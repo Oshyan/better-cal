@@ -285,8 +285,20 @@ final class ReviewController
     /** GET /review/count: the sidebar badge, without the payloads. */
     public function count(Request $req): Response
     {
-        $userId = (int) $req->user['id'];
-        $byKind = [
+        $byKind = $this->countsByKind((int) $req->user['id']);
+        return Response::json(['count' => array_sum($byKind), 'byKind' => $byKind]);
+    }
+
+    /** Everything waiting in Review, as one number (the app icon's badge, #170). */
+    public function total(int $userId): int
+    {
+        return array_sum($this->countsByKind($userId));
+    }
+
+    /** @return array<string, int> */
+    private function countsByKind(int $userId): array
+    {
+        return [
             'invite_new' => $this->queue->openCount($userId, ReviewQueue::KIND_INVITE_NEW),
             'invite_change' => $this->queue->openCount($userId, ReviewQueue::KIND_INVITE_CHANGE),
             'mail_limit' => $this->queue->openCount($userId, ReviewQueue::KIND_MAIL_LIMIT),
@@ -298,7 +310,6 @@ final class ReviewController
             'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
         ];
-        return Response::json(['count' => array_sum($byKind), 'byKind' => $byKind]);
     }
 
     /** POST /duplicates/:id {status: linked|dismissed}: the owner's word on a pair. */

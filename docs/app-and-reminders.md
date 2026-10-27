@@ -49,6 +49,9 @@ If you've already allowed notifications but this device isn't signed up (after r
 - **Devices receiving reminders:** every phone and browser that gets them, when each last got one, and **Remove** for any you don't recognize or no longer use.
 - **Delivery channel:** push, email, both, or push with email as a fallback when a device can't be reached.
 - **Default reminders** for timed and all-day events. A calendar can have its own defaults (in its settings), and an event its own reminders (in the editor).
+- **Show on app icon:** a number on the installed app's icon: Review items waiting, events today, or events still to come today (Nothing by default). Events count the planned and maybe ones on calendars you show; still to come leaves out all-day events and ones that have ended.
+
+The app icon number works on a computer (installed from Chrome, Edge or Safari on a Mac) and on iPhone or iPad when Better-Cal is on the Home Screen and allowed to send notifications. Android doesn't show numbers on web app icons, only a dot while a notification is showing. The number updates while the app is open and whenever a notification arrives. Chrome and Edge also refresh it in the background, about once a day at a time they choose. Browsers don't let it update silently otherwise, so on iPhone an events count can be a few hours old first thing in the morning, until the app opens or a reminder arrives.
 
 **On your phone or computer**, for sound, banners, the lock screen, or to unblock Better-Cal:
 

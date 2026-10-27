@@ -63,6 +63,7 @@ import { SplitView } from '../ui/SplitView.js';
 import { stepBack, afterHistorySettles } from './historysteps.js';
 import { primeKeyboard } from '../lib/ioskeyboard.js';
 import { noticeServerVersion, lookForUpdate } from './appversion.js';
+import { refreshBadge, badgeSettingChanged, clearBadge } from './badge.js';
 import { reloadIfReady } from './drafts.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -200,6 +201,14 @@ export function App() {
 
   useEffect(() => installKeyboard(), []);
 
+  // The app icon's number (#170): follow the setting, and show nothing once
+  // signed out.
+  const appBadge = useStore((st) => st.settings.appBadge);
+  useEffect(() => {
+    if (s.authed) badgeSettingChanged();
+    else if (s.booted) clearBadge();
+  }, [appBadge, s.authed, s.booted]);
+
   // Global minute tick: the single interval behind all time-relative styling
   // (past dim, active gold ring, now-line). Checks every 15s but only bumps
   // the store when the epoch minute actually changes, so the tree re-renders
@@ -270,6 +279,8 @@ export function App() {
             set({ pluginSeq: state.pluginSeq + 1 });
           }
           if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
+          // The app icon's number (#170), when something it counts may have moved.
+          refreshBadge({ changed: moved || reviewMoved });
           cursor = d.cursor;
           review = d.review ?? null;
           status = d.status ?? null;

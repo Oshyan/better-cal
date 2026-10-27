@@ -376,14 +376,41 @@ self.addEventListener('push', (event) => {
   const actions = [];
   if (data.join) actions.push({ action: 'join', title: 'Join' });
   if (data.map) actions.push({ action: 'map', title: 'Map' });
-  event.waitUntil(self.registration.showNotification(data.title || 'Better-Cal', {
-    body: data.body || '',
-    tag: data.tag || undefined,
-    icon: '/assets/icons/icon-192.png',
-    badge: '/assets/icons/badge-96.png',
-    actions: actions.slice(0, 2),
-    data: { url: data.url || '/', join: data.join || null, map: data.map || null },
-  }));
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(data.title || 'Better-Cal', {
+      body: data.body || '',
+      tag: data.tag || undefined,
+      icon: '/assets/icons/icon-192.png',
+      badge: '/assets/icons/badge-96.png',
+      actions: actions.slice(0, 2),
+      data: { url: data.url || '/', join: data.join || null, map: data.map || null },
+    }),
+    updateAppBadge(),
+  ]));
+});
+
+// --- App icon badge (#170) --------------------------------------------------
+// The number Settings' "Show on app icon" asks for, from the server (the
+// page asks the same endpoint, web/src/app/badge.js). Refreshed here on every
+// push and on periodic background sync, so it isn't only current while the
+// app is open. Browsers without the Badging API skip it; a failed request
+// leaves the icon as it was, and a signed-out one clears it.
+async function updateAppBadge() {
+  if (!self.navigator || !('setAppBadge' in self.navigator)) return;
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const res = await fetch('/api/v1/badge?tz=' + encodeURIComponent(tz), { credentials: 'same-origin', cache: 'no-store' });
+    if (res.status === 401) { await self.navigator.clearAppBadge(); return; }
+    if (!res.ok) return;
+    const d = await res.json();
+    const count = d && d.show !== 'none' ? Number(d.count) || 0 : 0;
+    if (count > 0) await self.navigator.setAppBadge(count);
+    else await self.navigator.clearAppBadge();
+  } catch (e) { /* offline: try again on the next push or sync */ }
+}
+
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'bc-badge') event.waitUntil(updateAppBadge());
 });
 
 self.addEventListener('notificationclick', (event) => {

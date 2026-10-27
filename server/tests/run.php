@@ -35,6 +35,7 @@ if (($testSessionSecret = getenv('BETTERCAL_SESSION_SECRET')) === false || $test
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Dav\DavIcs;
 use BetterCal\Domain\ApiTokens;
+use BetterCal\Domain\AppBadge;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Coordinates;
 use BetterCal\Domain\FallbackParser;
@@ -4951,6 +4952,41 @@ checkEq('cal hideCancelled default off', false, Calendars::hideCancelledFor(null
 checkEq('cal hideCancelled stored on', true, Calendars::hideCancelledFor('{"hideCancelled":true}'));
 checkEq('cal hideCancelled other settings leave it off', false, Calendars::hideCancelledFor('{"groupSimilar":true}'));
 checkEq('cal hideCancelled bad json is off', false, Calendars::hideCancelledFor('not json'));
+
+// ---------------------------------------------------------------------------
+// AppBadge: the app icon's number (#170) (pure)
+// ---------------------------------------------------------------------------
+
+$badgeNow = new DateTimeImmutable('2026-06-18T14:00:00-07:00');
+$bOcc = static fn(int $id, string $start, string $end, array $extra = []): array => $extra + [
+    'eventId' => $id, 'instanceId' => $id . '-x', 'start' => $start, 'end' => $end, 'allDay' => false,
+    'relationship' => 'planned', 'status' => 'confirmed', 'isContainer' => false, 'dupes' => [],
+];
+$badgeDay = [
+    $bOcc(1, '2026-06-18T09:00:00-07:00', '2026-06-18T10:00:00-07:00'), // over
+    $bOcc(2, '2026-06-18T13:30:00-07:00', '2026-06-18T15:00:00-07:00'), // under way
+    $bOcc(3, '2026-06-18T18:00:00-07:00', '2026-06-18T19:00:00-07:00', ['relationship' => 'maybe']),
+    $bOcc(4, '2026-06-18T00:00:00+00:00', '2026-06-19T00:00:00+00:00', ['allDay' => true]),
+    $bOcc(5, '2026-06-18T19:00:00-07:00', '2026-06-18T20:00:00-07:00', ['relationship' => 'available']),
+    $bOcc(6, '2026-06-18T07:00:00-07:00', '2026-06-18T08:00:00-07:00', ['relationship' => 'context']),
+    $bOcc(7, '2026-06-18T16:00:00-07:00', '2026-06-18T17:00:00-07:00', ['status' => 'cancelled']),
+    $bOcc(8, '2026-06-17T00:00:00+00:00', '2026-06-21T00:00:00+00:00', ['allDay' => true, 'isContainer' => true]),
+    // The same event on two calendars, in two zones: counted once.
+    $bOcc(9, '2026-06-18T17:00:00-07:00', '2026-06-18T18:00:00-07:00', ['dupes' => [['pairId' => 1, 'eventId' => 10, 'calendarId' => 2, 'groupId' => 9]]]),
+    $bOcc(10, '2026-06-19T00:00:00+00:00', '2026-06-19T01:00:00+00:00', ['dupes' => [['pairId' => 1, 'eventId' => 9, 'calendarId' => 1, 'groupId' => 9]]]),
+    // Tomorrow's all-day event: its date sits at UTC midnight, inside this
+    // evening's window on a west-coast clock, but it isn't today.
+    $bOcc(11, '2026-06-19T00:00:00+00:00', '2026-06-20T00:00:00+00:00', ['allDay' => true]),
+    // Yesterday's late event, which the window wouldn't send, never counts.
+    $bOcc(12, '2026-06-17T20:00:00-07:00', '2026-06-17T21:00:00-07:00'),
+];
+$badgeBounds = AppBadge::dayBounds($badgeNow, new DateTimeZone('America/Los_Angeles'));
+checkEq('badge: today counts planned and maybe, once each, on this date, without context, offers, cancelled or trips', 5, AppBadge::countEvents($badgeDay, false, $badgeNow, $badgeBounds));
+checkEq('badge: still to come leaves out what has ended and all-day ones', 3, AppBadge::countEvents($badgeDay, true, $badgeNow, $badgeBounds));
+checkEq('badge: an empty day is nothing', 0, AppBadge::countEvents([], false, $badgeNow, $badgeBounds));
+[$bStart, $bEnd] = AppBadge::dayBounds($badgeNow, new DateTimeZone('Europe/Berlin'));
+checkEq('badge: the day is the device zone\'s day', ['2026-06-18T00:00:00+02:00', '2026-06-19T00:00:00+02:00'], [$bStart->format(DATE_ATOM), $bEnd->format(DATE_ATOM)]);
+checkEq('badge: the setting takes only its four choices', ['none', 'review', 'today', 'remaining'], AppBadge::MODES);
 
 // ---------------------------------------------------------------------------
 // Ranking: signal-to-example serialization and score validation (pure)

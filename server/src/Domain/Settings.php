@@ -66,6 +66,9 @@ final class Settings
         // Month view rows on a desktop: all one height, or each as tall as
         // its busiest day needs, up to the screen's height (#171).
         'monthRows' => 'fixed',
+        // What the installed app's icon shows (#170): nothing, the Review
+        // count, events today, or events still to come today.
+        'appBadge' => 'none',
         // Accepting an emailed cancellation deletes the event (with Undo)
         // instead of keeping it struck through (#132).
         'removeAcceptedCancellations' => false,
@@ -244,6 +247,7 @@ final class Settings
                 'panelTucksSidebar' => self::bool($key, $value),
                 'gridAnchor' => self::enum($key, $value, ['context', 'top']),
                 'monthRows' => self::enum($key, $value, ['fixed', 'fit']),
+                'appBadge' => self::enum($key, $value, AppBadge::MODES),
                 'removeAcceptedCancellations' => self::bool($key, $value),
                 'mailEventMode' => self::enum($key, $value, ['any', 'approved', 'review']),
                 'mailApprovedSenders' => MailPolicy::rules($value),

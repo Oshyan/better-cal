@@ -311,6 +311,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 | `folderVisibility` | object: folder id → `{mode:"all"\|"none"\|"custom", custom:[calendarId]}` (at most 200 folders, 500 ids each) | `{}` | per-folder calendar visibility; meaning is up to the client |
 | `sidebarActiveOnly` | boolean | `false` | sidebar lists only checked calendars and people; display only |
 | `panelTucksSidebar` | boolean | `true` | desktop: the sidebar tucks away while an event's panel is open; display only |
+| `appBadge` | `none`\|`review`\|`today`\|`remaining` | `none` | what the installed app's icon shows; see `GET /badge` |
 | `gridAnchor` | `context`\|`top` | `context` | where month, 3-week and 2-week views put the day they go to (today, a jump): a row or two below the top, or at the top; display only |
 | `removeAcceptedCancellations` | boolean | `false` | accepting an emailed cancellation in Review deletes the event (with Undo) instead of keeping it struck through; the accept response carries `removed: true` |
 | `pluginHidden` | object: plugin id → boolean | `{}` | which plugins' overlay bands are hidden |
@@ -390,6 +391,7 @@ Everything waiting on the owner's decision, in one list of ten kinds:
   - Tokens get actions for duplicates only; every other decision is session only.
   - Stored items come in pages of 200: pass `nextBefore` as `before` for older ones, and deduplicate other kinds by `key` when appending pages. `/review/count` has the complete open count.
 - `GET /review/count` → `{count, byKind:{invite_new, invite_change, mail_error, mail_limit, model_limit, rsvp, proposal, duplicate, subscription, plugin}}` (the sidebar badge).
+- `GET /badge?tz=Area/City` → `{show, count}`: the number for the installed app's icon, as the `appBadge` setting chooses; `count` is null when `show` is `none`. `review` is `GET /review/count`'s total. `today` counts planned and maybe events on visible calendars on today's date in `tz` (the device's zone; the Home zone when missing or invalid), the same event on two calendars once, never cancelled ones, context or trips; `remaining` keeps the timed ones that haven't ended. The page and the service worker (on a push and on periodic background sync) both ask here.
 
 Decisions, all session only:
 

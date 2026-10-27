@@ -11,6 +11,7 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { holdReload } from './drafts.js';
+import { badgeSupported } from './badge.js';
 import { recentStarts } from './resume.js';
 import { needsAttention, WorkerNote } from './system.js';
 import { stalledStart } from './bootlog.js';
@@ -546,6 +547,9 @@ function HomeTimezoneRow({ tz, onChange }) {
 // Notifications: Web Push status + enable/disable/test, delivery channel
 // (push/email), Android battery guidance, plus the global default reminder
 // editors (the fallbacks behind calendar/event overrides).
+// #170: where the number shows, and how fresh it stays.
+const BADGE_HINT = 'A number on the installed app\'s icon: on a computer (installed from Chrome, Edge or Safari), and on iPhone or iPad from the Home Screen with notifications allowed. Android shows only a dot, with a notification. Events count planned and maybe ones on calendars you show. It updates while the app is open and when a notification arrives; Chrome and Edge also check about once a day.';
+
 function NotificationsSection({ settings, user }) {
   const [status, setStatus] = useState(null); // {subscribed, vapidConfigured, emailConfigured}
   const [perm, setPerm] = useState(permissionState());
@@ -632,6 +636,14 @@ function NotificationsSection({ settings, user }) {
         onClick=${run(disablePush, 'Notifications disabled')}>Disable</button>`}
       ${enabled && html`<button type="button" class="bc-btn" disabled=${busy}
         onClick=${run(sendTestNotification, (r) => 'Test sent to ' + ((r && r.sent) || 0) + ' device(s)')}>Send test notification</button>`}
+    <//>
+    <${Row} label="Show on app icon" hint=${BADGE_HINT + (badgeSupported() ? '' : ' This browser doesn\'t put numbers on app icons.')}>
+      <select aria-label="Show on app icon" value=${settings.appBadge || 'none'} onChange=${(e) => saveSetting('appBadge', e.target.value)}>
+        <option value="none">Nothing</option>
+        <option value="review">Review items waiting</option>
+        <option value="today">Events today</option>
+        <option value="remaining">Events still to come today</option>
+      </select>
     <//>
     ${devices && devices.length > 0 && html`<${Row} label="Devices receiving reminders" hint="Every browser or phone reminders are sent to. Remove any you do not recognise.">
       ${status && new Set(devices.map(d => d.endpointHash)).size >= status.deviceLimit && html`<p class="bc-hint">The reminder-device limit (${status.deviceLimit}) is reached. Existing devices still work. Remove old devices below before adding another.</p>`}

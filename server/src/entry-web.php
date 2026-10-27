@@ -147,6 +147,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
         $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp, $pluginsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
+        $badgeController = new Controllers\BadgeController($db, $settings, $events, $reviewController);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
@@ -274,6 +275,7 @@ function bc_handle_api(Request $request, array $cfg): void
         // Review queue: everything waiting on the owner's decision, one list.
         $router->add('GET', "$base/review", [$reviewController, 'index']);
         $router->add('GET', "$base/review/count", [$reviewController, 'count']);
+        $router->add('GET', "$base/badge", [$badgeController, 'show']);
         $router->add('POST', "$base/review/invitations/:id/accept", [$reviewController, 'acceptInvitation']);
         $router->add('POST', "$base/review/invitations/:id/dismiss", [$reviewController, 'dismissInvitation']);
         $router->add('POST', "$base/review/replies/:id/dismiss", [$reviewController, 'dismissReply']);

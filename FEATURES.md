@@ -149,7 +149,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - A Google connector (optional; each install sets up its own free Google Cloud client): connect a Google account to read the calendars you own, subscribe to or have been shared, including private shared ones no iCal address reaches. Where you can edit, changes go to Google first (write-through, not two-way sync). [Google Calendar connector](docs/google-calendar.md) has the setup.
 - Move a calendar to Google: a calendar that started here is created in your Google account with every event, no one is mailed, and it keeps its tags, people, reminders and trips. "Adopt as local calendar" brings it back.
 - Open browsers check for changes every 30 seconds, and at once when you come back to the tab, so changes from any device or automation show up without a reload.
-- The installable app opens without a connection (showing what it last loaded), is a share target, opens webcal links and .ics files (desktop Chrome and Edge), and has a "New event" shortcut on its icon.
+- The installable app opens without a connection (showing what it last loaded), is a share target, opens webcal links and .ics files (desktop Chrome and Edge), and has a "New event" shortcut on its icon. Its icon can show a number: Review items waiting, events today, or events still to come today.
 
 ### Plugins
 

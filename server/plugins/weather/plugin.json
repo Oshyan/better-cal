@@ -1,9 +1,9 @@
 {
   "id": "weather",
   "name": "Weather",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "minHost": "0.1.0",
-  "description": "Daily forecast on your calendar via Open-Meteo (free, no API key): one all-day event per day with an icon for the conditions and the high/low, plus the day's air quality (US AQI) when enabled. Severe weather and unhealthy air raise warnings.",
+  "description": "Daily forecast via Open-Meteo (free, no API key): one all-day event per day with an icon for the conditions and the high and low, plus the day's air quality (US AQI) when enabled. Add a weather calendar for each place, or one that follows another calendar's place. Severe weather and unhealthy air raise warnings.",
   "permissions": [
     "http",
     "events:write",
@@ -12,14 +12,23 @@
   "jobs": [
     {
       "id": "refresh",
-      "interval": "PT3H"
+      "interval": "PT3H",
+      "runOnSave": true
     }
   ],
-  "settings": [
+  "ownCalendars": {
+    "noun": "weather calendar",
+    "name": "Weather, {location}",
+    "color": "#5b8dd9",
+    "role": "context",
+    "max": 20
+  },
+  "ownCalendarSettings": [
     {
       "key": "location",
       "type": "location",
-      "label": "Forecast location"
+      "label": "Place",
+      "required": true
     },
     {
       "key": "units",

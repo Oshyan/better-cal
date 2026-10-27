@@ -42,7 +42,7 @@ $manifestOf = static fn(string $id): array => json_decode(
 // Every bundled plugin: manifest validity and interface shape
 // ---------------------------------------------------------------------------
 
-$bundled = ['weather', 'tides', 'lint', 'travel', 'dayplanner', 'visit-intents', 'trip-planner', 'fibery'];
+$bundled = ['weather', 'tides', 'sun', 'lint', 'travel', 'dayplanner', 'visit-intents', 'trip-planner', 'fibery'];
 foreach ($bundled as $id) {
     $m = $manifestOf($id);
     checkEq("plugin $id: manifest id matches directory", $id, $m['id'] ?? null);
@@ -77,11 +77,69 @@ $defaultOf = static function (array $m, string $key): mixed {
     return null;
 };
 checkEq('visit-intents: the wishlist starts empty', '', $defaultOf($manifestOf('visit-intents'), 'wishlist'));
-checkEq('tides: no default station', '', $defaultOf($manifestOf('tides'), 'station'));
+$ownDefault = static function (array $m, string $key): mixed {
+    foreach ($m['ownCalendarSettings'] ?? [] as $f) {
+        if (($f['key'] ?? null) === $key) {
+            return $f['default'] ?? null;
+        }
+    }
+    return null;
+};
+checkEq('tides: no default station', null, $ownDefault($manifestOf('tides'), 'station'));
+checkEq('sun: no default place', null, $ownDefault($manifestOf('sun'), 'location'));
+checkEq('weather: no default place', null, $ownDefault($manifestOf('weather'), 'location'));
+
+// ---------------------------------------------------------------------------
+// tides: one station per calendar, its filters judged at the station
+// ---------------------------------------------------------------------------
+
 $tidesPlugin = loadPlugin('tides');
-checkEq('tides: an empty station is accepted (not set up yet)', [], $tidesPlugin->validateSettings(['station' => '']));
-checkEq('tides: a 7-digit station is accepted', [], $tidesPlugin->validateSettings(['station' => '8518750']));
-check('tides: a malformed station is refused', isset($tidesPlugin->validateSettings(['station' => '12ab'])['station']));
+$tidesClass = get_class($tidesPlugin);
+check('tides: a calendar with neither lows nor highs is refused', isset($tidesPlugin->validateCalendarSettings(['lows' => false, 'highs' => false])['lows']));
+check('tides: lows on with no weekdays is refused', isset($tidesPlugin->validateCalendarSettings(['lows' => true, 'lowDays' => []])['lowDays']));
+checkEq('tides: lows only is fine', [], $tidesPlugin->validateCalendarSettings(['lows' => true, 'highs' => false, 'lowDays' => ['6', '7']]));
+
+// Zones: US coasts keep daylight saving, islands don't, unlisted places get the listed offset.
+checkEq('tides: a Gulf coast station is on Central time (not Mountain)', 'America/Chicago', $tidesClass::zoneFor(['timezonecorr' => -6, 'state' => 'TX', 'lat' => 29.3])->getName());
+checkEq('tides: a Pacific coast station is on Pacific time', 'America/Los_Angeles', $tidesClass::zoneFor(['timezonecorr' => -8, 'state' => 'OR', 'lat' => 44.0])->getName());
+checkEq('tides: Hawaii keeps no daylight saving', 'Pacific/Honolulu', $tidesClass::zoneFor(['timezonecorr' => -10, 'state' => 'HI', 'lat' => 21.0])->getName());
+checkEq('tides: the Aleutians keep it at -10', 'America/Adak', $tidesClass::zoneFor(['timezonecorr' => -10, 'state' => 'AK', 'lat' => 52.0])->getName());
+checkEq('tides: a tropical station with no state gets its fixed offset', '-06:00', $tidesClass::zoneFor(['timezonecorr' => -6, 'state' => '', 'lat' => 16.0])->getName());
+checkEq('tides: an all-capitals name reads as a name', 'Sample Harbor, CA', $tidesClass::stationName(['name' => 'SAMPLE HARBOR', 'state' => 'CA']));
+
+$tz = new DateTimeZone('America/Los_Angeles');
+$tide = $tidesClass::parsePrediction(['t' => '2030-06-15 14:30', 'v' => '-0.8', 'type' => 'L'], $tz); // 7:30 AM there, a Saturday
+checkEq('tides: a GMT row becomes the station\'s local time', '2030-06-15 07:30', $tide['local']->format('Y-m-d H:i'));
+check('tides: a malformed row is skipped', $tidesClass::parsePrediction(['t' => 'soon', 'v' => '1', 'type' => 'L'], $tz) === null);
+$sun = ['rise' => $tide['ts'] - 2 * 3600, 'set' => $tide['ts'] + 12 * 3600]; // rose at 5:30, sets at 19:30
+$lowOn = ['lows' => true, 'highs' => false];
+check('tides: a low passes with no filters', $tidesClass::passes($tide, $lowOn, $sun));
+check('tides: a low is dropped when lows are off', !$tidesClass::passes($tide, ['lows' => false], $sun));
+check('tides: a low at or below the limit passes', $tidesClass::passes($tide, $lowOn + ['lowMax' => -0.8], $sun));
+check('tides: a low above the limit is dropped', !$tidesClass::passes($tide, $lowOn + ['lowMax' => -1.0], $sun));
+check('tides: weekend only keeps a Saturday', $tidesClass::passes($tide, $lowOn + ['lowDays' => ['6', '7']], $sun));
+check('tides: weekdays only drops a Saturday', !$tidesClass::passes($tide, $lowOn + ['lowDays' => ['1', '2', '3', '4', '5']], $sun));
+check('tides: after sunrise passes two hours after it', $tidesClass::passes($tide, $lowOn + ['lowSun' => 'afterSunrise'], $sun));
+check('tides: "3 h after sunrise" drops a tide 2 h after', !$tidesClass::passes($tide, $lowOn + ['lowSun' => 'afterSunrise', 'lowSunrise' => 180], $sun));
+check('tides: a negative offset allows before sunrise', $tidesClass::passes($tide, $lowOn + ['lowSun' => 'daylight', 'lowSunrise' => -30, 'lowSunset' => 0], ['rise' => $tide['ts'] + 20 * 60, 'set' => $tide['ts'] + 9 * 3600]));
+check('tides: "an hour before sunset" drops a tide 30 min before', !$tidesClass::passes($tide, $lowOn + ['lowSun' => 'beforeSunset', 'lowSunset' => 60], ['rise' => $tide['ts'] - 9 * 3600, 'set' => $tide['ts'] + 1800]));
+check('tides: daylight passes where the sun never sets', $tidesClass::passes($tide, $lowOn + ['lowSun' => 'daylight'], ['rise' => true, 'set' => true]));
+check('tides: daylight drops a tide where the sun never rises', !$tidesClass::passes($tide, $lowOn + ['lowSun' => 'daylight'], ['rise' => false, 'set' => false]));
+check('tides: a clock window holds 7:30', $tidesClass::passes($tide, $lowOn + ['lowFrom' => '07:00', 'lowUntil' => '10:00'], $sun));
+check('tides: "not before 8" drops 7:30', !$tidesClass::passes($tide, $lowOn + ['lowFrom' => '08:00'], $sun));
+check('tides: a window across midnight holds an early tide', $tidesClass::inClockWindow(new DateTimeImmutable('2030-06-15 02:10'), '21:00', '03:00'));
+check('tides: and drops one at midday', !$tidesClass::inClockWindow(new DateTimeImmutable('2030-06-15 12:00'), '21:00', '03:00'));
+$high = $tidesClass::parsePrediction(['t' => '2030-06-15 20:30', 'v' => '6.2', 'type' => 'H'], $tz);
+check('tides: a high is judged by its own filters', $tidesClass::passes($high, ['lows' => true, 'highs' => true, 'highMin' => 6.0], $sun) && !$tidesClass::passes($high, ['lows' => true, 'highs' => true, 'highMin' => 6.5], $sun));
+$late = $tidesClass::describe($tide, 'ft', 'Sample Harbor, CA', '9999901', ['rise' => $tide['ts'] - 14 * 3600, 'set' => $tide['ts'] - 90 * 60]);
+check('tides: a tide after sunset says how long after', str_contains($late, '(1 h 30 min after sunset)'));
+check('tides: the description gives both units', str_contains($late, '-0.8 ft (-0.24 m)'));
+checkEq('tides: spans read plainly', ['20 min', '2 h', '1 h 5 min'], [$tidesClass::span(1200), $tidesClass::span(7200), $tidesClass::span(3900)]);
+$opts = $tidesClass::stationOptions(['9999902' => ['name' => 'Beta Point', 'state' => 'WA'], '9999901' => ['name' => 'Alpha Cove', 'state' => 'ME']]);
+checkEq('tides: station choices are sorted by name, labelled with the state', ['Alpha Cove, ME', 'Beta Point, WA'], array_column($opts, 'label'));
+
+$sunPlugin = loadPlugin('sun');
+check('sun: a calendar with neither sunrise nor sunset is refused', isset($sunPlugin->validateCalendarSettings(['sunrise' => false, 'sunset' => false])['sunrise']));
 
 // ---------------------------------------------------------------------------
 // visit-intents: wishlist parsing, hours, interval maths

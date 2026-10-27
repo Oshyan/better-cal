@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
+use BetterCal\Plugin\OwnCalendarsPlugin;
 use BetterCal\Plugin\PluginHost;
 use BetterCal\Plugin\PluginInterface;
 
 /**
- * Weather demo plugin (docs/plugins/prd-v1.md): the materialized-events shape.
- * One Open-Meteo call per refresh, one all-day event per forecast day in a
- * plugin-owned "Weather" calendar, warnings for severe days. Each day carries
- * a host icon for its conditions (sun, cloud, rain, snow, storm), which the
- * day's header shows beside the high/low. With air quality on, a second call
- * adds one "AQI" event per day (the day's highest US AQI) with the air icon.
+ * Weather (docs/plugins/prd-v1.md): the materialized-events shape. Each
+ * weather calendar is one place (or follows another calendar's place): one
+ * Open-Meteo call per refresh, one all-day event per forecast day, warnings
+ * for severe days. Each day carries a host icon for its conditions (sun,
+ * cloud, rain, snow, storm), which the day's header shows beside the
+ * high/low. With air quality on, a second call adds one "AQI" event per day
+ * (the day's highest US AQI) with the air icon.
  */
-return new class implements PluginInterface {
-    private const CAL_NAME = 'Weather';
-    private const CAL_COLOR = '#5b8dd9';
+return new class implements PluginInterface, OwnCalendarsPlugin {
 
     /** WMO weather codes -> host icon name + words. */
     public static function describe(int $code): array
@@ -73,23 +73,44 @@ return new class implements PluginInterface {
 
     public function validateSettings(array $values): array
     {
-        if (array_key_exists('location', $values) && $values['location'] === null) {
-            return ['location' => 'a forecast location is required'];
-        }
+        return [];
+    }
+
+    public function validateCalendarSettings(array $values): array
+    {
         return [];
     }
 
     public function runJob(PluginHost $host, string $jobId): void
     {
-        $s = $host->settings();
+        $warnings = [];
+        foreach ($host->ownCalendars() as $cal) {
+            try {
+                $warnings = [...$warnings, ...$this->fill($host, $cal)];
+            } catch (\Throwable $e) {
+                // One place failing leaves its last forecast and says so on it.
+                $host->setCalendarStatus($cal['id'], 'Could not update: ' . $e->getMessage(), 'error');
+                $host->log($cal['name'] . ': ' . $e->getMessage());
+            }
+        }
+        // Warnings are the plugin's, not one calendar's: a run for one
+        // calendar (after a save) leaves them for the next full run.
+        if ($host->targetCalendar() === null) {
+            $host->replaceWarnings($warnings);
+        }
+    }
+
+    /**
+     * @param array{id:int,name:string,settings:array<string,mixed>} $cal
+     * @return list<array<string,string>> warnings for this place
+     */
+    private function fill(PluginHost $host, array $cal): array
+    {
+        $s = $cal['settings'];
         $loc = $s['location'] ?? null;
         if (!is_array($loc) || !isset($loc['lat'], $loc['lng'])) {
-            $host->log('no forecast location configured; nothing to do');
-            $host->replaceWarnings([[
-                'severity' => 'info',
-                'message' => 'Weather has no forecast location yet. Set one in Manage → Plugins → Weather.',
-            ]]);
-            return;
+            $host->setCalendarStatus($cal['id'], 'No place yet. Pick one in this calendar\'s settings, or wait for the calendar it follows to fill.', 'warn');
+            return [];
         }
         $unitParam = ($s['units'] ?? 'F') === 'C' ? 'celsius' : 'fahrenheit';
         $days = max(1, min(14, (int) ($s['days'] ?? 10)));
@@ -181,9 +202,9 @@ return new class implements PluginInterface {
                 $host->log('air quality unavailable: ' . $e->getMessage()); // the forecast still syncs
             }
         }
-        $calId = $host->ensureCalendar(self::CAL_NAME, self::CAL_COLOR);
-        [$a, $u, $r] = $host->syncEvents($calId, $events);
-        $host->replaceWarnings($warnings);
-        $host->log('forecast ' . count($events) . ' days for ' . ($loc['name'] ?? '?') . ": +{$a} ~{$u} -{$r}, " . count($warnings) . ' severe');
+        [$a, $u, $r] = $host->syncEvents($cal['id'], $events);
+        $host->setCalendarStatus($cal['id'], $days . '-day forecast for ' . (($loc['name'] ?? '') ?: 'this place') . ($warnings !== [] ? ', with ' . count($warnings) . ' warning' . (count($warnings) === 1 ? '' : 's') : '') . '.', $warnings !== [] ? 'warn' : 'info');
+        $host->log($cal['name'] . ': forecast ' . count($events) . " days: +{$a} ~{$u} -{$r}, " . count($warnings) . ' severe');
+        return $warnings;
     }
 };

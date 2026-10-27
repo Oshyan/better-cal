@@ -1,9 +1,9 @@
 {
   "id": "tides",
   "name": "Tides",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "minHost": "0.1.0",
-  "description": "NOAA tide predictions (US stations, no API key): high/low tide events plus daylight low-tide window bands. Find your station id at tidesandcurrents.noaa.gov.",
+  "description": "NOAA tide predictions for US coasts, no API key. Add a tide calendar for each station, each with its own choice of tides: lows or highs, how low or high, in daylight, at times of day, on days of the week.",
   "permissions": [
     "http",
     "events:write",
@@ -12,35 +12,349 @@
   "jobs": [
     {
       "id": "refresh",
-      "interval": "PT12H"
+      "interval": "PT12H",
+      "runOnSave": true
     }
   ],
-  "settings": [
+  "ownCalendars": {
+    "noun": "tide calendar",
+    "name": "Tides, {station}",
+    "color": "#2e8b8b",
+    "role": "context",
+    "max": 20
+  },
+  "ownCalendarSettings": [
     {
       "key": "station",
-      "type": "text",
-      "label": "NOAA station id (e.g. 8518750 for The Battery, New York)",
-      "default": ""
+      "type": "select",
+      "optionsFrom": "stations",
+      "searchable": true,
+      "required": true,
+      "label": "Station",
+      "help": "Any of NOAA's US tide stations.",
+      "placeholder": "Search by place, state or station number",
+      "pendingText": "The station list loads on the plugin's first run, within a minute of turning it on."
     },
     {
-      "key": "stationName",
-      "type": "text",
-      "label": "Station name (label only)",
-      "default": ""
+      "key": "unit",
+      "type": "select",
+      "label": "Heights in",
+      "options": [
+        {
+          "value": "ft",
+          "label": "Feet"
+        },
+        {
+          "value": "m",
+          "label": "Meters"
+        }
+      ],
+      "default": "ft"
     },
     {
       "key": "days",
       "type": "number",
       "label": "Days ahead",
       "min": 1,
-      "max": 30,
-      "default": 14
+      "max": 365,
+      "default": 90,
+      "join": true
     },
     {
-      "key": "daylightBands",
+      "key": "lows",
       "type": "toggle",
-      "label": "Show daylight low-tide bands",
-      "default": true
+      "label": "Include low tides",
+      "default": true,
+      "section": "Low tides"
+    },
+    {
+      "key": "lowMax",
+      "type": "number",
+      "label": "At or below",
+      "help": "Only lows this low or lower, in the unit above. Empty for any height.",
+      "step": 0.1,
+      "min": -20,
+      "max": 60,
+      "showIf": {
+        "lows": true
+      }
+    },
+    {
+      "key": "lowSun",
+      "type": "select",
+      "label": "Daylight",
+      "options": [
+        {
+          "value": "any",
+          "label": "Any time"
+        },
+        {
+          "value": "afterSunrise",
+          "label": "After sunrise"
+        },
+        {
+          "value": "beforeSunset",
+          "label": "Before sunset"
+        },
+        {
+          "value": "daylight",
+          "label": "Between sunrise and sunset"
+        }
+      ],
+      "default": "any",
+      "showIf": {
+        "lows": true
+      }
+    },
+    {
+      "key": "lowSunrise",
+      "type": "number",
+      "label": "Minutes after sunrise",
+      "help": "Negative for before sunrise or after sunset.",
+      "min": -720,
+      "max": 720,
+      "default": 0,
+      "showIf": {
+        "lows": true,
+        "lowSun": [
+          "afterSunrise",
+          "daylight"
+        ]
+      }
+    },
+    {
+      "key": "lowSunset",
+      "type": "number",
+      "label": "Minutes before sunset",
+      "min": -720,
+      "max": 720,
+      "default": 0,
+      "showIf": {
+        "lows": true,
+        "lowSun": [
+          "beforeSunset",
+          "daylight"
+        ]
+      },
+      "join": true
+    },
+    {
+      "key": "lowFrom",
+      "type": "time",
+      "label": "Not before",
+      "help": "At the station. Leave empty for no limit; an end earlier than the start runs across midnight.",
+      "showIf": {
+        "lows": true
+      }
+    },
+    {
+      "key": "lowUntil",
+      "type": "time",
+      "label": "not after",
+      "showIf": {
+        "lows": true
+      },
+      "join": true
+    },
+    {
+      "key": "lowDays",
+      "type": "checklist",
+      "label": "Days of the week",
+      "options": [
+        {
+          "value": "1",
+          "label": "Mon"
+        },
+        {
+          "value": "2",
+          "label": "Tue"
+        },
+        {
+          "value": "3",
+          "label": "Wed"
+        },
+        {
+          "value": "4",
+          "label": "Thu"
+        },
+        {
+          "value": "5",
+          "label": "Fri"
+        },
+        {
+          "value": "6",
+          "label": "Sat"
+        },
+        {
+          "value": "7",
+          "label": "Sun"
+        }
+      ],
+      "default": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
+      ],
+      "showIf": {
+        "lows": true
+      }
+    },
+    {
+      "key": "highs",
+      "type": "toggle",
+      "label": "Include high tides",
+      "default": false,
+      "section": "High tides"
+    },
+    {
+      "key": "highMin",
+      "type": "number",
+      "label": "At or above",
+      "help": "Only highs this high or higher, in the unit above. Empty for any height.",
+      "step": 0.1,
+      "min": -20,
+      "max": 60,
+      "showIf": {
+        "highs": true
+      }
+    },
+    {
+      "key": "highSun",
+      "type": "select",
+      "label": "Daylight",
+      "options": [
+        {
+          "value": "any",
+          "label": "Any time"
+        },
+        {
+          "value": "afterSunrise",
+          "label": "After sunrise"
+        },
+        {
+          "value": "beforeSunset",
+          "label": "Before sunset"
+        },
+        {
+          "value": "daylight",
+          "label": "Between sunrise and sunset"
+        }
+      ],
+      "default": "any",
+      "showIf": {
+        "highs": true
+      }
+    },
+    {
+      "key": "highSunrise",
+      "type": "number",
+      "label": "Minutes after sunrise",
+      "help": "Negative for before sunrise or after sunset.",
+      "min": -720,
+      "max": 720,
+      "default": 0,
+      "showIf": {
+        "highs": true,
+        "highSun": [
+          "afterSunrise",
+          "daylight"
+        ]
+      }
+    },
+    {
+      "key": "highSunset",
+      "type": "number",
+      "label": "Minutes before sunset",
+      "min": -720,
+      "max": 720,
+      "default": 0,
+      "showIf": {
+        "highs": true,
+        "highSun": [
+          "beforeSunset",
+          "daylight"
+        ]
+      },
+      "join": true
+    },
+    {
+      "key": "highFrom",
+      "type": "time",
+      "label": "Not before",
+      "help": "At the station. Leave empty for no limit; an end earlier than the start runs across midnight.",
+      "showIf": {
+        "highs": true
+      }
+    },
+    {
+      "key": "highUntil",
+      "type": "time",
+      "label": "not after",
+      "showIf": {
+        "highs": true
+      },
+      "join": true
+    },
+    {
+      "key": "highDays",
+      "type": "checklist",
+      "label": "Days of the week",
+      "options": [
+        {
+          "value": "1",
+          "label": "Mon"
+        },
+        {
+          "value": "2",
+          "label": "Tue"
+        },
+        {
+          "value": "3",
+          "label": "Wed"
+        },
+        {
+          "value": "4",
+          "label": "Thu"
+        },
+        {
+          "value": "5",
+          "label": "Fri"
+        },
+        {
+          "value": "6",
+          "label": "Sat"
+        },
+        {
+          "value": "7",
+          "label": "Sun"
+        }
+      ],
+      "default": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
+      ],
+      "showIf": {
+        "highs": true
+      }
+    },
+    {
+      "key": "band",
+      "type": "number",
+      "label": "Shade around each tide",
+      "help": "Minutes either side of each tide shown, shaded on the calendar. 0 for none.",
+      "min": 0,
+      "max": 240,
+      "default": 0,
+      "section": "Display"
     }
   ],
   "decoration": {

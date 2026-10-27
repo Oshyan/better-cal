@@ -1,36 +1,51 @@
 {
   "id": "sun",
   "name": "Sun",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "minHost": "0.1.0",
-  "description": "Sunrise and sunset for a place, computed on this server (no network, no API key). One sunrise and one sunset moment per day, shown in each day's header and as a line on the timeline.",
+  "description": "Sunrise and sunset, computed on this server (no network, no API key). Add a sun calendar for each place, or one that follows another calendar's place, such as a tide station. Each day shows its sunrise and sunset in the day's header and as a line on the timeline.",
   "permissions": [
     "events:write"
   ],
   "jobs": [
     {
       "id": "refresh",
-      "interval": "P1D"
+      "interval": "P1D",
+      "runOnSave": true
     }
   ],
-  "settings": [
+  "ownCalendars": {
+    "noun": "sun calendar",
+    "name": "Sun, {location}",
+    "color": "#e0a33a",
+    "role": "context",
+    "max": 20
+  },
+  "ownCalendarSettings": [
     {
       "key": "location",
       "type": "location",
-      "label": "Location"
+      "label": "Place",
+      "required": true
     },
     {
       "key": "days",
       "type": "number",
       "label": "Days ahead",
       "min": 1,
-      "max": 60,
+      "max": 365,
       "default": 21
     },
     {
       "key": "sunrise",
       "type": "toggle",
       "label": "Include sunrise",
+      "default": true
+    },
+    {
+      "key": "sunset",
+      "type": "toggle",
+      "label": "Include sunset",
       "default": true
     }
   ],

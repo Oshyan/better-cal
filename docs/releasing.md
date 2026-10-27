@@ -6,7 +6,7 @@ Published releases are immutable: their tag and assets can't be replaced, though
 
 ## Application Release
 
-1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section (ending with its Operators line), run the full suite, push, and wait for the `tests` workflow to pass. Keep the section brief: one short bullet per change saying what's new and how to use it, small fixes together in one Fixes bullet, and a link to the docs for details. It becomes the release page people read before updating.
+1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section (ending with its Operators line), run the full suite, push, and wait for the `tests` workflow to pass. Keep the section brief: one short bullet per change saying what's new and how to use it, small fixes together in one Fixes bullet, and a link to the docs for details. It becomes the release page people read before updating. If the release carries fixes from a security review, put its version in that review's entry in `SECURITY.md` (What Has Been Reviewed) and in the README's **Latest review** line, in the same commit. A new review gets an entry there too: date, tool and model, what was checked (the whole codebase at a revision, or a range of commits and the versions it spans), findings by severity, and what became of each.
 2. Prepare a draft:
 
    ```sh

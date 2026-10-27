@@ -128,7 +128,9 @@ function openHandlers(occ, onOpen) {
 // `seg` is optional and only used by list contexts (the day-expand panel):
 // {contLeft, contRight} angles the matching end to show the event continues
 // beyond the day being listed.
-export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null, onOpen, onPointerDown }) {
+// `timeLabel` (optional) replaces the time with given text, shown for any
+// event: the expanded day's list says "all day" there so every title lines up.
+export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null, onOpen, onPointerDown, timeLabel = null }) {
   const color = calColor(cal);
   const interested = occ.relationship === 'maybe';
   // GCal semantics: all-day (and group) chips are filled with the calendar
@@ -153,7 +155,9 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     ${occ.relationship === 'context'
       ? html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`
       : html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`}
-    ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
+    ${timeLabel !== null
+      ? html`<span class="bc-chip-time">${timeLabel}</span>`
+      : timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
     ${occ.isGroup && html`<${StackGlyph} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     <${DurationSuffix} occ=${occ} />

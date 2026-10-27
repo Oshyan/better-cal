@@ -86,10 +86,11 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   let style = '';
   if (!mobile && anchorRect) {
     // Size to the content up to ~85% of the viewport; a scrollbar only
-    // appears when the day genuinely cannot fit on screen.
-    const w = Math.max(280, Math.min(380, anchorRect.width * 2));
+    // appears when the day genuinely cannot fit on screen. Wide enough for
+    // long titles (they wrap past that), never wider than the window.
+    const w = Math.min(window.innerWidth - 16, Math.max(320, Math.min(520, anchorRect.width * 2.4)));
     const maxH = Math.round(window.innerHeight * 0.85);
-    const h = Math.min(maxH, 64 + sorted.length * 34 + 40 + (ctx.length ? 14 + ctx.length * 26 : 0));
+    const h = Math.min(maxH, 64 + sorted.length * 30 + 40 + (ctx.length ? 14 + ctx.length * 26 : 0));
     const p = anchorPanel(anchorRect, w, h);
     style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:${maxH}px`;
   }
@@ -142,19 +143,16 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
             ? { contLeft: epochDayOfKey(span.startKey) < ed, contRight: epochDayOfKey(span.endKey) > ed }
             : null;
           const openOpts = { dayKey };
+          // The time sits inside the event, as in the grid; clicking the
+          // event opens it, so there's no separate open button.
           return html`<div key=${occ.instanceId} class="bc-dayexpand-row">
-            <span class="bc-dayexpand-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}</span>
             <${EventChip}
-              occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false} seg=${seg}
+              occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+              timeLabel=${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}
               dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
               onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, openOpts)}
               onPointerDown=${(ev) => dragOut(occ, ev)}
             />
-            ${onOpenDetail && !occ.isGroup && html`<button
-              type="button" class="bc-icon-btn bc-dayexpand-open"
-              title="Open details" aria-label=${'Open details for ' + (occ.title || 'event')}
-              onClick=${() => onOpenDetail(occ.instanceId)}
-            ><${Icon} name="arrowUpRight" size=${13} /></button>`}
           </div>`;
         })}
         ${eventPages > 1 && html`<div class="bc-dayexpand-pager">

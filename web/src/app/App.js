@@ -201,6 +201,12 @@ export function App() {
   };
 
   useEffect(() => installKeyboard(), []);
+  // A page has no toolbar, so its own sidebar button asks for this.
+  useEffect(() => {
+    const onToggle = () => toggleSidebar();
+    window.addEventListener('bc-toggle-sidebar', onToggle);
+    return () => window.removeEventListener('bc-toggle-sidebar', onToggle);
+  });
   // Cmd/Ctrl+V on the calendar opens quick add with what was pasted.
   useEffect(() => installPasteAnywhere(), []);
 
@@ -787,33 +793,36 @@ export function App() {
     return html`<${Login} />`;
   }
   if (state.quickAddWindow) return html`<${QuickAddWindow} />`;
-  if (s.route === 'organize') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'filters') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'views') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'settings') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'people') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'review') {
-    // Review is a tab of the phone's bottom bar, so the bar stays.
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'plugins') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
-  }
-  if (s.route === 'activity') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+  // The pages (Settings, Review, People and the rest) keep the sidebar on a
+  // computer: its Manage list goes straight from page to page, and its
+  // mini-month back to the calendar. A phone shows the page on its own, as
+  // before; the sidebar is a drawer there. Review keeps the phone's bottom
+  // bar, since it is one of the bar's tabs.
+  const PAGES = {
+    organize: () => html`<${OrganizePage} />`,
+    outfeeds: () => html`<${OutfeedsPage} />`,
+    filters: () => html`<${FiltersPage} />`,
+    views: () => html`<${SavedViewsPage} />`,
+    settings: () => html`<${SettingsPage} />`,
+    people: () => html`<${PeoplePage} />`,
+    review: () => html`<${ReviewPage} />`,
+    plugins: () => html`<${PluginsPage} />`,
+    activity: () => html`<${ActivityPage} />`,
+  };
+  if (PAGES[s.route]) {
+    const page = PAGES[s.route]();
+    const overlays = html`${s.route === 'settings' && html`<${Welcome} />`}${s.route === 'review' && html`<${BottomBar} />`}<${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} />`;
+    if (s.viewportNarrow) {
+      return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} />${page}${overlays}</div>`;
+    }
+    return html`<div class="bc-app">
+      <${WorkerBanner} /><${AppReloadBanner} />
+      <div class="bc-main is-page">
+        <${Sidebar} open=${false} collapsed=${sidebarCollapsed} onClose=${() => {}} />
+        ${page}
+      </div>
+      ${overlays}
+    </div>`;
   }
 
   let view = null;

@@ -89,7 +89,7 @@ export function MiniMonth() {
           (key === s.anchor ? ' is-sel' : '') +
           (dotDays.has(key) ? ' has-dot' : '')}
         aria-label=${'Go to ' + fmtDayLong(dateOfDayKey(key))}
-        onClick=${() => jumpToDate(key)}
+        onClick=${() => { if (state.route !== 'calendar') set({ route: 'calendar' }); jumpToDate(key); }}
       >${Number(key.slice(8, 10))}</button>`))}
     </div>
   </div>`;

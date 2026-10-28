@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
+use BetterCal\Http\InstallPages;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
+use BetterCal\Infra\JobQueue;
+use BetterCal\Infra\Updater;
 use BetterCal\Plugin\EditablePlugin;
 use BetterCal\Plugin\OwnCalendarsPlugin;
 use BetterCal\Plugin\PluginEditRefused;
@@ -1647,25 +1650,72 @@ final class Plugins
                 } else {
                     litespeed_finish_request();
                 }
-                $queue = new \BetterCal\Infra\JobQueue($this->db);
-                foreach ($jobIds as $jobId) {
-                    $job = $queue->claimById($jobId);
-                    if ($job === null) {
-                        continue; // the worker took it meanwhile
-                    }
-                    try {
-                        $payload = json_decode((string) ($job['payload_json'] ?? '{}'), true) ?: [];
-                        $this->runJob((int) ($payload['userId'] ?? 0), (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
-                        $queue->markDone((int) $job['id']);
-                    } catch (\Throwable $e) {
-                        $queue->markFailed($job, $e->getMessage());
-                    }
-                }
+                $this->runQueuedNow($jobIds);
             } catch (\Throwable $e) {
                 error_log('Better-Cal: running a plugin job now: ' . $e->getMessage());
             }
         });
         return true;
+    }
+
+    /** How long a post-response run waits for a worker run that's under way. */
+    public const AFTER_RESPONSE_LOCK_WAIT = 10;
+
+    /**
+     * The post-response run itself (runAfterResponse), serialized like the
+     * worker: it holds the worker's lock, which bin/update.php and the
+     * database update page also take, and rechecks for maintenance and a
+     * pending database update once it has the lock. So a run can't overlap an
+     * update's backup, code swap or migration. Anything that stops it (the
+     * lock busy past a short wait, an update under way, no lock to be had)
+     * leaves the jobs queued for the worker. Returns how many ran.
+     *
+     * @param list<int> $jobIds
+     */
+    public function runQueuedNow(array $jobIds): int
+    {
+        $dsn = (string) ($this->cfg['db']['dsn'] ?? '');
+        if ($jobIds === [] || $dsn === '') {
+            return 0;
+        }
+        $lock = Updater::workerLockName($dsn);
+        try {
+            if ((int) $this->db->scalar('SELECT GET_LOCK(?, ?)', [$lock, self::AFTER_RESPONSE_LOCK_WAIT]) !== 1) {
+                return 0;
+            }
+        } catch (\PDOException) {
+            return 0; // no named locks here: the worker runs them
+        }
+        try {
+            clearstatcache();
+            $root = (string) ($this->cfg['app_root'] ?? dirname(__DIR__, 3));
+            if (Maintenance::active($root) || InstallPages::needsDatabaseUpdate($this->cfg)) {
+                return 0;
+            }
+            $queue = new JobQueue($this->db);
+            $ran = 0;
+            foreach ($jobIds as $jobId) {
+                $job = $queue->claimById($jobId);
+                if ($job === null) {
+                    continue; // the worker took it meanwhile
+                }
+                $ran++;
+                try {
+                    $payload = json_decode((string) ($job['payload_json'] ?? '{}'), true) ?: [];
+                    $this->runJob((int) ($payload['userId'] ?? 0), (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
+                    $queue->markDone((int) $job['id']);
+                } catch (\Throwable $e) {
+                    $queue->markFailed($job, $e->getMessage());
+                }
+            }
+            return $ran;
+        } finally {
+            try {
+                $this->db->scalar('SELECT RELEASE_LOCK(?)', [$lock]);
+            } catch (\PDOException) {
+                // the connection closing releases it too
+            }
+        }
     }
 
     /**

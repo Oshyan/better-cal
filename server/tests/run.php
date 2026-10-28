@@ -7026,6 +7026,13 @@ return new class implements BetterCal\\Plugin\\PluginInterface {
     $jq = new BetterCal\Infra\JobQueue($ndb);
     $jobId = $jq->enqueue('plugin_job', ['userId' => 1, 'plugin' => 'needy', 'job' => 'sync']);
     check('run now: without an early answer the job is left for the worker', !(new BetterCal\Domain\Plugins($ndb, $dir, []))->runAfterResponse([$jobId]) && $ndb->scalar('SELECT status FROM jobs WHERE id = ?', [$jobId]) === 'pending');
+    // The run after the response is serialized like the worker: without the
+    // worker's lock (no database name to name it by, or no named locks at
+    // all), nothing runs and the job stays queued (security scan, 1.4.1).
+    checkEq('run now: with no lock to take, nothing runs', [0, 'pending'], [(new BetterCal\Domain\Plugins($ndb, $dir, []))->runQueuedNow([$jobId]), $ndb->scalar('SELECT status FROM jobs WHERE id = ?', [$jobId])]);
+    checkEq('run now: a database without named locks fails closed too', [0, 'pending'], [
+        (new BetterCal\Domain\Plugins($ndb, $dir, ['db' => ['dsn' => 'mysql:host=sample;dbname=sample'], 'app_root' => sys_get_temp_dir()]))->runQueuedNow([$jobId]),
+        $ndb->scalar('SELECT status FROM jobs WHERE id = ?', [$jobId])]);
     checkEq('run now: a pending job is claimed once', ['running', null], [$jq->claimById($jobId)['status'] ?? null, $jq->claimById($jobId)]);
     array_map('unlink', glob($dir . '/needy/*'));
     rmdir($dir . '/needy');

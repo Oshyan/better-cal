@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Fixes:** a plugin run started by Run now or a settings save (on servers that run it straight away) now waits for the worker's lock and steps aside during an update, as the worker does, so it can't write while an update backs up, replaces code or migrates the database. Blocked, it's left for the worker to run within a minute.
+
 ## 1.4.0 (2026-10-27)
 
 Month rows that fit their days, event links and paste anywhere into quick add, suggestions as you type, a number on the app icon, and a phone 3-day view that's easier to tap.

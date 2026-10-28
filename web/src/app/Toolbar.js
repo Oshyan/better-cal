@@ -188,6 +188,18 @@ const ORDINAL = new Intl.PluralRules('en', { type: 'ordinal' });
 const ORDINAL_SUFFIX = { one: 'st', two: 'nd', few: 'rd', other: 'th' };
 function ordinalSuffix(n) { return ORDINAL_SUFFIX[ORDINAL.select(n)] || 'th'; }
 
+// The pages beside the sidebar (Settings, Review and the rest) keep the
+// toolbar's hamburger and name where they are, without the calendar's
+// controls: those act on a calendar that isn't showing.
+export function PageToolbar({ onToggleSidebar }) {
+  return html`<header class="bc-toolbar is-page">
+    <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" title="Show or hide the sidebar" onClick=${onToggleSidebar}><${Icon} name="menu" size=${17} /></button>
+    <span class="bc-brand"><span class="bc-brand-icon"><${Icon} name="brand" size=${21} /></span><span class="bc-brand-name">Better-Cal</span></span>
+    <span class="bc-toolbar-spacer"></span>
+    <button type="button" class="bc-icon-btn bc-kbd-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
+  </header>`;
+}
+
 export function Toolbar({ onToggleSidebar }) {
   const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, todayDate, occVersion, showCtx, calendars } = useStore(
     (s) => ({

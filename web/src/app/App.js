@@ -29,7 +29,7 @@ import { AgendaList } from '../ui/AgendaList.js';
 import { dayRangeDraft } from '../lib/quickcreate.js';
 import { DayExpand } from '../ui/DayExpand.js';
 import { RescheduleBanner, RescheduleStrip, RescheduleOverlay } from '../ui/RescheduleMode.js';
-import { Toolbar } from './Toolbar.js';
+import { Toolbar, PageToolbar } from './Toolbar.js';
 import { BottomBar } from './BottomBar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
@@ -201,12 +201,6 @@ export function App() {
   };
 
   useEffect(() => installKeyboard(), []);
-  // A page has no toolbar, so its own sidebar button asks for this.
-  useEffect(() => {
-    const onToggle = () => toggleSidebar();
-    window.addEventListener('bc-toggle-sidebar', onToggle);
-    return () => window.removeEventListener('bc-toggle-sidebar', onToggle);
-  });
   // Cmd/Ctrl+V on the calendar opens quick add with what was pasted.
   useEffect(() => installPasteAnywhere(), []);
 
@@ -817,6 +811,7 @@ export function App() {
     }
     return html`<div class="bc-app">
       <${WorkerBanner} /><${AppReloadBanner} />
+      <${PageToolbar} onToggleSidebar=${toggleSidebar} />
       <div class="bc-main is-page">
         <${Sidebar} open=${false} collapsed=${sidebarCollapsed} onClose=${() => {}} />
         ${page}

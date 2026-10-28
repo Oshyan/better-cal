@@ -232,6 +232,9 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
   background: var(--bg-raised);
   flex-wrap: wrap;
 }
+/* A page's toolbar has none of the calendar's 31px buttons, so it holds their
+   height itself and doesn't shift going from the calendar to a page. */
+.bc-toolbar.is-page { min-height: 44px; }
 .bc-brand { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; }
 .bc-brand-icon { display: inline-flex; color: var(--accent); }
 .bc-brand-name { font-weight: 700; letter-spacing: 0.2px; font-size: 15px; }
@@ -1929,11 +1932,6 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* Management pages share a scroll surface with a centered content column. */
 .bc-page { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px 32px; }
-/* Back to calendar, with the sidebar's show/hide beside it where a page sits
-   next to the sidebar (a computer); a phone's page has no sidebar. */
-.bc-page-topline { display: flex; align-items: center; gap: 6px; }
-.bc-page-sidebar { margin-left: -6px; }
-.bc-app > .bc-page .bc-page-sidebar { display: none; }
 .bc-page-col { max-width: 680px; margin: 0 auto; }
 /* Breadcrumb-style back link: above the title, link-colored with a left
    arrow, so it never reads as an action button. */

@@ -12,15 +12,9 @@ import { Icon } from '../ui/icons.js';
 export function PageShell({ title, note, children, back = null }) {
   return html`<div class="bc-page">
     <div class="bc-page-col">
-      <div class="bc-page-topline">
-        <button
-          type="button" class="bc-icon-btn bc-page-sidebar" aria-label="Show or hide the sidebar" title="Show or hide the sidebar"
-          onClick=${() => window.dispatchEvent(new Event('bc-toggle-sidebar'))}
-        ><${Icon} name="menu" size=${15} /></button>
-        <button type="button" class="bc-page-back" onClick=${back ? back.onClick : () => set({ route: 'calendar' })}>
-          <${Icon} name="arrowLeft" size=${13} /><span>${back ? back.label : 'Back to calendar'}</span>
-        </button>
-      </div>
+      <button type="button" class="bc-page-back" onClick=${back ? back.onClick : () => set({ route: 'calendar' })}>
+        <${Icon} name="arrowLeft" size=${13} /><span>${back ? back.label : 'Back to calendar'}</span>
+      </button>
       <h1 class="bc-page-title">${title}</h1>
       ${note && html`<p class="bc-page-note">${note}</p>`}
       ${children}

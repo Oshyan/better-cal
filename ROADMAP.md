@@ -41,6 +41,7 @@ Filters that say what they do and can do more, plus a note of your own on any ev
 - Weather tags days with their conditions: rain, snow, hot, and so on ([#73](https://github.com/Oshyan/better-cal/issues/73))
 - Mark a calendar as day labels (holidays, birthdays, closures) ([#65](https://github.com/Oshyan/better-cal/issues/65))
 - Your own note on any event, separate from its description ([#64](https://github.com/Oshyan/better-cal/issues/64))
+- Fibery: mark a task done from Better-Cal, then pick any state from its status field ([#178](https://github.com/Oshyan/better-cal/issues/178))
 
 ## 1.6: Views and navigation
 

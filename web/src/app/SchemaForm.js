@@ -278,6 +278,10 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
   };
 
   if (!schema || schema.length === 0) return null;
+  // Below a required field that's still empty, the rest waits for it (a tide
+  // calendar's options mean nothing until there's a station), dimmed and out
+  // of reach. Other required fields stay open, in any order.
+  let waiting = false;
   return html`<div class="bc-schema-form">
     ${children}
     ${rows(schema, draft).map(({ fields: [f, ...joined], heading }) => {
@@ -286,10 +290,12 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
       const v = draft[f.key];
       // A secret is there once stored ({set: true}) or typed.
       const missing = f.required && (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && v.set === false));
+      const gated = waiting && !f.required;
+      if (missing) waiting = true;
       const control = (field) => html`<${Field} field=${field} value=${draft[field.key]} pluginId=${pluginId} placeSources=${placeSources} onChange=${(v) => setDraft({ ...draft, [field.key]: v })} />`;
       return html`
         ${heading && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${heading}</h4>`}
-        <${Tag} key=${f.key} class="bc-schema-field">
+        <${Tag} key=${f.key} class=${'bc-schema-field' + (gated ? ' is-gated' : '')} inert=${gated || undefined} title=${gated ? 'Fill in the required field above first' : undefined}>
           <span class="bc-schema-label">${f.label}${missing && html`<span class="bc-schema-required">Required</span>`}${f.help && html`<span class="bc-schema-help">${f.help}</span>`}</span>
           ${joined.length === 0 ? control(f) : html`<span class="bc-schema-joined">
             ${control(f)}
@@ -298,7 +304,7 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
         </${Tag}>`;
     })}
     <div class="bc-schema-actions">
-      <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !dirty} onClick=${save}>${saveLabel}</button>
+      <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !dirty || waiting} title=${waiting ? 'Fill in the required fields first' : undefined} onClick=${save}>${saveLabel}</button>
       ${onCancel && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${onCancel}>Cancel</button>`}
     </div>
   </div>`;

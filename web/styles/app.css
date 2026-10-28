@@ -2097,6 +2097,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-org-new { display: flex; gap: 8px; margin-bottom: 18px; }
 .bc-org-new input { flex: 1; min-width: 0; }
 .bc-org-section { margin-bottom: 20px; }
+/* A plugin form's fields below a required one that's still empty. */
+.bc-schema-field.is-gated { opacity: 0.45; }
 /* Sidebar order: one line naming the groups; Edit opens a list with a drag
    handle and Move up and Move down on each. */
 .bc-org-order { margin-bottom: 20px; }

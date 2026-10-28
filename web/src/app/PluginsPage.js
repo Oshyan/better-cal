@@ -82,10 +82,24 @@ function PluginRow({ p }) {
   const needsText = 'Fill in ' + needs.join(' and ') + ' to start.';
   // Turning on a plugin that still needs settings opens them: it waits for
   // them rather than running (and failing) every minute.
-  const toggle = () => act(
-    () => api('/plugins/' + p.id + '/' + (p.enabled ? 'disable' : 'enable'), { method: 'POST' }),
-    p.enabled ? p.name + ' turned off' : p.name + ' turned on. ' + (needs.length > 0 ? needsText : 'Its first run starts within a minute.'),
-  ).then(() => { if (!p.enabled && needs.length > 0) setOpenSettings(true); });
+  // Turned on, its first run starts at once where the server can manage it,
+  // and the page follows it, so what it loads (a station list) appears in
+  // its forms as soon as it's there.
+  const toggle = () => {
+    const turningOn = !p.enabled;
+    const lastRunAt = p.lastRun ? p.lastRun.at : null;
+    let now = false;
+    return act(async () => {
+      const d = await api('/plugins/' + p.id + '/' + (turningOn ? 'enable' : 'disable'), { method: 'POST' });
+      now = !!(d && d.now);
+      if (!turningOn) toast(p.name + ' turned off');
+      else if (needs.length > 0) toast(p.name + ' turned on. ' + needsText);
+      else toast(p.name + ' turned on. ' + (now ? 'Its first run is starting now.' : 'Its first run starts within a minute.'));
+    }).then(() => {
+      if (turningOn && needs.length > 0) setOpenSettings(true);
+      if (turningOn && needs.length === 0) followRunAfterSave(p.id, lastRunAt, now).catch(() => {});
+    });
+  };
 
   const runNow = () => act(async () => {
     const lastRunAt = p.lastRun ? p.lastRun.at : null;

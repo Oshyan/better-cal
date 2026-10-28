@@ -38,9 +38,22 @@ final class PluginsController
 
     public function enable(Request $req, array $params): Response
     {
+        $id = (string) $params['id'];
         $authority = RequestAuthority::request($req);
-        $this->plugins->withAuthority($authority, fn() => $this->plugins->enable((string) $params['id'], $authority->tokenId()));
-        return Response::json(['ok' => true]);
+        $this->plugins->withAuthority($authority, fn() => $this->plugins->enable($id, $authority->tokenId()));
+        // Its first run starts now, not at the worker's next minute, so what
+        // it loads (a station list, a service's databases) is there when its
+        // forms open. One still waiting for settings doesn't run yet.
+        $now = false;
+        $m = $this->plugins->manifest($id);
+        if ($m !== null && $this->plugins->missingRequired($id, $m) === []) {
+            $jobIds = array_values(array_map(static fn(array $job): string => (string) $job['id'], $m['jobs'] ?? []));
+            if ($jobIds !== []) {
+                $result = $this->plugins->withAuthority($authority, fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $jobIds));
+                $now = ($result['status'] ?? '') === 'ok' && $this->plugins->runAfterResponse($result['ids'] ?? []);
+            }
+        }
+        return Response::json(['ok' => true, 'now' => $now]);
     }
 
     public function disable(Request $req, array $params): Response

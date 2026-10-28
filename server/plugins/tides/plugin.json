@@ -34,7 +34,7 @@
       "label": "Station",
       "help": "Any of NOAA's US tide stations.",
       "placeholder": "Search by place, state or station number",
-      "pendingText": "The station list loads on the plugin's first run, within a minute of turning it on."
+      "pendingText": "The station list is loading. It appears here in a moment."
     },
     {
       "key": "unit",

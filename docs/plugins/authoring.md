@@ -360,7 +360,7 @@ p  br  b  strong  i  em  u  a  ul  ol  li  div
 
 ## Lifecycle and Health
 
-- **Enabling** schedules your jobs; the first run happens on the next worker tick (about a minute) or right away with "Run now".
+- **Enabling** runs your jobs right away where the server can finish a response early (PHP-FPM or LiteSpeed), and otherwise on the next worker tick (about a minute). A plugin still missing a required setting waits until it's filled in. In your forms, fields below a required one that's still empty stay out of reach until it is.
 - **Circuit breaker**: 5 failed or timed-out runs in a row turn the plugin off, with the reason on the ops page. A successful run resets the count.
 - **A run isn't a transaction.** Throwing partway through `runJob` marks the run failed but **doesn't** undo what you already wrote: ranges, warnings, events, kv and proposals from the first half all stay. This matters most for an "already announced this" fingerprint guarding `notify()`: write it on the **last** line, after the side effect it guards, or a later throw suppresses a notification that never went out.
 - **Turning off** (the checkbox) pauses a plugin and keeps everything. **Delete data** (the trash can) turns it off and deletes its settings, ranges, warnings, runs, proposals, per-event data, per-calendar settings and kv, and the receipt shows what was removed. The user chooses whether your calendars are deleted with their events or kept as ordinary local calendars, renamed "(archived)", that no longer sync. Turning the plugin on again starts fresh beside them.

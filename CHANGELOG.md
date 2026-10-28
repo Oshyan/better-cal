@@ -6,6 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **A plugin's first run starts when you turn it on,** where the server can manage it, so Tides' station list is there when you add a calendar instead of after a minute or a Run now. A plugin's form keeps the fields below a required one (a tide calendar's station) out of reach until it's filled in.
 - **Fixes:** a plugin run started by Run now or a settings save (on servers that run it straight away) now waits for the worker's lock and steps aside during an update, as the worker does, so it can't write while an update backs up, replaces code or migrates the database. Blocked, it's left for the worker to run within a minute.
 
 ## 1.4.0 (2026-10-27)

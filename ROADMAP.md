@@ -63,6 +63,7 @@ Filters that say what they do and can do more, plus a note of your own on any ev
 
 - Undo for changes made on Google calendars ([#172](https://github.com/Oshyan/better-cal/issues/172))
 - The events window answers "unchanged" when nothing moved ([#16](https://github.com/Oshyan/better-cal/issues/16))
+- Feed refreshes skip feeds that haven't changed ([#179](https://github.com/Oshyan/better-cal/issues/179))
 - What you've loaded stays readable offline ([#17](https://github.com/Oshyan/better-cal/issues/17))
 - Connect CalDAV calendars (iCloud, Fastmail, Nextcloud), then Microsoft ([#137](https://github.com/Oshyan/better-cal/issues/137))
 
@@ -85,6 +86,12 @@ If that's the answer to the big question. It starts with a decision, and the res
 - Native tasks ([#50](https://github.com/Oshyan/better-cal/issues/50))
 - Automations, starting with simple rules: tag, annotate, correct a feed's location ([#62](https://github.com/Oshyan/better-cal/issues/62))
 - Plugin panels drawn by the app, and an Add-ons group in the sidebar ([#54](https://github.com/Oshyan/better-cal/issues/54))
+
+Whatever 2.0 turns out to be about, it's also a good point to make the worker do less polling and more reacting, still on plain PHP, MySQL and cron ([#179](https://github.com/Oshyan/better-cal/issues/179)). Benchmarking with large, realistic data comes first, and decides which of these are worth it:
+
+- Reminders kept on a schedule instead of found by a scan every minute
+- Email that arrives in seconds (an inbound-mail webhook or mail piping), with IMAP as the fallback
+- Changes on Google calendars that show up right away, by push
 
 ## Decisions to make first
 

@@ -30,8 +30,16 @@ export function CalDot({ cal, color, deco }) {
       <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} />
     </span>`;
   }
+  // A calendar subscribed by web address wears a link, the same way a plugin
+  // calendar wears its icon: where it comes from, read at a glance. Google's
+  // calendars keep the ring (their G follows the name).
+  if (feed && cal.provider !== 'google') {
+    return html`<span class="bc-cal-dot is-icon is-link" title="Subscribed from a web address" style=${`color:${c}`}>
+      <${Icon} name="link" size=${12} />
+    </span>`;
+  }
   return feed
-    ? html`<span class="bc-cal-dot is-feed" title=${cal.provider === 'google' ? 'Google calendar' : 'Subscribed calendar'} style=${`border-color:${c}`}></span>`
+    ? html`<span class="bc-cal-dot is-feed" title="Google calendar" style=${`border-color:${c}`}></span>`
     : html`<span class="bc-cal-dot" style=${`background:${c}`}></span>`;
 }
 

@@ -465,14 +465,10 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
 .bc-folder-mode:hover { color: var(--accent); }
 .bc-folder-mode.is-off { color: var(--fg-muted); opacity: 0.7; }
 .bc-folder-mode svg { flex: none; }
-/* Tools keep their space at rest (opacity reveal, like bc-cal-solo) so the
-   mode control never shifts when hover surfaces them. */
-.bc-folder-tools {
-  display: inline-flex; flex: none;
-  opacity: 0; transition: opacity 0.12s ease;
-}
-.bc-folder-headrow:hover .bc-folder-tools,
-.bc-folder-headrow:has(:focus-visible) .bc-folder-tools { opacity: 1; }
+/* Header tools take no room until hover or focus brings them out, so a long
+   folder name only gives way while you're pointing at it. The show/hide
+   control is always last, at the same right edge in every header. */
+.bc-folder-tools { display: inline-flex; align-items: center; flex: none; }
 /* One optical box for every header tool (mode, new, options) so they sit on
    a shared baseline instead of drifting by glyph metrics. */
 .bc-folder-tool {
@@ -525,10 +521,13 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
   color: var(--warn-strong);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
-.bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
+/* Only and the gear take no room until the row is pointed at or focused:
+   the name uses the whole width at rest and gives way (an ellipsis) only
+   while they show. The row keeps the height they need, so nothing jumps. */
+.bc-cal-gear { padding: 2px 4px; display: none; flex: none; }
 .bc-cal-row:hover .bc-cal-gear,
 .bc-cal-row:has(:focus-visible) .bc-cal-gear,
-.bc-cal-gear.is-open { visibility: visible; }
+.bc-cal-gear.is-open { display: inline-flex; }
 .bc-cal-gear.is-open { color: var(--accent); }
 
 /* Per-calendar settings panel (inline under the row). */
@@ -596,8 +595,8 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
 
 /* No hover on touch: keep the reveal-on-hover controls reachable. */
 @media (hover: none) {
-  .bc-cal-gear { visibility: visible; }
-  .bc-folder-tools { opacity: 1; }
+  .bc-cal-gear { display: inline-flex; }
+  .bc-folder-tools .bc-folder-tool { display: inline-flex; }
 }
 
 /* --- month grid ------------------------------------------------------------ */
@@ -2333,12 +2332,12 @@ body.bc-rescheduling { user-select: none; }
    always visible on touch and while active. */
 .bc-cal-solo {
   font-size: 10.5px; padding: 2px 6px; flex: none;
-  color: var(--fg-muted); opacity: 0; transition: opacity 0.12s ease;
+  color: var(--fg-muted); display: none;
 }
 .bc-cal-row:hover .bc-cal-solo, .bc-cal-row:has(:focus-visible) .bc-cal-solo,
-.bc-cal-solo.is-on { opacity: 1; }
+.bc-cal-solo.is-on { display: inline-flex; }
 .bc-cal-solo.is-on { color: var(--accent); font-weight: 700; }
-@media (pointer: coarse) { .bc-cal-solo { opacity: 1; } }
+@media (pointer: coarse) { .bc-cal-solo { display: inline-flex; } }
 /* Solo notice: sticky at the bottom of the sidebar scroll area so entering
    or leaving solo never pushes the calendar list (quick toggling stays put). */
 .bc-solo-banner {
@@ -2953,13 +2952,13 @@ body.bc-rescheduling { user-select: none; }
 
 /* Hover-revealed "+" on section headers; gear follows the same reveal. */
 .bc-folder-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
-.bc-folder-tools .bc-folder-tool { opacity: 0; transition: opacity 0.1s ease; }
+.bc-folder-tools .bc-folder-tool:not(.bc-folder-mode) { display: none; }
 .bc-folder-headrow:hover .bc-folder-tools .bc-folder-tool, .bc-folder-tool:focus-visible,
-.bc-folder-headrow:has(:focus-visible) .bc-folder-tools .bc-folder-tool { opacity: 1; }
-@media (pointer: coarse) { .bc-folder-tools .bc-folder-tool { opacity: 1; } }
+.bc-folder-headrow:has(:focus-visible) .bc-folder-tools .bc-folder-tool { display: inline-flex; }
+@media (pointer: coarse) { .bc-folder-tools .bc-folder-tool:not(.bc-folder-mode) { display: inline-flex; } }
 /* A control that HIDES rows cannot itself hide: with only-active on, the way
    back has to be visible without hunting for it. */
-.bc-folder-tools .bc-activeonly.is-on { opacity: 1; color: var(--accent); }
+.bc-folder-tools .bc-activeonly.is-on { display: inline-flex; color: var(--accent); }
 
 /* Folder mark on an All-calendars row: this calendar is also listed above,
    under a folder of its own. It rides directly after the name rather than

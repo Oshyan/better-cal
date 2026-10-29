@@ -90,22 +90,16 @@ function healthBadge(cal, onOpen) {
 // loaded plugin list rather than the calendar payload, so it tracks the
 // manifest without a schema field to keep in sync.
 /**
- * Where a calendar comes from, after its name: Google's mark for a Google
- * calendar, a link for one subscribed by web address. Calendars that live
- * here (and plugin calendars, which show their own icon) get none, so the
- * marks single out what someone else's system holds.
+ * Google's mark after a Google calendar's name. A calendar subscribed by web
+ * address says so with its link icon in place of the dot (ui/icons.js
+ * CalDot), as a plugin calendar shows its own icon there.
  */
 function calSourceMark(cal) {
-  if (cal.kind !== 'subscribed' || cal.pluginId) return null;
-  const google = cal.provider === 'google';
-  const label = google
-    ? (cal.googleAccountEmail
-      ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go to Google' : '; view only'}`
-      : 'From Google Calendar; its account was disconnected, so it no longer updates')
-    : 'Subscribed from a web address; view only';
-  return html`<span class=${'bc-cal-src' + (google ? ' is-google' : '')} role="img" aria-label=${label} title=${label}>${google
-    ? html`<${GoogleG} size=${11} />`
-    : html`<${Icon} name="link" size=${12} />`}</span>`;
+  if (cal.kind !== 'subscribed' || cal.pluginId || cal.provider !== 'google') return null;
+  const label = cal.googleAccountEmail
+    ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go to Google' : '; view only'}`
+    : 'From Google Calendar; its account was disconnected, so it no longer updates';
+  return html`<span class="bc-cal-src is-google" role="img" aria-label=${label} title=${label}><${GoogleG} size=${11} /></span>`;
 }
 
 function pluginDecoFor(cal) {
@@ -343,7 +337,6 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps }) {
         <span class="bc-folder-icon"><${Icon} name="folder" size=${13} /></span>
         <span class="bc-folder-name" title=${folder.name}>${folder.name}</span>
       </button>
-      ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
       <span class="bc-folder-tools">
         <button
           type="button" class="bc-icon-btn bc-folder-tool"
@@ -356,6 +349,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps }) {
           title="Folder options"
           onClick=${() => { setRenameTo(folder.name); setOptions(!options); }}
         ><${Icon} name="settings" size=${12} /></button>
+        ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
       </span>
     </div>
     ${options && html`<div class="bc-folder-options">
@@ -722,13 +716,13 @@ export function Sidebar({ open, collapsed, onClose }) {
             aria-expanded=${!collapsedPeople}
             onClick=${() => set({ collapsedPeople: !collapsedPeople })}
           ><span class="bc-folder-caret${collapsedPeople ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>People</button>
-          <${PeopleModeButton} />
           <span class="bc-folder-tools">
             <button
               type="button" class="bc-icon-btn bc-folder-tool"
               aria-label="New person" title="New person"
               onClick=${() => set({ createDrawer: { kind: 'person' } })}
             ><${Icon} name="plus" size=${13} /></button>
+            <${PeopleModeButton} />
           </span>
         </div>
         ${!collapsedPeople && people.map((p) => {

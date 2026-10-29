@@ -11,6 +11,7 @@
 // rest under Other calendars), and a row's Only and settings sit behind a
 // press and hold instead of taking width from every name.
 
+import { whenText, feedProblem } from '../lib/feedproblem.js';
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api, loadCalendars } from './api.js';
@@ -67,7 +68,7 @@ async function applyVisibilityMap(entries) {
 function healthBadge(cal, onOpen) {
   if (cal.kind !== 'subscribed' || !cal.health) return null;
   const { status, content, error, lastPolledAt } = cal.health;
-  const when = lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '';
+  const when = lastPolledAt ? ' (last checked ' + whenText(lastPolledAt) + ')' : '';
   let tip = null;
   if (cal.subscriptionAuthorization && cal.subscriptionAuthorization.status === 'paused') {
     tip = (cal.subscriptionAuthorization.reason || 'Updates are paused until you review this subscription.') + when;
@@ -75,11 +76,14 @@ function healthBadge(cal, onOpen) {
   else if (content === 'emptied') tip = 'Feed came back empty; it had events before. The source may have broken or revoked access' + when;
   else if (content === 'stale') tip = 'Feed is stale: nothing has changed for a while and nothing is upcoming' + when;
   if (!tip) return null;
+  // Said the way its settings say it (lib/feedproblem.js), not the raw error.
+  const p = feedProblem(cal);
+  if (p) tip = p.headline + '. ' + p.reason + (p.tried ? ' Last tried ' + p.tried + '.' : '');
   return html`<button
     type="button"
     class="bc-health"
     aria-label=${'Attention needed for ' + cal.name + '. Open calendar options.'}
-    title=${tip + '. Click to open calendar options.'}
+    title=${tip + ' Click for details.'}
     onPointerDown=${(e) => e.stopPropagation()}
     onContextMenu=${(e) => { e.preventDefault(); e.stopPropagation(); }}
     onClick=${(e) => { e.stopPropagation(); onOpen(); }}

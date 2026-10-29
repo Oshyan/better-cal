@@ -34,6 +34,7 @@ import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, perso
 import { pastedText } from '../src/lib/pastetext.js';
 import { sidebarGroups, moveGroup } from '../src/lib/sidebarorder.js';
 import { timeChange, editedWords, listWords } from '../src/lib/changeline.js';
+import { feedProblem, whenText } from '../src/lib/feedproblem.js';
 import { fmtDateShort as fmtDS, fmtDateShortYear as fmtDSY } from '../src/lib/dates.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
@@ -2907,6 +2908,25 @@ console.log('--- undo toast: time change wording ---');
   eq('edited: list of three', listWords(['title', 'time', 'place']), 'title, time and place');
   eq('change: nothing changed', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), now), '');
   setTimeFormat('12');
+}
+
+console.log('--- feed problems in words ---');
+{
+  const now = new Date(2026, 9, 29, 17, 0);
+  const feed = (health, extra = {}) => ({ kind: 'subscribed', health, ...extra });
+  const failed = feedProblem(feed({ status: 'error', error: 'Feed fetch failed: HTTP 404', lastPolledAt: new Date(2026, 9, 29, 16, 15).toISOString(), lastOkAt: new Date(2026, 9, 12, 9, 0).toISOString() }), now);
+  eq('feed: a 404 is an error', failed.level, 'error');
+  assert('feed: a 404 says nothing was found', /Nothing was found/.test(failed.reason));
+  eq('feed: the raw detail is kept', failed.detail, 'Feed fetch failed: HTTP 404');
+  assert('feed: tried today', /^today at /.test(failed.tried));
+  assert('feed: last worked on its date', !/today|yesterday/.test(failed.worked) && failed.worked.includes(' at '));
+  assert('feed: 403 says access was refused', /refused access/.test(feedProblem(feed({ status: 'error', error: 'Feed fetch failed: HTTP 403' }), now).reason));
+  assert('feed: not a calendar', /not with a complete calendar/.test(feedProblem(feed({ status: 'error', error: 'Response is not an ICS calendar' }), now).reason));
+  eq('feed: emptied is a warning', feedProblem(feed({ status: 'ok', content: 'emptied' }), now).level, 'warn');
+  eq('feed: paused says so', feedProblem(feed({ status: 'ok' }, { subscriptionAuthorization: { status: 'paused' } }), now).headline, 'Updates are paused');
+  eq('feed: a healthy feed has no problem', feedProblem(feed({ status: 'ok', content: 'ok' }), now), null);
+  eq('feed: a local calendar has none', feedProblem({ kind: 'local', health: { status: 'error' } }, now), null);
+  assert('when: yesterday', /^yesterday at /.test(whenText(new Date(2026, 9, 28, 9, 0).toISOString(), now)));
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

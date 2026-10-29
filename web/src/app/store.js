@@ -40,6 +40,7 @@ export const state = {
   // People directory (sidebar folder, editor autocomplete, People page).
   people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
   peopleFocus: null,  // person name to auto-expand when the People page opens
+  organizeFocus: null, // calendar id whose settings open on Calendars & folders
   // Generalized "New <thing>" slide-in (CreateDrawer):
   // {kind: 'calendar'|'subscribe'|'import'|'folder'|'person', folderId?, url?}
   createDrawer: null,

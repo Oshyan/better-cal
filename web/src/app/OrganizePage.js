@@ -7,14 +7,15 @@
 // folders stays possible through "+ Add to another folder". The gear expands
 // the same per-calendar settings panel the sidebar opens.
 
-import { html, useState, useRef } from '../../vendor/index.js';
-import { useStore, toast, shallowEq } from './store.js';
+import { html, useState, useRef, useEffect } from '../../vendor/index.js';
+import { useStore, toast, shallowEq, state, set } from './store.js';
 import {
   updateCalendar, renameFolder, deleteFolder, createFolder, setSidebarOrder,
 } from './actions.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { CalendarSettings } from './CalendarSettings.js';
+import { feedProblem } from '../lib/feedproblem.js';
 import { Icon, CalDot } from '../ui/icons.js';
 
 function folderNameOf(folders, id) {
@@ -25,6 +26,17 @@ function folderNameOf(folders, id) {
 function CalendarRow({ cal, folders, contextFolderId }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const rowRef = useRef(null);
+  const problem = feedProblem(cal);
+  // Arriving from a feed's "Details" (the sidebar's notice): its settings
+  // open here, in full, in view. The first row listing it takes the focus.
+  const focus = useStore((s) => s.organizeFocus);
+  useEffect(() => {
+    if (focus !== cal.id || state.organizeFocus !== cal.id) return;
+    set({ organizeFocus: null });
+    setOpen(true);
+    requestAnimationFrame(() => rowRef.current && rowRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  }, [focus]); // eslint-disable-line
 
   const ids = cal.folderIds || [];
   const others = ids.filter((id) => id !== contextFolderId);
@@ -49,11 +61,16 @@ function CalendarRow({ cal, folders, contextFolderId }) {
 
   const addable = folders.filter((f) => !ids.includes(f.id));
 
-  return html`<div class="bc-org-cal">
+  return html`<div class="bc-org-cal" ref=${rowRef}>
     <div class="bc-org-cal-row">
       <${CalDot} cal=${cal} />
       <span class="bc-org-cal-name">${cal.name}</span>
       <span class="bc-org-kind">${cal.kind === 'subscribed' ? 'Feed' : 'Local'}</span>
+      ${problem && html`<button
+        type="button" class=${'bc-health bc-org-warn' + (problem.level === 'error' ? ' is-error' : '')}
+        title=${problem.headline + '. Open its settings for details.'} aria-label=${problem.headline + ': ' + cal.name}
+        onClick=${() => setOpen(true)}
+      ><${Icon} name="warning" size=${13} /></button>`}
       ${others.length > 0 && html`<span class="bc-org-note">Also in ${others.map((id) => folderNameOf(folders, id)).join(', ')}</span>`}
       <span class="bc-org-side">
         ${folders.length > 0 && html`<label class="bc-org-assign">
@@ -89,7 +106,7 @@ function CalendarRow({ cal, folders, contextFolderId }) {
         ><${Icon} name="settings" size=${14} /></button>
       </span>
     </div>
-    ${open && html`<${CalendarSettings} cal=${cal} folders=${folders} onClose=${() => setOpen(false)} />`}
+    ${open && html`<${CalendarSettings} cal=${cal} folders=${folders} full=${true} onClose=${() => setOpen(false)} />`}
   </div>`;
 }
 

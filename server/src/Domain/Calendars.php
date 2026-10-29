@@ -618,6 +618,9 @@ final class Calendars
             ),
             'health' => [
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
+                // When it last updated successfully (migration 054); null when
+                // it hasn't since that was recorded.
+                'lastOkAt' => !empty($c['last_ok_at']) ? Time::dbToIso((string) $c['last_ok_at']) : null,
                 'status' => (string) $c['last_poll_status'],
                 'error' => $c['last_poll_error'] !== null ? (string) $c['last_poll_error'] : null,
                 'content' => $content,

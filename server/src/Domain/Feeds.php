@@ -102,10 +102,12 @@ final class Feeds
     public function pollSucceeded(array $calendar, int $rawCount, int $upserts, ?string $warning = null): void
     {
         $calendarId = (int) $calendar['id'];
+        $now = Time::nowDb();
         $this->db->update('calendars', [
-            'last_polled_at' => Time::nowDb(),
+            'last_polled_at' => $now,
             'last_poll_status' => 'ok',
             'last_poll_error' => $warning,
+            'last_ok_at' => $now,
         ], 'id = ?', [$calendarId]);
         $this->recordStats($calendarId, $rawCount);
         (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);

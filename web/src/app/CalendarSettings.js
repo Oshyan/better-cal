@@ -5,6 +5,7 @@
 // calendar's events. Delete confirms inline.
 // All writes go through PATCH /calendars/:id (updateCalendar).
 
+import { feedProblem, whenText } from '../lib/feedproblem.js';
 import { html, useState } from '../../vendor/index.js';
 import { updateCalendar, refreshCalendar, deleteCalendar } from './actions.js';
 import { api, loadCalendars, loadReviewCount } from './api.js';
@@ -39,17 +40,39 @@ function nearest(options, value) {
   return best;
 }
 
+// The quiet line under Refresh now: when it was last checked, on this
+// device's clock, and what it holds. A problem has its own notice at the top.
 function pollStatusLine(cal) {
   const h = cal.health || {};
-  if (!h.lastPolledAt) return 'Not polled yet';
-  let line = 'Last poll ' + h.lastPolledAt;
-  if (h.status === 'error') line += ' (error: ' + (h.error || 'unknown') + ')';
-  else if (h.error) line += ' (updated with a warning: ' + h.error + ')';
-  else if (h.content === 'emptied') line += ' (came back empty; had events before)';
-  else if (h.content === 'stale') line += ' (stale: unchanged for a while, nothing upcoming)';
-  else if (h.content === 'empty') line += ' (ok, no events yet)';
-  else line += ' (ok' + (h.eventCount != null ? ', ' + h.eventCount + ' events' : '') + ')';
-  return line;
+  if (!h.lastPolledAt) return 'Not checked yet';
+  const line = 'Last checked ' + whenText(h.lastPolledAt);
+  if (h.status === 'error') return line;
+  if (h.content === 'empty') return line + ' · no events yet';
+  return line + (h.eventCount != null ? ' · ' + h.eventCount + (h.eventCount === 1 ? ' event' : ' events') : '');
+}
+
+/**
+ * What's wrong with a feed, at the top of its settings. Compact in the
+ * sidebar (what happened, why in a line, Try again, Details); in full on
+ * Calendars & folders (also the raw detail and when it last worked).
+ */
+function FeedNotice({ cal, full, refreshing, onRetry }) {
+  const p = feedProblem(cal);
+  if (!p) return null;
+  const paused = cal.subscriptionAuthorization && cal.subscriptionAuthorization.status === 'paused';
+  const when = p.tried && (p.worked
+    ? `Last tried ${p.tried}; last updated ${p.worked}.`
+    : `Last tried ${p.tried}.`);
+  return html`<div class=${'bc-feednotice is-' + p.level + (full ? ' is-full' : '')} role="status">
+    <div class="bc-feednotice-head"><${Icon} name="warning" size=${14} /><strong>${p.headline}</strong></div>
+    <p class="bc-feednotice-why">${p.reason}</p>
+    ${full && html`<p class="bc-feednotice-when">${when} ${cal.health && cal.health.status === 'error' ? 'The events it already has keep showing.' : ''}</p>`}
+    ${full && p.detail && html`<p class="bc-feednotice-detail">${p.detail}</p>`}
+    <div class="bc-feednotice-acts">
+      ${!paused && html`<button type="button" class="bc-btn" disabled=${refreshing} onClick=${onRetry}>${refreshing ? 'Trying' : 'Try again'}</button>`}
+      ${!full && html`<button type="button" class="bc-link-btn" onClick=${() => set({ route: 'organize', organizeFocus: cal.id })}>Details</button>`}
+    </div>
+  </div>`;
 }
 
 // Which reminders the calendar's events get: your defaults (linked, so they
@@ -103,7 +126,7 @@ function ReminderField({ cal }) {
   </div>`;
 }
 
-export function CalendarSettings({ cal, folders, onClose }) {
+export function CalendarSettings({ cal, folders, onClose, full = false }) {
   const stepUp = usePasswordStepUp();
   const [name, setName] = useState(cal.name);
   const [hex, setHex] = useState(cal.color);
@@ -161,6 +184,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
 
   return html`<div class="bc-calset" role="group" aria-label=${'Settings for ' + cal.name}>
     ${stepUp.prompt}
+    <${FeedNotice} cal=${cal} full=${full} refreshing=${refreshing} onRetry=${refresh} />
     <div class="bc-calset-field">
       <span class="bc-calset-label">Name</span>
       <input

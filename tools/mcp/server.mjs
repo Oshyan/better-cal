@@ -74,6 +74,74 @@ async function api(method, path, { query, body } = {}) {
   return data;
 }
 
+// Events stored in UTC (a plugin's, a feed's that wrote its times with a Z,
+// an import's) come back from the API with a +00:00 offset: the right
+// instant, but an assistant reads the hour as written and says a 3:35 PM tide
+// is at 11:35 PM. Timed ones go out on the owner's Home clock instead, the
+// same instant with the local offset, as the app shows them. All-day dates
+// are dates and stay as they are. The Home zone is read only when a result
+// holds such an event, and kept for ten minutes.
+const HOME_TTL_MS = 10 * 60 * 1000;
+let homeCache = { tz: null, at: 0 };
+
+async function homeZone() {
+  if (homeCache.at > Date.now() - HOME_TTL_MS) return homeCache.tz;
+  let tz = null;
+  try {
+    const s = await api('GET', '/settings');
+    tz = typeof s?.settings?.tz === 'string' && s.settings.tz !== '' ? s.settings.tz : null;
+    if (tz) new Intl.DateTimeFormat('en-US', { timeZone: tz });
+  } catch {
+    tz = null; // no zone to read, or not a zone: times stay as the API gave them
+  }
+  homeCache = { tz, at: Date.now() };
+  return tz;
+}
+
+const UTC_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]00:?00)$/;
+function utcTimed(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) && v.tzid === 'UTC' && v.allDay === false
+    && typeof v.start === 'string' && UTC_ISO.test(v.start);
+}
+function holdsUtcTimed(v) {
+  if (Array.isArray(v)) return v.some(holdsUtcTimed);
+  if (v === null || typeof v !== 'object') return false;
+  return utcTimed(v) || Object.values(v).some(holdsUtcTimed);
+}
+
+/** "2026-11-07T23:35:00Z" in America/Los_Angeles -> "2026-11-07T15:35:00-08:00". */
+function isoInZone(iso, tz) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(d).map((x) => [x.type, x.value]));
+  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  const off = Math.round((wall - Math.floor(d.getTime() / 1000) * 1000) / 60000);
+  const a = Math.abs(off);
+  const two = (n) => String(n).padStart(2, '0');
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${off < 0 ? '-' : '+'}${two(Math.floor(a / 60))}:${two(a % 60)}`;
+}
+
+function toHomeClock(v, tz) {
+  if (Array.isArray(v)) return v.map((x) => toHomeClock(x, tz));
+  if (v === null || typeof v !== 'object') return v;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = toHomeClock(x, tz);
+  if (utcTimed(v)) {
+    out.start = isoInZone(v.start, tz);
+    if (typeof v.end === 'string' && UTC_ISO.test(v.end)) out.end = isoInZone(v.end, tz);
+  }
+  return out;
+}
+
+async function onHomeClock(result) {
+  if (!holdsUtcTimed(result)) return result;
+  const tz = await homeZone();
+  return tz ? toHomeClock(result, tz) : result;
+}
+
 function pick(obj, keys) {
   const out = {};
   for (const k of keys) {
@@ -174,7 +242,7 @@ const PLUGIN_VALUES = { type: 'object', description: 'Settings matching the plug
 const TOOLS = [
   {
     name: 'list_events',
-    description: 'List expanded event occurrences in a time window. Recurring events arrive pre-expanded, one entry per occurrence.',
+    description: 'List expanded event occurrences in a time window. Recurring events arrive pre-expanded, one entry per occurrence. Times carry their UTC offset; events stored in UTC are given on the owner\'s Home clock.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -512,7 +580,7 @@ async function handleRequest(msg) {
         return;
       }
       try {
-        const result = markUntrusted(tool.name, await tool.handler(args));
+        const result = markUntrusted(tool.name, await onHomeClock(await tool.handler(args)));
         reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } catch (err) {
         reply(id, { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true });

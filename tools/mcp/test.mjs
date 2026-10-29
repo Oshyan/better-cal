@@ -59,6 +59,14 @@ const mock = createServer((req, res) => {
         end: '2026-08-01T20:00:00-07:00',
         allDay: false,
       });
+    } else if (req.method === 'GET' && path === '/api/v1/events' && req.url.includes('start=2026-11-07')) {
+      respond(200, { events: [
+        { eventId: 7, title: 'Low tide', start: '2026-11-07T23:35:00+00:00', end: '2026-11-07T23:35:00+00:00', allDay: false, tzid: 'UTC' },
+        { eventId: 8, title: 'Holiday', start: '2026-11-07T00:00:00+00:00', end: '2026-11-08T00:00:00+00:00', allDay: true, tzid: 'UTC' },
+        { eventId: 9, title: 'Tokyo call', start: '2026-11-08T09:00:00+09:00', end: '2026-11-08T10:00:00+09:00', allDay: false, tzid: 'Asia/Tokyo' },
+      ] });
+    } else if (req.method === 'GET' && path === '/api/v1/settings') {
+      respond(200, { settings: { tz: 'America/Los_Angeles' } });
     } else if (req.method === 'GET' && path === '/api/v1/events') {
       respond(200, { events: [{ instanceId: '42:20260801T190000Z', eventId: 42, title: 'Dinner' }] });
     } else if (req.method === 'GET' && path === '/api/v1/review') {
@@ -285,6 +293,21 @@ async function main() {
   checkEq('list_events auth header', `Bearer ${FAKE_TOKEN}`, listSeen.headers.authorization);
   const listedPayload = JSON.parse(listed.result?.content?.[0]?.text ?? 'null');
   checkEq('list_events maps events array', 1, listedPayload?.events?.length);
+
+  checkEq('list_events: no UTC events, no settings read', 1, received.length);
+
+  // ---- list_events: UTC-stored times go out on the Home clock --------------
+  received.length = 0;
+  const clocked = await rpc('tools/call', {
+    name: 'list_events',
+    arguments: { start: '2026-11-07T00:00:00-08:00', end: '2026-11-08T00:00:00-08:00' },
+  });
+  const clockedEvents = JSON.parse(clocked.result?.content?.[0]?.text ?? 'null')?.events ?? [];
+  checkEq('home clock: a UTC tide reads 3:35 PM in Los Angeles', '2026-11-07T15:35:00-08:00', clockedEvents[0]?.start);
+  checkEq('home clock: the instant is unchanged', Date.parse('2026-11-07T23:35:00Z'), Date.parse(clockedEvents[0]?.start));
+  checkEq('home clock: an all-day date stays as it is', '2026-11-07T00:00:00+00:00', clockedEvents[1]?.start);
+  checkEq('home clock: an event in its own zone keeps it', '2026-11-08T09:00:00+09:00', clockedEvents[2]?.start);
+  checkEq('home clock: the Home zone was read once', 1, received.filter((r) => r.url === '/api/v1/settings').length);
 
   // ---- update_event: declared keys only, numeric path ----------------------
   received.length = 0;

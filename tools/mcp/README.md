@@ -70,7 +70,7 @@ Every call's arguments are checked against the tool's schema before any request:
 | `resolve_duplicate` | `id`, `status` | Link or dismiss a duplicate pair |
 | `undo` | none | Revert the latest change |
 
-`update_event` patch fields are `title`, `start`, `end`, `allDay`, `location`, `description`, `rrule`, `calendarId`, `tzid` and `url`. Datetimes are ISO 8601 with an offset (`2026-08-01T19:00:00-07:00`). `id` is the numeric `eventId` from an occurrence, and `instanceStart` is that occurrence's `start`.
+`update_event` patch fields are `title`, `start`, `end`, `allDay`, `location`, `description`, `rrule`, `calendarId`, `tzid` and `url`. Datetimes are ISO 8601 with an offset (`2026-08-01T19:00:00-07:00`). Events stored in UTC (from plugins, feeds that write their times with a Z, and imports) are given on the owner's Home clock, the same moment with the local offset, so an assistant reads the hour the calendar shows. `id` is the numeric `eventId` from an occurrence, and `instanceStart` is that occurrence's `start`.
 
 - Each tool carries MCP annotations, so a client can ask before running one that's destructive or can reach an outside service (event writes that go through to a Google-backed calendar, and plugin settings, enabling and runs, which can affect the plugin's external services).
 - Results are labeled as containing third-party text (feed and invitation titles, descriptions, locations, organizer names): data, never instructions.

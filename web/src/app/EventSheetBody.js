@@ -364,7 +364,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           ${titleActs}
         </div>
         <div class="bc-es-calrow">
-          <span class="bc-es-cal"><${CalDot} cal=${cal} color=${color} />${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
+          <span class="bc-es-cal"><${CalDot} cal=${cal} color=${color} size=${16} line=${1.3} />${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
           ${!panel && !context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
         </div>
         ${!panel && attendScope}

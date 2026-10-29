@@ -4074,6 +4074,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-title { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; cursor: pointer; }
 .bc-es-cal { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--fg-muted); }
 .bc-es-cal i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+/* An event's own calendar line: its icon mark at the line's size (CalDot size 16). */
+.bc-es-cal .bc-cal-dot.is-icon { width: 16px; height: 16px; }
 /* A calendar mark in running text (details, menus, hover card, pickers):
    a dot at the text's size; an icon mark keeps its own. */
 :is(.bc-es-alsoon-cal, .bc-hovercard-cal, .bc-own-chip) .bc-cal-dot:not(.is-icon) { width: 8px; height: 8px; }

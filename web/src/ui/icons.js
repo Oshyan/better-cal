@@ -16,10 +16,6 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
   ><path d=${d} /></svg>`;
 }
 
-// Calendar color dot, kind-aware: local calendars fill solid; subscribed
-// feeds render hollow (2px ring of the calendar color, transparent center)
-// with a "Subscribed feed" tooltip. One shared treatment for every surface
-// that shows a calendar dot.
 // How a plugin calendar's icon is found (App.js sets it from the loaded
 // plugin list), so every calendar mark shows it without each caller asking.
 let pluginDecoLookup = () => null;
@@ -29,9 +25,11 @@ export function setPluginDecoLookup(fn) { pluginDecoLookup = typeof fn === 'func
  * A calendar's mark, the same everywhere it appears: a plugin calendar's
  * icon, a link for one subscribed by web address, a ring for a Google
  * calendar, or a dot in its color. Pass the calendar; `color` alone draws a
- * plain dot.
+ * plain dot. An icon mark is 12px with a 0.7px line, at home beside small
+ * text; `size` and `line` (px) set it larger and heavier beside bigger text
+ * (an event's own calendar line), where a hairline reads faint.
  */
-export function CalDot({ cal, color, deco }) {
+export function CalDot({ cal, color, deco, size = 12, line = MARK_LINE_PX }) {
   const c = (cal && cal.color) || color || '#888';
   if (deco === undefined && cal && cal.pluginId) deco = pluginDecoLookup(cal.pluginId);
   const feed = cal && cal.kind === 'subscribed';
@@ -39,7 +37,7 @@ export function CalDot({ cal, color, deco }) {
   // the calendar's own color: same slot, same size, more information.
   if (deco && (deco.icon || deco.iconPath)) {
     return html`<span class="bc-cal-dot is-icon" style=${`color:${c}`} title="Provided by a plugin">
-      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} stroke=${MARK_LINE_PX * 16 / 12} />
+      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${size} stroke=${line * 16 / size} />
     </span>`;
   }
   // A calendar subscribed by web address wears a link, the same way a plugin
@@ -47,7 +45,7 @@ export function CalDot({ cal, color, deco }) {
   // calendars keep the ring (their G follows the name).
   if (isLinkFeed(cal)) {
     return html`<span class="bc-cal-dot is-icon is-link" title="Subscribed from a web address" style=${`color:${c}`}>
-      <${LinkMark} size=${12} />
+      <${LinkMark} size=${size} line=${line} />
     </span>`;
   }
   return feed
@@ -276,8 +274,8 @@ export function isLinkFeed(cal) {
 // icon shrinks, and at dot size the two loops ran into a blob; this slighter
 // line keeps them apart at 9px.
 const MARK_LINE_PX = 0.7;
-export function LinkMark({ size = 9 }) {
-  return html`<${Icon} name="link" size=${size} stroke=${MARK_LINE_PX * 16 / size} />`;
+export function LinkMark({ size = 9, line = MARK_LINE_PX }) {
+  return html`<${Icon} name="link" size=${size} stroke=${line * 16 / size} />`;
 }
 
 // Map pin preceding location text (agenda rows, event popover, detail view):

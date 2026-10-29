@@ -9,7 +9,7 @@ import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { state, set, toast, useStore } from './store.js';
 import { api, loadCalendars, loadPlugins, refreshWindow } from './api.js';
 import { SchemaForm } from './SchemaForm.js';
-import { Icon } from '../ui/icons.js';
+import { Icon, CalDot } from '../ui/icons.js';
 
 const defaultsOf = (schema) => Object.fromEntries((schema || []).map((f) => [f.key, f.default ?? null]));
 const locationKey = (plugin) => ((plugin.ownCalendarSettingsSchema || []).find((f) => f.type === 'location') || {}).key || null;
@@ -200,7 +200,7 @@ export function LinkedCalendars({ cal }) {
       : 'Add calendars for ' + place + ' that follow this one if its place changes.'}</span></span>
     ${followers.map((f) => html`<div key=${f.cal.id} class="bc-own-linked-row">
       <button type="button" class="bc-own-chip" title="Open its settings" onClick=${() => openOwnCalendar(f.cal)}>
-        <span class="bc-own-dot" style=${'background:' + f.cal.color}></span>${f.cal.name}
+        <${CalDot} cal=${f.cal} />${f.cal.name}
       </button>
       <button type="button" class="bc-link-btn" disabled=${busy} title=${'Keep ' + place + ' as its own place, and stop following this calendar'} onClick=${() => unlink(f)}>Unlink</button>
     </div>`)}
@@ -236,7 +236,7 @@ export function OwnCalendarsList({ plugin }) {
       ${mine.length === 0 && !adding && html`<span class="bc-own-empty">No ${decl.noun}s yet.</span>`}
       ${mine.map((c) => html`<button key=${c.id} type="button" class=${'bc-own-chip' + (open === c.id ? ' is-open' : '') + (c.ownStatus && c.ownStatus.severity !== 'info' ? ' is-' + c.ownStatus.severity : '')}
         aria-expanded=${open === c.id} onClick=${() => { setOpen(open === c.id ? null : c.id); setAdding(false); }}>
-        <span class="bc-own-dot" style=${'background:' + c.color}></span>${c.name}
+        <${CalDot} cal=${c} />${c.name}
       </button>`)}
       ${!adding && !full && html`<button type="button" class="bc-link-btn" onClick=${() => { setAdding(true); setOpen(null); }}>
         <${Icon} name="plus" size=${12} /> Add ${decl.noun}</button>`}

@@ -830,6 +830,11 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
   padding: 3px 4px; border-radius: 4px; white-space: nowrap; cursor: pointer;
 }
 .bc-ctx-token:hover, .bc-ctx-token:focus-visible { background: var(--bg-inset); color: var(--fg); }
+/* Focus returns to a token when its details close; the browser's own ring
+   was clipped by the day header to a bracket at its left edge. The ring sits
+   inside the token instead, whole, and only for keyboard focus. */
+.bc-ctx-token:focus { outline: none; }
+.bc-ctx-token:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .bc-ctx-token .bc-ctx-glyph { width: 7px; height: 7px; }
 .bc-ctx-icon { display: inline-flex; flex: none; opacity: 0.85; }
 .bc-ctx-emoji { font-size: 10px; line-height: 1; font-style: normal; flex: none; }
@@ -881,7 +886,7 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
    to the column's end. Laid out as a row so the line never runs under the
    text, and inset from the column edges so neighbouring days' moments do not
    read as one stepped line. */
-.bc-ctx-mark { position: absolute; left: 3px; right: 4px; height: 0; z-index: 3; pointer-events: none; display: flex; align-items: center; gap: 0; }
+.bc-ctx-mark { position: absolute; left: 3px; right: 4px; height: 0; z-index: 32; pointer-events: none; display: flex; align-items: center; gap: 0; }
 .bc-ctx-mark-line { flex: 1 1 auto; min-width: 8px; border-top: 1.5px solid var(--fg-muted); opacity: 0.85; }
 .bc-ctx-mark-label {
   flex: none; display: inline-flex; align-items: center; gap: 3px; pointer-events: auto; cursor: pointer;
@@ -890,10 +895,14 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
   box-shadow: 0 0 0 1.5px var(--bg);
 }
 .bc-ctx-mark-label .bc-ctx-token-time { opacity: 0.85; font-weight: 500; }
-.bc-ctx-mark-label:hover, .bc-ctx-mark-label:focus-visible { filter: brightness(1.08); outline: none; box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px currentColor; }
-/* A plugin's shaded window around a moment (a tide): behind the events, a
-   gradient strongest at the moment and gone at both edges (inline style). */
-.bc-tg-window { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; }
+.bc-ctx-mark-label:hover { filter: brightness(1.08); }
+.bc-ctx-mark-label:focus { outline: none; }
+.bc-ctx-mark-label:focus-visible { box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--accent); }
+/* A plugin's shaded window around a moment (a tide): a gradient strongest
+   at the moment and gone at both edges (inline style), laid over the events
+   (a hovered one is z-index 30) so the window reads across them too; it
+   never takes the pointer. The moment's line and label sit above it. */
+.bc-tg-window { position: absolute; left: 0; right: 0; z-index: 31; pointer-events: none; }
 .bc-badge.is-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 :is(.bc-bar, .bc-block) .bc-ctx-glyph { margin-right: 4px; }
 .bc-block .bc-ctx-glyph { display: inline-block; vertical-align: -1px; }
@@ -3341,7 +3350,6 @@ body.bc-rescheduling { user-select: none; }
   max-height: calc(100vh - 16px); overflow-y: auto;
 }
 .bc-plugincard-head { display: flex; align-items: center; gap: 7px; }
-.bc-plugincard-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
 .bc-plugincard-title { font-weight: 700; font-size: 13.5px; min-width: 0; }
 .bc-plugincard-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
 .bc-plugincard-when { margin-top: 3px; font-size: 12px; color: var(--fg-muted); }
@@ -3936,7 +3944,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* --- The calendar picker with colour dots (ui/CalendarSelect.js) ------------
    A customizable select where the browser has one (Chrome 135+): the dots
    show in the list and on the button. Elsewhere the plain select, unchanged. */
-.bc-caldot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 @supports (appearance: base-select) {
   select.bc-calselect, select.bc-calselect::picker(select) { appearance: base-select; }
   select.bc-calselect { display: flex; align-items: center; min-height: 32px; padding: 4px 8px; }
@@ -4067,6 +4074,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-title { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; cursor: pointer; }
 .bc-es-cal { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--fg-muted); }
 .bc-es-cal i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+/* A calendar mark in running text (details, menus, hover card, pickers):
+   a dot at the text's size; an icon mark keeps its own. */
+:is(.bc-es-alsoon-cal, .bc-hovercard-cal, .bc-own-chip) .bc-cal-dot:not(.is-icon) { width: 8px; height: 8px; }
+:is(.bc-es-mh, .bc-plugincard-head) .bc-cal-dot:not(.is-icon) { width: 9px; height: 9px; }
+:is(.bc-hovercard-cal, .bc-es-alsoon-cal) .bc-cal-dot { margin-right: 4px; vertical-align: -1px; }
 .bc-es-partof { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: none; font-size: 14px; color: var(--fg); }
 .bc-es-row { display: flex; align-items: flex-start; gap: 14px; min-height: 24px; }
 .bc-es-row > svg { flex: none; color: var(--fg-muted); margin-top: 1px; }
@@ -4726,7 +4738,6 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 }
 .bc-own-chip.is-open { border-color: var(--accent); }
 .bc-own-chip.is-warn, .bc-own-chip.is-error { border-color: var(--warn); }
-.bc-own-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .bc-own-status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-muted); margin-top: 4px; }
 .bc-own-status small { margin-left: auto; font-variant-numeric: tabular-nums; }
 .bc-own-status.is-warn, .bc-own-status.is-error { color: var(--warn-strong); }

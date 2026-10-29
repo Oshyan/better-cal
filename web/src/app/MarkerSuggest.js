@@ -115,7 +115,7 @@ export function useMarkerSuggest(inputRef, value, onChange) {
       onMouseDown=${(e) => e.preventDefault() /* keep the box focused (and a phone's keyboard up) */}
       onClick=${() => pick(it)}
       onMouseEnter=${() => setActive(i)}
-    >${it.color && html`<${CalDot} color=${it.color} />`}<span class="bc-msuggest-label">${it.label}</span></li>`)}
+    >${it.color && html`<${CalDot} cal=${it.cal || null} color=${it.color} />`}<span class="bc-msuggest-label">${it.label}</span></li>`)}
   </ul>`;
 
   return { onKeyDown, list };

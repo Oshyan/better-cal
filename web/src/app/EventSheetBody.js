@@ -17,7 +17,7 @@ import {
 } from './actions.js';
 import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
-import { Icon, ThumbIcon, PinIcon } from '../ui/icons.js';
+import { Icon, ThumbIcon, PinIcon, CalDot } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
 import { fmtRangeParts, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
@@ -30,6 +30,13 @@ import { askConfirm } from './ConfirmDialog.js';
 // Video meetings: the link is a Join button, not an address. The providers
 // are shared with the server's push notifications (lib/patterns.js).
 /** The first video-meeting link in the location, link or description: {url, name}. */
+
+// A duplicate's calendar arrives as {id, name, color}; the loaded calendar
+// says what kind it is, so its mark matches the sidebar's.
+function fullCal(c) {
+  return (state.calendars || []).find((x) => x.id === c.id) || c;
+}
+
 export function meetingLink(occ) {
   for (const text of [occ.location, occ.url, occ.description && stripToText(occ.description)]) {
     if (!text) continue;
@@ -110,8 +117,8 @@ function AlsoOn({ occ }) {
       return html`<span class="bc-es-alsoon-item" key=${d.pairId}>
         ${i > 0 && html`<span class="bc-es-alsoon-sep" aria-hidden="true">·</span>`}
         ${other
-          ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" onClick=${() => openDetail(other.instanceId)}><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</button>`
-          : html`<span class="bc-es-alsoon-cal"><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</span>`}
+          ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" onClick=${() => openDetail(other.instanceId)}><${CalDot} cal=${fullCal(d.cal)} />${d.cal.name}</button>`
+          : html`<span class="bc-es-alsoon-cal"><${CalDot} cal=${fullCal(d.cal)} />${d.cal.name}</span>`}
         <button type="button" class="bc-es-alsoon-split" disabled=${busy}
           title=${'Not the same event: show the one on ' + d.cal.name + ' separately'}
           aria-label=${'Not the same as the one on ' + d.cal.name}
@@ -248,7 +255,7 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
     ${canDuplicate && item('plus', 'Duplicate', () => duplicateEvent(occ), '', 'then set its date')}
     ${item('copy', 'Copy to another calendar…', onCopy)}
     ${cal && html`<hr />
-      ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}
+      ${head(html`<${CalDot} cal=${cal} />Calendar: ${calName}`)}
       ${item('settings', 'Calendar settings', () => set({ popover: null, manageCal: cal.id }))}
       ${cal.visible && item('eyeOff', 'Hide this calendar', () => { set({ popover: null }); toggleCalendarVisible(cal); toast(calName + ' hidden. Show it again from the sidebar.', { duration: 4000 }); })}`}
     ${sourceUrl && html`<hr />
@@ -357,7 +364,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           ${titleActs}
         </div>
         <div class="bc-es-calrow">
-          <span class="bc-es-cal"><i style=${'background:' + color}></i>${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
+          <span class="bc-es-cal"><${CalDot} cal=${cal} color=${color} />${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
           ${!panel && !context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
         </div>
         ${!panel && attendScope}

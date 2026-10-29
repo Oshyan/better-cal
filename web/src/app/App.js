@@ -1,5 +1,6 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
+import { CalDot, setPluginDecoLookup } from '../ui/icons.js';
 import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
@@ -461,6 +462,12 @@ export function App() {
   // read as the whole day. Longer ranges, and plugin-wide ones (travel, trips),
   // stay bands. Every range takes its calendar's color as it is now: the
   // color stored with it is from the plugin's last run.
+  useEffect(() => {
+    setPluginDecoLookup((pid) => {
+      const pl = (state.plugins || []).find((p) => p.id === pid);
+      return (pl && pl.decoration) || null;
+    });
+  }, []);
   const isWindow = (r) => r.calendarId != null && parseISO(r.end) - parseISO(r.start) < 86400000;
   const pluginWindows = useMemo(() => {
     const out = [];
@@ -1184,7 +1191,7 @@ function PluginRangeCard({ card }) {
   const fmtT = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return html`<div class="bc-plugincard" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${occ.title}>
     <div class="bc-plugincard-head">
-      <span class="bc-plugincard-dot" style=${occ.pluginColor ? 'background:' + occ.pluginColor : ''}></span>
+      <${CalDot} color=${occ.pluginColor || null} deco=${occ.pluginIcon || occ.pluginIconPath ? { icon: occ.pluginIcon, iconPath: occ.pluginIconPath } : null} />
       <span class="bc-plugincard-title">${occ.title}</span>
       <span class="bc-plugincard-plugin">${occ.pluginId}</span>
     </div>

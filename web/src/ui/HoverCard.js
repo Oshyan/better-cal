@@ -11,6 +11,7 @@
 // "+N" or holiday label that stands for several gives its lines in
 // data-hovertext, one per line.
 
+import { CalDot } from './icons.js';
 import { html, render } from '../../vendor/index.js';
 import { state } from '../app/store.js';
 import { parseISO, dateOfDayKey, fmtRange, eventDuration } from '../lib/dates.js';
@@ -33,7 +34,7 @@ function Card({ occ, cal, at, nowMs, why = true }) {
   const duration = eventDuration(occ); // multi-day: the exact total, as the old tooltip gave it
   return html`<div class="bc-hovercard" role="tooltip" style=${`left:${at.left}px;top:${at.top}px`}>
     <div class="bc-hovercard-title">${occ.title || '(untitled)'}${occ.isGroup ? ` (${occ.count} similar)` : ''}</div>
-    <div class="bc-hovercard-meta">${fmtRange(s, e, occ.allDay)}${duration ? ` (${duration.exact} total)` : ''}${cal && html` · <span class="bc-hovercard-cal"><i style=${`background:${cal.color}`}></i>${cal.name}</span>`}</div>
+    <div class="bc-hovercard-meta">${fmtRange(s, e, occ.allDay)}${duration ? ` (${duration.exact} total)` : ''}${cal && html` · <span class="bc-hovercard-cal"><${CalDot} cal=${cal} />${cal.name}</span>`}</div>
     ${place && html`<div class="bc-hovercard-meta">${place}</div>`}
     ${reasons.length > 0 && html`<ul class="bc-hovercard-why">${reasons.map((r) => html`<li key=${r}>${r}</li>`)}</ul>`}
   </div>`;

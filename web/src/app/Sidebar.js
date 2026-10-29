@@ -102,12 +102,6 @@ function calSourceMark(cal) {
   return html`<span class="bc-cal-src is-google" role="img" aria-label=${label} title=${label}><${GoogleG} size=${11} /></span>`;
 }
 
-function pluginDecoFor(cal) {
-  if (!cal || !cal.pluginId) return null;
-  const pl = (state.plugins || []).find((p) => p.id === cal.pluginId);
-  return (pl && pl.decoration) || null;
-}
-
 // The sidebar's right edge (#129): drag to resize, arrows to nudge, Home or a
 // double click for the default. Desktop only; the drawer layouts hide it.
 function SidebarResize() {
@@ -174,7 +168,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phon
           onChange=${() => toggleCalendarVisible(cal)}
           aria-label=${'Toggle ' + cal.name}
         />
-        <${CalDot} cal=${cal} deco=${pluginDecoFor(cal)} />
+        <${CalDot} cal=${cal} />
         <span class="bc-cal-name">${cal.name}</span>
         ${calSourceMark(cal)}
         ${filedIn && filedIn.length > 0 && html`<span
@@ -596,7 +590,7 @@ export function Sidebar({ open, collapsed, onClose }) {
   const calMenu = (c, section) => {
     const soloed = solo && solo.calId === c.id;
     setMenu({
-      head: c.name, color: c.color || 'var(--border-strong)',
+      head: c.name, color: c.color || 'var(--border-strong)', cal: c,
       items: [
         soloed ? ['visAll', 'Show all calendars again', exitSolo] : ['visNone', 'Show only this calendar', () => enterSolo(c)],
         ['settings', openGear === section + ':' + c.id ? 'Close its settings' : 'Calendar settings', () => toggleGear(section + ':' + c.id)],
@@ -780,7 +774,7 @@ export function Sidebar({ open, collapsed, onClose }) {
         <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
       </div>`}
     </div>
-    ${menu && html`<${RowMenu} head=${menu.head} color=${menu.color} items=${menu.items} onClose=${() => setMenu(null)} />`}
+    ${menu && html`<${RowMenu} head=${menu.head} color=${menu.color} cal=${menu.cal || null} items=${menu.items} onClose=${() => setMenu(null)} />`}
     ${!phone && html`<footer class="bc-sidebar-foot">
       <button
         type="button" class="bc-folder-head bc-manage-head"

@@ -465,6 +465,8 @@ export function fmtRangeParts(start, end, allDay, now = new Date()) {
     put(short, start); text(' to '); put(short, dateOfDayKey(lastKey));
     return out;
   }
+  // A moment (a tide, a sunset) has one time, not "3:35 PM to 3:35 PM".
+  if (start.getTime() === end.getTime()) { put(day, start); text(', ' + fmtTime(start)); return out; }
   if (sk === ek) { put(day, start); text(', ' + fmtTime(start) + ' to ' + fmtTime(end)); return out; }
   put(day, start); text(' ' + fmtTime(start) + ' to '); put(day, end); text(' ' + fmtTime(end));
   return out;

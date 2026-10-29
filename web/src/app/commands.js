@@ -158,6 +158,7 @@ export function buildCommands() {
       label: (c.visible ? 'Hide calendar: ' : 'Show calendar: ') + c.name,
       group: 'Calendars',
       color: c.color,
+      cal: c,
       run: () => toggleCalendarVisible(c),
     });
   }

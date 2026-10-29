@@ -217,7 +217,7 @@ export function CommandPalette() {
               onMouseEnter=${() => setSel(i)}
             >
               <span class="bc-palette-lead">
-                ${row.icon ? html`<${Icon} name=${row.icon} size=${14} />` : (row.color ? html`<${CalDot} color=${row.color} />` : null)}
+                ${row.icon ? html`<${Icon} name=${row.icon} size=${14} />` : (row.color ? html`<${CalDot} cal=${row.cal || null} color=${row.color} />` : null)}
               </span>
               <span class="bc-palette-label">${row.label}</span>
               ${row.hint && html`<span class="bc-palette-hint">${row.hint}</span>`}

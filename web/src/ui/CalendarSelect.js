@@ -5,6 +5,7 @@
 // a glance; elsewhere it is the same plain select as before (the dot spans
 // have no text, so each option still reads as the calendar's name).
 
+import { CalDot } from './icons.js';
 import { html } from '../../vendor/index.js';
 import { DEFAULT_COLOR } from '../lib/color.js';
 
@@ -17,7 +18,7 @@ export function CalendarSelect({ calendars, value, onChange, className = '', ari
   >
     <button type="button" class="bc-calselect-btn"><selectedcontent></selectedcontent></button>
     ${calendars.map((c) => html`<option key=${c.id} value=${c.id}>
-      <span class="bc-caldot" style=${'background:' + (c.color || DEFAULT_COLOR)}></span><span class="bc-calselect-name">${c.name}</span>
+      <${CalDot} cal=${c} color=${DEFAULT_COLOR} /><span class="bc-calselect-name">${c.name}</span>
     </option>`)}
   </select>`;
 }

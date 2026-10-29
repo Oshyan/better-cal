@@ -101,7 +101,7 @@ export function markerSuggestions(marker, { calendars = [], tags = [], people = 
   if (marker.kind === '/') {
     for (const c of rank(calendars, marker.query, (c) => c.name)) {
       const insert = calendarMarker(c.name);
-      if (insert) out.push({ key: 'c' + c.id, label: c.name, insert, color: c.color });
+      if (insert) out.push({ key: 'c' + c.id, label: c.name, insert, color: c.color, cal: c });
     }
   } else if (marker.kind === '#') {
     for (const t of rank(tags, marker.query, (t) => t.name)) {

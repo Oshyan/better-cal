@@ -20,8 +20,20 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
 // feeds render hollow (2px ring of the calendar color, transparent center)
 // with a "Subscribed feed" tooltip. One shared treatment for every surface
 // that shows a calendar dot.
+// How a plugin calendar's icon is found (App.js sets it from the loaded
+// plugin list), so every calendar mark shows it without each caller asking.
+let pluginDecoLookup = () => null;
+export function setPluginDecoLookup(fn) { pluginDecoLookup = typeof fn === 'function' ? fn : () => null; }
+
+/**
+ * A calendar's mark, the same everywhere it appears: a plugin calendar's
+ * icon, a link for one subscribed by web address, a ring for a Google
+ * calendar, or a dot in its color. Pass the calendar; `color` alone draws a
+ * plain dot.
+ */
 export function CalDot({ cal, color, deco }) {
   const c = (cal && cal.color) || color || '#888';
+  if (deco === undefined && cal && cal.pluginId) deco = pluginDecoLookup(cal.pluginId);
   const feed = cal && cal.kind === 'subscribed';
   // A plugin that declared a decoration icon shows it in place of the dot, in
   // the calendar's own color: same slot, same size, more information.

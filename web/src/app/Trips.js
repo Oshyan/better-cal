@@ -170,7 +170,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
   const menu = moreOpen && html`<${TripMenu} onClose=${() => setMoreOpen(false)} phone=${!panel}>
     ${!panel && item('plus', 'Add events to this trip', startAdding)}
     ${item('calendar', 'New event in this trip', newInTrip)}
-    ${cal && html`<hr /><div class="bc-es-mh" role="presentation"><i style=${'background:' + color}></i>Calendar: ${calName}</div>
+    ${cal && html`<hr /><div class="bc-es-mh" role="presentation"><${CalDot} cal=${cal} />Calendar: ${calName}</div>
       ${item('settings', 'Calendar settings', () => set({ popover: null, manageCal: cal.id }))}`}
     <hr />
     ${item('trash', 'Delete trip…', () => setConfirmDelete(true), 'is-danger')}
@@ -209,7 +209,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
         ${titleActs}
       </div>
       <div class="bc-es-calrow">
-        <span class="bc-es-cal"><${TripBadge} /><i style=${'background:' + color}></i>${calName}</span>
+        <span class="bc-es-cal"><${TripBadge} /><${CalDot} cal=${cal} color=${color} />${calName}</span>
       </div>
     </div>
     ${!panel && menu}

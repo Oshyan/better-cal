@@ -2713,6 +2713,7 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
 {
   const now = new Date(2026, 9, 13, 12);
   const at = (y, m, d, h = 0) => new Date(y, m - 1, d, h);
+  assert('range: a moment has one time, not a range', !fmtRange(at(2026, 10, 8, 15), at(2026, 10, 8, 15), false, now).includes(' to '));
   assert('year: this year needs none', !fmtRange(at(2026, 10, 8, 10), at(2026, 10, 8, 16), false, now).includes('2026'));
   assert('year: an old event names its year', fmtRange(at(2011, 10, 8, 10), at(2011, 10, 8, 16), false, now).includes('2011'));
   assert('year: next year too', fmtRange(at(2027, 3, 1), at(2027, 3, 4), true, now).includes('2027'));

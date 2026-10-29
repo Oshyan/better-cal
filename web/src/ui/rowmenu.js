@@ -2,7 +2,7 @@
 // (0.8.0) and a day's date in the month and 3-day views.
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
-import { Icon } from './icons.js';
+import { Icon, CalDot } from './icons.js';
 import { onOutsidePress, insideAny } from './outside.js';
 
 // Half a second without moving; a scroll or a drag cancels it. Android also
@@ -31,11 +31,11 @@ export function useLongPress(onLong) {
 
 // The menu a hold opens: a sheet at the foot of the screen, in the event
 // sheet's More style. items: [icon, label, fn] (falsy entries skipped).
-export function RowMenu({ head, color, items, onClose }) {
+export function RowMenu({ head, color, cal = null, items, onClose }) {
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
   return html`<div class="bc-es-menu is-phone bc-rowmenu" role="menu" ref=${ref}>
-    <div class="bc-es-mh" role="presentation">${color && html`<i style=${'background:' + color}></i>`}${head}</div>
+    <div class="bc-es-mh" role="presentation">${cal ? html`<${CalDot} cal=${cal} />` : color && html`<i style=${'background:' + color}></i>`}${head}</div>
     ${items.filter(Boolean).map(([icon, label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-es-mi" onClick=${() => { onClose(); fn(); }}>
       <${Icon} name=${icon} size=${18} /><span>${label}</span>
     </button>`)}

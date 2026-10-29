@@ -10,7 +10,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Undo says what it would undo:** the toast after a change names the event on its first line and says what happened on the second, like "Moved in Fibery · Nov 6 → Nov 17", "Resized · ends 5:00 PM" or "Changed the title and place". A change to a whole series says so.
 - **The sidebar stays on Settings, Review, People and the other pages** on a computer, so you can go from page to page, or back to a date with the mini-month, without returning to the calendar first. The toolbar's hamburger still shows or hides it. Phones are unchanged.
 - **A plugin's first run starts when you turn it on,** where the server can manage it, so Tides' station list is there when you add a calendar instead of after a minute or a Run now. A plugin's form keeps the fields below a required one (a tide calendar's station) out of reach until it's filled in.
-- **Fixes:** a plugin run started by Run now or a settings save (on servers that run it straight away) now waits for the worker's lock and steps aside during an update, as the worker does, so it can't write while an update backs up, replaces code or migrates the database. Blocked, it's left for the worker to run within a minute.
+- **Fixes:** a plugin's moments on the timeline (a tide, say) labelled their time in UTC; they now read on your own clock, where the line already was. A plugin run started by Run now or a settings save (on servers that run it straight away) now waits for the worker's lock and steps aside during an update, as the worker does, so it can't write while an update backs up, replaces code or migrates the database. Blocked, it's left for the worker to run within a minute.
 
 ## 1.4.0 (2026-10-27)
 

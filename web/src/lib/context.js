@@ -21,8 +21,11 @@ export function isContext(occ) {
 export const HOST_ICON = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** "8:30 PM" -> "8:30p", "12:00 PM" -> "12p"; "20:30" stays under the 24h setting. In the event's own zone when given. */
+// UTC is no place: a plugin's moments are stored as UTC instants, and their
+// time reads on this device's clock, as zoneSuffix below already assumes
+// (a 3:35 PM low tide was labelled "11:35p").
 export function compactTime(d, tz) {
-  return fmtTimeIn(d, tz).replace(':00', '').replace(/\s?AM$/i, 'a').replace(/\s?PM$/i, 'p');
+  return fmtTimeIn(d, tz && tz !== 'UTC' ? tz : null).replace(':00', '').replace(/\s?AM$/i, 'a').replace(/\s?PM$/i, 'p');
 }
 
 // A place-bound moment (sunset in Portland) keeps its own clock: when the

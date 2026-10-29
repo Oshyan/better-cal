@@ -52,7 +52,7 @@ import {
   withRepeatEnd, repeatEnd, retypeUntil, describable, weekOfMonth,
 } from '../src/lib/repeat.js';
 import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
-import { contextToken, contextTitle, contextByDay, withoutContext, dayLabelsByDay, isDayLabel, dayLabelText } from '../src/lib/context.js';
+import { contextToken, contextTitle, compactTime, contextByDay, withoutContext, dayLabelsByDay, isDayLabel, dayLabelText } from '../src/lib/context.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -2563,6 +2563,11 @@ console.log('');
   eq('context token: weather pair with a condition word', [contextToken(weather).icon, contextToken(weather).text], ['cloud', '72/58']);
   eq('context token: a long-range normal keeps its tilde and gets the thermometer', [contextToken({ allDay: true, title: 'Portland, OR: ~80/58 avg' }).icon, contextToken({ allDay: true, title: 'Portland, OR: ~80/58 avg' }).text], ['thermometer', '~80/58']);
   eq('context token: clear skies are the sun; wind is the air icon', [contextToken({ allDay: true, title: '96/66 clear' }).icon, contextToken({ allDay: true, title: '70/55 windy' }).icon], ['sun', 'air']);
+  {
+    const at = new Date(2026, 10, 7, 15, 35);
+    const tide = { allDay: false, title: 'Low tide -0.4 ft', start: at.toISOString(), end: at.toISOString(), tzid: 'UTC', icon: 'tideLow' };
+    eq('context token: a UTC-stored plugin moment reads on the device clock', contextToken(tide).time, compactTime(at, null));
+  }
   eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
   eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);
   eq('context token: low tide keeps its height', [contextToken(tide).icon, contextToken(tide).text], ['tideLow', '0.8 ft']);

@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Support\Time;
 
 /**
  * Mutation log + undo. Each mutating API call records before/after snapshots
@@ -53,7 +54,7 @@ final class Undo
                 'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
                 'source' => ActivityContext::get(),
                 'run_id' => ActivityContext::runId(),
-                'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables), 0, 300),
+                'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables, Settings::homeTzid($this->db, $userId)), 0, 300),
                 'details_json' => $details === null ? null : json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE),
             ]);
         } catch (\PDOException $e) {
@@ -124,7 +125,7 @@ final class Undo
      * Human line for the activity feed when the caller didn't provide one:
      * "Added event 'Dinner at Luna' (Aug 14)". Pure.
      */
-    public static function defaultSummary(string $entity, string $op, ?array $before, ?array $after): string
+    public static function defaultSummary(string $entity, string $op, ?array $before, ?array $after, ?string $homeTzid = null): string
     {
         $verb = ['create' => 'Added', 'update' => 'Updated', 'delete' => 'Deleted'][$op] ?? ucfirst($op);
         $noun = str_replace('_', ' ', $entity);
@@ -142,7 +143,13 @@ final class Undo
         $line = $verb . ' ' . $noun . ($name !== '' ? " '" . $name . "'" : '');
         if ($entity === 'event' && is_array($row) && isset($row['start_utc'])) {
             try {
-                $line .= ' (' . (new \DateTimeImmutable((string) $row['start_utc'], new \DateTimeZone('UTC')))->format('M j') . ')';
+                // An all-day event's date is its UTC midnight; a timed one's
+                // is the day on its clock (the owner's, for a UTC-stored one).
+                $start = new \DateTimeImmutable((string) $row['start_utc'], Time::utc());
+                if ((int) ($row['all_day'] ?? 0) !== 1) {
+                    $start = $start->setTimezone(Time::displayZone((string) ($row['tzid'] ?? 'UTC'), $homeTzid));
+                }
+                $line .= ' (' . $start->format('M j') . ')';
             } catch (\Exception) {
             }
         }

@@ -19,7 +19,13 @@ final class Settings
     /** The owner's Home zone as set, or null when none has been (a new account before its first sign-in). */
     public static function homeTzid(Db $db, int $userId): ?string
     {
-        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        // A display hint (which clock a date is written on): it never fails
+        // the write it's part of, such as an activity line.
+        try {
+            $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        } catch (\PDOException) {
+            return null;
+        }
         $settings = is_string($raw) ? json_decode($raw, true) : null;
         $tz = is_array($settings) && is_string($settings['tz'] ?? null) ? trim($settings['tz']) : '';
         return $tz !== '' ? Time::normalizeTzid($tz) : null;

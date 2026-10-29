@@ -467,7 +467,16 @@ final class Events
             }
             $this->applyPeoplePatch($userId, $rowId, $in);
         });
-        $this->googleJournal($userId, "Changed '" . (string) $master['title'] . "' from " . $instStart->format('M j') . " on", $calendar, $masterId);
+        $this->googleJournal($userId, "Changed '" . (string) $master['title'] . "' from " . $this->journalDay($userId, $master, $instStart) . " on", $calendar, $masterId);
+    }
+
+    /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
+    private function journalDay(int $userId, array $master, \DateTimeImmutable $at): string
+    {
+        if ((int) $master['all_day'] === 1) {
+            return $at->setTimezone(Time::utc())->format('M j');
+        }
+        return $at->setTimezone(Time::displayZone((string) $master['tzid'], Settings::homeTzid($this->db, $userId)))->format('M j');
     }
 
     private function googleDeleteAll(int $userId, array $calendar, array $event, ?RequestAuthority $authority = null): void
@@ -505,7 +514,7 @@ final class Events
             'recurrence' => GoogleWriter::recurrenceLines($newRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
         ], $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [$resp]));
-        $this->googleJournal($userId, "Ended '" . (string) $master['title'] . "' before " . Time::fromDb($instanceUtc)->format('M j'), $calendar, (int) $master['id']);
+        $this->googleJournal($userId, "Ended '" . (string) $master['title'] . "' before " . $this->journalDay($userId, $master, Time::fromDb($instanceUtc)), $calendar, (int) $master['id']);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void

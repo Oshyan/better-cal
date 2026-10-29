@@ -186,7 +186,7 @@ final class People
             'create',
             null,
             ['availability' => [$row]],
-            'Marked ' . (string) $person['name'] . ' ' . $kind . ' (' . $start->format('M j') . ')'
+            'Marked ' . (string) $person['name'] . ' ' . $kind . ' (' . $start->setTimezone(Time::displayZone('UTC', Settings::homeTzid($this->db, $userId)))->format('M j') . ')'
         );
         return self::spanRow($row);
     }
@@ -237,7 +237,7 @@ final class People
             ['availability' => [$row]],
             ['availability' => [$after]],
             'Moved ' . (string) ($fields['kind'] ?? $row['kind']) . ' time for ' . (string) $person['name']
-                . ' (' . $start->format('M j') . ')'
+                . ' (' . $start->setTimezone(Time::displayZone('UTC', Settings::homeTzid($this->db, $userId)))->format('M j') . ')'
         );
         return self::spanRow($after);
     }

@@ -38,6 +38,21 @@ final class Time
         }
     }
 
+    /**
+     * The zone a timed event's clock is shown in: its own, unless that's UTC,
+     * which is how plugins, feeds that write their times with a Z, and imports
+     * store an instant with no place. Then it's the owner's Home zone, when
+     * one is set, so a 3:35 PM tide never reads as 11:35 PM.
+     */
+    public static function displayZone(?string $tzid, ?string $homeTzid): \DateTimeZone
+    {
+        $own = self::normalizeTzid($tzid);
+        if ($own !== 'UTC' || $homeTzid === null || $homeTzid === '') {
+            return self::zone($own);
+        }
+        return self::zone($homeTzid);
+    }
+
     /** Normalize a tzid string to a valid IANA identifier ('UTC' fallback). */
     public static function normalizeTzid(?string $tzid): string
     {

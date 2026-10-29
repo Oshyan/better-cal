@@ -383,7 +383,8 @@ return new class implements PluginInterface {
                 $daysOut  = (int)floor(($best['start'] - $now->getTimestamp()) / 86400);
                 $urgency  = 0;
                 if ($p['before'] !== null) {
-                    $left = (int)floor((strtotime($p['before'] . ' 23:59:59 UTC') - $now->getTimestamp()) / 86400);
+                    // The deadline is the end of that day where the owner is.
+                    $left = (int)floor(((new DateTimeImmutable($p['before'] . ' 23:59:59', $tz))->getTimestamp() - $now->getTimestamp()) / 86400);
                     $urgency = max(0, 30 - $left);
                 }
                 // A place open 168 hours a week can wait; one open on three

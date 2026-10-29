@@ -101,15 +101,18 @@ final class Duplicates
      * @param array{start_utc:string,all_day:int|string,tzid:string} $a
      * @param array{start_utc:string,all_day:int|string,tzid:string} $b
      */
-    public static function when(array $a, array $b): ?string
+    public static function when(array $a, array $b, ?string $homeTzid = null): ?string
     {
         $aDay = (int) $a['all_day'] === 1;
         $bDay = (int) $b['all_day'] === 1;
         // An event's date in its own zone: an all-day day made in the app is
         // local midnight (07:00 UTC in Los Angeles), its Google copy a UTC
         // midnight; compared as raw instants they never paired (audit, 0.9.14).
+        // A timed event stored in UTC is dated on the owner's clock (an
+        // evening event is that day's, not the next).
         $date = static fn(array $e): string => Time::fromDb((string) $e['start_utc'])
-            ->setTimezone(Time::zone(Time::normalizeTzid((string) $e['tzid'])))->format('Y-m-d');
+            ->setTimezone((int) $e['all_day'] === 1 ? Time::zone(Time::normalizeTzid((string) $e['tzid'])) : Time::displayZone((string) $e['tzid'], $homeTzid))
+            ->format('Y-m-d');
         if ($aDay && $bDay) {
             return $date($a) === $date($b) ? 'same' : null;
         }
@@ -132,9 +135,9 @@ final class Duplicates
      *
      * @return array{status:string,basis:string}|null
      */
-    public static function classify(array $a, array $b): ?array
+    public static function classify(array $a, array $b, ?string $homeTzid = null): ?array
     {
-        $when = self::when($a, $b);
+        $when = self::when($a, $b, $homeTzid);
         if ($when === null) {
             return null;
         }
@@ -363,6 +366,7 @@ final class Duplicates
     /** Different-UID title candidates: bounded anchors, neighbours, work and output. */
     private function discoverTimeSlice(int $userId, int $afterId, \DateTimeImmutable $now): array
     {
+        $homeTzid = Settings::homeTzid($this->db, $userId);
         $maxRows = Limits::get('DUPLICATE_SCAN_ROWS');
         $maxComparisons = Limits::get('DUPLICATE_COMPARISONS');
         // Independently tuned limits must still make progress: an operator
@@ -448,7 +452,7 @@ final class Duplicates
                     break;
                 }
                 $comparisons++;
-                $verdict = self::classify($row, $candidate);
+                $verdict = self::classify($row, $candidate, $homeTzid);
                 if ($verdict !== null) {
                     if ($verdict['status'] === 'linked') {
                         if (!$linkedForAnchor) {

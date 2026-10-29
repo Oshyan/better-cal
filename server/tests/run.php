@@ -6544,6 +6544,48 @@ checkEq(
     Undo::defaultSummary('saved_view', 'create', null, ['saved_views' => [['name' => 'Focus']]])
 );
 
+// UTC-stored times read on the owner's clock (plugins, Z feeds, imports): a
+// 7 PM Los Angeles dinner stored as 03:00Z is that day's, not the next.
+checkEq('display zone: a UTC event shows on the Home clock', 'America/Los_Angeles', Time::displayZone('UTC', 'America/Los_Angeles')->getName());
+checkEq('display zone: an event in its own zone keeps it', 'Asia/Tokyo', Time::displayZone('Asia/Tokyo', 'America/Los_Angeles')->getName());
+checkEq('display zone: no Home zone stays UTC', 'UTC', Time::displayZone('UTC', null)->getName());
+checkEq(
+    'activity summary: a UTC-stored evening event is dated on the Home clock',
+    "Added event 'Dinner' (Nov 3)",
+    Undo::defaultSummary('event', 'create', null, ['events' => [['title' => 'Dinner', 'start_utc' => '2026-11-04 03:00:00', 'tzid' => 'UTC', 'all_day' => 0]]], 'America/Los_Angeles')
+);
+checkEq(
+    'activity summary: an all-day event keeps its date',
+    "Added event 'Holiday' (Nov 4)",
+    Undo::defaultSummary('event', 'create', null, ['events' => [['title' => 'Holiday', 'start_utc' => '2026-11-04 00:00:00', 'tzid' => 'UTC', 'all_day' => 1]]], 'America/Los_Angeles')
+);
+checkEq(
+    'review: a UTC-stored timed occurrence is named by its Home day',
+    'Tue 3 Nov 2026',
+    \BetterCal\Domain\ReviewQueue::occurrenceLabel(['tzid' => 'UTC', 'all_day' => 0], '2026-11-04 01:00:00', 'America/Los_Angeles')
+);
+checkEq(
+    'duplicates: an evening event stored in UTC pairs with its own day',
+    'near',
+    \BetterCal\Domain\Duplicates::when(
+        ['start_utc' => '2026-11-04 03:00:00', 'all_day' => 0, 'tzid' => 'UTC'],
+        ['start_utc' => '2026-11-03 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'],
+        'America/Los_Angeles'
+    )
+);
+// A one-day all-day plugin event ends the next day whatever the host's zone.
+$hostZone = date_default_timezone_get();
+foreach (['Asia/Tokyo', 'Europe/Berlin', 'America/Los_Angeles', 'UTC'] as $zone) {
+    date_default_timezone_set($zone);
+    checkEq('plugin all-day: one day ends the next day with the host in ' . $zone,
+        ['2026-11-01 00:00:00', '2026-11-02 00:00:00', true],
+        \BetterCal\Plugin\PluginHost::spanToUtc(['start' => '2026-11-01']));
+}
+date_default_timezone_set($hostZone);
+checkEq('plugin timed: a time with no offset is the owner\'s local time',
+    '2026-11-07 17:00:00',
+    \BetterCal\Plugin\PluginHost::spanToUtc(['start' => '2026-11-07T09:00:00'], new \DateTimeZone('America/Los_Angeles'))[0]);
+
 // ---------------------------------------------------------------------------
 // System health: when a failing streak earns an email, and the words used.
 {

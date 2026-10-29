@@ -85,7 +85,7 @@ final class PluginHost
     public function log(string $message): void
     {
         if ($this->privateDiagnostics()) $message = PluginSecrets::HIDDEN_DIAGNOSTIC;
-        $this->log[] = '[' . date('H:i:s') . '] ' . mb_substr($message, 0, 300);
+        $this->log[] = '[' . (new \DateTimeImmutable('now', $this->ownerZone()))->format('H:i:sP') . '] ' . mb_substr($message, 0, 300);
         if (count($this->log) > 100) {
             array_shift($this->log);
         }
@@ -159,6 +159,25 @@ final class PluginHost
      * is whatever the host machine happens to be set to, which is how a plan
      * for "Saturday morning" ends up an ocean away from Saturday morning.
      */
+    private ?\DateTimeZone $ownerZone = null;
+
+    /**
+     * timezone(), read once per run, for the host's own formatting (log lines,
+     * times handed to plugins). UTC if it can't be read; a clock to write a
+     * time on never fails a run.
+     */
+    private function ownerZone(): \DateTimeZone
+    {
+        if ($this->ownerZone === null) {
+            try {
+                $this->ownerZone = $this->timezone();
+            } catch (\PDOException) {
+                $this->ownerZone = Time::utc();
+            }
+        }
+        return $this->ownerZone;
+    }
+
     public function timezone(): \DateTimeZone
     {
         $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$this->userId]);
@@ -183,8 +202,10 @@ final class PluginHost
             );
             $tz = is_string($tz) && $tz !== '' ? $tz : null;
         }
+        // Last resort UTC, as for events (Events::userTzid): the host's own
+        // zone is wherever the machine happens to be set.
         try {
-            return new \DateTimeZone($tz ?? date_default_timezone_get());
+            return new \DateTimeZone($tz ?? 'UTC');
         } catch (\Throwable) {
             return new \DateTimeZone('UTC');
         }
@@ -345,12 +366,29 @@ final class PluginHost
         if (count($occs) > Limits::get('PLUGIN_WINDOW_EVENTS')) {
             throw new \RuntimeException('eventsWindow: the requested window contains too many events; narrow it before reading');
         }
+        // A timed event stored in UTC (a plugin's, a feed's that wrote its
+        // times with a Z, an import's) reaches plugins on the owner's clock:
+        // the same instant, with the Home offset, so a plugin that formats or
+        // slices the time ("leave by 7:00 PM", "starts at 19:00") says what
+        // the owner's calendar says. Other zones are the event's own, kept.
+        $home = $this->ownerZone();
+        $clock = static function (array $o, string $key) use ($home): string {
+            $v = (string) $o[$key];
+            if (!empty($o['allDay']) || Time::normalizeTzid((string) ($o['tzid'] ?? 'UTC')) !== 'UTC') {
+                return $v;
+            }
+            try {
+                return Time::iso((new \DateTimeImmutable($v))->setTimezone($home));
+            } catch (\Exception) {
+                return $v;
+            }
+        };
         return array_map(static fn(array $o) => [
             'eventId' => $o['eventId'],
             'calendarId' => $o['calendarId'],
             'title' => $o['title'],
-            'start' => $o['start'],
-            'end' => $o['end'],
+            'start' => $clock($o, 'start'),
+            'end' => $clock($o, 'end'),
             'allDay' => $o['allDay'],
             'location' => $o['location'] ?? null,
             'lat' => $o['locationLat'] ?? null,
@@ -944,7 +982,7 @@ final class PluginHost
                     continue;
                 }
                 $seen[$key] = true;
-                [$startUtc, $endUtc, $allDay] = self::spanToUtc($ev);
+                [$startUtc, $endUtc, $allDay] = self::spanToUtc($ev, $this->ownerZone());
                 $cols = [
                     'title' => mb_substr(Sanitize::toText((string) ($ev['title'] ?? '')), 0, 500),
                     'description' => isset($ev['description']) ? Sanitize::description((string) $ev['description']) : null,
@@ -1164,7 +1202,7 @@ final class PluginHost
     }
 
     /** @return array{0:string,1:string,2:bool} [startUtc, endUtc, allDay] */
-    public static function spanToUtc(array $ev): array
+    public static function spanToUtc(array $ev, ?\DateTimeZone $local = null): array
     {
         $start = (string) ($ev['start'] ?? '');
         $end = (string) ($ev['end'] ?? '');
@@ -1173,12 +1211,16 @@ final class PluginHost
             $s = $start . ' 00:00:00';
             $e = (strlen($end) === 10 ? $end : $start) . ' 00:00:00';
             if ($e <= $s) {
-                $e = gmdate('Y-m-d', strtotime($start . ' +1 day')) . ' 00:00:00';
+                // Date arithmetic in UTC, never the host's zone: east of UTC,
+                // strtotime read the date as the day before and a one-day
+                // event ended where it began.
+                $e = (new \DateTimeImmutable($start, Time::utc()))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
             }
             return [$s, $e, true];
         }
-        $s = Time::toDb(new \DateTimeImmutable($start));
-        $e = $end !== '' ? Time::toDb(new \DateTimeImmutable($end)) : $s;
+        // A time with no offset is the owner's local time, not the host's.
+        $s = Time::toDb(new \DateTimeImmutable($start, $local ?? Time::utc()));
+        $e = $end !== '' ? Time::toDb(new \DateTimeImmutable($end, $local ?? Time::utc())) : $s;
         return [$s, max($e, $s), false];
     }
 

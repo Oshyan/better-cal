@@ -121,12 +121,12 @@ final class ReviewQueue
      *
      * @return list<array{field:string,label:string,from:?string,to:?string}>
      */
-    public static function occurrenceDiff(array $series, string $occurrence, string $method, array $fields, ?array $override = null): array
+    public static function occurrenceDiff(array $series, string $occurrence, string $method, array $fields, ?array $override = null, ?string $homeTzid = null): array
     {
         $skipped = in_array($occurrence, Recurrence::decodeExdates($series['exdates_json'] ?? null), true)
             || ($override !== null && (string) ($override['status'] ?? '') === 'cancelled' && ($method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled'));
         if ($method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled') {
-            return $skipped ? [] : [['field' => 'occurrence', 'label' => 'Occurrence', 'from' => self::occurrenceLabel($series, $occurrence), 'to' => 'cancelled']];
+            return $skipped ? [] : [['field' => 'occurrence', 'label' => 'Occurrence', 'from' => self::occurrenceLabel($series, $occurrence, $homeTzid), 'to' => 'cancelled']];
         }
         if ($skipped) {
             return [];
@@ -150,10 +150,18 @@ final class ReviewQueue
         );
     }
 
-    /** "Tue 3 Nov 2026", in the series' zone. */
-    public static function occurrenceLabel(array $series, string $occurrence): string
+    /**
+     * "Tue 3 Nov 2026": an all-day occurrence's date, or a timed one's day in
+     * the series' zone (the owner's Home zone for a series stored in UTC, so
+     * a 6 PM occurrence isn't named by the next day).
+     */
+    public static function occurrenceLabel(array $series, string $occurrence, ?string $homeTzid = null): string
     {
-        return Time::fromDb($occurrence)->setTimezone(Time::zone((string) ($series['tzid'] ?? 'UTC')))->format('D j M Y');
+        $at = Time::fromDb($occurrence);
+        if ((int) ($series['all_day'] ?? 0) === 1) {
+            return $at->setTimezone(Time::zone((string) ($series['tzid'] ?? 'UTC')))->format('D j M Y');
+        }
+        return $at->setTimezone(Time::displayZone((string) ($series['tzid'] ?? 'UTC'), $homeTzid))->format('D j M Y');
     }
 
     // ---- Holding -------------------------------------------------------
@@ -237,7 +245,7 @@ final class ReviewQueue
     ): ?int {
         $diff = $occurrence === null
             ? self::inviteDiff($event, $method, $fields)
-            : self::occurrenceDiff($event, $occurrence, $method, $fields, self::occurrenceRow($this->db, (int) $event['id'], $occurrence));
+            : self::occurrenceDiff($event, $occurrence, $method, $fields, self::occurrenceRow($this->db, (int) $event['id'], $occurrence), Settings::homeTzid($this->db, $userId));
         if ($diff === []) {
             return null;
         }
@@ -250,7 +258,7 @@ final class ReviewQueue
         $who = (string) ($invite['organizer']['name'] ?? '') ?: (string) ($invite['organizer']['email'] ?? '') ?: $fromAddr;
         $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
         if ($occurrence !== null) {
-            $day = self::occurrenceLabel($event, $occurrence);
+            $day = self::occurrenceLabel($event, $occurrence, Settings::homeTzid($this->db, $userId));
             $summary = $method === 'CANCEL'
                 ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence. Accepting skips just that one."
                 : ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence: $changed. Accepting changes just that one.";
@@ -720,7 +728,7 @@ final class ReviewQueue
                 $instance = (int) ($event['all_day'] ?? 0) === 1
                     ? Time::fromDb($occurrence)->setTimezone(Time::zone((string) $event['tzid']))->format('Y-m-d')
                     : Time::iso(Time::fromDb($occurrence));
-                $currentDiff = self::occurrenceDiff($event, $occurrence, $cancel ? 'CANCEL' : 'REQUEST', $fields, $overrideRow);
+                $currentDiff = self::occurrenceDiff($event, $occurrence, $cancel ? 'CANCEL' : 'REQUEST', $fields, $overrideRow, Settings::homeTzid($this->db, $userId));
                 if ($currentDiff === []) {
                     $this->close((int) $row['id'], 'superseded');
                     return $cancel

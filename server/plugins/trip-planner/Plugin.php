@@ -875,7 +875,7 @@ return new class implements PluginInterface {
             'https://archive-api.open-meteo.com/v1/archive?latitude=%.4f&longitude=%.4f'
             . '&start_date=%d-01-01&end_date=%d-12-31'
             . '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum'
-            . '&timezone=UTC&temperature_unit=celsius&precipitation_unit=mm',
+            . '&timezone=auto&temperature_unit=celsius&precipitation_unit=mm',
             $place['lat'], $place['lng'], $startY, $endY
         );
 

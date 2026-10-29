@@ -14,23 +14,27 @@ A major version should mean something you can say in one sentence. I have three 
 
 The releases below assume the first one, since it's the only change big enough to need a major version. Either of the others would move its issues forward and push the item work later.
 
-## 1.4.0 (in progress)
-
-Done so far:
+## 1.4.0 (released 2026-10-27)
 
 - Month rows that grow to fit their fullest day, with a switch in the grid's corner ([#171](https://github.com/Oshyan/better-cal/issues/171))
-- Plugins wait for their required settings, and open them when you turn the plugin on
-- Run now runs right away, and the calendar shows the result as soon as it's done
-- An open page picks up a new version on its own
-
-Planned:
-
-- A shared or pasted event page link becomes a quick-add draft ([#105](https://github.com/Oshyan/better-cal/issues/105))
+- A shared or pasted event page link becomes a quick-add draft ([#105](https://github.com/Oshyan/better-cal/issues/105)), and Cmd/Ctrl+V on the calendar opens quick add with what you copied
 - Quick add suggests calendars, tags and people after `/` `#` `@` ([#169](https://github.com/Oshyan/better-cal/issues/169))
 - Jump to date also takes a view, like "day view of June 9" ([#12](https://github.com/Oshyan/better-cal/issues/12))
 - A setting per calendar to hide events its source marks cancelled ([#135](https://github.com/Oshyan/better-cal/issues/135))
-- Bulk-edit the approved senders for email ingest, with wildcards ([#151](https://github.com/Oshyan/better-cal/issues/151))
+- Edit the approved senders for email ingest as text, with wildcards ([#151](https://github.com/Oshyan/better-cal/issues/151))
 - A number on the installed app's icon: Review items waiting, events today, or events still to come today. Off by default ([#170](https://github.com/Oshyan/better-cal/issues/170))
+- Holidays marked with a stripe across the day's header, sidebar groups in any order, and Cmd/Ctrl+Enter to save from the editor
+- Plugins wait for their required settings, Run now runs right away, and an open page picks up a new version on its own
+
+The [changelog](CHANGELOG.md) has the full list, fixes included.
+
+## 1.4.x (in progress)
+
+Done so far:
+
+- The sidebar stays beside Settings, Review and the other pages on a computer
+- A plugin's first run starts when you turn it on, and its form keeps later fields out of reach until the required ones are filled in
+- Plugin runs started by Run now or a settings save wait for the worker's lock, so they can't write during an update (a Low finding from the review of 1.0 to 1.4)
 
 ## 1.5: Filters and your own layer
 

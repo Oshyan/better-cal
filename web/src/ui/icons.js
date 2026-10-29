@@ -33,9 +33,9 @@ export function CalDot({ cal, color, deco }) {
   // A calendar subscribed by web address wears a link, the same way a plugin
   // calendar wears its icon: where it comes from, read at a glance. Google's
   // calendars keep the ring (their G follows the name).
-  if (feed && cal.provider !== 'google') {
+  if (isLinkFeed(cal)) {
     return html`<span class="bc-cal-dot is-icon is-link" title="Subscribed from a web address" style=${`color:${c}`}>
-      <${Icon} name="link" size=${12} />
+      <${LinkMark} size=${12} />
     </span>`;
   }
   return feed
@@ -62,7 +62,7 @@ const GEAR_PATH =
 
 // Bodies are built per call (never hoisted): preact mutates vnodes, so a
 // shared constant rendered in two places at once would corrupt the tree.
-export function Icon({ name, size = 15 }) {
+export function Icon({ name, size = 15, stroke = 1.4 }) {
   const body = {
     settings: html`<path d=${GEAR_PATH} fill="currentColor" stroke="none" />`,
     outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
@@ -249,9 +249,23 @@ export function Icon({ name, size = 15 }) {
   }[name === 'organize' ? 'folder' : name];
   return html`<svg
     viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
-    fill="none" stroke="currentColor" stroke-width="1.4"
+    fill="none" stroke="currentColor" stroke-width=${stroke}
     stroke-linecap="round" stroke-linejoin="round"
   >${body}</svg>`;
+}
+
+/** Subscribed by web address, and not a Google or plugin calendar. */
+export function isLinkFeed(cal) {
+  return !!(cal && cal.kind === 'subscribed' && cal.provider !== 'google' && !cal.pluginId);
+}
+
+// The mark of a calendar subscribed by web address: a link drawn with a 0.7px
+// line whatever its size. The icons' usual line (1.4 of 16) thickens as an
+// icon shrinks, and at dot size the two loops ran into a blob; this slighter
+// line keeps them apart at 9px.
+const MARK_LINE_PX = 0.7;
+export function LinkMark({ size = 9 }) {
+  return html`<${Icon} name="link" size=${size} stroke=${MARK_LINE_PX * 16 / size} />`;
 }
 
 // Map pin preceding location text (agenda rows, event popover, detail view):

@@ -10,7 +10,7 @@
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
-import { Icon, PluginGlyph } from './icons.js';
+import { Icon, PluginGlyph, LinkMark, isLinkFeed } from './icons.js';
 import { isPendingLocation } from '../lib/maps.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
@@ -154,7 +154,9 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
   >
     ${occ.relationship === 'context'
       ? html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`
-      : html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`}
+      : isLinkFeed(cal)
+        ? html`<span class="bc-chip-dot is-link" style=${`color:${color}`}><${LinkMark} /></span>`
+        : html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`}
     ${timeLabel !== null
       ? html`<span class="bc-chip-time">${timeLabel}</span>`
       : timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
@@ -202,6 +204,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
     ${!seg.contLeft && occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
+    ${!seg.contLeft && occ.relationship !== 'context' && isLinkFeed(cal) && html`<span class="bc-feed-mark"><${LinkMark} /></span>`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     ${note ? html`<span class="bc-bar-note">${note}</span>` : html`<${DurationSuffix} occ=${occ} />`}
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
@@ -254,6 +257,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
     <span class="bc-block-line">
       ${occ.isGroup && html`<${StackGlyph} />`}
       ${occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
+      ${occ.relationship !== 'context' && isLinkFeed(cal) && html`<span class="bc-feed-mark"><${LinkMark} /></span>`}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
       <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}

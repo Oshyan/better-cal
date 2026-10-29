@@ -762,6 +762,13 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 34%, transparent);
 }
 .bc-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+/* A subscribed calendar's event wears a link in the dot's place (and before
+   the title in bars and blocks, where the fill is the calendar's color, so it
+   takes the text's color). It fades with the dot on quieter events. */
+.bc-chip-dot.is-link { width: 9px; height: 9px; display: inline-flex; align-items: center; justify-content: center; background: none; }
+.bc-chip-dot.is-link svg, .bc-feed-mark svg { display: block; }
+.bc-feed-mark { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
+.bc-block .bc-feed-mark { display: inline-flex; vertical-align: -1px; }
 .bc-chip-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: none; font-size: 10.5px; }
 /* In month cells the title wins the space fight: pill collapses to the dot glow, time hides when the cell is tight */
 .bc-cell .bc-chip .bc-new-pill { display: none; }
@@ -1291,6 +1298,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-dayexpand-row .bc-chip.cont-l { padding-left: 16px; }
 .bc-dayexpand-row .bc-chip-dot { margin-top: 5px; }
+.bc-dayexpand-row .bc-chip-dot.is-link { margin-top: 4px; }
 .bc-dayexpand-row .bc-chip-time { min-width: 58px; font-size: 11.5px; line-height: 17px; }
 .bc-dayexpand-row .bc-chip-title { white-space: normal; overflow-wrap: anywhere; line-height: 17px; font-size: 12.5px; }
 .bc-dayexpand-row .bc-chip.cont-l::before,

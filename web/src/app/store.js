@@ -479,7 +479,10 @@ export function calendarMeta() {
   // editable and provider are what the grids' drags check: whether an event
   // can be copied with Option/Alt or dropped onto a sidebar calendar or
   // person. Without them every event read as a feed's and those drops did
-  // nothing (broken when Google write-through arrived).
-  for (const c of state.calendars) meta[c.id] = { color: c.color, name: c.name, visible: c.visible, editable: !!c.editable, provider: c.provider || null };
+  // nothing (broken when Google write-through arrived). kind and pluginId
+  // let an event from a calendar subscribed by web address wear its link.
+  for (const c of state.calendars) {
+    meta[c.id] = { color: c.color, name: c.name, visible: c.visible, editable: !!c.editable, provider: c.provider || null, kind: c.kind, pluginId: c.pluginId || null };
+  }
   return meta;
 }

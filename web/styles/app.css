@@ -876,17 +876,24 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-cell-head .bc-ctxstrip { flex: 0 1 auto; min-width: 0; }
 .bc-tg-vday-head .bc-ctxstrip { margin-left: 6px; }
 .bc-agenda-day .bc-ctxstrip { margin-left: 10px; vertical-align: middle; }
-/* A moment on the timeline: a short dashed lead-in and the label, laid out
-   as a row so the line never runs under the text, and inset from the column
-   edges so neighbouring days' moments do not read as one stepped line. */
-.bc-ctx-mark { position: absolute; left: 6px; right: 4px; height: 0; z-index: 3; pointer-events: none; display: flex; align-items: center; gap: 3px; }
-.bc-ctx-mark-line { flex: 1 1 auto; min-width: 8px; border-top: 1px dashed var(--fg-muted); opacity: 0.55; }
+/* A moment on the timeline: its label first, filled with the calendar's
+   color (knocked out of whatever it crosses), then a solid line in that color
+   to the column's end. Laid out as a row so the line never runs under the
+   text, and inset from the column edges so neighbouring days' moments do not
+   read as one stepped line. */
+.bc-ctx-mark { position: absolute; left: 3px; right: 4px; height: 0; z-index: 3; pointer-events: none; display: flex; align-items: center; gap: 0; }
+.bc-ctx-mark-line { flex: 1 1 auto; min-width: 8px; border-top: 1.5px solid var(--fg-muted); opacity: 0.85; }
 .bc-ctx-mark-label {
-  flex: none; display: inline-flex; align-items: center; gap: 2px; pointer-events: auto; cursor: pointer;
-  font-size: 9.5px; font-style: italic; line-height: 1; color: var(--fg-muted);
-  padding: 2px 3px; border-radius: 3px; white-space: nowrap;
+  flex: none; display: inline-flex; align-items: center; gap: 3px; pointer-events: auto; cursor: pointer;
+  font-size: 10px; font-weight: 600; line-height: 1;
+  padding: 2px 5px; border-radius: 4px; white-space: nowrap;
+  box-shadow: 0 0 0 1.5px var(--bg);
 }
-.bc-ctx-mark-label:hover, .bc-ctx-mark-label:focus-visible { color: var(--fg); background: var(--bg-inset); }
+.bc-ctx-mark-label .bc-ctx-token-time { opacity: 0.85; font-weight: 500; }
+.bc-ctx-mark-label:hover, .bc-ctx-mark-label:focus-visible { filter: brightness(1.08); outline: none; box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px currentColor; }
+/* A plugin's shaded window around a moment (a tide): behind the events, a
+   gradient strongest at the moment and gone at both edges (inline style). */
+.bc-tg-window { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; }
 .bc-badge.is-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 :is(.bc-bar, .bc-block) .bc-ctx-glyph { margin-right: 4px; }
 .bc-block .bc-ctx-glyph { display: inline-block; vertical-align: -1px; }

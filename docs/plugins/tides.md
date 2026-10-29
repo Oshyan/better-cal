@@ -22,7 +22,7 @@ For low tides and high tides separately:
 
 Times of day, days and sunrise are all at the station, in its local time, since that's where the tide happens. The events themselves show at their true moment in your own time zone, so a station in Hawaii shows its 6 AM low at 9 AM if you're on Pacific time.
 
-Each calendar looks up to 365 days ahead (90 to start). "Shade around each tide" also shades the calendar for a number of minutes either side of each tide shown, which is handy for tide-pooling or launching a kayak.
+Each calendar looks up to 365 days ahead (90 to start). "Shade around each tide" also shades the week and day views for a number of minutes either side of each tide shown, strongest at the tide and fading out, which is handy for tide-pooling or launching a kayak. Each tide is a line across the day at its time, labelled with its height and time in the calendar's color.
 
 ## What Shows
 

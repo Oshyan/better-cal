@@ -6,6 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Tides are easier to see:** each tide is a solid line across the week and day views in its calendar's color, labelled at the left with its height and time. "Shade around each tide" now shades the timeline around the tide, fading out from it, instead of drawing an all-day bar. The calendar's icon is a single wave with an arrow, and a color change shows straight away everywhere, including the tide icons in the day headers.
 - **Calendar names get the sidebar's full width:** Only and the gear no longer hold space at rest. They appear when you point at a row, and the name shortens only then. A calendar subscribed by web address shows a link icon in its color where the ring was, as plugin calendars show theirs, and so do its events on the calendar: in place of the dot, or before the title in all-day bars and week and day blocks. Every show/hide toggle now sits at the same right edge.
 - **Undo says what it would undo:** the toast after a change names the event on its first line and says what happened on the second, like "Moved in Fibery · Nov 6 → Nov 17", "Resized · ends 5:00 PM" or "Changed the title and place". A change to a whole series says so.
 - **The sidebar stays on Settings, Review, People and the other pages** on a computer, so you can go from page to page, or back to a date with the mini-month, without returning to the calendar first. The toolbar's hamburger still shows or hides it. Phones are unchanged.

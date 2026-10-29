@@ -27,7 +27,7 @@ export function CalDot({ cal, color, deco }) {
   // the calendar's own color: same slot, same size, more information.
   if (deco && (deco.icon || deco.iconPath)) {
     return html`<span class="bc-cal-dot is-icon" style=${`color:${c}`} title="Provided by a plugin">
-      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} />
+      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} stroke=${MARK_LINE_PX * 16 / 12} />
     </span>`;
   }
   // A calendar subscribed by web address wears a link, the same way a plugin
@@ -313,7 +313,7 @@ export function GoogleG({ size = 12 }) {
   </svg>`;
 }
 
-export function PluginGlyph({ icon, iconPath, size = 11 }) {
+export function PluginGlyph({ icon, iconPath, size = 11, stroke = 1.5 }) {
   // A plugin may ship its own icon as PATH DATA. The host builds the <svg>
   // around it — plugins never supply markup — so there is no element that could
   // carry a script, a foreignObject or an external reference, and the viewBox
@@ -323,7 +323,7 @@ export function PluginGlyph({ icon, iconPath, size = 11 }) {
   if (iconPath) {
     return html`<svg
       viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
-      fill="none" stroke="currentColor" stroke-width="1.5"
+      fill="none" stroke="currentColor" stroke-width=${stroke}
       stroke-linecap="round" stroke-linejoin="round"
     ><path d=${iconPath} /></svg>`;
   }

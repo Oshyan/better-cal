@@ -288,7 +288,7 @@ Since `myProposals()` returns no content, "has anything changed since I last pro
 ## Output Shapes
 
 1. **Materialized events** (`syncEvents`): a read-only calendar that behaves like a subscribed feed, with a visibility toggle, normal rendering and no cost to the events window. See `weather`.
-2. **Overlay bands** (`replaceRanges`): ranges drawn behind the calendar; clicking one opens a host info card with your `detailHtml`. They get a sidebar visibility toggle. See `tides`.
+2. **Overlay bands** (`replaceRanges`): ranges drawn behind the calendar; clicking one opens a host info card with your `detailHtml`. They get a sidebar visibility toggle. A range on one of your own calendars that's shorter than a day is a **window** instead: it shades the week and day timelines, strongest at its middle and fading to both edges, and isn't drawn in month view. Center it on the moment it surrounds. Bands and windows are drawn in their calendar's current color. See `tides`.
 3. **Warnings** (`replaceWarnings`): findings on the ops page, optionally linked to an event with `eventId`. No calendar objects. See `lint`.
 
 ### Materialized Events

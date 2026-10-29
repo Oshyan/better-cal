@@ -27,6 +27,7 @@ import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
+import { withAlpha } from '../lib/color.js';
 import { COMPACT_QUERY, PHONE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { swallowClickOfThisPress } from './outside.js';
@@ -115,7 +116,7 @@ export function TimeGrid({
   infinite = false, vstack = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange, onVisibleDay,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay, onExpandDay,
-  onDropToCalendar, onDropToPerson, hiddenDays,
+  onDropToCalendar, onDropToPerson, hiddenDays, windows = [],
 }) {
   const rootRef = useRef(null);
   const scrollRef = useRef(null);  // vertical time scroller
@@ -990,6 +991,33 @@ export function TimeGrid({
     ? { a: epochDayOfKey(draft.startKey), b: epochDayOfKey(draft.endKey) }
     : null;
 
+  // A plugin's shaded window on a day (App.js pluginWindows): strongest at
+  // its middle, the moment it surrounds, fading to nothing at both edges.
+  // Clipped at midnight, the peak stays where the moment is.
+  const dayWindows = (k) => {
+    if (!windows || windows.length === 0) return [];
+    const from = dateOfDayKey(k).getTime();
+    const to = dateOfDayKey(keyOfEpochDay(epochDayOfKey(k) + 1)).getTime();
+    const out = [];
+    for (const w of windows) {
+      if (w.endMs <= from || w.startMs >= to) continue;
+      const s = Math.max(w.startMs, from);
+      const e = Math.min(w.endMs, to);
+      const sMin = minutesOfDay(new Date(s));
+      const eMin = e >= to ? MINUTES_DAY : minutesOfDay(new Date(e));
+      if (eMin <= sMin) continue;
+      const peakMin = sMin + ((w.startMs + w.endMs) / 2 - s) / 60000;
+      const pct = Math.max(0, Math.min(100, ((peakMin - sMin) / (eMin - sMin)) * 100));
+      const strong = withAlpha(w.color || '#2e8b8b', 0.28);
+      out.push({
+        id: w.id,
+        style: `top:${(sMin / 60) * HOUR_H}px;height:${((eMin - sMin) / 60) * HOUR_H}px;`
+          + `background:linear-gradient(to bottom, transparent, ${strong} ${pct.toFixed(1)}%, transparent)`,
+      });
+    }
+    return out;
+  };
+
   const dayCols = days.map((k, i) => {
     const ed = epochDayOfKey(k);
     const inRange = rangeSel && ed >= rangeSel.a && ed <= rangeSel.b;
@@ -1002,6 +1030,7 @@ export function TimeGrid({
     style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
     onPointerDown=${dragCreate}
   >
+    ${dayWindows(k).map((w) => html`<div key=${w.id} class="bc-tg-window" aria-hidden="true" style=${w.style}></div>`)}
     ${layoutByDay[i].map((item) => {
       const top = (item.startMin / 60) * HOUR_H;
       const height = Math.max(((item.visualEnd - item.startMin) / 60) * HOUR_H - 2, 18);

@@ -455,16 +455,39 @@ export function App() {
       .catch(() => { plugRangeKeyRef.current = null; });
   }, [visMonthKey, pluginSeq]);
 
+  // A range on one of a plugin's own calendars that's shorter than a day (a
+  // tide's shading) is a window on the week and day timelines, drawn
+  // strongest at its middle and fading to both edges; as an all-day band it
+  // read as the whole day. Longer ranges, and plugin-wide ones (travel, trips),
+  // stay bands. Every range takes its calendar's color as it is now: the
+  // color stored with it is from the plugin's last run.
+  const isWindow = (r) => r.calendarId != null && parseISO(r.end) - parseISO(r.start) < 86400000;
+  const pluginWindows = useMemo(() => {
+    const out = [];
+    const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
+    for (const [pid, entry] of Object.entries(pluginRanges)) {
+      if (pluginHidden && pluginHidden[pid]) continue;
+      for (const r of entry.ranges || []) {
+        if (!isWindow(r)) continue;
+        const cal = calById.get(r.calendarId);
+        if (!cal || cal.visible !== true) continue;
+        out.push({ id: pid + ':' + r.id, startMs: parseISO(r.start).getTime(), endMs: parseISO(r.end).getTime(), color: cal.color || r.color });
+      }
+    }
+    return out;
+  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
+
   const pluginOccs = useMemo(() => {
     const out = [];
     const decoBy = {};
     for (const pl of (state.plugins || [])) if (pl.decoration) decoBy[pl.id] = pl.decoration;
     // A band that belongs to one of a plugin's calendars hides with it.
-    const calVisible = new Map((calendarsForRanges || []).map((c) => [c.id, c.visible]));
+    const calById = new Map((calendarsForRanges || []).map((c) => [c.id, c]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
       if (pluginHidden && pluginHidden[pid]) continue;
       for (const r of entry.ranges || []) {
-        if (r.calendarId != null && calVisible.get(r.calendarId) !== true) continue;
+        if (r.calendarId != null && (calById.get(r.calendarId) || {}).visible !== true) continue;
+        if (isWindow(r)) continue;
         const startKey = dayKeyOf(parseISO(r.start));
         const endKey = dayKeyOf(new Date(parseISO(r.end).getTime() - 60000));
         out.push({
@@ -472,7 +495,7 @@ export function App() {
           eventId: null,
           calendarId: null,
           pluginId: pid,
-          pluginColor: r.color || (decoBy[pid] && decoBy[pid].color) || null,
+          pluginColor: (r.calendarId != null && (calById.get(r.calendarId) || {}).color) || r.color || (decoBy[pid] && decoBy[pid].color) || null,
           pluginIcon: (decoBy[pid] && decoBy[pid].icon) || null,
           pluginIconPath: (decoBy[pid] && decoBy[pid].iconPath) || null,
           pluginAnim: (decoBy[pid] && decoBy[pid].animation) || null,
@@ -491,7 +514,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden, calendarsForRanges]);
+  }, [pluginRanges, pluginHidden, calendarsForRanges]); // eslint-disable-line
 
   const occurrencesWithAvail = useMemo(
     () => {
@@ -908,6 +931,7 @@ export function App() {
       key="week"
       infinite=${true}
       occurrences=${occurrences}
+      windows=${pluginWindows}
       hiddenDays=${hiddenDays}
       calendars=${calMeta}
       dimSet=${dimSet}
@@ -933,6 +957,7 @@ export function App() {
       vstack=${true}
       days=${[s.anchor]}
       occurrences=${occurrences}
+      windows=${pluginWindows}
       hiddenDays=${hiddenDays}
       calendars=${calMeta}
       dimSet=${dimSet}

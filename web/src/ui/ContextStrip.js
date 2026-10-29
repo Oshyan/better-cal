@@ -5,6 +5,7 @@
 
 import { html, useState, useLayoutEffect, useRef } from '../../vendor/index.js';
 import { Icon } from './icons.js';
+import { contrastText, ink } from '../lib/color.js';
 import { contextToken, contextTitle, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
 
 const CONTEXT_RENDER_MAX = 100;
@@ -19,9 +20,17 @@ function keyOpen(onOpen, occ, e) {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(onOpen, occ, e); }
 }
 
-/** The token's icon: a host icon, a literal glyph, or the calendar's hollow square. */
-export function TokenIcon({ token, cal, size = 10 }) {
-  if (token.icon && HOST_ICON.test(token.icon)) return html`<span class="bc-ctx-icon"><${Icon} name=${token.icon} size=${size} /></span>`;
+/**
+ * The token's icon: a host icon, a literal glyph, or the calendar's hollow
+ * square. A host icon wears its calendar's color (as ink), so a tide or a
+ * sunset is found by color across a month; `plain` leaves it in the text's
+ * color, for the timeline's filled label.
+ */
+export function TokenIcon({ token, cal, size = 10, plain = false }) {
+  if (token.icon && HOST_ICON.test(token.icon)) {
+    const tint = !plain && cal && cal.color ? `color:${ink(cal.color)}` : undefined;
+    return html`<span class="bc-ctx-icon" style=${tint}><${Icon} name=${token.icon} size=${size} /></span>`;
+  }
   if (token.icon) return html`<span class="bc-ctx-emoji">${token.icon}</span>`;
   return html`<span class="bc-ctx-glyph" style=${`border-color:${(cal && cal.color) || 'var(--fg-muted)'}`}></span>`;
 }
@@ -104,21 +113,26 @@ export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more
   </span>`;
 }
 
-/** A timed context event on the timeline: a dashed hairline at its minute with a small label, never a block. */
+/**
+ * A timed context event on the timeline: a line across the day at its minute
+ * in the calendar's color, never a block. Its label leads at the left, filled
+ * with that color, so it reads over events and stays near the hour labels.
+ */
 export function ContextMark({ occ, cal, top, onOpen }) {
   const tk = contextToken(occ, cal, 18);
-  // At hairline size the horizon glyphs turn to mud; the plain sun reads.
+  // At this size the horizon glyphs turn to mud; the plain sun reads.
   if (tk.icon === 'sunrise' || tk.icon === 'sunset') tk.icon = 'sun';
-  const color = (cal && cal.color) || 'var(--fg-muted)';
+  const color = (cal && cal.color) || '#8b93a4';
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
-    <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
     <span
       role="button" tabindex="0" class="bc-ctx-mark-label"
+      style=${`background:${color};color:${contrastText(color)}`}
       data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occ, e)}
       onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
-    ><${TokenIcon} token=${tk} cal=${cal} size=${11} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
+    ><${TokenIcon} token=${tk} cal=${cal} size=${11} plain=${true} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
+    <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
   </div>`;
 }
 

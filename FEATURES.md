@@ -66,7 +66,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - A confirmation before unsaved details are lost.
 - Events open in a side panel on a desktop (the sheet on a phone) with everything: when, the invitation reply, where with Directions or Join, reminders, people, map, description, plugin data and the source. A fixed toolbar (Edit, Move, More, For me), and `[` / `]` to step through the day's events.
 - Copy an event to another calendar from More.
-- An undo toast after destructive actions, backed by the activity log.
+- An undo toast after destructive actions, backed by the activity log. It names the event and says what happened to it, with the change itself when it's short ("Moved · Nov 6 → Nov 17").
 
 ### Trips
 

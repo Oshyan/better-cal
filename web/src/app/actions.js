@@ -14,6 +14,7 @@ import { extendTripSpan } from '../ui/trips.js';
 import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
+import { timeChange, listWords } from '../lib/changeline.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -291,6 +292,18 @@ export function pluginBacked(occ) {
 }
 export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
 export const NO_UNDO = "Can't be undone";
+
+// Undo toasts name the item on their first line and say what happened to it
+// on the second, with the change itself when it's short ("Moved · Nov 6 →
+// Nov 17"), so Undo never has to be taken on trust.
+function itemName(occ) { return (occ && occ.title) || 'Untitled event'; }
+function said(what, change) { return change ? what + ' · ' + change : what; }
+// Which occurrences of a series a change took, said only when it isn't the
+// one the action assumes (a drag takes this one; a calendar move, all).
+function seriesWords(occ, scope, usual) {
+  if (!occ || !occ.recurring || !scope || scope === usual) return '';
+  return scope === 'all' ? ' (all in series)' : scope === 'following' ? ' (this and following)' : ' (this occurrence)';
+}
 export function googleCalendar(calendarId) {
   const cal = state.calendars.find((c) => c.id === calendarId);
   return !!(cal && cal.provider === 'google');
@@ -317,7 +330,8 @@ function maybePromptTripExit(occ, newStart, newEnd) {
   const ts = parseISO(trip.start).getTime();
   const te = parseISO(trip.end).getTime();
   if (e > ts && s < te) return; // still overlaps the trip
-  toast('"' + (occ.title || 'Event') + '" is now outside trip "' + (trip.title || '') + '"', {
+  toast('Now outside ' + (trip.title || 'its trip'), {
+    title: itemName(occ),
     duration: 12000,
     actions: [
       {
@@ -326,7 +340,7 @@ function maybePromptTripExit(occ, newStart, newEnd) {
           const ext = extendTripSpan(trip, { ...occ, start: newStart, end: newEnd });
           if (!ext) return;
           api('/events/' + trip.eventId, { method: 'PATCH', body: { start: ext.start, end: ext.end } })
-            .then(() => { toast('Trip extended', { undoable: true }); refreshWindow(); })
+            .then(() => { toast(said('Extended', timeChange(trip, { ...ext, allDay: trip.allDay })), { title: itemName(trip), undoable: true }); refreshWindow(); })
             .catch((err) => toast('Extend failed: ' + err.message, { error: true }));
         },
       },
@@ -347,7 +361,8 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
-    toast(viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ), note: NO_UNDO });
+    const verb = (viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Moved at Google' : 'Moved') + seriesWords(occ, scope || 'this', 'this');
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -369,7 +384,8 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
-    toast(viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ), note: NO_UNDO });
+    const verb = (viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Resized at Google' : 'Resized') + seriesWords(occ, scope || 'this', 'this');
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -417,14 +433,15 @@ export async function createEvent(fields) {
       // Quick add's own window shows this itself, then closes (QuickAddWindow.js).
     } else if (cal && !cal.visible) {
       toast(`Created in ${cal.name}, which is hidden${repeats}`, {
+        title: itemName(occ),
         actionLabel: 'Show it',
         onAction: () => toggleCalendarVisible(cal),
       });
     } else if (cal && cal.provider === 'google') {
       // Created at Google through the connector: no local snapshot to undo to.
-      toast('Event created at Google' + repeats, { note: NO_UNDO });
+      toast('Created at Google' + repeats, { title: itemName(occ), note: NO_UNDO });
     } else {
-      toast('Event created' + repeats, { undoable: true });
+      toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undoable: true });
     }
     if (!state.quickAddWindow) refreshWindow(); // no calendar behind quick add's own window
     return occ;
@@ -454,7 +471,20 @@ function followSplit(occ, res) {
   set(patch);
 }
 
-export async function updateEvent(occ, fields, scope) {
+// The second line of an update's toast. words is what the editor says it
+// changed (lib/changeline.js editedWords); a bare start/end edit is a new time.
+function updateLine(occ, fields, scope, words, google) {
+  const timeOnly = Object.keys(fields).every((k) => ['start', 'end', 'allDay', 'tzid'].includes(k));
+  const list = words || (timeOnly ? ['time'] : null);
+  const where = (google ? ' at Google' : '') + seriesWords(occ, scope, 'this');
+  if (list && list.length === 1 && list[0] === 'time' && fields.start) {
+    return said('New time' + where, timeChange(occ, { start: fields.start, end: fields.end, allDay: fields.allDay != null ? fields.allDay : occ.allDay }));
+  }
+  if (list && list.length > 0 && list.length <= 3) return 'Changed the ' + listWords(list) + where;
+  return 'Updated' + where;
+}
+
+export async function updateEvent(occ, fields, scope, words = null) {
   const body = { ...fields };
   if (occ.recurring) {
     body.scope = scope || 'this';
@@ -464,7 +494,9 @@ export async function updateEvent(occ, fields, scope) {
     const res = await api('/events/' + occ.eventId, { method: 'PATCH', body });
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
-    toast(wentToGoogle ? 'Event updated at Google' : 'Event updated', { undoable: !wentToGoogle, note: NO_UNDO });
+    toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
+      title: fields.title || itemName(occ), undoable: !wentToGoogle, note: NO_UNDO,
+    });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
     followSplit(occ, res);
@@ -492,7 +524,7 @@ export async function deleteEvent(occ, scope) {
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
     await api('/events/' + occ.eventId, { method: 'DELETE', body });
-    toast(googleBacked(occ) ? 'Event deleted at Google' : 'Event deleted', { undoable: !googleBacked(occ), note: NO_UNDO });
+    toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
     for (const r of removed) state.occ.set(r.instanceId, r);
@@ -510,7 +542,7 @@ export async function copyEventTo(occ, calendarId, scope) {
     const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
     if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast('Copied to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { title: created.title || itemName(occ), duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -530,7 +562,7 @@ export async function duplicateEvent(occ) {
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
     refreshWindow();
     set({ popover: null, editor: { mode: 'edit', occ: created, focus: 'date' } });
-    toast('Duplicated "' + (created.title || occ.title) + '". Set its new date.', { duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast('Duplicated. Set its new date.', { title: created.title || itemName(occ), duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
     return created;
   } catch (e) {
     toast('Duplicate failed: ' + e.message, { error: true });
@@ -549,7 +581,7 @@ export async function copyEventAt({ instanceId, newStart, newEnd }) {
     const body = { duplicate: true, scope: occ.recurring ? 'this' : 'all', start: newStart, end: newEnd };
     if (occ.recurring) body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied "' + (created.title || occ.title) + '"' + (cal.provider === 'google' ? ' (and at Google)' : ''), { undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast(said('Copied' + (cal.provider === 'google' ? ' at Google' : ''), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: created.title || itemName(occ), undoable: cal.provider !== 'google', note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -563,7 +595,7 @@ const ATTENDANCE_TOASTS = {
   none: 'Attendance cleared',
   interested: 'Marked interested',
   going: 'Marked going',
-  hidden: 'Event hidden',
+  hidden: 'Hidden',
 };
 
 export async function cycleAttendance(occ) {
@@ -586,7 +618,7 @@ export async function setRelationship(occ, relationship, scope) {
     const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
-    toast(relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : ''), { undoable: !google, note: NO_UNDO });
+    toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: !google, note: NO_UNDO });
     if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
     else if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
     return relationship;
@@ -622,7 +654,7 @@ export async function setAttendance(occ, attendance, scope) {
     const body = { attendance };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
-    toast(ATTENDANCE_TOASTS[attendance] || 'Attendance updated', { undoable: true });
+    toast((ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: true });
     // Hidden events leave the window payload on the next fetch, and a series
     // answer changes more than this one occurrence; refresh so the cache
     // agrees with the server (undo refreshes again to restore).
@@ -678,7 +710,7 @@ export async function attachToTrip(tripOcc, memberOcc, { silent } = {}) {
       method: 'POST',
       body: { eventId: memberOcc.eventId },
     });
-    if (!silent) toast('Added to ' + (tripOcc.title || 'trip'), { undoable: true });
+    if (!silent) toast('Added to ' + (tripOcc.title || 'the trip'), { title: itemName(memberOcc), undoable: true });
     bumpTripLinks();
     refreshWindow();
     maybePromptExtendTrip(tripOcc, memberOcc);
@@ -692,7 +724,8 @@ export async function attachToTrip(tripOcc, memberOcc, { silent } = {}) {
 export async function detachFromTrip(tripEventId, memberOcc, { silent } = {}) {
   try {
     await api('/events/' + tripEventId + '/links/' + memberOcc.eventId, { method: 'DELETE' });
-    if (!silent) toast('Removed from trip', { undoable: true });
+    const trip = [...state.occ.values()].find((o) => o.isContainer && o.eventId === tripEventId);
+    if (!silent) toast('Removed from ' + ((trip && trip.title) || 'its trip'), { title: itemName(memberOcc), undoable: true });
     bumpTripLinks();
     refreshWindow();
     return true;
@@ -717,7 +750,7 @@ export function maybePromptExtendTrip(tripOcc, memberOcc) {
           method: 'PATCH',
           body: { start: ext.start, end: ext.end, ...(tripOcc.recurring ? { scope: 'all' } : {}) },
         });
-        toast('Trip extended', { undoable: true });
+        toast(said('Extended', timeChange(tripOcc, { ...ext, allDay: tripOcc.allDay })), { title: itemName(tripOcc), undoable: true });
         refreshWindow();
       } catch (e) {
         toast('Extend failed: ' + e.message, { error: true });
@@ -747,7 +780,7 @@ export async function deleteTripOnly(occ) {
   set({ popover: null });
   try {
     await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
-    toast('Trip removed, its events kept', { undoable: true });
+    toast('Trip removed, its events kept', { title: itemName(occ), undoable: true });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
@@ -771,7 +804,7 @@ export async function deleteTripAndMembers(occ, members) {
     }
     await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
     removeOccurrencesOfEvent(occ.eventId);
-    toast('Trip and its ' + members.length + (members.length === 1 ? ' event deleted' : ' events deleted'), { undoable: true });
+    toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undoable: true });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
@@ -816,8 +849,7 @@ export async function moveEventToCalendar(occ, calendarId, scope) {
     const body = { calendarId };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    const what = occ.recurring && body.scope === 'this' ? 'this occurrence of "' : occ.recurring && body.scope === 'following' ? 'the rest of "' : '"';
-    toast('Moved ' + what + (occ.title || 'event') + '" to ' + cal.name, { undoable: true });
+    toast('Moved to ' + cal.name + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: true });
     refreshWindow();
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -847,12 +879,14 @@ export async function linkPersonToEvent(occ, person, scope) {
     const body = { personIds: [...ids, addId] };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast('Added ' + personName + ' to "' + (occ.title || 'event') + '"', { undoable: true });
+    toast('Added ' + personName, { title: itemName(occ), undoable: true });
     refreshWindow();
   } catch (e) {
     toast('Link failed: ' + e.message, { error: true });
   }
 }
+
+function spanKind(sp) { return sp.kind ? sp.kind.charAt(0).toUpperCase() + sp.kind.slice(1) : 'Away'; }
 
 // Resize an availability band from either end: shift just that edge of the
 // underlying span by whole days, preserving its time of day.
@@ -865,7 +899,8 @@ export async function resizeAvailabilitySpanDays(spanId, startDeltaDays, endDelt
       method: 'PATCH',
       body: { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) },
     });
-    toast('Adjusted ' + sp.name + "'s " + sp.kind + ' time', { undoable: true });
+    const next = { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) };
+    toast(said(spanKind(sp) + ' time changed', timeChange(sp, next)), { title: sp.name, undoable: true });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Resize failed: ' + e.message, { error: true });
@@ -883,7 +918,7 @@ export async function moveAvailabilitySpan(spanId, deltaDays) {
       method: 'PATCH',
       body: { start: shift(sp.start), end: shift(sp.end) },
     });
-    toast('Moved ' + sp.name + "'s " + sp.kind + ' time', { undoable: true });
+    toast(said(spanKind(sp) + ' time moved', timeChange(sp, { start: shift(sp.start), end: shift(sp.end) })), { title: sp.name, undoable: true });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -901,7 +936,7 @@ export async function moveTrip(occ, deltaDays, withMembers) {
     const body = { start: newStart, end: newEnd };
     if (withMembers) body.moveMembers = true;
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast(withMembers ? 'Trip and its events moved' : 'Trip moved', { undoable: true });
+    toast(said(withMembers ? 'Moved with its events' : 'Moved', timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: itemName(occ), undoable: true });
     refreshWindow();
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -983,7 +1018,7 @@ export async function saveViewAs(name) {
   try {
     const view = await api('/views', { method: 'POST', body: { name, config: captureViewConfig() } });
     set({ savedViews: [...state.savedViews, view], activeViewId: view.id });
-    toast('View saved', { undoable: true });
+    toast('View saved', { title: name, undoable: true });
     return view;
   } catch (e) {
     toast('Save failed: ' + e.message, { error: true });
@@ -995,7 +1030,7 @@ export async function updateSavedView(view, fields) {
   try {
     const updated = await api('/views/' + view.id, { method: 'PATCH', body: fields });
     set({ savedViews: state.savedViews.map((v) => (v.id === view.id ? updated : v)) });
-    toast('View updated', { undoable: true });
+    toast('View updated', { title: updated.name || view.name, undoable: true });
     return updated;
   } catch (e) {
     toast('Update failed: ' + e.message, { error: true });
@@ -1010,7 +1045,7 @@ export async function deleteSavedView(view) {
       savedViews: state.savedViews.filter((v) => v.id !== view.id),
       activeViewId: state.activeViewId === view.id ? null : state.activeViewId,
     });
-    toast('View deleted', { undoable: true });
+    toast('View deleted', { title: view.name, undoable: true });
   } catch (e) {
     toast('Delete failed: ' + e.message, { error: true });
   }
@@ -1108,7 +1143,7 @@ export async function refreshCalendar(cal) {
 export async function deleteCalendar(cal) {
   try {
     await api('/calendars/' + cal.id, { method: 'DELETE' });
-    toast('Calendar deleted', { undoable: true });
+    toast('Calendar deleted', { title: cal.name, undoable: true });
     await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     refreshWindow();
     return true;
@@ -1148,7 +1183,7 @@ export async function renameFolder(folder, name) {
 export async function deleteFolder(folder) {
   try {
     await api('/folders/' + folder.id, { method: 'DELETE' });
-    toast('Folder "' + folder.name + '" deleted', { undoable: true });
+    toast('Folder deleted', { title: folder.name, undoable: true });
     await loadCalendars();
     return true;
   } catch (e) {

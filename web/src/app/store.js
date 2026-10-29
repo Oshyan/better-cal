@@ -437,7 +437,8 @@ export function removeOccurrencesOfEvent(eventId) {
 }
 
 let toastSeq = 0;
-// opts: undoable, error, duration, and an optional action prompt
+// opts: title (the item's name, a first line above text), undoable, error,
+// duration, and an optional action prompt
 // (actionLabel + onAction, with dismissLabel replacing the ✕ dismiss).
 // How long a toast stays (0.6.2): ten seconds when it offers Undo, so there
 // is time to read it and reach the button; six for a plain notice. The toast
@@ -449,6 +450,7 @@ export function toast(text, opts = {}) {
   set({
     toasts: [...state.toasts, {
       id, text, duration,
+      title: opts.title || null,
       undoable: !!opts.undoable,
       // Shown where Undo would be, for a write that has no undo (Google).
       note: opts.note || null,

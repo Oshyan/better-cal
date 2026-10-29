@@ -36,6 +36,7 @@ import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
+import { editedWords } from '../lib/changeline.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -744,7 +745,10 @@ export function EditorDrawer() {
     }
     let ok;
     if (occ) {
-      ok = await updateEvent(occ, fields, scope);
+      // What the edit changed, for the toast ("Changed the title and time").
+      let words = null;
+      try { words = editedWords(JSON.parse(initialSnapRef.current), form); } catch { /* no baseline: the toast says "Updated" */ }
+      ok = await updateEvent(occ, fields, scope, words);
     } else {
       const created = await createEvent(fields);
       ok = !!created;

@@ -33,6 +33,7 @@ The [changelog](CHANGELOG.md) has the full list, fixes included.
 Done so far:
 
 - The sidebar stays beside Settings, Review and the other pages on a computer
+- Undo toasts name the event and say what they'd undo, like "Moved · Nov 6 → Nov 17"
 - A plugin's first run starts when you turn it on, and its form keeps later fields out of reach until the required ones are filled in
 - Plugin runs started by Run now or a settings save wait for the worker's lock, so they can't write during an update (a Low finding from the review of 1.0 to 1.4)
 

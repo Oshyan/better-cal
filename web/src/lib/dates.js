@@ -291,6 +291,7 @@ export function fmtDayLong(d) { return dayLongFmt.format(d); }
 export function fmtDayMedium(d) { return dayMedFmt.format(d); }
 export function fmtDateShort(d) { return dateShortFmt.format(d); }
 export function fmtDateFull(d) { return dateFullFmt.format(d); }
+export function fmtDateShortYear(d) { return dateShortYearFmt.format(d); }
 
 export function localTz() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;

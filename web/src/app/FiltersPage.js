@@ -207,7 +207,7 @@ export function FiltersPage() {
     setBusy(true);
     try {
       await api('/filters', { method: 'POST', body });
-      toast(body.type === 'prompt' ? 'Filter created; evaluating in the background' : 'Filter created', { undoable: true });
+      toast(body.type === 'prompt' ? 'Filter created; evaluating in the background' : 'Filter created', { title: body.name || null, undoable: true });
       setCreateSeq((n) => n + 1);
       await load();
       refreshWindow();
@@ -221,7 +221,7 @@ export function FiltersPage() {
     setBusy(true);
     try {
       await api('/filters/' + id, { method: 'PATCH', body });
-      toast('Filter updated', { undoable: true });
+      toast('Filter updated', { title: body.name || null, undoable: true });
       setEditingId(null);
       await load();
       refreshWindow();
@@ -234,7 +234,7 @@ export function FiltersPage() {
   const toggle = async (f) => {
     try {
       await api('/filters/' + f.id, { method: 'PATCH', body: { enabled: !f.enabled } });
-      toast(f.enabled ? 'Filter disabled' : 'Filter enabled', { undoable: true });
+      toast(f.enabled ? 'Filter disabled' : 'Filter enabled', { title: f.name || null, undoable: true });
       await load();
       refreshWindow();
     } catch (err) {
@@ -246,7 +246,7 @@ export function FiltersPage() {
     if (f.id === editingId) setEditingId(null);
     try {
       await api('/filters/' + f.id, { method: 'DELETE' });
-      toast('Filter deleted', { undoable: true });
+      toast('Filter deleted', { title: f.name || null, undoable: true });
       await load();
       refreshWindow();
     } catch (err) {

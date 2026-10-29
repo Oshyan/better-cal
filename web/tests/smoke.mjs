@@ -33,6 +33,8 @@ import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jump
 import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, SUGGEST_MAX } from '../src/lib/markersuggest.js';
 import { pastedText } from '../src/lib/pastetext.js';
 import { sidebarGroups, moveGroup } from '../src/lib/sidebarorder.js';
+import { timeChange, editedWords, listWords } from '../src/lib/changeline.js';
+import { fmtDateShort as fmtDS, fmtDateShortYear as fmtDSY } from '../src/lib/dates.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
@@ -2870,6 +2872,35 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('quick range: an all-day span is kept', buildRange(allDay, span, false).end, at(2026, 8, 8));
   eq('quick range: moving the date makes it one day', buildRange(allDay, span, true).end, at(2026, 8, 4));
   eq('quick range: no date, nothing to save', buildRange({ ...timed, dateKey: '' }, null, false), null);
+}
+
+console.log('--- undo toast: time change wording ---');
+{
+  setTimeFormat('24');
+  const now = new Date(2026, 9, 28, 12);
+  const t = (y, mo, d, h = 0, mi = 0) => toISOWithOffset(new Date(y, mo - 1, d, h, mi));
+  const timed = (s, e) => ({ start: s, end: e, allDay: false });
+  const allDay = (s, e) => ({ start: s + 'T00:00:00+00:00', end: e + 'T00:00:00+00:00', allDay: true });
+  const day = (y, mo, d) => fmtDS(new Date(y, mo - 1, d));
+  eq('change: same day, new time', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 6, 16, 30), t(2026, 11, 6, 17, 30)), now), '15:00 → 16:30');
+  eq('change: new day, same time', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 17, 15), t(2026, 11, 17, 16)), now), day(2026, 11, 6) + ' → ' + day(2026, 11, 17));
+  eq('change: new day and time', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 17, 10), t(2026, 11, 17, 11)), now), day(2026, 11, 6) + ', 15:00 → ' + day(2026, 11, 17) + ', 10:00');
+  eq('change: all-day move', timeChange(allDay('2026-11-06', '2026-11-07'), allDay('2026-11-17', '2026-11-18'), now), day(2026, 11, 6) + ' → ' + day(2026, 11, 17));
+  eq('change: end dragged', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 6, 15), t(2026, 11, 6, 17)), now), 'ends 17:00');
+  eq('change: end dragged to midnight', timeChange(timed(t(2026, 11, 6, 22), t(2026, 11, 6, 23)), timed(t(2026, 11, 6, 22), t(2026, 11, 7, 0)), now), 'ends 00:00');
+  eq('change: end dragged past midnight names the day', timeChange(timed(t(2026, 11, 6, 22), t(2026, 11, 6, 23)), timed(t(2026, 11, 6, 22), t(2026, 11, 7, 1)), now), 'ends ' + day(2026, 11, 7) + ', 01:00');
+  eq('change: start dragged', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 17)), timed(t(2026, 11, 6, 14), t(2026, 11, 6, 17)), now), 'starts 14:00');
+  eq('change: all-day end dragged', timeChange(allDay('2026-11-06', '2026-11-07'), allDay('2026-11-06', '2026-11-09'), now), 'ends ' + day(2026, 11, 8));
+  eq('change: all-day to timed', timeChange(allDay('2026-11-06', '2026-11-07'), timed(t(2026, 11, 6, 9), t(2026, 11, 6, 10)), now), day(2026, 11, 6) + ' → ' + day(2026, 11, 6) + ', 09:00');
+  eq('change: moved and longer', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 7, 15), t(2026, 11, 7, 18)), now), day(2026, 11, 6) + ' → ' + day(2026, 11, 7) + ', ends 18:00');
+  eq('change: another year names it', timeChange(allDay('2026-12-30', '2026-12-31'), allDay('2027-01-04', '2027-01-05'), now), fmtDSY(new Date(2026, 11, 30)) + ' → ' + fmtDSY(new Date(2027, 0, 4)));
+  const form = { title: 'Dentist', calendarId: 3, start: '2026-11-06T15:00', end: '2026-11-06T16:00', allDay: false, tz: 'UTC', location: '', tags: '', people: [], rrule: null, reminders: null, rel: 'planned' };
+  eq('edited: title and time', editedWords(form, { ...form, title: 'Dentist checkup', end: '2026-11-06T16:30' }), ['title', 'time']);
+  eq('edited: a calendar reselected as text is unchanged', editedWords(form, { ...form, calendarId: '3' }), []);
+  eq('edited: people', editedWords(form, { ...form, people: [{ id: 1, name: 'Sam Sample' }] }), ['people']);
+  eq('edited: list of three', listWords(['title', 'time', 'place']), 'title, time and place');
+  eq('change: nothing changed', timeChange(timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), timed(t(2026, 11, 6, 15), t(2026, 11, 6, 16)), now), '');
+  setTimeFormat('12');
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

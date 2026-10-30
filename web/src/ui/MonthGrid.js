@@ -394,12 +394,24 @@ export function MonthGrid({
     setTopRef.current = el.scrollTop;
   }, []);
 
+  // A glide under way (Today, the arrows): the row it's heading for. Until it
+  // arrives, a geometry change re-aims it instead of setting scrollTop, which
+  // cancelled the smooth scroll part way when a window load landed (#183).
+  // It ends on arrival, or when you scroll yourself.
+  const glideRef = useRef(null);
+  const anchorTopRef = useRef(null);
+
   // Scroll handling via rAF throttle.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     let raf = 0;
+    const endGlide = () => { glideRef.current = null; };
     const onScroll = () => {
+      const gl = glideRef.current;
+      // Arrived (or as near as the scroller goes, at its end).
+      if (gl && anchorTopRef.current
+          && Math.abs(el.scrollTop - Math.min(anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight)) <= 1) glideRef.current = null;
       const g = geomRef.current;
       if (g.geo.fit && (setTopRef.current == null || Math.abs(el.scrollTop - setTopRef.current) >= 1)) {
         const w = g.geo.weekAt(el.scrollTop);
@@ -410,7 +422,13 @@ export function MonthGrid({
       raf = requestAnimationFrame(() => { raf = 0; recompute(); });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
+    const yours = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'scrollend'];
+    for (const t of yours) el.addEventListener(t, endGlide, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      for (const t of yours) el.removeEventListener(t, endGlide);
+      cancelAnimationFrame(raf);
+    };
   }, [recompute]);
 
   // Geometry changes (viewport resize, layout switch, container remount) must
@@ -438,6 +456,7 @@ export function MonthGrid({
     const lead = anchorAtTop ? 0 : Math.max(0, Math.round((h - g.height(row)) * ANCHOR_LINE));
     return Math.max(0, g.top(row) - lead);
   }, [anchorAtTop]);
+  anchorTopRef.current = anchorTop;
   const applyAnchor = useCallback((row) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -470,6 +489,11 @@ export function MonthGrid({
     if (!el) return;
     const prev = prevGeoRef.current;
     prevGeoRef.current = geo;
+    if (glideRef.current && pendingRowRef.current == null) {
+      el.scrollTo({ top: anchorTop(glideRef.current.row), behavior: 'smooth' });
+      recompute();
+      return;
+    }
     if (pendingRowRef.current != null && el.clientHeight > 0) {
       applyAnchor(pendingRowRef.current);
       settleAnchor();
@@ -515,10 +539,12 @@ export function MonthGrid({
       const top = anchorTop(w);
       if (Math.abs(top - el.scrollTop) <= el.clientHeight * 2.5) {
         pendingRowRef.current = null;
+        glideRef.current = { row: w };
         el.scrollTo({ top, behavior: 'smooth' });
         return;
       }
     }
+    glideRef.current = null;
     pendingRowRef.current = w;
     if (el.clientHeight > 0) {
       applyAnchor(w);

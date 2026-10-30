@@ -9,7 +9,9 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **More little fixes from [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
   - Overnight events (10 PM to 1 AM) keep their time: a chip in month view, a block on each day in week and day views, which you can move and resize.
   - Week view's all-day and multi-day bars can be moved and resized; in day view, dragging across midnight makes a timed event.
-  - The agenda keeps loading as you scroll, and no longer shows months it hasn't loaded as empty.
+  - The agenda keeps loading as you scroll, shows people's away times and plugin bands, and no longer shows months it hasn't loaded as empty.
+  - Next, a view switch and a reload start from where you've scrolled in the agenda and split view too.
+  - Today and the arrows no longer stop part way in month view; on Safari, day view's arrows no longer land a day off; and the phone's 3-day view goes to the 1st of a month, not the 15th.
   - A move no longer briefly snaps back when a refresh lands, and an event deleted elsewhere disappears even if it began before the dates on screen.
   - Smaller: away times and plugin bands load for the right months after quick moves, the phone's day title skips hidden calendars, month tokens give other zones' times on your clock, and the month label and mini-month follow view switches and "Show past events".
 

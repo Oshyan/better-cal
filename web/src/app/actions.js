@@ -130,6 +130,9 @@ export function stepAnchor(dir) {
 export function jumpAnchorFor(dayKey, granularity) {
   if (granularity !== 'month' && granularity !== 'year') return dayKey;
   if (!['month', 'weeks3', 'weeks2'].includes(state.view)) return dayKey;
+  // The phone's 3-day ribbon shows a few days, not a month: mid-month hid
+  // the 1st through about the 8th (#183).
+  if (state.view === 'month' && effectiveOverviewMode() === '3day') return dayKey;
   return dayKey.slice(0, 8) + '15';
 }
 

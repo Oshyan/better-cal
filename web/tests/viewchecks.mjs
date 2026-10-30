@@ -71,6 +71,25 @@ export async function run() {
     const ok = await until(() => st().anchor === want && sameMonth(st().visibleMonth, monthOf(want)) && st().visibleDays && st().visibleDays.start === want);
     return { ok, want, anchor: st().anchor, visibleMonth: st().visibleMonth };
   });
+  // Without the browser's scroll anchoring (Safari), each arrow press used to
+  // leave the view a day off the date it named. Turned off here to match.
+  await check('day view: the arrows land on their day without scroll anchoring', async () => {
+    const sc = document.querySelector('.bc-tg-scroll');
+    sc.style.overflowAnchor = 'none';
+    const topDay = () => {
+      let cur = null;
+      for (const p of sc.querySelectorAll('[data-vday]')) { if (p.offsetTop <= sc.scrollTop + 4) cur = p.dataset.vday; else break; }
+      return cur;
+    };
+    const off = [];
+    for (let i = 0; i < 4; i++) {
+      A.navigate(i < 2 ? 1 : -1);
+      await until(() => topDay() === st().anchor, 1500);
+      if (topDay() !== st().anchor) off.push(st().anchor + ' showed ' + topDay());
+    }
+    sc.style.overflowAnchor = '';
+    return { ok: off.length === 0, off };
+  });
   await check('day view: Today comes back to today', async () => {
     A.goToday();
     const ok = await until(() => st().anchor === today && sameMonth(st().visibleMonth, monthOf(today)));
@@ -118,6 +137,28 @@ export async function run() {
     A.setView('day');
     const ok = await until(() => document.querySelector('.bc-tg-vday-head') && st().anchor >= days.start && st().anchor <= days.end);
     return { ok, weekShowed: days, dayOpenedOn: st().anchor };
+  });
+
+  // Month with rows that fit their contents: Today glides, and a data load
+  // landing mid-glide used to stop it part way. Loads are simulated by
+  // nudging the occurrence version while it moves.
+  await check('month view: a glide finishes when data lands during it', async () => {
+    const rows = st().settings.monthRows;
+    S.set({ settings: { ...st().settings, monthRows: 'fit' } });
+    A.setView('month');
+    A.jumpToDate(addDays(today, 21));
+    await until(() => st().anchorSeen === st().scrollSeq);
+    await wait(500);
+    A.goToday();
+    for (let i = 0; i < 6; i++) { await wait(60); S.set({ occVersion: st().occVersion + 1 }); }
+    await wait(1500);
+    const sc = document.querySelector('.bc-month-scroll');
+    const cell = sc && sc.querySelector(`[data-day="${today}"]`);
+    const r = cell && cell.getBoundingClientRect();
+    const box = sc && sc.getBoundingClientRect();
+    const ok = !!(r && box && r.top >= box.top - 2 && r.bottom <= box.top + box.height * 0.75);
+    S.set({ settings: { ...st().settings, monthRows: rows } });
+    return { ok, todayRowTop: r && box ? Math.round(r.top - box.top) : null };
   });
 
   // A refresh leaves what's held on screen but marks everything outside the

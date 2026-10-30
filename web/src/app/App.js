@@ -396,6 +396,24 @@ export function App() {
   const visMonthKey = useStore((st) => (st.view !== 'day' && st.visibleMonth
     ? st.visibleMonth.year * 100 + st.visibleMonth.month
     : (st.anchor ? Number(st.anchor.slice(0, 4)) * 100 + Number(st.anchor.slice(5, 7)) : 0)));
+  // The months the away times and plugin bands are fetched for: three around
+  // the month on screen, or in the agenda its whole loaded stretch, which
+  // reaches much further (it lists them too).
+  const bandWin = (() => {
+    if (s.view === 'agenda') {
+      const at = dateOfDayKey(s.anchor).getTime();
+      const r = state.loadedRanges.find((x) => x.start <= at && x.end > at);
+      if (r) {
+        const a = new Date(r.start);
+        const b = new Date(r.end);
+        return { start: toISOWithOffset(new Date(a.getFullYear(), a.getMonth(), 1)), end: toISOWithOffset(new Date(b.getFullYear(), b.getMonth() + 1, 1)) };
+      }
+    }
+    const vm = visMonthKey
+      ? { year: Math.floor(visMonthKey / 100), month: visMonthKey % 100 }
+      : { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
+    return { start: toISOWithOffset(new Date(vm.year, vm.month - 2, 1)), end: toISOWithOffset(new Date(vm.year, vm.month + 1, 1)) };
+  })();
   const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
   const availKeyRef = useRef(null);
   useEffect(() => {
@@ -403,14 +421,10 @@ export function App() {
       if (state.availSpans.length > 0) set({ availSpans: [] });
       return;
     }
-    // The same month the plugin bands use (visMonthKey): in day view, the day
-    // you're on, which the view reports only when you scroll.
-    const vm = visMonthKey
-      ? { year: Math.floor(visMonthKey / 100), month: visMonthKey % 100 }
-      : { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
-    const start = new Date(vm.year, vm.month - 1 - 1, 1);
-    const end = new Date(vm.year, vm.month - 1 + 2, 1);
-    const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + availSeq;
+    // The same months the plugin bands use (bandWin): in day view, around
+    // the day you're on, which the view reports only when you scroll.
+    const { start, end } = bandWin;
+    const key = start + '|' + end + '|' + availSeq;
     // At boot this effect runs twice for the same months: once when people
     // finish loading, then again when the grid reports the month it settled
     // on — which is usually the month we had already guessed from today.
@@ -421,10 +435,10 @@ export function App() {
     // you scrolled past) landing last overwrote the newer months (#183).
     // A failure clears the key, and the next events load (a refresh, the
     // change poll, coming back online) tries again.
-    api('/availability?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
+    api('/availability?' + new URLSearchParams({ start, end }))
       .then((d) => { if (availKeyRef.current === key) set({ availSpans: d.spans || [] }); })
       .catch(() => { if (availKeyRef.current === key) availKeyRef.current = null; });
-  }, [anyPersonVisible, visMonthKey, availSeq, s.occVersion]); // eslint-disable-line
+  }, [anyPersonVisible, bandWin.start, bandWin.end, availSeq, s.occVersion]); // eslint-disable-line
 
   const availOccs = useMemo(() => availSpans.map((sp) => {
     const days = bandDays(sp.start, sp.end);
@@ -456,18 +470,15 @@ export function App() {
   const plugRangeKeyRef = useRef(null);
   useEffect(() => {
     if (!visMonthKey) return;
-    const y = Math.floor(visMonthKey / 100);
-    const m = visMonthKey % 100;
-    const start = new Date(y, m - 1 - 1, 1);
-    const end = new Date(y, m - 1 + 2, 1);
-    const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + pluginSeq;
+    const { start, end } = bandWin;
+    const key = start + '|' + end + '|' + pluginSeq;
     if (plugRangeKeyRef.current === key) return;
     plugRangeKeyRef.current = key;
     // Latest answer only, and a failure retries on the next events load (as above).
-    api('/plugins/ranges?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
+    api('/plugins/ranges?' + new URLSearchParams({ start, end }))
       .then((d) => { if (plugRangeKeyRef.current === key) set({ pluginRanges: d.plugins || {} }); })
       .catch(() => { if (plugRangeKeyRef.current === key) plugRangeKeyRef.current = null; });
-  }, [visMonthKey, pluginSeq, s.occVersion]);
+  }, [visMonthKey, bandWin.start, bandWin.end, pluginSeq, s.occVersion]); // eslint-disable-line
 
   // A range on one of a plugin's own calendars that's shorter than a day (a
   // tide's shading) is a window on the week and day timelines, drawn
@@ -1048,9 +1059,10 @@ export function App() {
     const held = holding(dateOfDayKey(s.anchor).getTime())
       || (state.visibleDays ? holding(dateOfDayKey(state.visibleDays.start).getTime()) : null);
     const inHeld = (o) => held && parseISO(o.end).getTime() > held.start && parseISO(o.start).getTime() < held.end;
+    // People's away times and plugin bands too, as every other view has them (#183).
     let agendaOccs = (s.agendaShowPast
-      ? occurrences
-      : occurrences.filter((o) => parseISO(o.end).getTime() >= agendaCutoff)).filter(inHeld);
+      ? occurrencesWithAvail
+      : occurrencesWithAvail.filter((o) => parseISO(o.end).getTime() >= agendaCutoff)).filter(inHeld);
     const agendaMore = !!(held && agendaMoreRef.current && agendaMoreRef.current.to > held.end);
     if (s.agendaSort === 'match') agendaOccs = sortByMatch(agendaOccs);
     view = html`<div class="bc-agenda-wrap">

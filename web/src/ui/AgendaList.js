@@ -18,7 +18,8 @@ import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
   timeState, addDaysKey, fmtDateShort, dayKeyOf, epochDayOfKey,
 } from '../lib/dates.js';
-import { EventChip, HiddenMark } from './EventChip.js';
+import { EventChip, HiddenMark, bandColor } from './EventChip.js';
+import { isBand } from '../lib/bands.js';
 import { ContextStrip, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, withoutContext, compactTime } from '../lib/context.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
@@ -125,6 +126,8 @@ function gapRange(g) {
 }
 
 function calColorOf(calendars, occ) {
+  // Away times and plugin bands have their own colors (EventChip bandColor).
+  if (isBand(occ)) return bandColor(occ, calendars[occ.calendarId]);
   return (calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888';
 }
 
@@ -316,6 +319,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     if (!el) return;
     if (swipedRef.current) setSwiped(null);
     noteTopPos();
+    reportTopRef.current();
     setWin((prev) => {
       const next = { top: el.scrollTop, height: el.clientHeight };
       return Math.abs(prev.top - next.top) > 200 || prev.height !== next.height ? next : prev;
@@ -323,6 +327,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     // Within two screens of the end: ask for more (App loads the next stretch).
     if (onNearEndRef.current && el.scrollTop + el.clientHeight * 3 > el.scrollHeight) onNearEndRef.current();
   }, [noteTopPos]);
+  const reportTopRef = useRef(() => {});
   const onNearEndRef = useRef(onNearEnd);
   onNearEndRef.current = onNearEnd;
 
@@ -382,22 +387,38 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   // The month at the top of the viewport: drives the sticky header (the only
   // place the YEAR appears in this view) and is reported upward so the
   // mini-month follows an agenda scroll like it does every other view.
-  const topMonth = useMemo(() => {
-    if (flat || groups.length === 0) return null;
-    let current = groups[0];
-    for (const g of groups) {
-      if (g.top <= win.top + 8) current = g; else break;
-    }
-    return current.dayKey || null;
-  }, [groups, win.top, flat]);
-
-  // The month, and the day at the top (where Next, a view switch or a reload
-  // starts from once you've scrolled; actions.js hereKey).
-  useEffect(() => {
-    if (!topMonth || !onVisibleMonthChange) return;
-    const [y, m] = topMonth.split('-').map(Number);
-    onVisibleMonthChange({ year: y, month: m }, { start: topMonth, end: topMonth });
-  }, [topMonth]); // eslint-disable-line
+  //
+  // Reported from the scroll itself (not the 200px-coarse window), with the
+  // days it stands for: the top group's, and any empty days just above it,
+  // which have no rows of their own. A jump to an empty day lands on the
+  // next day with events, and still counts as there (actions.js hereKey);
+  // reported as only that next day, Next started from where you'd last
+  // navigated (#183). A folded run (Split) stands for all its days.
+  const reportTop = useCallback(() => {
+    const el = scrollRef.current;
+    const gs = groupsRef.current;
+    const report = onVisibleMonthChangeRef.current;
+    if (!el || flat || !report || gs.length === 0) return;
+    let i = 0;
+    for (let k = 0; k < gs.length; k++) { if (gs[k].top <= el.scrollTop + 8) i = k; else break; }
+    const g = gs[i];
+    if (!g.dayKey) return;
+    const prev = i > 0 ? gs[i - 1] : null;
+    // At the very top, the empty days the lead-in note names count too.
+    const start = prev && prev.dayKey ? addDaysKey(prev.gapTo || prev.dayKey, 1)
+      : (gapFrom && gapFrom < g.dayKey ? gapFrom : g.dayKey);
+    const end = g.gapTo || g.dayKey;
+    const key = start + '|' + end;
+    if (reportedRef.current === key) return;
+    reportedRef.current = key;
+    const [y, m] = g.dayKey.split('-').map(Number);
+    report({ year: y, month: m }, { start: start <= end ? start : end, end });
+  }, [flat, gapFrom]);
+  const onVisibleMonthChangeRef = useRef(onVisibleMonthChange);
+  onVisibleMonthChangeRef.current = onVisibleMonthChange;
+  const reportedRef = useRef(null);
+  useEffect(() => { reportTop(); }, [groups, reportTop]);
+  reportTopRef.current = reportTop;
 
   // The list starts at the first day that HAS events, which silently skips
   // empty days at the front — opening on "Saturday, August 8" when today is
@@ -481,7 +502,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             // Row-level time state so the time and location columns dim with
             // the chip; the chip carries the same class itself via nowMs.
             const ts = nowMs ? timeState(occ, nowMs) : null;
-            const trip = !!occ.isContainer;
+            const trip = !!occ.isContainer && !isBand(occ);
             const start = row.kind === 'start';
             const end = row.kind === 'end';
             const span = (start || end) && !flat;

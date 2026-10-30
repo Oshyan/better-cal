@@ -575,7 +575,7 @@ export function TimeGrid({
     // follows reports no change of day: say so here, or the month (the mini
     // month, the month-windowed fetches) stays where it was (#183).
     if (onVisibleDayRef.current) onVisibleDayRef.current(key);
-    vPinRef.current = { dayKey: key, within };
+    vPinRef.current = { dayKey: key, within, win: { first: a - V_BEFORE, last: a + V_AFTER } };
     setVWin((prev) => (prev.first === a - V_BEFORE && prev.last === a + V_AFTER
       ? prev : { first: a - V_BEFORE, last: a + V_AFTER }));
   }, [scrollSeq, vstack]); // eslint-disable-line
@@ -593,10 +593,21 @@ export function TimeGrid({
   // once before it arrives. Cleared there, Today did nothing at all. It gives
   // up after a few renders, so a day that never renders can't wedge
   // tracking.
+  //
+  // It also waits for the window it asked for: applied in the same commit,
+  // against the old window, the panels added or removed above the day next
+  // render moved it about a day, wherever the browser doesn't anchor the
+  // scroll itself (Safari, #183).
   useLayoutEffect(() => {
     if (!vstack) return;
     const pin = vPinRef.current;
     if (!pin) return;
+    if (pin.win && (vWin.first !== pin.win.first || vWin.last !== pin.win.last)) {
+      // Superseded by another window, it gives up rather than wedge tracking.
+      pin.waits = (pin.waits || 0) + 1;
+      if (pin.waits > 5) vPinRef.current = null;
+      return;
+    }
     if (vScrollTo(pin.dayKey, pin.within)) {
       vPinRef.current = null;
       return;
@@ -642,7 +653,7 @@ export function TimeGrid({
       const win = vWinRef.current;
       const ed = epochDayOfKey(current);
       if (ed - win.first < V_EDGE || win.last - ed < V_EDGE) {
-        vPinRef.current = { dayKey: current, within };
+        vPinRef.current = { dayKey: current, within, win: { first: ed - V_BEFORE, last: ed + V_AFTER } };
         setVWin({ first: ed - V_BEFORE, last: ed + V_AFTER });
       }
     };

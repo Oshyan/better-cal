@@ -558,14 +558,23 @@ export function TimeGrid({
   // skipped whenever the requested window happened to equal the current one
   // — which is exactly what "Today" does when today is already inside the
   // rendered band: the scroll never happened and the un-applied pin then
-  // disabled scroll tracking entirely. The pin is also always cleared, so a
-  // panel that cannot be found costs one restore rather than wedging.
+  // disabled scroll tracking entirely.
+  //
+  // A pin whose day isn't rendered yet waits for the window that brings it:
+  // Today from more than a week away asks for a new window, and this runs
+  // once before it arrives. Cleared there, Today did nothing at all. It gives
+  // up after a few renders, so a day that never renders can't wedge
+  // tracking.
   useLayoutEffect(() => {
     if (!vstack) return;
     const pin = vPinRef.current;
     if (!pin) return;
-    vScrollTo(pin.dayKey, pin.within);
-    vPinRef.current = null;
+    if (vScrollTo(pin.dayKey, pin.within)) {
+      vPinRef.current = null;
+      return;
+    }
+    pin.tries = (pin.tries || 0) + 1;
+    if (pin.tries > 3) vPinRef.current = null;
   });
 
   // Stack scrolling: report the day at the viewport top (drives the toolbar

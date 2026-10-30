@@ -907,6 +907,8 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-ctx-mark { position: absolute; left: 3px; right: 4px; height: 0; z-index: 32; pointer-events: none; display: flex; align-items: center; gap: 0; }
 .bc-ctx-mark-line { flex: 1 1 auto; min-width: 8px; border-top: 1.5px solid var(--fg-muted); opacity: 0.85; }
 .bc-ctx-mark-label {
+  /* Above its own line, so the line stops at the label's white ring. */
+  position: relative; z-index: 1;
   flex: none; display: inline-flex; align-items: center; gap: 3px; pointer-events: auto; cursor: pointer;
   font-size: 10px; font-weight: 600; line-height: 1;
   padding: 2px 5px; border-radius: 4px; white-space: nowrap;
@@ -918,8 +920,9 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-ctx-mark-label:focus-visible { box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--accent); }
 /* A plugin's shaded window around a moment (a tide): a gradient strongest
    at the moment and gone at both edges (inline style), laid over the events
-   (a hovered one is z-index 30) so the window reads across them too; it
-   never takes the pointer. The moment's line and label sit above it. */
+   so the window reads across them too; it never takes the pointer. The
+   moment's line and label sit above it, and the event you point at above
+   them all. */
 .bc-tg-window { position: absolute; left: 0; right: 0; z-index: 31; pointer-events: none; }
 .bc-badge.is-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 :is(.bc-bar, .bc-block) .bc-ctx-glyph { margin-right: 4px; }
@@ -1013,7 +1016,9 @@ button.bc-hidden-mark { cursor: pointer; }
   /* Hairline of page background so cascaded (overlapping) blocks separate. */
   box-shadow: 0 0 0 1px var(--bg);
 }
-.bc-block:hover { z-index: 30 !important; }
+/* The event you point at comes to the top: above its neighbours, a tide's
+   shading (31) and a tide's line and label (32). */
+.bc-block:hover { z-index: 40 !important; }
 .bc-block-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .bc-block-time, .bc-block-loc { font-size: 10.5px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-block-handle { position: absolute; left: 0; right: 0; height: 6px; cursor: ns-resize; }
@@ -4770,3 +4775,12 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-schema-linked { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
 .bc-own-offers { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .bc-own-offer { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
+
+/* However an event is drawn at rest (past, available, context, dimmed by a
+   filter, or several at once), the one you point at or focus reads at full
+   strength: pointing at it says you want its details. It applies to every
+   event block and bar, whatever calendar or plugin it comes from, and to
+   plugin bands, so a new kind of calendar gets it without asking. Stated
+   once, last, so no combination of resting styles can outrank it. The
+   original of an event being dragged stays faded. */
+:is(.bc-bar, .bc-block, .bc-band):not(.is-drag-source):is(:hover, :focus-visible) { opacity: 1 !important; filter: none !important; }

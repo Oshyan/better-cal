@@ -24,7 +24,7 @@ import {
   todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart, fmtDayLong,
 } from '../lib/dates.js';
 import {
-  visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments, shiftOccurrenceDays,
+  visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, isOvernight, rowSpanSegments, shiftOccurrenceDays, resizeOccurrenceDays,
   spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows, ANCHOR_LINE,
@@ -108,7 +108,7 @@ function indexOccurrences(occurrences, columns) {
       place(bandsByRow, longBands, occ, startKey, endKey);
       continue;
     }
-    if (startKey === endKey && !occ.allDay) {
+    if (!occ.allDay && (startKey === endKey || isOvernight(occ))) {
       let list = byDay.get(startKey);
       if (!list) byDay.set(startKey, (list = []));
       list.push(occ);
@@ -764,41 +764,7 @@ export function MonthGrid({
         const target = dropRef.current.key;
         highlightDays([]);
         if (!target) return;
-        // All-day: pure day-key arithmetic, sent as literal dates — routing
-        // these through a local Date shifted the UNTOUCHED edge back a day
-        // west of UTC (the +00:00 date parses to the prior local evening and
-        // the server floors the literal date).
-        if (occ.allDay) {
-          let sKey = startKey;
-          let eKeyIncl = endKey;
-          if (edge === 'end') eKeyIncl = keyOfEpochDay(Math.max(epochDayOfKey(target), epochDayOfKey(startKey)));
-          else sKey = keyOfEpochDay(Math.min(epochDayOfKey(target), epochDayOfKey(endKey)));
-          if (onResizeEvent) {
-            onResizeEvent({
-              instanceId: occ.instanceId,
-              newStart: sKey,
-              newEnd: keyOfEpochDay(epochDayOfKey(eKeyIncl) + 1), // exclusive
-              edge,
-              at: pt,
-            });
-          }
-          return;
-        }
-        const s0 = parseISO(occ.start);
-        const e0 = parseISO(occ.end);
-        let s = s0, e = e0;
-        if (edge === 'end') {
-          const day = Math.max(epochDayOfKey(target), epochDayOfKey(startKey));
-          const base = dateOfDayKey(keyOfEpochDay(day));
-          e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
-          if (e <= s) e = new Date(s.getTime() + 30 * 60000);
-        } else {
-          const day = Math.min(epochDayOfKey(target), epochDayOfKey(endKey));
-          const base = dateOfDayKey(keyOfEpochDay(day));
-          s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), s0.getHours(), s0.getMinutes());
-          if (s >= e) s = new Date(e.getTime() - 30 * 60000);
-        }
-        if (onResizeEvent) onResizeEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e), edge, at: pt });
+        if (onResizeEvent) onResizeEvent({ instanceId: occ.instanceId, ...resizeOccurrenceDays(occ, edge, target), edge, at: pt });
       },
       onCancel: () => highlightDays([]),
     });

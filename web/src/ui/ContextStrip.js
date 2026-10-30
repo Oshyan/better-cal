@@ -6,7 +6,8 @@
 import { html, useState, useLayoutEffect, useRef } from '../../vendor/index.js';
 import { Icon } from './icons.js';
 import { contrastText, ink } from '../lib/color.js';
-import { contextToken, contextTitle, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
+import { contextToken, contextTitle, compactTime, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
+import { parseISO } from '../lib/dates.js';
 
 const CONTEXT_RENDER_MAX = 100;
 const CONTEXT_OVERFLOW_TITLE_MAX = 20;
@@ -41,6 +42,9 @@ export function TokenIcon({ token, cal, size = 10, plain = false }) {
 // browser's own tooltip showed for some tokens and not others.
 function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
   const tk = contextToken(occ, cal);
+  // Without room for a zone name (month cells), the time reads on this
+  // device's clock: another zone's time with its name dropped looked local (#183).
+  const localTime = tk.time && tk.zone ? compactTime(parseISO(occ.start)) : tk.time;
   return html`<span
     role="button" tabindex=${overflow ? -1 : 0} aria-hidden=${overflow ? 'true' : undefined}
     class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')}
@@ -51,7 +55,7 @@ function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
   >
     <${TokenIcon} token=${tk} cal=${cal} />
     ${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}
-    ${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${zone && tk.zone ? ' ' + tk.zone : ''}</span>`}
+    ${tk.time && html`<span class="bc-ctx-token-time">${zone ? tk.time + (tk.zone ? ' ' + tk.zone : '') : localTime}</span>`}
   </span>`;
 }
 

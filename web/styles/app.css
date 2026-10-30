@@ -1029,6 +1029,9 @@ button.bc-hidden-mark { cursor: pointer; }
   /* Hairline of page background so cascaded (overlapping) blocks separate. */
   box-shadow: 0 0 0 1px var(--bg);
 }
+/* An overnight event's parts: square where it carries on past midnight. */
+.bc-block.cont-t { border-top-left-radius: 0; border-top-right-radius: 0; }
+.bc-block.cont-b { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 /* The event you point at comes to the top: above its neighbours, a tide's
    shading (31) and a tide's line and label (32). */
 .bc-block:hover { z-index: 40 !important; }
@@ -1267,6 +1270,8 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg-muted); font-size: 12px; font-style: italic;
   padding: 10px 0 2px;
 }
+/* How far the list reaches, or that more is on its way (it loads as you near the end). */
+.bc-agenda-endnote { color: var(--fg-muted); font-size: 12px; font-style: italic; padding: 10px 0 16px; }
 
 /* Multi-day rail treatment: one continuous calendar-colored bar per span,
    running from the vertical center of the start row to the vertical center

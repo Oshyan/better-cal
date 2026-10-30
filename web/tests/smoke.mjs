@@ -16,7 +16,7 @@ import {
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
   visibleWeekRange, weekTop, totalHeight, segmentSpan, occurrenceDaySpan,
-  monthStartsInRange, dominantMonthOfWeek, isMultiDay,
+  monthStartsInRange, dominantMonthOfWeek, isMultiDay, isOvernight,
   monthsAround, miniMonthGrid, dayDropDates, timeDropDates, shiftOccurrenceDays,
   rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
@@ -43,7 +43,7 @@ import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
 import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges, patchOccurrence } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -2984,6 +2984,47 @@ console.log('--- view review fixes (#183) ---');
   eq('grouping: a holiday group is still context', [g.length, g[0].relationship, g[0].status], [1, 'context', 'confirmed']);
   const mixed = groupOccurrences([hol('Harvest Day (North)'), { ...mkOcc(1, 'Harvest Day (South)', '2026-11-26'), relationship: 'planned' }], FLAGS);
   eq('grouping: members that differ give no relationship', mixed[0].relationship, undefined);
+}
+
+console.log('--- window merges (#183) ---');
+{
+  storeState.occ.clear();
+  storeState.loadedRanges = [];
+  storeState.staleRanges = [];
+  const occ = (id, start, end, extra = {}) => ({ instanceId: id, eventId: 1, calendarId: 1, title: id, allDay: false, start, end, ...extra });
+  // A timed event that began before the window and runs into it, deleted elsewhere.
+  storeState.occ.set('long', occ('long', '2026-10-31T20:00:00Z', '2026-11-01T10:00:00Z'));
+  storeState.occ.set('allday', occ('allday', '2026-10-31T00:00:00+00:00', '2026-11-02T00:00:00+00:00', { allDay: true }));
+  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', []);
+  assert('merge: a timed event running into the window is cleared when the answer lacks it', !storeState.occ.has('long'));
+  assert('merge: an all-day span from before the window still goes by its start', storeState.occ.has('allday'));
+
+  // A drop while an older answer is on its way: the moved copy stays.
+  storeState.occ.clear();
+  storeState.occ.set('m', occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z'));
+  const asked = Date.now() - 1000;
+  patchOccurrence('m', { start: '2026-11-04T10:00:00Z', end: '2026-11-04T11:00:00Z', _optimistic: true });
+  patchOccurrence('m', { _optimistic: false });
+  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z')], asked);
+  eq('merge: an answer asked before the drop keeps the moved copy', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
+  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('m', '2026-11-04T10:00:00Z', '2026-11-04T11:00:00Z', { title: 'fresh' })], Date.now() + 1);
+  eq('merge: an answer asked after it replaces it', storeState.occ.get('m').title, 'fresh');
+  storeState.occ.clear();
+  storeState.loadedRanges = [];
+  storeState.staleRanges = [];
+}
+
+console.log('--- overnight events (#183) ---');
+{
+  const at = (d, h, m = 0) => isoAt(new Date(2026, 10, d, h, m));
+  const ev = (s, e, extra = {}) => ({ instanceId: 'x', allDay: false, start: s, end: e, ...extra });
+  assert('overnight: 10 PM to 1 AM', isOvernight(ev(at(6, 22), at(7, 1))));
+  assert('overnight: a 14-hour overnight flight', isOvernight(ev(at(6, 18), at(7, 8))));
+  assert('overnight: not one ending at midnight', !isOvernight(ev(at(6, 22), at(7, 0))));
+  assert('overnight: not a same-day event', !isOvernight(ev(at(6, 9), at(6, 10))));
+  assert('overnight: not a span of a day or more', !isOvernight(ev(at(6, 14), at(8, 10))));
+  assert('overnight: not all-day', !isOvernight({ instanceId: 'x', allDay: true, start: '2026-11-06T00:00:00+00:00', end: '2026-11-08T00:00:00+00:00' }));
+  assert('overnight: not a trip', !isOvernight(ev(at(6, 22), at(7, 1), { isContainer: true })));
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

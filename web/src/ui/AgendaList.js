@@ -137,7 +137,7 @@ function calColorOf(calendars, occ) {
 // Split view); loaded: the held windows ([{start, end}] ms), so a run never
 // fetched reads "not loaded yet" rather than "nothing on". apiRef: receives
 // {el, groups, ...} for a caller that links another scroller to this one.
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onExpandDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onExpandDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef, onNearEnd = null, endNote = null }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -320,7 +320,11 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       const next = { top: el.scrollTop, height: el.clientHeight };
       return Math.abs(prev.top - next.top) > 200 || prev.height !== next.height ? next : prev;
     });
+    // Within two screens of the end: ask for more (App loads the next stretch).
+    if (onNearEndRef.current && el.scrollTop + el.clientHeight * 3 > el.scrollHeight) onNearEndRef.current();
   }, [noteTopPos]);
+  const onNearEndRef = useRef(onNearEnd);
+  onNearEndRef.current = onNearEnd;
 
   useEffect(() => { onScroll(); }, [groups.length, onScroll]);
 
@@ -585,5 +589,6 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         </section>`;
       })}
     </div>
+    ${endNote && groups.length > 0 && html`<div class="bc-agenda-endnote">${endNote}</div>`}
   </div>`;
 }

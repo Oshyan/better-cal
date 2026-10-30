@@ -279,9 +279,18 @@ export function invalidateRecords(eventId = null) {
 const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
 const OCCURRENCE_CACHE_MAX = 25000;
 
-export function mergeWindow(startISO, endISO, events) {
+// When each occurrence was last changed here (a drag, a resize, an edit's
+// optimistic patch): a window answer asked for before then is older than it.
+const editedAt = new Map();
+
+// asked: when the request for this answer went out. An occurrence changed
+// here since then (or still waiting on its save) keeps its own copy: a
+// refresh already on its way when you dropped an event put the old time
+// back until the next one arrived (#183).
+export function mergeWindow(startISO, endISO, events, asked = null) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
+  const mine = (id, occ) => !!occ && (occ._optimistic || (asked != null && (editedAt.get(id) || 0) > asked));
   // Drop cached occurrences whose start falls in the window, then reinsert,
   // carrying fetched record fields over from the previous copy (invalidate
   // first when the refresh follows an edit of that event, see actions.js).
@@ -294,12 +303,19 @@ export function mergeWindow(startISO, endISO, events) {
   for (const [id, occ] of state.occ) {
     const t = new Date(occ.start).getTime();
     if (id === kept) continue;
-    if (t >= s && t < e && !occ._optimistic) {
+    // The answer holds everything overlapping the window, so a timed event
+    // that began before it and runs into it is replaced (or gone, deleted
+    // elsewhere) too; it lingered until you scrolled to its start (#183).
+    // All-day dates sit at UTC midnight, not on the window's local edges,
+    // so they still go by their start.
+    const inside = (t >= s && t < e) || (!occ.allDay && t < e && new Date(occ.end).getTime() > s);
+    if (inside && !mine(id, occ)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);
     }
   }
   for (const ev of events) {
+    if (mine(ev.instanceId, state.occ.get(ev.instanceId))) continue;
     const p = prior.get(ev.instanceId);
     if (p) {
       const merged = { ...ev, full: true };
@@ -442,6 +458,7 @@ export function patchOccurrence(instanceId, patch) {
   if (!occ) return null;
   const before = { ...occ };
   state.occ.set(instanceId, { ...occ, ...patch });
+  if ('_optimistic' in patch) editedAt.set(instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
   return before;
 }

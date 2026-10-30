@@ -22,7 +22,7 @@ import {
   fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
-import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
+import { occurrenceDaySpan, isOvernight, isWeekendEpochDay, shiftOccurrenceDays, resizeOccurrenceDays } from './monthmath.js';
 import { EventBlock, EventBar, HiddenMark, TripBand } from './EventChip.js';
 import { isBand, canReschedule } from '../lib/bands.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
@@ -417,13 +417,16 @@ export function TimeGrid({
       const { startKey, endKey } = occurrenceDaySpan(occ);
       const s = epochDayOfKey(startKey), e = epochDayOfKey(endKey);
       if (e < firstDay || s > lastDay) continue;
-      if (occ.allDay || startKey !== endKey) {
+      if (occ.allDay || (startKey !== endKey && !isOvernight(occ))) {
         const startCol = Math.max(0, s - firstDay);
         const endCol = Math.min(days.length - 1, e - firstDay);
         bars.push({ occ, seg: { startCol, endCol, contLeft: s < firstDay, contRight: e > lastDay } });
       } else {
-        const i = dayIdx.get(startKey);
-        if (i != null) timed[i].push(occ);
+        // Timed, in each day it touches (an overnight event has two parts).
+        for (let d = s; d <= e; d++) {
+          const i = dayIdx.get(keyOfEpochDay(d));
+          if (i != null) timed[i].push(occ);
+        }
       }
     }
     return {
@@ -448,7 +451,7 @@ export function TimeGrid({
       for (const occ of ordered) {
         if (occ.attendance === 'hidden' || isContext(occ)) continue;
         const { startKey, endKey } = occurrenceDaySpan(occ);
-        if (!occ.allDay && startKey === endKey) continue;
+        if (!occ.allDay && (startKey === endKey || isOvernight(occ))) continue;
         const s = epochDayOfKey(startKey);
         const e = epochDayOfKey(endKey);
         if (s > ed || e < ed) continue;
@@ -479,7 +482,7 @@ export function TimeGrid({
     for (const occ of occurrences) {
       if (occ.attendance === 'hidden' || isContext(occ) || filteredOut(occ)) continue;
       const { startKey, endKey } = occurrenceDaySpan(occ);
-      if (!occ.allDay && startKey === endKey) continue;
+      if (!occ.allDay && (startKey === endKey || isOvernight(occ))) continue;
       // Away times and plugin bands go after real events, like quiet ones:
       // in a collapsed row they'd otherwise push events into "+N" (#183).
       const band = isBand(occ);
@@ -520,18 +523,25 @@ export function TimeGrid({
   }, [allDayBars, barLanes, visibleBarLanes, dimSet]);
 
   // Overlap layout per day column (see layout.js for the algorithm).
-  const layoutByDay = useMemo(() => timedByDay.map((list) => {
+  // An overnight event's part on a day runs from midnight or to midnight;
+  // contUp / contDown say it carries on into the day before / after.
+  const layoutByDay = useMemo(() => timedByDay.map((list, i) => {
+    const k = days[i];
     const items = list.map((occ) => {
       const s = parseISO(occ.start), e = parseISO(occ.end);
+      const contUp = dayKeyOf(s) !== k;
+      const contDown = e > s && dayKeyOf(new Date(e.getTime() - 1)) !== k;
       return {
         id: occ.instanceId,
         occ,
-        startMin: Math.max(0, minutesOfDay(s)),
-        endMin: Math.min(MINUTES_DAY, minutesOfDay(e) || (dayKeyOf(e) !== dayKeyOf(s) ? MINUTES_DAY : minutesOfDay(e))),
+        contUp,
+        contDown,
+        startMin: contUp ? 0 : Math.max(0, minutesOfDay(s)),
+        endMin: dayKeyOf(e) === k ? minutesOfDay(e) : (e > s ? MINUTES_DAY : minutesOfDay(s)),
       };
     });
     return layoutOverlaps(items, 30, { maxColumns: TIMED_COLUMNS_MAX, maxItems: TIMED_EVENTS_PER_DAY });
-  }), [timedByDay]);
+  }), [timedByDay, days]);
 
   // Initial vertical scroll: when anchored on today, land just above the
   // now-line (Google-style); otherwise fall back to 7am. The now-line (and
@@ -746,6 +756,15 @@ export function TimeGrid({
       onMove: (pt) => {
         const s = pointToSlot(pt);
         if (!s) return;
+        // Day view stacks the next day below: dragging into it is a timed
+        // event past midnight, not an all-day one (#183). Minutes count from
+        // the start of the day the drag began.
+        if (vstack) {
+          const rel = (epochDayOfKey(s.dayKey) - epochDayOfKey(origin.dayKey)) * MINUTES_DAY + snapMin(s.min);
+          current = { dayKey: origin.dayKey, startMin: Math.min(startSnap, rel), endMin: Math.max(startSnap + SNAP_MIN, rel) };
+          setDraft(current);
+          return;
+        }
         const dm = dragCreateMode(origin.dayKey, s.dayKey);
         if (dm.mode === 'days') {
           current = dm;
@@ -769,7 +788,7 @@ export function TimeGrid({
       },
       onCancel: () => setDraft(null), // Escape, or the finger scrolled away
     });
-  }, [pointToSlot, infinite]);
+  }, [pointToSlot, infinite, vstack]);
 
   // All-day lane create: click or drag selects an inclusive day range with
   // the same confirm chip. Lane selections always draft all-day events, even
@@ -839,6 +858,11 @@ export function TimeGrid({
     const grab = pointToSlot({ x: ev.clientX, y: ev.clientY });
     if (!grab) return;
     const grabOffset = grab.min - minutesOfDay(s0);
+    // An overnight event moves by its absolute start, across midnight as
+    // needed: grabbed in its second part, the offset spans the day change.
+    const overnight = isOvernight(occ);
+    const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
+    const absGrab = absOf(grab.dayKey, grab.min) - absOf(dayKeyOf(s0), minutesOfDay(s0));
     let target = null;
     let ext = null;
     // Sidebar rows accept drops here too (recategorize / link a person);
@@ -870,9 +894,14 @@ export function TimeGrid({
         }
         const slot = pointToSlot(pt);
         if (!slot) { target = null; hidePreview(previewRef); return; }
-        const startMin = Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset)));
-        target = { dayKey: slot.dayKey, startMin };
-        showPreview(previewRef, previewGeom(), target.dayKey, startMin, durMin);
+        if (overnight) {
+          const a = snapMin(absOf(slot.dayKey, slot.min) - absGrab);
+          const day = Math.floor(a / MINUTES_DAY);
+          target = { dayKey: keyOfEpochDay(day), startMin: a - day * MINUTES_DAY };
+        } else {
+          target = { dayKey: slot.dayKey, startMin: Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset))) };
+        }
+        showPreview(previewRef, previewGeom(), target.dayKey, target.startMin, durMin);
       },
       onDrop: (pt) => {
         src.classList.remove('is-drag-source');
@@ -893,12 +922,130 @@ export function TimeGrid({
     });
   }, [pointToSlot, infinite, previewGeom, onMoveEvent, onDropToCalendar, onDropToPerson, calendars]);
 
+  // Week view's all-day and multi-day bars move and resize by whole days, as
+  // in month view: the spanned columns show where they'd land, and letting
+  // go off the calendar does nothing. They couldn't be dragged at all (#183).
+  // Trips and bands keep month view's drags.
+  const barDraggable = (occ) => !vstack && !occ.isContainer && !occ.isGroup && canReschedule(occ, calendars[occ.calendarId]);
+  const dragMoveBar = useCallback((occ, ev) => {
+    if (!barDraggable(occ)) return;
+    ev.stopPropagation();
+    const src = ev.currentTarget;
+    const grab = pointToSlot({ x: ev.clientX, y: ev.clientY }, true);
+    if (!grab) return;
+    const { startKey, endKey } = occurrenceDaySpan(occ);
+    const span = epochDayOfKey(endKey) - epochDayOfKey(startKey);
+    const grabOff = epochDayOfKey(grab.dayKey) - epochDayOfKey(startKey);
+    const draggedCal = calendars[occ.calendarId];
+    const isFeed = !!draggedCal && !draggedCal.editable;
+    const isGoogle = !!draggedCal && draggedCal.provider === 'google';
+    const extKinds = !isFeed ? { cal: !isGoogle ? (id) => id !== occ.calendarId : false, person: true } : null;
+    let target = null;
+    let ext = null;
+    startPointerDrag(ev, {
+      makeGhost: () => cloneAsGhost(src),
+      hScrollEl: infinite ? hscrollRef.current : null,
+      copyable: !isFeed,
+      onLift: () => src.classList.add('is-drag-source'),
+      onMove: (pt) => {
+        if (extKinds) {
+          ext = externalDropTarget(pt, extKinds);
+          if (ext) { setDropRowHighlight(ext.el); setDraft(null); target = null; return; }
+          setDropRowHighlight(null);
+        }
+        const slot = pointToSlot(pt, true);
+        if (!slot) { target = null; setDraft(null); return; }
+        target = epochDayOfKey(slot.dayKey) - grabOff;
+        setDraft({ mode: 'days', startKey: keyOfEpochDay(target), endKey: keyOfEpochDay(target + span) });
+      },
+      onDrop: (pt) => {
+        src.classList.remove('is-drag-source');
+        setDraft(null);
+        setDropRowHighlight(null);
+        if (ext) {
+          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id, pt);
+          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
+          return;
+        }
+        if (target == null || !onMoveEvent) return;
+        const delta = target - epochDayOfKey(startKey);
+        if (delta === 0) return;
+        onMoveEvent({ instanceId: occ.instanceId, ...shiftOccurrenceDays(occ, delta), at: pt });
+      },
+      onCancel: () => { src.classList.remove('is-drag-source'); setDraft(null); setDropRowHighlight(null); },
+    });
+  }, [pointToSlot, infinite, vstack, calendars, onMoveEvent, onDropToCalendar, onDropToPerson]); // eslint-disable-line
+  const dragResizeBar = useCallback((occ, edge, ev) => {
+    if (!barDraggable(occ)) return;
+    ev.stopPropagation();
+    const { startKey, endKey } = occurrenceDaySpan(occ);
+    const sEd = epochDayOfKey(startKey);
+    const eEd = epochDayOfKey(endKey);
+    let target = null;
+    startPointerDrag(ev, {
+      hScrollEl: infinite ? hscrollRef.current : null,
+      onMove: (pt) => {
+        const slot = pointToSlot(pt, true);
+        if (!slot) { target = null; setDraft(null); return; }
+        target = slot.dayKey;
+        const k = epochDayOfKey(target);
+        const a = edge === 'end' ? sEd : Math.min(k, eEd);
+        const b = edge === 'end' ? Math.max(k, sEd) : eEd;
+        setDraft({ mode: 'days', startKey: keyOfEpochDay(a), endKey: keyOfEpochDay(b) });
+      },
+      onDrop: (pt) => {
+        setDraft(null);
+        if (!target || !onResizeEvent) return;
+        const r = resizeOccurrenceDays(occ, edge, target);
+        onResizeEvent({ instanceId: occ.instanceId, ...r, edge, at: pt });
+      },
+      onCancel: () => setDraft(null),
+    });
+  }, [pointToSlot, infinite, vstack, calendars, onResizeEvent]); // eslint-disable-line
+
+  // An overnight event's ends, in absolute minutes. Each part carries only
+  // its own end's handle. In day view the stacked day under the pointer
+  // counts; side by side (week) only the height does, on the part's own day,
+  // so drifting into the next column doesn't jump a day.
+  const dragResizeOvernight = useCallback((occ, edge, ev, s0, e0) => {
+    const col = ev.currentTarget.closest('.bc-tg-col');
+    const partKey = (col && col.dataset.day) || dayKeyOf(edge === 'start' ? s0 : new Date(e0.getTime() - 1));
+    const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
+    const sAbs = absOf(dayKeyOf(s0), minutesOfDay(s0));
+    const eAbs = sAbs + Math.round((e0 - s0) / 60000);
+    const partStart = absOf(partKey, 0);
+    let result = null;
+    startPointerDrag(ev, {
+      scrollEl: scrollRef.current,
+      onMove: (pt) => {
+        const slot = pointToSlot(pt);
+        if (!slot) { result = null; hidePreview(previewRef); return; }
+        const a = snapMin(absOf(vstack ? slot.dayKey : partKey, slot.min));
+        const s = edge === 'start' ? Math.min(a, eAbs - SNAP_MIN) : sAbs;
+        const e = edge === 'end' ? Math.max(a, sAbs + SNAP_MIN) : eAbs;
+        result = { s, e };
+        const ps = Math.max(0, s - partStart);
+        const pe = Math.min(MINUTES_DAY, e - partStart);
+        if (pe > ps) showPreview(previewRef, previewGeom(), partKey, ps, pe - ps);
+        else hidePreview(previewRef);
+      },
+      onDrop: (pt) => {
+        hidePreview(previewRef);
+        if (!result || !onResizeEvent) return;
+        const at = (x) => { const d = Math.floor(x / MINUTES_DAY); return toISOWithOffset(dateAt(keyOfEpochDay(d), x - d * MINUTES_DAY)); };
+        onResizeEvent({ instanceId: occ.instanceId, newStart: at(result.s), newEnd: at(result.e), edge, at: pt });
+      },
+      onCancel: () => hidePreview(previewRef),
+    });
+  }, [pointToSlot, previewGeom, onResizeEvent, vstack]);
+
   const dragResize = useCallback((occ, edge, ev) => {
     ev.stopPropagation();
     if (!canReschedule(occ, calendars[occ.calendarId])) return;
     const s0 = parseISO(occ.start);
     const e0 = parseISO(occ.end);
     const dayKey = occDayKey(occ);
+    if (isOvernight(occ)) { dragResizeOvernight(occ, edge, ev, s0, e0); return; }
     if (!days.includes(dayKey)) return;
     let result = null;
     startPointerDrag(ev, {
@@ -932,7 +1079,7 @@ export function TimeGrid({
       },
       onCancel: () => hidePreview(previewRef),
     });
-  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars, vstack]);
+  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars, vstack, dragResizeOvernight]);
 
   // --- render ---------------------------------------------------------------
 
@@ -1017,7 +1164,9 @@ export function TimeGrid({
     ${isBand(occ)
       ? html`<${TripBand} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg} dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />`
       : html`<${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-      dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />`}
+      dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
+      onPointerDown=${barDraggable(occ) ? (e) => dragMoveBar(occ, e) : undefined}
+      onEdgePointerDown=${barDraggable(occ) ? (edge, e) => dragResizeBar(occ, edge, e) : null} />`}
   </div>`;
   };
   // Phone week: "+N" under the lanes on each day that has more; it opens
@@ -1065,6 +1214,15 @@ export function TimeGrid({
     return out;
   };
 
+  // A timed draft's part on a day: one past midnight (day view) covers two.
+  const draftPart = (k) => {
+    if (!draft || draft.mode === 'days' || draft.dayKey == null) return null;
+    const off = (epochDayOfKey(k) - epochDayOfKey(draft.dayKey)) * MINUTES_DAY;
+    const s = Math.max(0, draft.startMin - off);
+    const e = Math.min(MINUTES_DAY, draft.endMin - off);
+    return e > s ? { s, e, first: s === draft.startMin - off } : null;
+  };
+
   const dayCols = days.map((k, i) => {
     const ed = epochDayOfKey(k);
     const inRange = rangeSel && ed >= rangeSel.a && ed <= rangeSel.b;
@@ -1090,7 +1248,7 @@ export function TimeGrid({
       return html`<${EventBlock}
         key=${item.id}
         occ=${item.occ} cal=${calendars[item.occ.calendarId]}
-        rect=${{ top, height, leftPct, widthPct, z: item.col + 1 }}
+        rect=${{ top, height, leftPct, widthPct, z: item.col + 1, contUp: item.contUp, contDown: item.contDown }}
         dimmed=${dimSet && dimSet.has(item.occ.instanceId)} nowMs=${nowMs}
         titleOnly=${phoneWeek}
         onOpen=${onOpenEvent}
@@ -1108,10 +1266,10 @@ export function TimeGrid({
       key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
       top=${(minutesOfDay(parseISO(occ.start)) / 60) * HOUR_H} onOpen=${onOpenEvent}
     />`)}
-    ${draft && draft.dayKey === k && html`<div
+    ${draftPart(k) && html`<div
       class="bc-tg-draft"
-      style=${`top:${(draft.startMin / 60) * HOUR_H}px;height:${((draft.endMin - draft.startMin) / 60) * HOUR_H}px`}
-    >${fmtTime(dateAt(k, draft.startMin))} to ${fmtTime(dateAt(k, draft.endMin))}</div>`}
+      style=${`top:${(draftPart(k).s / 60) * HOUR_H}px;height:${((draftPart(k).e - draftPart(k).s) / 60) * HOUR_H}px`}
+    >${draftPart(k).first ? fmtTime(dateAt(draft.dayKey, draft.startMin)) + ' to ' + fmtTime(dateAt(draft.dayKey, draft.endMin)) : ''}</div>`}
     ${k === nowKey && html`<div class="bc-nowline" style=${`top:${(minutesOfDay(now) / 60) * HOUR_H}px`}><span class="bc-nowline-dot"></span></div>`}
   </div>`;
   });
@@ -1276,7 +1434,7 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
     el.style.left = left + 1 + 'px';
     el.style.width = col.offsetWidth - 4 + 'px';
     el.style.top = top + (startMin / 60) * HOUR_H + 'px';
-    el.style.height = (durMin / 60) * HOUR_H + 'px';
+    el.style.height = (Math.min(durMin, MINUTES_DAY - startMin) / 60) * HOUR_H + 'px';
     return;
   }
   if (geom.infinite) {
@@ -1294,7 +1452,8 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   el.style.left = left + 'px';
   el.style.width = width + 'px';
   el.style.top = (startMin / 60) * HOUR_H + 'px';
-  el.style.height = (durMin / 60) * HOUR_H + 'px';
+  // An overnight event's preview stops at midnight, like its first part.
+  el.style.height = (Math.min(durMin, MINUTES_DAY - startMin) / 60) * HOUR_H + 'px';
 }
 
 function hidePreview(previewRef) {

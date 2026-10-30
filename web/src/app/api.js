@@ -308,11 +308,12 @@ async function fetchRange(s, e) {
   inFlight.push(entry);
   const startISO = iso(s);
   const endISO = iso(e);
+  const asked = Date.now();
   try {
     const data = await api('/events?' + new URLSearchParams({ start: startISO, end: endISO }), {
       signal: ctrl ? ctrl.signal : undefined,
     });
-    mergeWindow(startISO, endISO, data.events || []);
+    mergeWindow(startISO, endISO, data.events || [], asked);
     if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
@@ -555,10 +556,11 @@ export async function refreshWindow() {
   for (let a = s; a < e; a += MAX_SPAN_MS) {
     const b = Math.min(e, a + MAX_SPAN_MS);
     const params = new URLSearchParams({ start: iso(a), end: iso(b) });
+    const asked = Date.now();
     try {
       const data = await api('/events?' + params.toString());
       if (id !== windowReqId) return;
-      mergeWindow(iso(a), iso(b), data.events || []);
+      mergeWindow(iso(a), iso(b), data.events || [], asked);
       boundCacheAfterMerge(refreshStart, refreshEnd);
     } catch (err) {
       // A failed refresh only leaves slightly stale data; not fatal.

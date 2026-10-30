@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **More little fixes from [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
+  - Overnight events (10 PM to 1 AM) keep their time: a chip in month view, a block on each day in week and day views, which you can move and resize.
+  - Week view's all-day and multi-day bars can be moved and resized; in day view, dragging across midnight makes a timed event.
+  - The agenda keeps loading as you scroll, and no longer shows months it hasn't loaded as empty.
+  - A move no longer briefly snaps back when a refresh lands, and an event deleted elsewhere disappears even if it began before the dates on screen.
+  - Smaller: away times and plugin bands load for the right months after quick moves, the phone's day title skips hidden calendars, month tokens give other zones' times on your clock, and the month label and mini-month follow view switches and "Show past events".
+
 ## 1.4.1 (2026-10-29)
 
 - **Fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183)):** it turns out building a calendar view *is* easy, just deceptively so. The gotchas aren't hard to fix once you know where to look. Sorry for missing them until now! 😅 More follow in the next releases; let me know if you see anything else that looks off.

@@ -64,7 +64,11 @@ export function hereKey() {
 }
 
 export function setView(view) {
-  set({ view, anchor: hereKey(), visibleDays: null, scrollSeq: state.scrollSeq + 1 });
+  const anchor = hereKey();
+  // The month too: until the new view reports what it shows, the mini-month
+  // and the label otherwise stayed on the old view's month (#183).
+  const visibleMonth = { year: Number(anchor.slice(0, 4)), month: Number(anchor.slice(5, 7)) };
+  set({ view, anchor, visibleMonth, visibleDays: null, scrollSeq: state.scrollSeq + 1 });
 }
 
 export function cycleView() {

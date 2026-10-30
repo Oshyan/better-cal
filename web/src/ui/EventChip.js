@@ -250,7 +250,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
-    class="bc-block${titleOnly ? ' is-title-only' : ''}${stateClasses(occ, dimmed, nowMs)}"
+    class="bc-block${titleOnly ? ' is-title-only' : ''}${rect.contUp ? ' cont-t' : ''}${rect.contDown ? ' cont-b' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"
@@ -265,7 +265,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
       }
     }}
   >
-    ${edges && html`<span class="bc-block-handle t" onPointerDown=${(ev) => edges('start', ev)}></span>`}
+    ${edges && !rect.contUp && html`<span class="bc-block-handle t" onPointerDown=${(ev) => edges('start', ev)}></span>`}
     <span class="bc-block-line">
       ${occ.isGroup && html`<${StackGlyph} />`}
       ${occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
@@ -276,7 +276,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
     </span>
     ${showMeta && html`<span class="bc-block-time">${fmtTime(s)} to ${fmtTime(e)}</span>`}
     ${showLoc && html`<span class="bc-block-loc">${occ.location}</span>`}
-    ${edges && html`<span class="bc-block-handle b" onPointerDown=${(ev) => edges('end', ev)}></span>`}
+    ${edges && !rect.contDown && html`<span class="bc-block-handle b" onPointerDown=${(ev) => edges('end', ev)}></span>`}
   </div>`;
 }
 

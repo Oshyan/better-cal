@@ -189,6 +189,21 @@ export function segmentSpan(startKey, endKey) {
 }
 
 // Is an occurrence multi-day on the grid?
+/**
+ * A timed event that runs past midnight but lasts less than a day (10 PM to
+ * 1 AM, an overnight flight). It's a timed event, not a span: month shows it
+ * as a chip on the day it starts, week and day as a block in each day it
+ * touches. As a bar it lost its time (#183).
+ */
+export function isOvernight(occ) {
+  if (occ.allDay || occ.isContainer) return false;
+  const s = parseISO(occ.start).getTime();
+  const e = parseISO(occ.end).getTime();
+  if (!(e - s < 86400000)) return false;
+  const { startKey, endKey } = occurrenceDaySpan(occ);
+  return startKey !== endKey;
+}
+
 export function isMultiDay(occ) {
   const { startKey, endKey } = occurrenceDaySpan(occ);
   return endKey !== startKey;
@@ -264,6 +279,39 @@ export function shiftOccurrenceDays(occ, deltaDays) {
     newStart: toISOWithOffset(shift(occ.start)),
     newEnd: toISOWithOffset(shift(occ.end)),
   };
+}
+
+/**
+ * A bar's start or end dragged to another day (month and week views). The
+ * other end stays put, and an end can't pass the other one. All-day: pure
+ * day-key arithmetic, sent as literal dates (routing these through a local
+ * Date shifted the untouched edge back a day west of UTC, since the +00:00
+ * date parses to the prior local evening and the server floors the literal
+ * date). Timed: the moved end keeps its clock time on its new day.
+ */
+export function resizeOccurrenceDays(occ, edge, targetKey) {
+  const { startKey, endKey } = occurrenceDaySpan(occ);
+  const t = epochDayOfKey(targetKey);
+  if (occ.allDay) {
+    let sKey = startKey;
+    let eKeyIncl = endKey;
+    if (edge === 'end') eKeyIncl = keyOfEpochDay(Math.max(t, epochDayOfKey(startKey)));
+    else sKey = keyOfEpochDay(Math.min(t, epochDayOfKey(endKey)));
+    return { newStart: sKey, newEnd: keyOfEpochDay(epochDayOfKey(eKeyIncl) + 1) }; // exclusive
+  }
+  const s0 = parseISO(occ.start);
+  const e0 = parseISO(occ.end);
+  let s = s0, e = e0;
+  if (edge === 'end') {
+    const base = dateOfDayKey(keyOfEpochDay(Math.max(t, epochDayOfKey(startKey))));
+    e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
+    if (e <= s) e = new Date(s.getTime() + 30 * 60000);
+  } else {
+    const base = dateOfDayKey(keyOfEpochDay(Math.min(t, epochDayOfKey(endKey))));
+    s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), s0.getHours(), s0.getMinutes());
+    if (s >= e) s = new Date(e.getTime() - 30 * 60000);
+  }
+  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e) };
 }
 
 export function dayDropDates(occ, targetKey) {

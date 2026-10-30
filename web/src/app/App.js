@@ -21,7 +21,7 @@ import { installKeyboard } from './keyboard.js';
 import { installPasteAnywhere } from './pasteanywhere.js';
 import {
   addDaysKey, dateOfDayKey, toISOWithOffset, parseISO, epochDayOfKey,
-  dayKeyOf, todayKey,
+  dayKeyOf, todayKey, fmtDateShort,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { bandDays } from '../lib/bands.js';
@@ -417,10 +417,14 @@ export function App() {
     // Skip the repeat rather than paying a second round trip for it.
     if (availKeyRef.current === key) return;
     availKeyRef.current = key;
+    // Only the latest request's answer counts: a slow earlier one (the month
+    // you scrolled past) landing last overwrote the newer months (#183).
+    // A failure clears the key, and the next events load (a refresh, the
+    // change poll, coming back online) tries again.
     api('/availability?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
-      .then((d) => set({ availSpans: d.spans || [] }))
-      .catch(() => { availKeyRef.current = null; }); // let a failure retry
-  }, [anyPersonVisible, visMonthKey, availSeq]); // eslint-disable-line
+      .then((d) => { if (availKeyRef.current === key) set({ availSpans: d.spans || [] }); })
+      .catch(() => { if (availKeyRef.current === key) availKeyRef.current = null; });
+  }, [anyPersonVisible, visMonthKey, availSeq, s.occVersion]); // eslint-disable-line
 
   const availOccs = useMemo(() => availSpans.map((sp) => {
     const days = bandDays(sp.start, sp.end);
@@ -459,10 +463,11 @@ export function App() {
     const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + pluginSeq;
     if (plugRangeKeyRef.current === key) return;
     plugRangeKeyRef.current = key;
+    // Latest answer only, and a failure retries on the next events load (as above).
     api('/plugins/ranges?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
-      .then((d) => set({ pluginRanges: d.plugins || {} }))
-      .catch(() => { plugRangeKeyRef.current = null; });
-  }, [visMonthKey, pluginSeq]);
+      .then((d) => { if (plugRangeKeyRef.current === key) set({ pluginRanges: d.plugins || {} }); })
+      .catch(() => { if (plugRangeKeyRef.current === key) plugRangeKeyRef.current = null; });
+  }, [visMonthKey, pluginSeq, s.occVersion]);
 
   // A range on one of a plugin's own calendars that's shorter than a day (a
   // tide's shading) is a window on the week and day timelines, drawn
@@ -573,14 +578,31 @@ export function App() {
       // Anchor-aware window: follow the anchor (navigation/jump) rather than
       // always loading today-forward; "show past" widens the lookback.
       const from = addDaysKey(s.anchor, s.agendaShowPast ? -365 : -90);
+      agendaMoreRef.current = null;
       loadWindow(
         toISOWithOffset(dateOfDayKey(from)),
         toISOWithOffset(dateOfDayKey(addDaysKey(s.anchor, 120))),
       );
-      const [y, m] = s.anchor.split('-').map(Number);
-      set({ visibleMonth: { year: y, month: m } });
     }
   }, [s.view, s.anchor, s.agendaShowPast]);
+  // The month label follows a move, not "Show past events": toggling that
+  // reset the label while the list stayed where it was (#183).
+  useEffect(() => {
+    if (s.view !== 'agenda') return;
+    const [y, m] = s.anchor.split('-').map(Number);
+    set({ visibleMonth: { year: y, month: m } });
+  }, [s.view, s.anchor]);
+  // Scrolling near the agenda's end asks for 120 more days, once per end.
+  // The window starts where the agenda's does, up to the 700 days one
+  // window may span (api.js); past that it keeps the latest 690.
+  const agendaMoreRef = useRef(null);
+  const onAgendaNearEnd = useCallback((endMs) => {
+    if (agendaMoreRef.current && agendaMoreRef.current.from === endMs) return; // already asked for this end
+    const to = new Date(endMs + 120 * 86400000);
+    const from = Math.max(dateOfDayKey(addDaysKey(state.anchor, state.agendaShowPast ? -365 : -90)).getTime(), to.getTime() - 690 * 86400000);
+    agendaMoreRef.current = { from: endMs, to: to.getTime() };
+    loadWindow(toISOWithOffset(new Date(from)), toISOWithOffset(to));
+  }, []);
 
   // Drag-and-drop drop handlers (Wave 11). All of them route through actions
   // that toast with undo; the trip move asks first because silently dragging
@@ -1017,9 +1039,19 @@ export function App() {
     // already been filtered out. Anchors on today or ahead of it keep the
     // now-cutoff, so the default view still drops this morning's leftovers.
     const agendaCutoff = Math.min(nowMs, dateOfDayKey(s.anchor).getTime());
-    let agendaOccs = s.agendaShowPast
+    // Only the loaded stretch around where you are: other months held from
+    // earlier showed beyond it, with the unloaded months between them
+    // looking empty (#183). Until it arrives, the list says it's loading.
+    // The stretch holding the day you're on, or the top of the list once a
+    // long scroll has carried the window past that day.
+    const holding = (ms) => state.loadedRanges.find((r) => r.start <= ms && r.end > ms) || null;
+    const held = holding(dateOfDayKey(s.anchor).getTime())
+      || (state.visibleDays ? holding(dateOfDayKey(state.visibleDays.start).getTime()) : null);
+    const inHeld = (o) => held && parseISO(o.end).getTime() > held.start && parseISO(o.start).getTime() < held.end;
+    let agendaOccs = (s.agendaShowPast
       ? occurrences
-      : occurrences.filter((o) => parseISO(o.end).getTime() >= agendaCutoff);
+      : occurrences.filter((o) => parseISO(o.end).getTime() >= agendaCutoff)).filter(inHeld);
+    const agendaMore = !!(held && agendaMoreRef.current && agendaMoreRef.current.to > held.end);
     if (s.agendaSort === 'match') agendaOccs = sortByMatch(agendaOccs);
     view = html`<div class="bc-agenda-wrap">
       <div class="bc-agenda-toggle">
@@ -1052,8 +1084,10 @@ export function App() {
         onSetAttendance=${(occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v)}
         onFeedback=${sendFeedback}
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
-        emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}
+        emptyLabel=${!held ? 'Loading…' : s.agendaShowPast ? 'No events' : 'No upcoming events'}
         gapFrom=${s.agendaShowPast ? null : dayKeyOf(new Date(agendaCutoff))}
+        onNearEnd=${held ? () => onAgendaNearEnd(held.end) : null}
+        endNote=${!held ? null : agendaMore ? 'Loading later events…' : 'Through ' + fmtDateShort(new Date(held.end - 1))}
       />
     </div>`;
   }

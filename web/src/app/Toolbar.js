@@ -221,7 +221,9 @@ export function Toolbar({ onToggleSidebar }) {
   const calMeta = useMemo(() => calendarMeta(), [calendars]);
   const { dayCtx, dayLabels } = useMemo(() => {
     if (view !== 'day' || !showCtx) return { dayCtx: [], dayLabels: [] };
-    const all = [...state.occ.values()];
+    // Only shown calendars: a hidden weather or holiday calendar still
+    // labelled the phone's day title (#183).
+    const all = [...state.occ.values()].filter((o) => calMeta[o.calendarId] && calMeta[o.calendarId].visible);
     return {
       dayCtx: (contextByDay(all, calMeta).get(anchor) || []).filter((o) => o.allDay),
       dayLabels: dayLabelsByDay(all, calMeta).get(anchor) || [],

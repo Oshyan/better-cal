@@ -143,12 +143,20 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
             ? { contLeft: epochDayOfKey(span.startKey) < ed, contRight: epochDayOfKey(span.endKey) > ed }
             : null;
           const openOpts = { dayKey };
+          // A timed event that began on an earlier day says when it ends
+          // here, or that it fills the day; its start time belongs to the
+          // day it starts (#183).
+          const before = epochDayOfKey(span.startKey) < ed;
+          const after = epochDayOfKey(span.endKey) > ed;
+          const timeLabel = occ.allDay ? 'all day'
+            : !before ? fmtTime(parseISO(occ.start))
+              : after ? 'all day' : 'until ' + fmtTime(parseISO(occ.end));
           // The time sits inside the event, as in the grid; clicking the
           // event opens it, so there's no separate open button.
           return html`<div key=${occ.instanceId} class="bc-dayexpand-row">
             <${EventChip}
               occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-              timeLabel=${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}
+              timeLabel=${timeLabel}
               dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
               onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, openOpts)}
               onPointerDown=${(ev) => dragOut(occ, ev)}

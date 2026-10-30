@@ -138,15 +138,15 @@ function openHandlers(occ, onOpen) {
     onClick: (e) => {
       if (hasModifier(e)) return;
       e.stopPropagation();
+      // The second click of a double-click: one click already opens the
+      // full panel, and on a desktop the panel moves the layout, so the
+      // second landed on another event, or closed the panel (#184).
+      if (e.detail > 1) return;
       // Containers skip the popover: a single click always opens the trip
       // detail view (the popover's inline edits make no sense for a trip).
       if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), occ.isContainer ? { detail: true } : undefined);
     },
-    onDblClick: (e) => {
-      if (hasModifier(e) || occ.isGroup) return;
-      e.stopPropagation();
-      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
-    },
+    onDblClick: (e) => { e.stopPropagation(); },
   };
 }
 

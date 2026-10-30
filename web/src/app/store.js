@@ -4,7 +4,7 @@
 
 import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { useState, useEffect, useRef } from '../../vendor/index.js';
-import { todayKey } from '../lib/dates.js';
+import { todayKey, dayKeyOf, addDaysKey } from '../lib/dates.js';
 
 const listeners = new Set();
 
@@ -294,6 +294,13 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   const recent = (id) => asked != null && (editedAt.get(id) || 0) > asked;
+  const firstDay = dayKeyOf(new Date(s));
+  const lastDay = dayKeyOf(new Date(e - 1));
+  const allDayInside = (occ) => {
+    const a = String(occ.start).slice(0, 10);
+    const b = occ.end && String(occ.end).slice(0, 10) > a ? String(occ.end).slice(0, 10) : addDaysKey(a, 1); // exclusive
+    return a <= lastDay && b > firstDay;
+  };
   const mine = (id, occ) => !!occ && (occ._optimistic || recent(id));
   // Drop cached occurrences whose start falls in the window, then reinsert,
   // carrying fetched record fields over from the previous copy (invalidate
@@ -307,12 +314,15 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
   for (const [id, occ] of state.occ) {
     const t = new Date(occ.start).getTime();
     if (id === kept) continue;
-    // The answer holds everything overlapping the window, so a timed event
-    // that began before it and runs into it is replaced (or gone, deleted
-    // elsewhere) too; it lingered until you scrolled to its start (#183).
-    // All-day dates sit at UTC midnight, not on the window's local edges,
-    // so they still go by their start.
-    const inside = (t >= s && t < e) || (!occ.allDay && t < e && new Date(occ.end).getTime() > s);
+    // The answer holds everything overlapping the window, so whatever
+    // overlaps it here is replaced (or gone, deleted elsewhere). A timed
+    // event goes by its instants. An all-day one goes by its dates against
+    // the window's local days: its "start" is a date written at UTC midnight,
+    // which west of UTC fell inside a window ending at the next local
+    // midnight, so loading a day threw away the next day's all-day events,
+    // and nothing loaded them again (all-day events vanished as you scrolled
+    // back in week view). A long one deleted elsewhere is cleared too.
+    const inside = occ.allDay ? allDayInside(occ) : (t < e && new Date(occ.end || occ.start).getTime() > s) || (t >= s && t < e);
     if (inside && !mine(id, occ)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);
@@ -398,6 +408,13 @@ export function markStaleOutside(startISO, endISO) {
   state.staleRanges = mergeRanges(state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, [{ start: s, end: e }])));
 }
 
+/** A stretch whose refresh failed: still shown, fetched again when next asked for. */
+export function markStale(startISO, endISO) {
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (e > s) state.staleRanges = mergeRanges([...state.staleRanges, { start: s, end: e }]);
+}
+
 /** What's held and current: the loaded ranges less the stale ones. Fetching asks for the rest. */
 export function freshRanges() {
   return state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, state.staleRanges));
@@ -453,17 +470,24 @@ function mergeRanges(ranges) {
 // for that range later.
 // An occurrence fetched on its own, to open (see mergeWindow).
 export function insertOccurrence(occ) {
-  state.occ.set(occ.instanceId, { ...occ, _held: true });
+  // Already on the calendar from a window: refresh its fields and keep it
+  // there. Only one the windows don't hold (another stretch, or hidden by a
+  // filter) is "held", shown just while its panel is open (App.js).
+  const cur = state.occ.get(occ.instanceId);
+  state.occ.set(occ.instanceId, cur && !cur._held ? { ...cur, ...occ } : { ...occ, _held: true });
   editedAt.set(occ.instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
 }
 
-export function patchOccurrence(instanceId, patch) {
+// edit: false for what isn't a change (an event's full record arriving,
+// map coordinates found): those must not hold the occurrence against the
+// next refresh (#184: hovering an event froze it until the next change).
+export function patchOccurrence(instanceId, patch, { edit = true } = {}) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;
   const before = { ...occ };
   state.occ.set(instanceId, { ...occ, ...patch });
-  editedAt.set(instanceId, Date.now());
+  if (edit) editedAt.set(instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
   return before;
 }

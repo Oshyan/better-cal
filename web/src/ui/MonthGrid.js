@@ -638,6 +638,9 @@ export function MonthGrid({
     if (!el) return null;
     const r = el.getBoundingClientRect();
     if (pt.x < r.left + GUTTER_W || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) return null;
+    // Under the event panel or the phone sheet is not the calendar (#184).
+    const hit = document.elementFromPoint(pt.x, pt.y);
+    if (hit && !el.contains(hit)) return null;
     const colW = (r.width - GUTTER_W) / columns;
     const col = Math.max(0, Math.min(columns - 1, Math.floor((pt.x - r.left - GUTTER_W) / colW)));
     const yContent = pt.y - r.top + el.scrollTop;

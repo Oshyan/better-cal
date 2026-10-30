@@ -58,20 +58,31 @@ export function groupOccurrences(occurrences, groupFlags) {
     });
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
+    // A group mixing all-day and timed members is timed, and takes its
+    // times from the timed ones: the all-day member's date (written at UTC
+    // midnight) read as a time put the group on the day before west of UTC
+    // (#184).
+    const allDay = sorted.every((m) => m.allDay);
+    const timed = allDay ? sorted : sorted.filter((m) => !m.allDay);
+    const tFirst = timed[0];
+    const tLast = timed.reduce((a, m) => (endMs(m) > endMs(a) ? m : a), timed[0]);
+    const lit = sorted.find((m) => m.highlighted);
     groupByKey.set(key, {
       isGroup: true,
       instanceId: GROUP_PREFIX + key,
       calendarId: first.calendarId,
       title: baseTitle(first.title),
       count: sorted.length,
-      start: first.start,
+      start: allDay ? first.start : tFirst.start,
       // Not a string compare: members carry their OWN tz offset, so
       // "...T09:00:00+00:00" sorts above "...T17:00:00-07:00" as text while
       // being two hours earlier in fact.
-      end: endMs(last) > endMs(first) ? last.end : first.end,
-      allDay: sorted.every((m) => m.allDay),
+      end: allDay ? (endMs(last) > endMs(first) ? last.end : first.end) : tLast.end,
+      allDay,
       dimmed: sorted.every((m) => !!m.dimmed),
-      highlighted: sorted.some((m) => !!m.highlighted),
+      highlighted: !!lit,
+      highlightColor: lit ? lit.highlightColor : undefined,
+      isNew: sorted.some((m) => !!m.isNew),
       attendance: 'none',
       // What the members share decides how the group is drawn: holidays
       // (context) stay a day label, not an event bar (#183).

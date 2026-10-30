@@ -58,7 +58,10 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
-    const covered = () => !!document.querySelector('.bc-popover[role="dialog"]');
+    // Anything opened over the list (an event, a plugin's card, a group)
+    // takes the keys first (#184: a plugin card closed with the list).
+    const covered = () => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => panelRef.current && d !== panelRef.current && !panelRef.current.contains(d));
     const onKey = (e) => {
       if (covered()) return;
       if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current(); }

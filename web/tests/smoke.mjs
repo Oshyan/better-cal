@@ -3001,7 +3001,14 @@ console.log('--- window merges (#183) ---');
   storeState.occ.set('allday', occ('allday', '2026-10-31T00:00:00+00:00', '2026-11-02T00:00:00+00:00', { allDay: true }));
   mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', []);
   assert('merge: a timed event running into the window is cleared when the answer lacks it', !storeState.occ.has('long'));
-  assert('merge: an all-day span from before the window still goes by its start', storeState.occ.has('allday'));
+  assert('merge: an all-day span overlapping the window is cleared when the answer lacks it', !storeState.occ.has('allday'));
+  // The next day's all-day event, held from before, survives loading the day
+  // before it, in any time zone (west of UTC it was thrown away).
+  storeState.occ.set('next', occ('next', '2026-11-09T00:00:00+00:00', '2026-11-10T00:00:00+00:00', { allDay: true }));
+  mergeWindow(isoAt(new Date(2026, 10, 8)), isoAt(new Date(2026, 10, 9)), []);
+  assert('merge: the next day\'s all-day event survives loading the day before', storeState.occ.has('next'));
+  mergeWindow(isoAt(new Date(2026, 10, 9)), isoAt(new Date(2026, 10, 10)), []);
+  assert('merge: its own day\'s answer without it clears it', !storeState.occ.has('next'));
 
   // A drop while an older answer is on its way: the moved copy stays.
   storeState.occ.clear();
@@ -3038,6 +3045,29 @@ console.log('--- bar resize (#183) ---');
   eq('resize: a bar ending mid-day keeps its time', resizeOccurrenceDays({ allDay: false, start: iso(2, 10), end: iso(4, 15) }, 'end', '2026-11-05').newEnd, iso(5, 15));
   eq('resize: all-day end, inclusive Thu', resizeOccurrenceDays({ allDay: true, start: '2026-11-02T00:00:00+00:00', end: '2026-11-04T00:00:00+00:00' }, 'end', '2026-11-05'),
     { newStart: '2026-11-02', newEnd: '2026-11-06' });
+}
+
+console.log('--- second review (#184) ---');
+{
+  const at = (d, h, m = 0) => isoAt(new Date(2026, 10, d, h, m));
+  // The agenda lists an overnight event on its evening, not as a two-day span.
+  const late = { instanceId: 'late', calendarId: 1, title: 'Late show', allDay: false, start: at(6, 22), end: at(7, 1) };
+  const g = buildAgendaGroups([late]);
+  eq('agenda: an overnight event is one row on its evening', g.map((x) => [x.dayKey, x.rows.map((r) => r.kind)]), [['2026-11-06', ['normal']]]);
+  // A group mixing all-day and timed members stays on its day, in any zone.
+  const hol = { instanceId: 'h1', calendarId: 1, title: 'Harvest Day', allDay: true, start: '2026-06-02T00:00:00+00:00', end: '2026-06-03T00:00:00+00:00' };
+  const parade = { instanceId: 'h2', calendarId: 1, title: 'Harvest Day (parade)', allDay: false, start: isoAt(new Date(2026, 5, 2, 10)), end: isoAt(new Date(2026, 5, 2, 12)), highlighted: true, highlightColor: '#ff0000', isNew: true };
+  const grp = groupOccurrences([hol, parade], { 1: true })[0];
+  eq('grouping: a mixed group stays on its day', occurrenceDaySpan(grp), { startKey: '2026-06-02', endKey: '2026-06-02' });
+  eq('grouping: a mixed group keeps the highlight and the new mark', [grp.highlightColor, grp.isNew], ['#ff0000', true]);
+  // An event opened from elsewhere that the calendar already holds stays drawn.
+  storeState.occ.clear();
+  storeState.occ.set('w', { instanceId: 'w', calendarId: 1, title: 'Old', allDay: false, start: at(3, 9), end: at(3, 10) });
+  insertOccurrence({ instanceId: 'w', calendarId: 1, title: 'New', allDay: false, start: at(3, 9), end: at(3, 10) });
+  eq('held: one already on the calendar is refreshed, not held', [storeState.occ.get('w').title, !!storeState.occ.get('w')._held], ['New', false]);
+  insertOccurrence({ instanceId: 'x', calendarId: 1, title: 'Hidden', allDay: false, start: at(3, 9), end: at(3, 10) });
+  assert('held: one the windows lack is held', !!storeState.occ.get('x')._held);
+  storeState.occ.clear();
 }
 
 console.log('--- overnight events (#183) ---');

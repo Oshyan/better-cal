@@ -4820,3 +4820,20 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* The event panel takes focus when it opens, for the keyboard; the panel
    itself needs no ring (its controls show theirs). */
 .bc-popover[role="dialog"]:focus { outline: none; }
+
+/* Week and day blocks stay opaque however faded (past, available, context,
+   dimmed by a filter): with opacity, overlapping blocks showed through each
+   other, the state the solid fill exists to prevent (#184). A wash in the
+   timeline's own color fades them instead, and lifts when you point at one. */
+.bc-block:is(.is-past, .is-available, .is-context, .is-filter-dimmed),
+.bc-block.is-past.is-filter-dimmed { opacity: 1; }
+.bc-block::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: var(--bg); opacity: 0; pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.bc-block.is-filter-dimmed::after { opacity: 0.22; }
+.bc-block.is-available::after { opacity: 0.28; }
+.bc-block:is(.is-past, .is-context)::after { opacity: 0.45; }
+.bc-block.is-past.is-filter-dimmed::after { opacity: 0.58; }
+.bc-block:not(.is-drag-source):is(:hover, :focus-visible)::after { opacity: 0; }

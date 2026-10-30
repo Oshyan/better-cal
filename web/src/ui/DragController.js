@@ -42,6 +42,11 @@ window.addEventListener('click', (e) => {
 // }
 // Returns a cancel function.
 export function startPointerDrag(e, opts) {
+  // The main button only. A right-click, Ctrl-click or two-finger click
+  // (the context menu) started drags and creates; on a Mac the menu ate the
+  // release, and the drag stayed stuck to the pointer until the next click
+  // dropped it (#184).
+  if (e.pointerType === 'mouse' && (e.button !== 0 || e.ctrlKey)) return () => {};
   const isTouch = e.pointerType === 'touch';
   const startX = e.clientX, startY = e.clientY;
   let lifted = false;
@@ -102,6 +107,10 @@ export function startPointerDrag(e, opts) {
 
 
   function onMove(ev) {
+    // A mouse moving with no button held was let go somewhere we didn't
+    // hear about (another window, Cmd-Tab, a menu): the drag is over, and
+    // without knowing where, nothing is dropped.
+    if (ev.pointerType === 'mouse' && ev.buttons === 0) { cancel(); return; }
     lastPt = { x: ev.clientX, y: ev.clientY };
     if (ev.altKey !== copyKey) { copyKey = ev.altKey; showCopy(); }
     if (!lifted) {
@@ -144,7 +153,9 @@ export function startPointerDrag(e, opts) {
   }
 
   function onKey(ev) {
-    if (ev.key === 'Escape') cancel();
+    // Escape cancels the drag and only that: the event panel or the day's
+    // list under it stays open (#184).
+    if (ev.key === 'Escape') { if (ev.type === 'keydown') { ev.stopPropagation(); ev.preventDefault(); } cancel(); }
     else if (ev.key === 'Alt') { copyKey = ev.type === 'keydown'; showCopy(); if (lifted) ev.preventDefault(); }
   }
 

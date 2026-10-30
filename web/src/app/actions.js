@@ -44,9 +44,14 @@ export function effectiveOverviewMode() {
 // Pick an overview mode from the mobile Overview dropdown: optimistic local
 // apply, persisted through the settings endpoint (overviewMode).
 export function setOverviewMode(mode) {
+  // From where you are, as a view switch does (#184).
+  const anchor = hereKey();
   set({
     settings: { ...state.settings, overviewMode: mode },
     view: 'month',
+    anchor,
+    visibleMonth: { year: Number(anchor.slice(0, 4)), month: Number(anchor.slice(5, 7)) },
+    visibleDays: null,
     scrollSeq: state.scrollSeq + 1,
   });
   api('/settings', { method: 'PATCH', body: { overviewMode: mode } })
@@ -980,7 +985,8 @@ export function captureViewConfig() {
     // so a view saved before the filter existed, or with everything on,
     // stores nothing and applies as "show all".
     hideRel: REL_KINDS.filter((k) => state.showRel[k] === false),
-    anchor: state.anchor === todayKey() ? 'today' : state.anchor,
+    // No date: a view is calendars, filters and a layout. Saved with the
+    // date it happened to be on, it jumped there every time after (#184).
   };
 }
 
@@ -1013,13 +1019,19 @@ export function applySavedView(view) {
     toast((viewType === 'weeks2' ? '2-week' : '3-week') + ' view is desktop-only');
     viewType = 'month';
   }
+  // Where you are stays where you are; only the built-in reset (the default
+  // view with none chosen) goes to today. Switching views threw you to
+  // today, or to a date stored when the view was saved (#184).
+  const anchor = view.id == null && config.anchor === 'today' ? todayKey() : hereKey();
   set({
     view: viewType,
     calendars,
     collapsedFolders: { ...(config.folderCollapse || {}) },
     filterText: config.filterText || '',
     showRel: showRelFromConfig(config),
-    anchor: !config.anchor || config.anchor === 'today' ? todayKey() : config.anchor,
+    anchor,
+    visibleMonth: { year: Number(anchor.slice(0, 4)), month: Number(anchor.slice(5, 7)) },
+    visibleDays: null,
     activeViewId: view.id,
     scrollSeq: state.scrollSeq + 1,
   });

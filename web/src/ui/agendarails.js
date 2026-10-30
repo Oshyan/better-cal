@@ -8,7 +8,7 @@
 // as groups (synthesized when empty); intermediate empty days get nothing,
 // the rail alone carries continuity across them.
 
-import { occurrenceDaySpan } from './monthmath.js';
+import { occurrenceDaySpan, isOvernight } from './monthmath.js';
 import { epochDayOfKey, keyOfEpochDay, startMs } from '../lib/dates.js';
 
 export const AGENDA_ROW_H = 36;
@@ -106,7 +106,7 @@ function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded, m
   if (!Number.isFinite(first) || !Number.isFinite(last)) return [];
   const spans = [];
   for (const occ of occurrences) {
-    if (occ.attendance === 'hidden') continue;
+    if (occ.attendance === 'hidden' || isOvernight(occ)) continue; // an evening's event covers no next day
     const { startKey, endKey } = occurrenceDaySpan(occ);
     const a = Math.max(first, epochDayOfKey(startKey));
     const b = Math.min(last, epochDayOfKey(endKey));
@@ -189,7 +189,10 @@ export function buildAgendaGroups(occurrences, opts = {}) {
     }
     const shownStart = keyOfEpochDay(startDay);
     const shownEnd = keyOfEpochDay(endDay);
-    if (occ.end && startKey !== endKey) {
+    // An overnight event (10 PM to 1 AM) is an evening's event, listed on its
+    // day with both times, as month and week show it; as a two-day span it
+    // read like a trip (#184).
+    if (occ.end && startKey !== endKey && !isOvernight(occ)) {
       bucket(shownStart).starts.push(occ);
       bucket(shownEnd).ends.push(occ);
     } else {

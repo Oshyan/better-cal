@@ -251,7 +251,7 @@ export function useEventGeo(occ, active) {
                 ...(occ.recurring ? { scope: 'all' } : {}),
               },
             }).catch(() => {});
-            patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng });
+            patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng }, { edit: false });
           }
         } else {
           setGeo({ status: 'none' });

@@ -699,6 +699,11 @@ export function TimeGrid({
     const vbox = el.getBoundingClientRect();
     if (pt.x < box.left || pt.x > box.right) return null;
     if (!anyHeight && (pt.y < vbox.top || pt.y > vbox.bottom)) return null;
+    // Something drawn over the calendar there (the event panel, the phone
+    // sheet) is not the calendar: a drop there moved the event to a time
+    // hidden underneath (#184). The drag ghost and previews let points through.
+    const hit = document.elementFromPoint(pt.x, pt.y);
+    if (hit && rootRef.current && !rootRef.current.contains(hit)) return null;
     // Stack mode: the day is whichever panel's column the pointer is over,
     // read from live rects so variable panel heights need no math.
     if (vstack) {
@@ -756,6 +761,7 @@ export function TimeGrid({
     if (!origin) return;
     const startSnap = Math.floor(origin.min / SNAP_MIN) * SNAP_MIN;
     let current = null;
+    let offGrid = false;
     let lifted = false;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
@@ -766,7 +772,10 @@ export function TimeGrid({
       },
       onMove: (pt) => {
         const s = pointToSlot(pt);
-        if (!s) return;
+        // Off the calendar: no draft, and letting go there creates nothing
+        // (#184), as for moves.
+        if (!s) { current = null; offGrid = true; setDraft(null); return; }
+        offGrid = false;
         // Day view stacks the next day below: dragging into it is a timed
         // event past midnight, not an all-day one (#183). Minutes count from
         // the start of the day the drag began.
@@ -790,6 +799,7 @@ export function TimeGrid({
         setDraft(current);
       },
       onDrop: () => {
+        if (offGrid) { setDraft(null); return; }
         commitSelection(current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 });
       },
       onTap: () => {
@@ -812,6 +822,7 @@ export function TimeGrid({
     if (!origin) return;
     const single = { mode: 'days', startKey: origin.dayKey, endKey: origin.dayKey, allDayLane: true };
     let current = null;
+    let offGrid = false;
     let lifted = false;
     startPointerDrag(ev, {
       hScrollEl: infinite ? hscrollRef.current : null,
@@ -821,12 +832,14 @@ export function TimeGrid({
       },
       onMove: (pt) => {
         const s = pointToSlot(pt, true);
-        if (!s) return;
+        if (!s) { current = null; offGrid = true; setDraft(null); return; }
+        offGrid = false;
         const { startKey, endKey } = normalizeDayRange(origin.dayKey, s.dayKey);
         current = { mode: 'days', startKey, endKey, allDayLane: true };
         setDraft(current);
       },
       onDrop: () => {
+        if (offGrid) { setDraft(null); return; }
         commitSelection(current || single);
       },
       onTap: () => {

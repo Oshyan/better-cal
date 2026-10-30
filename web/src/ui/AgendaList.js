@@ -530,7 +530,9 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
               : compact
-                ? (span ? dayOfSpanLabel(occ, g.dayKey).replace(/^Day /, '') : occ.allDay ? 'all day' : compactTime(parseISO(occ.start)))
+                // A timed span's start row keeps its time ("10p · 1/2"): the
+                // phone agenda gave spans none (#184).
+                ? (span ? (start && !occ.allDay ? compactTime(parseISO(occ.start)) + ' · ' : '') + dayOfSpanLabel(occ, g.dayKey).replace(/^Day /, '') : occ.allDay ? 'all day' : compactTime(parseISO(occ.start)))
               : span ? dayOfSpanLabel(occ, g.dayKey) + (spanTime ? ' · ' + spanTime : '')
               : occ.allDay ? 'all day'
               // A moment (no length) shows one time, as everywhere else.

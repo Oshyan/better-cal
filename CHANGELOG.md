@@ -6,6 +6,13 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **A second review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)):** more of the same cleanup.
+  - All-day events no longer vanish as you scroll back in week view west of UTC (time zones are hard 😄), and one deleted elsewhere disappears.
+  - A double-click opens the event once; right-click and Ctrl-click no longer start drags; Escape cancels a drag without closing the panel; drops and drag-to-create over the panel or off the calendar do nothing.
+  - Refreshes that fail are retried, a retry no longer takes over what gets refreshed, and an event hidden by a filter, opened from a notification, leaves the calendar when its panel closes.
+  - Saved views, the phone's View sheet and turning the phone sideways keep your place.
+  - The agenda lists overnight events on their evening, the phone agenda gives spans a time, faded blocks no longer show through each other, and mixed groups of similar items stay on their day.
+
 - **The last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
   - Events show their calendar's mark everywhere: a plugin calendar's icon and a Google calendar's ring on month chips too, and phone month pills keep icons and the "new" glow.
   - The keyboard can reach an event's panel: opening one moves focus into it and closing it returns focus. Escape closes an event opened from a day's list before the list.

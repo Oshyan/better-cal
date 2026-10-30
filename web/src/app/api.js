@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, freshRanges } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, markStale, freshRanges } from './store.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
@@ -378,8 +378,20 @@ function windowLoaded(startISO, endISO) {
   failedWindows.delete(startISO + '|' + endISO);
   // An older request may land after the person has navigated elsewhere. It
   // can satisfy its own cache gap, but must not clear or replace the current
-  // view's loading/error state.
-  if (!current) return;
+  // view's loading/error state, unless that's an old failure note while
+  // the view on screen is loaded (it stayed up over held data, #184).
+  if (!current) {
+    if (failedWindows.size === 0 && state.windowStatus && state.windowStatus.kind === 'failed' && lastWindow) {
+      const ls = new Date(lastWindow.start).getTime();
+      const le = new Date(lastWindow.end).getTime();
+      if (freshRanges().some((r) => r.start <= ls && r.end >= le)) {
+        retryStep = 0;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        set({ windowStatus: null });
+      }
+    }
+    return;
+  }
   if (failedWindows.size > 0) return;
   retryStep = 0;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
@@ -407,15 +419,21 @@ export function retryWindowsNow() {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   const again = [...failedWindows.values()];
   failedWindows.clear();
-  for (const w of again) loadWindow(w.start, w.end);
+  // A window the view has moved on from is fetched without becoming the
+  // view's window again: it took over what saves and the change poll
+  // refresh, leaving the dates on screen out of date (#184).
+  for (const w of again) {
+    const isView = !!lastWindow && lastWindow.start === w.start && lastWindow.end === w.end;
+    loadWindow(w.start, w.end, { asView: isView });
+  }
 }
 
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('online', () => { if (failedWindows.size > 0) retryWindowsNow(); });
 }
 
-export async function loadWindow(startISO, endISO, { force = false } = {}) {
-  lastWindow = { start: startISO, end: endISO };
+export async function loadWindow(startISO, endISO, { force = false, asView = true } = {}) {
+  if (asView) lastWindow = { start: startISO, end: endISO };
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   if (!(e > s) || e - s > MAX_SPAN_MS) {
@@ -528,7 +546,7 @@ export function ensureFullOccurrence(instanceId) {
       const rec = (d && d.occurrence) || {};
       const patch = { full: true, stale: false };
       for (const k of DETAIL_FIELDS) if (k in rec) patch[k] = rec[k];
-      patchOccurrence(instanceId, patch);
+      patchOccurrence(instanceId, patch, { edit: false });
       return state.occ.get(instanceId);
     })
     .catch(() => {
@@ -542,8 +560,11 @@ export function ensureFullOccurrence(instanceId) {
 }
 
 // Refetch the most recently requested window (after mutations/undo).
+// Resolves false when part of it failed (a server error, a deploy): that
+// part is marked stale, and the change poll keeps its place to try again
+// (#184: a failed refresh was never retried).
 export async function refreshWindow() {
-  if (!lastWindow) return;
+  if (!lastWindow) return true;
   const refreshStart = lastWindow.start;
   const refreshEnd = lastWindow.end;
   // Everything outside this stretch is no longer known to be current.
@@ -553,20 +574,23 @@ export async function refreshWindow() {
   // In pieces under the server's cap, like any other window (fetchRange).
   const s = new Date(refreshStart).getTime();
   const e = new Date(refreshEnd).getTime();
+  let ok = true;
   for (let a = s; a < e; a += MAX_SPAN_MS) {
     const b = Math.min(e, a + MAX_SPAN_MS);
     const params = new URLSearchParams({ start: iso(a), end: iso(b) });
     const asked = Date.now();
     try {
       const data = await api('/events?' + params.toString());
-      if (id !== windowReqId) return;
+      if (id !== windowReqId) return true; // a newer refresh took over
       mergeWindow(iso(a), iso(b), data.events || [], asked);
       boundCacheAfterMerge(refreshStart, refreshEnd);
     } catch (err) {
-      // A failed refresh only leaves slightly stale data; not fatal.
+      ok = false;
+      markStale(iso(a), iso(b));
       if (err && err.code === 'event_window_too_large') windowFailed(refreshStart, refreshEnd, err);
     }
   }
+  return ok;
 }
 
 // --- search ----------------------------------------------------------------

@@ -12,7 +12,7 @@ import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
-  resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows } from './actions.js';
+  resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows, hereKey } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
 import { hidesCancelled } from '../ui/daysteps.js';
@@ -289,9 +289,10 @@ export function App() {
           const moved = cursor !== null && d.cursor !== cursor;
           const reviewMoved = review !== null && d.review !== review;
           const statusMoved = status !== null && d.status !== status;
+          let refreshed = true;
           if (moved) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
-            refreshWindow();
+            refreshed = await refreshWindow();
             loadPeople().catch(() => {});
             loadSavedViews().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
@@ -320,7 +321,9 @@ export function App() {
           if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
           // The app icon's number (#170), when something it counts may have moved.
           refreshBadge({ changed: moved || reviewMoved });
-          cursor = d.cursor;
+          // A refresh that failed leaves the cursor where it was, so the
+          // next check sees the change again and retries.
+          if (refreshed) cursor = d.cursor;
           review = d.review ?? null;
           status = d.status ?? null;
         }
@@ -388,12 +391,17 @@ export function App() {
   // Occurrences on visible calendars, from the cache. Calendars flagged
   // groupSimilar get near-duplicate collapsing (synthetic group items).
   const showRel = useStore((st) => st.showRel);
+  const openId = useStore((st) => (st.popover ? st.popover.instanceId : null));
   const occurrences = useMemo(() => {
     const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
     const hideCancelled = hidesCancelled(s.calendars);
     const out = [];
     for (const occ of state.occ.values()) {
       if (!visible.has(occ.calendarId)) continue;
+      // Opened from a notification, Activity or a trip but not in any window
+      // (a filter hides it, or its dates aren't loaded): drawn only while
+      // its panel is open (#184: a filter-hidden one stayed on the grid).
+      if (occ._held && occ.instanceId !== openId) continue;
       // A calendar set to hide what its source cancelled (#135).
       if (occ.status === 'cancelled' && hideCancelled.has(occ.calendarId)) continue;
       // The relationship quick filter: a kind switched off leaves every view.
@@ -405,7 +413,7 @@ export function App() {
     // The same event on two visible calendars draws once (#9).
     const calById = new Map(s.calendars.map((c) => [c.id, c]));
     return groupOccurrences(collapseDuplicates(out, calById), flags);
-  }, [s.occVersion, s.calendars, showRel]);
+  }, [s.occVersion, s.calendars, showRel, openId]);
   // Days where the kind filter hid something: every view marks them, so a
   // filtered view never loses things silently (docs/relationships.md).
   const hiddenDays = useMemo(() => {
@@ -587,6 +595,17 @@ export function App() {
   );
 
   // Stable-callback mirror of the merged occurrence list (plugin cards).
+  // The month grid remounts when its column count changes (a phone turned
+  // sideways, the narrow-window fallback). It starts from where you are,
+  // not the last date you navigated to (#184); the anchor follows after.
+  const gridColsRef = useRef(null);
+  const gridRebaseRef = useRef(null);
+  useEffect(() => {
+    const a = gridRebaseRef.current;
+    if (!a) return;
+    gridRebaseRef.current = null;
+    if (a !== state.anchor) set({ anchor: a, visibleMonth: { year: Number(a.slice(0, 4)), month: Number(a.slice(5, 7)) } });
+  });
   const occurrencesRef = useRef([]);
   occurrencesRef.current = occurrencesWithAvail;
 
@@ -965,6 +984,8 @@ export function App() {
     // three very wide days in rows too short to read.
     const ribbon = s.view === 'month' && effectiveOverviewMode() === '3day';
     const columns = ribbon ? (s.phoneWide ? 5 : 3) : 7;
+    if (gridColsRef.current !== null && gridColsRef.current !== columns) gridRebaseRef.current = hereKey();
+    gridColsRef.current = columns;
     const ribbonRows = s.phoneWide ? 3 : 5;
     view = html`<${MonthGrid}
       key=${'grid' + columns}
@@ -974,7 +995,7 @@ export function App() {
       columns=${columns}
       visibleRows=${ribbon ? ribbonRows : MONTH_ROWS[s.view]}
       minRows=${ribbon ? ribbonRows : MONTH_MIN_ROWS[s.view] || MONTH_ROWS[s.view]}
-      scrollKey=${s.anchor}
+      scrollKey=${gridRebaseRef.current || s.anchor}
       scrollSeq=${s.scrollSeq}
       glide=${s.glideSeq === s.scrollSeq}
       anchorAtTop=${s.gridAnchor === 'top'}

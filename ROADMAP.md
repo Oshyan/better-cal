@@ -37,9 +37,13 @@ The [changelog](CHANGELOG.md) has the full list, fixes included.
 - Feed problems in plain words, tides that are easier to see, times stored in UTC read on your own clock everywhere
 - The first round of fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183))
 
+## 1.4.2 (released 2026-10-30)
+
+- The second round of the view review's fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)): overnight events, week view bar drags, an agenda that keeps loading, and smaller navigation and loading fixes
+
 ## 1.4.x (next)
 
-- The rest of the view review's fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)), then a second, independent review of every view
+- The view review's remaining keyboard and cosmetic fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)), then a second, independent review of every view
 
 ## 1.5: Filters and your own layer
 

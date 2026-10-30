@@ -409,9 +409,14 @@ export function MonthGrid({
     const endGlide = () => { glideRef.current = null; };
     const onScroll = () => {
       const gl = glideRef.current;
-      // Arrived (or as near as the scroller goes, at its end).
-      if (gl && anchorTopRef.current
-          && Math.abs(el.scrollTop - Math.min(anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight)) <= 1) glideRef.current = null;
+      if (gl && anchorTopRef.current) {
+        // Arrived (or as near as the scroller goes), or moving away from the
+        // target: a glide only ever closes in, so that's you scrolling (a
+        // scrollbar drag, Page Down; Safari has no scrollend to say so).
+        const dist = Math.abs(el.scrollTop - Math.min(anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight));
+        if (dist <= 1 || (gl.dist != null && dist > gl.dist + 1)) glideRef.current = null;
+        else gl.dist = dist;
+      }
       const g = geomRef.current;
       if (g.geo.fit && (setTopRef.current == null || Math.abs(el.scrollTop - setTopRef.current) >= 1)) {
         const w = g.geo.weekAt(el.scrollTop);
@@ -490,6 +495,7 @@ export function MonthGrid({
     const prev = prevGeoRef.current;
     prevGeoRef.current = geo;
     if (glideRef.current && pendingRowRef.current == null) {
+      glideRef.current.dist = null; // re-aimed: the distance starts over
       el.scrollTo({ top: anchorTop(glideRef.current.row), behavior: 'smooth' });
       recompute();
       return;
@@ -539,7 +545,9 @@ export function MonthGrid({
       const top = anchorTop(w);
       if (Math.abs(top - el.scrollTop) <= el.clientHeight * 2.5) {
         pendingRowRef.current = null;
-        glideRef.current = { row: w };
+        // Already there (Today on today): nothing will scroll, so no glide
+        // to end; one left set would pull you back on the next load.
+        glideRef.current = Math.abs(top - el.scrollTop) > 1 ? { row: w, dist: null } : null;
         el.scrollTo({ top, behavior: 'smooth' });
         return;
       }

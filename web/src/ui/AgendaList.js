@@ -330,6 +330,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   const reportTopRef = useRef(() => {});
   const onNearEndRef = useRef(onNearEnd);
   onNearEndRef.current = onNearEnd;
+  // A list too short to scroll asks again whenever a load lands (the end
+  // note changes), until it fills the screen or App's two-year limit.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && onNearEndRef.current && el.scrollTop + el.clientHeight * 3 > el.scrollHeight) onNearEndRef.current();
+  }, [endNote, groups.length]);
 
   useEffect(() => { onScroll(); }, [groups.length, onScroll]);
 

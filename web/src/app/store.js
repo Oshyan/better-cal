@@ -279,9 +279,12 @@ export function invalidateRecords(eventId = null) {
 const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
 const OCCURRENCE_CACHE_MAX = 25000;
 
-// When each occurrence was last changed here (a drag, a resize, an edit's
-// optimistic patch): a window answer asked for before then is older than it.
+// When each occurrence was last changed here (a drag, a resize, a Maybe, a
+// delete, an inserted copy): a window answer asked for before then is older
+// than it, and must neither put the old version back nor bring a deleted
+// one back to life.
 const editedAt = new Map();
+export function noteEdited(instanceId) { editedAt.set(instanceId, Date.now()); }
 
 // asked: when the request for this answer went out. An occurrence changed
 // here since then (or still waiting on its save) keeps its own copy: a
@@ -290,7 +293,8 @@ const editedAt = new Map();
 export function mergeWindow(startISO, endISO, events, asked = null) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
-  const mine = (id, occ) => !!occ && (occ._optimistic || (asked != null && (editedAt.get(id) || 0) > asked));
+  const recent = (id) => asked != null && (editedAt.get(id) || 0) > asked;
+  const mine = (id, occ) => !!occ && (occ._optimistic || recent(id));
   // Drop cached occurrences whose start falls in the window, then reinsert,
   // carrying fetched record fields over from the previous copy (invalidate
   // first when the refresh follows an edit of that event, see actions.js).
@@ -315,7 +319,7 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
     }
   }
   for (const ev of events) {
-    if (mine(ev.instanceId, state.occ.get(ev.instanceId))) continue;
+    if (recent(ev.instanceId) || mine(ev.instanceId, state.occ.get(ev.instanceId))) continue;
     const p = prior.get(ev.instanceId);
     if (p) {
       const merged = { ...ev, full: true };
@@ -450,6 +454,7 @@ function mergeRanges(ranges) {
 // An occurrence fetched on its own, to open (see mergeWindow).
 export function insertOccurrence(occ) {
   state.occ.set(occ.instanceId, { ...occ, _held: true });
+  editedAt.set(occ.instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
 }
 
@@ -458,7 +463,7 @@ export function patchOccurrence(instanceId, patch) {
   if (!occ) return null;
   const before = { ...occ };
   state.occ.set(instanceId, { ...occ, ...patch });
-  if ('_optimistic' in patch) editedAt.set(instanceId, Date.now());
+  editedAt.set(instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
   return before;
 }
@@ -466,13 +471,14 @@ export function patchOccurrence(instanceId, patch) {
 export function restoreOccurrence(instanceId, before) {
   if (before) state.occ.set(instanceId, before);
   else state.occ.delete(instanceId);
+  editedAt.set(instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
 }
 
 export function removeOccurrencesOfEvent(eventId) {
   const removed = [];
   for (const [id, occ] of state.occ) {
-    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); }
+    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); editedAt.set(id, Date.now()); }
   }
   set({ occVersion: state.occVersion + 1 });
   return removed;

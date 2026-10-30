@@ -2,7 +2,7 @@
 
 import {
   state, set, toast, patchOccurrence, restoreOccurrence,
-  removeOccurrencesOfEvent, mergeWindow, invalidateRecords,
+  removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
 import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } from './api.js';
 import { adoptSettings } from './settings.js';
@@ -534,6 +534,7 @@ export async function deleteEvent(occ, scope) {
     : removeOccurrencesOfEvent(occ.eventId);
   if (occ.recurring && (scope || 'this') === 'this') {
     state.occ.delete(occ.instanceId);
+    noteEdited(occ.instanceId);
     set({ occVersion: state.occVersion + 1 });
   }
   set({ popover: null, editor: null });

@@ -17,7 +17,7 @@ import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js'
 import {
   visibleWeekRange, weekTop, totalHeight, segmentSpan, occurrenceDaySpan,
   monthStartsInRange, dominantMonthOfWeek, isMultiDay, isOvernight,
-  monthsAround, miniMonthGrid, dayDropDates, timeDropDates, shiftOccurrenceDays,
+  monthsAround, miniMonthGrid, dayDropDates, timeDropDates, shiftOccurrenceDays, resizeOccurrenceDays,
   rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
@@ -43,7 +43,7 @@ import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
 import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges, patchOccurrence } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges, patchOccurrence, removeOccurrencesOfEvent } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -416,9 +416,13 @@ eq('all-day bare date round-trips through occurrenceDaySpan',
 eq('timeDropDates snaps to 15', timeDropDates(occTimed, '2026-08-12', 611), // 10:11 -> 10:15
   { newStart: localISO(2026, 8, 12, 10, 15), newEnd: localISO(2026, 8, 12, 11, 45) });
 
-// timeDropDates clamps so the event still starts inside the target day.
-eq('timeDropDates clamps to day end', timeDropDates(occTimed, '2026-08-12', 1435).newEnd,
-  localISO(2026, 8, 13, 0, 0));
+// timeDropDates keeps the start inside the target day; the end may run past
+// midnight (#183: an overnight event dropped at 10 PM stays at 10 PM).
+eq('timeDropDates keeps the start in the day', timeDropDates(occTimed, '2026-08-12', 1435),
+  { newStart: localISO(2026, 8, 12, 23, 45), newEnd: localISO(2026, 8, 13, 1, 15) });
+eq('timeDropDates leaves an overnight event where it was dropped',
+  timeDropDates({ allDay: false, start: localISO(2026, 8, 12, 22, 0), end: localISO(2026, 8, 13, 1, 0) }, '2026-08-12', 1320),
+  { newStart: localISO(2026, 8, 12, 22, 0), newEnd: localISO(2026, 8, 13, 1, 0) });
 
 console.log('--- overlap layout ---');
 
@@ -3009,9 +3013,31 @@ console.log('--- window merges (#183) ---');
   eq('merge: an answer asked before the drop keeps the moved copy', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
   mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('m', '2026-11-04T10:00:00Z', '2026-11-04T11:00:00Z', { title: 'fresh' })], Date.now() + 1);
   eq('merge: an answer asked after it replaces it', storeState.occ.get('m').title, 'fresh');
+  // A delete while an older answer is on its way: it stays deleted.
+  storeState.occ.set('d', occ('d', '2026-11-05T10:00:00Z', '2026-11-05T11:00:00Z', { eventId: 9 }));
+  const asked2 = Date.now() - 1000;
+  removeOccurrencesOfEvent(9);
+  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('d', '2026-11-05T10:00:00Z', '2026-11-05T11:00:00Z', { eventId: 9 })], asked2);
+  assert('merge: an answer asked before a delete does not bring it back', !storeState.occ.has('d'));
+  // A Maybe (any local patch) while an older answer is on its way: it stays.
+  storeState.occ.set('r', occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' }));
+  const asked3 = Date.now() - 1000;
+  patchOccurrence('r', { relationship: 'maybe' });
+  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' })], asked3);
+  eq('merge: an answer asked before a Maybe keeps it', storeState.occ.get('r').relationship, 'maybe');
   storeState.occ.clear();
   storeState.loadedRanges = [];
   storeState.staleRanges = [];
+}
+
+console.log('--- bar resize (#183) ---');
+{
+  const iso = (d, h) => isoAt(new Date(2026, 10, d, h));
+  const bar = { allDay: false, start: iso(2, 10), end: iso(4, 0) }; // Mon 10 AM to Wed 00:00 (last day Tue)
+  eq('resize: a bar ending at midnight, end dropped on Thu, ends Fri 00:00', resizeOccurrenceDays(bar, 'end', '2026-11-05').newEnd, iso(6, 0));
+  eq('resize: a bar ending mid-day keeps its time', resizeOccurrenceDays({ allDay: false, start: iso(2, 10), end: iso(4, 15) }, 'end', '2026-11-05').newEnd, iso(5, 15));
+  eq('resize: all-day end, inclusive Thu', resizeOccurrenceDays({ allDay: true, start: '2026-11-02T00:00:00+00:00', end: '2026-11-04T00:00:00+00:00' }, 'end', '2026-11-05'),
+    { newStart: '2026-11-02', newEnd: '2026-11-06' });
 }
 
 console.log('--- overnight events (#183) ---');
@@ -3025,6 +3051,8 @@ console.log('--- overnight events (#183) ---');
   assert('overnight: not a span of a day or more', !isOvernight(ev(at(6, 14), at(8, 10))));
   assert('overnight: not all-day', !isOvernight({ instanceId: 'x', allDay: true, start: '2026-11-06T00:00:00+00:00', end: '2026-11-08T00:00:00+00:00' }));
   assert('overnight: not a trip', !isOvernight(ev(at(6, 22), at(7, 1), { isContainer: true })));
+  assert('overnight: not one running on into the next afternoon', !isOvernight(ev(at(6, 22), at(7, 21))));
+  assert('overnight: landing by noon is', isOvernight(ev(at(6, 23), at(7, 12))));
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

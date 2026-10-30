@@ -910,7 +910,9 @@ export function TimeGrid({
           const day = Math.floor(a / MINUTES_DAY);
           target = { dayKey: keyOfEpochDay(day), startMin: a - day * MINUTES_DAY };
         } else {
-          target = { dayKey: slot.dayKey, startMin: Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset))) };
+          // The start stays on the day under the pointer; the end may run
+          // past midnight, so 9 to 11 PM can become 11 PM to 1 AM (#183).
+          target = { dayKey: slot.dayKey, startMin: Math.max(0, Math.min(MINUTES_DAY - SNAP_MIN, snapMin(slot.min - grabOffset))) };
         }
         showPreview(previewRef, previewGeom(), target.dayKey, target.startMin, durMin);
       },
@@ -1016,28 +1018,34 @@ export function TimeGrid({
 
   // An overnight event's ends, in absolute minutes. Each part carries only
   // its own end's handle. In day view the stacked day under the pointer
-  // counts; side by side (week) only the height does, on the part's own day,
-  // so drifting into the next column doesn't jump a day.
+  // counts. Side by side (week), so does the event's other day (to end it
+  // before midnight, or start it after); any other column counts as the
+  // part's own day, so drifting sideways doesn't jump a day.
   const dragResizeOvernight = useCallback((occ, edge, ev, s0, e0) => {
     const col = ev.currentTarget.closest('.bc-tg-col');
     const partKey = (col && col.dataset.day) || dayKeyOf(edge === 'start' ? s0 : new Date(e0.getTime() - 1));
     const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
     const sAbs = absOf(dayKeyOf(s0), minutesOfDay(s0));
     const eAbs = sAbs + Math.round((e0 - s0) / 60000);
-    const partStart = absOf(partKey, 0);
+    const firstKey = dayKeyOf(s0);
+    const lastKey = dayKeyOf(new Date(e0.getTime() - 1));
     let result = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       onMove: (pt) => {
         const slot = pointToSlot(pt);
         if (!slot) { result = null; hidePreview(previewRef); return; }
-        const a = snapMin(absOf(vstack ? slot.dayKey : partKey, slot.min));
+        const own = vstack || slot.dayKey === firstKey || slot.dayKey === lastKey ? slot.dayKey : partKey;
+        const a = snapMin(absOf(own, slot.min));
         const s = edge === 'start' ? Math.min(a, eAbs - SNAP_MIN) : sAbs;
         const e = edge === 'end' ? Math.max(a, sAbs + SNAP_MIN) : eAbs;
         result = { s, e };
-        const ps = Math.max(0, s - partStart);
-        const pe = Math.min(MINUTES_DAY, e - partStart);
-        if (pe > ps) showPreview(previewRef, previewGeom(), partKey, ps, pe - ps);
+        // The preview shows the day the moved end is on.
+        const edgeDay = Math.floor((edge === 'end' ? e - 1 : s) / MINUTES_DAY);
+        const dayStart = edgeDay * MINUTES_DAY;
+        const ps = Math.max(0, s - dayStart);
+        const pe = Math.min(MINUTES_DAY, e - dayStart);
+        if (pe > ps) showPreview(previewRef, previewGeom(), keyOfEpochDay(edgeDay), ps, pe - ps);
         else hidePreview(previewRef);
       },
       onDrop: (pt) => {

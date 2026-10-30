@@ -6,7 +6,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { adoptSettings } from './settings.js';
-import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -132,6 +132,9 @@ export function App() {
     (st) => ({
       booted: st.booted, serverState: st.serverState, authed: st.authed, route: st.route, view: st.view,
       anchor: st.anchor, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, occVersion: st.occVersion,
+      // The agenda's top day once it has landed (actions.js hereKey): its
+      // window and band fetches follow it as you scroll.
+      agendaTop: st.view === 'agenda' && st.anchorSeen === st.scrollSeq && st.visibleDays ? st.visibleDays.start : null,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
       agendaSort: st.agendaSort, windowStatus: st.windowStatus,
@@ -401,13 +404,10 @@ export function App() {
   // reaches much further (it lists them too).
   const bandWin = (() => {
     if (s.view === 'agenda') {
-      const at = dateOfDayKey(s.anchor).getTime();
-      const r = state.loadedRanges.find((x) => x.start <= at && x.end > at);
-      if (r) {
-        const a = new Date(r.start);
-        const b = new Date(r.end);
-        return { start: toISOWithOffset(new Date(a.getFullYear(), a.getMonth(), 1)), end: toISOWithOffset(new Date(b.getFullYear(), b.getMonth() + 1, 1)) };
-      }
+      // The months around the agenda's top, as far as its window reaches.
+      const a = dateOfDayKey(addDaysKey(s.agendaTop || s.anchor, -60));
+      const b = dateOfDayKey(addDaysKey(s.agendaTop || s.anchor, 150));
+      return { start: toISOWithOffset(new Date(a.getFullYear(), a.getMonth(), 1)), end: toISOWithOffset(new Date(b.getFullYear(), b.getMonth() + 1, 1)) };
     }
     const vm = visMonthKey
       ? { year: Math.floor(visMonthKey / 100), month: visMonthKey % 100 }
@@ -418,6 +418,7 @@ export function App() {
   const availKeyRef = useRef(null);
   useEffect(() => {
     if (!anyPersonVisible) {
+      availKeyRef.current = null; // an answer still on its way doesn't put them back
       if (state.availSpans.length > 0) set({ availSpans: [] });
       return;
     }
@@ -603,16 +604,30 @@ export function App() {
     const [y, m] = s.anchor.split('-').map(Number);
     set({ visibleMonth: { year: y, month: m } });
   }, [s.view, s.anchor]);
-  // Scrolling near the agenda's end asks for 120 more days, once per end.
-  // The window starts where the agenda's does, up to the 700 days one
-  // window may span (api.js); past that it keeps the latest 690.
+  // The agenda's window follows its top as you scroll, as the other views'
+  // follow what they show: what a save or the change poll refreshes stays
+  // the stretch around what you're reading (#183).
+  useEffect(() => {
+    if (!s.agendaTop) return;
+    loadWindow(
+      toISOWithOffset(dateOfDayKey(addDaysKey(s.agendaTop, -60))),
+      toISOWithOffset(dateOfDayKey(addDaysKey(s.agendaTop, 150))),
+    );
+  }, [s.agendaTop]);
+  // Near the agenda's end, 120 more days, fetched without becoming the
+  // view's window. Once per end; a failure lets the next scroll ask again.
+  // Not more than two years past the top: a short list that never fills the
+  // screen would otherwise keep asking.
   const agendaMoreRef = useRef(null);
   const onAgendaNearEnd = useCallback((endMs) => {
     if (agendaMoreRef.current && agendaMoreRef.current.from === endMs) return; // already asked for this end
-    const to = new Date(endMs + 120 * 86400000);
-    const from = Math.max(dateOfDayKey(addDaysKey(state.anchor, state.agendaShowPast ? -365 : -90)).getTime(), to.getTime() - 690 * 86400000);
-    agendaMoreRef.current = { from: endMs, to: to.getTime() };
-    loadWindow(toISOWithOffset(new Date(from)), toISOWithOffset(to));
+    const top = dateOfDayKey((state.visibleDays && state.visibleDays.start) || state.anchor).getTime();
+    if (endMs > top + 730 * 86400000) return;
+    const to = endMs + 120 * 86400000;
+    const req = { from: endMs, to };
+    agendaMoreRef.current = req;
+    ensureRangeLoaded(toISOWithOffset(new Date(endMs)), toISOWithOffset(new Date(to)))
+      .catch(() => { if (agendaMoreRef.current === req) { agendaMoreRef.current = null; set({ occVersion: state.occVersion + 1 }); } });
   }, []);
 
   // Drag-and-drop drop handlers (Wave 11). All of them route through actions
@@ -1053,11 +1068,12 @@ export function App() {
     // Only the loaded stretch around where you are: other months held from
     // earlier showed beyond it, with the unloaded months between them
     // looking empty (#183). Until it arrives, the list says it's loading.
-    // The stretch holding the day you're on, or the top of the list once a
-    // long scroll has carried the window past that day.
+    // The stretch holding the top of the list once it has landed, else the
+    // day you're on: after a jump it waits for that day's stretch rather
+    // than listing the one you left.
     const holding = (ms) => state.loadedRanges.find((r) => r.start <= ms && r.end > ms) || null;
-    const held = holding(dateOfDayKey(s.anchor).getTime())
-      || (state.visibleDays ? holding(dateOfDayKey(state.visibleDays.start).getTime()) : null);
+    const held = (s.agendaTop && holding(dateOfDayKey(s.agendaTop).getTime()))
+      || holding(dateOfDayKey(s.anchor).getTime());
     const inHeld = (o) => held && parseISO(o.end).getTime() > held.start && parseISO(o.start).getTime() < held.end;
     // People's away times and plugin bands too, as every other view has them (#183).
     let agendaOccs = (s.agendaShowPast
@@ -1098,7 +1114,7 @@ export function App() {
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
         emptyLabel=${!held ? 'Loading…' : s.agendaShowPast ? 'No events' : 'No upcoming events'}
         gapFrom=${s.agendaShowPast ? null : dayKeyOf(new Date(agendaCutoff))}
-        onNearEnd=${held ? () => onAgendaNearEnd(held.end) : null}
+        onNearEnd=${held && s.agendaSort !== 'match' ? () => onAgendaNearEnd(held.end) : null}
         endNote=${!held ? null : agendaMore ? 'Loading later events…' : 'Through ' + fmtDateShort(new Date(held.end - 1))}
       />
     </div>`;

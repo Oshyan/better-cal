@@ -190,18 +190,21 @@ export function segmentSpan(startKey, endKey) {
 
 // Is an occurrence multi-day on the grid?
 /**
- * A timed event that runs past midnight but lasts less than a day (10 PM to
- * 1 AM, an overnight flight). It's a timed event, not a span: month shows it
- * as a chip on the day it starts, week and day as a block in each day it
- * touches. As a bar it lost its time (#183).
+ * A timed event that runs past midnight into the next morning (10 PM to
+ * 1 AM, an overnight flight landing by noon). It's a timed event, not a
+ * span: month shows it as a chip on the day it starts, week and day as a
+ * block in each day it touches. As a bar it lost its time (#183). One that
+ * runs on into the next afternoon (10 PM to 9 PM, or a day shortened by a
+ * clock change) is mostly the second day's, so it stays a span.
  */
 export function isOvernight(occ) {
   if (occ.allDay || occ.isContainer) return false;
-  const s = parseISO(occ.start).getTime();
-  const e = parseISO(occ.end).getTime();
+  const s = parseISO(occ.start);
+  const e = parseISO(occ.end);
   if (!(e - s < 86400000)) return false;
   const { startKey, endKey } = occurrenceDaySpan(occ);
-  return startKey !== endKey;
+  if (epochDayOfKey(endKey) !== epochDayOfKey(startKey) + 1) return false;
+  return e.getHours() * 60 + e.getMinutes() <= 12 * 60;
 }
 
 export function isMultiDay(occ) {
@@ -304,7 +307,12 @@ export function resizeOccurrenceDays(occ, edge, targetKey) {
   let s = s0, e = e0;
   if (edge === 'end') {
     const base = dateOfDayKey(keyOfEpochDay(Math.max(t, epochDayOfKey(startKey))));
-    e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
+    // Ending at midnight, its last day is the one before: dropped on Thursday
+    // it ends as Thursday does, at Friday 00:00 (it stopped a day short).
+    const atMidnight = e0.getHours() === 0 && e0.getMinutes() === 0;
+    e = atMidnight
+      ? new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1)
+      : new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
     if (e <= s) e = new Date(s.getTime() + 30 * 60000);
   } else {
     const base = dateOfDayKey(keyOfEpochDay(Math.min(t, epochDayOfKey(endKey))));
@@ -326,7 +334,10 @@ export function timeDropDates(occ, dayKey, minute) {
   const s0 = parseISO(occ.start);
   const e0 = parseISO(occ.end);
   const durMin = Math.max(15, (e0.getTime() - s0.getTime()) / 60000);
-  const startMin = Math.max(0, Math.min(1440 - durMin, Math.round(minute / 15) * 15));
+  // The start stays on the day dropped on; the end may run past midnight
+  // (an overnight event dropped at 10 PM stays at 10 PM; it was pulled back
+  // so it ended by midnight, #183).
+  const startMin = Math.max(0, Math.min(1440 - 15, Math.round(minute / 15) * 15));
   const base = dateOfDayKey(dayKey);
   const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, startMin);
   return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(new Date(s.getTime() + durMin * 60000)) };

@@ -8,6 +8,7 @@ import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } 
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
+import { hereKeyOf } from '../lib/viewpos.js';
 import { repeatSentence } from '../lib/repeat.js';
 import { shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
@@ -54,8 +55,16 @@ export function setOverviewMode(mode) {
 
 // --- navigation -------------------------------------------------------------
 
+// Where you are (lib/viewpos.js). Views report the days they show
+// (visibleDays), and anchorSeen records the move (scrollSeq) after which
+// they first showed the anchor; a report from before the latest move, or
+// from the view you left, never counts.
+export function hereKey() {
+  return hereKeyOf(state.anchor, state.visibleDays, state.anchorSeen === state.scrollSeq);
+}
+
 export function setView(view) {
-  set({ view, scrollSeq: state.scrollSeq + 1 });
+  set({ view, anchor: hereKey(), visibleDays: null, scrollSeq: state.scrollSeq + 1 });
 }
 
 export function cycleView() {
@@ -76,7 +85,7 @@ export function goToday() {
 }
 
 export function navigate(days) {
-  set({ anchor: addDaysKey(state.anchor, days), scrollSeq: state.scrollSeq + 1 });
+  set({ anchor: addDaysKey(hereKey(), days), scrollSeq: state.scrollSeq + 1 });
 }
 
 // Toolbar chevron step, sized to the current view: month and agenda step by

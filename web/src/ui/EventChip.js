@@ -8,6 +8,7 @@
 // onOpen(instanceId, rect, {detail: true}).
 
 import { html } from '../../vendor/index.js';
+import { isBand } from '../lib/bands.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
 import { Icon, PluginGlyph, LinkMark, isLinkFeed } from './icons.js';
@@ -17,6 +18,17 @@ import { isPendingLocation } from '../lib/maps.js';
 // browser-native behaviors are never hijacked.
 function hasModifier(e) {
   return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1;
+}
+
+/**
+ * A band's color wherever it's drawn (a month band, a week or day lane, a
+ * row in a day's list). Availability carries no calendar: away is a neutral
+ * slate, busy a warm amber, here a present green, all distinct from any
+ * calendar color. A plugin band takes its calendar's color.
+ */
+export function bandColor(occ, cal) {
+  if (occ.availKind) return occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e';
+  return occ.pluginColor || calColor(cal);
 }
 
 function calColor(cal) {
@@ -131,7 +143,7 @@ function openHandlers(occ, onOpen) {
 // `timeLabel` (optional) replaces the time with given text, shown for any
 // event: the expanded day's list says "all day" there so every title lines up.
 export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null, onOpen, onPointerDown, timeLabel = null }) {
-  const color = calColor(cal);
+  const color = isBand(occ) ? bandColor(occ, cal) : calColor(cal);
   const interested = occ.relationship === 'maybe';
   // GCal semantics: all-day (and group) chips are filled with the calendar
   // tint; timed events are quiet dot + time + title rows. The tint rides a
@@ -274,12 +286,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
 // plus the stronger 2px top edge. Not draggable in v1; click or Enter opens
 // the trip detail. The title labels each row's segment, small and truncated.
 export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
-  // Availability pseudo-occurrences carry no calendar: away is a neutral
-  // slate, busy a warm amber, here a present green — all distinct from any
-  // calendar color.
-  const color = occ.availKind
-    ? (occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e')
-    : (occ.pluginColor || calColor(cal));
+  const color = bandColor(occ, cal);
   const open = (e) => {
     if (hasModifier(e)) return;
     e.stopPropagation();

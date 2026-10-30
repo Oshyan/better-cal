@@ -195,8 +195,14 @@ export function startPointerDrag(e, opts) {
 // Vertical auto-scroll delta for a pointer y near a scroll container's
 // top/bottom edges; speed proportional to edge proximity. Shared by
 // startPointerDrag and RescheduleMode.
+// Each counts only near the scroller: inside its edge zone, or past its edge
+// by no more than that zone again. Further out (a pointer over the sidebar,
+// the toolbar or the event panel) is somewhere else, not "very near the
+// edge": the week track ran at full speed, a week a second, while a drag
+// crossed the sidebar to a calendar row (#183).
 export function edgeScrollDy(scrollEl, y) {
   const r = scrollEl.getBoundingClientRect();
+  if (y < r.top - EDGE_ZONE || y > r.bottom + EDGE_ZONE) return 0;
   if (y < r.top + EDGE_ZONE) return -edgeSpeed(r.top + EDGE_ZONE - y);
   if (y > r.bottom - EDGE_ZONE) return edgeSpeed(y - (r.bottom - EDGE_ZONE));
   return 0;
@@ -205,6 +211,7 @@ export function edgeScrollDy(scrollEl, y) {
 // Horizontal counterpart for left/right edges (infinite week day track).
 export function edgeScrollDx(scrollEl, x) {
   const r = scrollEl.getBoundingClientRect();
+  if (x < r.left - EDGE_ZONE || x > r.right + EDGE_ZONE) return 0;
   if (x < r.left + EDGE_ZONE) return -edgeSpeed(r.left + EDGE_ZONE - x);
   if (x > r.right - EDGE_ZONE) return edgeSpeed(x - (r.right - EDGE_ZONE));
   return 0;

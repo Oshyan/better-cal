@@ -387,11 +387,13 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     return current.dayKey || null;
   }, [groups, win.top, flat]);
 
+  // The month, and the day at the top (where Next, a view switch or a reload
+  // starts from once you've scrolled; actions.js hereKey).
   useEffect(() => {
     if (!topMonth || !onVisibleMonthChange) return;
     const [y, m] = topMonth.split('-').map(Number);
-    onVisibleMonthChange({ year: y, month: m });
-  }, [topMonth && topMonth.slice(0, 7)]); // eslint-disable-line
+    onVisibleMonthChange({ year: y, month: m }, { start: topMonth, end: topMonth });
+  }, [topMonth]); // eslint-disable-line
 
   // The list starts at the first day that HAS events, which silently skips
   // empty days at the front — opening on "Saturday, August 8" when today is

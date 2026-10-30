@@ -21,9 +21,10 @@ import { installKeyboard } from './keyboard.js';
 import { installPasteAnywhere } from './pasteanywhere.js';
 import {
   addDaysKey, dateOfDayKey, toISOWithOffset, parseISO, epochDayOfKey,
-  occDayKey, dayKeyOf, todayKey,
+  dayKeyOf, todayKey,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
+import { bandDays } from '../lib/bands.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
 import { TimeGrid } from '../ui/TimeGrid.js';
 import { AgendaList } from '../ui/AgendaList.js';
@@ -392,7 +393,7 @@ export function App() {
   // view doesn't, so it falls back to the month of the day you're on.
   // Without that, opening straight into day view fetched neither, and a
   // tide's shading never appeared.
-  const visMonthKey = useStore((st) => (st.visibleMonth
+  const visMonthKey = useStore((st) => (st.view !== 'day' && st.visibleMonth
     ? st.visibleMonth.year * 100 + st.visibleMonth.month
     : (st.anchor ? Number(st.anchor.slice(0, 4)) * 100 + Number(st.anchor.slice(5, 7)) : 0)));
   const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
@@ -402,7 +403,11 @@ export function App() {
       if (state.availSpans.length > 0) set({ availSpans: [] });
       return;
     }
-    const vm = state.visibleMonth || { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
+    // The same month the plugin bands use (visMonthKey): in day view, the day
+    // you're on, which the view reports only when you scroll.
+    const vm = visMonthKey
+      ? { year: Math.floor(visMonthKey / 100), month: visMonthKey % 100 }
+      : { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
     const start = new Date(vm.year, vm.month - 1 - 1, 1);
     const end = new Date(vm.year, vm.month - 1 + 2, 1);
     const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + availSeq;
@@ -418,11 +423,7 @@ export function App() {
   }, [anyPersonVisible, visMonthKey, availSeq]); // eslint-disable-line
 
   const availOccs = useMemo(() => availSpans.map((sp) => {
-    const startKey = occDayKey({ allDay: false, start: sp.start });
-    // End instant is exclusive; step back a minute so a midnight end doesn't
-    // bleed the band into the next day.
-    const endDate = new Date(parseISO(sp.end).getTime() - 60000);
-    const endKey = dayKeyOf(endDate);
+    const days = bandDays(sp.start, sp.end);
     return {
       instanceId: 'avail:' + sp.id,
       spanId: sp.id,
@@ -434,8 +435,8 @@ export function App() {
       availKind: sp.kind,
       personName: sp.name,
       allDay: true,
-      start: startKey + 'T00:00:00+00:00',
-      end: (endKey >= startKey ? endKey : startKey) + 'T00:00:00+00:00',
+      start: days.start,
+      end: days.end,
       attendance: 'none',
       status: 'confirmed',
       source: 'local',
@@ -502,8 +503,7 @@ export function App() {
       for (const r of entry.ranges || []) {
         if (r.calendarId != null && (calById.get(r.calendarId) || {}).visible !== true) continue;
         if (isWindow(r)) continue;
-        const startKey = dayKeyOf(parseISO(r.start));
-        const endKey = dayKeyOf(new Date(parseISO(r.end).getTime() - 60000));
+        const days = bandDays(r.start, r.end);
         out.push({
           instanceId: 'plg:' + pid + ':' + r.id,
           eventId: null,
@@ -519,8 +519,8 @@ export function App() {
           title: r.label,
           isContainer: true,
           allDay: true,
-          start: startKey + 'T00:00:00+00:00',
-          end: (endKey >= startKey ? endKey : startKey) + 'T00:00:00+00:00',
+          start: days.start,
+          end: days.end,
           attendance: 'none',
           status: 'confirmed',
           source: 'local',
@@ -665,11 +665,21 @@ export function App() {
   }, [promptScopeAt]);
 
   const onRequestWindow = useCallback(({ start, end }) => { loadWindow(start, end); }, []);
+  // A move (Today, Next, a jump) to a day already on screen sends no new
+  // report, so it counts as arrived now (actions.js hereKey).
+  const scrollSeqNow = useStore((st) => st.scrollSeq);
+  useEffect(() => {
+    set((st) => {
+      const d = st.visibleDays;
+      return d && st.anchor >= d.start && st.anchor <= d.end && st.anchorSeen !== st.scrollSeq ? { anchorSeen: st.scrollSeq } : {};
+    });
+  }, [scrollSeqNow]);
   const onVisibleMonthChange = useCallback((vm, days) => {
     set((st) => {
       const out = {};
       if (!(st.visibleMonth && st.visibleMonth.year === vm.year && st.visibleMonth.month === vm.month)) out.visibleMonth = vm;
       if (days && !(st.visibleDays && st.visibleDays.start === days.start && st.visibleDays.end === days.end)) out.visibleDays = days;
+      if (days && st.anchor >= days.start && st.anchor <= days.end && st.anchorSeen !== st.scrollSeq) out.anchorSeen = st.scrollSeq;
       return out;
     });
   }, []);
@@ -717,9 +727,18 @@ export function App() {
   }, []);
   // Day view scrolled to a different day: follow it in the toolbar label and
   // mini-month WITHOUT bumping scrollSeq, which would yank the scroll back.
+  // Also called after Today, the arrows or a jump (TimeGrid), which set the
+  // anchor themselves, so the month and the day on screen follow those too.
   const onVisibleDay = useCallback((dayKey) => {
     const [y, m] = dayKey.split('-').map(Number);
-    set((st) => (st.anchor === dayKey ? {} : { anchor: dayKey, visibleMonth: { year: y, month: m } }));
+    set((st) => {
+      const out = {};
+      if (st.anchor !== dayKey) out.anchor = dayKey;
+      if (!(st.visibleMonth && st.visibleMonth.year === y && st.visibleMonth.month === m)) out.visibleMonth = { year: y, month: m };
+      if (!(st.visibleDays && st.visibleDays.start === dayKey && st.visibleDays.end === dayKey)) out.visibleDays = { start: dayKey, end: dayKey };
+      if (st.anchorSeen !== st.scrollSeq) out.anchorSeen = st.scrollSeq;
+      return out;
+    });
   }, []);
   const onExpandDay = useCallback((dayKey) => {
     const cell = document.querySelector(`[data-day="${dayKey}"]`);
@@ -944,7 +963,7 @@ export function App() {
     view = html`<${TimeGrid}
       key="week"
       infinite=${true}
-      occurrences=${occurrences}
+      occurrences=${occurrencesWithAvail}
       windows=${pluginWindows}
       hiddenDays=${hiddenDays}
       calendars=${calMeta}
@@ -970,7 +989,7 @@ export function App() {
       key="day"
       vstack=${true}
       days=${[s.anchor]}
-      occurrences=${occurrences}
+      occurrences=${occurrencesWithAvail}
       windows=${pluginWindows}
       hiddenDays=${hiddenDays}
       calendars=${calMeta}
@@ -1043,7 +1062,10 @@ export function App() {
   let expand = null;
   if (s.expandedDay) {
     const ed = epochDayOfKey(s.expandedDay.dayKey);
-    const dayOccs = occurrences.filter((occ) => {
+    // A day's list holds what its cell counts, people's away times and plugin
+    // bands included: month's "+N more" counted them, and the list it opened
+    // didn't show them (#183).
+    const dayOccs = occurrencesWithAvail.filter((occ) => {
       const { startKey, endKey } = occurrenceDaySpan(occ);
       return epochDayOfKey(startKey) <= ed && epochDayOfKey(endKey) >= ed;
     });

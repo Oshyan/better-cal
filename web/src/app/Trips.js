@@ -11,7 +11,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, insertOccurrence, toast } from './store.js';
-import { api, loadWindow } from './api.js';
+import { api, ensureRangeLoaded } from './api.js';
 import { Skeleton } from './PageShell.js';
 import {
   openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers, editFromView,
@@ -116,7 +116,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
   const span = tripSpan(occ);
   useEffect(() => {
     if (!adding) return;
-    loadWindow(toISOWithOffset(dateOfDayKey(span.startKey)), toISOWithOffset(addDaysDate(dateOfDayKey(span.endKey), 1)));
+    ensureRangeLoaded(toISOWithOffset(dateOfDayKey(span.startKey)), toISOWithOffset(addDaysDate(dateOfDayKey(span.endKey), 1))).catch(() => {});
   }, [adding, occ.eventId]); // eslint-disable-line
 
   const color = (cal && cal.color) || '#888';

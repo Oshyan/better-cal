@@ -16,7 +16,7 @@ import {
   jumpToTarget,
 } from './actions.js';
 import { api, loadPeople } from './api.js';
-import { localTz } from '../lib/dates.js';
+import { localTz, todayKey } from '../lib/dates.js';
 import { parseJumpTarget } from '../lib/jumpparse.js';
 
 // Which context a `needs` gate is asking about.
@@ -97,7 +97,7 @@ export function buildCommands() {
         label: 'Go to',
         placeholder: 'e.g. next tuesday, aug 14, 2027-03-01',
         run: (text) => {
-          const target = parseJumpTarget(text, state.anchor);
+          const target = parseJumpTarget(text, todayKey());
           if (!target) { toast('Could not read "' + text + '" as a date', { error: true }); return false; }
           jumpToTarget(target);
           return true;

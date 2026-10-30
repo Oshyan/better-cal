@@ -2755,6 +2755,9 @@ body.bc-rescheduling { user-select: none; }
 }
 .bc-band.cont-l { border-bottom-left-radius: 0; }
 .bc-band.cont-r { border-bottom-right-radius: 0; }
+/* Day view's all-day area lists its bars; a band there sits among them at a bar's size. */
+.bc-vday-band { height: 20px; flex: 0 1 220px; min-width: 0; max-width: min(100%, 320px); }
+.bc-tg-phone .bc-vday-band { flex: none; max-width: none; }
 .bc-band-label {
   min-width: 0;
   font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
@@ -3219,7 +3222,7 @@ body.bc-rescheduling { user-select: none; }
   border-radius: 5px; padding: 1px 8px; font-size: 11px; color: var(--fg-muted); cursor: pointer;
 }
 .bc-vday-more:hover { color: var(--accent); border-color: var(--accent); }
-.bc-tg-vday-body { display: flex; position: relative; height: 1152px; }
+.bc-tg-vday-body { display: flex; position: relative; height: 1152px; isolation: isolate; } /* its events, shading and tide labels stack inside it, under the sticky date header (#183) */
 .bc-tg-vday-body .bc-tg-col { border-right: none; }
 
 /* --- agenda: span gutter, linked hover, month markers --------------------- */

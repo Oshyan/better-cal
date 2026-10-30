@@ -6,6 +6,15 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183)):** it turns out building a calendar view *is* easy, just deceptively so. The gotchas aren't hard to fix once you know where to look, and a dedicated review found a fair few. Sorry for missing them until now! 😅 More follow in the next releases; let me know if you see anything else that looks off.
+  - After a change, going back to weeks or months you'd seen earlier showed the old version until a reload.
+  - Next, the arrow keys, switching views and a reload start from where you've scrolled to, not where you last navigated.
+  - People's away and busy times and plugin bands now show in week and day views and in a day's "+N more" list, and no longer end a day early.
+  - Day view keeps its month right after Today, the arrows or a jump, so tide shading, away times and the mini-month follow along.
+  - Letting go of a drag outside the calendar no longer moves the event, week view no longer races ahead while you drag across the sidebar, and a still touch long-press no longer moves an event to the previous drag's day.
+  - Events from feeds and view-only Google calendars no longer drag or resize only to fail, and sidebar rows that can't take an event no longer accept the drop.
+  - Similar holidays grouped together stay a day label instead of becoming an event bar, and day view's date header stays above the timeline.
+  - Week view's month label names the month in the middle of the screen, the command palette's "Go to tomorrow" counts from today, and dragging an event's end past midnight in day view stops at midnight instead of making it 15 minutes long.
 - **The event you point at comes forward:** in week and day views, any event (past, available, context, dimmed by a filter, from any calendar or plugin) shows at full strength and on top while you point at it, above a tide's line and shading too. A tide's label can still be reached through an event: pointing at its spot brings the tide in front and takes the click.
 - **A feed's problem says what happened and what to do:** its settings open with a notice saying, in plain words, what went wrong ("Nothing was found at the address", "The address refused access"), with Try again. In the sidebar it's compact, with Details for the full notice on Calendars & folders: when it was last tried and last updated, and the raw error. The line by Refresh now and the warning's tooltip give times on your own clock.
 - **Tides are easier to see:** each tide is a solid line across the week and day views in its calendar's color, labelled at the left with its height and time. "Shade around each tide" now shades the timeline around the tide, fading out from it, instead of drawing an all-day bar. The calendar's icon is a single wave with an arrow, and a color change shows straight away everywhere, including the tide icons in the day headers. A tide's line, label and shading stay in front of the events they cross, even one you point at, and its details give one time instead of "3:35 PM to 3:35 PM".

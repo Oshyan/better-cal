@@ -157,12 +157,14 @@ function SidebarResize() {
 
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phone = false, onMenu = null }) {
   const press = useLongPress(() => onMenu && onMenu());
-  // data-drop-cal marks writable calendars as drag targets: dropping an event
-  // here moves it onto this calendar (feeds are read-only, so no attribute).
+  // data-drop-cal marks the calendars an event can be moved onto: ones that
+  // take new events, and not Google's (moves into or out of Google are
+  // refused). Feeds, view-only and plugin calendars took a drop that did
+  // nothing (#183).
   return html`<div class="bc-cal-item">
     <div
       class="bc-cal-row${cal.visible ? '' : ' is-off'}${phone ? ' is-held' : ''}"
-      data-drop-cal=${cal.kind === 'subscribed' ? undefined : cal.id}
+      data-drop-cal=${cal.editable && cal.provider !== 'google' ? cal.id : undefined}
       ...${phone ? press : {}}
     >
       <label class="bc-cal-label" title=${cal.name}>

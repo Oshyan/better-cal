@@ -8,7 +8,7 @@ const OFF_KEY = 'bc-push-off';
 const OFFERED_KEY = 'bc-push-offered';
 const markOff = (off) => { try { if (off) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY); } catch { /* private mode */ } };
 
-import { api, loadWindow } from './api.js';
+import { api, ensureRangeLoaded } from './api.js';
 import { state, toast, insertOccurrence } from './store.js';
 import { openDetail } from './actions.js';
 import { deepLinkWindows } from '../lib/deeplink.js';
@@ -257,7 +257,7 @@ export async function openOccurrence(instanceId, at, { quiet = false } = {}) {
   }
   if (broad) {
     try {
-      await loadWindow(broad.start, broad.end);
+      await ensureRangeLoaded(broad.start, broad.end);
     } catch { /* cache may still hold it; the targeted retry below covers it */ }
     if (state.occ.has(instanceId)) {
       openDetail(instanceId);

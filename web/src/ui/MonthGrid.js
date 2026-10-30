@@ -32,6 +32,7 @@ import {
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
+import { canReschedule } from '../lib/bands.js';
 import { ContextStrip, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
@@ -595,10 +596,14 @@ export function MonthGrid({
 
   const dropRef = useRef({ key: null, els: [] });
 
+  // The day under a point, or null off the grid: a drag let go over the
+  // sidebar, the toolbar or the event panel has no day to land on. Clamped to
+  // the nearest column, it moved the event to a row's first or last day.
   const dayKeyAtPoint = useCallback((pt) => {
     const el = scrollRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
+    if (pt.x < r.left + GUTTER_W || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) return null;
     const colW = (r.width - GUTTER_W) / columns;
     const col = Math.max(0, Math.min(columns - 1, Math.floor((pt.x - r.left - GUTTER_W) / colW)));
     const yContent = pt.y - r.top + el.scrollTop;
@@ -649,6 +654,8 @@ export function MonthGrid({
     const draggedCal = calendars[occ.calendarId];
     const isFeed = !!draggedCal && !draggedCal.editable;
     const isGoogle = !!draggedCal && draggedCal.provider === 'google';
+    // A read-only event can still go onto a trip band, but not to another day.
+    const fixed = !canReschedule(occ, draggedCal);
     const extKinds = (!isAvail && !isTrip) ? {
       cal: !isFeed && !isGoogle ? (id) => id !== occ.calendarId : false,
       person: !isFeed,
@@ -662,6 +669,10 @@ export function MonthGrid({
     const spanDays = epochDayOfKey(endKey) - epochDayOfKey(startKey);
     const grabKey = (from && from.grabKey) || dayKeyAtPoint({ x: ev.clientX, y: ev.clientY }) || startKey;
     const grabOffset = epochDayOfKey(grabKey) - epochDayOfKey(startKey);
+    // Every drag starts with no target. A touch long-press held still sends
+    // no move, and its release used the previous drag's day (#183).
+    dropRef.current.key = null;
+    dropRef.current.ext = null;
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
       scrollEl: scrollRef.current,
@@ -681,8 +692,8 @@ export function MonthGrid({
           }
           setDropRowHighlight(null);
         }
-        const k = dayKeyAtPoint(pt);
-        if (!k) return;
+        const k = fixed ? null : dayKeyAtPoint(pt);
+        if (!k) { dropRef.current.key = null; highlightDays([]); return; }
         const newStart = epochDayOfKey(k) - grabOffset;
         dropRef.current.key = keyOfEpochDay(newStart);
         highlightDays(renderedDayKeys(newStart, newStart + spanDays));
@@ -732,15 +743,17 @@ export function MonthGrid({
   }, [dragMoveOcc]);
 
   const dragResizeOcc = useCallback((occ, edge, ev) => {
-    if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned
+    if (!canReschedule(occ, calendars[occ.calendarId])) return; // plugin bands, read-only calendars
     ev.stopPropagation();
     const { startKey, endKey } = occurrenceDaySpan(occ);
+    dropRef.current.key = null;
+    dropRef.current.ext = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       onLift: () => {},
       onMove: (pt) => {
         const k = dayKeyAtPoint(pt);
-        if (!k) return;
+        if (!k) { dropRef.current.key = null; highlightDays([]); return; }
         dropRef.current.key = k;
         const a = edge === 'end' ? epochDayOfKey(startKey) : Math.min(epochDayOfKey(k), epochDayOfKey(endKey));
         const b = edge === 'end' ? Math.max(epochDayOfKey(k), epochDayOfKey(startKey)) : epochDayOfKey(endKey);
@@ -788,7 +801,7 @@ export function MonthGrid({
       },
       onCancel: () => highlightDays([]),
     });
-  }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onResizeEvent]);
+  }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onResizeEvent, calendars]);
 
   // Drag across cells selects a day range; on release the confirm chip
   // appears at the pointer (Create opens the editor, Cancel dismisses).
@@ -798,6 +811,8 @@ export function MonthGrid({
     if (ev.target !== ev.currentTarget) return; // only empty cell space
     if (ev.pointerType === 'touch') return; // touch: long-press-lift on events only, scroll wins
     const originKey = ev.currentTarget.dataset.day;
+    dropRef.current.key = null;
+    dropRef.current.ext = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       onMove: (pt) => {
@@ -1078,7 +1093,7 @@ function WeekRow({
             dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
             onPointerDown=${(e) => dragMoveOcc(occ, e)}
-            onEdgePointerDown=${(edge, e) => dragResizeOcc(occ, edge, e)}
+            onEdgePointerDown=${canReschedule(occ, calendars[occ.calendarId]) ? (edge, e) => dragResizeOcc(occ, edge, e) : null}
           />
         </div>`)}
       </div>`}
@@ -1093,7 +1108,7 @@ function WeekRow({
             dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
             onPointerDown=${(e) => dragMoveOcc(occ, e)}
-            onEdgePointerDown=${(edge, e) => dragResizeOcc(occ, edge, e)}
+            onEdgePointerDown=${canReschedule(occ, calendars[occ.calendarId]) ? (edge, e) => dragResizeOcc(occ, edge, e) : null}
           />
         </div>`)}
       </div>

@@ -35,13 +35,15 @@ import { pastedText } from '../src/lib/pastetext.js';
 import { sidebarGroups, moveGroup } from '../src/lib/sidebarorder.js';
 import { timeChange, editedWords, listWords } from '../src/lib/changeline.js';
 import { feedProblem, whenText } from '../src/lib/feedproblem.js';
+import { bandDays, isBand, canReschedule } from '../src/lib/bands.js';
+import { hereKeyOf } from '../src/lib/viewpos.js';
 import { fmtDateShort as fmtDS, fmtDateShortYear as fmtDSY } from '../src/lib/dates.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
 import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, keepLoadedOnly } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -2927,6 +2929,56 @@ console.log('--- feed problems in words ---');
   eq('feed: a healthy feed has no problem', feedProblem(feed({ status: 'ok', content: 'ok' }), now), null);
   eq('feed: a local calendar has none', feedProblem({ kind: 'local', health: { status: 'error' } }, now), null);
   assert('when: yesterday', /^yesterday at /.test(whenText(new Date(2026, 9, 28, 9, 0).toISOString(), now)));
+}
+
+console.log('--- view review fixes (#183) ---');
+{
+  // Bands end the day after their last day, like every all-day item; a
+  // midnight end doesn't reach into the next day.
+  const at = (y, m, d, h = 0) => isoAt(new Date(y, m - 1, d, h));
+  eq('band: Monday to Friday midnight covers Mon-Thu', bandDays(at(2026, 11, 2), at(2026, 11, 6)),
+    { start: '2026-11-02T00:00:00+00:00', end: '2026-11-06T00:00:00+00:00' });
+  eq('band: ending mid-afternoon covers that day', bandDays(at(2026, 11, 2), at(2026, 11, 6, 15)).end, '2026-11-07T00:00:00+00:00');
+  eq('band: a one-day band', bandDays(at(2026, 11, 2), at(2026, 11, 3)),
+    { start: '2026-11-02T00:00:00+00:00', end: '2026-11-03T00:00:00+00:00' });
+  eq('band: an end before its start still covers the start day', bandDays(at(2026, 11, 5), at(2026, 11, 2)).end, '2026-11-06T00:00:00+00:00');
+
+  assert('band: away time is a band', isBand({ instanceId: 'avail:3', availKind: 'away' }));
+  assert('band: a plugin range is a band', isBand({ instanceId: 'plg:tides:9' }));
+  assert('band: an event is not', !isBand({ instanceId: '41:2026-11-02' }));
+
+  const occ = { instanceId: '41:2026-11-02' };
+  assert('drag: a local event moves', canReschedule(occ, { editable: true }));
+  assert('drag: a feed event does not', !canReschedule(occ, { editable: false }));
+  assert('drag: a reschedulable plugin calendar\'s event does', canReschedule(occ, { editable: false, reschedulable: true }));
+  assert('drag: a plugin band never does', !canReschedule({ instanceId: 'plg:tides:9' }, null));
+  assert('drag: away time does', canReschedule({ instanceId: 'avail:3', availKind: 'away' }, undefined));
+
+  // Where Next, a view switch and a reload start from.
+  eq('here: the anchor while it is on screen', hereKeyOf('2026-11-04', { start: '2026-11-01', end: '2026-11-07' }), '2026-11-04');
+  eq('here: the middle of the screen once scrolled away', hereKeyOf('2026-11-04', { start: '2027-01-03', end: '2027-01-09' }), '2027-01-06');
+  eq('here: the anchor when nothing is reported', hereKeyOf('2026-11-04', null), '2026-11-04');
+  eq('here: one day on screen', hereKeyOf('2026-11-04', { start: '2026-12-25', end: '2026-12-25' }), '2026-12-25');
+  eq('here: on the way to the anchor, the anchor', hereKeyOf('2026-11-04', { start: '2026-10-11', end: '2026-10-17' }, false), '2026-11-04');
+
+  // After a change only the refreshed stretch counts as loaded.
+  const ms = (iso) => Date.parse(iso);
+  storeState.loadedRanges = [
+    { start: ms('2026-08-01T00:00:00Z'), end: ms('2026-09-01T00:00:00Z') },
+    { start: ms('2026-10-01T00:00:00Z'), end: ms('2026-12-01T00:00:00Z') },
+  ];
+  keepLoadedOnly('2026-10-15T00:00:00Z', '2026-11-15T00:00:00Z');
+  eq('loaded: only the refreshed stretch stays loaded', storeState.loadedRanges,
+    [{ start: ms('2026-10-15T00:00:00Z'), end: ms('2026-11-15T00:00:00Z') }]);
+  keepLoadedOnly('2027-01-01T00:00:00Z', '2027-02-01T00:00:00Z');
+  eq('loaded: nothing loaded there leaves nothing', storeState.loadedRanges, []);
+
+  // A group keeps what its members share: grouped holidays stay day labels.
+  const hol = (title) => ({ ...mkOcc(1, title, '2026-11-26'), relationship: 'context', status: 'confirmed' });
+  const g = groupOccurrences([hol('Harvest Day (North)'), hol('Harvest Day (South)')], FLAGS);
+  eq('grouping: a holiday group is still context', [g.length, g[0].relationship, g[0].status], [1, 'context', 'confirmed']);
+  const mixed = groupOccurrences([hol('Harvest Day (North)'), { ...mkOcc(1, 'Harvest Day (South)', '2026-11-26'), relationship: 'planned' }], FLAGS);
+  eq('grouping: members that differ give no relationship', mixed[0].relationship, undefined);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

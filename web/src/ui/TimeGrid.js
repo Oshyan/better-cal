@@ -23,7 +23,8 @@ import {
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
-import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
+import { EventBlock, EventBar, HiddenMark, TripBand } from './EventChip.js';
+import { isBand, canReschedule } from '../lib/bands.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
@@ -372,8 +373,15 @@ export function TimeGrid({
   useEffect(() => {
     if (!infinite) return;
     if (onVisibleMonthChange && leftDayRef.current != null) {
-      const [y, m] = keyOfEpochDay(Math.round(leftDayRef.current)).split('-').map(Number);
-      onVisibleMonthChange({ year: y, month: m });
+      // The days on screen, and the month of their middle: navigation centres
+      // its target, so naming the leftmost day's month called a jump to
+      // November "October" (#183).
+      const g = geomH.current;
+      const across = g.colW && hscrollRef.current ? Math.max(1, Math.round(hscrollRef.current.clientWidth / g.colW)) : 7;
+      const first = Math.round(leftDayRef.current);
+      const mid = keyOfEpochDay(first + Math.floor(across / 2));
+      const [y, m] = mid.split('-').map(Number);
+      onVisibleMonthChange({ year: y, month: m }, { start: keyOfEpochDay(first), end: keyOfEpochDay(first + across - 1) });
     }
     if (onRequestWindow) {
       onRequestWindow({
@@ -547,6 +555,10 @@ export function TimeGrid({
       ? nowWithin(scrollRef.current ? scrollRef.current.clientHeight : 0)
       : 7 * HOUR_H);
     vDayRef.current = key;
+    // Today, the arrows and a jump set the day themselves, so the scroll that
+    // follows reports no change of day: say so here, or the month (the mini
+    // month, the month-windowed fetches) stays where it was (#183).
+    if (onVisibleDayRef.current) onVisibleDayRef.current(key);
     vPinRef.current = { dayKey: key, within };
     setVWin((prev) => (prev.first === a - V_BEFORE && prev.last === a + V_AFTER
       ? prev : { first: a - V_BEFORE, last: a + V_AFTER }));
@@ -648,9 +660,16 @@ export function TimeGrid({
 
   // --- pointer helpers ------------------------------------------------------
 
+  // The day and minute under a point, or null off the timeline: a drag let
+  // go over the sidebar, the header or the event panel has nowhere to land.
+  // Clamped to the nearest column and minute, it moved the event to a day
+  // that had scrolled past unseen (#183).
   const pointToSlot = useCallback((pt) => {
     const el = scrollRef.current;
     if (!el || days.length === 0) return null;
+    const box = (infinite && hscrollRef.current ? hscrollRef.current : el).getBoundingClientRect();
+    const vbox = el.getBoundingClientRect();
+    if (pt.x < box.left || pt.x > box.right || pt.y < vbox.top || pt.y > vbox.bottom) return null;
     // Stack mode: the day is whichever panel's column the pointer is over,
     // read from live rects so variable panel heights need no math.
     if (vstack) {
@@ -817,6 +836,9 @@ export function TimeGrid({
     // Sidebar rows accept drops here too (recategorize / link a person);
     // feed events are read-only content-wise, so neither applies to them.
     const draggedCal = calendars[occ.calendarId];
+    // Nothing a read-only event can be dropped on here: no drag, and a click
+    // still opens it.
+    if (!canReschedule(occ, draggedCal)) return;
     const isFeed = !!draggedCal && !draggedCal.editable;
     const isGoogle = !!draggedCal && draggedCal.provider === 'google';
     const extKinds = !isFeed ? { cal: !isGoogle ? (id) => id !== occ.calendarId : false, person: true } : null;
@@ -839,7 +861,7 @@ export function TimeGrid({
           setDropRowHighlight(null);
         }
         const slot = pointToSlot(pt);
-        if (!slot) return;
+        if (!slot) { target = null; hidePreview(previewRef); return; }
         const startMin = Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset)));
         target = { dayKey: slot.dayKey, startMin };
         showPreview(previewRef, previewGeom(), target.dayKey, startMin, durMin);
@@ -865,6 +887,7 @@ export function TimeGrid({
 
   const dragResize = useCallback((occ, edge, ev) => {
     ev.stopPropagation();
+    if (!canReschedule(occ, calendars[occ.calendarId])) return;
     const s0 = parseISO(occ.start);
     const e0 = parseISO(occ.end);
     const dayKey = occDayKey(occ);
@@ -874,8 +897,12 @@ export function TimeGrid({
       scrollEl: scrollRef.current,
       onMove: (pt) => {
         const slot = pointToSlot(pt);
-        if (!slot) return;
-        const m = snapMin(slot.min);
+        if (!slot) { result = null; hidePreview(previewRef); return; }
+        // Past the end of the event's own day (day view stacks the next day
+        // below it) is the end of that day, not 0:00 of the next, which made
+        // the event 15 minutes long; before its start is the start.
+        const own = slot.dayKey === dayKey ? slot.min : (slot.dayKey > dayKey ? MINUTES_DAY : 0);
+        const m = snapMin(own);
         let sMin = minutesOfDay(s0);
         let eMin = minutesOfDay(e0) || MINUTES_DAY;
         if (edge === 'start') sMin = Math.min(m, eMin - SNAP_MIN);
@@ -896,7 +923,7 @@ export function TimeGrid({
       },
       onCancel: () => hidePreview(previewRef),
     });
-  }, [pointToSlot, days, previewGeom, onResizeEvent]);
+  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars]);
 
   // --- render ---------------------------------------------------------------
 
@@ -978,8 +1005,10 @@ export function TimeGrid({
       ? `left:${left}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${lane * lanePitch}px;--bl:${left}px;--bw:${(seg.endCol - seg.startCol + 1) * colW}px`
       : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${lane * lanePitch}px`}
   >
-    <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-      dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />
+    ${isBand(occ)
+      ? html`<${TripBand} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg} dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />`
+      : html`<${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+      dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />`}
   </div>`;
   };
   // Phone week: "+N" under the lanes on each day that has more; it opens
@@ -1057,7 +1086,7 @@ export function TimeGrid({
         titleOnly=${phoneWeek}
         onOpen=${onOpenEvent}
         onPointerDown=${(e) => dragMove(item.occ, e)}
-        onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
+        onEdgePointerDown=${canReschedule(item.occ, calendars[item.occ.calendarId]) ? (edge, e) => dragResize(item.occ, edge, e) : null}
       />`;
     })}
     ${hiddenTimed > 0 && html`<button
@@ -1129,11 +1158,13 @@ export function TimeGrid({
                     onCreateRange(allDayRangeDraft(k, k));
                   }}
                 >
-                  ${bars.slice(0, vMax).map(({ occ, seg, dayOf }) => html`<${EventBar}
+                  ${bars.slice(0, vMax).map(({ occ, seg, dayOf }) => (isBand(occ)
+                    ? html`<div key=${occ.instanceId} class="bc-vday-band"><${TripBand} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg} dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} /></div>`
+                    : html`<${EventBar}
                     key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
                     note=${phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
-                  />`)}
+                  />`))}
                   ${bars.overflow > 0 && html`<button
                     type="button" class="bc-vday-more"
                     title="List everything on this day"

@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, keepLoadedOnly } from './store.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
@@ -468,6 +468,25 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   }
 }
 
+// A stretch for something other than the view (a trip's "Add events", an
+// event opened from a notification): fetch what isn't held or on its way,
+// leaving lastWindow alone. Through loadWindow it became "the view's window",
+// and every refresh after it (a save, undo, the change poll) refetched that
+// stretch instead of what's on screen (#183).
+export async function ensureRangeLoaded(startISO, endISO) {
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (!(e > s)) return;
+  const gaps = missingRanges(s, e, [
+    ...state.loadedRanges,
+    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
+  ]);
+  // In pieces under the server's cap, as a refresh does.
+  for (const gap of gaps) {
+    for (let a = gap.start; a < gap.end; a += MAX_SPAN_MS) await fetchRange(a, Math.min(gap.end, a + MAX_SPAN_MS));
+  }
+}
+
 // One day, complete: an open event steps through its day's events, but it
 // can be cached on its own (Review, a notification, search, People, Activity
 // and trips insert just the one), with the rest of the day never loaded, so
@@ -526,6 +545,8 @@ export async function refreshWindow() {
   if (!lastWindow) return;
   const refreshStart = lastWindow.start;
   const refreshEnd = lastWindow.end;
+  // Everything outside this stretch is no longer known to be current.
+  keepLoadedOnly(refreshStart, refreshEnd);
   windowReqId++;
   const id = windowReqId;
   // In pieces under the server's cap, like any other window (fetchRange).

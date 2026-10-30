@@ -73,6 +73,10 @@ export function groupOccurrences(occurrences, groupFlags) {
       dimmed: sorted.every((m) => !!m.dimmed),
       highlighted: sorted.some((m) => !!m.highlighted),
       attendance: 'none',
+      // What the members share decides how the group is drawn: holidays
+      // (context) stay a day label, not an event bar (#183).
+      relationship: sorted.every((m) => m.relationship === first.relationship) ? first.relationship : undefined,
+      status: sorted.every((m) => m.status === first.status) ? first.status : undefined,
       members: sorted,
     });
     for (const m of members) memberToKey.set(m.instanceId, key);

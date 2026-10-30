@@ -130,6 +130,7 @@ export const state = {
   nowMinute: Math.floor(Date.now() / 60000),
   visibleMonth: null, // {year, month}
   visibleDays: null, // {start, end} day keys on screen in the month grid (MiniMonth keeps the selected day in view)
+  anchorSeen: -1, // the scrollSeq after which the view showed the anchor (actions.js hereKey)
   filterText: '',
   agendaShowPast: false,
   agendaSort: 'time', // 'time' | 'match' (rank score, PRD 5.8)
@@ -359,6 +360,22 @@ export function pruneOccurrenceCache(startISO, endISO, {
   return 'pruned';
 }
 
+/**
+ * After a change, only the refreshed stretch is current: everything loaded
+ * outside it may hold the old version of what changed (an edited series, an
+ * event moved into a month seen earlier). It stops counting as loaded, so
+ * the view asks for it again when it next shows it, and the fresh answer
+ * replaces what's cached there (#183). The cached occurrences stay until
+ * then, so nothing on screen blanks.
+ */
+export function keepLoadedOnly(startISO, endISO) {
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  state.loadedRanges = state.loadedRanges
+    .map((r) => ({ start: Math.max(r.start, s), end: Math.min(r.end, e) }))
+    .filter((r) => r.end > r.start);
+}
+
 export function rangeCovered(startISO, endISO) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
@@ -480,10 +497,11 @@ export function calendarMeta() {
   // editable and provider are what the grids' drags check: whether an event
   // can be copied with Option/Alt or dropped onto a sidebar calendar or
   // person. Without them every event read as a feed's and those drops did
-  // nothing (broken when Google write-through arrived). kind and pluginId
+  // nothing (broken when Google write-through arrived). reschedulable says a
+  // read-only calendar's events can still be moved (a plugin's). kind and pluginId
   // let an event from a calendar subscribed by web address wear its link.
   for (const c of state.calendars) {
-    meta[c.id] = { color: c.color, name: c.name, visible: c.visible, editable: !!c.editable, provider: c.provider || null, kind: c.kind, pluginId: c.pluginId || null };
+    meta[c.id] = { color: c.color, name: c.name, visible: c.visible, editable: !!c.editable, reschedulable: !!c.reschedulable, provider: c.provider || null, kind: c.kind, pluginId: c.pluginId || null };
   }
   return meta;
 }

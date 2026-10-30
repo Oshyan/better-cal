@@ -19,7 +19,7 @@
 // with its query, and the time of day in week and day view.
 
 import { state, set } from './store.js';
-import { applySavedView } from './actions.js';
+import { applySavedView, hereKey } from './actions.js';
 import { splitDay } from '../lib/splitday.js';
 import { setResumeTime } from '../lib/resumetime.js';
 import { openOccurrence } from './push.js';
@@ -77,7 +77,7 @@ export function saveResume() {
   const snap = {
     at: Date.now(),
     view: state.view,
-    day: (time && time.day) || (onCalendar && ((state.view === 'split' && splitDay()) || dayAtAnchorLine())) || state.anchor,
+    day: (time && time.day) || (onCalendar && ((state.view === 'split' && splitDay()) || dayAtAnchorLine())) || hereKey(),
     filterText: state.filterText || '',
     activeViewId: state.activeViewId || null,
     route: state.route || 'calendar',

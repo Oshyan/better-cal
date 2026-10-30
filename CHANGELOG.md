@@ -6,6 +6,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **The sidebar's width is remembered per screen:** set it once on each monitor or resolution; a screen it hasn't seen starts from your last width, scaled to fit. It can now go up to 500px.
+
 - **A second review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)):** more of the same cleanup.
   - A long all-day event deleted or shortened on another device no longer stays on screen.
   - A double-click opens the event once; right-click, Ctrl-click and a pen's barrel button no longer start drags; Escape cancels a drag without closing the panel; drops and drag-to-create over the panel or off the calendar do nothing.

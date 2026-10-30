@@ -12,15 +12,17 @@ import { takeHandoff, runHandoff } from './handoff.js';
 import { QA_WINDOW_KEY } from './QuickAddWindow.js';
 import { markBooted, reportStalledStart } from './bootlog.js';
 import { startHoverCards } from '../ui/HoverCard.js';
-import { applySidebarWidth, readSidebarWidth } from '../lib/sidebarwidth.js';
+import { applySidebarWidth, readSidebarWidth, followScreen } from '../lib/sidebarwidth.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
 } from '../lib/batterytip.js';
 
 // The remembered sidebar width (#129) before the first frame, so the boot
-// shell's placeholder and the real sidebar don't jump.
+// shell's placeholder and the real sidebar don't jump; this screen's, and
+// another's when the window moves.
 applySidebarWidth(readSidebarWidth());
+followScreen();
 
 // Arriving from the update banner's reload (drafts.js reloadForUpdate): take
 // its marker back off the address.

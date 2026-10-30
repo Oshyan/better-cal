@@ -109,9 +109,15 @@ function calSourceMark(cal) {
 // The sidebar's right edge (#129): drag to resize, arrows to nudge, Home or a
 // double click for the default. Desktop only; the drawer layouts hide it.
 function SidebarResize() {
-  const [width, setWidth] = useState(readSidebarWidth);
+  const [width, setWidth] = useState(() => readSidebarWidth());
   const drag = useRef(null);
   const commit = (w) => setWidth(saveSidebarWidth(w));
+  // Another screen's width (sidebarwidth.js followScreen).
+  useEffect(() => {
+    const on = (e) => setWidth(e.detail);
+    window.addEventListener('bc-sidebar-width', on);
+    return () => window.removeEventListener('bc-sidebar-width', on);
+  }, []);
   const onPointerDown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();

@@ -2911,19 +2911,29 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('ends: no end, nothing to retype', retypeUntil('FREQ=DAILY', true), 'FREQ=DAILY');
 }
 
-// The sidebar's width (#129, web/src/lib/sidebarwidth.js).
+// The sidebar's width (#129, web/src/lib/sidebarwidth.js), per screen.
 {
-  eq('sidebar width: clamped to 200-420', [clampSidebarWidth(100), clampSidebarWidth(300.4), clampSidebarWidth(900), clampSidebarWidth('x')], [200, 300, 420, 256]);
+  eq('sidebar width: clamped to 200-500', [clampSidebarWidth(100), clampSidebarWidth(300.4), clampSidebarWidth(900), clampSidebarWidth('x')], [200, 300, 500, 256]);
   const store = new Map();
   const had = globalThis.localStorage;
   globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
-  eq('sidebar width: nothing stored reads as the default', readSidebarWidth(), 256);
-  saveSidebarWidth(333);
-  eq('sidebar width: a saved width reads back', [readSidebarWidth(), store.get('bc-sidebar-w')], [333, '333']);
-  saveSidebarWidth(256);
-  eq('sidebar width: the default forgets the stored width', store.has('bc-sidebar-w'), false);
-  store.set('bc-sidebar-w', '9999');
-  eq('sidebar width: a stored width out of range is clamped', readSidebarWidth(), 420);
+  const BIG = '3840x2160';
+  const LAPTOP = '1440x900';
+  eq('sidebar width: nothing stored reads as the default', readSidebarWidth(BIG), 256);
+  saveSidebarWidth(420, BIG);
+  eq('sidebar width: a saved width reads back on its screen', readSidebarWidth(BIG), 420);
+  eq('sidebar width: a new screen scales the last one set by screen width', readSidebarWidth(LAPTOP), 200);
+  saveSidebarWidth(300, LAPTOP);
+  eq('sidebar width: each screen keeps its own', [readSidebarWidth(BIG), readSidebarWidth(LAPTOP)], [420, 300]);
+  eq('sidebar width: a third screen scales from the last set', readSidebarWidth('1920x1080'), 400);
+  store.set('bc-sidebar-w', '333');
+  eq('sidebar width: a width from before is kept on any screen', [readSidebarWidth(BIG), readSidebarWidth(LAPTOP)], [333, 333]);
+  saveSidebarWidth(350, LAPTOP);
+  eq('sidebar width: and becomes the first saved screen\'s', [readSidebarWidth(LAPTOP), Object.keys(JSON.parse(store.get('bc-sidebar-w')).widths)], [350, [LAPTOP]]);
+  store.set('bc-sidebar-w', JSON.stringify({ widths: { [BIG]: 9999 }, last: BIG }));
+  eq('sidebar width: a stored width out of range is clamped', readSidebarWidth(BIG), 500);
+  for (let i = 0; i < 12; i++) saveSidebarWidth(260 + i, (1000 + i) + 'x800');
+  eq('sidebar width: only the latest screens are kept', Object.keys(JSON.parse(store.get('bc-sidebar-w')).widths).length, 8);
   globalThis.localStorage = had;
 }
 

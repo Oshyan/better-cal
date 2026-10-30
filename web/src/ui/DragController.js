@@ -62,7 +62,10 @@ export function startPointerDrag(e, opts) {
   // live, so pressing or releasing it mid-drag changes the outcome, and the
   // page shows which (body.bc-drag-copy).
   let copyKey = !!e.altKey;
-  const showCopy = () => document.body.classList.toggle('bc-drag-copy', lifted && copyKey && !!opts.copyable);
+  // copyable may be a function, asked as the pointer moves: over a person
+  // or a trip, Option links or attaches the original, so no copy badge (#184).
+  const canCopy = () => (typeof opts.copyable === 'function' ? !!opts.copyable() : !!opts.copyable);
+  const showCopy = () => document.body.classList.toggle('bc-drag-copy', lifted && copyKey && canCopy());
 
   function lift() {
     if (lifted || done) return;
@@ -126,6 +129,7 @@ export function startPointerDrag(e, opts) {
     ev.preventDefault();
     positionGhost();
     if (opts.onMove) opts.onMove(lastPt);
+    if (copyKey) showCopy();
   }
 
   function onUp(ev) {
@@ -136,7 +140,7 @@ export function startPointerDrag(e, opts) {
     if (wasLifted) {
       suppressClick = true;
       setTimeout(() => { suppressClick = false; }, 350);
-      if (opts.onDrop) opts.onDrop(copyKey && opts.copyable ? { ...lastPt, copy: true } : lastPt);
+      if (opts.onDrop) opts.onDrop(copyKey && canCopy() ? { ...lastPt, copy: true } : lastPt);
     } else if (opts.onTap) opts.onTap();
     else if (opts.onCancel) opts.onCancel();
   }

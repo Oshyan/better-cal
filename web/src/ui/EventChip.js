@@ -10,7 +10,8 @@
 import { html } from '../../vendor/index.js';
 import { isBand } from '../lib/bands.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
-import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
+import { parseISO, fmtTime, timeState, eventDuration, dateOfDayKey } from '../lib/dates.js';
+import { occurrenceDaySpan } from './monthmath.js';
 import { Icon, PluginGlyph, EventMark, isRingCal } from './icons.js';
 import { isPendingLocation } from '../lib/maps.js';
 
@@ -29,6 +30,14 @@ function hasModifier(e) {
 export function bandColor(occ, cal) {
   if (occ.availKind) return occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e';
   return occ.pluginColor || calColor(cal);
+}
+
+// An away time's or a plugin band's dates for its hover card: "Nov 2 to 6"
+// (the card gave only its name, #184).
+function bandDates(occ) {
+  const { startKey, endKey } = occurrenceDaySpan(occ);
+  const f = (k) => dateOfDayKey(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return startKey === endKey ? f(startKey) : f(startKey) + ' to ' + f(endKey);
 }
 
 // The calendar's mark on a chip, in the dot's place: its icon, the link, a
@@ -206,7 +215,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
   // Containers get a distinct outlined variant (is-trip): tinted, not solid,
   // and never draggable or resizable in v1.
   const style = trip
-    ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
+    ? `border:1.5px solid ${ink(color)};color:var(--fg);background:${withAlpha(color, 0.1)}`
     // A maybe keeps its fill; the dashed outline is drawn in the text colour
     // so it shows on any calendar colour.
     : `background:${color};color:${contrastText(color)}` + (interested ? `;border:1.5px dashed ${contrastText(color)}` : '');
@@ -250,7 +259,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
   const interested = occ.relationship === 'maybe';
   const trip = !!occ.isContainer;
   const bg = trip
-    ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
+    ? `border:1.5px solid ${ink(color)};color:var(--fg);background:${withAlpha(color, 0.1)}`
     // Opaque, not translucent: cascaded blocks overlap, and a see-through
     // fill let the block underneath bleed through so neither title was
     // readable. Hover raises one to the front when you need the other.
@@ -313,11 +322,11 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     class="bc-band${occ.availKind ? ' is-avail' : ''}${occ.pluginId ? ' is-pluginband' : ''}${occ.pluginAnim && occ.pluginAnim !== 'none' ? ' is-anim-' + occ.pluginAnim : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${occ.availKind
       ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(ink(color), 0.9)}`
-      : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}${hlVar(occ)}`}
+      : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${ink(color)}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    data-hovertext=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') : undefined}
+    data-hovertext=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') + '\n' + bandDates(occ) : undefined}
     onPointerDown=${onPointerDown}
     onClick=${open}
     onKeyDown=${(e) => {

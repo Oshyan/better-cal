@@ -14,7 +14,7 @@
 import { CalDot } from './icons.js';
 import { html, render } from '../../vendor/index.js';
 import { state } from '../app/store.js';
-import { parseISO, dateOfDayKey, fmtRange, eventDuration } from '../lib/dates.js';
+import { parseISO, dateOfDayKey, fmtRange, eventDuration, zoneNote } from '../lib/dates.js';
 import { isPendingLocation } from '../lib/maps.js';
 import { formattingReasons } from '../lib/eventwhy.js';
 
@@ -32,10 +32,13 @@ function Card({ occ, cal, at, nowMs, why = true }) {
   // The reasons explain how an event chip is drawn; a context token isn't.
   const reasons = why ? formattingReasons(occ, nowMs) : [];
   const place = occ.location && !isPendingLocation(occ.location) ? occ.location : null;
+  // An event set in another zone says so, as its panel does (#184).
+  const zone = zoneNote(occ);
   const duration = eventDuration(occ); // multi-day: the exact total, as the old tooltip gave it
   return html`<div class="bc-hovercard" role="tooltip" style=${`left:${at.left}px;top:${at.top}px`}>
     <div class="bc-hovercard-title">${occ.title || '(untitled)'}${occ.isGroup ? ` (${occ.count} similar)` : ''}</div>
     <div class="bc-hovercard-meta">${fmtRange(s, e, occ.allDay)}${duration ? ` (${duration.exact} total)` : ''}${cal && html` · <span class="bc-hovercard-cal"><${CalDot} cal=${cal} />${cal.name}</span>`}</div>
+    ${zone && html`<div class="bc-hovercard-meta">${zone}</div>`}
     ${place && html`<div class="bc-hovercard-meta">${place}</div>`}
     ${reasons.length > 0 && html`<ul class="bc-hovercard-why">${reasons.map((r) => html`<li key=${r}>${r}</li>`)}</ul>`}
   </div>`;
@@ -81,6 +84,9 @@ export function startHoverCards(doc = document) {
 
   const onOver = (e) => {
     if (e.pointerType && e.pointerType !== 'mouse') return;
+    // Not over the drop area mid-drag, or while rescheduling (#184).
+    const b = doc.body.classList;
+    if (b.contains('bc-dragging') || b.contains('bc-rescheduling')) return;
     const el = e.target && e.target.closest ? e.target.closest(TARGETS) : null;
     if (!el || el === current) return;
     hide();

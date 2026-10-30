@@ -30,7 +30,7 @@ import {
   buildAgendaGroups, railRanges, washRects, spanPixelRanges, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
 } from './agendarails.js';
-import { withAlpha } from '../lib/color.js';
+import { withAlpha, ink } from '../lib/color.js';
 
 // One compact segmented group per feed row: triage (interested / going /
 // hide) plus, past a thin divider, thumbs feedback for the trainable
@@ -127,8 +127,10 @@ function gapRange(g) {
 
 function calColorOf(calendars, occ) {
   // Away times and plugin bands have their own colors (EventChip bandColor).
-  if (isBand(occ)) return bandColor(occ, calendars[occ.calendarId]);
-  return (calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888';
+  // Through ink(): rails and outlines are thin, and a dark calendar color
+  // faded into the dark theme's ground (#184).
+  if (isBand(occ)) return ink(bandColor(occ, calendars[occ.calendarId]));
+  return ink((calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888');
 }
 
 // props: sortMode 'time' (default: day-grouped) | 'match' (flat, caller-ordered

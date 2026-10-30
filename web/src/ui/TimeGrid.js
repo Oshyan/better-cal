@@ -623,12 +623,27 @@ export function TimeGrid({
       return;
     }
     if (vScrollTo(pin.dayKey, pin.within)) {
+      vTopRef.current = { dayKey: pin.dayKey, within: pin.within };
       vPinRef.current = null;
       return;
     }
     pin.tries = (pin.tries || 0) + 1;
     if (pin.tries > 3) vPinRef.current = null;
   });
+
+  // The day at the top of day view and how far into it, as last seen. When
+  // data lands, panels above grow (all-day bars, holidays); browsers that
+  // anchor the scroll keep the place, Safari didn't and slid down (#184).
+  // Put back what was at the top, when anything moved it.
+  const vTopRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!vstack || vPinRef.current || !vTopRef.current) return;
+    const el = scrollRef.current;
+    const panel = vPanel(vTopRef.current.dayKey);
+    if (!el || !panel) return;
+    const want = panel.offsetTop + vTopRef.current.within;
+    if (Math.abs(el.scrollTop - want) > 1) el.scrollTop = want;
+  }, [occurrences]); // eslint-disable-line
 
   // Stack scrolling: report the day at the viewport top (drives the toolbar
   // label) and recenter the window before either edge comes into view.
@@ -660,6 +675,7 @@ export function TimeGrid({
         else break;
       }
       if (!current) return;
+      vTopRef.current = { dayKey: current, within };
       if (current !== vDayRef.current) {
         vDayRef.current = current;
         if (onVisibleDayRef.current) onVisibleDayRef.current(current);
@@ -917,7 +933,7 @@ export function TimeGrid({
       ghostOffset: { x: 10, y: -8 },
       scrollEl: scrollRef.current,
       hScrollEl: infinite ? hscrollRef.current : null,
-      copyable: !isFeed && !occ.isContainer,
+      copyable: () => !isFeed && !occ.isContainer && !(ext && ext.kind === 'person'),
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
         if (extKinds) {
@@ -985,7 +1001,7 @@ export function TimeGrid({
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
       hScrollEl: infinite ? hscrollRef.current : null,
-      copyable: !isFeed,
+      copyable: () => !isFeed && !(ext && ext.kind === 'person'),
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
         if (extKinds) {

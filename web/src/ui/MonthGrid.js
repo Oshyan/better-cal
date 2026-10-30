@@ -727,7 +727,8 @@ export function MonthGrid({
       scrollEl: scrollRef.current,
       // Option/Alt copies an ordinary event (not a trip, a person's away
       // time or a plugin band) on a calendar that takes new events.
-      copyable: !isFeed && !occ.isContainer && !/^(avail|plg):/.test(String(occ.instanceId)),
+      copyable: () => !isFeed && !occ.isContainer && !/^(avail|plg):/.test(String(occ.instanceId))
+        && !(dropRef.current.ext && dropRef.current.ext.kind !== 'cal'),
       onLift: from && from.onLift ? () => from.onLift() : undefined,
       onMove: (pt) => {
         if (extKinds) {

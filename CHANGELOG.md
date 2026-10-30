@@ -16,6 +16,9 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - The 2- and 3-week arrows and the arrow keys glide; the phone's 3-day view steps month by month; the month grid keeps its place when its height changes.
   - Drags follow the page when it scrolls under them, reach weeks beyond split view's strip, use the current row heights, and no longer pull out the phone's sidebar.
   - Search results and trip rows show how long an event runs and whether it's cancelled; timed events over several days show their start and end in week and day views; month puts trips before away times and shows a trip's highlight and Maybe.
+  - Reschedule mode works from the keyboard (arrow keys, then Enter); with the event panel open on a computer, the toolbar and sidebar work on the first click.
+  - Hover cards name an event's own time zone and give away times' dates, and stay out of the way during drags; thin lines in dark calendar colors stay visible in the dark theme.
+  - Smaller: day view holds its place on Safari as data loads, a reload with fitted rows lands on the right row, and Option-dragging onto a person or trip no longer shows a copy badge.
 
 - **The last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
   - Events show their calendar's mark everywhere: a plugin calendar's icon and a Google calendar's ring on month chips too, and phone month pills keep icons and the "new" glow.

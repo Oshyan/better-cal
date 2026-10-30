@@ -16,7 +16,7 @@
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect } from '../../vendor/index.js';
 import {
-  epochDayOfKey, dateOfDayKey, parseISO,
+  epochDayOfKey, keyOfEpochDay, dateOfDayKey, parseISO,
   fmtMonthShort, fmtDayMedium, fmtTime,
 } from '../lib/dates.js';
 import {
@@ -38,7 +38,7 @@ export function RescheduleBanner({ occ, onExit }) {
   return html`<div class="bc-resched-banner" role="status">
     <span class="bc-resched-label">Rescheduling: <strong>${occ.title || '(untitled)'}</strong></span>
     ${occ.recurring && html`<span class="bc-resched-scope">Repeating: you'll choose which ones</span>`}
-    <span class="bc-resched-hint">Drop the event on a new day, or use the month strip on the right</span>
+    <span class="bc-resched-hint">Drop the event on a new day (or pick one with the arrow keys and Enter), or use the month strip on the right</span>
     <button type="button" class="bc-btn bc-resched-cancel" onClick=${onExit}>
       Cancel<kbd>Esc</kbd>
     </button>
@@ -300,7 +300,51 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
     // Esc cancels the confirm chip first, then exits the mode. Esc typed
     // inside another open overlay (search, quick add, drawer) keeps its
     // normal close-that-overlay meaning.
+    // From the keyboard (#184): the arrow keys move a target day (a day left
+    // or right, a week up or down) and Enter asks to move there, as a click
+    // does. Only the days on screen can be reached this way.
+    let kbKey = null;
+    const keyTarget = (key) => {
+      const dayEl = document.querySelector(`.bc-view [data-day="${key}"]`);
+      return dayEl ? { key, dayEl } : null;
+    };
+    const STEP = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     const onKey = (e) => {
+      // The month strip's own arrow keys walk its months; fields keep theirs.
+      if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop, .bc-strip, input, textarea, select')) return;
+      if (STEP[e.key] && !pendingRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        const from = kbKey || occurrenceDaySpan(occRef.current).startKey;
+        const next = keyOfEpochDay(epochDayOfKey(from) + STEP[e.key]);
+        const info = keyTarget(next);
+        if (!info) return;
+        kbKey = next;
+        if (ghostRef.current) ghostRef.current.style.display = 'none';
+        applyHighlight(info);
+        info.dayEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        return;
+      }
+      if (e.key === 'Enter' && kbKey && !pendingRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        const info = keyTarget(kbKey);
+        const o = occRef.current;
+        const drop = dayDropDates(o, kbKey);
+        if (!info || parseISO(drop.newStart).getTime() === parseISO(o.start).getTime()) return;
+        const r = info.dayEl.getBoundingClientRect();
+        clearHighlight();
+        setPending({
+          instanceId: o.instanceId,
+          newStart: drop.newStart,
+          newEnd: drop.newEnd,
+          targetKey: kbKey,
+          label: 'Move to ' + fmtDayMedium(dateOfDayKey(kbKey)) + '?',
+          x: r.left + r.width / 2,
+          y: r.top + Math.min(r.height / 2, 40),
+        });
+        return;
+      }
       if (e.key !== 'Escape') return;
       if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop')) return;
       e.preventDefault();

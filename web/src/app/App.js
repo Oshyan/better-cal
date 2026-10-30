@@ -135,7 +135,10 @@ async function fetchPluginRanges(start, end) {
   const out = {};
   const seen = {};
   let from = start;
-  for (let page = 0; page < 12; page++) {
+  // Up to 40 pages (20,000 ranges a plugin, far past any real stretch);
+  // twelve stopped short with several tide stations over the agenda's
+  // reach (#184). Past that the answer keeps truncated: true.
+  for (let page = 0; page < 40; page++) {
     const d = await api('/plugins/ranges?' + new URLSearchParams({ start: from, end }));
     let next = null;
     for (const [pid, entry] of Object.entries(d.plugins || {})) {

@@ -431,7 +431,11 @@ export function EventPopover() {
       // open the same way; a holiday tap only closed the panel (#183).
       const toEvent = (t) => t && t.closest
         && t.closest('[data-instance], .bc-ctx-token, .bc-ctx-mark-hit, .bc-daylabel') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
-      stop = onOutsidePress((t) => inPanel(t) || toEvent(t), () => set({ popover: null }));
+      // On a computer the panel is a side column: the toolbar and the
+      // sidebar beside it just work (Next, Today, the mini-month), and the
+      // panel stays. Their first press only closed it (#184).
+      const beside = (t) => !isMobile() && t && t.closest && !!t.closest('.bc-toolbar, .bc-sidebar');
+      stop = onOutsidePress((t) => inPanel(t) || toEvent(t) || beside(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {

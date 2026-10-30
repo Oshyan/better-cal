@@ -54,14 +54,16 @@ function dayAtAnchorLine() {
   const sc = document.querySelector('.bc-month-scroll');
   if (!sc) return null;
   const box = sc.getBoundingClientRect();
-  const cell = sc.querySelector('.bc-cell');
-  const rowH = cell ? cell.getBoundingClientRect().height : 0;
-  if (!rowH || !box.height) return null;
-  const lead = state.settings.gridAnchor === 'top' ? 0 : Math.max(0, (box.height - rowH) * ANCHOR_LINE);
-  const y = box.top + lead + rowH / 2;
+  if (!box.height) return null;
+  // Each row is checked with its own height: rows that fit their contents
+  // differ, and the first rendered row (a buffer above the screen) gave the
+  // wrong line, so a reload could land a row off (#184).
+  const top = state.settings.gridAnchor === 'top';
   let best = null;
   for (const c of sc.querySelectorAll('.bc-cell')) {
     const r = c.getBoundingClientRect();
+    if (!r.height) continue;
+    const y = box.top + (top ? 0 : Math.max(0, (box.height - r.height) * ANCHOR_LINE)) + r.height / 2;
     if (r.top <= y && y < r.bottom && (!best || r.left < best.left)) best = { left: r.left, day: c.dataset.day };
   }
   return best && best.day;

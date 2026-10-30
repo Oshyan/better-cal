@@ -769,7 +769,10 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
    behind it. */
 .bc-chip:hover {
   background: var(--bg-inset);
-  box-shadow: 0 0 0 1px var(--border-strong);
+  /* An outline, so it never replaces a box-shadow the chip already wears:
+     the gold "now" ring, the phone pill's "new" glow (#184). */
+  outline: 1px solid var(--border-strong);
+  outline-offset: 0;
 }
 /* Solid-filled elements (month bars, time-grid blocks) keep their colour —
    it is the only thing identifying the calendar — and take a ring of their

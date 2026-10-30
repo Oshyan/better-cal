@@ -4,6 +4,7 @@
 // every surface renders the same glyphs.
 
 import { html } from '../../vendor/index.js';
+import { contrastText } from '../lib/color.js';
 
 export function ThumbIcon({ dir = 'up', size = 13 }) {
   const d = dir === 'up'
@@ -22,35 +23,34 @@ let pluginDecoLookup = () => null;
 export function setPluginDecoLookup(fn) { pluginDecoLookup = typeof fn === 'function' ? fn : () => null; }
 
 /**
- * A calendar's mark, the same everywhere it appears: a plugin calendar's
- * icon, a link for one subscribed by web address, a ring for a Google
- * calendar, or a dot in its color. Pass the calendar; `color` alone draws a
- * plain dot. An icon mark is 12px with a 0.7px line, at home beside small
- * text; `size` and `line` (px) set it larger and heavier beside bigger text
- * (an event's own calendar line), where a hairline reads faint.
+ * A calendar's mark, the same everywhere it appears (1.4.3, option C in
+ * docs/design/calendar-marks.md): a disc in its color, empty for a plain
+ * calendar, with a plugin's icon, a web feed's link or Google's G inside in
+ * white (black on a pale color). The disc's size comes from where it sits
+ * (app.css); the glyph fills most of it with a fine line at any size. Pass
+ * the calendar; `color` alone draws a plain disc, `deco` a plugin's icon.
  */
-export function CalDot({ cal, color, deco, size = 12, line = MARK_LINE_PX }) {
+export function CalDot({ cal, color, deco }) {
+  return html`<${MarkDisc} cal=${cal} color=${color} deco=${deco} cls="bc-cal-dot" />`;
+}
+
+// The disc itself, for CalDot and event chips (cls "bc-chip-dot").
+export function MarkDisc({ cal, color, deco, cls }) {
   const c = (cal && cal.color) || color || '#888';
   if (deco === undefined && cal && cal.pluginId) deco = pluginDecoLookup(cal.pluginId);
-  const feed = cal && cal.kind === 'subscribed';
-  // A plugin that declared a decoration icon shows it in place of the dot, in
-  // the calendar's own color: same slot, same size, more information.
-  if (deco && (deco.icon || deco.iconPath)) {
-    return html`<span class="bc-cal-dot is-icon" style=${`color:${c}`} title="Provided by a plugin">
-      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${size} stroke=${line * 16 / size} />
-    </span>`;
-  }
-  // A calendar subscribed by web address wears a link, the same way a plugin
-  // calendar wears its icon: where it comes from, read at a glance. Google's
-  // calendars keep the ring (their G follows the name).
-  if (isLinkFeed(cal)) {
-    return html`<span class="bc-cal-dot is-icon is-link" title="Subscribed from a web address" style=${`color:${c}`}>
-      <${LinkMark} size=${size} line=${line} />
-    </span>`;
-  }
-  return feed
-    ? html`<span class="bc-cal-dot is-feed" title="Google calendar" style=${`border-color:${c}`}></span>`
-    : html`<span class="bc-cal-dot" style=${`background:${c}`}></span>`;
+  const plugin = deco && (deco.icon || deco.iconPath);
+  const glyph = plugin ? html`<${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} />`
+    : isLinkFeed(cal) ? html`<${Icon} name="link" />`
+      : isRingCal(cal) ? html`<${GoogleLetter} />`
+        : null;
+  const title = plugin ? 'Provided by a plugin' : isLinkFeed(cal) ? 'Subscribed from a web address' : isRingCal(cal) ? 'Google calendar' : undefined;
+  return html`<span class=${cls + ' is-disc' + (glyph ? ' is-marked' : '')} title=${title} style=${`background:${c};color:${contrastText(c)}`}>${glyph}</span>`;
+}
+
+// Google's G for its calendars' discs, stroked like the other glyphs. The
+// colored logo stays where Google is named (the sidebar, Settings).
+function GoogleLetter() {
+  return html`<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12.3 4.6A5.1 5.1 0 1 0 13.1 8.4H8.4" /></svg>`;
 }
 
 // Filled cog silhouette: disc r5 with 8 rectangular teeth to r7.4 and a
@@ -234,8 +234,10 @@ export function Icon({ name, size = 15, stroke = 1.4 }) {
       <path d="M6.2 4.8V3.6c0-.6.4-1 1-1h1.6c.6 0 1 .4 1 1v1.2M5.6 4.8v8.8M10.4 4.8v8.8" />`,
     // Information icons: what a context token is about (weather, air, sun, tide).
     sun: html`<circle cx="8" cy="8" r="2.8" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />`,
-    sunrise: html`<path d="M1.5 12h13M4.5 12a3.5 3.5 0 0 1 7 0M8 7.5V2.5M6 4.5l2-2 2 2M3 9.2l.8-.8M13 9.2l-.8-.8" />`,
-    sunset: html`<path d="M1.5 12h13M4.5 12a3.5 3.5 0 0 1 7 0M8 2.5v5M6 5.5l2 2 2-2M3 9.2l.8-.8M13 9.2l-.8-.8" />`,
+    // Horizon, half sun and an arrow, nothing more: the rays beside it ran
+    // the strokes together at mark size (1.4.3).
+    sunrise: html`<path d="M1.5 12.5h13M4 12.5a4 4 0 0 1 8 0M8 6.5V2M5.8 4.2L8 2l2.2 2.2" />`,
+    sunset: html`<path d="M1.5 12.5h13M4 12.5a4 4 0 0 1 8 0M8 2v4.5M5.8 4.3L8 6.5l2.2-2.2" />`,
     air: html`<path d="M2 5.5h7.5a1.8 1.8 0 1 0-1.8-1.8M2 8.5h10a1.8 1.8 0 1 1-1.8 1.8M2 11.5h5.5a1.5 1.5 0 1 1-1.5 1.5" />`,
     tideHigh: html`<path d="M1.5 12c1.6 0 1.6-1.6 3.2-1.6s1.7 1.6 3.3 1.6 1.6-1.6 3.2-1.6 1.7 1.6 3.3 1.6M8 8V2.5M5.8 4.7L8 2.5l2.2 2.2" />`,
     tideLow: html`<path d="M1.5 12c1.6 0 1.6-1.6 3.2-1.6s1.7 1.6 3.3 1.6 1.6-1.6 3.2-1.6 1.7 1.6 3.3 1.6M8 2.5V8M5.8 5.8L8 8l2.2-2.2" />`,
@@ -270,11 +272,9 @@ export function isLinkFeed(cal) {
 }
 
 /**
- * The glyph an event of this calendar wears, as CalDot gives the calendar
- * itself: a plugin's icon, or a link for a calendar subscribed by web
- * address; null for a plain calendar. Event chips put it where the dot is,
- * bars and blocks before the title (#183: plugin calendars' events had a
- * plain dot).
+ * The glyph an event of this calendar wears where its color fills the shape
+ * (bars and week blocks, where a disc would vanish): a plugin's icon, or a
+ * link for a calendar subscribed by web address; null for a plain calendar.
  */
 export function EventMark({ cal, size = 9 }) {
   const deco = cal && cal.pluginId ? pluginDecoLookup(cal.pluginId) : null;
@@ -285,7 +285,7 @@ export function EventMark({ cal, size = 9 }) {
   return null;
 }
 
-/** A Google calendar's events wear its ring, as the calendar does. */
+/** A calendar from Google: its disc carries a G. */
 export function isRingCal(cal) {
   return !!(cal && cal.kind === 'subscribed' && !isLinkFeed(cal) && !cal.pluginId);
 }

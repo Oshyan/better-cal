@@ -209,7 +209,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
         ${titleActs}
       </div>
       <div class="bc-es-calrow">
-        <span class="bc-es-cal"><${TripBadge} /><${CalDot} cal=${cal} color=${color} size=${16} line=${1.3} />${calName}</span>
+        <span class="bc-es-cal"><${TripBadge} /><${CalDot} cal=${cal} color=${color} />${calName}</span>
       </div>
     </div>
     ${!panel && menu}

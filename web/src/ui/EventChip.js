@@ -12,7 +12,7 @@ import { isBand } from '../lib/bands.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration, dateOfDayKey } from '../lib/dates.js';
 import { occurrenceDaySpan } from './monthmath.js';
-import { Icon, PluginGlyph, EventMark, isRingCal } from './icons.js';
+import { Icon, PluginGlyph, EventMark, MarkDisc } from './icons.js';
 import { isPendingLocation } from '../lib/maps.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
@@ -40,13 +40,10 @@ function bandDates(occ) {
   return startKey === endKey ? f(startKey) : f(startKey) + ' to ' + f(endKey);
 }
 
-// The calendar's mark on a chip, in the dot's place: its icon, the link, a
-// Google ring, or the dot.
+// The calendar's mark on a chip: its disc, as the calendar wears it in the
+// sidebar (icons.js MarkDisc).
 function chipMark(cal, color) {
-  const glyph = EventMark({ cal });
-  if (glyph) return html`<span class="bc-chip-dot is-link" style=${`color:${color}`}>${glyph}</span>`;
-  if (isRingCal(cal)) return html`<span class="bc-chip-dot is-ring" style=${`border-color:${color}`}></span>`;
-  return html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`;
+  return html`<${MarkDisc} cal=${cal} color=${color} cls="bc-chip-dot" />`;
 }
 
 // Bars and blocks are filled with the calendar's tint: an icon or link goes

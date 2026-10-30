@@ -6,6 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Calendar marks are discs:** every calendar shows a disc in its color, with its plugin's icon, a web feed's link or Google's G inside, so the color always shows. The sunrise and sunset icons are simpler and easier to read small.
 - **The sidebar's width is remembered per screen:** set it once on each monitor or resolution; a screen it hasn't seen starts from your last width, scaled to fit. It can now go up to 500px.
 
 - **A second review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)):** more of the same cleanup.

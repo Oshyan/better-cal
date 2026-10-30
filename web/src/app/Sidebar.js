@@ -95,8 +95,8 @@ function healthBadge(cal, onOpen) {
 // manifest without a schema field to keep in sync.
 /**
  * Google's mark after a Google calendar's name. A calendar subscribed by web
- * address says so with its link icon in place of the dot (ui/icons.js
- * CalDot), as a plugin calendar shows its own icon there.
+ * address carries its link icon in its disc (ui/icons.js
+ * CalDot), as a plugin calendar carries its own icon there.
  */
 function calSourceMark(cal) {
   if (cal.kind !== 'subscribed' || cal.pluginId || cal.provider !== 'google') return null;

@@ -503,11 +503,18 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
   text-decoration-thickness: 1px;
 }
 .bc-cal-row.is-off .bc-cal-dot { opacity: 0.3; }
-.bc-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+/* A calendar's mark (icons.js MarkDisc, 1.4.3): a disc in its color, with
+   its icon, link or G inside in a contrasting color. The glyph fills most of
+   the disc with a fine line at any size: a heavier line ran fine icons
+   together. Sized where it sits; chips use .bc-chip-dot. */
+.bc-cal-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.bc-cal-row .bc-cal-dot { width: 14px; height: 14px; }
+:is(.bc-cal-dot, .bc-chip-dot).is-disc > svg { display: block; width: 80%; height: 80%; stroke-width: 0.75px; }
+:is(.bc-cal-dot, .bc-chip-dot).is-disc > svg * { vector-effect: non-scaling-stroke; }
+:is(.bc-cal-dot, .bc-chip-dot).is-disc > .bc-glyph { font-size: 0.6em; line-height: 1; }
 /* Subscribed feeds render hollow (2px ring of the calendar color, transparent
    center) vs the solid fill of local calendars; the inline style carries the
    ring color. One treatment for every surface that shows a calendar dot. */
-.bc-cal-dot.is-feed { background: transparent; border: 2px solid currentColor; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A calendar from somewhere else (Sidebar.js calSourceMark): Google's mark or a link. */
 .bc-cal-src { flex: none; display: inline-flex; color: var(--fg-muted); margin-left: 2px; }
@@ -787,14 +794,10 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
   outline: 1.5px solid color-mix(in srgb, var(--fg) 34%, transparent);
   outline-offset: -1.5px;
 }
-.bc-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-/* A subscribed calendar's event wears a link in the dot's place (and before
-   the title in bars and blocks, where the fill is the calendar's color, so it
-   takes the text's color). It fades with the dot on quieter events. */
-.bc-chip-dot.is-link { width: 9px; height: 9px; display: inline-flex; align-items: center; justify-content: center; background: none; }
-/* A Google calendar's events: a ring, as the calendar wears in the sidebar. */
-.bc-chip-dot.is-ring { background: none; border: 1.5px solid; box-sizing: border-box; }
-.bc-chip-dot.is-link svg, .bc-feed-mark svg { display: block; }
+.bc-chip-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+/* Bars and blocks are filled with the calendar's color, so a marked
+   calendar's icon goes before the title alone, in the text's color. */
+.bc-feed-mark svg { display: block; }
 .bc-feed-mark { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
 .bc-block .bc-feed-mark { display: inline-flex; vertical-align: -1px; }
 .bc-chip-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: none; font-size: 10.5px; }
@@ -1366,8 +1369,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   border-radius: 6px; position: relative; align-items: flex-start; white-space: normal;
 }
 .bc-dayexpand-row .bc-chip.cont-l { padding-left: 16px; }
-.bc-dayexpand-row .bc-chip-dot { margin-top: 5px; }
-.bc-dayexpand-row .bc-chip-dot.is-link { margin-top: 4px; }
+.bc-dayexpand-row .bc-chip-dot { margin-top: 3px; }
 .bc-dayexpand-row .bc-chip-time { min-width: 58px; font-size: 11.5px; line-height: 17px; }
 .bc-dayexpand-row .bc-chip-title { white-space: normal; overflow-wrap: anywhere; line-height: 17px; font-size: 12.5px; }
 .bc-dayexpand-row .bc-chip.cont-l::before,
@@ -2374,9 +2376,10 @@ body.bc-rescheduling { user-select: none; }
   .bc-cell .bc-chip .bc-chip-time,
   .bc-cell .bc-chip .bc-new-pill,
   .bc-cell .bc-chip .bc-chip-dot { display: none; }
-  /* An icon or link still says where it's from (bars keep theirs), and a
-     new event glows around the pill instead of its hidden dot (#183). */
-  .bc-cell .bc-chip .bc-chip-dot.is-link { display: inline-flex; }
+  /* A marked calendar's disc still says where it's from (bars keep their
+     icon), and a new event glows around the pill instead of its hidden
+     disc (#183). */
+  .bc-cell .bc-chip .bc-chip-dot.is-marked { display: inline-flex; width: 9px; height: 9px; }
   .bc-cell .bc-chip.is-new { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent); }
   .bc-cell .bc-chip .bc-chip-title { display: block; font-size: 10px; }
   /* Mobile pills need the fill back (dots are hidden at this size). */
@@ -2523,7 +2526,7 @@ body.bc-rescheduling { user-select: none; }
    hides. Not the time: at about 100 points a day, "1:30 AM" took half of
    every pill and left a word of the title (0.4.0). */
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
-  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-block; }
+  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-flex; width: 10px; height: 10px; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-title { font-size: 11px; }
 }
 
@@ -3399,7 +3402,6 @@ body.bc-rescheduling { user-select: none; }
 .bc-band-icon { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
 /* Icon-in-place-of-dot: same 9px slot the dot occupies, so calendar names stay
    aligned whether a row shows a dot, a feed ring, or a plugin glyph. */
-.bc-cal-dot.is-icon { background: none; border: 0; display: inline-flex; align-items: center; justify-content: center; }
 .bc-glyph { font-size: 11px; line-height: 1; }
 
 /* Range info card */
@@ -4137,11 +4139,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-cal { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--fg-muted); }
 .bc-es-cal i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 /* An event's own calendar line: its icon mark at the line's size (CalDot size 16). */
-.bc-es-cal .bc-cal-dot.is-icon { width: 16px; height: 16px; }
+.bc-es-cal .bc-cal-dot { width: 16px; height: 16px; }
 /* A calendar mark in running text (details, menus, hover card, pickers):
    a dot at the text's size; an icon mark keeps its own. */
-:is(.bc-es-alsoon-cal, .bc-hovercard-cal, .bc-own-chip) .bc-cal-dot:not(.is-icon) { width: 8px; height: 8px; }
-:is(.bc-es-mh, .bc-plugincard-head) .bc-cal-dot:not(.is-icon) { width: 9px; height: 9px; }
+:is(.bc-es-alsoon-cal, .bc-hovercard-cal, .bc-own-chip) .bc-cal-dot { width: 11px; height: 11px; }
+:is(.bc-es-mh, .bc-plugincard-head) .bc-cal-dot { width: 12px; height: 12px; }
 :is(.bc-hovercard-cal, .bc-es-alsoon-cal) .bc-cal-dot { margin-right: 4px; vertical-align: -1px; }
 .bc-es-partof { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: none; font-size: 14px; color: var(--fg); }
 .bc-es-row { display: flex; align-items: flex-start; gap: 14px; min-height: 24px; }

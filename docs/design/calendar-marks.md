@@ -11,9 +11,11 @@ The mockup is [calendar-marks.html](calendar-marks.html) (open it in a browser t
 - **C: discs for every calendar (chosen).** The same disc on every row: empty for a plain calendar, with the icon or a G for the rest. One size and rhythm down every list, and the color always shows. The few extra pixels are already spent on the marked calendars in B, so giving them to all is no real loss.
 - **D: rings for marked calendars.** Plain calendars keep a filled dot; marked ones get a ring (about 2px) in the calendar color with the icon inside in the same color. Lighter than a disc and a little playful; a possible future variation, or a setting if discs ever feel heavy.
 
-## Notes for C
+## C as Built (1.4.3)
 
-- Keep the disc at about 10px on chips and grow the icon inside slightly, so it reads without the disc getting bigger.
-- Fine icons suffer inside a disc. The sunset icon (sun, horizon, arrow and rays) was already hard to read small and is harder in white on color; it wants redrawing or replacing with something simpler before C ships.
-- Week and day blocks are filled with the calendar color, so a disc would vanish there: they keep the icon alone, in the block's text color, before the title.
-- The phone month pills are only 13px tall; check the disc fits there or fall back to the icon alone.
+- Discs are 10px on chips, 14px in the sidebar and 12px elsewhere (the event panel's calendar line 16px). Every calendar gets one; a plain calendar's is empty.
+- The glyph fills 80% of the disc (up from about 75% in the mockup) with a 0.75px line at any size: the mockup's heavier line made fine icons like the sunset harder to read.
+- Google's disc carries a stroked G in the glyphs' style; the colored Google logo stays after the calendar's name in the sidebar.
+- The sunrise and sunset icons were redrawn as horizon, half sun and arrow; the side rays ran together at mark size.
+- Week and day blocks and month bars keep the icon alone, in the text color, before the title.
+- Phone month pills hide the disc for plain calendars, as they hid the dot, and show a 9px disc for marked ones.

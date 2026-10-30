@@ -117,6 +117,12 @@ export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more
  * A timed context event on the timeline: a line across the day at its minute
  * in the calendar's color, never a block. Its label leads at the left, filled
  * with that color, so it reads over events and stays near the hour labels.
+ *
+ * The event you point at comes above the line and label, so the label alone
+ * could never be reached through an event it overlaps. An invisible target
+ * over the label sits above every event instead: reaching the label's spot
+ * brings the line and label to the front and takes the click, and pointing
+ * anywhere else on the event keeps the event in front.
  */
 export function ContextMark({ occ, cal, top, onOpen }) {
   const tk = contextToken(occ, cal, 18);
@@ -124,14 +130,17 @@ export function ContextMark({ occ, cal, top, onOpen }) {
   if (tk.icon === 'sunrise' || tk.icon === 'sunset') tk.icon = 'sun';
   const color = (cal && cal.color) || '#8b93a4';
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
-    <span
-      role="button" tabindex="0" class="bc-ctx-mark-label"
-      style=${`background:${color};color:${contrastText(color)}`}
-      data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
-      onPointerDown=${(e) => e.stopPropagation()}
-      onClick=${(e) => open(onOpen, occ, e)}
-      onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
-    ><${TokenIcon} token=${tk} cal=${cal} size=${11} plain=${true} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
+    <span class="bc-ctx-mark-pill">
+      <span class="bc-ctx-mark-label" aria-hidden="true" style=${`background:${color};color:${contrastText(color)}`}
+      ><${TokenIcon} token=${tk} cal=${cal} size=${11} plain=${true} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
+      <span
+        role="button" tabindex="0" class="bc-ctx-mark-hit"
+        data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
+        onPointerDown=${(e) => e.stopPropagation()}
+        onClick=${(e) => open(onOpen, occ, e)}
+        onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
+      ></span>
+    </span>
     <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
   </div>`;
 }

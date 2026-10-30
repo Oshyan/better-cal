@@ -387,7 +387,14 @@ export function App() {
   const availSeq = useStore((st) => st.availSeq);
   // Scalar month key so the effect follows real navigation (the s.visibleMonth
   // selector above is reschedule-gated and unsuitable here).
-  const visMonthKey = useStore((st) => (st.visibleMonth ? st.visibleMonth.year * 100 + st.visibleMonth.month : 0));
+  // The month on screen, for the month-windowed fetches below (people's away
+  // times, plugin bands and shading). Month and week views report it; day
+  // view doesn't, so it falls back to the month of the day you're on.
+  // Without that, opening straight into day view fetched neither, and a
+  // tide's shading never appeared.
+  const visMonthKey = useStore((st) => (st.visibleMonth
+    ? st.visibleMonth.year * 100 + st.visibleMonth.month
+    : (st.anchor ? Number(st.anchor.slice(0, 4)) * 100 + Number(st.anchor.slice(5, 7)) : 0)));
   const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
   const availKeyRef = useRef(null);
   useEffect(() => {

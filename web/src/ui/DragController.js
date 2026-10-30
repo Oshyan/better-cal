@@ -29,6 +29,13 @@ window.addEventListener('click', (e) => {
   }
 }, true);
 
+// The scroller the edge auto-scroll last moved, and when: a scroll that
+// came from it, not from data landing or a re-layout (SplitView).
+let autoScroll = null;
+export function autoScrolledJustNow(el) {
+  return !!autoScroll && autoScroll.el === el && performance.now() - autoScroll.at < 120;
+}
+
 // startPointerDrag(pointerdownEvent, opts)
 // opts: {
 //   makeGhost(): Node | null      ghost appended to body, moved via transform
@@ -46,7 +53,10 @@ export function startPointerDrag(e, opts) {
   // (the context menu) started drags and creates; on a Mac the menu ate the
   // release, and the drag stayed stuck to the pointer until the next click
   // dropped it (#184).
-  if (e.pointerType === 'mouse' && (e.button !== 0 || e.ctrlKey)) return () => {};
+  // A pen's barrel button and eraser too; Ctrl-click is the context menu
+  // only on a Mac (elsewhere it's an ordinary press).
+  const mac = /Mac/.test(navigator.platform || '') && navigator.maxTouchPoints < 2;
+  if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && (e.button !== 0 || (mac && e.ctrlKey))) return () => {};
   const isTouch = e.pointerType === 'touch';
   const startX = e.clientX, startY = e.clientY;
   let lifted = false;
@@ -97,7 +107,7 @@ export function startPointerDrag(e, opts) {
     let moved = false;
     if (el) {
       const dy = edgeScrollDy(el, lastPt.y, lastPt.x);
-      if (dy !== 0) { el.scrollTop += dy; moved = true; }
+      if (dy !== 0) { el.scrollTop += dy; moved = true; autoScroll = { el, at: performance.now() }; }
     }
     const hel = opts.hScrollEl;
     if (hel) {
@@ -214,6 +224,16 @@ export function startPointerDrag(e, opts) {
   if (isTouch) pressTimer = setTimeout(lift, LONG_PRESS_MS);
 
   return cancel;
+}
+
+// Is the calendar covered at this point by something drawn over it (the
+// event panel, the phone sheet, any dialog)? A drop there would land at a
+// time hidden underneath (#184). Only covers count: a toast, the loading
+// pill or the toolbar the pointer passes while edge-scrolling don't.
+export function coveredAt(pt, root) {
+  const hit = document.elementFromPoint(pt.x, pt.y);
+  const cover = hit && hit.closest && hit.closest('[role="dialog"]');
+  return !!cover && !(root && root.contains(cover));
 }
 
 // Vertical auto-scroll delta for a pointer y near a scroll container's

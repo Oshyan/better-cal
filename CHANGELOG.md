@@ -7,8 +7,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 ## Unreleased
 
 - **A second review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)):** more of the same cleanup.
-  - All-day events no longer vanish as you scroll back in week view west of UTC (time zones are hard 😄), and one deleted elsewhere disappears.
-  - A double-click opens the event once; right-click and Ctrl-click no longer start drags; Escape cancels a drag without closing the panel; drops and drag-to-create over the panel or off the calendar do nothing.
+  - A long all-day event deleted or shortened on another device no longer stays on screen.
+  - A double-click opens the event once; right-click, Ctrl-click and a pen's barrel button no longer start drags; Escape cancels a drag without closing the panel; drops and drag-to-create over the panel or off the calendar do nothing.
   - Refreshes that fail are retried, a retry no longer takes over what gets refreshed, and an event hidden by a filter, opened from a notification, leaves the calendar when its panel closes.
   - Saved views, the phone's View sheet and turning the phone sideways keep your place.
   - The agenda lists overnight events on their evening, the phone agenda gives spans a time, faded blocks no longer show through each other, and mixed groups of similar items stay on their day.
@@ -18,7 +18,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - Search results and trip rows show how long an event runs and whether it's cancelled; timed events over several days show their start and end in week and day views; month puts trips before away times and shows a trip's highlight and Maybe.
   - Reschedule mode works from the keyboard (arrow keys, then Enter); with the event panel open on a computer, the toolbar and sidebar work on the first click.
   - Hover cards name an event's own time zone and give away times' dates, and stay out of the way during drags; thin lines in dark calendar colors stay visible in the dark theme.
-  - Smaller: day view holds its place on Safari as data loads, a reload with fitted rows lands on the right row, and Option-dragging onto a person or trip no longer shows a copy badge.
+  - Smaller: day view holds its place on Safari as data loads, a reload with fitted rows lands on the right row, Option-dragging onto a person or trip no longer shows a copy badge, and the agenda's Next moves on from a month whose first days are empty.
 
 - **The last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
   - Events show their calendar's mark everywhere: a plugin calendar's icon and a Google calendar's ring on month chips too, and phone month pills keep icons and the "new" glow.

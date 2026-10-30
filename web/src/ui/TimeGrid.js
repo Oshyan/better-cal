@@ -30,7 +30,7 @@ import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { withAlpha } from '../lib/color.js';
 import { COMPACT_QUERY, PHONE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
-import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
+import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight, coveredAt } from './DragController.js';
 import { swallowClickOfThisPress } from './outside.js';
 import { takeResumeTime } from '../lib/resumetime.js';
 import {
@@ -634,14 +634,26 @@ export function TimeGrid({
   // The day at the top of day view and how far into it, as last seen. When
   // data lands, panels above grow (all-day bars, holidays); browsers that
   // anchor the scroll keep the place, Safari didn't and slid down (#184).
-  // Put back what was at the top, when anything moved it.
+  // Put back what was at the top, when anything moved it. How far into the
+  // day is read again as the new data renders, before the page changes:
+  // mid-fling, the last scroll report is a frame old, and putting that back
+  // pulled the fling backwards.
   const vTopRef = useRef(null);
-  useLayoutEffect(() => {
-    if (!vstack || vPinRef.current || !vTopRef.current) return;
+  const vSnapRef = useRef({ occ: null, top: null });
+  if (vstack && vSnapRef.current.occ !== occurrences) {
+    vSnapRef.current.occ = occurrences;
     const el = scrollRef.current;
-    const panel = vPanel(vTopRef.current.dayKey);
+    const panel = vTopRef.current && vPanel(vTopRef.current.dayKey);
+    vSnapRef.current.top = el && panel ? { dayKey: vTopRef.current.dayKey, within: el.scrollTop - panel.offsetTop } : null;
+  }
+  useLayoutEffect(() => {
+    const snap = vSnapRef.current.top;
+    vSnapRef.current.top = null;
+    if (!vstack || vPinRef.current || !snap) return;
+    const el = scrollRef.current;
+    const panel = vPanel(snap.dayKey);
     if (!el || !panel) return;
-    const want = panel.offsetTop + vTopRef.current.within;
+    const want = panel.offsetTop + snap.within;
     if (Math.abs(el.scrollTop - want) > 1) el.scrollTop = want;
   }, [occurrences]); // eslint-disable-line
 
@@ -729,11 +741,8 @@ export function TimeGrid({
     const vbox = el.getBoundingClientRect();
     if (pt.x < box.left || pt.x > box.right) return null;
     if (!anyHeight && (pt.y < vbox.top || pt.y > vbox.bottom)) return null;
-    // Something drawn over the calendar there (the event panel, the phone
-    // sheet) is not the calendar: a drop there moved the event to a time
-    // hidden underneath (#184). The drag ghost and previews let points through.
-    const hit = document.elementFromPoint(pt.x, pt.y);
-    if (hit && rootRef.current && !rootRef.current.contains(hit)) return null;
+    // Under the event panel or the phone sheet is not the calendar (#184).
+    if (coveredAt(pt, rootRef.current)) return null;
     // Stack mode: the day is whichever panel's column the pointer is over,
     // read from live rects so variable panel heights need no math.
     if (vstack) {

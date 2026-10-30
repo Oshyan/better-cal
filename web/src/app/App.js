@@ -276,6 +276,9 @@ export function App() {
     let status = null;
     let stopped = false;
     let inFlight = false;
+    // A window refresh that failed: tried again on each check until it lands,
+    // without repeating the rest of the change's reloads (#184).
+    let windowOwed = false;
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;
       // Nothing changes under a drag: the next check, after the drop, picks
@@ -289,15 +292,17 @@ export function App() {
         if (!stopped && d && d.cursor) {
           // Each part reloads only what it covers, merged into what's on
           // screen: no reload, no lost place, nothing taken out of your hands.
-          // A move that is only this tab's own last change was already
-          // refreshed by the save that made it.
-          const moved = cursor !== null && d.cursor !== cursor && d.cursor !== ownChangeCursor();
+          const moved = cursor !== null && d.cursor !== cursor;
           const reviewMoved = review !== null && d.review !== review;
           const statusMoved = status !== null && d.status !== status;
-          let refreshed = true;
+          // The events window, when the cursor is where this tab's own last
+          // save left it, was refetched by that save after it read the
+          // cursor, so it holds every change up to here; the rest still
+          // reloads, as other changes may have come in before the save.
+          if (moved && d.cursor !== ownChangeCursor()) windowOwed = true;
+          if (windowOwed) windowOwed = !(await refreshWindow({ own: false }));
           if (moved) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
-            refreshed = await refreshWindow({ own: false });
             loadPeople().catch(() => {});
             loadSavedViews().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
@@ -326,9 +331,7 @@ export function App() {
           if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
           // The app icon's number (#170), when something it counts may have moved.
           refreshBadge({ changed: moved || reviewMoved });
-          // A refresh that failed leaves the cursor where it was, so the
-          // next check sees the change again and retries.
-          if (refreshed) cursor = d.cursor;
+          cursor = d.cursor;
           review = d.review ?? null;
           status = d.status ?? null;
         }
@@ -653,9 +656,16 @@ export function App() {
     }
   }, [s.view, s.anchor, s.agendaShowPast]);
   // The month label follows a move, not "Show past events": toggling that
-  // reset the label while the list stayed where it was (#183).
+  // reset the label while the list stayed where it was (#183). Not when the
+  // list already shows the day moved to: a month starting with empty days
+  // lands on its first day with events, perhaps the one on screen, and the
+  // list names the month it shows (it reported just before this). Named for
+  // the move, the next Next aimed at the same day and only changed the
+  // label (#184).
   useEffect(() => {
     if (s.view !== 'agenda') return;
+    const d = state.visibleDays;
+    if (d && s.anchor >= d.start && s.anchor <= d.end) return;
     const [y, m] = s.anchor.split('-').map(Number);
     set({ visibleMonth: { year: y, month: m } });
   }, [s.view, s.anchor]);
@@ -678,7 +688,9 @@ export function App() {
     if (agendaMoreRef.current && agendaMoreRef.current.from === endMs) return; // already asked for this end
     const top = dateOfDayKey((state.visibleDays && state.visibleDays.start) || state.anchor).getTime();
     if (endMs > top + 730 * 86400000) return;
-    const to = endMs + 120 * 86400000;
+    // By local days, not milliseconds: across a clock change the end landed
+    // an hour off midnight, and the next stretch started there.
+    const to = dateOfDayKey(addDaysKey(dayKeyOf(new Date(endMs)), 120)).getTime();
     const req = { from: endMs, to };
     agendaMoreRef.current = req;
     ensureRangeLoaded(toISOWithOffset(new Date(endMs)), toISOWithOffset(new Date(to)))
@@ -894,6 +906,10 @@ export function App() {
   const firstRoute = useRef(true);
   useEffect(() => {
     if (firstRoute.current) { firstRoute.current = false; return; }
+    // The sidebar's page links pass a press through the event panel (#184);
+    // a page doesn't draw it, so leaving the calendar closes it rather than
+    // keeping it for the way back.
+    if (route !== 'calendar' && state.popover) set({ popover: null });
     reloadIfReady();
     lookForUpdate();
     // Back on the calendar from a page that may have changed it (a plugin's

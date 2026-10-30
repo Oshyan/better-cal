@@ -38,7 +38,7 @@ import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { useLongPress, RowMenu } from './rowmenu.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
+import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight, coveredAt } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
@@ -647,8 +647,7 @@ export function MonthGrid({
     const r = el.getBoundingClientRect();
     if (pt.x < r.left + GUTTER_W || pt.x > r.right || pt.y < r.top || pt.y > r.bottom) return null;
     // Under the event panel or the phone sheet is not the calendar (#184).
-    const hit = document.elementFromPoint(pt.x, pt.y);
-    if (hit && !el.contains(hit)) return null;
+    if (coveredAt(pt, el)) return null;
     const colW = (r.width - GUTTER_W) / columns;
     const col = Math.max(0, Math.min(columns - 1, Math.floor((pt.x - r.left - GUTTER_W) / colW)));
     const yContent = pt.y - r.top + el.scrollTop;

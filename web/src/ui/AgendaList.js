@@ -379,6 +379,9 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     }
     el.scrollTop = target.top + into;
     appliedSeqRef.current = scrollSeq;
+    // Reported again even where it didn't move: the move's anchor may be
+    // among the days already on screen (App.js keeps the label then).
+    reportedRef.current = null;
     onScroll();
   }, [scrollSeq, scrollKey, groups, flat, onScroll, gaps]);
 

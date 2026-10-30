@@ -17,6 +17,7 @@
 
 import { html, useRef, useState, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { MonthGrid } from './MonthGrid.js';
+import { autoScrolledJustNow } from './DragController.js';
 import { AgendaList } from './AgendaList.js';
 import { epochDayOfKey, keyOfEpochDay } from '../lib/dates.js';
 import { rowIndexOfEpochDay, firstEpochDayOfRow } from './monthmath.js';
@@ -161,9 +162,10 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     // During a drag, the edge auto-scroll moving the weeks is a scrub: the
     // list moves by as much and the weeks follow it, so a drop can reach
     // weeks beyond the strip. Put back, the strip jittered at its edges and
-    // only the weeks on screen were reachable (#184).
+    // only the weeks on screen were reachable (#184). Only the auto-scroll:
+    // weeks moved by data landing mid-drag are put back as ever.
     const onGrid = () => {
-      if (dragging()) {
+      if (dragging() && autoScrolledJustNow(ge)) {
         const ed = listDay();
         if (ed != null) {
           const dy = ge.scrollTop - gridTopOf(ed);

@@ -1969,6 +1969,66 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = realFetch;
 }
 
+// --- Event windows (#184): whole-month gaps, the loading note, own changes ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow, refreshWindow, ownChangeCursor } = await import('../src/app/api.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const DAY = 86400000;
+  const asked = [];
+  let held = null; // a promise the events answer waits on
+  let dense = false; // the server refuses anything wider than ten days
+  let failEvents = false;
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c-after-save' });
+    const s = Date.parse(u.searchParams.get('start'));
+    const e = Date.parse(u.searchParams.get('end'));
+    asked.push([s, e]);
+    if (held) await held;
+    if (failEvents) return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+    if (dense && e - s > 10 * DAY) return json({ error: { code: 'event_window_too_large', message: 'Too many.' } }, 422);
+    return json({ events: [] });
+  };
+  const at = (y, m, d) => isoAt(new Date(y, m - 1, d));
+
+  // A dense month: widened to the whole month, the request is refused, so
+  // just the days needed are asked for, and they load.
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  dense = true;
+  asked.length = 0;
+  await loadWindow(at(2029, 5, 10), at(2029, 5, 13));
+  eq('window: a refused whole-month gap falls back to the days needed', [st.windowStatus, asked.length], [null, 2]);
+  assert('window: and those days count as loaded', st.loadedRanges.some((r) => r.start <= Date.parse(at(2029, 5, 10)) && r.end >= Date.parse(at(2029, 5, 13))));
+  dense = false;
+
+  // "Loading" stays while days on screen are still on their way, even when
+  // the view asks again for a window those requests already cover.
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2029-08-10', end: '2029-08-16' } });
+  let release;
+  held = new Promise((r) => { release = r; });
+  const first = loadWindow(at(2029, 8, 3), at(2029, 8, 24));
+  await new Promise((r) => setTimeout(r, 0));
+  await loadWindow(at(2029, 8, 4), at(2029, 8, 25)); // the view settling, all of it in flight
+  eq('window: the note stays while what it waits on is on its way', st.windowStatus && st.windowStatus.kind, 'loading');
+  held = null;
+  release();
+  await first;
+  eq('window: and goes when it lands', st.windowStatus, null);
+
+  // A save's own refresh reads the change cursor first; only one that lands
+  // tells the poll it needn't fetch the window again.
+  await refreshWindow();
+  eq('own changes: a landed refresh remembers the cursor it read', ownChangeCursor(), 'c-after-save');
+  failEvents = true;
+  const ok = await refreshWindow();
+  eq('own changes: a failed refresh does not', [ok, ownChangeCursor()], [false, null]);
+  failEvents = false;
+  put({ windowStatus: null, visibleDays: null });
+  globalThis.fetch = realFetch;
+}
+
 console.log('--- API offline session transitions ---');
 
 {
@@ -3002,13 +3062,52 @@ console.log('--- window merges (#183) ---');
   mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', []);
   assert('merge: a timed event running into the window is cleared when the answer lacks it', !storeState.occ.has('long'));
   assert('merge: an all-day span overlapping the window is cleared when the answer lacks it', !storeState.occ.has('allday'));
-  // The next day's all-day event, held from before, survives loading the day
-  // before it, in any time zone (west of UTC it was thrown away).
-  storeState.occ.set('next', occ('next', '2026-11-09T00:00:00+00:00', '2026-11-10T00:00:00+00:00', { allDay: true }));
-  mergeWindow(isoAt(new Date(2026, 10, 8)), isoAt(new Date(2026, 10, 9)), []);
-  assert('merge: the next day\'s all-day event survives loading the day before', storeState.occ.has('next'));
-  mergeWindow(isoAt(new Date(2026, 10, 9)), isoAt(new Date(2026, 10, 10)), []);
-  assert('merge: its own day\'s answer without it clears it', !storeState.occ.has('next'));
+  // Against the server's own answer (Events.php window: rows whose stored
+  // instants overlap the window; all-day dates are stored at UTC midnight),
+  // no window loses an event the database still holds, whatever the zone and
+  // wherever the window's edges fall (#184: a merge by local days dropped
+  // all-day events the answer never carried).
+  const db = [
+    occ('a1', '2026-11-08T00:00:00+00:00', '2026-11-09T00:00:00+00:00', { allDay: true }),
+    occ('a2', '2026-11-09T00:00:00+00:00', '2026-11-10T00:00:00+00:00', { allDay: true }),
+    occ('a3', '2026-11-07T00:00:00+00:00', '2026-11-12T00:00:00+00:00', { allDay: true }),
+    occ('a4', '2026-03-08T00:00:00+00:00', '2026-03-09T00:00:00+00:00', { allDay: true }),
+    occ('t1', '2026-11-09T07:30:00Z', '2026-11-09T08:30:00Z'),
+    occ('t2', '2026-11-08T23:00:00Z', '2026-11-09T01:00:00Z'),
+  ];
+  const answer = (rows, a, b) => rows.filter((r) => Date.parse(r.start) < Date.parse(b) && Date.parse(r.end) > Date.parse(a));
+  const DAY = 86400000;
+  const windows = [];
+  for (let d = 5; d <= 12; d++) windows.push([new Date(2026, 10, d), new Date(2026, 10, d + 1)]); // local days
+  windows.push([new Date(2026, 10, 9, 10), new Date(2026, 10, 10, 10)]); // a deep link's window
+  windows.push([new Date(2026, 10, 8, 12), new Date(2026, 10, 9, 12)]);
+  windows.push([new Date(2026, 10, 8, 20), new Date(2026, 10, 9, 20)]); // late edges (west of UTC)
+  windows.push([new Date(2026, 10, 8, 4), new Date(2026, 10, 9, 4)]); // early edges (east of UTC)
+  const cont = new Date(2026, 1, 1); // an agenda continuation across a DST change, by milliseconds
+  windows.push([cont, new Date(cont.getTime() + 60 * DAY)]);
+  windows.push([new Date(cont.getTime() + 35 * DAY), new Date(cont.getTime() + 36 * DAY)]);
+  let lost = [];
+  for (const [a, b] of windows) {
+    storeState.occ.clear();
+    for (const r of db) storeState.occ.set(r.instanceId, r);
+    mergeWindow(isoAt(a), isoAt(b), answer(db, isoAt(a), isoAt(b)));
+    for (const r of db) if (!storeState.occ.has(r.instanceId)) lost.push(`${r.instanceId} @ ${isoAt(a)}`);
+  }
+  eq('merge: no window loses an event the server still holds', lost, []);
+  // And what's gone from the database leaves with any window that overlaps it.
+  const gone = [];
+  for (const [a, b] of windows) {
+    storeState.occ.clear();
+    for (const r of db) storeState.occ.set(r.instanceId, r);
+    const kept = db.filter((r) => r.instanceId !== 'a2' && r.instanceId !== 'a3');
+    mergeWindow(isoAt(a), isoAt(b), answer(kept, isoAt(a), isoAt(b)));
+    for (const id of ['a2', 'a3']) {
+      const r = db.find((x) => x.instanceId === id);
+      const overlaps = answer([r], isoAt(a), isoAt(b)).length > 0;
+      if (overlaps === storeState.occ.has(id)) gone.push(`${id} @ ${isoAt(a)}`);
+    }
+  }
+  eq('merge: a deleted event leaves with exactly the windows overlapping it', gone, []);
 
   // A drop while an older answer is on its way: the moved copy stays.
   storeState.occ.clear();

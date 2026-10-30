@@ -4,7 +4,7 @@
 
 import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { useState, useEffect, useRef } from '../../vendor/index.js';
-import { todayKey, dayKeyOf, addDaysKey } from '../lib/dates.js';
+import { todayKey } from '../lib/dates.js';
 
 const listeners = new Set();
 
@@ -294,13 +294,6 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   const recent = (id) => asked != null && (editedAt.get(id) || 0) > asked;
-  const firstDay = dayKeyOf(new Date(s));
-  const lastDay = dayKeyOf(new Date(e - 1));
-  const allDayInside = (occ) => {
-    const a = String(occ.start).slice(0, 10);
-    const b = occ.end && String(occ.end).slice(0, 10) > a ? String(occ.end).slice(0, 10) : addDaysKey(a, 1); // exclusive
-    return a <= lastDay && b > firstDay;
-  };
   const mine = (id, occ) => !!occ && (occ._optimistic || recent(id));
   // Drop cached occurrences whose start falls in the window, then reinsert,
   // carrying fetched record fields over from the previous copy (invalidate
@@ -315,14 +308,14 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
     const t = new Date(occ.start).getTime();
     if (id === kept) continue;
     // The answer holds everything overlapping the window, so whatever
-    // overlaps it here is replaced (or gone, deleted elsewhere). A timed
-    // event goes by its instants. An all-day one goes by its dates against
-    // the window's local days: its "start" is a date written at UTC midnight,
-    // which west of UTC fell inside a window ending at the next local
-    // midnight, so loading a day threw away the next day's all-day events,
-    // and nothing loaded them again (all-day events vanished as you scrolled
-    // back in week view). A long one deleted elsewhere is cleared too.
-    const inside = occ.allDay ? allDayInside(occ) : (t < e && new Date(occ.end || occ.start).getTime() > s) || (t >= s && t < e);
+    // overlaps it here is replaced (or gone, deleted elsewhere). Overlap is
+    // judged as the server judges it, by instants (Events.php window): an
+    // all-day date is stored and sent as UTC midnight (0.9.16), so its
+    // "+00:00" start and end are exactly the instants the server compares.
+    // Anything wider (by local days, say) drops events the answer never
+    // carried, for any window not on local midnights (#184).
+    const end = occ.end ? new Date(occ.end).getTime() : occ.allDay ? t + 86400000 : t;
+    const inside = (t < e && end > s) || (t >= s && t < e);
     if (inside && !mine(id, occ)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);

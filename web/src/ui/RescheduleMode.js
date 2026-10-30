@@ -310,8 +310,10 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
     };
     const STEP = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     const onKey = (e) => {
-      // The month strip's own arrow keys walk its months; fields keep theirs.
-      if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop, .bc-strip, input, textarea, select')) return;
+      // The month strip's own arrow keys walk its months; fields keep theirs
+      // (arrows and Enter only: Escape still leaves, below).
+      const own = e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop, .bc-strip, input, textarea, select');
+      if (own && e.key !== 'Escape') return;
       if (STEP[e.key] && !pendingRef.current) {
         e.preventDefault();
         e.stopPropagation();

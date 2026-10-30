@@ -324,9 +324,13 @@ async function fetchRange(s, e) {
     // for it again (#184).
     if (asked < lastRefreshAsked) {
       markStale(startISO, endISO);
-      if (lastWindow) { const w = lastWindow; queueMicrotask(() => loadWindow(w.start, w.end)); }
+      // Still the view's window by then; a view that moved on asks for its own.
+      if (lastWindow) { const w = lastWindow; queueMicrotask(() => { if (lastWindow === w) loadWindow(w.start, w.end); }); }
     }
     if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
+    // Whatever asked for it (a trip's stretch, a day, an older view), it
+    // may have been what the view's "Loading" waited on.
+    settleViewNote();
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
   } finally {
@@ -370,6 +374,19 @@ function windowFailed(startISO, endISO, err) {
   set({ windowStatus: { kind: 'failed', offline: !!(err && err.code === 'offline'), retryAt: Date.now() + delay } });
 }
 
+// The view's "Loading" or failure note goes once its window is all held
+// and fresh, whichever request brought the last of it.
+function settleViewNote() {
+  const note = state.windowStatus && state.windowStatus.kind;
+  if (failedWindows.size > 0 || (note !== 'failed' && note !== 'loading') || !lastWindow) return;
+  const ls = new Date(lastWindow.start).getTime();
+  const le = new Date(lastWindow.end).getTime();
+  if (!freshRanges().some((r) => r.start <= ls && r.end >= le)) return;
+  retryStep = 0;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  set({ windowStatus: null });
+}
+
 function windowLoaded(startISO, endISO) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
@@ -390,20 +407,10 @@ function windowLoaded(startISO, endISO) {
   failedWindows.delete(startISO + '|' + endISO);
   // An older request may land after the person has navigated elsewhere. It
   // can satisfy its own cache gap, but must not clear or replace the current
-  // view's loading/error state, unless that's an old failure note while
-  // the view on screen is loaded (it stayed up over held data, #184).
-  if (!current) {
-    if (failedWindows.size === 0 && state.windowStatus && state.windowStatus.kind === 'failed' && lastWindow) {
-      const ls = new Date(lastWindow.start).getTime();
-      const le = new Date(lastWindow.end).getTime();
-      if (freshRanges().some((r) => r.start <= ls && r.end >= le)) {
-        retryStep = 0;
-        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-        set({ windowStatus: null });
-      }
-    }
-    return;
-  }
+  // view's loading/error state, unless that's an old note while the view on
+  // screen is loaded: a failure that stayed up over held data, or "Loading"
+  // for days the view found on their way here (#184).
+  if (!current) { settleViewNote(); return; }
   if (failedWindows.size > 0) return;
   retryStep = 0;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
@@ -520,10 +527,18 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // day (week view) or one week (month view) at a time, and each request
   // costs the server about the same whatever its width, so a year of
   // scrolling sent dozens (#184). A month's request covers the next weeks.
-  const gaps = monthGaps(missingRanges(s, e, have), have);
-  // Nothing missing: already held (perhaps by a later, wider window), or on
-  // its way. Either way this window no longer counts as failed.
-  if (gaps.length === 0) { windowLoaded(startISO, endISO); return; }
+  const narrow = missingRanges(s, e, have);
+  const gaps = monthGaps(narrow, have);
+  if (gaps.length === 0) {
+    // Some of it still on its way: whichever request carries it says when
+    // the view is loaded (windowLoaded), so "Loading" stays until then.
+    const coming = inFlight.some((r) => r.start < e && r.end > s);
+    // Nothing missing: already held (perhaps by a later, wider window).
+    // Either way this window no longer counts as failed.
+    if (!coming || !state.windowStatus || state.windowStatus.kind !== 'loading') windowLoaded(startISO, endISO);
+    else failedWindows.delete(startISO + '|' + endISO);
+    return;
+  }
   // "Loading" on a cold start, and whenever days on screen are among what's
   // missing: after a jump they looked empty until they arrived (#184).
   // Scrolling ahead of the screen asks quietly.
@@ -532,7 +547,17 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // view request cannot create an unbounded burst of simultaneous responses.
   try {
     for (const gap of gaps) {
-      await fetchRange(gap.start, gap.end);
+      try {
+        await fetchRange(gap.start, gap.end);
+      } catch (err) {
+        // Widened to whole months, a gap can hold more than the server will
+        // expand at once (a dense stretch): ask for just the days needed.
+        if (!err || err.code !== 'event_window_too_large') throw err;
+        const parts = narrow.filter((n) => n.start < gap.end && n.end > gap.start)
+          .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
+        if (parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end) throw err;
+        for (const p of parts) await fetchRange(p.start, p.end);
+      }
       boundCacheAfterMerge(startISO, endISO);
     }
     windowLoaded(startISO, endISO);
@@ -618,14 +643,16 @@ export function ensureFullOccurrence(instanceId) {
 // part is marked stale, and the change poll keeps its place to try again
 // (#184: a failed refresh was never retried).
 // own (the default): a refresh after a change made here. The change cursor
-// is read first: when the change poll next sees that same cursor, nothing
-// else has changed and it needn't refresh again (#184: every edit cost two
-// full refreshes). The poll passes own: false.
+// is read first: when the change poll next sees that same cursor, the window
+// already holds everything up to it and needn't be fetched again (#184:
+// every edit cost two full refreshes). The poll passes own: false.
 export async function refreshWindow({ own = true } = {}) {
+  let cursor = null;
   if (own) {
-    try { const d = await api('/changes/cursor'); if (d && d.cursor) ownCursor = d.cursor; } catch { /* the poll refreshes as before */ }
+    ownCursor = null;
+    try { const d = await api('/changes/cursor'); if (d && d.cursor) cursor = d.cursor; } catch { /* the poll refreshes as before */ }
   }
-  if (!lastWindow) return true;
+  if (!lastWindow) { ownCursor = cursor; return true; }
   lastRefreshAsked = Date.now();
   const refreshStart = lastWindow.start;
   const refreshEnd = lastWindow.end;
@@ -652,6 +679,8 @@ export async function refreshWindow({ own = true } = {}) {
       if (err && err.code === 'event_window_too_large') windowFailed(refreshStart, refreshEnd, err);
     }
   }
+  // Only a refresh that landed covers the cursor it read.
+  if (own && ok && id === windowReqId) ownCursor = cursor;
   return ok;
 }
 

@@ -94,7 +94,11 @@ export function goToday() {
 }
 
 export function navigate(days) {
-  set({ anchor: addDaysKey(hereKey(), days), scrollSeq: state.scrollSeq + 1 });
+  const anchor = addDaysKey(hereKey(), days);
+  // The month-grid views glide, as Today and the month arrows do: the 2- and
+  // 3-week arrows and the arrow keys cut straight to the new rows (#184).
+  if (state.view === 'month' || state.view === 'weeks2' || state.view === 'weeks3') { glideTo(anchor); return; }
+  set({ anchor, scrollSeq: state.scrollSeq + 1 });
 }
 
 // Toolbar chevron step, sized to the current view: month and agenda step by
@@ -111,7 +115,14 @@ export function stepAnchor(dir) {
   const gliding = Date.now() - lastStepAt < 900 && state.glideSeq === state.scrollSeq;
   lastStepAt = Date.now();
   const fromAnchor = { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
-  const vm = (!gliding && state.visibleMonth) || fromAnchor;
+  // The phone's 3-day ribbon shows about two weeks, often across two months,
+  // so its "month on screen" lags: landing on the 1st still read as the
+  // month before, and the next press aimed at the same 1st and stayed put
+  // (#184). It steps from the day you're on instead.
+  const here = hereKey();
+  const ribbon = v === 'month' && effectiveOverviewMode() === '3day';
+  const vm = ribbon ? { year: Number(here.slice(0, 4)), month: Number(here.slice(5, 7)) }
+    : (!gliding && state.visibleMonth) || fromAnchor;
   const k = vm.year * 12 + (vm.month - 1) + dir;
   const y = Math.floor(k / 12);
   const m = ((k % 12) + 12) % 12 + 1;

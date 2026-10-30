@@ -12,6 +12,10 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - Refreshes that fail are retried, a retry no longer takes over what gets refreshed, and an event hidden by a filter, opened from a notification, leaves the calendar when its panel closes.
   - Saved views, the phone's View sheet and turning the phone sideways keep your place.
   - The agenda lists overnight events on their evening, the phone agenda gives spans a time, faded blocks no longer show through each other, and mixed groups of similar items stay on their day.
+  - Scrolling asks the server for whole months, not a request per day, and your own edits no longer trigger a second full refresh.
+  - The 2- and 3-week arrows and the arrow keys glide; the phone's 3-day view steps month by month; the month grid keeps its place when its height changes.
+  - Drags follow the page when it scrolls under them, reach weeks beyond split view's strip, use the current row heights, and no longer pull out the phone's sidebar.
+  - Search results and trip rows show how long an event runs and whether it's cancelled; timed events over several days show their start and end in week and day views; month puts trips before away times and shows a trip's highlight and Maybe.
 
 - **The last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
   - Events show their calendar's mark everywhere: a plugin calendar's icon and a Google calendar's ring on month chips too, and phone month pills keep icons and the "new" glow.

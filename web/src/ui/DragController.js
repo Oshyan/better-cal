@@ -152,6 +152,13 @@ export function startPointerDrag(e, opts) {
     if (ev.pointerType === 'touch' && ev.pointerId !== e.pointerId && !lifted) cancel();
   }
 
+  // The page scrolled under a still pointer (the wheel, a trackpad, an
+  // arrow key): what's under it changed, so the target follows. It kept the
+  // day or time from before the scroll (#184).
+  function onScrollWhileLifted() {
+    if (lifted && !done && opts.onMove) opts.onMove(lastPt);
+  }
+
   function onKey(ev) {
     // Escape cancels the drag and only that: the event panel or the day's
     // list under it stays open (#184).
@@ -185,9 +192,11 @@ export function startPointerDrag(e, opts) {
     window.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('touchmove', onTouchMove, { passive: false });
     window.removeEventListener('pointerdown', onOtherDown, true);
+    window.removeEventListener('scroll', onScrollWhileLifted, true);
   }
 
   window.addEventListener('pointermove', onMove, { passive: false });
+  window.addEventListener('scroll', onScrollWhileLifted, true);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', cancel);
   window.addEventListener('keydown', onKey, true);

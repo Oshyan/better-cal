@@ -158,7 +158,20 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     // a navigation) is put straight back, before they load a window for the
     // wrong place. Except while a navigation waits for its day to load:
     // then they sit on that day, which is what loads it.
-    const onGrid = () => { gridFromList(); };
+    // During a drag, the edge auto-scroll moving the weeks is a scrub: the
+    // list moves by as much and the weeks follow it, so a drop can reach
+    // weeks beyond the strip. Put back, the strip jittered at its edges and
+    // only the weeks on screen were reachable (#184).
+    const onGrid = () => {
+      if (dragging()) {
+        const ed = listDay();
+        if (ed != null) {
+          const dy = ge.scrollTop - gridTopOf(ed);
+          if (Math.abs(dy) > 0.5) { scrubBy(dy); return; }
+        }
+      }
+      gridFromList();
+    };
     const takeList = () => {
       lead.current = 'list';
       stopFling();
@@ -179,8 +192,8 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     const queue = (d) => { pendingDy += d; if (!frame) frame = requestAnimationFrame(flush); };
     const stopFling = () => { cancelAnimationFrame(frame); frame = 0; pendingDy = 0; };
     const dragging = () => document.body.classList.contains('bc-dragging');
+    // The wheel scrubs during a mouse drag too, to bring other weeks in.
     const onWheel = (e) => {
-      if (dragging()) return;
       e.preventDefault();
       stopFling();
       scrubEd.current = null;
@@ -249,7 +262,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
       release();
       for (const ev of ['pointerdown', 'wheel', 'touchstart']) le.removeEventListener(ev, takeList, opts);
     };
-  }, [gridFromList, scrubBy, listDay, mark]);
+  }, [gridFromList, scrubBy, listDay, mark, gridTopOf]);
 
   // Navigation goes through the list: AgendaList scrolls itself to the
   // anchor (its effect runs before this one), or waits for that day to load

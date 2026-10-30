@@ -829,6 +829,8 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
    information under the day's plans. */
 .bc-chip.is-maybe { border-style: dashed; }
 :is(.bc-bar, .bc-block).is-maybe { border-style: dashed; }
+/* A Maybe trip in month view, as its bar has in week view (#184). */
+.bc-band.is-maybe:not(.is-avail) { outline: 1px dashed currentColor; outline-offset: -1px; }
 /* Dot-style chips carry the calendar colour inline, so the quieting lands
    on the title, which is what the eye reads. */
 .bc-chip.is-available .bc-chip-title { color: var(--fg-muted); }
@@ -1873,6 +1875,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-search-row.is-selected { background: var(--bg-inset); }
 .bc-search-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A cancelled result reads as one (#184). */
+.bc-search-row.is-cancelled .bc-search-title { text-decoration: line-through; opacity: 0.75; }
 .bc-search-loc { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-search-date { margin-left: auto; color: var(--fg-muted); font-size: 12px; flex: none; }
 .bc-search-opts { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
@@ -2542,7 +2546,7 @@ body.bc-rescheduling { user-select: none; }
    transparent row, the tinted all-day pill and the solid bars and blocks
    alike, and it composes with hover, dimming and the active-now ring for
    free because it never touches box-shadow or background. */
-.is-highlighted .bc-chip-title {
+.is-highlighted :is(.bc-chip-title, .bc-band-label) {
   text-decoration: underline;
   text-decoration-color: var(--hl, var(--accent));
   text-decoration-thickness: 2px;
@@ -4592,6 +4596,8 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-tr-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .bc-tr-title { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15px; line-height: 1.3; }
 .bc-tr-title .bc-cal-dot, .bc-tr-title svg { flex: none; }
+.bc-tr-row.is-past .bc-tr-main { opacity: 0.6; }
+.bc-tr-row.is-cancelled .bc-tr-title { text-decoration: line-through; opacity: 0.75; }
 .bc-tr-sub { color: var(--fg-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 .bc-tr-n {
   flex: none; display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;

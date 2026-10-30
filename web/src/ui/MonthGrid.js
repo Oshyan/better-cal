@@ -32,7 +32,7 @@ import {
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
-import { canReschedule } from '../lib/bands.js';
+import { canReschedule, isBand } from '../lib/bands.js';
 import { ContextStrip, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
@@ -155,7 +155,10 @@ function weekLanes(bars, bands, dimSet, columns, barLaneLimit, chipRow, bandH) {
   const isQuiet = (occ) => !!occ.dimmed;
   const bandList = (bands || []).filter(shownByFilter);
   const bandLanes = assignLanes(
-    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
+    // Trips before people's away times and plugin bands, as week view orders
+    // them: two away times pushed a trip into "+N" (#184). Those still count
+    // in "+N" when they don't fit; only the order changes.
+    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) || isBand(b.occ) })),
     MAX_BAND_LANES,
   );
   let bandLaneCount = 0;
@@ -340,6 +343,10 @@ export function MonthGrid({
   }, []);
 
   const topWeekRef = useRef(null);
+  // How far into that top row the scroll sits (fixed rows): a height change
+  // (a phone keyboard, the URL bar, a resize) kept the row but dropped this,
+  // snapping the grid to the row's edge (#184).
+  const topFracRef = useRef(0);
   // Geometry lives in a ref so recompute has ONE stable identity for the whole
   // component life. A version with rowH captured in its closure can be invoked
   // late (rAF-throttled scroll events) after rowH changed, computing the range
@@ -368,6 +375,7 @@ export function MonthGrid({
       r.topOffset = exact - Math.floor(exact);
     }
     topWeekRef.current = r.top;
+    topFracRef.current = r.topOffset || 0;
     setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top
       && Math.abs((prev.topOffset ?? 0) - r.topOffset) < 0.1 ? prev : r));
   }, []);
@@ -517,7 +525,7 @@ export function MonthGrid({
       fitAnchorRef.current = fitAnchorAt(g, a.week, scrollRef.current.scrollTop - geo.top(a.week));
     } else if (topWeekRef.current != null) {
       if (geo.fit) setTop(geo.top(topWeekRef.current));
-      else el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
+      else el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH) + topFracRef.current * rowH;
     }
     recompute();
   }, [rowH, viewH, minWeek, recompute, applyAnchor, settleAnchor, geo, setTop]);
@@ -644,9 +652,12 @@ export function MonthGrid({
     const colW = (r.width - GUTTER_W) / columns;
     const col = Math.max(0, Math.min(columns - 1, Math.floor((pt.x - r.left - GUTTER_W) / colW)));
     const yContent = pt.y - r.top + el.scrollTop;
-    const wi = geo.weekAt(yContent);
+    // The geometry as it is now: with fitted rows it changes as months load
+    // or a refresh lands during a drag, which kept mapping the pointer by
+    // the row heights from when the drag began (#184).
+    const wi = geomRef.current.geo.weekAt(yContent);
     return keyOfEpochDay(firstEpochDayOfRow(wi, columns) + col);
-  }, [geo, columns]);
+  }, [columns]);
 
   // The day keys of [a..b] that have a cell on screen. Drag highlighting used
   // to build a key, and run a DOM query, for EVERY day of the span being

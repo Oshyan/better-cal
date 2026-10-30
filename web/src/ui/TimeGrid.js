@@ -103,6 +103,20 @@ function nowWithin(viewportH) {
   return Math.max(0, nowPx - lead);
 }
 
+// A timed event over several days says when it starts where its bar starts
+// and when it ends where its bar ends ("from 9:00 AM", "until 5:00 PM"), as
+// the agenda and a day's list do; the bar showed only its length (#184).
+function spanNote(occ, startsHere, endsHere) {
+  if (occ.allDay || occ.isContainer || !occ.end) return null;
+  const s = fmtTime(parseISO(occ.start));
+  const e = fmtTime(parseISO(occ.end));
+  // Both ends on screen: the end names its day, or it reads as a daily time.
+  if (startsHere && endsHere) return s + ' to ' + fmtWeekdayShort(parseISO(occ.end)) + ' ' + e;
+  if (startsHere) return 'from ' + s;
+  if (endsHere) return 'until ' + e;
+  return null;
+}
+
 function dateAt(dayKey, minutes) {
   const base = dateOfDayKey(dayKey);
   return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minutes);
@@ -1196,6 +1210,7 @@ export function TimeGrid({
     ${isBand(occ)
       ? html`<${TripBand} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg} dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />`
       : html`<${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+      note=${spanNote(occ, !seg.contLeft, !seg.contRight)}
       dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
       onPointerDown=${barDraggable(occ) ? (e) => dragMoveBar(occ, e) : undefined}
       onEdgePointerDown=${barDraggable(occ) ? (edge, e) => dragResizeBar(occ, edge, e) : null} />`}
@@ -1361,7 +1376,7 @@ export function TimeGrid({
                     ? html`<div key=${occ.instanceId} class="bc-vday-band"><${TripBand} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg} dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} /></div>`
                     : html`<${EventBar}
                     key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-                    note=${phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null}
+                    note=${spanNote(occ, !dayOf || dayOf[0] === 1, !dayOf || dayOf[0] === dayOf[1]) || (phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null)}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
                   />`))}
                   ${bars.overflow > 0 && html`<button

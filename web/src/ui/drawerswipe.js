@@ -49,6 +49,9 @@ export function installDrawerSwipe({ enabled, isOpen, open, close }) {
 
   function onMove(e) {
     if (!t) return;
+    // An event lifted by a long-press near the edge is being dragged, not
+    // the drawer: it slid out with the finger (#184).
+    if (!t.dragging && document.body.classList.contains('bc-dragging')) { t = null; finish(); return; }
     const dx = e.touches[0].clientX - t.x0;
     const dy = e.touches[0].clientY - t.y0;
     if (!t.dragging) {

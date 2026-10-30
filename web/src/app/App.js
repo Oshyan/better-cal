@@ -6,7 +6,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { adoptSettings } from './settings.js';
-import { loadWindow, ensureRangeLoaded, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -286,13 +286,15 @@ export function App() {
         if (!stopped && d && d.cursor) {
           // Each part reloads only what it covers, merged into what's on
           // screen: no reload, no lost place, nothing taken out of your hands.
-          const moved = cursor !== null && d.cursor !== cursor;
+          // A move that is only this tab's own last change was already
+          // refreshed by the save that made it.
+          const moved = cursor !== null && d.cursor !== cursor && d.cursor !== ownChangeCursor();
           const reviewMoved = review !== null && d.review !== review;
           const statusMoved = status !== null && d.status !== status;
           let refreshed = true;
           if (moved) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
-            refreshed = await refreshWindow();
+            refreshed = await refreshWindow({ own: false });
             loadPeople().catch(() => {});
             loadSavedViews().catch(() => {});
             set({ availSeq: state.availSeq + 1 });

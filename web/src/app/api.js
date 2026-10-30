@@ -255,6 +255,11 @@ export async function loadSavedViews() {
 // --- events window loading -------------------------------------------------
 
 let windowReqId = 0;
+// When the latest refresh asked (fetchRange marks older answers stale), and
+// the change cursor just after this tab's own last change (the poll skips it).
+let lastRefreshAsked = 0;
+let ownCursor = null;
+export function ownChangeCursor() { return ownCursor; }
 let lastWindow = null;
 // Ranges currently in flight. loadedRanges only knows about ranges that have
 // already LANDED, so in-flight spans are fed to missingRanges alongside them —
@@ -314,6 +319,13 @@ async function fetchRange(s, e) {
       signal: ctrl ? ctrl.signal : undefined,
     });
     mergeWindow(startISO, endISO, data.events || [], asked);
+    // Asked before the latest refresh, it may hold what that refresh just
+    // replaced (a change made elsewhere): marked stale, and the view asks
+    // for it again (#184).
+    if (asked < lastRefreshAsked) {
+      markStale(startISO, endISO);
+      if (lastWindow) { const w = lastWindow; queueMicrotask(() => loadWindow(w.start, w.end)); }
+    }
     if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
@@ -432,6 +444,40 @@ if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('online', () => { if (failedWindows.size > 0) retryWindowsNow(); });
 }
 
+// Gaps widened to whole local months, less what's held or on its way,
+// merged, and cut to the server's widest window.
+function monthGaps(gaps, have) {
+  const wide = [];
+  for (const g of gaps) {
+    const a = new Date(g.start);
+    const b = new Date(g.end - 1);
+    const from = new Date(a.getFullYear(), a.getMonth(), 1).getTime();
+    const to = new Date(b.getFullYear(), b.getMonth() + 1, 1).getTime();
+    for (const m of missingRanges(from, to, have)) wide.push(m);
+  }
+  wide.sort((x, y) => x.start - y.start);
+  const merged = [];
+  for (const g of wide) {
+    const last = merged[merged.length - 1];
+    if (last && g.start <= last.end) last.end = Math.max(last.end, g.end);
+    else merged.push({ ...g });
+  }
+  const out = [];
+  for (const g of merged) for (let a = g.start; a < g.end; a += MAX_SPAN_MS) out.push({ start: a, end: Math.min(g.end, a + MAX_SPAN_MS) });
+  return out;
+}
+
+// Whether any day on screen (as the view last reported) is in these gaps.
+function gapsOnScreen(gaps) {
+  const d = state.visibleDays;
+  if (!d || !d.start || !d.end) return false;
+  const s = dateOfDayKey(d.start).getTime();
+  const end = dateOfDayKey(d.end);
+  end.setDate(end.getDate() + 1);
+  const e = end.getTime();
+  return gaps.some((g) => g.start < e && g.end > s);
+}
+
 export async function loadWindow(startISO, endISO, { force = false, asView = true } = {}) {
   if (asView) lastWindow = { start: startISO, end: endISO };
   const s = new Date(startISO).getTime();
@@ -466,14 +512,22 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // dozen multi-thousand-occurrence responses, and merging them starved the
   // frame loop badly enough that requestAnimationFrame stopped firing (#14).
   // The gap is normally a single month.
-  const gaps = missingRanges(s, e, [
+  const have = [
     ...freshRanges(),
     ...inFlight.map((r) => ({ start: r.start, end: r.end })),
-  ]);
+  ];
+  // Each gap is asked for in whole local months: scrolling uncovered one
+  // day (week view) or one week (month view) at a time, and each request
+  // costs the server about the same whatever its width, so a year of
+  // scrolling sent dozens (#184). A month's request covers the next weeks.
+  const gaps = monthGaps(missingRanges(s, e, have), have);
   // Nothing missing: already held (perhaps by a later, wider window), or on
   // its way. Either way this window no longer counts as failed.
   if (gaps.length === 0) { windowLoaded(startISO, endISO); return; }
-  if (cold) set({ windowStatus: { kind: 'loading' } });
+  // "Loading" on a cold start, and whenever days on screen are among what's
+  // missing: after a jump they looked empty until they arrived (#184).
+  // Scrolling ahead of the screen asks quietly.
+  if (cold || (asView && gapsOnScreen(gaps))) set({ windowStatus: { kind: 'loading' } });
   // A fragmented cache can contain many holes. Read them sequentially so one
   // view request cannot create an unbounded burst of simultaneous responses.
   try {
@@ -563,8 +617,16 @@ export function ensureFullOccurrence(instanceId) {
 // Resolves false when part of it failed (a server error, a deploy): that
 // part is marked stale, and the change poll keeps its place to try again
 // (#184: a failed refresh was never retried).
-export async function refreshWindow() {
+// own (the default): a refresh after a change made here. The change cursor
+// is read first: when the change poll next sees that same cursor, nothing
+// else has changed and it needn't refresh again (#184: every edit cost two
+// full refreshes). The poll passes own: false.
+export async function refreshWindow({ own = true } = {}) {
+  if (own) {
+    try { const d = await api('/changes/cursor'); if (d && d.cursor) ownCursor = d.cursor; } catch { /* the poll refreshes as before */ }
+  }
   if (!lastWindow) return true;
+  lastRefreshAsked = Date.now();
   const refreshStart = lastWindow.start;
   const refreshEnd = lastWindow.end;
   // Everything outside this stretch is no longer known to be current.

@@ -23,7 +23,7 @@ import { DurationSuffix } from '../ui/EventChip.js';
 import { stripToText } from '../lib/richtext.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
-  parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
+  parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime, timeState,
 } from '../lib/dates.js';
 import { dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
 import { gmapsUrl, validCoordinates } from '../lib/maps.js';
@@ -234,11 +234,14 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
           const mcal = state.calendars.find((c) => c.id === m.calendarId);
           const asking = rowAsk === m.eventId;
           const pinned = m.locationLat != null && m.locationLng != null;
-          return html`<div key=${m.eventId} class=${'bc-tr-row' + (asking ? ' is-asking' : '')}>
+          // How long it runs, and whether it's over or cancelled, as on the
+          // calendar: a 4-night stay read as one day (#184).
+          const mState = (m.status === 'cancelled' ? ' is-cancelled' : '') + (m.end && timeState(m, Date.now()) === 'past' ? ' is-past' : '');
+          return html`<div key=${m.eventId} class=${'bc-tr-row' + (asking ? ' is-asking' : '') + mState}>
             <button type="button" class="bc-tr-main" onClick=${() => openMember(m)} title=${'Open ' + (m.title || 'event')}>
               <span class="bc-tr-when">${fmtWhen(m)}</span>
               <span class="bc-tr-what">
-                <span class="bc-tr-title"><${CalDot} cal=${mcal} color=${(mcal && mcal.color) || '#888'} />${m.title || '(untitled)'}</span>
+                <span class="bc-tr-title"><${CalDot} cal=${mcal} color=${(mcal && mcal.color) || '#888'} />${m.title || '(untitled)'}${m.end ? html`<${DurationSuffix} occ=${m} />` : ''}</span>
                 ${m.location && html`<span class="bc-tr-sub">${pinned && points.length > 1 && (panel || full) ? html`<b class="bc-tr-n">${i + 1}</b>` : ''}${m.location}</span>`}
               </span>
             </button>

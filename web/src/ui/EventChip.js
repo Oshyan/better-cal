@@ -313,7 +313,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     class="bc-band${occ.availKind ? ' is-avail' : ''}${occ.pluginId ? ' is-pluginband' : ''}${occ.pluginAnim && occ.pluginAnim !== 'none' ? ' is-anim-' + occ.pluginAnim : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${occ.availKind
       ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(ink(color), 0.9)}`
-      : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}
+      : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"

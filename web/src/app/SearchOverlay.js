@@ -19,13 +19,22 @@ import { isPendingLocation } from '../lib/maps.js';
 import { parseISO, dateOfDayKey, fmtDateFull, fmtDayMedium, fmtTime, occDayKey, todayKey } from '../lib/dates.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
+import { occurrenceDaySpan, isOvernight } from '../ui/monthmath.js';
 
 // "Fri, Oct 9 · 3:00 AM"; the year only when it isn't this one (0.6.9).
-function whenText(occ) {
+// All-day says so, and something longer than a day says when it ends: a
+// week-long conference read as just its first day (#184).
+export function whenText(occ) {
   const d = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
-  const sameYear = String(d.getFullYear()) === todayKey().slice(0, 4);
-  const day = sameYear ? fmtDayMedium(d) : fmtDateFull(d);
-  return occ.allDay ? day : day + ' · ' + fmtTime(d);
+  const thisYear = todayKey().slice(0, 4);
+  const dayOf = (x) => (String(x.getFullYear()) === thisYear ? fmtDayMedium(x) : fmtDateFull(x));
+  const { startKey, endKey } = occurrenceDaySpan(occ);
+  const multi = startKey !== endKey;
+  if (occ.allDay) return multi ? dayOf(d) + ' to ' + dayOf(dateOfDayKey(endKey)) : dayOf(d) + ' · all day';
+  const head = dayOf(d) + ' · ' + fmtTime(d);
+  if (!multi) return head;
+  const e = parseISO(occ.end);
+  return isOvernight(occ) ? head + ' to ' + fmtTime(e) : head + ' to ' + dayOf(e) + ' ' + fmtTime(e);
 }
 
 const OPTS_KEY = 'bc-search-opts';
@@ -239,7 +248,7 @@ export function SearchOverlay() {
       const idx = offset + i;
       return html`<button
         key=${occ.instanceId} type="button"
-        class="bc-search-row${idx === sel ? ' is-selected' : ''}"
+        class="bc-search-row${idx === sel ? ' is-selected' : ''}${occ.status === 'cancelled' ? ' is-cancelled' : ''}"
         onClick=${() => go(occ)}
         onMouseEnter=${() => setSel(idx)}
       >

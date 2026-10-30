@@ -310,6 +310,7 @@ async function fetchRange(s, e) {
   }
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const entry = { start: s, end: e, ctrl };
+  entry.done = new Promise((r) => { entry.settle = r; });
   inFlight.push(entry);
   const startISO = iso(s);
   const endISO = iso(e);
@@ -324,8 +325,7 @@ async function fetchRange(s, e) {
     // for it again (#184).
     if (asked < lastRefreshAsked) {
       markStale(startISO, endISO);
-      // Still the view's window by then; a view that moved on asks for its own.
-      if (lastWindow) { const w = lastWindow; queueMicrotask(() => { if (lastWindow === w) loadWindow(w.start, w.end); }); }
+      if (lastWindow) { const w = lastWindow; queueMicrotask(() => loadWindow(w.start, w.end)); }
     }
     if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
     // Whatever asked for it (a trip's stretch, a day, an older view), it
@@ -336,6 +336,7 @@ async function fetchRange(s, e) {
   } finally {
     const i = inFlight.indexOf(entry);
     if (i >= 0) inFlight.splice(i, 1);
+    entry.settle();
   }
 }
 
@@ -530,13 +531,20 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   const narrow = missingRanges(s, e, have);
   const gaps = monthGaps(narrow, have);
   if (gaps.length === 0) {
-    // Some of it still on its way: whichever request carries it says when
-    // the view is loaded (windowLoaded), so "Loading" stays until then.
-    const coming = inFlight.some((r) => r.start < e && r.end > s);
+    // Some of it still on its way: wait for it, then ask again for whatever
+    // it didn't bring (a request that failed, or a month the server refused
+    // and that only the other window's days were fetched from). "Loading"
+    // stays meanwhile; it went before the days arrived, or stayed for good
+    // (#184).
+    const coming = inFlight.filter((r) => r.start < e && r.end > s);
+    if (coming.length > 0) {
+      await Promise.all(coming.map((r) => r.done));
+      if (asView && (!lastWindow || lastWindow.start !== startISO || lastWindow.end !== endISO)) return; // the view moved on
+      return loadWindow(startISO, endISO, { asView });
+    }
     // Nothing missing: already held (perhaps by a later, wider window).
     // Either way this window no longer counts as failed.
-    if (!coming || !state.windowStatus || state.windowStatus.kind !== 'loading') windowLoaded(startISO, endISO);
-    else failedWindows.delete(startISO + '|' + endISO);
+    windowLoaded(startISO, endISO);
     return;
   }
   // "Loading" on a cold start, and whenever days on screen are among what's

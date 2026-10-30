@@ -315,7 +315,7 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
     // Anything wider (by local days, say) drops events the answer never
     // carried, for any window not on local midnights (#184).
     const end = occ.end ? new Date(occ.end).getTime() : occ.allDay ? t + 86400000 : t;
-    const inside = (t < e && end > s) || (t >= s && t < e);
+    const inside = t < e && end > s;
     if (inside && !mine(id, occ)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);

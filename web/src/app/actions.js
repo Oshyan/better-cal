@@ -121,13 +121,16 @@ export function stepAnchor(dir) {
   // (#184). It steps from the day you're on instead.
   const here = hereKey();
   const ribbon = v === 'month' && effectiveOverviewMode() === '3day';
-  // The agenda's top day may stand for empty days before it, the month
-  // moved to among them: it steps from that month, or Next aimed at the same
-  // day again (#184).
+  let vm = ribbon ? { year: Number(here.slice(0, 4)), month: Number(here.slice(5, 7)) }
+    : (!gliding && state.visibleMonth) || fromAnchor;
+  // The agenda names the month of its top day, which may stand for empty
+  // days before it. Prev to a month with nothing in it lands back there,
+  // the list unmoved: the next Prev steps on from the month it went to, or
+  // it went to the same month again (#184).
   const d = state.visibleDays;
-  const listed = v === 'agenda' && d && state.anchor >= d.start && state.anchor <= d.end;
-  const vm = ribbon ? { year: Number(here.slice(0, 4)), month: Number(here.slice(5, 7)) }
-    : listed ? fromAnchor : (!gliding && state.visibleMonth) || fromAnchor;
+  const ym = (x) => x.year * 12 + x.month;
+  if (v === 'agenda' && dir < 0 && d && state.anchor >= d.start && state.anchor <= d.end
+    && state.anchor.endsWith('-01') && ym(fromAnchor) < ym(vm)) vm = fromAnchor;
   const k = vm.year * 12 + (vm.month - 1) + dir;
   const y = Math.floor(k / 12);
   const m = ((k % 12) + 12) % 12 + 1;

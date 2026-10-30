@@ -2010,12 +2010,31 @@ console.log('--- chronological ordering across timezone offsets ---');
   held = new Promise((r) => { release = r; });
   const first = loadWindow(at(2029, 8, 3), at(2029, 8, 24));
   await new Promise((r) => setTimeout(r, 0));
-  await loadWindow(at(2029, 8, 4), at(2029, 8, 25)); // the view settling, all of it in flight
+  const second = loadWindow(at(2029, 8, 4), at(2029, 8, 25)); // the view settling, all of it in flight
+  await new Promise((r) => setTimeout(r, 0));
   eq('window: the note stays while what it waits on is on its way', st.windowStatus && st.windowStatus.kind, 'loading');
   held = null;
   release();
   await first;
+  await second;
   eq('window: and goes when it lands', st.windowStatus, null);
+
+  // The month in flight is refused (too dense) and only the first window's
+  // days are fetched in its place: the view that waited on it asks for its
+  // own days, and the note goes once they land.
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2029-05-14', end: '2029-05-20' } });
+  dense = true;
+  held = new Promise((r) => { release = r; });
+  const jump = loadWindow(at(2029, 5, 10), at(2029, 5, 13));
+  await new Promise((r) => setTimeout(r, 0));
+  const settled = loadWindow(at(2029, 5, 14), at(2029, 5, 21));
+  await new Promise((r) => setTimeout(r, 0));
+  held = null;
+  release();
+  await jump;
+  await settled;
+  eq('window: a refused month in flight still brings the view its days', [st.windowStatus, st.loadedRanges.some((r) => r.start <= Date.parse(at(2029, 5, 14)) && r.end >= Date.parse(at(2029, 5, 21)))], [null, true]);
+  dense = false;
 
   // A save's own refresh reads the change cursor first; only one that lands
   // tells the poll it needn't fetch the window again.
@@ -3118,6 +3137,14 @@ console.log('--- window merges (#183) ---');
     }
   }
   eq('merge: a deleted event leaves with exactly the windows overlapping it', gone, []);
+  // A moment (no length) at a window's very start isn't in its answer; the
+  // window before ended there, so the server sends it with neither.
+  storeState.occ.clear();
+  storeState.occ.set('pin', occ('pin', '2026-11-09T08:00:00Z', '2026-11-09T08:00:00Z'));
+  mergeWindow('2026-11-09T08:00:00Z', '2026-11-10T08:00:00Z', []);
+  assert('merge: a moment at the window\'s start is kept', storeState.occ.has('pin'));
+  mergeWindow('2026-11-09T00:00:00Z', '2026-11-10T00:00:00Z', []);
+  assert('merge: one inside it goes when the answer lacks it', !storeState.occ.has('pin'));
 
   // A drop while an older answer is on its way: the moved copy stays.
   storeState.occ.clear();

@@ -279,6 +279,7 @@ export function App() {
     // A window refresh that failed: tried again on each check until it lands,
     // without repeating the rest of the change's reloads (#184).
     let windowOwed = false;
+    let restOwed = false;
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;
       // Nothing changes under a drag: the next check, after the drop, picks
@@ -300,8 +301,17 @@ export function App() {
           // cursor, so it holds every change up to here; the rest still
           // reloads, as other changes may have come in before the save.
           if (moved && d.cursor !== ownChangeCursor()) windowOwed = true;
-          if (windowOwed) windowOwed = !(await refreshWindow({ own: false }));
-          if (moved) {
+          // When it fails the connection is likely failing the rest too:
+          // they're redone, once, with the refresh that lands.
+          let again = false;
+          if (windowOwed) {
+            const ok = await refreshWindow({ own: false });
+            again = ok && restOwed;
+            restOwed = !ok && (restOwed || moved);
+            windowOwed = !ok;
+          }
+          const reload = moved || again;
+          if (reload) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
             loadPeople().catch(() => {});
             loadSavedViews().catch(() => {});
@@ -317,20 +327,20 @@ export function App() {
               }).catch(() => {});
             }
           }
-          if (moved || statusMoved) loadCalendars().catch(() => {});
+          if (reload || statusMoved) loadCalendars().catch(() => {});
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.
-          if (moved || reviewMoved) loadReviewCount();
+          if (reload || reviewMoved) loadReviewCount();
           if (statusMoved) {
             loadSystemHealth();
             loadPlugins();
             loadUpdates();
             set({ pluginSeq: state.pluginSeq + 1 });
           }
-          if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
+          if (reload || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
           // The app icon's number (#170), when something it counts may have moved.
-          refreshBadge({ changed: moved || reviewMoved });
+          refreshBadge({ changed: reload || reviewMoved });
           cursor = d.cursor;
           review = d.review ?? null;
           status = d.status ?? null;

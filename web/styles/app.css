@@ -4849,3 +4849,4 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-block:is(.is-past, .is-context)::after { opacity: 0.45; }
 .bc-block.is-past.is-filter-dimmed::after { opacity: 0.58; }
 .bc-block:not(.is-drag-source):is(:hover, :focus-visible)::after { opacity: 0; }
+body:not(.bc-drag-copy) .bc-block.is-drag-source:is(.is-past, :hover, :focus-visible) { opacity: 0.4; }

@@ -1,0 +1,102 @@
+<title>Calendar Mark Options</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one column per option, each showing the same calendars in a month
+   cell, week blocks and sidebar rows, light above dark, at actual size and
+   enlarged. Tokens follow Better-Cal's own app.css. */
+:root {
+  --page: #eef0f3; --ink: #1e2430; --muted: #6b7280; --rule: #d9dde3; --card: #ffffff;
+  --accent: #5b6cff;
+  --app-bg-l: #ffffff; --app-fg-l: #1e2430; --app-mut-l: #6b7280; --app-rule-l: #e2e5ea;
+  --app-bg-d: #1e2128; --app-fg-d: #e6e8ec; --app-mut-d: #9aa1ac; --app-rule-d: #2c3038;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --page: #121418; --ink: #e6e8ec; --muted: #9aa1ac; --rule: #2c3038; --card: #1a1d23; color-scheme: dark; } }
+:root[data-theme="dark"] { --page: #121418; --ink: #e6e8ec; --muted: #9aa1ac; --rule: #2c3038; --card: #1a1d23; color-scheme: dark; }
+body { background: var(--page); color: var(--ink); font-family: var(--sans); padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 20px; margin: 0 0 6px; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 70ch; margin: 0 0 18px; line-height: 1.45; }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+.grid { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 14px; overflow-x: auto; }
+.opt { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.opt h2 { font-size: 14px; margin: 0; display: flex; gap: 8px; align-items: baseline; }
+.opt h2 b { color: var(--accent); }
+.opt p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.4; min-height: 50px; }
+.label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 2px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.app { border-radius: 6px; padding: 6px; font-size: 11.5px; min-width: 0; }
+.app.l { background: var(--app-bg-l); color: var(--app-fg-l); border: 1px solid var(--app-rule-l); --mut: var(--app-mut-l); }
+.app.d { background: var(--app-bg-d); color: var(--app-fg-d); border: 1px solid var(--app-rule-d); --mut: var(--app-mut-d); }
+.daynum { font-weight: 600; font-size: 11px; margin-bottom: 3px; }
+.chip { display: flex; align-items: center; gap: 4px; height: 18px; white-space: nowrap; overflow: hidden; }
+.chip .t { color: var(--mut); font-size: 10.5px; }
+.chip .n { overflow: hidden; text-overflow: ellipsis; }
+.mk { flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; box-sizing: border-box; }
+.mk svg { display: block; }
+.block { border-radius: 4px; padding: 3px 5px; margin-bottom: 4px; font-size: 11px; display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; }
+.side { display: flex; align-items: center; gap: 7px; height: 21px; font-size: 12.5px; white-space: nowrap; }
+.side .g { margin-left: 3px; display: inline-flex; }
+.zoom { overflow: hidden; }
+.zoom .app { zoom: 2.6; }
+@media (max-width: 700px) { .grid { grid-template-columns: repeat(4, 260px); } }
+</style>
+
+<h1>Calendar marks on events</h1>
+<p class="lede">The same six calendars in each option: a plain calendar, three plugin calendars (tides, tasks, sunset; the sunset color is pale to show the dark glyph), a web feed and a Google calendar. Each column shows a month cell, week blocks and the sidebar, light and dark, then the month cell enlarged. Names and times are invented.</p>
+<div class="key"><span>A: today (1.4.3)</span><span>B: discs for marked calendars</span><span>C: discs for every calendar</span><span>D: rings for marked calendars</span></div>
+<div class="grid" id="grid"></div>
+
+<script>
+const CALS = [
+  { name: 'Personal', color: '#4f7cff', kind: 'plain', ev: ['9:00 AM', 'Dentist'] },
+  { name: 'Tides', color: '#2e8b8b', kind: 'icon', path: 'M2.5 12.5 C4.4 10.6 6.1 14.4 8 12.5 C9.9 10.6 11.6 14.4 13.5 12.5 M8 2.5 V8.5 M5.2 5.9 L8 8.7 L10.8 5.9', ev: ['10:42 AM', 'Low 0.3 ft'] },
+  { name: 'Tasks', color: '#8a63d2', kind: 'icon', path: 'M3.2 8.4l3.2 3.2 6.4-7', ev: ['12:00 PM', 'Send invoices'] },
+  { name: 'Sunset', color: '#e8c25a', kind: 'icon', path: 'M1.5 12h13M4.5 12a3.5 3.5 0 0 1 7 0M8 2.5v5M6 5.5l2 2 2-2M3 9.2l.8-.8M13 9.2l-.8-.8', ev: ['5:58 PM', 'Sunset'] },
+  { name: 'Community feed', color: '#c2457a', kind: 'icon', path: 'M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 0 0-4-4l-.7.7M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 0 0 4 4l.7-.7', ev: ['7:00 PM', 'Library talk'] },
+  { name: 'Team (Google)', color: '#e8743b', kind: 'google', ev: ['8:30 PM', 'Planning call'] },
+];
+// Better-Cal's contrastText: dark text on light colors.
+function lum(hex) {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const contrast = (hex) => (lum(hex) > 0.42 ? '#1a1a1a' : '#ffffff');
+const glyph = (path, size, linePx, color) => `<svg viewBox="0 0 16 16" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="${(linePx * 16 / size).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>`;
+const gLetter = (size, color) => `<svg viewBox="0 0 16 16" width="${size}" height="${size}"><text x="8" y="12.2" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-weight="800" font-size="12.5" fill="${color}">G</text></svg>`;
+const googleLogo = `<svg viewBox="0 0 48 48" width="11" height="11"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>`;
+
+const dot = (d, color) => `<span class="mk" style="width:${d}px;height:${d}px;background:${color}"></span>`;
+const ring = (d, w, color, inner = '') => `<span class="mk" style="width:${d}px;height:${d}px;border:${w}px solid ${color}">${inner}</span>`;
+const disc = (d, color, inner) => `<span class="mk" style="width:${d}px;height:${d}px;background:${color}">${inner}</span>`;
+const glyphOnly = (inner) => `<span class="mk">${inner}</span>`;
+
+// Each option: the mark on a chip (month, agenda, day list) and in the sidebar.
+const OPTIONS = [
+  { id: 'A', title: 'Today', note: 'A 7px dot, or the icon drawn alone in the calendar color with a hairline; Google a 7px ring. Icons read clearly but carry little color.',
+    chip: (c) => c.kind === 'plain' ? dot(7, c.color) : c.kind === 'google' ? ring(7, 1.5, c.color) : glyphOnly(glyph(c.path, 9, 0.7, c.color)),
+    side: (c) => c.kind === 'plain' ? dot(10, c.color) : c.kind === 'google' ? ring(10, 2, c.color) : glyphOnly(glyph(c.path, 12, 0.7, c.color)) },
+  { id: 'B', title: 'Discs for marked calendars', note: 'Plain calendars keep the 7px dot. Marked ones get an 11px disc in the calendar color with the icon in white or black. Google is a disc with a G.',
+    chip: (c) => c.kind === 'plain' ? dot(7, c.color) : disc(11, c.color, c.kind === 'google' ? gLetter(9, contrast(c.color)) : glyph(c.path, 8, 0.9, contrast(c.color))),
+    side: (c) => c.kind === 'plain' ? dot(10, c.color) : disc(14, c.color, c.kind === 'google' ? gLetter(11, contrast(c.color)) : glyph(c.path, 10, 1, contrast(c.color))) },
+  { id: 'C', title: 'Discs for every calendar', note: 'Every calendar gets the same 10px disc, plain ones empty. One size down every row, at the cost of slightly bigger plain dots.',
+    chip: (c) => c.kind === 'plain' ? dot(10, c.color) : disc(10, c.color, c.kind === 'google' ? gLetter(8, contrast(c.color)) : glyph(c.path, 7.5, 0.85, contrast(c.color))),
+    side: (c) => c.kind === 'plain' ? dot(14, c.color) : disc(14, c.color, c.kind === 'google' ? gLetter(11, contrast(c.color)) : glyph(c.path, 10, 1, contrast(c.color))) },
+  { id: 'D', title: 'Rings for marked calendars', note: 'Plain calendars keep a filled dot. Marked ones get an 11px ring (2px) in the calendar color with the icon inside in the same color.',
+    chip: (c) => c.kind === 'plain' ? dot(8, c.color) : ring(12, 1.6, c.color, c.kind === 'google' ? gLetter(8, c.color) : glyph(c.path, 7, 0.9, c.color)),
+    side: (c) => c.kind === 'plain' ? dot(10, c.color) : ring(15, 2, c.color, c.kind === 'google' ? gLetter(10, c.color) : glyph(c.path, 9, 1, c.color)) },
+];
+
+const cell = (o, theme) => `<div class="app ${theme}"><div class="daynum">Thu 12</div>${CALS.map((c) => `<div class="chip">${o.chip(c)}<span class="t">${c.ev[0]}</span><span class="n">${c.ev[1]}</span></div>`).join('')}</div>`;
+// Week blocks are filled with the calendar color, so the mark there is the
+// icon alone in the text color, in every option.
+const blocks = (theme) => `<div class="app ${theme}">${CALS.filter((c) => c.kind !== 'plain').slice(0, 4).map((c) => `<div class="block" style="background:${c.color};color:${contrast(c.color)}">${c.kind === 'google' ? '' : glyphOnly(glyph(c.path, 9, 0.8, contrast(c.color)))}<span>${c.ev[1]}</span></div>`).join('')}</div>`;
+const side = (o, theme) => `<div class="app ${theme}">${CALS.map((c) => `<div class="side">${o.side(c)}<span>${c.name.replace(' (Google)', '')}</span>${c.kind === 'google' ? `<span class="g">${googleLogo}</span>` : ''}</div>`).join('')}</div>`;
+
+document.getElementById('grid').innerHTML = OPTIONS.map((o) => `<section class="opt">
+  <h2><b>${o.id}</b>${o.title}</h2><p>${o.note}</p>
+  <div class="label">Month cell</div><div class="pair">${cell(o, 'l')}${cell(o, 'd')}</div>
+  <div class="label">Sidebar</div><div class="pair">${side(o, 'l')}${side(o, 'd')}</div>
+  <div class="label">Week blocks (the same in every option)</div><div class="pair">${blocks('l')}${blocks('d')}</div>
+  <div class="label">Month cell, enlarged</div><div class="zoom">${cell(o, 'l')}</div>
+</section>`).join('');
+</script>

@@ -28,14 +28,18 @@ The releases below assume the first one, since it's the only change big enough t
 
 The [changelog](CHANGELOG.md) has the full list, fixes included.
 
-## 1.4.x (in progress)
-
-Done so far:
+## 1.4.1 (released 2026-10-29)
 
 - The sidebar stays beside Settings, Review and the other pages on a computer
 - Undo toasts name the event and say what they'd undo, like "Moved · Nov 6 → Nov 17"
 - A plugin's first run starts when you turn it on, and its form keeps later fields out of reach until the required ones are filled in
 - Plugin runs started by Run now or a settings save wait for the worker's lock, so they can't write during an update (a Low finding from the review of 1.0 to 1.4)
+- Feed problems in plain words, tides that are easier to see, times stored in UTC read on your own clock everywhere
+- The first round of fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183))
+
+## 1.4.x (next)
+
+- The rest of the view review's fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)), then a second, independent review of every view
 
 ## 1.5: Filters and your own layer
 

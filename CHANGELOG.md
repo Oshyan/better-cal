@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.4.1 (2026-10-29)
 
 - **Fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183)):** it turns out building a calendar view *is* easy, just deceptively so. The gotchas aren't hard to fix once you know where to look, and a dedicated review found a fair few. Sorry for missing them until now! 😅 More follow in the next releases; let me know if you see anything else that looks off.
   - After a change, going back to weeks or months you'd seen earlier showed the old version until a reload.
@@ -24,6 +24,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **A plugin's first run starts when you turn it on,** where the server can manage it, so Tides' station list is there when you add a calendar instead of after a minute or a Run now. A plugin's form keeps the fields below a required one (a tide calendar's station) out of reach until it's filled in.
 - **Times stored in UTC now read on your own clock everywhere.** Plugins, feeds that write their times with a Z, and imports store an instant with no place, and several places showed it in UTC: a tide's label on the timeline, Travel's "leave by" time, Lint's "outside your preferred hours" check (which also warned about evening events that were fine), the dates in Activity and in Review's "the Tue 3 Nov occurrence", which day an evening event counts as when looking for duplicates, and what an assistant reads through the MCP server. A one-day plugin event (a forecast day) no longer ends on the day it starts on servers set east of UTC.
 - **Fixes:** Today did nothing in day view when you were more than a week past today. Opening straight into day view (after a reload, say) showed no tide shading and no one's away times. An event's hover outline sat 3px in from its left edge. A tide's line now stops at its label's outline. A plugin run started by Run now or a settings save (on servers that run it straight away) now waits for the worker's lock and steps aside during an update, as the worker does, so it can't write while an update backs up, replaces code or migrates the database. Blocked, it's left for the worker to run within a minute.
+
+Operators: one database change (feeds remember when they last updated), applied automatically by `update.php` or the database update page.
 
 ## 1.4.0 (2026-10-27)
 

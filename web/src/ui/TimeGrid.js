@@ -442,7 +442,10 @@ export function TimeGrid({
       const ed = epochDayOfKey(k);
       const out = [];
       let total = 0;
-      for (const occ of occurrences) {
+      // Events first, then away times and plugin bands, so a band never takes
+      // an event's place and sends it to "more".
+      const ordered = [...occurrences.filter((o) => !isBand(o)), ...occurrences.filter(isBand)];
+      for (const occ of ordered) {
         if (occ.attendance === 'hidden' || isContext(occ)) continue;
         const { startKey, endKey } = occurrenceDaySpan(occ);
         if (!occ.allDay && startKey === endKey) continue;
@@ -477,7 +480,10 @@ export function TimeGrid({
       if (occ.attendance === 'hidden' || isContext(occ) || filteredOut(occ)) continue;
       const { startKey, endKey } = occurrenceDaySpan(occ);
       if (!occ.allDay && startKey === endKey) continue;
-      items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer, quiet: isQuiet(occ) });
+      // Away times and plugin bands go after real events, like quiet ones:
+      // in a collapsed row they'd otherwise push events into "+N" (#183).
+      const band = isBand(occ);
+      items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer && !band, quiet: band || isQuiet(occ) });
     }
     items.sort((a, b) => (b.trip - a.trip) || String(a.id).localeCompare(String(b.id)));
     return assignLanes(items, ALLDAY_LANES_MAX); // stable sort inside: quiet last, start, then longer, then this order
@@ -485,7 +491,7 @@ export function TimeGrid({
   const barLanes = useMemo(() => {
     if (!globalLanes) {
       const lanes = assignLanes(
-        allDayBars.filter((b) => !filteredOut(b.occ)).map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
+        allDayBars.filter((b) => !filteredOut(b.occ)).map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isBand(b.occ) || isQuiet(b.occ) })),
         ALLDAY_LANES_MAX,
       );
       for (const b of allDayBars) if (filteredOut(b.occ)) lanes.set(b.occ.instanceId, ALLDAY_LANES_MAX); // not drawn
@@ -663,13 +669,15 @@ export function TimeGrid({
   // The day and minute under a point, or null off the timeline: a drag let
   // go over the sidebar, the header or the event panel has nowhere to land.
   // Clamped to the nearest column and minute, it moved the event to a day
-  // that had scrolled past unseen (#183).
-  const pointToSlot = useCallback((pt) => {
+  // that had scrolled past unseen (#183). anyHeight: only the column counts
+  // (the all-day lane sits above the timeline).
+  const pointToSlot = useCallback((pt, anyHeight = false) => {
     const el = scrollRef.current;
     if (!el || days.length === 0) return null;
     const box = (infinite && hscrollRef.current ? hscrollRef.current : el).getBoundingClientRect();
     const vbox = el.getBoundingClientRect();
-    if (pt.x < box.left || pt.x > box.right || pt.y < vbox.top || pt.y > vbox.bottom) return null;
+    if (pt.x < box.left || pt.x > box.right) return null;
+    if (!anyHeight && (pt.y < vbox.top || pt.y > vbox.bottom)) return null;
     // Stack mode: the day is whichever panel's column the pointer is over,
     // read from live rects so variable panel heights need no math.
     if (vstack) {
@@ -770,7 +778,7 @@ export function TimeGrid({
     if (ev.target !== ev.currentTarget) return; // only empty lane space
     if (catchingScroll(ev)) return;
     const touch = ev.pointerType === 'touch';
-    const origin = pointToSlot({ x: ev.clientX, y: ev.clientY });
+    const origin = pointToSlot({ x: ev.clientX, y: ev.clientY }, true);
     if (!origin) return;
     const single = { mode: 'days', startKey: origin.dayKey, endKey: origin.dayKey, allDayLane: true };
     let current = null;
@@ -782,7 +790,7 @@ export function TimeGrid({
         setDraft(single);
       },
       onMove: (pt) => {
-        const s = pointToSlot(pt);
+        const s = pointToSlot(pt, true);
         if (!s) return;
         const { startKey, endKey } = normalizeDayRange(origin.dayKey, s.dayKey);
         current = { mode: 'days', startKey, endKey, allDayLane: true };
@@ -898,10 +906,11 @@ export function TimeGrid({
       onMove: (pt) => {
         const slot = pointToSlot(pt);
         if (!slot) { result = null; hidePreview(previewRef); return; }
-        // Past the end of the event's own day (day view stacks the next day
-        // below it) is the end of that day, not 0:00 of the next, which made
-        // the event 15 minutes long; before its start is the start.
-        const own = slot.dayKey === dayKey ? slot.min : (slot.dayKey > dayKey ? MINUTES_DAY : 0);
+        // Day view stacks the next day below this one: past the end of the
+        // event's own day is the end of that day, not 0:00 of the next, which
+        // made the event 15 minutes long; above its start is the start. Side
+        // by side (week), the column doesn't matter, only the height.
+        const own = !vstack || slot.dayKey === dayKey ? slot.min : (slot.dayKey > dayKey ? MINUTES_DAY : 0);
         const m = snapMin(own);
         let sMin = minutesOfDay(s0);
         let eMin = minutesOfDay(e0) || MINUTES_DAY;
@@ -923,7 +932,7 @@ export function TimeGrid({
       },
       onCancel: () => hidePreview(previewRef),
     });
-  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars]);
+  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars, vstack]);
 
   // --- render ---------------------------------------------------------------
 

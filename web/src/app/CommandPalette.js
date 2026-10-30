@@ -18,7 +18,7 @@ import { rankByFuzzy } from '../lib/fuzzy.js';
 import { parseJumpTarget } from '../lib/jumpparse.js';
 import { jumpToTarget, jumpViewPhrase } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { dateOfDayKey, fmtDateFull } from '../lib/dates.js';
+import { dateOfDayKey, fmtDateFull, todayKey } from '../lib/dates.js';
 
 // Only cap a *ranked* list, where the tail is genuinely the worst matches.
 // With no query every score ties and the order is just the registry's own, so
@@ -68,7 +68,8 @@ export function CommandPalette() {
 
   // The date row: only when the text actually parses, so it never occupies a
   // slot for a query that was never about a date.
-  const jump = !prompt && text ? parseJumpTarget(text, state.anchor) : null;
+  // Counted from today, as the jump box and the Go to prompt do (#183).
+  const jump = !prompt && text ? parseJumpTarget(text, todayKey()) : null;
 
   const matches = useMemo(() => {
     if (prompt) return [];

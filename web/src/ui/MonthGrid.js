@@ -660,7 +660,8 @@ export function MonthGrid({
       cal: !isFeed && !isGoogle ? (id) => id !== occ.calendarId : false,
       person: !isFeed,
       instance: (iid) => {
-        if (iid === occ.instanceId || String(iid).startsWith('avail:')) return false;
+        // Trips only: a person's away time or a plugin band has no event to add to.
+        if (iid === occ.instanceId || /^(avail|plg):/.test(String(iid))) return false;
         const t = occByIdRef.current.get(iid);
         return !!(t && t.isContainer && !t.availKind);
       },
@@ -816,7 +817,9 @@ export function MonthGrid({
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       onMove: (pt) => {
-        const k = dayKeyAtPoint(pt) || originKey;
+        // Off the grid, no range: letting go there creates nothing.
+        const k = dayKeyAtPoint(pt);
+        if (!k) { dropRef.current.key = null; highlightDays([]); return; }
         const a = Math.min(epochDayOfKey(originKey), epochDayOfKey(k));
         const b = Math.max(epochDayOfKey(originKey), epochDayOfKey(k));
         dropRef.current.key = k;
@@ -825,7 +828,8 @@ export function MonthGrid({
       onDrop: () => {
         highlightDays([]);
         if (!onCreateRange) return;
-        const k = dropRef.current.key || originKey;
+        const k = dropRef.current.key;
+        if (!k) return;
         const { startKey, endKey } = normalizeDayRange(originKey, k);
         // Straight into the editor (GCal-style): dismissing it is the cancel.
         onCreateRange(dayRangeDraft(startKey, endKey));

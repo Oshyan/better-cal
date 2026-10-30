@@ -1,14 +1,15 @@
 // Browser checks of the calendar views: navigation, what each view loads and
-// shows, and where drags may land. Run on a test install with invented data
-// (it moves the view around, refreshes and tries a drag), signed in, from
-// the browser console or an automated browser:
+// shows, and where drags may land. Run them only on a test install with
+// invented data, signed in, with the page in front, from the browser console
+// or an automated browser:
 //
 //   const { run } = await import('/assets/tests/viewchecks.mjs?' + Date.now());
 //   console.table(await run());
 //
-// Only a test install serves this file: releases leave web/tests out. Each
-// check says what it found; none of them edits or creates anything unless a
-// regression lets a drag through (then the event moves, as a person's would).
+// Never on an install with real data: they move the view around, refresh,
+// and try a drag, and if a regression lets that drag land, the event really
+// moves (or a repeating one asks This/Following/All). Release zips leave
+// web/tests out, but an install deployed by copying the repository serves it.
 // Started from the findings of a review of every view (#183).
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -87,7 +88,7 @@ export async function run() {
     await until(() => st().visibleDays && st().visibleDays.start > addDays(before || today, 21));
     const scrolled = st().visibleDays;
     A.navigate(7);
-    const want = addDays(scrolled.start, Math.floor(6 / 2) + 7);
+    const want = addDays(addDays(scrolled.start, Math.floor((new Date(scrolled.end) - new Date(scrolled.start)) / 864e5 / 2)), 7);
     const ok = await until(() => st().anchor === want && st().visibleDays && st().anchor >= st().visibleDays.start && st().anchor <= st().visibleDays.end);
     return { ok, scrolled, want, anchor: st().anchor, now: st().visibleDays };
   });
@@ -119,13 +120,17 @@ export async function run() {
     return { ok, weekShowed: days, dayOpenedOn: st().anchor };
   });
 
-  // A refresh keeps only what it refetched as loaded.
-  await check('after a refresh only the refreshed stretch counts as loaded', async () => {
+  // A refresh leaves what's held on screen but marks everything outside the
+  // refreshed stretch to be fetched again.
+  await check('after a refresh only the refreshed stretch is fresh', async () => {
     A.setView('month');
-    await until(() => document.querySelector('.bc-month-rule, [data-day]'));
+    await until(() => document.querySelector('.bc-month-rule, [data-day]') && !st().windowStatus);
+    await wait(500); // the month's own window requests
+    const held = st().loadedRanges.reduce((n, r) => n + (r.end - r.start), 0);
     await API.refreshWindow();
-    const r = st().loadedRanges;
-    return { ok: r.length <= 1, ranges: r.length };
+    const after = st().loadedRanges.reduce((n, r) => n + (r.end - r.start), 0);
+    const fresh = S.freshRanges();
+    return { ok: held > 0 && after >= held && fresh.length === 1, heldDays: Math.round(held / 864e5), freshDays: fresh.length ? Math.round((fresh[0].end - fresh[0].start) / 864e5) : 0 };
   });
 
   // Bands: people's away times show in week and day, a day short no more.
@@ -171,16 +176,24 @@ export async function run() {
   await check('week view: a drag let go above the grid moves nothing', async () => {
     A.jumpToDate(today);
     A.setView('week');
-    await until(() => document.querySelector('.bc-block[data-instance]'));
+    await until(() => st().anchorSeen === st().scrollSeq);
     const cals = Object.fromEntries(st().calendars.map((c) => [c.id, c]));
     const grid = document.querySelector('.bc-tg-scroll').getBoundingClientRect();
-    const block = [...document.querySelectorAll('.bc-block[data-instance]')].find((el) => {
+    const movable = () => [...document.querySelectorAll('.bc-block[data-instance]')].find((el) => {
       const o = st().occ.get(el.dataset.instance);
       const r = el.getBoundingClientRect();
       return o && cals[o.calendarId] && cals[o.calendarId].editable && r.height > 20
         && r.top > grid.top && r.bottom < grid.bottom - 80 && r.left > grid.left && r.right < grid.right;
     });
-    if (!block) return { ok: true, skipped: 'no timed event on screen' };
+    // Look a few weeks on for a timed event in view.
+    let block = movable();
+    for (let i = 0; !block && i < 8; i++) {
+      A.navigate(7);
+      await until(() => st().anchorSeen === st().scrollSeq);
+      await wait(300);
+      block = movable();
+    }
+    if (!block) return { ok: false, detail: 'no editable timed event within eight weeks: nothing to drag' };
     const id = block.dataset.instance;
     const before = st().occ.get(id).start;
     const title = block.querySelector('.bc-chip-title') || block;
@@ -208,6 +221,57 @@ export async function run() {
     const asked = !!st().dropChoice;
     S.set({ dropChoice: null });
     return { ok: lifted && shownInside && !shownOutside && after === before && !asked, lifted, shownInside, shownOutside, before, after, asked };
+  });
+
+  const opts = (x, y, buttons = 1) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', button: 0, buttons, isPrimary: true });
+
+  // Week view: a click in empty all-day space starts an all-day event.
+  await check('week view: clicking the all-day lane starts an all-day event', async () => {
+    A.jumpToDate(today);
+    A.setView('week');
+    await until(() => st().anchorSeen === st().scrollSeq);
+    const lane = document.querySelector('.bc-tg-allday .bc-tg-htrack, .bc-tg-allday-lane');
+    const hs = document.querySelector('.bc-tg-hscroll').getBoundingClientRect();
+    const lr = lane.parentElement.getBoundingClientRect();
+    const y = lr.bottom - 3;
+    let x = null;
+    for (let px = hs.left + 20; px < hs.right - 20; px += 15) {
+      if (document.elementFromPoint(px, y) === lane) { x = px; break; }
+    }
+    if (x == null) return { ok: false, detail: 'no empty all-day space on screen' };
+    S.set({ editor: null });
+    lane.dispatchEvent(new PointerEvent('pointerdown', opts(x, y)));
+    window.dispatchEvent(new PointerEvent('pointerup', opts(x, y, 0)));
+    const ok = await until(() => st().editor && st().editor.mode === 'create' && st().editor.draft && st().editor.draft.allDay, 1500);
+    S.set({ editor: null });
+    return { ok };
+  });
+
+  // Week view: resizing follows the pointer's height, whichever column it drifts into.
+  await check('week view: a resize drifting sideways keeps its length', async () => {
+    const handle = [...document.querySelectorAll('.bc-block .bc-block-handle.b')].find((h) => {
+      const r = h.getBoundingClientRect();
+      const g = document.querySelector('.bc-tg-scroll').getBoundingClientRect();
+      return r.top > g.top + 20 && r.bottom < g.bottom - 120 && r.left > g.left + 150 && r.right < g.right - 150;
+    });
+    if (!handle) return { ok: false, detail: 'no event end to drag on screen' };
+    const r = handle.getBoundingClientRect();
+    const x0 = r.left + r.width / 2;
+    const y0 = r.top + r.height / 2;
+    const col = handle.closest('.bc-block').parentElement.getBoundingClientRect().width;
+    const height = () => { const p = document.querySelector('.bc-tg-preview'); return p && getComputedStyle(p).display !== 'none' ? Math.round(p.getBoundingClientRect().height) : null; };
+    handle.dispatchEvent(new PointerEvent('pointerdown', opts(x0, y0)));
+    window.dispatchEvent(new PointerEvent('pointermove', opts(x0, y0 + 40)));
+    window.dispatchEvent(new PointerEvent('pointermove', opts(x0, y0 + 60)));
+    const straight = height();
+    window.dispatchEvent(new PointerEvent('pointermove', opts(x0 + col, y0 + 60)));
+    const right = height();
+    window.dispatchEvent(new PointerEvent('pointermove', opts(x0 - col, y0 + 60)));
+    const left = height();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', opts(x0 - col, y0 + 60, 0)));
+    S.set({ dropChoice: null });
+    return { ok: straight != null && right === straight && left === straight, straight, right, left };
   });
 
   A.setView(start.view);

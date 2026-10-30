@@ -93,6 +93,7 @@ export const state = {
   occ: new Map(),
   occVersion: 0,
   loadedRanges: [], // [{start, end}] ms epochs, merged
+  staleRanges: [], // held but maybe out of date since a change: fetched again when next shown (freshRanges)
   // Event window loading as the view needs to show it: null (nothing to say),
   // {kind:'loading'} on a cold load, {kind:'failed', offline, retryAt} when a
   // window request failed and a retry is scheduled, or {kind:'limited',
@@ -310,6 +311,7 @@ export function mergeWindow(startISO, endISO, events) {
     }
   }
   state.loadedRanges = mergeRanges([...state.loadedRanges, { start: s, end: e }]);
+  state.staleRanges = state.staleRanges.flatMap((r) => missingRanges(r.start, r.end, [{ start: s, end: e }]));
   set({ occVersion: state.occVersion + 1 });
 }
 
@@ -342,6 +344,7 @@ export function pruneOccurrenceCache(startISO, endISO, {
   if (active + optimistic > max) {
     for (const [id, occ] of state.occ) if (!occ._optimistic) state.occ.delete(id);
     state.loadedRanges = [];
+    state.staleRanges = [];
     set({ occVersion: state.occVersion + 1 });
     return 'limited';
   }
@@ -361,19 +364,23 @@ export function pruneOccurrenceCache(startISO, endISO, {
 }
 
 /**
- * After a change, only the refreshed stretch is current: everything loaded
- * outside it may hold the old version of what changed (an edited series, an
- * event moved into a month seen earlier). It stops counting as loaded, so
- * the view asks for it again when it next shows it, and the fresh answer
- * replaces what's cached there (#183). The cached occurrences stay until
- * then, so nothing on screen blanks.
+ * After a change, only the refreshed stretch is current: everything held
+ * outside it may be the old version of what changed (an edited series, an
+ * event moved into a month seen earlier), and going back there showed it
+ * until a reload (#183). It's marked stale, so the view fetches it again
+ * when it next shows it and the fresh answer replaces it. It stays held
+ * meanwhile, so nothing on screen blanks and the split view's list keeps
+ * its reach.
  */
-export function keepLoadedOnly(startISO, endISO) {
+export function markStaleOutside(startISO, endISO) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
-  state.loadedRanges = state.loadedRanges
-    .map((r) => ({ start: Math.max(r.start, s), end: Math.min(r.end, e) }))
-    .filter((r) => r.end > r.start);
+  state.staleRanges = mergeRanges(state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, [{ start: s, end: e }])));
+}
+
+/** What's held and current: the loaded ranges less the stale ones. Fetching asks for the rest. */
+export function freshRanges() {
+  return state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, state.staleRanges));
 }
 
 export function rangeCovered(startISO, endISO) {

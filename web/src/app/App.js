@@ -650,8 +650,8 @@ export function App() {
       if (!sp) return;
       // All-day drags report literal day keys; span instants are real ISO.
       const dayOf = (v) => epochDayOfKey(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : dayKeyOf(parseISO(v)));
-      // The pseudo-occurrence's end is inclusive-day; the drag reports an
-      // exclusive end, so compare each against its own convention.
+      // The drag reports an exclusive end; the span's last day is the day of
+      // its end instant less a minute, so the end moves by the difference.
       const startDelta = p.edge === 'start' ? dayOf(p.newStart) - dayOf(sp.start) : 0;
       const endDelta = p.edge === 'end'
         ? dayOf(p.newEnd) - epochDayOfKey(dayKeyOf(new Date(parseISO(sp.end).getTime() - 60000))) - 1

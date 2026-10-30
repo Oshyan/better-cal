@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, keepLoadedOnly } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, freshRanges } from './store.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
@@ -361,7 +361,7 @@ function windowLoaded(startISO, endISO) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   const current = !!lastWindow && lastWindow.start === startISO && lastWindow.end === endISO;
-  if (current && state.loadedRanges.some((r) => r.start <= s && r.end >= e)) {
+  if (current && freshRanges().some((r) => r.start <= s && r.end >= e)) {
     const pruned = pruneOccurrenceCache(startISO, endISO, { activeWindow: lastWindow });
     if (pruned === 'limited') {
       failedWindows.delete(startISO + '|' + endISO);
@@ -448,7 +448,7 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   // frame loop badly enough that requestAnimationFrame stopped firing (#14).
   // The gap is normally a single month.
   const gaps = missingRanges(s, e, [
-    ...state.loadedRanges,
+    ...freshRanges(),
     ...inFlight.map((r) => ({ start: r.start, end: r.end })),
   ]);
   // Nothing missing: already held (perhaps by a later, wider window), or on
@@ -478,7 +478,7 @@ export async function ensureRangeLoaded(startISO, endISO) {
   const e = new Date(endISO).getTime();
   if (!(e > s)) return;
   const gaps = missingRanges(s, e, [
-    ...state.loadedRanges,
+    ...freshRanges(),
     ...inFlight.map((r) => ({ start: r.start, end: r.end })),
   ]);
   // In pieces under the server's cap, as a refresh does.
@@ -498,7 +498,7 @@ export async function ensureDayLoaded(dayKey) {
   const next = dateOfDayKey(dayKey);
   next.setDate(next.getDate() + 1);
   const gaps = missingRanges(s, next.getTime(), [
-    ...state.loadedRanges,
+    ...freshRanges(),
     ...inFlight.map((r) => ({ start: r.start, end: r.end })),
   ]);
   try {
@@ -546,7 +546,7 @@ export async function refreshWindow() {
   const refreshStart = lastWindow.start;
   const refreshEnd = lastWindow.end;
   // Everything outside this stretch is no longer known to be current.
-  keepLoadedOnly(refreshStart, refreshEnd);
+  markStaleOutside(refreshStart, refreshEnd);
   windowReqId++;
   const id = windowReqId;
   // In pieces under the server's cap, like any other window (fetchRange).

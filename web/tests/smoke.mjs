@@ -43,7 +43,7 @@ import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
 import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, keepLoadedOnly } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -2961,17 +2961,22 @@ console.log('--- view review fixes (#183) ---');
   eq('here: one day on screen', hereKeyOf('2026-11-04', { start: '2026-12-25', end: '2026-12-25' }), '2026-12-25');
   eq('here: on the way to the anchor, the anchor', hereKeyOf('2026-11-04', { start: '2026-10-11', end: '2026-10-17' }, false), '2026-11-04');
 
-  // After a change only the refreshed stretch counts as loaded.
+  // After a change only the refreshed stretch is fresh; the rest stays held
+  // (nothing blanks) but is fetched again when next shown.
   const ms = (iso) => Date.parse(iso);
-  storeState.loadedRanges = [
-    { start: ms('2026-08-01T00:00:00Z'), end: ms('2026-09-01T00:00:00Z') },
-    { start: ms('2026-10-01T00:00:00Z'), end: ms('2026-12-01T00:00:00Z') },
-  ];
-  keepLoadedOnly('2026-10-15T00:00:00Z', '2026-11-15T00:00:00Z');
-  eq('loaded: only the refreshed stretch stays loaded', storeState.loadedRanges,
-    [{ start: ms('2026-10-15T00:00:00Z'), end: ms('2026-11-15T00:00:00Z') }]);
-  keepLoadedOnly('2027-01-01T00:00:00Z', '2027-02-01T00:00:00Z');
-  eq('loaded: nothing loaded there leaves nothing', storeState.loadedRanges, []);
+  const r = (a, b) => ({ start: ms(a + 'T00:00:00Z'), end: ms(b + 'T00:00:00Z') });
+  storeState.occ.clear();
+  storeState.loadedRanges = [r('2026-08-01', '2026-09-01'), r('2026-10-01', '2026-12-01')];
+  storeState.staleRanges = [];
+  markStaleOutside('2026-10-15T00:00:00Z', '2026-11-15T00:00:00Z');
+  eq('stale: everything held stays held', storeState.loadedRanges, [r('2026-08-01', '2026-09-01'), r('2026-10-01', '2026-12-01')]);
+  eq('stale: only the refreshed stretch is fresh', freshRanges(), [r('2026-10-15', '2026-11-15')]);
+  eq('stale: missing for a fetch is the stale part', missingRanges(ms('2026-08-15T00:00:00Z'), ms('2026-11-01T00:00:00Z'), freshRanges()),
+    [r('2026-08-15', '2026-10-15')]);
+  mergeWindow('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z', []);
+  eq('stale: fetching a stretch again makes it fresh', freshRanges(), [r('2026-08-01', '2026-09-01'), r('2026-10-15', '2026-11-15')]);
+  storeState.loadedRanges = [];
+  storeState.staleRanges = [];
 
   // A group keeps what its members share: grouped holidays stay day labels.
   const hol = (title) => ({ ...mkOcc(1, title, '2026-11-26'), relationship: 'context', status: 'confirmed' });

@@ -88,12 +88,12 @@ export function startPointerDrag(e, opts) {
     const el = opts.scrollEl;
     let moved = false;
     if (el) {
-      const dy = edgeScrollDy(el, lastPt.y);
+      const dy = edgeScrollDy(el, lastPt.y, lastPt.x);
       if (dy !== 0) { el.scrollTop += dy; moved = true; }
     }
     const hel = opts.hScrollEl;
     if (hel) {
-      const dx = edgeScrollDx(hel, lastPt.x);
+      const dx = edgeScrollDx(hel, lastPt.x, lastPt.y);
       if (dx !== 0) { hel.scrollLeft += dx; moved = true; }
     }
     if (moved && opts.onMove) opts.onMove(lastPt); // targets shift under the pointer
@@ -196,22 +196,25 @@ export function startPointerDrag(e, opts) {
 // top/bottom edges; speed proportional to edge proximity. Shared by
 // startPointerDrag and RescheduleMode.
 // Each counts only near the scroller: inside its edge zone, or past its edge
-// by no more than that zone again. Further out (a pointer over the sidebar,
-// the toolbar or the event panel) is somewhere else, not "very near the
-// edge": the week track ran at full speed, a week a second, while a drag
-// crossed the sidebar to a calendar row (#183).
-export function edgeScrollDy(scrollEl, y) {
+// by no more than that zone again, and (given the other coordinate) beside
+// it. Further out (a pointer over the sidebar, the toolbar or the event
+// panel) is somewhere else, not "very near the edge": the week track ran at
+// full speed, a week a second, while a drag crossed the sidebar to a
+// calendar row (#183).
+export function edgeScrollDy(scrollEl, y, x = null) {
   const r = scrollEl.getBoundingClientRect();
   if (y < r.top - EDGE_ZONE || y > r.bottom + EDGE_ZONE) return 0;
+  if (x != null && (x < r.left || x > r.right)) return 0;
   if (y < r.top + EDGE_ZONE) return -edgeSpeed(r.top + EDGE_ZONE - y);
   if (y > r.bottom - EDGE_ZONE) return edgeSpeed(y - (r.bottom - EDGE_ZONE));
   return 0;
 }
 
 // Horizontal counterpart for left/right edges (infinite week day track).
-export function edgeScrollDx(scrollEl, x) {
+export function edgeScrollDx(scrollEl, x, y = null) {
   const r = scrollEl.getBoundingClientRect();
   if (x < r.left - EDGE_ZONE || x > r.right + EDGE_ZONE) return 0;
+  if (y != null && (y < r.top || y > r.bottom)) return 0;
   if (x < r.left + EDGE_ZONE) return -edgeSpeed(r.left + EDGE_ZONE - x);
   if (x > r.right - EDGE_ZONE) return edgeSpeed(x - (r.right - EDGE_ZONE));
   return 0;

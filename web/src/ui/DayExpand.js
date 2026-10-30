@@ -49,18 +49,42 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     setContextPage(0);
   }, [dayKey]);
 
+  // Keys and focus. An event opened from the list sits on top: while it's
+  // open, Escape and Tab are its (Escape closed this panel first, and Tab
+  // couldn't leave it). Focus moves in when the panel opens, not on every
+  // render: the parent passes a new onClose each time, and the minute tick
+  // pulled focus back to the first button (#183). Closing puts focus back
+  // where it was.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
+    const covered = () => !!document.querySelector('.bc-popover[role="dialog"]');
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
-      if (e.key === 'Tab') trapFocus(panelRef.current, e);
+      if (covered()) return;
+      if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current(); }
+      if (e.key === 'Tab' && panelRef.current && panelRef.current.contains(document.activeElement)) trapFocus(panelRef.current, e);
     };
     document.addEventListener('keydown', onKey, true);
-    if (panelRef.current) {
-      const first = panelRef.current.querySelector('button, [tabindex]');
-      if (first) first.focus();
-    }
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    const before = document.activeElement;
+    const beforeId = before && before.dataset ? before.dataset.instance : null;
+    const day = dayKey;
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      const a = document.activeElement;
+      if (a && a !== document.body) return;
+      // The element you came from, or (redrawn meanwhile) the same event, or
+      // the day's "+N more".
+      const back = (before && before.isConnected ? before : null)
+        || (beforeId ? document.querySelector(`[data-instance="${CSS.escape(beforeId)}"]`) : null)
+        || document.querySelector(`[data-day="${day}"] .bc-more, [data-day="${day}"] [tabindex="0"]`);
+      if (back && back.focus) back.focus({ preventScroll: true });
+    };
+  }, []); // eslint-disable-line
+  useEffect(() => {
+    if (!panelRef.current) return;
+    const first = panelRef.current.querySelector('button, [tabindex]');
+    if (first) first.focus({ preventScroll: true });
+  }, [dayKey]);
 
   const d = dateOfDayKey(dayKey);
   const ed = epochDayOfKey(dayKey);

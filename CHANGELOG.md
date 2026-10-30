@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **The last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**
+  - Events show their calendar's mark everywhere: a plugin calendar's icon and a Google calendar's ring on month chips too, and phone month pills keep icons and the "new" glow.
+  - The keyboard can reach an event's panel: opening one moves focus into it and closing it returns focus. Escape closes an event opened from a day's list before the list.
+  - Faded events in month and the agenda come to full strength when you point at them, as in week and day; past and cancelled trips look like other past and cancelled events, and trip bands and grouped events get hover cards.
+  - Moving an overnight event previews both days; the drag-to-create draft, drop preview and now line stay visible over tides and side-by-side events.
+  - Smaller: tapping a holiday with an event open opens the holiday, the agenda shows one time for a moment, the phone's day title skips cancelled events a calendar hides, and plugins with many ranges (several tide stations) no longer lose the later weeks.
+
 ## 1.4.2 (2026-10-30)
 
 - **More little fixes from [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings 😅**

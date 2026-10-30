@@ -183,6 +183,12 @@ export function jumpToDate(dayKey, flashId) {
 }
 
 export function closeOverlays() {
+  // An event (or group) opened from a day's list closes on its own, back to
+  // the list it came from, one layer at a time (#183).
+  if ((state.popover || state.groupPopover) && state.expandedDay && !state.editor) {
+    set({ popover: null, groupPopover: null, deletePrompt: null, attendPrompt: null });
+    return true;
+  }
   if (state.popover || state.groupPopover || state.editor || state.expandedDay ||
       state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen ||
       state.createDrawer || state.moveDialog) {

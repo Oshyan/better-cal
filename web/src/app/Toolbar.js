@@ -11,6 +11,7 @@ import { html, useState, useRef, useEffect, useMemo } from '../../vendor/index.j
 import { useStore, set, shallowEq, state, calendarMeta } from './store.js';
 import { ContextStrip, DayLabel } from '../ui/ContextStrip.js';
 import { contextByDay, dayLabelsByDay } from '../lib/context.js';
+import { hidesCancelled } from '../ui/daysteps.js';
 import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
@@ -221,14 +222,17 @@ export function Toolbar({ onToggleSidebar }) {
   const calMeta = useMemo(() => calendarMeta(), [calendars]);
   const { dayCtx, dayLabels } = useMemo(() => {
     if (view !== 'day' || !showCtx) return { dayCtx: [], dayLabels: [] };
-    // Only shown calendars: a hidden weather or holiday calendar still
-    // labelled the phone's day title (#183).
-    const all = [...state.occ.values()].filter((o) => calMeta[o.calendarId] && calMeta[o.calendarId].visible);
+    // Only shown calendars, and not what a calendar hides as cancelled: a
+    // hidden weather or holiday calendar still labelled the phone's day
+    // title (#183). The Show filter's context switch is checked above.
+    const hideCancelled = hidesCancelled(calendars);
+    const all = [...state.occ.values()].filter((o) => calMeta[o.calendarId] && calMeta[o.calendarId].visible
+      && !(o.status === 'cancelled' && hideCancelled.has(o.calendarId)));
     return {
       dayCtx: (contextByDay(all, calMeta).get(anchor) || []).filter((o) => o.allDay),
       dayLabels: dayLabelsByDay(all, calMeta).get(anchor) || [],
     };
-  }, [view, anchor, occVersion, showCtx, calMeta]);
+  }, [view, anchor, occVersion, showCtx, calMeta, calendars]);
   const openCtx = (instanceId, anchorRect) => set({ popover: { instanceId, anchorRect } });
 
   // Day view shows the full date ("Friday, August 8"); everything else the

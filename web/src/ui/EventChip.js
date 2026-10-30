@@ -11,7 +11,7 @@ import { html } from '../../vendor/index.js';
 import { isBand } from '../lib/bands.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
-import { Icon, PluginGlyph, LinkMark, isLinkFeed } from './icons.js';
+import { Icon, PluginGlyph, EventMark, isRingCal } from './icons.js';
 import { isPendingLocation } from '../lib/maps.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
@@ -31,6 +31,22 @@ export function bandColor(occ, cal) {
   return occ.pluginColor || calColor(cal);
 }
 
+// The calendar's mark on a chip, in the dot's place: its icon, the link, a
+// Google ring, or the dot.
+function chipMark(cal, color) {
+  const glyph = EventMark({ cal });
+  if (glyph) return html`<span class="bc-chip-dot is-link" style=${`color:${color}`}>${glyph}</span>`;
+  if (isRingCal(cal)) return html`<span class="bc-chip-dot is-ring" style=${`border-color:${color}`}></span>`;
+  return html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`;
+}
+
+// Bars and blocks are filled with the calendar's tint: an icon or link goes
+// before the title; a plain or Google calendar needs nothing more.
+function barMark(cal) {
+  const glyph = EventMark({ cal });
+  return glyph ? html`<span class="bc-feed-mark">${glyph}</span>` : null;
+}
+
 function calColor(cal) {
   return (cal && cal.color) || DEFAULT_COLOR;
 }
@@ -44,12 +60,12 @@ function hlVar(occ) {
   return occ.highlighted && occ.highlightColor ? `;--hl:${occ.highlightColor}` : '';
 }
 
-function chipTitle(occ) {
-  const duration = eventDuration(occ);
-  const base = occ.isGroup ? `${occ.title} (${occ.count} similar)`
-    : (occ.title || '(untitled)') + (duration ? `\n${duration.exact} total` : '');
-  if (occ.highlighted) return `${base}\nHighlighted by one of your filters`;
-  return base;
+// A group's hover card: what it gathers (group ids aren't events, so the
+// event card can't show; #183).
+function groupCardText(occ) {
+  const names = occ.members.slice(0, 8).map((m) => m.title || '(untitled)');
+  if (occ.members.length > 8) names.push('…and ' + (occ.members.length - 8) + ' more');
+  return occ.title + ' · ' + occ.count + ' similar\n' + names.join('\n');
 }
 
 function stateClasses(occ, dimmed, nowMs) {
@@ -160,15 +176,14 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${seg && seg.contLeft ? ' cont-l' : ''}${seg && seg.contRight ? ' cont-r' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
+    data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
     onClick=${onClick}
     onDblClick=${onDblClick}
   >
     ${occ.relationship === 'context'
       ? html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`
-      : isLinkFeed(cal)
-        ? html`<span class="bc-chip-dot is-link" style=${`color:${color}`}><${LinkMark} /></span>`
-        : html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`}
+      : chipMark(cal, color)}
     ${timeLabel !== null
       ? html`<span class="bc-chip-time">${timeLabel}</span>`
       : timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
@@ -201,6 +216,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
     class="bc-bar${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
+    data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     role="button"
     tabindex="0"
     onPointerDown=${occ.isGroup || trip ? undefined : onPointerDown}
@@ -216,7 +232,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
     ${!seg.contLeft && occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
-    ${!seg.contLeft && occ.relationship !== 'context' && isLinkFeed(cal) && html`<span class="bc-feed-mark"><${LinkMark} /></span>`}
+    ${!seg.contLeft && occ.relationship !== 'context' && barMark(cal)}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     ${note ? html`<span class="bc-bar-note">${note}</span>` : html`<${DurationSuffix} occ=${occ} />`}
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
@@ -253,6 +269,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
     class="bc-block${titleOnly ? ' is-title-only' : ''}${rect.contUp ? ' cont-t' : ''}${rect.contDown ? ' cont-b' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
+    data-hovertext=${occ.isGroup ? groupCardText(occ) : undefined}
     role="button"
     tabindex="0"
     onPointerDown=${occ.isGroup || trip ? undefined : onPointerDown}
@@ -269,7 +286,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
     <span class="bc-block-line">
       ${occ.isGroup && html`<${StackGlyph} />`}
       ${occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
-      ${occ.relationship !== 'context' && isLinkFeed(cal) && html`<span class="bc-feed-mark"><${LinkMark} /></span>`}
+      ${occ.relationship !== 'context' && barMark(cal)}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
       <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
@@ -300,7 +317,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    title=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') : chipTitle(occ)}
+    data-hovertext=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') : undefined}
     onPointerDown=${onPointerDown}
     onClick=${open}
     onKeyDown=${(e) => {

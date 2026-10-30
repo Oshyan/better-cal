@@ -269,6 +269,27 @@ export function isLinkFeed(cal) {
   return !!(cal && cal.kind === 'subscribed' && cal.provider !== 'google' && !cal.pluginId);
 }
 
+/**
+ * The glyph an event of this calendar wears, as CalDot gives the calendar
+ * itself: a plugin's icon, or a link for a calendar subscribed by web
+ * address; null for a plain calendar. Event chips put it where the dot is,
+ * bars and blocks before the title (#183: plugin calendars' events had a
+ * plain dot).
+ */
+export function EventMark({ cal, size = 9 }) {
+  const deco = cal && cal.pluginId ? pluginDecoLookup(cal.pluginId) : null;
+  if (deco && (deco.icon || deco.iconPath)) {
+    return html`<${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${size} stroke=${MARK_LINE_PX * 16 / size} />`;
+  }
+  if (isLinkFeed(cal)) return html`<${LinkMark} size=${size} />`;
+  return null;
+}
+
+/** A Google calendar's events wear its ring, as the calendar does. */
+export function isRingCal(cal) {
+  return !!(cal && cal.kind === 'subscribed' && !isLinkFeed(cal) && !cal.pluginId);
+}
+
 // The mark of a calendar subscribed by web address: a link drawn with a 0.7px
 // line whatever its size. The icons' usual line (1.4 of 16) thickens as an
 // icon shrinks, and at dot size the two loops ran into a blob; this slighter

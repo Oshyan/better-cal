@@ -37,7 +37,7 @@ const UI_SELECTOR = '.bc-resched-banner, .bc-strip, .bc-confirm-chip';
 export function RescheduleBanner({ occ, onExit }) {
   return html`<div class="bc-resched-banner" role="status">
     <span class="bc-resched-label">Rescheduling: <strong>${occ.title || '(untitled)'}</strong></span>
-    ${occ.recurring && html`<span class="bc-resched-scope">This occurrence only</span>`}
+    ${occ.recurring && html`<span class="bc-resched-scope">Repeating: you'll choose which ones</span>`}
     <span class="bc-resched-hint">Drop the event on a new day, or use the month strip on the right</span>
     <button type="button" class="bc-btn bc-resched-cancel" onClick=${onExit}>
       Cancel<kbd>Esc</kbd>

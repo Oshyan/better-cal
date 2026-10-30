@@ -533,7 +533,8 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
                 ? (span ? dayOfSpanLabel(occ, g.dayKey).replace(/^Day /, '') : occ.allDay ? 'all day' : compactTime(parseISO(occ.start)))
               : span ? dayOfSpanLabel(occ, g.dayKey) + (spanTime ? ' · ' + spanTime : '')
               : occ.allDay ? 'all day'
-              : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '');
+              // A moment (no length) shows one time, as everywhere else.
+              : fmtTime(parseISO(occ.start)) + (occ.end && fmtTime(parseISO(occ.end)) !== fmtTime(parseISO(occ.start)) ? ' to ' + fmtTime(parseISO(occ.end)) : '');
             const color = calColorOf(calendars, occ);
             const triage = !end && occ.source === 'feed' && onSetAttendance;
             const rowClass = `bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}`;

@@ -127,6 +127,37 @@ function pressedDay(occ) {
   return ed >= epochDayOfKey(span.startKey) && ed <= epochDayOfKey(span.endKey) ? key : undefined;
 }
 
+// A plugin's ranges in a stretch. The server sends a plugin's earliest
+// ranges up to a cap and says when it stopped short (several tide stations
+// over a few months pass it), so this asks again from the last one it sent,
+// and merges (#183: the later weeks' bands and shading went missing).
+async function fetchPluginRanges(start, end) {
+  const out = {};
+  const seen = {};
+  let from = start;
+  for (let page = 0; page < 12; page++) {
+    const d = await api('/plugins/ranges?' + new URLSearchParams({ start: from, end }));
+    let next = null;
+    for (const [pid, entry] of Object.entries(d.plugins || {})) {
+      if (!out[pid]) { out[pid] = { ...entry, ranges: [] }; seen[pid] = new Set(); }
+      for (const r of entry.ranges || []) {
+        if (seen[pid].has(r.id)) continue;
+        seen[pid].add(r.id);
+        out[pid].ranges.push(r);
+      }
+      out[pid].truncated = !!entry.truncated;
+      const rs = entry.ranges || [];
+      if (entry.truncated && rs.length) {
+        const last = parseISO(rs[rs.length - 1].start).getTime();
+        if (next == null || last < next) next = last;
+      }
+    }
+    if (next == null || next <= parseISO(from).getTime()) break;
+    from = toISOWithOffset(new Date(next));
+  }
+  return out;
+}
+
 export function App() {
   const s = useStore(
     (st) => ({
@@ -476,8 +507,8 @@ export function App() {
     if (plugRangeKeyRef.current === key) return;
     plugRangeKeyRef.current = key;
     // Latest answer only, and a failure retries on the next events load (as above).
-    api('/plugins/ranges?' + new URLSearchParams({ start, end }))
-      .then((d) => { if (plugRangeKeyRef.current === key) set({ pluginRanges: d.plugins || {} }); })
+    fetchPluginRanges(start, end)
+      .then((plugins) => { if (plugRangeKeyRef.current === key) set({ pluginRanges: plugins }); })
       .catch(() => { if (plugRangeKeyRef.current === key) plugRangeKeyRef.current = null; });
   }, [visMonthKey, bandWin.start, bandWin.end, pluginSeq, s.occVersion]); // eslint-disable-line
 

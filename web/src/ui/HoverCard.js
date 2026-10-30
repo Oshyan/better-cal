@@ -19,7 +19,8 @@ import { isPendingLocation } from '../lib/maps.js';
 import { formattingReasons } from '../lib/eventwhy.js';
 
 export const HOVER_DELAY_MS = 700;
-const TARGETS = '.bc-chip[data-instance], .bc-bar[data-instance], .bc-block[data-instance], [data-ctx-instance], [data-hovertext]';
+// Trip bands too (#183); away times and plugin bands carry their text.
+const TARGETS = '.bc-chip[data-instance], .bc-bar[data-instance], .bc-block[data-instance], .bc-band[data-instance], [data-ctx-instance], [data-hovertext]';
 
 function Card({ occ, cal, at, nowMs, why = true }) {
   // All-day dates are dates (stored at +00:00): read them as written, as the

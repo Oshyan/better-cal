@@ -1293,7 +1293,7 @@ export function TimeGrid({
   </div>`;
   });
 
-  const preview = html`<div class="bc-tg-preview" ref=${previewRef} style="display:none"></div>`;
+  const preview = html`<div class="bc-tg-preview" ref=${previewRef} style="display:none"></div><div class="bc-tg-preview" style="display:none"></div>`;
 
   // --- vertical day stack ---------------------------------------------------
   // Day view scrolls straight into the next day: consecutive day panels with
@@ -1430,9 +1430,20 @@ export function TimeGrid({
 // Drop preview rectangle moved via direct DOM writes (no re-render per move).
 // In infinite mode the preview lives inside the track (px day columns); in
 // fixed mode it lives in the body (gutter + flex columns).
+// A drop preview that runs past midnight draws its second part on the next
+// day, in the box beside the first (it showed only the part before; #183).
 function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   const el = previewRef.current;
   if (!el) return;
+  const first = Math.min(durMin, MINUTES_DAY - startMin);
+  previewPart(el, geom, dayKey, startMin, first);
+  const next = el.nextElementSibling;
+  if (!next || !next.classList.contains('bc-tg-preview')) return;
+  if (durMin > first) previewPart(next, geom, keyOfEpochDay(epochDayOfKey(dayKey) + 1), 0, Math.min(MINUTES_DAY, durMin - first));
+  else next.style.display = 'none';
+}
+
+function previewPart(el, geom, dayKey, startMin, durMin) {
   let left, width;
   if (geom.vstack) {
     // The preview is a child of the stack container, so the column's offsets
@@ -1442,7 +1453,7 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
     const scroll = geom.scrollEl;
     const col = scroll && scroll.querySelector(`.bc-tg-col[data-day="${dayKey}"]`);
     const stack = scroll && scroll.querySelector('.bc-tg-vdays');
-    if (!col || !stack) return;
+    if (!col || !stack) { el.style.display = 'none'; return; }
     let top = 0;
     let left = 0;
     for (let node = col; node && node !== stack; node = node.offsetParent) {
@@ -1453,7 +1464,7 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
     el.style.left = left + 1 + 'px';
     el.style.width = col.offsetWidth - 4 + 'px';
     el.style.top = top + (startMin / 60) * HOUR_H + 'px';
-    el.style.height = (Math.min(durMin, MINUTES_DAY - startMin) / 60) * HOUR_H + 'px';
+    el.style.height = (durMin / 60) * HOUR_H + 'px';
     return;
   }
   if (geom.infinite) {
@@ -1462,7 +1473,8 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   } else {
     const scroll = geom.scrollEl;
     if (!scroll) return;
-    const idx = Math.max(0, geom.days.indexOf(dayKey));
+    const idx = geom.days.indexOf(dayKey);
+    if (idx < 0) { el.style.display = 'none'; return; }
     const colW = (scroll.clientWidth - GUTTER) / geom.days.length;
     left = GUTTER + idx * colW;
     width = colW - 4;
@@ -1471,10 +1483,13 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   el.style.left = left + 'px';
   el.style.width = width + 'px';
   el.style.top = (startMin / 60) * HOUR_H + 'px';
-  // An overnight event's preview stops at midnight, like its first part.
-  el.style.height = (Math.min(durMin, MINUTES_DAY - startMin) / 60) * HOUR_H + 'px';
+  el.style.height = (durMin / 60) * HOUR_H + 'px';
 }
 
 function hidePreview(previewRef) {
-  if (previewRef.current) previewRef.current.style.display = 'none';
+  const el = previewRef.current;
+  if (!el) return;
+  el.style.display = 'none';
+  const next = el.nextElementSibling;
+  if (next && next.classList.contains('bc-tg-preview')) next.style.display = 'none';
 }

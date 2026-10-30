@@ -789,6 +789,8 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
    the title in bars and blocks, where the fill is the calendar's color, so it
    takes the text's color). It fades with the dot on quieter events. */
 .bc-chip-dot.is-link { width: 9px; height: 9px; display: inline-flex; align-items: center; justify-content: center; background: none; }
+/* A Google calendar's events: a ring, as the calendar wears in the sidebar. */
+.bc-chip-dot.is-ring { background: none; border: 1.5px solid; box-sizing: border-box; }
 .bc-chip-dot.is-link svg, .bc-feed-mark svg { display: block; }
 .bc-feed-mark { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
 .bc-block .bc-feed-mark { display: inline-flex; vertical-align: -1px; }
@@ -967,7 +969,7 @@ button.bc-hidden-mark { cursor: pointer; }
 .bc-ov-key { margin-left: auto; padding-left: 14px; font: inherit; font-size: 11px; color: var(--fg-muted); }
 .bc-ov-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 /* Below the app's mobile breakpoint the Show filter leaves the toolbar; where it goes on a phone is the mobile design review's call. */
-.is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
+.is-cancelled .bc-chip-title, .is-cancelled .bc-band-label, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure
    opacity, so dimmed items stay readable (clearly secondary, never
    illegible) in both themes; hover restores. */
@@ -1170,22 +1172,27 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg-muted); font-size: 10.5px; font-weight: 700; cursor: pointer;
 }
 .bc-tg-density-more:hover { color: var(--accent); border-color: var(--accent); }
+/* The draft and the drop preview sit above everything on the timeline but
+   a pointed-at event (40): tide shading (31) and tide lines (32-33) hid
+   them (#183). */
 .bc-tg-draft {
-  position: absolute; left: 2px; right: 2px;
+  position: absolute; left: 2px; right: 2px; z-index: 38;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   border: 1px dashed var(--accent); border-radius: 5px;
   font-size: 10.5px; color: var(--fg); padding: 2px 5px; pointer-events: none;
 }
 .bc-nowline {
   position: absolute; left: 0; right: 0; height: 2px;
-  background: var(--now); z-index: 5; pointer-events: none;
+  /* Above every column of side-by-side events (each its column + 1); at 5
+     it crossed the first four and went under the rest (#183). */
+  background: var(--now); z-index: 30; pointer-events: none;
 }
 .bc-nowline-dot {
   position: absolute; left: -4px; top: -3px; width: 8px; height: 8px;
   border-radius: 50%; background: var(--now);
 }
 .bc-tg-preview {
-  position: absolute; z-index: 6; pointer-events: none;
+  position: absolute; z-index: 38; pointer-events: none;
   background: color-mix(in srgb, var(--accent) 25%, transparent);
   border: 1.5px dashed var(--accent); border-radius: 5px;
 }
@@ -2360,6 +2367,10 @@ body.bc-rescheduling { user-select: none; }
   .bc-cell .bc-chip .bc-chip-time,
   .bc-cell .bc-chip .bc-new-pill,
   .bc-cell .bc-chip .bc-chip-dot { display: none; }
+  /* An icon or link still says where it's from (bars keep theirs), and a
+     new event glows around the pill instead of its hidden dot (#183). */
+  .bc-cell .bc-chip .bc-chip-dot.is-link { display: inline-flex; }
+  .bc-cell .bc-chip.is-new { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent); }
   .bc-cell .bc-chip .bc-chip-title { display: block; font-size: 10px; }
   /* Mobile pills need the fill back (dots are hidden at this size). */
   .bc-cell .bc-chip.is-dotstyle { background: var(--tint, transparent); }
@@ -2611,17 +2622,17 @@ body.bc-rescheduling { user-select: none; }
    Hover/focus restores, matching the filter-dim convention. Scoped to the
    chip elements: agenda rows also carry is-past (for their time/location
    columns below) and a bare-class rule would double-dim the chip inside. */
-:is(.bc-chip, .bc-bar, .bc-block).is-past {
+:is(.bc-chip, .bc-bar, .bc-block, .bc-band).is-past {
   opacity: 0.55;
   filter: saturate(0.5);
   transition: opacity 0.12s ease, filter 0.12s ease;
 }
-:is(.bc-chip, .bc-bar, .bc-block).is-past:hover,
-:is(.bc-chip, .bc-bar, .bc-block).is-past:focus-visible { opacity: 1; filter: none; }
+:is(.bc-chip, .bc-bar, .bc-block, .bc-band).is-past:hover,
+:is(.bc-chip, .bc-bar, .bc-block, .bc-band).is-past:focus-visible { opacity: 1; filter: none; }
 /* Past + filter-dimmed compose: both signals push it further back (the
    standalone rules would otherwise just fight over the same
    opacity/filter properties). */
-:is(.bc-chip, .bc-bar, .bc-block).is-past.is-filter-dimmed { opacity: 0.42; filter: saturate(0.2); }
+:is(.bc-chip, .bc-bar, .bc-block, .bc-band).is-past.is-filter-dimmed { opacity: 0.42; filter: saturate(0.2); }
 /* Agenda rows dim their time and location columns alongside the chip (the
    chip dims itself; row-level opacity would double-dim it). */
 .bc-agenda-row.is-past .bc-agenda-time,
@@ -4803,5 +4814,9 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
    event block and bar, whatever calendar or plugin it comes from, and to
    plugin bands, so a new kind of calendar gets it without asking. Stated
    once, last, so no combination of resting styles can outrank it. The
-   original of an event being dragged stays faded. */
-:is(.bc-bar, .bc-block, .bc-band):not(.is-drag-source):is(:hover, :focus-visible) { opacity: 1 !important; filter: none !important; }
+   original of an event being dragged stays faded. Month, agenda and a day's
+   list draw chips, which come up the same way (#183). */
+:is(.bc-chip, .bc-bar, .bc-block, .bc-band):not(.is-drag-source):is(:hover, :focus-visible) { opacity: 1 !important; filter: none !important; }
+/* The event panel takes focus when it opens, for the keyboard; the panel
+   itself needs no ring (its controls show theirs). */
+.bc-popover[role="dialog"]:focus { outline: none; }

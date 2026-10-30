@@ -388,6 +388,30 @@ export function EventPopover() {
     setEditingTime(false);
   }, [popover && popover.instanceId]);
 
+  // Focus goes into the panel when it opens (the keyboard couldn't reach it)
+  // and back where it was when it closes: the event you opened, or the day
+  // list it came from (#183). Stepping through the day keeps it in the panel.
+  const isOpen = !!popover;
+  const openedId = popover && popover.instanceId;
+  const openedIdRef = useRef(openedId);
+  if (openedId) openedIdRef.current = openedId;
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const before = document.activeElement;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) panel.focus({ preventScroll: true });
+    return () => {
+      const a = document.activeElement;
+      // Focus moved somewhere on purpose (a field, another panel): leave it.
+      if (a && a !== document.body && a.isConnected) return;
+      const id = openedIdRef.current;
+      const back = before && before !== document.body && before.isConnected
+        ? before
+        : (id ? document.querySelector(`[data-instance="${CSS.escape(id)}"]`) : null);
+      if (back && back.focus) back.focus({ preventScroll: true });
+    };
+  }, [isOpen]); // eslint-disable-line
+
   // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
     // A press anywhere outside the card closes it and does nothing else, the
@@ -403,9 +427,10 @@ export function EventPopover() {
       // instead of only closing; a tap anywhere else closes it and does nothing more. Controls
       // inside a row (its swipe actions) never take a press through.
       const inPanel = insideAny(panelRef);
-      // Context tokens and marks (weather, sunset) open the same way.
+      // Context tokens and marks (weather, sunset) and day labels (holidays)
+      // open the same way; a holiday tap only closed the panel (#183).
       const toEvent = (t) => t && t.closest
-        && t.closest('[data-instance], .bc-ctx-token, .bc-ctx-mark-hit') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
+        && t.closest('[data-instance], .bc-ctx-token, .bc-ctx-mark-hit, .bc-daylabel') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
       stop = onOutsidePress((t) => inPanel(t) || toEvent(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
@@ -477,6 +502,7 @@ export function EventPopover() {
     ref=${panelRef}
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
     aria-label="Event details"
   >
     <div class="bc-evsheet-head">

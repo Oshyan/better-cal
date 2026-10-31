@@ -9026,15 +9026,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         content_changed_at TEXT, created_at TEXT, subscription_authority TEXT, created_by_token_id INTEGER
     )');
     davJournal($cdb);
-    $cdb->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER)');
+    $cdb->run("CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER, sort TEXT NOT NULL DEFAULT 'manual')");
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
-    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER)');
+    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
     $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
     $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
     $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
     $cdb->run('CREATE TABLE mutations (
         id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT,
-        before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT
+        before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT,
+        undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )');
     $cdb->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (11, 1, NULL), (22, 1, NULL)');
     $calendarInsert = 'INSERT INTO calendars (
@@ -9068,6 +9069,65 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('phase 13: a token PATCH preserves access to its own supplied source address',
         $agentSource,
         $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
+    // The folder order migration: each folder starts in the order it showed.
+    $mdb055 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mdb055->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, position INTEGER)');
+    $mdb055->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT, position INTEGER)');
+    $mdb055->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, PRIMARY KEY (calendar_id, folder_id))');
+    $mdb055->run('INSERT INTO calendars (id, position) VALUES (1, 2), (2, 0), (3, 1)');
+    $mdb055->run("INSERT INTO folders (id, name, position) VALUES (1, 'A', 0), (2, 'B', 1)");
+    $mdb055->run('INSERT INTO calendar_folders (calendar_id, folder_id) VALUES (1, 1), (2, 1), (3, 1), (1, 2), (3, 2)');
+    (require __DIR__ . '/../migrations/055_folder_order.php')($mdb055);
+    (require __DIR__ . '/../migrations/055_folder_order.php')($mdb055);
+    checkEq('migration 055: folders keep the order they showed, and run twice it changes nothing', [[2, 3, 1], [3, 1], ['manual', 'manual']], [
+        array_map('intval', array_column($mdb055->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = 1 ORDER BY position'), 'calendar_id')),
+        array_map('intval', array_column($mdb055->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = 2 ORDER BY position'), 'calendar_id')),
+        array_column($mdb055->all('SELECT sort FROM folders ORDER BY id'), 'sort'),
+    ]);
+    // Folders keep their own order, or list A to Z (#187).
+    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (10, 1, 'Alpha', 0), (11, 1, 'Beta', 1), (12, 2, 'Someone else', 0)");
+    $cdb->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 10, 0), (2, 10, 1)');
+    $folderDomain = new BetterCal\Domain\Folders($cdb, new BetterCal\Domain\Undo($cdb));
+    $folderOrder = static fn() => array_column(array_map(static fn($f) => ['k' => $f['id'], 'v' => $f['calendarIds']], $calendarDomain->listAll(1)['folders']), 'v', 'k');
+    checkEq('folders: listed with their calendars in their own order, manual unless set', [[10 => [1, 2], 11 => []], ['manual', 'manual']],
+        [$folderOrder(), array_column($calendarDomain->listAll(1)['folders'], 'sort')]);
+    $folderDomain->place(1, 10, 2, 0);
+    checkEq('folders: a calendar moves to a new place in its folder', [10 => [2, 1], 11 => []], $folderOrder());
+    $folderDomain->place(1, 11, 1, 0, 10);
+    checkEq('folders: dragged to another folder, it leaves the first', [[10 => [2], 11 => [1]], [11]],
+        [$folderOrder(), $calendarDomain->listAll(1)['calendars'][0]['folderIds']]);
+    $folderDomain->place(1, 11, 2, 5);
+    checkEq('folders: added to another as well, it stays where it was (a place past the end is the end)', [10 => [2], 11 => [1, 2]], $folderOrder());
+    // What Undo restores: the folder's rows before, and after.
+    $lastMutation = $cdb->one('SELECT entity, entity_id, before_json, after_json, summary FROM mutations ORDER BY id DESC LIMIT 1');
+    $snapshot = static fn(?string $json) => array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], json_decode((string) $json, true)['tables']['calendar_folders'] ?? []);
+    checkEq('folders: undo has the folder before and after', [['folder', 11], [[1, 0]], [[1, 0], [2, 1]], "Added 'Agent feed' to folder 'Beta'"],
+        [[$lastMutation['entity'], (int) $lastMutation['entity_id']], $snapshot($lastMutation['before_json']), $snapshot($lastMutation['after_json']), $lastMutation['summary']]);
+    $folderDomain->unfile(1, 11, 2);
+    $folderDomain->place(1, 11, 2, 0);
+    $folderDomain->unfile(1, 10, 2);
+    checkEq('folders: taken out of one folder, it stays in the other', [10 => [], 11 => [2, 1]], $folderOrder());
+    $calendarDomain->patch(1, 1, ['folderIds' => [11, 10]]);
+    checkEq("folders: filed from its settings, it keeps its place where it was and goes last where it's new", [10 => [1], 11 => [2, 1]], $folderOrder());
+    $folderDomain->patch(1, 11, ['sort' => 'az']);
+    checkEq('folders: a folder can list A to Z', 'az', $calendarDomain->listAll(1)['folders'][1]['sort']);
+    $caught = null;
+    try { $folderDomain->patch(1, 11, ['sort' => 'random']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('folders: an unknown sort is refused', $caught !== null && $caught->status === 400);
+    $caught = null;
+    try { $folderDomain->place(1, 12, 1, 0); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check("folders: someone else's folder can't be filed into", $caught !== null && $caught->status === 404);
+    $listOrder = static fn() => array_column($calendarDomain->listAll(1)['calendars'], 'id');
+    $calendarDomain->placeInList(1, 2, 0);
+    checkEq('calendar list: a calendar moves to a new place in the list', [2, 1], $listOrder());
+    $lastMutation = $cdb->one('SELECT before_json, after_json FROM mutations ORDER BY id DESC LIMIT 1');
+    $ids = static fn(?string $json) => array_map(static fn($r) => [(int) $r['id'], (int) $r['position']], json_decode((string) $json, true)['tables']['calendars']);
+    checkEq('calendar list: undo has the list before and after', [[[1, 0], [2, 1]], [[2, 0], [1, 1]]],
+        [$ids($lastMutation['before_json']), $ids($lastMutation['after_json'])]);
+    $calendarDomain->placeInList(1, 1, 0);
+    $cdb->run('DELETE FROM calendar_folders');
+    $cdb->run('DELETE FROM folders');
+
     $createdSource = 'https://feeds.example.test/new.ics?token=new-secret';
     $createdCalendar = $calendarDomain->create(1, ['name' => 'New sample feed'], 'subscribed', $createdSource);
     $storedSource = (string) $cdb->scalar('SELECT source_url FROM calendars WHERE id = ?', [$createdCalendar['id']]);

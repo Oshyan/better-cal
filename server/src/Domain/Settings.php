@@ -69,6 +69,9 @@ final class Settings
         // a jump): with a row or two before it for context, or at the top
         // so the screen is what's ahead (#91).
         'gridAnchor' => 'context',
+        // The sidebar's main calendar list: in your own order, or A to Z
+        // (#187). Folders keep theirs on the folder.
+        'sidebarAllSort' => 'manual',
         // Month view rows on a desktop: all one height, or each as tall as
         // its busiest day needs, up to the screen's height (#171).
         'monthRows' => 'fixed',
@@ -274,6 +277,7 @@ final class Settings
                 'sidebarActiveOnly' => self::bool($key, $value),
                 'panelTucksSidebar' => self::bool($key, $value),
                 'gridAnchor' => self::enum($key, $value, ['context', 'top']),
+                'sidebarAllSort' => self::enum($key, $value, ['manual', 'az']),
                 'monthRows' => self::enum($key, $value, ['fixed', 'fit']),
                 'appBadge' => self::enum($key, $value, AppBadge::MODES),
                 'removeAcceptedCancellations' => self::bool($key, $value),

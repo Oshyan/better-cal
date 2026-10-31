@@ -2304,6 +2304,32 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
+// --- Calendars in a folder's own order, and where a dragged one lands (#187) ---
+{
+  const { sortedCalendars, calendarDrop } = await import('../src/lib/calorder.js');
+  const cal = (id, name, folderIds = []) => ({ id, name, folderIds });
+  const cals = [cal(1, 'Work', [5]), cal(2, 'birthdays', [5]), cal(3, 'Alpha', [5, 6]), cal(4, 'Unfiled')];
+  const ids = (list) => list.map((c) => c.id);
+  eq('folder order: its own, as the server sends it', ids(sortedCalendars(cals, { id: 5, calendarIds: [3, 1, 2], sort: 'manual' })), [3, 1, 2]);
+  eq('folder order: A to Z, whatever the case', ids(sortedCalendars(cals, { id: 5, calendarIds: [3, 1, 2], sort: 'az' })), [3, 2, 1]);
+  eq('folder order: one filed but not listed yet goes last', ids(sortedCalendars(cals, { id: 5, calendarIds: [1], sort: 'manual' })), [1, 2, 3]);
+  eq('folder order: one listed but no longer filed is left out', ids(sortedCalendars(cals, { id: 6, calendarIds: [1, 3], sort: 'manual' })), [3]);
+  eq('main list: the calendars in their order, or A to Z', [ids(sortedCalendars(cals, { sort: 'manual' })), ids(sortedCalendars(cals, { sort: 'az' }))], [[1, 2, 3, 4], [3, 2, 4, 1]]);
+
+  const order = [3, 1, 2];
+  eq('drop: over the top half of a row, before it', calendarDrop({ calId: 2, from: 5, to: 5, toSort: 'manual', order, overId: 3, after: false }), { kind: 'place', folderId: 5, at: 0, from: null });
+  eq('drop: over the bottom half, after it', calendarDrop({ calId: 3, from: 5, to: 5, toSort: 'manual', order, overId: 1, after: true }), { kind: 'place', folderId: 5, at: 1, from: null });
+  eq('drop: where it already is, nothing', calendarDrop({ calId: 1, from: 5, to: 5, toSort: 'manual', order, overId: 1, after: false }), null);
+  eq('drop: within a folder listed A to Z, nothing', calendarDrop({ calId: 2, from: 5, to: 5, toSort: 'az', order, overId: 3 }), null);
+  eq('drop: into another folder, out of the first', calendarDrop({ calId: 1, from: 5, to: 6, toSort: 'manual', order: [3], overId: 3, after: true }), { kind: 'place', folderId: 6, at: 1, from: 5 });
+  eq('drop: with Option, in both', calendarDrop({ calId: 1, from: 5, to: 6, toSort: 'manual', order: [3], overId: 3, after: true, copy: true }), { kind: 'place', folderId: 6, at: 1, from: null });
+  eq('drop: into an A to Z folder, at the end of its own order', calendarDrop({ calId: 4, from: 'all', to: 6, toSort: 'az', order: [3], overId: 3 }), { kind: 'place', folderId: 6, at: 1, from: null });
+  eq('drop: from a folder onto the main list, out of the folder', calendarDrop({ calId: 1, from: 5, to: 'all', toSort: 'manual', order: [1, 2, 3, 4], overId: 4 }), { kind: 'unfile', folderId: 5 });
+  eq('drop: within the main list, a new place', calendarDrop({ calId: 4, from: 'all', to: 'all', toSort: 'manual', order: [1, 2, 3, 4], overId: 1 }), { kind: 'list', at: 0 });
+  eq('drop: within the main list A to Z, nothing', calendarDrop({ calId: 4, from: 'all', to: 'all', toSort: 'az', order: [1, 2, 3, 4], overId: 1 }), null);
+  eq('drop: onto People or Plugins, nothing', calendarDrop({ calId: 4, from: 'all', to: null, toSort: 'manual', order: [] }), null);
+}
+
 // --- A calendar's role change reloads the events on screen (#186) ---
 {
   const hadWindow = 'window' in globalThis;

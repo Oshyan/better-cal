@@ -32,16 +32,22 @@ final class Calendars
             $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]),
             $userId
         );
-        $folders = $this->db->all('SELECT id, name, position FROM folders WHERE user_id = ? ORDER BY position, id', [$userId]);
+        $folders = $this->db->all('SELECT * FROM folders WHERE user_id = ? ORDER BY position, id', [$userId]);
         $tags = $this->db->all('SELECT id, name FROM tags WHERE user_id = ? ORDER BY name', [$userId]);
 
         $calIds = array_map(static fn($c) => (int) $c['id'], $calendars);
         $folderIdsByCal = [];
+        $calIdsByFolder = [];
         $feedFactsByCal = [];
         if ($calIds !== []) {
             [$in, $params] = Db::in($calIds);
-            foreach ($this->db->all("SELECT calendar_id, folder_id FROM calendar_folders WHERE calendar_id IN $in", $params) as $row) {
+            // In each folder's own order (#187): folders list them so below.
+            $calPos = array_flip($calIds);
+            $links = $this->db->all("SELECT calendar_id, folder_id, position FROM calendar_folders WHERE calendar_id IN $in", $params);
+            usort($links, static fn($a, $b) => [(int) $a['folder_id'], (int) $a['position'], $calPos[(int) $a['calendar_id']]] <=> [(int) $b['folder_id'], (int) $b['position'], $calPos[(int) $b['calendar_id']]]);
+            foreach ($links as $row) {
                 $folderIdsByCal[(int) $row['calendar_id']][] = (int) $row['folder_id'];
+                $calIdsByFolder[(int) $row['folder_id']][] = (int) $row['calendar_id'];
             }
             foreach ($this->db->all(self::feedFactsSql($in), $params) as $row) {
                 $feedFactsByCal[(int) $row['id']] = self::feedFacts($row);
@@ -60,6 +66,8 @@ final class Calendars
             ),
             'folders' => array_map(static fn(array $f) => [
                 'id' => (int) $f['id'], 'name' => (string) $f['name'], 'position' => (int) $f['position'],
+                'sort' => Folders::sortOf($f),
+                'calendarIds' => $calIdsByFolder[(int) $f['id']] ?? [],
             ], $folders),
             'tags' => array_map(static fn(array $t) => ['id' => (int) $t['id'], 'name' => (string) $t['name']], $tags),
         ];
@@ -639,13 +647,44 @@ final class Calendars
 
     private function setFolders(int $userId, int $calendarId, array $folderIds): void
     {
-        $this->db->run('DELETE FROM calendar_folders WHERE calendar_id = ?', [$calendarId]);
-        foreach (array_unique(array_map('intval', $folderIds)) as $folderId) {
+        $want = array_values(array_unique(array_map('intval', $folderIds)));
+        $have = array_map('intval', array_column($this->db->all('SELECT folder_id FROM calendar_folders WHERE calendar_id = ?', [$calendarId]), 'folder_id'));
+        foreach (array_diff($have, $want) as $folderId) {
+            $this->db->run('DELETE FROM calendar_folders WHERE calendar_id = ? AND folder_id = ?', [$calendarId, $folderId]);
+        }
+        // Kept folders keep its place in them; a new one takes it at the end.
+        foreach (array_diff($want, $have) as $folderId) {
             $owned = $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [$folderId, $userId]);
             if ($owned !== null) {
-                $this->db->run('INSERT IGNORE INTO calendar_folders (calendar_id, folder_id) VALUES (?, ?)', [$calendarId, $folderId]);
+                $end = (int) $this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendar_folders WHERE folder_id = ?', [$folderId]);
+                $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, $end]);
             }
         }
+    }
+
+    /**
+     * Put a calendar at a place in the calendar list's own order (0 first),
+     * the order the main list shows when it isn't A to Z (#187).
+     *
+     * @return list<int> every calendar id, in the new order
+     */
+    public function placeInList(int $userId, int $calendarId, int $at): array
+    {
+        $cal = $this->db->one('SELECT id, name FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
+        if ($cal === null) {
+            throw HttpError::notFound('Calendar not found');
+        }
+        return $this->db->tx(function () use ($userId, $calendarId, $at, $cal): array {
+            $before = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
+            $order = array_values(array_filter(array_map(static fn($c) => (int) $c['id'], $before), static fn(int $c) => $c !== $calendarId));
+            array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
+            foreach ($order as $i => $id) {
+                $this->db->run('UPDATE calendars SET position = ? WHERE id = ?', [$i, $id]);
+            }
+            $after = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $after], "Moved '" . $cal['name'] . "' in the calendar list");
+            return $order;
+        });
     }
 
     /**

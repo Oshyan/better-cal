@@ -2424,6 +2424,15 @@ body.bc-rescheduling { user-select: none; }
 .bc-cal-solo.is-on { display: inline-flex; }
 .bc-cal-solo.is-on { color: var(--accent); font-weight: 700; }
 @media (pointer: coarse) { .bc-cal-solo { display: inline-flex; } }
+/* A folder's Only (#187), revealed with the header's other tools. */
+.bc-folder-headrow:hover .bc-cal-solo, .bc-folder-headrow:has(:focus-visible) .bc-cal-solo { display: inline-flex; }
+/* A group's order: A to Z when lit, your own otherwise (#187). */
+.bc-sort { font-size: 10.5px; font-weight: 600; padding: 2px 5px; white-space: nowrap; }
+/* A calendar dragged among the folders (#187): a line where it lands in
+   a group's own order, or the group it goes into lit. */
+.bc-cal-item.is-drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.bc-cal-item.is-drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.bc-folder.is-drop-into { border-radius: 6px; background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
 /* Solo notice: sticky at the bottom of the sidebar scroll area so entering
    or leaving solo never pushes the calendar list (quick toggling stays put). */
 .bc-solo-banner {
@@ -3048,6 +3057,10 @@ body.bc-rescheduling { user-select: none; }
 /* A control that HIDES rows cannot itself hide: with only-active on, the way
    back has to be visible without hunting for it. */
 .bc-folder-tools .bc-activeonly.is-on { display: inline-flex; color: var(--accent); }
+/* Likewise A to Z (#187): while it's on, it says so. */
+.bc-folder-tools .bc-sort.is-on { display: inline-flex; color: var(--accent); }
+/* A phone's folder options: Only and A to Z, side by side (#187). */
+.bc-folder-optrow { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Folder mark on an All-calendars row: this calendar is also listed above,
    under a folder of its own. It rides directly after the name rather than

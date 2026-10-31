@@ -35,6 +35,15 @@ final class CalendarsController
         return Response::json($this->calendars->create($this->userId($req), $req->body), 201);
     }
 
+    /** POST /calendars/:id/position {at}: a place in the list's own order (#187). */
+    public function position(Request $req, array $params): Response
+    {
+        if (!isset($req->body['at']) || !is_int($req->body['at'])) {
+            throw HttpError::badRequest('at must be a whole number');
+        }
+        return Response::json(['calendarIds' => $this->calendars->placeInList($this->userId($req), (int) $params['id'], $req->body['at'])]);
+    }
+
     public function patch(Request $req, array $params): Response
     {
         return Response::json($this->calendars->patch(

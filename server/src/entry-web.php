@@ -176,12 +176,15 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/export", [$exportController, 'all']);
         $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
+        $router->add('POST', "$base/calendars/:id/position", [$calendarsController, 'position']);
         $router->add('POST', "$base/calendars/:id/adopt", [$calendarsController, 'adopt']);
         $router->add('DELETE', "$base/calendars/:id", [$calendarsController, 'delete']);
 
         $router->add('POST', "$base/folders", [$foldersController, 'create']);
         $router->add('PATCH', "$base/folders/:id", [$foldersController, 'patch']);
         $router->add('DELETE', "$base/folders/:id", [$foldersController, 'delete']);
+        $router->add('POST', "$base/folders/:id/calendars/:calendarId", [$foldersController, 'place']);
+        $router->add('DELETE', "$base/folders/:id/calendars/:calendarId", [$foldersController, 'unfile']);
 
         $router->add('GET', "$base/events", [$eventsController, 'window']);
         $router->add('POST', "$base/events", [$eventsController, 'create']);

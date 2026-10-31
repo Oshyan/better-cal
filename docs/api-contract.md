@@ -43,7 +43,7 @@ What a token creates belongs to that exact token and stops with it, whether it's
 
 ## Calendars and Folders
 
-- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position}], tags:[{id,name}]}`. A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, reschedulable, pluginId, pluginName, pluginSettings, ownSettings, ownStatus, place, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, hideCancelled, reminderDefaults, subscriptionAuthorization, health}`.
+- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position,sort,calendarIds}], tags:[{id,name}]}`. Calendars come in the list's own order (`position`). A folder's `calendarIds` are its calendars in its own order, and `sort` is `manual` or `az` (how the folder lists them; A to Z is the client's to apply). A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, reschedulable, pluginId, pluginName, pluginSettings, ownSettings, ownStatus, place, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, hideCancelled, reminderDefaults, subscriptionAuthorization, health}`.
   - `kind`: `local`, `subscribed` (both ICS and Google) or `plugin`.
   - `role` is what the calendar is to the person: `mine` (events are planned unless tentative), `opportunities` (events are available until picked) or `context` (information: never planned, never busy, drawn quietly). Defaults: local → mine, subscribed → opportunities, plugin → context.
   - `provider` is `ics` (an address the server fetches; `sourceUrl` set) or `google` (through a connected Google account; `googleCalendarId` and `googleAccessRole` set, `sourceUrl` null). A bearer token gets an ICS `sourceUrl` only for a subscription that exact token created, here and in calendar mutation responses; otherwise it's null.
@@ -70,7 +70,9 @@ What a token creates belongs to that exact token and stops with it, whether it's
   - 413 `import_too_large` when a file is over `IMPORT_BYTES` (25 MiB), holds more events than `IMPORT_EVENTS` (20,000), or has more skipped occurrences (EXDATE values) than `EXDATE_VALUES_PER_EVENT` (1,024 per event) or `EXDATE_VALUES_PER_INPUT` (4,096 per file), checked before parsing. The event cap is lowered to what PHP's `memory_limit` can hold, and the message says which limit applied.
   - On every ingest path (this one, feeds, CalDAV, mail and `POST`/`PATCH /events`), descriptions over 65,535 characters and URLs over 2,048 are cut, and control characters never enter a UID or URL.
   - All these budgets have `BETTERCAL_LIMIT_*` overrides; the two EXDATE budgets can be raised only to 2,048 and 8,192. See [limits.md](limits.md).
-- `POST /folders` `{name}` (201), `PATCH /folders/:id`, `DELETE /folders/:id`.
+- `POST /folders` `{name}` (201), `PATCH /folders/:id` `{name?, position?, sort?}`, `DELETE /folders/:id`.
+- `POST /folders/:id/calendars/:calendarId` `{at, from?}` → `{calendarIds}`: files the calendar in this folder at place `at` of its own order (0 first; past the end is the end), and takes it out of folder `from` when given. Within the same folder it's a move. `DELETE /folders/:id/calendars/:calendarId` takes it out of this folder only. Both are undoable.
+- `POST /calendars/:id/position` `{at}` → `{calendarIds}`: a new place in the calendar list's own order. Undoable.
 - `GET /export` → a zip with one `.ics` file per calendar, every live event whatever its date. `GET /calendars/:id/export` → that calendar's `.ics`. Both session only, sent with `Content-Disposition: attachment`.
 
 ## Google Calendar
@@ -313,6 +315,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 | `panelTucksSidebar` | boolean | `true` | desktop: the sidebar tucks away while an event's panel is open; display only |
 | `sidebarOrder` | list of group keys: `f<folder id>`, `all`, `people`, `plugins` | `[]` | the sidebar's groups in the order chosen; a group not listed takes its default place (folders in their own order, then All calendars, People, Plugins), and a new folder joins the folders; display only |
 | `appBadge` | `none`\|`review`\|`today`\|`remaining` | `none` | what the installed app's icon shows; see `GET /badge` |
+| `sidebarAllSort` | `manual`\|`az` | `manual` | the sidebar's main calendar list in its own order or A to Z; display only |
 | `gridAnchor` | `context`\|`top` | `context` | where month, 3-week and 2-week views put the day they go to (today, a jump): a row or two below the top, or at the top; display only |
 | `removeAcceptedCancellations` | boolean | `false` | accepting an emailed cancellation in Review deletes the event (with Undo) instead of keeping it struck through; the accept response carries `removed: true` |
 | `pluginHidden` | object: plugin id → boolean | `{}` | which plugins' overlay bands are hidden |

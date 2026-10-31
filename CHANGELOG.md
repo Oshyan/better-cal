@@ -8,6 +8,12 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 - **Moving a repeating event to another calendar from the editor moves the series** ([#186](https://github.com/Oshyan/better-cal/issues/186)): Apply to switches to all events and lights up, so you can still pick just this one. It used to split that one date off the series.
 - **A calendar changed to Context moves its events into the day headers at once**, not at the next refresh.
+- **Folders in the sidebar** ([#187](https://github.com/Oshyan/better-cal/issues/187)):
+  - **Only** on a folder's header shows just that folder's calendars; click it again to bring back what was on.
+  - **Drag a calendar** onto another folder to move it there, or hold Option (Alt) to add it there as well. Drag it to the main list to take it out of its folder.
+  - **A–Z** on a folder or the main list sorts it by name; otherwise drag calendars into the order you like. Each folder keeps its own order.
+
+Operators: one database change (each folder's order of calendars), applied automatically by `update.php` or the database update page.
 
 ## 1.4.4 (2026-10-31)
 

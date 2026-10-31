@@ -20,7 +20,9 @@ import {
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
   peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting, setSidebarOrder,
+  setFolderSort, fileCalendar, unfileCalendar, placeCalendarInList,
 } from './actions.js';
+import { sortedCalendars, calendarDrop } from '../lib/calorder.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 
 // What a dragged sidebar group carries, so other drags never read as one.
@@ -161,16 +163,17 @@ function SidebarResize() {
   ></div>`;
 }
 
-function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phone = false, onMenu = null }) {
+function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phone = false, onMenu = null, onDragStart = null }) {
   const press = useLongPress(() => onMenu && onMenu());
   // data-drop-cal marks the calendars an event can be moved onto: ones that
   // take new events, and not Google's (moves into or out of Google are
   // refused). Feeds, view-only and plugin calendars took a drop that did
   // nothing (#183).
-  return html`<div class="bc-cal-item">
+  return html`<div class="bc-cal-item" data-cal-id=${cal.id}>
     <div
       class="bc-cal-row${cal.visible ? '' : ' is-off'}${phone ? ' is-held' : ''}"
       data-drop-cal=${cal.editable && cal.provider !== 'google' ? cal.id : undefined}
+      onPointerDown=${onDragStart || undefined}
       ...${phone ? press : {}}
     >
       <label class="bc-cal-label" title=${cal.name}>
@@ -304,9 +307,26 @@ function PeopleModeButton() {
   />`;
 }
 
+// A group's order (#187): A to Z, or your own, set by dragging its rows.
+// Shown on hover while it's your own order, like the other tools; marked
+// while it's A to Z.
+function SortButton({ sort, name, onPick }) {
+  const az = sort === 'az';
+  return html`<button
+    type="button" class="bc-icon-btn bc-folder-tool bc-sort${az ? ' is-on' : ''}"
+    aria-pressed=${az}
+    aria-label=${az ? name + ' is listed A to Z; list it in your own order' : 'List ' + name + ' A to Z'}
+    title=${az ? 'Listed A to Z. Click for your own order (drag calendars to arrange it).' : 'Listed in your own order (drag calendars to arrange it). Click for A to Z.'}
+    onClick=${() => onPick(az ? 'manual' : 'az')}
+  >A–Z</button>`;
+}
+
 // Folder header: collapse, visibility mode, hover-revealed + (new calendar
-// in this folder) and a gear opening a small options panel (rename, delete).
-function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps }) {
+// in this folder), Only (show just this folder, #187), A to Z, and a gear
+// opening a small options panel (rename, delete).
+// On a phone every header tool shows at once, so Only and A to Z wait in
+// the options panel, and come to the header only while they're on.
+function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps, soloed = false, onSolo = null, phone = false }) {
   const [options, setOptions] = useState(false);
   const [renameTo, setRenameTo] = useState(folder.name);
 
@@ -355,10 +375,23 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps }) {
           title="Folder options"
           onClick=${() => { setRenameTo(folder.name); setOptions(!options); }}
         ><${Icon} name="settings" size=${12} /></button>
+        ${cals.length > 0 && onSolo && (!phone || soloed) && html`<button
+          type="button"
+          class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"
+          aria-label=${soloed ? 'Stop showing only ' + folder.name : 'Show only ' + folder.name}
+          aria-pressed=${soloed}
+          title=${soloed ? 'Showing only this folder. Click to restore.' : "Show only this folder's calendars"}
+          onClick=${(e) => { onSolo(); e.currentTarget.blur(); }}
+        >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>`}
+        ${cals.length > 1 && (!phone || folder.sort === 'az') && html`<${SortButton} sort=${folder.sort} name=${folder.name} onPick=${(sort) => setFolderSort(folder, sort)} />`}
         ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
       </span>
     </div>
     ${options && html`<div class="bc-folder-options">
+      ${phone && cals.length > 0 && html`<div class="bc-folder-optrow">
+        ${onSolo && html`<button type="button" class="bc-btn" onClick=${() => { setOptions(false); onSolo(); }}>${soloed ? 'Show all calendars again' : 'Show only this folder'}</button>`}
+        ${cals.length > 1 && html`<button type="button" class="bc-btn" onClick=${() => setFolderSort(folder, folder.sort === 'az' ? 'manual' : 'az')}>${folder.sort === 'az' ? 'List in my own order' : 'List A to Z'}</button>`}
+      </div>`}
       <form class="bc-folder-renameform" onSubmit=${submitRename}>
         <input value=${renameTo} onInput=${(e) => setRenameTo(e.target.value)} aria-label="Folder name" />
         <button type="submit" class="bc-btn">Rename</button>
@@ -469,7 +502,7 @@ export function Sidebar({ open, collapsed, onClose }) {
   // once in All calendars — so the open gear is keyed by SECTION as well as
   // id; keying by id alone opened both copies of the settings panel at once.
   const [openGear, setOpenGear] = useState(null); // "<section>:<calendarId>"
-  const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
+  const [solo, setSolo] = useState(null); // {calId | folderId, prev: [[id, visible], ...]}
   const [menu, setMenu] = useState(null); // phone: {head, color, items} of a held row
   const phone = (() => { try { return window.matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
   // A phone lists a calendar once: in the first folder it is filed in, else
@@ -564,18 +597,87 @@ export function Sidebar({ open, collapsed, onClose }) {
     setSolo({ calId: cal.id, prev });
     await applyVisibilityMap(state.calendars.map((c) => [c.id, c.id === cal.id]));
   };
+  // A whole folder (#187): its calendars on, the rest off, and back after.
+  const enterFolderSolo = async (folder) => {
+    const prev = solo ? solo.prev : state.calendars.map((c) => [c.id, c.visible]);
+    setSolo({ folderId: folder.id, prev });
+    await applyVisibilityMap(state.calendars.map((c) => [c.id, (c.folderIds || []).includes(folder.id)]));
+  };
   const exitSolo = async () => {
     if (!solo) return;
     const prev = solo.prev;
     setSolo(null);
     await applyVisibilityMap(prev);
   };
-  const soloCal = solo ? calendars.find((c) => c.id === solo.calId) : null;
+  // A calendar dragged to another folder, to a new place in its own, or
+  // back to the main list out of its folder (#187). On a computer only; a
+  // plain click still works, as the drag starts once the pointer moves.
+  // Option (Alt) files it in the folder it's dropped on as well.
+  const dragCalStart = (c, section, ev) => {
+    if (ev.pointerType === 'touch' || ev.target.closest('input, button')) return;
+    const from = section === 'all' ? 'all' : Number(section.slice(1));
+    let drop = null;
+    let marked = null;
+    const mark = (el, cls) => {
+      if (marked) marked.el.classList.remove(marked.cls);
+      marked = el ? { el, cls } : null;
+      if (el) el.classList.add(cls);
+    };
+    const dropAt = (pt, copy) => {
+      const el = document.elementFromPoint(pt.x, pt.y);
+      const sec = el && el.closest('.bc-sidebar [data-group]');
+      if (!sec) return null;
+      const key = sec.dataset.group;
+      const to = key === 'all' ? 'all' : key[0] === 'f' ? Number(key.slice(1)) : null;
+      if (to == null) return null;
+      const folder = to === 'all' ? null : state.folders.find((f) => f.id === to);
+      if (to !== 'all' && !folder) return null;
+      const toSort = folder ? folder.sort : (state.settings.sidebarAllSort === 'az' ? 'az' : 'manual');
+      const order = folder ? sortedCalendars(state.calendars, { ...folder, sort: 'manual' }).map((x) => x.id) : state.calendars.map((x) => x.id);
+      const item = el.closest('[data-cal-id]');
+      const overId = item && sec.contains(item) ? Number(item.dataset.calId) : null;
+      const r = item ? item.getBoundingClientRect() : null;
+      const after = !!r && pt.y > r.top + r.height / 2;
+      const d = calendarDrop({ calId: c.id, from, to, toSort, order, overId, after, copy });
+      if (!d) return null;
+      return { ...d, sec, item: d.kind !== 'unfile' && toSort !== 'az' && overId != null && overId !== c.id ? item : null, after };
+    };
+    startPointerDrag(ev, {
+      makeGhost: () => {
+        const g = document.createElement('div');
+        g.className = 'bc-drag-personpill';
+        g.textContent = c.name;
+        return g;
+      },
+      copyable: () => !!drop && drop.kind === 'place' && typeof from === 'number' && drop.folderId !== from,
+      onMove: (pt) => {
+        drop = dropAt(pt, false);
+        if (!drop) mark(null);
+        else if (drop.item) mark(drop.item, drop.after ? 'is-drop-after' : 'is-drop-before');
+        else mark(drop.sec, 'is-drop-into');
+      },
+      onDrop: (pt) => {
+        mark(null);
+        const d = dropAt(pt, !!pt.copy);
+        if (!d) return;
+        const folderOf = (id) => state.folders.find((f) => f.id === id);
+        if (d.kind === 'list') placeCalendarInList(c, d.at);
+        else if (d.kind === 'unfile') unfileCalendar(c, folderOf(d.folderId));
+        else fileCalendar(c, folderOf(d.folderId), d.at, d.from != null ? folderOf(d.from) : null);
+      },
+      onCancel: () => mark(null),
+    });
+  };
+  const soloCal = solo && solo.calId != null ? calendars.find((c) => c.id === solo.calId) : null;
+  const soloFolder = solo && solo.folderId != null ? folders.find((f) => f.id === solo.folderId) : null;
 
+  // Each folder in its own order, or A to Z (#187); the main list likewise.
   const byFolder = folders.map((f) => ({
     folder: f,
-    cals: calendars.filter((c) => (c.folderIds || []).includes(f.id)),
+    cals: sortedCalendars(calendars, f),
   }));
+  const allSort = state.settings.sidebarAllSort === 'az' ? 'az' : 'manual';
+  const allCals = sortedCalendars(calendars, { sort: allSort });
   // "All calendars" means all of them. A calendar filed in a folder is listed
   // in both places on purpose: this section doubles as the management surface
   // (every row carries its own gear), so having to remember which folder a
@@ -619,8 +721,9 @@ export function Sidebar({ open, collapsed, onClose }) {
     onSolo=${(cal) => (solo && solo.calId === cal.id ? exitSolo() : enterSolo(cal))}
     phone=${phone}
     onMenu=${() => calMenu(c, section)}
+    onDragStart=${phone ? null : (e) => dragCalStart(c, section, e)}
   />`);
-  const unfiled = calendars.filter((c) => !folders.some((f) => (c.folderIds || []).includes(f.id)));
+  const unfiled = allCals.filter((c) => !folders.some((f) => (c.folderIds || []).includes(f.id)));
   const allCalTools = html`<span class="bc-folder-tools">
     <button
       type="button" class="bc-icon-btn bc-folder-tool"
@@ -628,6 +731,7 @@ export function Sidebar({ open, collapsed, onClose }) {
       onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
     ><${Icon} name="plus" size=${13} /></button>
     <${ActiveOnlyButton} />
+    ${calendars.length > 1 && html`<${SortButton} sort=${allSort} name=${phone ? 'Other calendars' : 'All calendars'} onPick=${(sort) => saveSetting('sidebarAllSort', sort)} />`}
     <${AllModeButton} />
   </span>`;
   const pagesGrid = html`<nav class="bc-sb-pages" aria-label="Manage">
@@ -691,6 +795,9 @@ export function Sidebar({ open, collapsed, onClose }) {
           collapsed=${!!collapsedFolders[folder.id]}
           onToggleCollapse=${() => toggleFolder(folder.id)}
           dragProps=${groupDrag(key)}
+          soloed=${!!soloFolder && soloFolder.id === folder.id}
+          onSolo=${() => (soloFolder && soloFolder.id === folder.id ? exitSolo() : enterFolderSolo(folder))}
+          phone=${phone}
         />
         ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals, 'f' + folder.id)}</div>`}
       </section>`;
@@ -713,7 +820,7 @@ export function Sidebar({ open, collapsed, onClose }) {
           ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>All calendars</button>
           ${allCalTools}
         </div>`}
-        ${(byFolder.length === 0 || !collapsedAllCals) && rows(calendars, 'all')}
+        ${(byFolder.length === 0 || !collapsedAllCals) && rows(allCals, 'all')}
       </section>`;
   groupNodes.people = people.length > 0 && html`<section key="people" data-group="people" class=${groupCls('people')}>
         <div class="bc-folder-headrow" ...${groupDrag('people')}>
@@ -781,8 +888,8 @@ export function Sidebar({ open, collapsed, onClose }) {
       ${groupKeys.map((k) => groupNodes[k])}
       <${AddMenu} />
       ${phone && pagesGrid}
-      ${soloCal && html`<div class="bc-solo-banner" role="status">
-        Showing only <strong>${soloCal.name}</strong>
+      ${(soloCal || soloFolder) && html`<div class="bc-solo-banner" role="status">
+        Showing only <strong>${soloCal ? soloCal.name : soloFolder.name}</strong>
         <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
       </div>`}
     </div>

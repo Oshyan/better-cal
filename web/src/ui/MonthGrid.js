@@ -515,10 +515,15 @@ export function MonthGrid({
       // What's on screen stays put first, as it does outside a glide: rows
       // above it changing height moved the grid months under the glide
       // (March to the August before), and it had all that way to come back.
+      // Only when something moved: written unchanged (a load that left the
+      // heights alone), it stopped the glide where it was.
       if (prev !== geo) {
         const w = prev.weekAt(el.scrollTop);
-        ownEndsRef.current++;
-        setTop(geo.top(w) + ((el.scrollTop - prev.top(w)) / prev.height(w)) * geo.height(w));
+        const held = geo.top(w) + ((el.scrollTop - prev.top(w)) / prev.height(w)) * geo.height(w);
+        if (Math.abs(held - el.scrollTop) >= 1) {
+          ownEndsRef.current++;
+          setTop(held);
+        }
       }
       glideRef.current.dist = null; // re-aimed: the distance starts over
       el.scrollTo({ top: anchorTop(glideRef.current.row), behavior: 'smooth' });

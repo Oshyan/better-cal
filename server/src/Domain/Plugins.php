@@ -1785,8 +1785,13 @@ final class Plugins
                 $params[] = Time::toDb($after['start']);
                 $params[] = $after['key'];
             }
+            // The set's gen (below) comes from the same statement as its
+            // rows: read separately, a refresh between the two labelled the
+            // old rows with the new set's gen, and nothing started again.
+            $genSql = '(SELECT COUNT(*) FROM plugin_ranges WHERE plugin_id = ?) AS gen_n, (SELECT COALESCE(MAX(id), 0) FROM plugin_ranges WHERE plugin_id = ?) AS gen_m';
+            array_unshift($params, $id, $id);
             $rows = $this->db->all(
-                'SELECT r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
+                'SELECT ' . $genSql . ', r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
                  LEFT JOIN calendars c ON c.id = r.calendar_id
                  WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)' . $page . '
                  ORDER BY r.start_utc, r.source_key LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
@@ -1798,8 +1803,10 @@ final class Plugins
             }
             // Which set of ranges the page came from: a refresh replaces them
             // all under new ids, so this changes with it, and a reader paging
-            // through starts again rather than mixing two sets (#185).
-            $gen = $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_ranges WHERE plugin_id = ?', [$id]);
+            // through starts again rather than mixing two sets (#185). An
+            // empty page has no row to carry it, and asks on its own.
+            $gen = $rows !== [] ? ['n' => $rows[0]['gen_n'], 'm' => $rows[0]['gen_m']]
+                : $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_ranges WHERE plugin_id = ?', [$id]);
             $out[$id] = [
                 'truncated' => $truncated,
                 'gen' => $gen['n'] . ':' . $gen['m'],

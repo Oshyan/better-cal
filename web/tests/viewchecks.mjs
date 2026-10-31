@@ -7,8 +7,9 @@
 //   console.table(await run());
 //
 // Never on an install with real data: they move the view around, refresh,
-// and try a drag, and if a regression lets that drag land, the event really
-// moves (or a repeating one asks This/Following/All). Release zips leave
+// add sample events (and delete them after), and try a drag, and if a
+// regression lets that drag land, the event really moves (or a repeating
+// one asks This/Following/All). Release zips leave
 // web/tests out, but an install deployed by copying the repository serves it.
 // Started from the findings of a review of every view (#183).
 
@@ -525,6 +526,33 @@ export async function run() {
       render(null, box);
       box.remove();
     }
+  });
+
+  // A load that leaves the rows as they were, landing mid-glide, leaves the
+  // glide to arrive: the grid wrote its place back unchanged, which stopped
+  // the glide where it was, still marked as gliding.
+  await check('month view: a glide arrives after a load that changes no heights', async () => {
+    const { glideActive } = await import('/assets/src/lib/glide.js');
+    const rows = st().settings.monthRows;
+    S.set({ settings: { ...st().settings, monthRows: 'fit' } });
+    const runs = [];
+    // From the middle of a month a few on, the load landing early in the glide.
+    for (const after of [30, 90]) {
+      A.setView('month');
+      A.jumpToDate(addDays(today, 100).slice(0, 8) + '15');
+      await until(() => st().anchorSeen === st().scrollSeq);
+      await wait(1500);
+      const from = st().visibleMonth;
+      A.stepAnchor(1);
+      await wait(after);
+      S.set({ occVersion: st().occVersion + 1 });
+      await wait(3000);
+      const k = from.year * 12 + from.month;
+      const want = { year: Math.floor(k / 12), month: (k % 12) + 1 };
+      runs.push({ after, ok: sameMonth(st().visibleMonth, want) && !glideActive(), want, landed: st().visibleMonth });
+    }
+    S.set({ settings: { ...st().settings, monthRows: rows } });
+    return { ok: runs.every((r) => r.ok), runs };
   });
 
   // Next month pressed quickly lands as many months on, and the grid never

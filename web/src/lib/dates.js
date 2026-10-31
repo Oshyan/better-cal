@@ -117,17 +117,19 @@ export function dateOfDayKey(key) {
   return new Date(y, m - 1, d);
 }
 
-// The instant of a wall time on a day (minutes past midnight). In the hour
+// The instant of a wall time on a day (minutes past midnight). In the time
 // a clock change repeats, a wall time is two instants and new Date takes
 // the first: given after (ms), the first at or past it; given before, the
 // last at or before it; and if neither fits, after or before itself. A
 // resized end at 01:45 landed before its start at 01:30 in the second
-// 1 o'clock, and the resize was refused (#185).
+// 1 o'clock, and the resize was refused (#185). The second pass is as far
+// on as the clock goes back, whatever that is (an hour, half of one, two).
 export function wallInstant(dayKey, minutes, { after = null, before = null } = {}) {
   const base = dateOfDayKey(dayKey);
   const t = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minutes).getTime();
   const wall = (ms) => { const d = new Date(ms); return dayKeyOf(d) + ' ' + (d.getHours() * 60 + d.getMinutes()); };
-  const all = [t, t + 30 * 60000, t + 60 * 60000].filter((ms) => wall(ms) === wall(t));
+  const back = new Date(t + 4 * 3600000).getTimezoneOffset() - new Date(t).getTimezoneOffset();
+  const all = [t, t + back * 60000].filter((ms, i) => (i === 0 || back > 0) && wall(ms) === wall(t));
   if (after != null) return all.find((ms) => ms >= after) ?? Math.max(t, after);
   if (before != null) return [...all].reverse().find((ms) => ms <= before) ?? Math.min(t, before);
   return t;

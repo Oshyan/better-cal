@@ -1112,6 +1112,14 @@ final class PluginHost
             $this->log('ranges truncated: ' . count($ranges) . ' -> ' . self::MAX_RANGES_PER_SYNC);
             $ranges = array_slice($ranges, 0, self::MAX_RANGES_PER_SYNC);
         }
+        // All at once: a reader between the delete and the inserts saw the
+        // plugin with some or none of its bands (#185).
+        return $this->db->tx(fn(): int => $this->replaceRangesNow($ranges, $calendarId));
+    }
+
+    /** @param list<array<string,mixed>> $ranges */
+    private function replaceRangesNow(array $ranges, ?int $calendarId): int
+    {
         if ($calendarId !== null) {
             // Bands that belong to one calendar: hidden with it, gone with it,
             // and replaced per calendar so one calendar's run leaves the

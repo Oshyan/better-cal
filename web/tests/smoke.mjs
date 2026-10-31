@@ -2308,24 +2308,27 @@ console.log('--- chronological ordering across timezone offsets ---');
 {
   const { wallInstant, dayKeyOf: keyOf } = await import('../src/lib/dates.js');
   eq('wall instant: an ordinary time is that time', wallInstant('2026-03-10', 90), new Date(2026, 2, 10, 1, 30).getTime());
-  // The hour this zone's clock change repeats this year, if it has one.
+  // The time this zone's clock change repeats this year, if it has one, and
+  // how long it is (an hour, half of one, two), measured, not assumed.
   let back = null;
-  for (let t = Date.UTC(2026, 0, 1); t < Date.UTC(2027, 0, 1); t += 3600000) {
-    if (new Date(t + 3600000).getTimezoneOffset() > new Date(t).getTimezoneOffset()) { back = t + 3600000; break; }
+  let shift = 0;
+  for (let t = Date.UTC(2026, 0, 1); t < Date.UTC(2027, 0, 1) && back === null; t += 15 * 60000) {
+    const d = new Date(t + 15 * 60000).getTimezoneOffset() - new Date(t).getTimezoneOffset();
+    if (d > 0) { back = t + 15 * 60000; shift = d; }
   }
   if (back !== null) {
     const M = 60000;
     const d = new Date(back);
     const key = keyOf(d);
-    const m0 = d.getHours() * 60 + d.getMinutes(); // the repeated hour's first wall minute
-    // Starting in the second pass of that hour, an end dragged up to a
-    // quarter past the start lands after it, not in the first pass.
-    const start = back + 30 * M;
-    eq('wall instant: a shortened end stays after a start in the second pass', wallInstant(key, m0 + 45, { after: start + 15 * M }), back + 45 * M);
-    // Ending in the first pass, a start dragged down lands before it.
-    const end = back - 15 * M;
-    eq('wall instant: a moved start stays before an end in the first pass', wallInstant(key, m0 + 30, { before: end - 15 * M }), back - 30 * M);
-    eq('wall instant: with nothing to stay beside, the first pass', wallInstant(key, m0 + 45), back - 15 * M);
+    const m0 = d.getHours() * 60 + d.getMinutes(); // the repeated time's first wall minute
+    const half = Math.floor(shift / 2);
+    // Starting as the second pass begins, an end dragged into that pass
+    // lands in it, after the start, at the time asked for.
+    eq('wall instant: a shortened end stays after a start in the second pass', wallInstant(key, m0 + half, { after: back + M }), back + half * M);
+    // Ending half way through the first pass, a start dragged to its
+    // beginning lands there, before the end.
+    eq('wall instant: a moved start stays before an end in the first pass', wallInstant(key, m0, { before: back - (shift - half) * M - M }), back - shift * M);
+    eq('wall instant: with nothing to stay beside, the first pass', wallInstant(key, m0 + half), back - (shift - half) * M);
   }
 }
 

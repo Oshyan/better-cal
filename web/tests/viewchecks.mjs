@@ -315,6 +315,242 @@ export async function run() {
     return { ok: straight != null && right === straight && left === straight, straight, right, left };
   });
 
+  // --- From the release review of 1.4.1 to 1.4.3 (#185) ---
+  // These add sample events ("View check sample") to the first editable
+  // local calendar and delete them after. Moves and resizes are caught
+  // before they reach the server: what would have been saved is checked,
+  // and nothing is.
+  const local = st().calendars.find((c) => c.kind === 'local' && c.editable);
+  const iso = (ms) => { const d = new Date(ms); const off = -d.getTimezoneOffset(); const a = Math.abs(off); return keyOf(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00' + (off < 0 ? '-' : '+') + pad(Math.floor(a / 60)) + ':' + pad(a % 60); };
+  const made = [];
+  const sample = async (fields) => {
+    const r = await API.api('/events', { method: 'POST', body: { calendarId: local.id, title: 'View check sample', allDay: false, ...fields } });
+    made.push(r.eventId);
+    await API.refreshWindow();
+    await until(() => st().occ.has(r.instanceId));
+    return r.instanceId;
+  };
+  // Saves of moves and resizes, caught and refused.
+  const caught = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, o) => {
+    if (o && o.method === 'PATCH' && /\/events\//.test(String(url))) {
+      caught.push(JSON.parse(o.body || '{}'));
+      return Promise.resolve(new Response(JSON.stringify({ error: { code: 'view_check', message: 'Caught by a view check' } }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return realFetch(url, o);
+  };
+  const shown = (id) => [...document.querySelectorAll(`[data-instance="${CSS.escape(id)}"]`)].find((el) => el.getBoundingClientRect().width > 0);
+  const press = (el, x, y, extra = {}) => el.dispatchEvent(new PointerEvent('pointerdown', { ...opts(x, y), ...extra }));
+  const moveTo = (x, y, extra = {}) => window.dispatchEvent(new PointerEvent('pointermove', { ...opts(x, y), ...extra }));
+  const release = (x, y, extra = {}) => window.dispatchEvent(new PointerEvent('pointerup', { ...opts(x, y, 0), ...extra }));
+  // The day this zone's clock goes back, within the next year, and the first
+  // instant of the hour it repeats.
+  let back = null;
+  for (let t = Date.now(); t < Date.now() + 400 * 864e5 && back === null; t += 3600000) {
+    if (new Date(t + 3600000).getTimezoneOffset() > new Date(t).getTimezoneOffset()) back = Math.floor((t + 3600000) / 3600000) * 3600000;
+  }
+  try {
+    if (!local) {
+      results.push({ check: 'sample events', ok: false, detail: 'no editable local calendar to add them to' });
+    } else {
+      // An all-day event let go over the toolbar, above the week, stays put.
+      await check('week view: an all-day event let go over the toolbar moves nothing', async () => {
+        A.jumpToDate(today);
+        A.setView('week');
+        await until(() => st().anchorSeen === st().scrollSeq);
+        const id = await sample({ allDay: true, start: today, end: addDays(today, 1) });
+        await until(() => shown(id));
+        const bar = shown(id);
+        if (!bar) return { ok: false, detail: 'the sample event did not show' };
+        const r = bar.getBoundingClientRect();
+        const x = r.left + Math.min(20, r.width / 2);
+        const y = r.top + r.height / 2;
+        const bar0 = document.querySelector('.bc-toolbar').getBoundingClientRect();
+        caught.length = 0;
+        press(bar, x, y);
+        moveTo(x + 10, y);
+        moveTo(x + 10, bar0.top + bar0.height / 2);
+        release(x + 10, bar0.top + bar0.height / 2);
+        await wait(600);
+        const outside = caught.length;
+        // The control: let go a day on, it does move.
+        const b2 = shown(id).getBoundingClientRect();
+        press(shown(id), b2.left + 10, y);
+        moveTo(b2.left + 20, y);
+        moveTo(b2.left + 10 + b2.width, y);
+        release(b2.left + 10 + b2.width, y);
+        await wait(600);
+        S.set({ dropChoice: null });
+        return { ok: outside === 0 && caught.length === 1, overToolbar: outside, aDayOn: caught.length };
+      });
+
+      // Two fingers: once one has lifted an event, another press starts
+      // nothing, and only the first finger moves anything.
+      await check('week view: a second finger starts no drag beside the first', async () => {
+        const a = await sample({ allDay: true, start: addDays(today, 1), end: addDays(today, 2) });
+        const b = await sample({ allDay: true, start: addDays(today, 1), end: addDays(today, 2), title: 'View check sample 2' });
+        await until(() => shown(a) && shown(b));
+        if (!shown(a) || !shown(b)) return { ok: false, detail: 'the sample events did not show' };
+        const ra = shown(a).getBoundingClientRect();
+        const rb = shown(b).getBoundingClientRect();
+        const t1 = { pointerId: 11, pointerType: 'touch' };
+        const t2 = { pointerId: 12, pointerType: 'touch' };
+        caught.length = 0;
+        press(shown(a), ra.left + 10, ra.top + ra.height / 2, t1);
+        await wait(500); // the long press lifts it
+        const lifted = document.body.classList.contains('bc-dragging');
+        press(shown(b), rb.left + 10, rb.top + rb.height / 2, t2);
+        await wait(500);
+        moveTo(rb.left + 10 + rb.width, rb.top + rb.height / 2, t2);
+        release(rb.left + 10 + rb.width, rb.top + rb.height / 2, t2);
+        await wait(400);
+        const bySecond = caught.length;
+        moveTo(ra.left + 10 + ra.width, ra.top + ra.height / 2, t1);
+        release(ra.left + 10 + ra.width, ra.top + ra.height / 2, t1);
+        await wait(600);
+        S.set({ dropChoice: null });
+        return { ok: lifted && bySecond === 0 && caught.length === 1, lifted, bySecond, byFirst: caught.length };
+      });
+
+      // Reschedule mode: after a jump to a far month, the arrow keys pick a
+      // day on screen and Enter asks to move there.
+      await check('reschedule mode: arrows and Enter work after a far jump', async () => {
+        const id = await sample({ start: iso(new Date(new Date().setHours(10, 0, 0, 0)).getTime()), end: iso(new Date(new Date().setHours(11, 0, 0, 0)).getTime()) });
+        A.setView('month');
+        A.enterReschedule(id);
+        await until(() => document.body.classList.contains('bc-rescheduling'));
+        A.jumpToDate(addDays(today, 200));
+        await until(() => st().anchorSeen === st().scrollSeq);
+        await wait(400);
+        const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        key('ArrowRight');
+        key('Enter');
+        const ok = await until(() => document.querySelector('.bc-confirm-chip'), 1500);
+        const label = ok ? document.querySelector('.bc-confirm-chip').textContent.trim() : null;
+        key('Escape');
+        key('Escape');
+        A.exitReschedule();
+        return { ok: !!ok && /Move to/.test(label), label };
+      });
+
+      // Resizing across or during the hour a clock change repeats keeps the
+      // end not dragged, and the one dragged lands on the right side of it.
+      if (back === null) {
+        results.push({ check: 'clock change resizes', ok: true, detail: 'skipped: this time zone has no clock change in the next year' });
+      } else {
+        const day = keyOf(new Date(back));
+        const M = 60000;
+        const resize = async (id, edge, dMin) => {
+          const block = shown(id);
+          const handle = block && block.querySelector('.bc-block-handle.' + (edge === 'end' ? 'b' : 't'));
+          if (!handle) return null;
+          const hours = [...document.querySelectorAll('.bc-hour-label')].filter((h) => h.getBoundingClientRect().height > 0);
+          const perMin = (hours[2].getBoundingClientRect().top - hours[1].getBoundingClientRect().top) / 60;
+          const r = handle.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          caught.length = 0;
+          press(handle, x, y);
+          for (let i = 1; i <= 6; i++) moveTo(x, y + (dMin * perMin * i) / 6);
+          release(x, y + dMin * perMin);
+          await wait(600);
+          return caught[0] || null;
+        };
+        const go = async (key) => {
+          A.jumpToDate(key);
+          A.setView('day');
+          await until(() => document.querySelector('.bc-tg-vday-head') && st().anchorSeen === st().scrollSeq);
+        };
+        await check('clock change: resizing in the repeated hour keeps the end not dragged', async () => {
+          await go(day);
+          // From half past into the hour's second pass, for an hour and a half.
+          const s0 = back + 30 * M;
+          const id = await sample({ start: iso(s0), end: iso(s0 + 90 * M) });
+          await until(() => shown(id));
+          shown(id).scrollIntoView({ block: 'center' });
+          await wait(300);
+          const longer = await resize(id, 'end', 60);
+          const shorter = await resize(id, 'end', -75); // to a quarter past the start
+          const later = await resize(id, 'start', 30);
+          const o = st().occ.get(id);
+          const fine = (b, keep, other) => !!b && b[keep] === o[keep] && Date.parse(b.end) > Date.parse(b.start) && b[other] !== o[other];
+          return { ok: fine(longer, 'start', 'end') && fine(shorter, 'start', 'end') && fine(later, 'end', 'start'), longer, shorter, later };
+        });
+        await check('clock change: resizing an overnight event across it keeps the end not dragged', async () => {
+          const eve = addDays(day, -1);
+          await go(eve);
+          const s0 = new Date(Number(eve.slice(0, 4)), Number(eve.slice(5, 7)) - 1, Number(eve.slice(8, 10)), 21, 0).getTime();
+          const id = await sample({ start: iso(s0), end: iso(back + 120 * M) });
+          await until(() => shown(id));
+          shown(id).scrollIntoView({ block: 'center' });
+          await wait(300);
+          const b = await resize(id, 'start', 30);
+          const o = st().occ.get(id);
+          return { ok: !!b && b.end === o.end && b.start !== o.start, sent: b, end: o.end };
+        });
+      }
+    }
+  } finally {
+    window.fetch = realFetch;
+    for (const id of made) { try { await API.api('/events/' + id, { method: 'DELETE' }); } catch { /* already gone */ } }
+    if (made.length) await API.refreshWindow();
+  }
+
+  // A required plugin credential can be cleared: Save stays on, and saving
+  // sends the clear. The form is drawn on its own, off screen.
+  await check('settings: a required credential can be cleared', async () => {
+    // By their plain addresses, which the page maps to the copies it runs:
+    // a second copy of the UI runtime would break the form's hooks.
+    const { SchemaForm } = await import('/assets/src/app/SchemaForm.js');
+    const { render, html } = await import('/assets/vendor/index.js');
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:-2000px;top:0;width:600px';
+    document.body.appendChild(box);
+    let saved = null;
+    try {
+      render(html`<${SchemaForm} schema=${[{ key: 'token', type: 'secret', label: 'API key', required: true }]} values=${{ token: { set: true } }} onSave=${async (b) => { saved = b; return true; }} />`, box);
+      await until(() => box.querySelector('.bc-schema-secret'));
+      // Let its first effects run, as they have long before anyone clicks:
+      // the one that takes in the saved values would undo the Clear.
+      await wait(300);
+      [...box.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Clear').click();
+      await until(() => /cleared/i.test(box.querySelector('.bc-schema-secret').textContent));
+      const saveBtn = box.querySelector('.bc-schema-actions .bc-btn-primary');
+      const enabled = !saveBtn.disabled;
+      saveBtn.click();
+      await until(() => saved, 1500);
+      return { ok: enabled && !!saved && saved.token === null, enabled, saved };
+    } finally {
+      render(null, box);
+      box.remove();
+    }
+  });
+
+  // Next month pressed quickly lands as many months on, and the grid never
+  // turns back on the way: rows changing height mid-glide sent it months
+  // back, and the next press stepped from there.
+  for (const gap of [300, 1000]) {
+    await check(`month view: Next five times, ${gap}ms apart, lands five months on`, async () => {
+      A.setView('month');
+      A.goToday();
+      await until(() => st().anchorSeen === st().scrollSeq);
+      await wait(1500);
+      const from = st().visibleMonth;
+      const next = [...document.querySelectorAll('.bc-toolbar-nav button')].find((b) => b.getAttribute('aria-label') === 'Next month');
+      const seen = [];
+      let watching = true;
+      (function watch() { const d = st().visibleDays; if (d && seen[seen.length - 1] !== d.start) seen.push(d.start); if (watching) requestAnimationFrame(watch); })();
+      for (let i = 0; i < 5; i++) { next.click(); await wait(gap); }
+      await wait(3000);
+      watching = false;
+      const k = from.year * 12 + from.month - 1 + 5;
+      const want = { year: Math.floor(k / 12), month: (k % 12) + 1 };
+      const back2 = seen.filter((x, i) => i > 0 && x < seen[i - 1]);
+      return { ok: sameMonth(st().visibleMonth, want) && back2.length === 0, from, want, landed: st().visibleMonth, wentBack: back2 };
+    });
+  }
+
   A.setView(start.view);
   A.jumpToDate(start.anchor);
   return results;

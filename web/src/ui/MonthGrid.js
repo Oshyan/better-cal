@@ -408,7 +408,10 @@ export function MonthGrid({
   // cancelled the smooth scroll part way when a window load landed (#183).
   // It ends on arrival, or when you scroll yourself.
   const glideRef = useRef(null);
-  const setGlide = useCallback((g) => { glideRef.current = g; setGlideActive(!!g); }, []);
+  // Scroll ends the grid caused itself, holding its place mid-glide: one
+  // read as yours ended the glide, and the next load pinned it part way.
+  const ownEndsRef = useRef(0);
+  const setGlide = useCallback((g) => { glideRef.current = g; ownEndsRef.current = 0; setGlideActive(!!g); }, []);
   useEffect(() => () => { if (glideRef.current) setGlideActive(false); }, []);
   const anchorTopRef = useRef(null);
 
@@ -417,7 +420,10 @@ export function MonthGrid({
     const el = scrollRef.current;
     if (!el) return;
     let raf = 0;
-    const endGlide = () => { if (glideRef.current) setGlide(null); };
+    const endGlide = (e) => {
+      if (e && e.type === 'scrollend' && ownEndsRef.current > 0) { ownEndsRef.current--; return; }
+      if (glideRef.current) setGlide(null);
+    };
     const onScroll = () => {
       const gl = glideRef.current;
       if (gl && anchorTopRef.current) {
@@ -511,6 +517,7 @@ export function MonthGrid({
       // (March to the August before), and it had all that way to come back.
       if (prev !== geo) {
         const w = prev.weekAt(el.scrollTop);
+        ownEndsRef.current++;
         setTop(geo.top(w) + ((el.scrollTop - prev.top(w)) / prev.height(w)) * geo.height(w));
       }
       glideRef.current.dist = null; // re-aimed: the distance starts over

@@ -1827,6 +1827,38 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         check('split: "this and following" reports the new series that holds the occurrence',
             $newSeries !== null && $newSeries !== $seriesId
             && $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$newSeries]) === '2026-12-10 18:00:00');
+
+        // An edited date moved to another calendar with "All events" moves
+        // the series, edits and all; it used to be split off on its own
+        // whatever was asked (#187 review).
+        $daily = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
+        $eventsA->patch(1, $daily, ['scope' => 'this', 'instanceStart' => '2026-12-10T18:00:00+00:00', 'title' => 'Edited date']);
+        $edited = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$daily]);
+        $eventsA->patch(1, $edited, ['calendarId' => 13, 'scope' => 'all', 'title' => 'Edited date, renamed']);
+        checkEq('edited date moved with the whole series: the series and the date move, nothing splits off', [13, 13, 'Edited date, renamed', null, 0], [
+            (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$daily]),
+            (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited]),
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$edited]),
+            $adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$daily]),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Edited date%' AND recurrence_parent_id IS NULL AND deleted_at IS NULL"),
+        ]);
+        $edited2 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 2', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
+        $eventsA->patch(1, $edited2, ['scope' => 'this', 'instanceStart' => '2026-12-11T18:00:00+00:00', 'title' => 'Second edited date']);
+        $edited2Date = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$edited2]);
+        $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following']);
+        checkEq('edited date moved with "this and following": the series splits there, the later part moves, nothing on its own', [10, 0, 1], [
+            (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2]),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title = 'Second edited date' AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL"),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE calendar_id = 13 AND rrule IS NOT NULL AND title = 'Daily mover 2' AND deleted_at IS NULL"),
+        ]);
+        $edited3 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 3', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
+        $eventsA->patch(1, $edited3, ['scope' => 'this', 'instanceStart' => '2026-12-12T18:00:00+00:00', 'title' => 'Third edited date']);
+        $edited3Date = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$edited3]);
+        $eventsA->patch(1, $edited3Date, ['calendarId' => 13]);
+        checkEq('edited date moved on its own (no scope): still splits off, as before', [10, 1], [
+            (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited3]),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title = 'Third edited date' AND calendar_id = 13 AND recurrence_parent_id IS NULL AND deleted_at IS NULL"),
+        ]);
     }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
@@ -9098,12 +9130,28 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         [$folderOrder(), $calendarDomain->listAll(1)['calendars'][0]['folderIds']]);
     $folderDomain->place(1, 11, 2, 5);
     checkEq('folders: added to another as well, it stays where it was (a place past the end is the end)', [10 => [2], 11 => [1, 2]], $folderOrder());
-    // What Undo restores: the folder's rows before, and after.
-    $lastMutation = $cdb->one('SELECT entity, entity_id, before_json, after_json, summary FROM mutations ORDER BY id DESC LIMIT 1');
-    $snapshot = static fn(?string $json) => array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], json_decode((string) $json, true)['tables']['calendar_folders'] ?? []);
-    checkEq('folders: undo has the folder before and after', [['folder', 11], [[1, 0]], [[1, 0], [2, 1]], "Added 'Agent feed' to folder 'Beta'"],
-        [[$lastMutation['entity'], (int) $lastMutation['entity_id']], $snapshot($lastMutation['before_json']), $snapshot($lastMutation['after_json']), $lastMutation['summary']]);
+    $lastMutation = $cdb->one('SELECT entity, entity_id, summary FROM mutations ORDER BY id DESC LIMIT 1');
+    checkEq('folders: the activity entry names the calendar and the folder', ['calendar_place', 2, "Added 'Agent feed' to folder 'Beta'"],
+        [$lastMutation['entity'], (int) $lastMutation['entity_id'], $lastMutation['summary']]);
+    $placeUndo = new BetterCal\Domain\Undo($cdb);
+    $placeUndo->undoLatest(1);
+    checkEq('folders: undone, it is out of the folder it was added to and still where it was', [10 => [2], 11 => [1]], $folderOrder());
+    // Undo puts back only the calendar it moved: a later change to the
+    // folder it came from stays (#187 review).
+    $folderDomain->place(1, 11, 2, 0);
+    $folderDomain->place(1, 10, 1, 0, 11);
+    $moveEntry = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
     $folderDomain->unfile(1, 11, 2);
+    checkEq('folders: before the undo, 1 moved to Alpha and 2 taken out of Beta', [10 => [1, 2], 11 => []], $folderOrder());
+    $placeUndo->undoById(1, $moveEntry);
+    checkEq("folders: undoing the older move puts 1 back in Beta; 2 stays out of it", [10 => [2], 11 => [1]], $folderOrder());
+    $folderDomain->place(1, 11, 1, 0);
+    $first = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $folderDomain->place(1, 10, 1, 0, 11);
+    $caught = null;
+    try { $placeUndo->undoById(1, $first); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('folders: an older move of a calendar moved again since is stale', $caught !== null && $caught->errorCode === 'stale_undo');
+    $folderDomain->place(1, 11, 1, 0, 10);
     $folderDomain->place(1, 11, 2, 0);
     $folderDomain->unfile(1, 10, 2);
     checkEq('folders: taken out of one folder, it stays in the other', [10 => [], 11 => [2, 1]], $folderOrder());
@@ -9120,11 +9168,19 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $listOrder = static fn() => array_column($calendarDomain->listAll(1)['calendars'], 'id');
     $calendarDomain->placeInList(1, 2, 0);
     checkEq('calendar list: a calendar moves to a new place in the list', [2, 1], $listOrder());
-    $lastMutation = $cdb->one('SELECT before_json, after_json FROM mutations ORDER BY id DESC LIMIT 1');
-    $ids = static fn(?string $json) => array_map(static fn($r) => [(int) $r['id'], (int) $r['position']], json_decode((string) $json, true)['tables']['calendars']);
-    checkEq('calendar list: undo has the list before and after', [[[1, 0], [2, 1]], [[2, 0], [1, 1]]],
-        [$ids($lastMutation['before_json']), $ids($lastMutation['after_json'])]);
-    $calendarDomain->placeInList(1, 1, 0);
+    $reorderEntry = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $calendarDomain->patch(1, 1, ['name' => 'Owner feed, renamed']);
+    $placeUndo->undoById(1, $reorderEntry);
+    checkEq("calendar list: undoing an older reorder puts it back and keeps another calendar's later rename", [[1, 2], 'Owner feed, renamed'],
+        [$listOrder(), $cdb->scalar('SELECT name FROM calendars WHERE id = 1')]);
+    // A Google calendar in the list no longer makes a reorder log-only.
+    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
+    $calendarDomain->placeInList(1, 2, 0);
+    check('calendar list: a reorder stays undoable with a Google calendar in the list',
+        $cdb->scalar('SELECT before_json FROM mutations ORDER BY id DESC LIMIT 1') !== null);
+    $placeUndo->undoLatest(1);
+    checkEq('calendar list: and undoes', [1, 2], $listOrder());
+    $cdb->run("UPDATE calendars SET provider = 'ics', name = 'Owner feed' WHERE id = 1");
     $cdb->run('DELETE FROM calendar_folders');
     $cdb->run('DELETE FROM folders');
 

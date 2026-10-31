@@ -79,24 +79,18 @@ final class Folders
         $source = $from !== null && $from !== $id ? $this->get($userId, $from) : null;
         return $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId, $at, $source): array {
             $ids = $source !== null ? [$id, (int) $source['id']] : [$id];
-            $before = $this->links($ids);
-            $was = in_array($calendarId, $this->order($id), true);
+            $before = self::places($this->db, $calendarId, $ids);
             if ($source !== null) {
-                $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [(int) $source['id'], $calendarId]);
-                $this->renumber((int) $source['id'], $this->order((int) $source['id']));
+                self::putAt($this->db, (int) $source['id'], $calendarId, null);
             }
-            $order = array_values(array_filter($this->order($id), static fn(int $c) => $c !== $calendarId));
-            array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
-            if (!$was) {
-                $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $id, 0]);
-            }
-            $this->renumber($id, $order);
+            self::putAt($this->db, $id, $calendarId, $at);
+            $was = $before[0]['at'] !== null;
             $name = (string) $cal['name'];
             $summary = $was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
                 : ($source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
                 : "Added '" . $name . "' to folder '" . $folder['name'] . "'");
-            $this->undo->record($userId, 'folder', $id, 'update', ['calendar_folders' => $before], ['calendar_folders' => $this->links($ids)], $summary);
-            return ['calendarIds' => $order];
+            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], $summary, ['before' => $before, 'after' => self::places($this->db, $calendarId, $ids)]);
+            return ['calendarIds' => self::order($this->db, $id)];
         });
     }
 
@@ -106,34 +100,55 @@ final class Folders
         $folder = $this->get($userId, $id);
         $cal = $this->ownedCalendar($userId, $calendarId);
         $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId): void {
-            $before = $this->links([$id]);
-            $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$id, $calendarId]);
-            $this->renumber($id, $this->order($id));
-            $this->undo->record($userId, 'folder', $id, 'update', ['calendar_folders' => $before], ['calendar_folders' => $this->links([$id])], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'");
+            $before = self::places($this->db, $calendarId, [$id]);
+            self::putAt($this->db, $id, $calendarId, null);
+            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'", ['before' => $before, 'after' => self::places($this->db, $calendarId, [$id])]);
         });
     }
 
-    /** A folder's calendars in its own order (ties by the calendars' order). */
-    private function order(int $id): array
+    /**
+     * Where a calendar is in each of these folders: [{folder, at}], at null
+     * when it isn't in one. What Undo puts back (Undo::PLACE): only this
+     * calendar's place, so later changes to the others stay (#187 review).
+     *
+     * @param list<int> $folderIds
+     * @return list<array{folder:int,at:?int}>
+     */
+    public static function places(Db $db, int $calendarId, array $folderIds): array
     {
-        return array_map('intval', array_column($this->db->all(
-            'SELECT cf.calendar_id FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id WHERE cf.folder_id = ? ORDER BY cf.position, c.position, c.id',
-            [$id]
-        ), 'calendar_id'));
+        return array_map(static function (int $f) use ($db, $calendarId): array {
+            $i = array_search($calendarId, self::order($db, $f), true);
+            return ['folder' => $f, 'at' => $i === false ? null : (int) $i];
+        }, $folderIds);
     }
 
-    private function renumber(int $id, array $order): void
+    /** Put a calendar at a place in a folder's own order, or out of it (null). */
+    public static function putAt(Db $db, int $folderId, int $calendarId, ?int $at): void
     {
-        foreach ($order as $i => $calendarId) {
-            $this->db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$i, $id, $calendarId]);
+        $order = array_values(array_filter(self::order($db, $folderId), static fn(int $c) => $c !== $calendarId));
+        $in = $db->scalar('SELECT calendar_id FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$folderId, $calendarId]) !== null;
+        if ($at === null) {
+            if ($in) {
+                $db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$folderId, $calendarId]);
+            }
+        } else {
+            array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
+            if (!$in) {
+                $db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, 0]);
+            }
+        }
+        foreach ($order as $i => $c) {
+            $db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$i, $folderId, $c]);
         }
     }
 
-    /** @param list<int> $ids */
-    private function links(array $ids): array
+    /** A folder's calendars in its own order (ties by the calendars' order). */
+    public static function order(Db $db, int $id): array
     {
-        [$in, $params] = Db::in($ids);
-        return $this->db->all("SELECT * FROM calendar_folders WHERE folder_id IN $in ORDER BY folder_id, position", $params);
+        return array_map('intval', array_column($db->all(
+            'SELECT cf.calendar_id FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id WHERE cf.folder_id = ? ORDER BY cf.position, c.position, c.id',
+            [$id]
+        ), 'calendar_id'));
     }
 
     private function ownedCalendar(int $userId, int $calendarId): array

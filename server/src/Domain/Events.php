@@ -1388,6 +1388,25 @@ final class Events
         $targetCalendar = isset($in['calendarId']) ? (int) $in['calendarId'] : null;
         if ($targetCalendar !== null && $targetCalendar !== (int) $event['calendar_id'] && $google === null) {
             if (!empty($event['recurrence_parent_id'])) {
+                // An edited date moved with its series (Apply to: all, or
+                // this and following): the series moves from here, as from
+                // any of its dates, and the rest of the edit stays this
+                // date's. It was split off on its own whatever was asked
+                // (#187 review).
+                $whole = (string) ($in['scope'] ?? '');
+                if (in_array($whole, ['all', 'following'], true)) {
+                    $this->patch($userId, (int) $event['recurrence_parent_id'], [
+                        'calendarId' => $targetCalendar,
+                        'scope' => $whole,
+                        'instanceStart' => Time::iso(Time::fromDb((string) $event['recurrence_instance_utc'])),
+                    ], $authority);
+                    $rest = array_diff_key($in, ['calendarId' => true, 'scope' => true, 'instanceStart' => true]);
+                    $still = $this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $event['id']]);
+                    if ($rest !== [] && $still !== null) {
+                        $this->patch($userId, (int) $event['id'], $rest, $authority);
+                    }
+                    return;
+                }
                 $this->detachToCalendar($userId, $event, null, $in);
                 return;
             }

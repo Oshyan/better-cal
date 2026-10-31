@@ -16,6 +16,13 @@ use BetterCal\Support\Time;
  */
 final class Undo
 {
+    /**
+     * A calendar's place in a folder or the calendar list (#187): undone by
+     * putting just that calendar back where it was, so later changes to
+     * the others stay. Newer moves of the same calendar make it stale.
+     */
+    public const PLACE = 'calendar_place';
+
     /** Restore order respects FK dependencies; deletions run in reverse. */
     private const TABLE_ORDER = [
         'folders', 'tags', 'people', 'calendars', 'calendar_folders',
@@ -172,7 +179,37 @@ final class Undo
         if ((string) $mutation['entity'] === 'plugin_edit') {
             return $this->undoPluginEdit($mutation, $authority);
         }
+        if ((string) $mutation['entity'] === self::PLACE) {
+            return $this->undoPlace($mutation, $authority);
+        }
         return $this->apply($mutation, $authority);
+    }
+
+    /** @return array{entity:string,op:string} */
+    private function undoPlace(array $mutation, ?RequestAuthority $authority = null): array
+    {
+        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+        $before = is_array($details) && is_array($details['before'] ?? null) ? $details['before'] : null;
+        $userId = (int) $mutation['user_id'];
+        $calendarId = (int) $mutation['entity_id'];
+        if ($before === null || $this->db->scalar('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
+            throw HttpError::badRequest('That calendar is no longer here to move back', 'not_undoable');
+        }
+        $this->db->tx(function () use ($before, $userId, $calendarId, $mutation, $authority): void {
+            $authority?->assertValid($this->db);
+            foreach ($before as $place) {
+                $at = isset($place['at']) ? (int) $place['at'] : null;
+                if (!empty($place['list'])) {
+                    if ($at !== null) {
+                        Calendars::putInList($this->db, $userId, $calendarId, $at);
+                    }
+                } elseif (isset($place['folder']) && $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [(int) $place['folder'], $userId]) !== null) {
+                    Folders::putAt($this->db, (int) $place['folder'], $calendarId, $at);
+                }
+            }
+            $this->db->update('mutations', ['undone' => 1], 'id = ?', [(int) $mutation['id']]);
+        });
+        return ['entity' => 'calendar', 'op' => 'update'];
     }
 
     /**
@@ -209,6 +246,9 @@ final class Undo
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             return $this->undoPluginEdit($mutation, $authority);
+        }
+        if ((string) $mutation['entity'] === self::PLACE) {
+            return $this->undoPlace($mutation, $authority);
         }
         return $this->apply($mutation, $authority);
     }

@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } from './api.js';
+import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, calendarsEdited, calendarsSaved, calendarEditsNow } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -1215,14 +1215,25 @@ export async function deleteCalendar(cal) {
 
 // --- folders ------------------------------------------------------------------
 
-// A folder's order (#187): 'az' (A to Z) or 'manual' (your own).
+// Sidebar edits go to the server one at a time, in the order made: two
+// drags in quick succession could arrive the other way round (#187 review).
+let sidebarTurn = Promise.resolve();
+function inTurn(write) {
+  const run = sidebarTurn.then(write, write).finally(calendarsSaved);
+  sidebarTurn = run.catch(() => {});
+  return run;
+}
+
+// A folder's order (#187): 'az' (A to Z) or 'manual' (your own). A failed
+// change goes back only if nothing newer was asked for since.
 export async function setFolderSort(folder, sort) {
   const was = folder.sort;
+  const edit = calendarsEdited();
   set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort } : f)) });
   try {
-    await api('/folders/' + folder.id, { method: 'PATCH', body: { sort } });
+    await inTurn(() => api('/folders/' + folder.id, { method: 'PATCH', body: { sort } }));
   } catch (e) {
-    set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort: was } : f)) });
+    if (edit === calendarEditsNow()) set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort: was } : f)) });
     toast('Failed: ' + e.message, { error: true });
   }
 }
@@ -1230,20 +1241,23 @@ export async function setFolderSort(folder, sort) {
 // A calendar dragged into a folder, at a place in its own order, and out
 // of folder `from` when given (#187). Shown at once, then as saved.
 export async function fileCalendar(cal, folder, at, from = null) {
-  const without = (ids) => (ids || []).filter((id) => id !== cal.id);
+  const was = (cal.folderIds || []).includes(folder.id);
+  calendarsEdited();
+  const withoutCal = (ids) => (ids || []).filter((id) => id !== cal.id);
+  // Folder ids for the calendar, calendar ids for the folders: the two
+  // are numbered apart, and filtering one by the other dropped a folder
+  // whose id matched the calendar's (#187 review).
+  const folderIds = [...new Set([...(cal.folderIds || []).filter((id) => !from || id !== from.id), folder.id])];
   set({
     folders: state.folders.map((f) => {
-      if (f.id === folder.id) { const ids = without(f.calendarIds); ids.splice(at, 0, cal.id); return { ...f, calendarIds: ids }; }
-      if (from && f.id === from.id) return { ...f, calendarIds: without(f.calendarIds) };
+      if (f.id === folder.id) { const ids = withoutCal(f.calendarIds); ids.splice(at, 0, cal.id); return { ...f, calendarIds: ids }; }
+      if (from && f.id === from.id) return { ...f, calendarIds: withoutCal(f.calendarIds) };
       return f;
     }),
-    calendars: state.calendars.map((c) => (c.id === cal.id
-      ? { ...c, folderIds: [...without(c.folderIds).filter((id) => !from || id !== from.id), folder.id] }
-      : c)),
+    calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds } : c)),
   });
   try {
-    await api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'POST', body: from ? { at, from: from.id } : { at } });
-    const was = (cal.folderIds || []).includes(folder.id);
+    await inTurn(() => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'POST', body: from ? { at, from: from.id } : { at } }));
     if (!was) toast((from ? 'Moved to ' : 'Added to ') + folder.name, { title: cal.name, undoable: true });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1253,12 +1267,13 @@ export async function fileCalendar(cal, folder, at, from = null) {
 
 // Out of a folder, dragged back to the main list (#187).
 export async function unfileCalendar(cal, folder) {
+  calendarsEdited();
   set({
     folders: state.folders.map((f) => (f.id === folder.id ? { ...f, calendarIds: (f.calendarIds || []).filter((id) => id !== cal.id) } : f)),
     calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds: (c.folderIds || []).filter((id) => id !== folder.id) } : c)),
   });
   try {
-    await api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'DELETE' });
+    await inTurn(() => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'DELETE' }));
     toast('Taken out of ' + folder.name, { title: cal.name, undoable: true });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1268,12 +1283,13 @@ export async function unfileCalendar(cal, folder) {
 
 // A new place in the main calendar list's own order (#187).
 export async function placeCalendarInList(cal, at) {
+  calendarsEdited();
   const ids = state.calendars.map((c) => c.id).filter((id) => id !== cal.id);
   ids.splice(at, 0, cal.id);
   const byId = new Map(state.calendars.map((c) => [c.id, c]));
   set({ calendars: ids.map((id) => byId.get(id)) });
   try {
-    await api('/calendars/' + cal.id + '/position', { method: 'POST', body: { at } });
+    await inTurn(() => api('/calendars/' + cal.id + '/position', { method: 'POST', body: { at } }));
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }

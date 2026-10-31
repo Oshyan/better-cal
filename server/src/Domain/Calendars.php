@@ -675,16 +675,34 @@ final class Calendars
             throw HttpError::notFound('Calendar not found');
         }
         return $this->db->tx(function () use ($userId, $calendarId, $at, $cal): array {
-            $before = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
-            $order = array_values(array_filter(array_map(static fn($c) => (int) $c['id'], $before), static fn(int $c) => $c !== $calendarId));
-            array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
-            foreach ($order as $i => $id) {
-                $this->db->run('UPDATE calendars SET position = ? WHERE id = ?', [$i, $id]);
-            }
-            $after = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
-            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $after], "Moved '" . $cal['name'] . "' in the calendar list");
+            $was = array_search($calendarId, self::listOrder($this->db, $userId), true);
+            $order = self::putInList($this->db, $userId, $calendarId, $at);
+            // Only this calendar's place, for Undo to put back (Undo::PLACE):
+            // the whole list's rows put back the others' later changes too,
+            // and a Google calendar among them left the move log-only.
+            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Moved '" . $cal['name'] . "' in the calendar list", [
+                'before' => [['list' => true, 'at' => $was === false ? null : (int) $was]],
+                'after' => [['list' => true, 'at' => (int) array_search($calendarId, $order, true)]],
+            ]);
             return $order;
         });
+    }
+
+    /** @return list<int> the user's calendars in the list's own order */
+    public static function listOrder(Db $db, int $userId): array
+    {
+        return array_map('intval', array_column($db->all('SELECT id FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]), 'id'));
+    }
+
+    /** @return list<int> the new order, with the calendar at its place */
+    public static function putInList(Db $db, int $userId, int $calendarId, int $at): array
+    {
+        $order = array_values(array_filter(self::listOrder($db, $userId), static fn(int $c) => $c !== $calendarId));
+        array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
+        foreach ($order as $i => $id) {
+            $db->run('UPDATE calendars SET position = ? WHERE id = ? AND user_id = ?', [$i, $id, $userId]);
+        }
+        return $order;
     }
 
     /**

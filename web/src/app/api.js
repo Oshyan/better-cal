@@ -167,9 +167,28 @@ export async function loadConfig() {
 
 // --- calendars -------------------------------------------------------------
 
+// Sidebar edits to calendars and folders (a drag, A to Z), counted, and
+// how many aren't saved yet: a reload asked for before the latest one
+// began, or answered while one is still on its way, holds an older order,
+// and landing put that back on screen (#187 review). The last edit's own
+// reload, after it's saved, brings the list.
+let calendarEdits = 0;
+let calendarsUnsaved = 0;
+export function calendarsEdited() {
+  calendarsUnsaved++;
+  return ++calendarEdits;
+}
+export function calendarsSaved() {
+  calendarsUnsaved = Math.max(0, calendarsUnsaved - 1);
+}
+export function calendarEditsNow() {
+  return calendarEdits;
+}
+
 export async function loadCalendars() {
+  const asked = calendarEdits;
   const data = await api('/calendars');
-  set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+  if (asked === calendarEdits && calendarsUnsaved === 0) set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
   return data;
 }
 

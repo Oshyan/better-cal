@@ -14,9 +14,8 @@
 import { whenText, feedProblem } from '../lib/feedproblem.js';
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
-import { api, loadCalendars } from './api.js';
 import {
-  toggleCalendarVisible, createFolder, deleteFolder,
+  toggleCalendarVisible, setCalendarVisible, createFolder, deleteFolder, renameFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
   peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting, setSidebarOrder,
@@ -47,18 +46,14 @@ import {
 // the solo target keeps the ORIGINAL captured set so "Show all" always returns
 // to the pre-solo state. Applied as real visible-flag PATCHes (silent, batch)
 // so every view and the server agree; folder custom sets are not touched.
+// Each through the same way in as its checkbox (setCalendarVisible): one
+// that fails goes back on its own.
 async function applyVisibilityMap(entries) {
   const want = new Map(entries);
   const changed = state.calendars.filter((c) => want.has(c.id) && c.visible !== want.get(c.id));
   if (changed.length === 0) return;
-  set({ calendars: state.calendars.map((c) => (want.has(c.id) && c.visible !== want.get(c.id) ? { ...c, visible: want.get(c.id) } : c)) });
-  const results = await Promise.allSettled(
-    changed.map((c) => api('/calendars/' + c.id, { method: 'PATCH', body: { visible: want.get(c.id) } })),
-  );
-  if (results.some((r) => r.status === 'rejected')) {
-    toast('Some visibility changes failed to save', { error: true });
-    loadCalendars();
-  }
+  const results = await Promise.allSettled(changed.map((c) => setCalendarVisible(c, want.get(c.id))));
+  if (results.some((r) => r.status === 'rejected')) toast('Some visibility changes failed to save', { error: true });
 }
 
 // Three things can be wrong with a feed and they want different reactions:
@@ -344,12 +339,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps, solo
     const name = renameTo.trim();
     setOptions(false);
     if (!name || name === folder.name) return;
-    try {
-      await api('/folders/' + folder.id, { method: 'PATCH', body: { name } });
-      await loadCalendars();
-    } catch (err) {
-      toast('Rename failed: ' + err.message, { error: true });
-    }
+    await renameFolder(folder, name);
   };
 
   return html`<div class="bc-folder-headwrap">

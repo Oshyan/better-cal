@@ -1545,6 +1545,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     checkEq('migration 048: adds the provenance columns, skipping a table this database lacks',
         'added events.location_source, events.location_provider, events.location_placed_at', $m48($adb));
     checkEq('migration 048: runs again harmlessly', 'location provenance already present', $m48($adb));
+    (require dirname(__DIR__) . '/migrations/056_mutation_touches.php')($adb);
     $undoA = new BetterCal\Domain\Undo($adb);
     $labelsA = new BetterCal\Domain\Labels($adb);
     $eventsA = new BetterCal\Domain\Events(
@@ -1852,6 +1853,13 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             [(int) ($snapRow($allEntries[0]['before_json'], $daily)['calendar_id'] ?? 0), (int) ($snapRow($allEntries[0]['before_json'], $edited)['calendar_id'] ?? 0), $snapRow($allEntries[0]['before_json'], $edited)['title'] ?? null],
             [(int) ($snapRow($allEntries[0]['after_json'], $daily)['calendar_id'] ?? 0), (int) ($snapRow($allEntries[0]['after_json'], $edited)['calendar_id'] ?? 0), $snapRow($allEntries[0]['after_json'], $edited)['title'] ?? null],
         ]);
+        $combined = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+        $eventsA->patch(1, $edited, ['title' => 'Later edit of that date']);
+        $caught = null;
+        try { $undoA->undoById(1, $combined); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+        checkEq('edited date moved with the whole series: a later edit of that date makes the move\'s undo stale', ['stale_undo', 'Later edit of that date'],
+            [$caught ? $caught->errorCode : null, $adb->scalar('SELECT title FROM events WHERE id = ?', [$edited])]);
+        $eventsA->patch(1, $edited, ['title' => 'Edited date, renamed']);
         checkEq('edited date moved with the whole series: the series and the date move, nothing splits off', [13, 13, 'Edited date, renamed', null, 0], [
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$daily]),
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited]),
@@ -1862,13 +1870,23 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $edited2 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 2', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $eventsA->patch(1, $edited2, ['scope' => 'this', 'instanceStart' => '2026-12-11T18:00:00+00:00', 'title' => 'Second edited date', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
         $edited2Date = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$edited2]);
-        // As the editor sends it: the date's details, with the title changed.
-        $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following', 'title' => 'Second edited, renamed', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
-        $later = $adb->one("SELECT calendar_id, title, start_utc FROM events WHERE calendar_id = 13 AND rrule IS NOT NULL AND deleted_at IS NULL AND title LIKE 'Second edited%'");
-        checkEq('edited date moved with "this and following": the later part moves and takes that date\'s time and the new title, nothing on its own', [10, 0, ['calendar_id' => 13, 'title' => 'Second edited, renamed', 'start_utc' => '2026-12-11 20:00:00']], [
+        // This and following isn't offered from a date edited on its own
+        // (#188): refused, and nothing changes.
+        $caught = null;
+        try {
+            $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following', 'title' => 'Second edited, renamed', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
+        } catch (BetterCal\Http\HttpError $e) {
+            $caught = $e;
+        }
+        checkEq('edited date moved with "this and following": refused, and the series and the date stay as they were', ['scope_unavailable', 10, 10, 'Second edited date'], [
+            $caught ? $caught->errorCode : null,
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2]),
-            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Second edited%' AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL"),
-            $later === null ? null : ['calendar_id' => (int) $later['calendar_id'], 'title' => $later['title'], 'start_utc' => $later['start_utc']],
+            (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2Date]),
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$edited2Date]),
+        ]);
+        checkEq('an edited date says so in its record; a plain date of the series has no such mark', [true, null], [
+            $eventsA->serializeSingle($eventsA->get(1, $edited2Date))['isException'] ?? null,
+            $eventsA->serializeSingle($eventsA->get(1, $edited2))['isException'] ?? null,
         ]);
         $edited3 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 3', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $eventsA->patch(1, $edited3, ['scope' => 'this', 'instanceStart' => '2026-12-12T18:00:00+00:00', 'title' => 'Third edited date']);
@@ -9120,6 +9138,20 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('phase 13: a token PATCH preserves access to its own supplied source address',
         $agentSource,
         $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
+    // What a change touched (Undo::touchesOf): rows that changed, not rows
+    // carried along; a calendar's place in the list as its own touch.
+    checkEq('touches: a rename touches the calendar, not the folders it is in', ['calendars:5'], BetterCal\Domain\Undo::touchesOf(
+        ['calendars' => [['id' => 5, 'name' => 'A', 'position' => 1, 'updated_at' => 'x']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]],
+        ['calendars' => [['id' => 5, 'name' => 'B', 'position' => 1, 'updated_at' => 'y']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]]
+    ));
+    checkEq('touches: filing in a folder, and a new place in the list', ['calendars:5', 'calendar_position:5', 'calendar_folders:5|4'], BetterCal\Domain\Undo::touchesOf(
+        ['calendars' => [['id' => 5, 'position' => 1]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3]]],
+        ['calendars' => [['id' => 5, 'position' => 2]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3], ['calendar_id' => 5, 'folder_id' => 4]]]
+    ));
+    checkEq('touches: only updated_at changed is no change', [], BetterCal\Domain\Undo::touchesOf(
+        ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'a']]], ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'b']]]
+    ));
+
     // The folder order migration: each folder starts in the order it showed.
     $mdb055 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $mdb055->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, position INTEGER)');
@@ -9138,6 +9170,11 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     // Folders keep their own order, or list A to Z (#187).
     $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (10, 1, 'Alpha', 0), (11, 1, 'Beta', 1), (12, 2, 'Someone else', 0)");
     $cdb->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 10, 0), (2, 10, 1)');
+    // What each change touched (migration 056), for undo's staleness check.
+    $m056 = require __DIR__ . '/../migrations/056_mutation_touches.php';
+    $m056($cdb);
+    $m056($cdb);
+    check('migration 056: adds the table, and runs again harmlessly', $cdb->scalar("SELECT name FROM sqlite_master WHERE name = 'mutation_touches'") !== null);
     $folderDomain = new BetterCal\Domain\Folders($cdb, new BetterCal\Domain\Undo($cdb));
     $folderOrder = static fn() => array_column(array_map(static fn($f) => ['k' => $f['id'], 'v' => $f['calendarIds']], $calendarDomain->listAll(1)['folders']), 'v', 'k');
     checkEq('folders: listed with their calendars in their own order, manual unless set', [[10 => [1, 2], 11 => []], ['manual', 'manual']],
@@ -9179,6 +9216,17 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('folders: a move filed again from its settings since is stale, and nothing changes', ['stale_undo', [10 => [2, 1], 11 => [1]]],
         [$caught ? $caught->errorCode : null, $folderOrder()]);
     $calendarDomain->patch(1, 1, ['folderIds' => [11]]);
+    // The same for a Google calendar, whose entries keep no snapshots.
+    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
+    $folderDomain->place(1, 10, 1, 0, 11);
+    $googleMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $calendarDomain->patch(1, 1, ['folderIds' => [10, 11]]);
+    $caught = null;
+    try { $placeUndo->undoById(1, $googleMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    checkEq('folders: a Google calendar filed again from its settings since: stale too, and nothing changes', ['stale_undo', [10 => [1, 2], 11 => [1]]],
+        [$caught ? $caught->errorCode : null, $folderOrder()]);
+    $calendarDomain->patch(1, 1, ['folderIds' => [11]]);
+    $cdb->run("UPDATE calendars SET provider = 'ics' WHERE id = 1");
     $folderDomain->place(1, 10, 1, 0, 11);
     $renamedMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
     $calendarDomain->patch(1, 1, ['name' => 'Owner feed, renamed again']);

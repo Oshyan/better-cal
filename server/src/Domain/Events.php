@@ -1395,12 +1395,11 @@ final class Events
                 // (#187 review).
                 $whole = (string) ($in['scope'] ?? '');
                 $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
-                // This and following: the series splits here, and the new
-                // part takes this date's details and the rest of the edit,
-                // as from any other date (#187 review).
+                // This and following isn't offered from a date edited on its
+                // own: the split drops later edited dates and the date's own
+                // details along with them (#188). This one, or all.
                 if ($whole === 'following') {
-                    $this->patch($userId, (int) $event['recurrence_parent_id'], ['instanceStart' => $instance] + $in, $authority);
-                    return;
+                    throw HttpError::badRequest('A date edited on its own moves on its own or with all events, not with the following ones', 'scope_unavailable');
                 }
                 // All events: the series moves, edits and all, and the rest
                 // of the edit stays this date's (applied to the whole series
@@ -2382,6 +2381,9 @@ final class Events
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
+            // A date of a series edited on its own (its own event); sent
+            // only when so, like hasReminders, as lists drop nulls.
+            'isException' => !empty($row['recurrence_parent_id']) ? true : null,
             'rrule' => $rrule,
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],

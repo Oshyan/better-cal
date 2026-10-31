@@ -13,7 +13,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - **Drag a calendar** onto another folder to move it there, or hold Option (Alt) to add it there as well. Drag it to the main list to take it out of its folder.
   - **A–Z** on a folder or the main list sorts it by name; otherwise drag calendars into the order you like. Each folder keeps its own order.
 
-Operators: one database change (each folder's order of calendars), applied automatically by `update.php` or the database update page.
+Operators: two database changes (each folder's order of calendars, and what each change touched, for undo), applied automatically by `update.php` or the database update page.
 
 ## 1.4.4 (2026-10-31)
 

@@ -89,7 +89,7 @@ final class Folders
             $summary = $was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
                 : ($source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
                 : "Added '" . $name . "' to folder '" . $folder['name'] . "'");
-            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], $summary, ['before' => $before, 'after' => self::places($this->db, $calendarId, $ids)]);
+            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], $summary, ['before' => $before, 'after' => self::places($this->db, $calendarId, $ids)], [], self::touches($calendarId, $ids));
             return ['calendarIds' => self::order($this->db, $id)];
         });
     }
@@ -102,7 +102,7 @@ final class Folders
         $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId): void {
             $before = self::places($this->db, $calendarId, [$id]);
             self::putAt($this->db, $id, $calendarId, null);
-            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'", ['before' => $before, 'after' => self::places($this->db, $calendarId, [$id])]);
+            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'", ['before' => $before, 'after' => self::places($this->db, $calendarId, [$id])], [], self::touches($calendarId, [$id]));
         });
     }
 
@@ -120,6 +120,18 @@ final class Folders
             $i = array_search($calendarId, self::order($db, $f), true);
             return ['folder' => $f, 'at' => $i === false ? null : (int) $i];
         }, $folderIds);
+    }
+
+    /**
+     * What a placement touched, for Undo's staleness check: the calendar's
+     * filing in each folder, keyed as the settings' own filing changes are.
+     *
+     * @param list<int> $folderIds
+     * @return list<string>
+     */
+    public static function touches(int $calendarId, array $folderIds): array
+    {
+        return array_map(static fn(int $f) => 'calendar_folders:' . $calendarId . '|' . $f, $folderIds);
     }
 
     /** Put a calendar at a place in a folder's own order, or out of it (null). */

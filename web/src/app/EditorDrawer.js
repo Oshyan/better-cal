@@ -819,7 +819,8 @@ export function EditorDrawer() {
     upd({ calendarId: v });
     if (!occ || !occ.recurring) return;
     const moved = Number(v) !== occ.calendarId;
-    if (moved && scope === 'this') {
+    // A date edited on its own can't move with the following ones (#188).
+    if (moved && (scope === 'this' || (scope === 'following' && occ.isException))) {
       setScope('all');
       autoScope.current = true;
       setNlFlash(new Set(['scope']));
@@ -1096,7 +1097,7 @@ export function EditorDrawer() {
         ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>
           <select value=${scope} onChange=${(e) => { setScope(e.target.value); autoScope.current = false; }} aria-label="Apply to">
             <option value="this">This event only</option>
-            <option value="following">This and following</option>
+            ${!(occ.isException && Number(form.calendarId) !== occ.calendarId) && html`<option value="following">This and following</option>`}
             <option value="all">All events in series</option>
           </select>
         </div>`}

@@ -683,7 +683,7 @@ final class Calendars
             $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Moved '" . $cal['name'] . "' in the calendar list", [
                 'before' => [['list' => true, 'at' => $was === false ? null : (int) $was]],
                 'after' => [['list' => true, 'at' => (int) array_search($calendarId, $order, true)]],
-            ]);
+            ], [], ['calendar_position:' . $calendarId]);
             return $order;
         });
     }

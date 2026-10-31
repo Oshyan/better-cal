@@ -2371,8 +2371,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   const savedWindow = globalThis.window;
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
-  const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar } = await import('../src/app/actions.js');
-  const { loadCalendars } = await import('../src/app/api.js');
+  const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar, toggleCalendarVisible } = await import('../src/app/actions.js');
+  const { loadCalendars, calendarsOwed } = await import('../src/app/api.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -2381,18 +2381,19 @@ console.log('--- chronological ordering across timezone offsets ---');
   let server;
   const reset = () => {
     holds = [];
-    server = { list: [1, 2, 3], names: {}, folders: { 1: { sort: 'manual', ids: [1] }, 2: { sort: 'manual', ids: [] } } };
+    server = { list: [1, 2, 3], names: {}, hidden: {}, folders: { 1: { sort: 'manual', ids: [1] }, 2: { sort: 'manual', ids: [] } } };
     put({
-      calendars: server.list.map((id) => ({ id, name: 'Sample ' + id, folderIds: id === 1 ? [1] : [] })),
+      calendars: server.list.map((id) => ({ id, name: 'Sample ' + id, visible: true, folderIds: id === 1 ? [1] : [] })),
       folders: [{ id: 1, name: 'One', sort: 'manual', calendarIds: [1] }, { id: 2, name: 'Two', sort: 'manual', calendarIds: [] }],
     });
   };
   const listed = () => json({
-    calendars: server.list.map((id) => ({ id, name: server.names[id] || 'Sample ' + id, folderIds: Object.keys(server.folders).map(Number).filter((f) => server.folders[f].ids.includes(id)) })),
+    calendars: server.list.map((id) => ({ id, name: server.names[id] || 'Sample ' + id, visible: server.hidden[id] ? false : true, folderIds: Object.keys(server.folders).map(Number).filter((f) => server.folders[f].ids.includes(id)) })),
     folders: Object.keys(server.folders).map(Number).map((f) => ({ id: f, name: 'F' + f, sort: server.folders[f].sort, calendarIds: [...server.folders[f].ids] })),
     tags: [],
   });
   let holds = []; // [{match, promise, fail}], each used once
+  let failReads = 0; // the next reloads of the list that fail
   const holdNext = (match, fail = false) => { let release; holds.push({ match, fail, promise: new Promise((r) => { release = r; }) }); return () => release(); };
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
@@ -2411,7 +2412,12 @@ console.log('--- chronological ordering across timezone offsets ---');
     if ((m = u.pathname.match(/\/calendars\/(\d+)\/position$/))) { const id = Number(m[1]); server.list = server.list.filter((x) => x !== id); server.list.splice(body.at, 0, id); return json({ calendarIds: server.list }); }
     if ((m = u.pathname.match(/\/folders\/(\d+)\/calendars\/(\d+)$/))) { const f = server.folders[m[1]]; const id = Number(m[2]); f.ids = f.ids.filter((x) => x !== id); f.ids.splice(body.at, 0, id); return json({ calendarIds: f.ids }); }
     if ((m = u.pathname.match(/\/folders\/(\d+)$/)) && method === 'PATCH') { server.folders[m[1]].sort = body.sort; return json({ id: Number(m[1]), sort: body.sort }); }
-    if ((m = u.pathname.match(/\/calendars\/(\d+)$/)) && method === 'PATCH') { if (body.name) server.names[m[1]] = body.name; return json({ id: Number(m[1]), name: server.names[m[1]] }); }
+    if ((m = u.pathname.match(/\/calendars\/(\d+)$/)) && method === 'PATCH') {
+      if (body.name) server.names[m[1]] = body.name;
+      if ('visible' in body) server.hidden[m[1]] = !body.visible;
+      return json({ id: Number(m[1]), name: server.names[m[1]] || 'Sample ' + m[1], visible: !server.hidden[m[1]] });
+    }
+    if (u.pathname.endsWith('/calendars') && method === 'GET' && failReads > 0) { failReads--; return json({ error: { code: 'server', message: 'Down for a moment' } }, 500); }
     if (u.pathname.endsWith('/calendars') && method === 'GET') return listed();
     return json({});
   };
@@ -2489,6 +2495,36 @@ console.log('--- chronological ordering across timezone offsets ---');
   await old;
   await tick(10);
   eq("sidebar: a reload asked for before a rename doesn't put the old name back", st.calendars[0].name, 'Renamed sample');
+
+  // A checkbox clicked while an older reload is still out: the reload,
+  // answered after, doesn't tick it back (#187 review).
+  reset();
+  const releaseOldRead = holdNext((u, m) => m === 'GET' && u.pathname.endsWith('/calendars'));
+  const oldRead = loadCalendars();
+  await tick();
+  await toggleCalendarVisible(st.calendars[1]);
+  await tick(10);
+  releaseOldRead();
+  await oldRead;
+  await tick(10);
+  eq("sidebar: a reload asked for before a checkbox click doesn't undo it", [st.calendars[1].visible, server.hidden[2]], [false, true]);
+
+  // A failed A to Z whose reload fails too (an outage): the folder shows
+  // its own order again at once, and the list is owed a reload until one
+  // lands (the change check asks).
+  reset();
+  await tick(10);
+  const failSortSave = holdNext((u, m) => m === 'PATCH', true);
+  failReads = 1;
+  const sorting = setFolderSort(st.folders[0], 'az');
+  await tick();
+  eq('sidebar: A to Z shows at once', st.folders[0].sort, 'az');
+  failSortSave();
+  await sorting;
+  await tick(10);
+  eq('sidebar: a failed A to Z goes back, with its reload failing too, and a reload is owed', [st.folders[0].sort, calendarsOwed()], ['manual', true]);
+  await loadCalendars();
+  eq('sidebar: a reload that lands settles what was owed', calendarsOwed(), false);
 
   globalThis.fetch = realFetch;
   put(saved);

@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, calendarsEdited, calendarsSaved } from './api.js';
+import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -1159,24 +1159,30 @@ export async function saveSetting(key, value) {
 
 // --- calendar mutations -------------------------------------------------------
 
+// A calendar's checkbox (and Only, and a folder's All or None): shown at
+// once, and back as it was if the save fails (writeCalendars).
+export function setCalendarVisible(cal, visible) {
+  const put = (v) => set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, visible: v } : c)) });
+  return writeCalendars({
+    key: 'calendar:' + cal.id + ':visible',
+    show: () => put(visible),
+    send: () => api('/calendars/' + cal.id, { method: 'PATCH', body: { visible } }),
+    revert: () => put(!visible),
+  });
+}
+
 export async function toggleCalendarVisible(cal) {
-  const calendars = state.calendars.map((c) => (c.id === cal.id ? { ...c, visible: !c.visible } : c));
-  set({ calendars });
   noteFolderCustomToggle(cal);
   try {
-    await api('/calendars/' + cal.id, { method: 'PATCH', body: { visible: !cal.visible } });
+    await setCalendarVisible(cal, !cal.visible);
   } catch (e) {
-    set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, visible: cal.visible } : c)) });
     toast('Failed: ' + e.message, { error: true });
   }
 }
 
 export async function updateCalendar(cal, fields) {
-  // A write to the calendars like a sidebar edit (calendarsEdited): a
-  // reload asked for before it doesn't put its old name back.
-  calendarsEdited();
   try {
-    const updated = await api('/calendars/' + cal.id, { method: 'PATCH', body: fields }).finally(calendarsSaved);
+    const updated = await writeCalendars({ send: () => api('/calendars/' + cal.id, { method: 'PATCH', body: fields }) });
     set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...updated } : c)) });
     toast('Calendar updated', { duration: 2500 });
     // What a calendar is comes with each of its events (a context event
@@ -1218,47 +1224,43 @@ export async function deleteCalendar(cal) {
 
 // --- folders ------------------------------------------------------------------
 
-// Sidebar edits go to the server one at a time, in the order made: two
-// drags in quick succession could arrive the other way round (#187 review).
-let sidebarTurn = Promise.resolve();
-function inTurn(write) {
-  const run = sidebarTurn.then(write, write).finally(calendarsSaved);
-  sidebarTurn = run.catch(() => {});
-  return run;
-}
-
-// A folder's order (#187): 'az' (A to Z) or 'manual' (your own). Shown at
-// once; one that fails is put right by the reload after the last save.
+// A folder's order (#187): 'az' (A to Z) or 'manual' (your own).
 export async function setFolderSort(folder, sort) {
-  calendarsEdited();
-  set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort } : f)) });
+  const was = folder.sort;
+  const put = (v) => set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort: v } : f)) });
   try {
-    await inTurn(() => api('/folders/' + folder.id, { method: 'PATCH', body: { sort } }));
+    await writeCalendars({
+      key: 'folder:' + folder.id + ':sort',
+      show: () => put(sort),
+      send: () => api('/folders/' + folder.id, { method: 'PATCH', body: { sort } }),
+      revert: () => put(was),
+    });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
 }
 
 // A calendar dragged into a folder, at a place in its own order, and out
-// of folder `from` when given (#187). Shown at once, then as saved.
+// of folder `from` when given (#187). Shown at once; one that fails is
+// put right by the reload after the last write.
 export async function fileCalendar(cal, folder, at, from = null) {
   const was = (cal.folderIds || []).includes(folder.id);
-  calendarsEdited();
   const withoutCal = (ids) => (ids || []).filter((id) => id !== cal.id);
   // Folder ids for the calendar, calendar ids for the folders: the two
-  // are numbered apart, and filtering one by the other dropped a folder
-  // whose id matched the calendar's (#187 review).
+  // are numbered apart.
   const folderIds = [...new Set([...(cal.folderIds || []).filter((id) => !from || id !== from.id), folder.id])];
-  set({
-    folders: state.folders.map((f) => {
-      if (f.id === folder.id) { const ids = withoutCal(f.calendarIds); ids.splice(at, 0, cal.id); return { ...f, calendarIds: ids }; }
-      if (from && f.id === from.id) return { ...f, calendarIds: withoutCal(f.calendarIds) };
-      return f;
-    }),
-    calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds } : c)),
-  });
   try {
-    await inTurn(() => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'POST', body: from ? { at, from: from.id } : { at } }));
+    await writeCalendars({
+      show: () => set({
+        folders: state.folders.map((f) => {
+          if (f.id === folder.id) { const ids = withoutCal(f.calendarIds); ids.splice(at, 0, cal.id); return { ...f, calendarIds: ids }; }
+          if (from && f.id === from.id) return { ...f, calendarIds: withoutCal(f.calendarIds) };
+          return f;
+        }),
+        calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds } : c)),
+      }),
+      send: () => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'POST', body: from ? { at, from: from.id } : { at } }),
+    });
     if (!was) toast((from ? 'Moved to ' : 'Added to ') + folder.name, { title: cal.name, undoable: true });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1267,13 +1269,14 @@ export async function fileCalendar(cal, folder, at, from = null) {
 
 // Out of a folder, dragged back to the main list (#187).
 export async function unfileCalendar(cal, folder) {
-  calendarsEdited();
-  set({
-    folders: state.folders.map((f) => (f.id === folder.id ? { ...f, calendarIds: (f.calendarIds || []).filter((id) => id !== cal.id) } : f)),
-    calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds: (c.folderIds || []).filter((id) => id !== folder.id) } : c)),
-  });
   try {
-    await inTurn(() => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'DELETE' }));
+    await writeCalendars({
+      show: () => set({
+        folders: state.folders.map((f) => (f.id === folder.id ? { ...f, calendarIds: (f.calendarIds || []).filter((id) => id !== cal.id) } : f)),
+        calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds: (c.folderIds || []).filter((id) => id !== folder.id) } : c)),
+      }),
+      send: () => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'DELETE' }),
+    });
     toast('Taken out of ' + folder.name, { title: cal.name, undoable: true });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1282,13 +1285,16 @@ export async function unfileCalendar(cal, folder) {
 
 // A new place in the main calendar list's own order (#187).
 export async function placeCalendarInList(cal, at) {
-  calendarsEdited();
-  const ids = state.calendars.map((c) => c.id).filter((id) => id !== cal.id);
-  ids.splice(at, 0, cal.id);
-  const byId = new Map(state.calendars.map((c) => [c.id, c]));
-  set({ calendars: ids.map((id) => byId.get(id)) });
   try {
-    await inTurn(() => api('/calendars/' + cal.id + '/position', { method: 'POST', body: { at } }));
+    await writeCalendars({
+      show: () => {
+        const ids = state.calendars.map((c) => c.id).filter((id) => id !== cal.id);
+        ids.splice(at, 0, cal.id);
+        const byId = new Map(state.calendars.map((c) => [c.id, c]));
+        set({ calendars: ids.map((id) => byId.get(id)) });
+      },
+      send: () => api('/calendars/' + cal.id + '/position', { method: 'POST', body: { at } }),
+    });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
@@ -1296,9 +1302,8 @@ export async function placeCalendarInList(cal, at) {
 
 export async function createFolder(name) {
   try {
-    await api('/folders', { method: 'POST', body: { name } });
+    await writeCalendars({ send: () => api('/folders', { method: 'POST', body: { name } }) });
     toast('Folder created');
-    await loadCalendars();
     return true;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1307,9 +1312,15 @@ export async function createFolder(name) {
 }
 
 export async function renameFolder(folder, name) {
+  const was = folder.name;
+  const put = (v) => set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, name: v } : f)) });
   try {
-    await api('/folders/' + folder.id, { method: 'PATCH', body: { name } });
-    set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, name } : f)) });
+    await writeCalendars({
+      key: 'folder:' + folder.id + ':name',
+      show: () => put(name),
+      send: () => api('/folders/' + folder.id, { method: 'PATCH', body: { name } }),
+      revert: () => put(was),
+    });
     toast('Folder renamed');
     return true;
   } catch (e) {
@@ -1321,9 +1332,8 @@ export async function renameFolder(folder, name) {
 // Delete only applies to empty folders; the caller checks and explains.
 export async function deleteFolder(folder) {
   try {
-    await api('/folders/' + folder.id, { method: 'DELETE' });
+    await writeCalendars({ send: () => api('/folders/' + folder.id, { method: 'DELETE' }) });
     toast('Folder deleted', { title: folder.name, undoable: true });
-    await loadCalendars();
     return true;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1404,10 +1414,6 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
 
   const changed = cals.filter((c) => c.visible !== wantVisible(c));
-  if (changed.length > 0) {
-    const flip = new Map(changed.map((c) => [c.id, !c.visible]));
-    set({ calendars: state.calendars.map((c) => (flip.has(c.id) ? { ...c, visible: flip.get(c.id) } : c)) });
-  }
   const nextVis = { ...state.folderVisibility, [folderId]: nextEntry };
   // The All group covers calendars that also live in folders, so a change
   // here moves rows those folders' own buttons are reporting on. Carry the
@@ -1422,11 +1428,14 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
   persistFolderVisibility(nextVis);
 
-  // Persist the flag flips; on failure reload to resync rather than tracking
-  // per-calendar rollbacks across a batch.
+  // Each calendar's flag through the same way in as its checkbox: shown
+  // at once, put back on its own if its save fails.
+  let told = false;
   for (const c of changed) {
-    api('/calendars/' + c.id, { method: 'PATCH', body: { visible: !c.visible } })
-      .catch((e) => { toast('Failed: ' + e.message, { error: true }); loadCalendars(); });
+    setCalendarVisible(c, !c.visible).catch((e) => {
+      if (!told) toast('Failed: ' + e.message, { error: true });
+      told = true;
+    });
   }
 }
 

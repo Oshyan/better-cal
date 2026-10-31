@@ -167,28 +167,50 @@ export async function loadConfig() {
 
 // --- calendars -------------------------------------------------------------
 
-// Writes to calendars and folders (a drag, A to Z, a calendar's settings),
-// counted, and how many aren't saved yet. A reload only shows if none was
-// unsaved when it was asked for and none began before it answered: one
-// asked for between writes held an older order, and landing late put it
-// back on screen (#187 review). Once the last write is saved, however it
-// went, the list is asked for again, so the screen ends as saved.
+// Every write to calendars and folders goes through writeCalendars (#187):
+// a drag, A to Z, a checkbox, a calendar's settings, a folder's name.
+// - shown at once (show), then sent, one at a time in the order made;
+// - a failed one puts back what it showed (revert), unless a newer write
+//   to the same thing (key) came since;
+// - a reload of the list only shows if no write was unsaved when it was
+//   asked for and none began before it answered: one asked for between
+//   writes held an older list, and landing late put it back on screen;
+// - once the last write is done, however it went, the list is owed a
+//   reload until one lands (calendarsOwed: the change check asks again).
 let calendarEdits = 0;
 let calendarsUnsaved = 0;
-export function calendarsEdited() {
+let calendarsDirty = false;
+let calendarTurn = Promise.resolve();
+const latestByKey = new Map();
+export function writeCalendars({ key = null, show = null, send, revert = null }) {
+  const edit = ++calendarEdits;
   calendarsUnsaved++;
-  return ++calendarEdits;
+  if (key) latestByKey.set(key, edit);
+  if (show) show();
+  const run = calendarTurn.then(send, send);
+  calendarTurn = run.catch(() => {});
+  return run.catch((err) => {
+    if (revert && (!key || latestByKey.get(key) === edit)) revert();
+    throw err;
+  }).finally(() => {
+    if (key && latestByKey.get(key) === edit) latestByKey.delete(key);
+    calendarsUnsaved--;
+    calendarsDirty = true;
+    if (calendarsUnsaved === 0) loadCalendars().catch(() => {});
+  });
 }
-export function calendarsSaved() {
-  calendarsUnsaved = Math.max(0, calendarsUnsaved - 1);
-  if (calendarsUnsaved === 0) loadCalendars().catch(() => {});
+export function calendarsOwed() {
+  return calendarsDirty;
 }
 
 export async function loadCalendars() {
   const asked = calendarEdits;
   const clean = calendarsUnsaved === 0;
   const data = await api('/calendars');
-  if (clean && asked === calendarEdits && calendarsUnsaved === 0) set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+  if (clean && asked === calendarEdits && calendarsUnsaved === 0) {
+    set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+    calendarsDirty = false;
+  }
   return data;
 }
 

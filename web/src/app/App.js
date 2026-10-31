@@ -6,7 +6,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { adoptSettings } from './settings.js';
-import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges, serialReloads } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges, serialReloads, calendarsOwed } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -297,7 +297,9 @@ export function App() {
               if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
             }));
           }
-          if (due('calendars') || statusMoved) part('calendars', loadCalendars);
+          // Owed a reload after a write whose own one didn't land
+          // (writeCalendars): asked again until one does.
+          if (due('calendars') || statusMoved || calendarsOwed()) part('calendars', loadCalendars);
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.
@@ -701,13 +703,15 @@ export function App() {
   // GCal-style scope chip for direct manipulation of repeating events: every
   // drag that would silently edit "this occurrence" asks which occurrences it
   // means, at the drop point. The editor keeps its own scope select.
-  const promptScopeAt = useCallback((at, cb, occ) => {
+  // A date edited on its own moves to another calendar on its own or with
+  // all events, not with the following ones (#188): onlyThisOrAll.
+  const promptScopeAt = useCallback((at, cb, occ, onlyThisOrAll = false) => {
     set({
       dropChoice: {
         x: at.x, y: at.y, title: occ && googleBacked(occ) ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
         options: [
           { label: 'This event', value: 'this' },
-          { label: 'This + following', value: 'following' },
+          ...(onlyThisOrAll ? [] : [{ label: 'This + following', value: 'following' }]),
           { label: 'All events', value: 'all' },
           { label: 'Cancel', value: null },
         ],
@@ -719,7 +723,7 @@ export function App() {
   const onDropToCalendar = useCallback((occ, calendarId, at) => {
     // Option/Alt: copy onto that calendar instead of moving there.
     if (at && at.copy) { copyEventTo(occ, calendarId, occ.recurring ? 'this' : 'all'); return; }
-    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope)); return; }
+    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope), occ, !!occ.isException); return; }
     moveEventToCalendar(occ, calendarId);
   }, [promptScopeAt]);
 

@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Moving a repeating event to another calendar from the editor moves the series** ([#186](https://github.com/Oshyan/better-cal/issues/186)): Apply to switches to all events and lights up, so you can still pick just this one. It used to split that one date off the series.
+- **A calendar changed to Context moves its events into the day headers at once**, not at the next refresh.
+
 ## 1.4.4 (2026-10-31)
 
 - **A release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185)):** fixes for what an independent review found 😅

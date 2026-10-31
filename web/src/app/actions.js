@@ -1176,6 +1176,10 @@ export async function updateCalendar(cal, fields) {
     const updated = await api('/calendars/' + cal.id, { method: 'PATCH', body: fields });
     set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...updated } : c)) });
     toast('Calendar updated', { duration: 2500 });
+    // What a calendar is comes with each of its events (a context event
+    // moves to the day's header): asked for again now, not at the next
+    // change check up to half a minute on (#186).
+    if ('role' in fields) refreshWindow();
     return updated;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });

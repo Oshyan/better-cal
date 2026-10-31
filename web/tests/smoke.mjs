@@ -2304,6 +2304,39 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
+// --- A calendar's role change reloads the events on screen (#186) ---
+{
+  const hadWindow = 'window' in globalThis;
+  const savedWindow = globalThis.window;
+  if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
+  const realFetch = globalThis.fetch;
+  const { updateCalendar } = await import('../src/app/actions.js');
+  const { loadWindow } = await import('../src/app/api.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  let windows = 0;
+  globalThis.fetch = async (url, o) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/calendars/7') && o && o.method === 'PATCH') return json({ id: 7, role: JSON.parse(o.body).role });
+    if (u.pathname.endsWith('/events')) { windows++; return json({ events: [] }); }
+    return json({});
+  };
+  const savedCals = st.calendars;
+  put({ calendars: [{ id: 7, name: 'Sample', role: 'mine' }], loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  await loadWindow(isoAt(new Date(2034, 2, 1)), isoAt(new Date(2034, 2, 8)));
+  const before = windows;
+  await updateCalendar(st.calendars[0], { role: 'context' });
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  eq('calendar role: the events on screen are asked for again', [windows > before, st.calendars[0].role], [true, 'context']);
+  const asked = windows;
+  await updateCalendar(st.calendars[0], { reminderDefaults: [10] });
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  eq("calendar role: other settings don't reload them", windows, asked);
+  globalThis.fetch = realFetch;
+  put({ calendars: savedCals, loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
+}
+
 // --- Resizing in a repeated hour (#185) ---
 {
   const { wallInstant, dayKeyOf: keyOf } = await import('../src/lib/dates.js');

@@ -191,6 +191,8 @@ export function EditorDrawer() {
   const [form, setForm] = useState(null);
   const [durationLock, setDurationLock] = useState(true);
   const [scope, setScope] = useState('this');
+  // Set to the whole series by a calendar change, not by hand (below).
+  const autoScope = useRef(false);
   // Custom reminder entry (number + unit) revealed by the Custom option.
   const [remCustom, setRemCustom] = useState(null); // {n, unit} | null
 
@@ -486,6 +488,7 @@ export function EditorDrawer() {
       set({ editorDirty: true });
     }
     setScope('this');
+    autoScope.current = false;
     setDurationLock(true);
     setRemCustom(null);
     setNlText((editor.restore && editor.restore.nlText) || editor.nlText || '');
@@ -807,6 +810,26 @@ export function EditorDrawer() {
   const startIdx = Math.min(95, Math.floor(startMins / 15));
   const endIdx = endFromStart ? Math.max(0, Math.min(95, Math.round(endSpan / 15) - 1)) : Math.min(95, Math.floor(endMins / 15));
   const flash = (k) => (nlFlash && nlFlash.has(k) ? ' bc-nl-applied' : '');
+  // A repeating event's calendar belongs to the series: moving it moves the
+  // series unless you pick otherwise under Apply to, which lights up to say
+  // so. Left on This event only, a move split one date off the series onto
+  // the other calendar, with nothing to say it had (#186). Back to its own
+  // calendar, Apply to goes back too, unless you chose it yourself.
+  const pickCalendar = (v) => {
+    upd({ calendarId: v });
+    if (!occ || !occ.recurring) return;
+    const moved = Number(v) !== occ.calendarId;
+    if (moved && scope === 'this') {
+      setScope('all');
+      autoScope.current = true;
+      setNlFlash(new Set(['scope']));
+      clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setNlFlash(null), 1400);
+    } else if (!moved && autoScope.current) {
+      setScope('this');
+      autoScope.current = false;
+    }
+  };
   // The event's length on the lock: days spelled out, shorter spans as the end list says them.
   const lengthText = backwards || isNaN(whenE - whenS) ? ''
     : duration ? duration.exact
@@ -878,7 +901,7 @@ export function EditorDrawer() {
           <${CalendarSelect}
             calendars=${state.calendars.filter((c) => c.editable)}
             value=${form.calendarId}
-            onChange=${(v) => upd({ calendarId: v })}
+            onChange=${pickCalendar}
           />
         </div>
 
@@ -1070,8 +1093,8 @@ export function EditorDrawer() {
           </div>`}
         </div>
 
-        ${occ && occ.recurring && html`${lab('Apply to')}<div class="bc-ed-ctl">
-          <select value=${scope} onChange=${(e) => setScope(e.target.value)} aria-label="Apply to">
+        ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>
+          <select value=${scope} onChange=${(e) => { setScope(e.target.value); autoScope.current = false; }} aria-label="Apply to">
             <option value="this">This event only</option>
             <option value="following">This and following</option>
             <option value="all">All events in series</option>

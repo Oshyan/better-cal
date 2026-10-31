@@ -732,15 +732,18 @@ export function TimeGrid({
   // The day and minute under a point, or null off the timeline: a drag let
   // go over the sidebar, the header or the event panel has nowhere to land.
   // Clamped to the nearest column and minute, it moved the event to a day
-  // that had scrolled past unseen (#183). anyHeight: only the column counts
-  // (the all-day lane sits above the timeline).
+  // that had scrolled past unseen (#183). anyHeight: the all-day lane and
+  // the day headers above the timeline count too, but not past the grid:
+  // let go over the toolbar or below the calendar, an all-day event moved
+  // anyway (#185).
   const pointToSlot = useCallback((pt, anyHeight = false) => {
     const el = scrollRef.current;
     if (!el || days.length === 0) return null;
     const box = (infinite && hscrollRef.current ? hscrollRef.current : el).getBoundingClientRect();
     const vbox = el.getBoundingClientRect();
     if (pt.x < box.left || pt.x > box.right) return null;
-    if (!anyHeight && (pt.y < vbox.top || pt.y > vbox.bottom)) return null;
+    const top = anyHeight && rootRef.current ? rootRef.current.getBoundingClientRect().top : vbox.top;
+    if (pt.y < top || pt.y > vbox.bottom) return null;
     // Under the event panel or the phone sheet is not the calendar (#184).
     if (coveredAt(pt, rootRef.current)) return null;
     // Stack mode: the day is whichever panel's column the pointer is over,
@@ -1077,8 +1080,11 @@ export function TimeGrid({
     const col = ev.currentTarget.closest('.bc-tg-col');
     const partKey = (col && col.dataset.day) || dayKeyOf(edge === 'start' ? s0 : new Date(e0.getTime() - 1));
     const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
+    // Each end on its own clock: across a clock change the minutes between
+    // them aren't the distance on the clock, and the end you didn't touch
+    // moved by an hour (#185).
     const sAbs = absOf(dayKeyOf(s0), minutesOfDay(s0));
-    const eAbs = sAbs + Math.round((e0 - s0) / 60000);
+    const eAbs = absOf(dayKeyOf(e0), minutesOfDay(e0));
     const firstKey = dayKeyOf(s0);
     const lastKey = dayKeyOf(new Date(e0.getTime() - 1));
     let result = null;
@@ -1104,7 +1110,8 @@ export function TimeGrid({
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
         const at = (x) => { const d = Math.floor(x / MINUTES_DAY); return toISOWithOffset(dateAt(keyOfEpochDay(d), x - d * MINUTES_DAY)); };
-        onResizeEvent({ instanceId: occ.instanceId, newStart: at(result.s), newEnd: at(result.e), edge, at: pt });
+        // The end not dragged stays exactly as it was.
+        onResizeEvent({ instanceId: occ.instanceId, newStart: edge === 'start' ? at(result.s) : occ.start, newEnd: edge === 'end' ? at(result.e) : occ.end, edge, at: pt });
       },
       onCancel: () => hidePreview(previewRef),
     });

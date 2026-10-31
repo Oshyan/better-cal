@@ -304,6 +304,19 @@ final class PluginsController
         if ($end <= $start) {
             throw HttpError::badRequest('end must be after start');
         }
-        return Response::json(['plugins' => $this->plugins->rangesForWindow($start, $end)]);
+        // One plugin's next page: after the last range sent, by its start and id.
+        $only = isset($req->query['plugin']) ? (string) $req->query['plugin'] : null;
+        $after = null;
+        if (isset($req->query['afterStart']) || isset($req->query['afterId'])) {
+            try {
+                $after = ['start' => Time::parseIso((string) ($req->query['afterStart'] ?? '')), 'id' => (int) ($req->query['afterId'] ?? 0)];
+            } catch (\InvalidArgumentException $e) {
+                throw HttpError::badRequest('afterStart must be an ISO timestamp');
+            }
+            if ($only === null) {
+                throw HttpError::badRequest('a next page is for one plugin');
+            }
+        }
+        return Response::json(['plugins' => $this->plugins->rangesForWindow($start, $end, $only, $after)]);
     }
 }

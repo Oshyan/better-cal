@@ -308,6 +308,17 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
       const dayEl = document.querySelector(`.bc-view [data-day="${key}"]`);
       return dayEl ? { key, dayEl } : null;
     };
+    // A day cell showing on screen, not just drawn in the virtual list.
+    const onScreen = (el) => {
+      const view = el.closest('.bc-view');
+      const vb = view ? view.getBoundingClientRect() : { top: 0, bottom: innerHeight, left: 0, right: innerWidth };
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.bottom > Math.max(vb.top, 0) && r.top < Math.min(vb.bottom, innerHeight) && r.right > vb.left && r.left < vb.right;
+    };
+    const firstOnScreen = () => {
+      for (const el of document.querySelectorAll('.bc-view [data-day]')) if (onScreen(el)) return el.dataset.day;
+      return null;
+    };
     const STEP = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
     const onKey = (e) => {
       // The month strip's own arrow keys walk its months; fields keep theirs
@@ -318,10 +329,17 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
         e.preventDefault();
         e.stopPropagation();
         const from = kbKey || occurrenceDaySpan(occRef.current).startKey;
-        const next = keyOfEpochDay(epochDayOfKey(from) + STEP[e.key]);
-        const info = keyTarget(next);
+        let info = keyTarget(keyOfEpochDay(epochDayOfKey(from) + STEP[e.key]));
+        // Moved away from that day (a far month, the month strip): start
+        // from the first day on screen instead. The arrows searched days no
+        // longer drawn and did nothing (#185).
+        const fromEl = keyTarget(from);
+        if (!fromEl || !onScreen(fromEl.dayEl)) {
+          const v = firstOnScreen();
+          info = v ? keyTarget(v) : null;
+        }
         if (!info) return;
-        kbKey = next;
+        kbKey = info.key;
         if (ghostRef.current) ghostRef.current.style.display = 'none';
         applyHighlight(info);
         info.dayEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });

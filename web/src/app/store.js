@@ -258,7 +258,13 @@ const RECORD_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'c
 // refetches at once (EventPopover). Stripping them meant a description or the
 // event's own time zone vanished from an open view whenever anything changed
 // on any device, until something happened to refetch it.
+// Bumped whenever fetched records are marked out of date: a record asked
+// for before then may hold what the change replaced (api.js).
+let recordGen = 0;
+export const recordGeneration = () => recordGen;
+
 export function invalidateRecords(eventId = null) {
+  recordGen++;
   if (eventId === null) {
     for (const [id, occ] of state.occ) {
       if (occ.full && !occ.stale) state.occ.set(id, { ...occ, stale: true });
@@ -285,6 +291,7 @@ const OCCURRENCE_CACHE_MAX = 25000;
 // one back to life.
 const editedAt = new Map();
 export function noteEdited(instanceId) { editedAt.set(instanceId, Date.now()); }
+export function editedSince(instanceId, t) { return (editedAt.get(instanceId) || 0) > t; }
 
 // asked: when the request for this answer went out. An occurrence changed
 // here since then (or still waiting on its save) keeps its own copy: a

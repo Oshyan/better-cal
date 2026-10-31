@@ -1580,6 +1580,11 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     // The rest of this block expects the stored invite as it was.
     unset($dismissedInvite['reviewDismissedAt']);
     $adb->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($dismissedInvite), $accepted['eventId']]);
+    // As a Google invitation (always answerable from here), it's listed.
+    $adb->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode(['via' => 'google'] + $dismissedInvite), $accepted['eventId']]);
+    $waiting = $queueA->invitationsAwaitingReply(1, new DateTimeImmutable('2026-11-01T00:00:00Z'));
+    checkEq('review reply: an invitation awaiting a reply says its zone (the MCP server reads it)', 'UTC', $waiting[0]['tzid'] ?? null);
+    $adb->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($dismissedInvite), $accepted['eventId']]);
     checkEq('review new invite accept: creates one event and marks organizer owner-approved', [1, 'owner', 'NEEDS-ACTION', 'mail:imip:review'], [
         (int) $adb->scalar('SELECT COUNT(*) FROM events'),
         $savedInvite['organizerTrust'] ?? null,
@@ -7223,6 +7228,32 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', ?, 'x', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'gone'), ('stations', ?, 'y', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'kept'), ('stations', NULL, 'z', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'plugin-wide')", [$a, $b]);
     $bands = $own->rangesForWindow(new DateTimeImmutable('2030-01-01T00:00:00Z'), new DateTimeImmutable('2030-01-02T00:00:00Z'))['stations']['ranges'];
     checkEq("bands: a deleted calendar's bands stop showing; the rest carry their calendar", [['kept', $b], ['plugin-wide', null]], array_map(static fn($r) => [$r['label'], $r['calendarId']], $bands));
+
+    // Past the cap, paging after the last range by its start and id: ranges
+    // sharing a start, and a long one still overlapping, each come once.
+    $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations'");
+    $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, 'long', '2030-02-01 00:00:00', '2030-02-28 00:00:00', 'long')");
+    for ($i = 0; $i < Plugins::RANGE_RESPONSE_CAP + 1; $i++) {
+        $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, ?, '2030-02-10 06:00:00', '2030-02-10 07:00:00', 'tied')", ['t' . $i]);
+    }
+    $ws = new DateTimeImmutable('2030-02-05T00:00:00Z');
+    $we = new DateTimeImmutable('2030-02-20T00:00:00Z');
+    $got = [];
+    $page = $own->rangesForWindow($ws, $we)['stations'];
+    $pages = 1;
+    while (true) {
+        foreach ($page['ranges'] as $r) {
+            $got[] = $r['id'];
+        }
+        if (!$page['truncated'] || $pages > 5) {
+            break;
+        }
+        $last = end($page['ranges']);
+        $page = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'id' => $last['id']])['stations'];
+        $pages++;
+    }
+    checkEq('bands: paging past the cap brings every range once, ties and long ones included', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, 2], [count($got), count(array_unique($got)), $pages]);
+    checkEq('bands: a next page is for the plugin asked about', ['stations'], array_keys($own->rangesForWindow($ws, $we, 'stations')));
 
     foreach (['stations', 'follower'] as $pid) {
         array_map('unlink', glob($dir . '/' . $pid . '/*'));

@@ -6,7 +6,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { adoptSettings } from './settings.js';
-import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -125,40 +125,6 @@ function pressedDay(occ) {
   if (!key) return undefined;
   const ed = epochDayOfKey(key);
   return ed >= epochDayOfKey(span.startKey) && ed <= epochDayOfKey(span.endKey) ? key : undefined;
-}
-
-// A plugin's ranges in a stretch. The server sends a plugin's earliest
-// ranges up to a cap and says when it stopped short (several tide stations
-// over a few months pass it), so this asks again from the last one it sent,
-// and merges (#183: the later weeks' bands and shading went missing).
-async function fetchPluginRanges(start, end) {
-  const out = {};
-  const seen = {};
-  let from = start;
-  // Up to 40 pages (20,000 ranges a plugin, far past any real stretch);
-  // twelve stopped short with several tide stations over the agenda's
-  // reach (#184). Past that the answer keeps truncated: true.
-  for (let page = 0; page < 40; page++) {
-    const d = await api('/plugins/ranges?' + new URLSearchParams({ start: from, end }));
-    let next = null;
-    for (const [pid, entry] of Object.entries(d.plugins || {})) {
-      if (!out[pid]) { out[pid] = { ...entry, ranges: [] }; seen[pid] = new Set(); }
-      for (const r of entry.ranges || []) {
-        if (seen[pid].has(r.id)) continue;
-        seen[pid].add(r.id);
-        out[pid].ranges.push(r);
-      }
-      out[pid].truncated = !!entry.truncated;
-      const rs = entry.ranges || [];
-      if (entry.truncated && rs.length) {
-        const last = parseISO(rs[rs.length - 1].start).getTime();
-        if (next == null || last < next) next = last;
-      }
-    }
-    if (next == null || next <= parseISO(from).getTime()) break;
-    from = toISOWithOffset(new Date(next));
-  }
-  return out;
 }
 
 export function App() {
@@ -280,6 +246,10 @@ export function App() {
     // without repeating the rest of the change's reloads (#184).
     let windowOwed = false;
     let restOwed = false;
+    // A reload that failed (people, saved views, settings, calendars) is
+    // owed until it lands: the cursor moved on and it was forgotten (#185).
+    const owed = new Set();
+    const part = (name, p) => p.then(() => { owed.delete(name); }, () => { owed.add(name); });
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;
       // Nothing changes under a drag: the next check, after the drop, picks
@@ -311,23 +281,24 @@ export function App() {
             windowOwed = !ok;
           }
           const reload = moved || again;
+          const due = (name) => reload || owed.has(name);
           if (reload) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
-            loadPeople().catch(() => {});
-            loadSavedViews().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
-            // Settings changed on another device, unless this tab is
-            // editing them right now.
-            if (state.route !== 'settings') {
-              api('/settings').then((r) => {
-                const next = r && r.settings;
-                // Most moves aren't settings; adopting identical ones would
-                // only redraw everything that reads them.
-                if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
-              }).catch(() => {});
-            }
           }
-          if (reload || statusMoved) loadCalendars().catch(() => {});
+          if (due('people')) part('people', loadPeople());
+          if (due('views')) part('views', loadSavedViews());
+          // Settings changed on another device, unless this tab is
+          // editing them right now.
+          if (due('settings') && state.route !== 'settings') {
+            part('settings', api('/settings').then((r) => {
+              const next = r && r.settings;
+              // Most moves aren't settings; adopting identical ones would
+              // only redraw everything that reads them.
+              if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
+            }));
+          }
+          if (due('calendars') || statusMoved) part('calendars', loadCalendars());
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.

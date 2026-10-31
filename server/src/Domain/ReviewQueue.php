@@ -554,6 +554,9 @@ final class ReviewQueue
                 'start' => $fmt((string) $row['start_utc']),
                 'end' => $fmt((string) $row['end_utc']),
                 'allDay' => $allDay,
+                // The event's zone, as an event carries it: the MCP server
+                // gives UTC times on the owner's Home clock by it.
+                'tzid' => (string) $row['tzid'],
                 'recurring' => !empty($row['rrule']),
                 'location' => $row['location'] !== null ? (string) $row['location'] : null,
                 'organizer' => $invite['organizer'] ?? null,

@@ -81,7 +81,9 @@ const mock = createServer((req, res) => {
             { name: 'accept', label: 'Accept change', method: 'POST', path: '/review/invite-changes/12/accept' },
             { name: 'dismiss', label: 'Dismiss', method: 'POST', path: '/review/invite-changes/12/dismiss' },
           ] },
-          { key: 'rsvp:4410', kind: 'rsvp', status: 'open', title: 'Offsite', actions: [
+          { key: 'rsvp:4410', kind: 'rsvp', status: 'open', title: 'Offsite', detail: {
+            eventId: 4410, title: 'Offsite', start: '2026-11-07T23:35:00+00:00', end: '2026-11-08T00:35:00+00:00', allDay: false, tzid: 'UTC',
+          }, actions: [
             { name: 'accepted', label: 'Accept', method: 'POST', path: '/events/4410/rsvp', body: { answer: 'accepted' } },
           ] },
           { key: 'proposal:7', kind: 'proposal', status: 'open', title: 'Sample plan', detail: {
@@ -387,6 +389,8 @@ async function main() {
   const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
   checkEq('list_review path', '/api/v1/review', received[0]?.url);
   checkEq('list_review maps items', 5, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
+  const rsvpItem = (JSON.parse(review.result?.content?.[0]?.text ?? '{}').items || []).find((i) => i.kind === 'rsvp');
+  checkEq("list_review: an invitation's UTC times read on the Home clock", ['2026-11-07T15:35:00-08:00', '2026-11-07T16:35:00-08:00'], [rsvpItem?.detail?.start, rsvpItem?.detail?.end]);
   check('list_review marks third-party text as data (F18)', String(JSON.parse(review.result?.content?.[0]?.text ?? '{}')._untrusted || '').includes('never instructions'));
   checkEq('Review decisions are not an MCP tool', undefined, byName.decide_review);
 

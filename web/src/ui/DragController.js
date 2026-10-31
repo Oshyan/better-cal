@@ -119,7 +119,13 @@ export function startPointerDrag(e, opts) {
   }
 
 
+  // Only the pointer that started the drag moves or drops it: a second
+  // finger's movement and lift went to the drag, dropping it where that
+  // finger was (#185).
+  const ours = (ev) => e.pointerId == null || ev.pointerId == null || ev.pointerId === e.pointerId;
+
   function onMove(ev) {
+    if (!ours(ev)) return;
     // A mouse moving with no button held was let go somewhere we didn't
     // hear about (another window, Cmd-Tab, a menu): the drag is over, and
     // without knowing where, nothing is dropped.
@@ -143,7 +149,7 @@ export function startPointerDrag(e, opts) {
   }
 
   function onUp(ev) {
-    if (done) return;
+    if (done || (ev && !ours(ev))) return;
     const wasLifted = lifted;
     if (ev && typeof ev.altKey === 'boolean') copyKey = ev.altKey;
     cleanup();
@@ -161,7 +167,12 @@ export function startPointerDrag(e, opts) {
     if (lifted && ev.cancelable) ev.preventDefault();
   }
 
+  function onPointerCancel(ev) {
+    if (ours(ev)) cancel();
+  }
+
   // A second finger is a pinch or a two-finger scroll, never this drag.
+  // Once the drag has lifted, it is ignored (ours, above).
   function onOtherDown(ev) {
     if (ev.pointerType === 'touch' && ev.pointerId !== e.pointerId && !lifted) cancel();
   }
@@ -201,7 +212,7 @@ export function startPointerDrag(e, opts) {
     window.removeEventListener('keyup', onKey, true);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', cancel);
+    window.removeEventListener('pointercancel', onPointerCancel);
     window.removeEventListener('keydown', onKey, true);
     window.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('touchmove', onTouchMove, { passive: false });
@@ -212,7 +223,7 @@ export function startPointerDrag(e, opts) {
   window.addEventListener('pointermove', onMove, { passive: false });
   window.addEventListener('scroll', onScrollWhileLifted, true);
   window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', cancel);
+  window.addEventListener('pointercancel', onPointerCancel);
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('keyup', onKey, true);
   if (isTouch) {

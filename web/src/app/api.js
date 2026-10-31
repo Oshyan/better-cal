@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, markStale, freshRanges } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, markStale, freshRanges, recordGeneration, editedSince } from './store.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
@@ -258,6 +258,8 @@ let windowReqId = 0;
 // When the latest refresh asked (fetchRange marks older answers stale), and
 // the change cursor just after this tab's own last change (the poll skips it).
 let lastRefreshAsked = 0;
+// The newest window refresh: one it takes over from answers with its result.
+let latestRefresh = null;
 let ownCursor = null;
 export function ownChangeCursor() { return ownCursor; }
 let lastWindow = null;
@@ -327,10 +329,12 @@ async function fetchRange(s, e) {
       markStale(startISO, endISO);
       if (lastWindow) { const w = lastWindow; queueMicrotask(() => loadWindow(w.start, w.end)); }
     }
-    if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
+    const capped = Array.isArray(data.capped) ? data.capped : [];
+    if (capped.length) noteCapped(capped);
     // Whatever asked for it (a trip's stretch, a day, an older view), it
     // may have been what the view's "Loading" waited on.
     settleViewNote();
+    return capped;
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
   } finally {
@@ -530,18 +534,24 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // scrolling sent dozens (#184). A month's request covers the next weeks.
   const narrow = missingRanges(s, e, have);
   const gaps = monthGaps(narrow, have);
-  if (gaps.length === 0) {
-    // Some of it still on its way: wait for it, then ask again for whatever
-    // it didn't bring (a request that failed, or a month the server refused
-    // and that only the other window's days were fetched from). "Loading"
-    // stays meanwhile; it went before the days arrived, or stayed for good
-    // (#184).
+  // Some of it still on its way: wait for it, then ask again for whatever
+  // it didn't bring (a request that failed, or a month the server refused
+  // and that only the other window's days were fetched from). "Loading"
+  // stays meanwhile; it went before the days arrived, or stayed for good
+  // (#184), or went once the view's other months landed (#185).
+  const awaitComing = async () => {
     const coming = inFlight.filter((r) => r.start < e && r.end > s);
-    if (coming.length > 0) {
-      await Promise.all(coming.map((r) => r.done));
-      if (asView && (!lastWindow || lastWindow.start !== startISO || lastWindow.end !== endISO)) return; // the view moved on
-      return loadWindow(startISO, endISO, { asView });
-    }
+    if (coming.length === 0) return false;
+    await Promise.all(coming.map((r) => r.done));
+    if (!(asView && (!lastWindow || lastWindow.start !== startISO || lastWindow.end !== endISO))) await loadWindow(startISO, endISO, { asView });
+    return true; // the view moved on, or asked again
+  };
+  // The days needed within a gap.
+  const neededIn = (gap) => narrow.filter((n) => n.start < gap.end && n.end > gap.start)
+    .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
+  const onlyNeeded = (gap, parts) => parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end;
+  if (gaps.length === 0) {
+    if (await awaitComing()) return;
     // Nothing missing: already held (perhaps by a later, wider window).
     // Either way this window no longer counts as failed.
     windowLoaded(startISO, endISO);
@@ -555,19 +565,32 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // view request cannot create an unbounded burst of simultaneous responses.
   try {
     for (const gap of gaps) {
+      let capped = [];
       try {
-        await fetchRange(gap.start, gap.end);
+        capped = (await fetchRange(gap.start, gap.end)) || [];
       } catch (err) {
         // Widened to whole months, a gap can hold more than the server will
         // expand at once (a dense stretch): ask for just the days needed.
         if (!err || err.code !== 'event_window_too_large') throw err;
-        const parts = narrow.filter((n) => n.start < gap.end && n.end > gap.start)
-          .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
-        if (parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end) throw err;
+        const parts = neededIn(gap);
+        if (onlyNeeded(gap, parts)) throw err;
         for (const p of parts) await fetchRange(p.start, p.end);
+      }
+      // A series too frequent for the whole months (the server expands up to
+      // 1,000 of one series a request) may fit the days needed, as it did
+      // before requests were widened: an hourly one came back cut off before
+      // the days on screen. Ask for just those days, and leave the rest of
+      // the months to be asked for when they're shown (#185).
+      if (capped.length) {
+        const parts = neededIn(gap);
+        if (!onlyNeeded(gap, parts)) {
+          for (const p of parts) await fetchRange(p.start, p.end);
+          for (const r of missingRanges(gap.start, gap.end, parts)) markStale(iso(r.start), iso(r.end));
+        }
       }
       boundCacheAfterMerge(startISO, endISO);
     }
+    if (await awaitComing()) return;
     windowLoaded(startISO, endISO);
   } catch (err) {
     windowFailed(startISO, endISO, err);
@@ -628,8 +651,18 @@ export function ensureFullOccurrence(instanceId) {
   if (!occ) return Promise.resolve(null);
   if (occ.full && !occ.stale) return Promise.resolve(occ);
   if (detailInFlight.has(instanceId)) return detailInFlight.get(instanceId);
+  const gen = recordGeneration();
+  const asked = Date.now();
   const p = api('/events/' + occ.eventId + '/occurrence')
     .then((d) => {
+      // Asked before records were marked out of date (a change made
+      // elsewhere) or before an edit here, it may hold what they replaced:
+      // marked current, it stayed that way until the next change (#185).
+      // Ask again.
+      if (gen !== recordGeneration() || editedSince(instanceId, asked)) {
+        if (detailInFlight.get(instanceId) === p) detailInFlight.delete(instanceId);
+        return ensureFullOccurrence(instanceId);
+      }
       const rec = (d && d.occurrence) || {};
       const patch = { full: true, stale: false };
       for (const k of DETAIL_FIELDS) if (k in rec) patch[k] = rec[k];
@@ -641,7 +674,7 @@ export function ensureFullOccurrence(instanceId) {
       // full, so the next open tries again.
       return state.occ.get(instanceId) || null;
     })
-    .finally(() => detailInFlight.delete(instanceId));
+    .finally(() => { if (detailInFlight.get(instanceId) === p) detailInFlight.delete(instanceId); });
   detailInFlight.set(instanceId, p);
   return p;
 }
@@ -668,6 +701,9 @@ export async function refreshWindow({ own = true } = {}) {
   markStaleOutside(refreshStart, refreshEnd);
   windowReqId++;
   const id = windowReqId;
+  let settle;
+  const done = new Promise((r) => { settle = r; });
+  latestRefresh = done;
   // In pieces under the server's cap, like any other window (fetchRange).
   const s = new Date(refreshStart).getTime();
   const e = new Date(refreshEnd).getTime();
@@ -678,7 +714,14 @@ export async function refreshWindow({ own = true } = {}) {
     const asked = Date.now();
     try {
       const data = await api('/events?' + params.toString());
-      if (id !== windowReqId) return true; // a newer refresh took over
+      if (id !== windowReqId) {
+        // A newer refresh took over: this answer is dropped, so whether the
+        // window is current is that refresh's to say. Answering true here
+        // let the change poll forget a refresh that then failed (#185).
+        const replaced = await latestRefresh;
+        settle(replaced);
+        return replaced;
+      }
       mergeWindow(iso(a), iso(b), data.events || [], asked);
       boundCacheAfterMerge(refreshStart, refreshEnd);
     } catch (err) {
@@ -689,7 +732,39 @@ export async function refreshWindow({ own = true } = {}) {
   }
   // Only a refresh that landed covers the cursor it read.
   if (own && ok && id === windowReqId) ownCursor = cursor;
+  settle(ok);
   return ok;
+}
+
+// A plugin's ranges in a stretch. The server sends each plugin's earliest
+// ranges up to a cap and says when it stopped short (several tide stations
+// over a few months pass it), so this asks for the rest a page at a time,
+// after the last range sent by its start and id (#183). By start alone,
+// ranges sharing a start, or a long one still overlapping, came back again
+// and paging stopped short (#185). Past 40 pages (20,000 ranges a plugin,
+// far past any real stretch) the plugin keeps truncated: true, and the
+// person is told.
+const truncatedSeen = new Set();
+export async function fetchPluginRanges(start, end) {
+  const first = await api('/plugins/ranges?' + new URLSearchParams({ start, end }));
+  const out = {};
+  for (const [pid, entry] of Object.entries(first.plugins || {})) {
+    out[pid] = { ...entry, ranges: [...(entry.ranges || [])] };
+    let page = entry;
+    for (let n = 1; page.truncated && (page.ranges || []).length > 0 && n < 40; n++) {
+      const last = page.ranges[page.ranges.length - 1];
+      const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid, afterStart: last.start, afterId: String(last.id) }));
+      page = (d.plugins || {})[pid] || { truncated: false, ranges: [] };
+      out[pid].ranges.push(...(page.ranges || []));
+    }
+    out[pid].truncated = !!page.truncated;
+    if (out[pid].truncated && !truncatedSeen.has(pid)) {
+      truncatedSeen.add(pid);
+      const pl = (state.plugins || []).find((p) => p.id === pid);
+      toast(`${(pl && pl.name) || 'A plugin'} has more bands here than can be shown; some are missing.`, { duration: 10000 });
+    }
+  }
+  return out;
 }
 
 // --- search ----------------------------------------------------------------

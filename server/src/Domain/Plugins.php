@@ -1755,20 +1755,39 @@ final class Plugins
 
     // ---- read paths (request handlers; no plugin code) ------------------
 
-    /** Overlay ranges for a window: one indexed query, capped per plugin. */
-    public function rangesForWindow(\DateTimeImmutable $start, \DateTimeImmutable $end): array
+    /**
+     * Overlay ranges for a window: one indexed query, capped per plugin.
+     * Past the cap, the caller asks for one plugin's next page after the last
+     * range it got ($after: its start and id). Ordered by start and id, so
+     * ranges sharing a start, or a long one still overlapping, are neither
+     * sent twice nor skipped: paging by start alone stopped short.
+     *
+     * @param array{start:\DateTimeImmutable,id:int}|null $after
+     */
+    public function rangesForWindow(\DateTimeImmutable $start, \DateTimeImmutable $end, ?string $only = null, ?array $after = null): array
     {
         $enabled = array_map(static fn($r) => (string) $r['id'], $this->db->all('SELECT id FROM plugins WHERE enabled = 1'));
+        if ($only !== null) {
+            $enabled = array_values(array_filter($enabled, static fn($id) => $id === $only));
+        }
         $out = [];
         foreach ($enabled as $id) {
             // A band tied to a calendar goes with it: a deleted calendar's
             // bands stop showing (and return if the delete is undone).
+            $params = [$id, Time::toDb($end), Time::toDb($start)];
+            $page = '';
+            if ($after !== null) {
+                $page = ' AND (r.start_utc > ? OR (r.start_utc = ? AND r.id > ?))';
+                $params[] = Time::toDb($after['start']);
+                $params[] = Time::toDb($after['start']);
+                $params[] = $after['id'];
+            }
             $rows = $this->db->all(
                 'SELECT r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
                  LEFT JOIN calendars c ON c.id = r.calendar_id
-                 WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)
-                 ORDER BY r.start_utc LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
-                [$id, Time::toDb($end), Time::toDb($start)]
+                 WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)' . $page . '
+                 ORDER BY r.start_utc, r.id LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
+                $params
             );
             $truncated = count($rows) > self::RANGE_RESPONSE_CAP;
             if ($truncated) {

@@ -2048,6 +2048,153 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = realFetch;
 }
 
+// --- Event windows and records: the second release review (#185) ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow, refreshWindow, ensureFullOccurrence, fetchPluginRanges } = await import('../src/app/api.js');
+  const { state: st, set: put, invalidateRecords } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const DAY = 86400000;
+  const at = (y, m, d, h = 0) => isoAt(new Date(y, m - 1, d, h));
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const ev = (id, startISO, endISO) => ({ instanceId: 'r' + id, eventId: id, calendarId: 1, title: 'Sample ' + id, start: startISO, end: endISO, allDay: false });
+  let handler = null;
+  globalThis.fetch = async (url) => handler(new URL(String(url), 'http://app.test'));
+  const range = (u) => [Date.parse(u.searchParams.get('start')), Date.parse(u.searchParams.get('end'))];
+
+  // A series that fits the days asked for but not the whole months around
+  // them (an hourly one): the widened answer comes back capped, before the
+  // days on screen. They're asked for on their own, and what the months
+  // held beyond them isn't counted as loaded.
+  const target = Date.parse(at(2029, 6, 15, 10));
+  handler = async (u) => {
+    const [s, e] = range(u);
+    if (e - s > 40 * DAY) return json({ events: [], capped: [77] });
+    return json({ events: s <= target && target < e ? [ev(77, at(2029, 6, 15, 10), at(2029, 6, 15, 11))] : [] });
+  };
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  await loadWindow(at(2029, 5, 19), at(2029, 6, 23));
+  assert('capped: a series cut off over whole months still shows on the days asked for', st.occ.has('r77'));
+  assert('capped: the rest of those months is asked for again when shown', !st.loadedRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))) || st.staleRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))));
+
+  // "Loading" stays while part of the view's days are in an older request
+  // still on its way, even after the view's other months land.
+  const holds = new Map(); // month start -> {promise, release}
+  const hold = (y, m) => { let release; const promise = new Promise((r) => { release = r; }); holds.set(Date.parse(at(y, m, 1)), { promise, release }); return release; };
+  handler = async (u) => {
+    const [s] = range(u);
+    const h = holds.get(s);
+    if (h) await h.promise;
+    return json({ events: [] });
+  };
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2030-05-28', end: '2030-06-05' } });
+  const releaseMay = hold(2030, 5);
+  const older = loadWindow(at(2030, 5, 10), at(2030, 5, 13)); // May on its way
+  await tick();
+  const view = loadWindow(at(2030, 5, 28), at(2030, 6, 6)); // needs June too
+  for (let i = 0; i < 5; i++) await tick();
+  eq('loading: the note stays while May is still on its way, June landed', st.windowStatus && st.windowStatus.kind, 'loading');
+  releaseMay();
+  await older;
+  await view;
+  eq('loading: and goes once May lands', st.windowStatus, null);
+
+  // A refresh taken over by a newer one that then fails doesn't answer
+  // true: the change poll must keep the refresh it owes.
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  handler = async () => json({ events: [] });
+  await loadWindow(at(2031, 3, 1), at(2031, 3, 8));
+  let releaseA;
+  const heldA = new Promise((r) => { releaseA = r; });
+  let n = 0;
+  handler = async (u) => {
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c2' });
+    n++;
+    if (n === 1) { await heldA; return json({ events: [] }); }
+    return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+  };
+  const a = refreshWindow({ own: false });
+  await tick();
+  const b = await refreshWindow({ own: true });
+  releaseA();
+  eq('refresh: one taken over answers with what the newer one found', [b, await a], [false, false]);
+
+  // A record asked for before a change elsewhere marked records out of date
+  // isn't taken as current: it's asked for again.
+  st.occ.clear();
+  st.occ.set('d1', { ...ev(91, at(2031, 4, 2, 9), at(2031, 4, 2, 10)), instanceId: 'd1' });
+  let releaseOld;
+  const heldOld = new Promise((r) => { releaseOld = r; });
+  let detailCalls = 0;
+  handler = async () => {
+    detailCalls++;
+    if (detailCalls === 1) { await heldOld; return json({ occurrence: { description: 'Before the change' } }); }
+    return json({ occurrence: { description: 'After the change' } });
+  };
+  const opened = ensureFullOccurrence('d1');
+  await tick();
+  invalidateRecords();
+  releaseOld();
+  await opened;
+  eq('records: an answer from before a change is asked for again', [st.occ.get('d1').description, st.occ.get('d1').stale, detailCalls], ['After the change', false, 2]);
+
+  // Plugin bands past the cap: ranges sharing one start, and a long one
+  // still overlapping, each come once, paged by start and id.
+  const all = [{ id: 1, start: '2031-05-01T00:00:00+00:00', end: '2031-05-30T00:00:00+00:00' }];
+  for (let i = 2; i <= 6; i++) all.push({ id: i, start: '2031-05-10T06:00:00+00:00', end: '2031-05-10T07:00:00+00:00' });
+  const CAP = 2;
+  const order = (x, y) => Date.parse(x.start) - Date.parse(y.start) || x.id - y.id;
+  handler = async (u) => {
+    let rs = [...all].sort(order);
+    const after = u.searchParams.get('afterStart');
+    if (after) {
+      const t = Date.parse(after);
+      const id = Number(u.searchParams.get('afterId'));
+      rs = rs.filter((r) => Date.parse(r.start) > t || (Date.parse(r.start) === t && r.id > id));
+    }
+    return json({ plugins: { tides: { truncated: rs.length > CAP, ranges: rs.slice(0, CAP) } } });
+  };
+  const bands = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
+  eq('bands: paging brings every range once, ties included', [bands.tides.ranges.map((r) => r.id), bands.tides.truncated], [[1, 2, 3, 4, 5, 6], false]);
+
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+// --- Drags: only the pointer that started one moves or drops it (#185) ---
+{
+  const hadWindow = 'window' in globalThis;
+  const hadDocument = 'document' in globalThis;
+  const savedWindow = globalThis.window;
+  const savedDocument = globalThis.document;
+  const win = new EventTarget();
+  win.innerWidth = 1000; win.innerHeight = 800;
+  globalThis.window = win;
+  globalThis.document = { body: { classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }, appendChild() {} }, elementFromPoint: () => null };
+  const realRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.cancelAnimationFrame = () => {};
+  const { startPointerDrag } = await import('../src/ui/DragController.js');
+  const pe = (type, id, x, y) => { const e = new Event(type); Object.assign(e, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, buttons: 1, altKey: false }); return e; };
+  const down = { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100, button: 0, altKey: false, currentTarget: null, target: null, preventDefault() {}, stopPropagation() {} };
+  const drops = [];
+  const moves = [];
+  startPointerDrag(down, { onMove: (pt) => moves.push(pt), onDrop: (pt) => drops.push(pt), onCancel: () => drops.push('cancel') });
+  await new Promise((r) => setTimeout(r, 700)); // the long press lifts it
+  win.dispatchEvent(pe('pointerdown', 2, 400, 400));
+  win.dispatchEvent(pe('pointermove', 2, 420, 420));
+  win.dispatchEvent(pe('pointerup', 2, 420, 420));
+  eq("drag: a second finger doesn't move or drop it", [moves.some((m) => m.x === 420), drops.length], [false, 0]);
+  win.dispatchEvent(pe('pointermove', 1, 150, 150));
+  win.dispatchEvent(pe('pointerup', 1, 150, 150));
+  eq('drag: its own finger still drops it, where that finger is', drops.map((d) => d.x), [150]);
+  if (hadWindow) globalThis.window = savedWindow; else delete globalThis.window;
+  if (hadDocument) globalThis.document = savedDocument; else delete globalThis.document;
+  globalThis.requestAnimationFrame = realRaf;
+}
+
 console.log('--- API offline session transitions ---');
 
 {

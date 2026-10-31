@@ -290,8 +290,12 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
       const v = draft[f.key];
       // A secret is there once stored ({set: true}) or typed.
       const missing = f.required && (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && v.set === false));
+      // Clearing a stored secret saves even when it's required ("Will be
+      // cleared" with Save off, #185): the plugin pauses until a new one is
+      // entered (Plugins::missingRequired).
+      const clearing = f.type === 'secret' && v === null && !!(values[f.key] && values[f.key].set);
       const gated = waiting && !f.required;
-      if (missing) waiting = true;
+      if (missing && !clearing) waiting = true;
       const control = (field) => html`<${Field} field=${field} value=${draft[field.key]} pluginId=${pluginId} placeSources=${placeSources} onChange=${(v) => setDraft({ ...draft, [field.key]: v })} />`;
       return html`
         ${heading && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${heading}</h4>`}

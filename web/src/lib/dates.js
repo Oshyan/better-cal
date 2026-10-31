@@ -117,6 +117,22 @@ export function dateOfDayKey(key) {
   return new Date(y, m - 1, d);
 }
 
+// The instant of a wall time on a day (minutes past midnight). In the hour
+// a clock change repeats, a wall time is two instants and new Date takes
+// the first: given after (ms), the first at or past it; given before, the
+// last at or before it; and if neither fits, after or before itself. A
+// resized end at 01:45 landed before its start at 01:30 in the second
+// 1 o'clock, and the resize was refused (#185).
+export function wallInstant(dayKey, minutes, { after = null, before = null } = {}) {
+  const base = dateOfDayKey(dayKey);
+  const t = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minutes).getTime();
+  const wall = (ms) => { const d = new Date(ms); return dayKeyOf(d) + ' ' + (d.getHours() * 60 + d.getMinutes()); };
+  const all = [t, t + 30 * 60000, t + 60 * 60000].filter((ms) => wall(ms) === wall(t));
+  if (after != null) return all.find((ms) => ms >= after) ?? Math.max(t, after);
+  if (before != null) return [...all].reverse().find((ms) => ms <= before) ?? Math.min(t, before);
+  return t;
+}
+
 // Integer calendar-day count since 1970-01-01 for a day key.
 // Uses UTC arithmetic on the key parts so DST cannot skew the count.
 export function epochDayOfKey(key) {

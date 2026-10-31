@@ -2271,6 +2271,31 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.requestAnimationFrame = realRaf;
 }
 
+// --- Resizing in a repeated hour (#185) ---
+{
+  const { wallInstant, dayKeyOf: keyOf } = await import('../src/lib/dates.js');
+  eq('wall instant: an ordinary time is that time', wallInstant('2026-03-10', 90), new Date(2026, 2, 10, 1, 30).getTime());
+  // The hour this zone's clock change repeats this year, if it has one.
+  let back = null;
+  for (let t = Date.UTC(2026, 0, 1); t < Date.UTC(2027, 0, 1); t += 3600000) {
+    if (new Date(t + 3600000).getTimezoneOffset() > new Date(t).getTimezoneOffset()) { back = t + 3600000; break; }
+  }
+  if (back !== null) {
+    const M = 60000;
+    const d = new Date(back);
+    const key = keyOf(d);
+    const m0 = d.getHours() * 60 + d.getMinutes(); // the repeated hour's first wall minute
+    // Starting in the second pass of that hour, an end dragged up to a
+    // quarter past the start lands after it, not in the first pass.
+    const start = back + 30 * M;
+    eq('wall instant: a shortened end stays after a start in the second pass', wallInstant(key, m0 + 45, { after: start + 15 * M }), back + 45 * M);
+    // Ending in the first pass, a start dragged down lands before it.
+    const end = back - 15 * M;
+    eq('wall instant: a moved start stays before an end in the first pass', wallInstant(key, m0 + 30, { before: end - 15 * M }), back - 30 * M);
+    eq('wall instant: with nothing to stay beside, the first pass', wallInstant(key, m0 + 45), back - 15 * M);
+  }
+}
+
 console.log('--- API offline session transitions ---');
 
 {

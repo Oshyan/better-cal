@@ -19,7 +19,7 @@
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
   parseISO, toISOWithOffset, dayKeyOf, occDayKey, dateOfDayKey, todayKey,
-  fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay,
+  fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay, wallInstant,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isOvernight, isWeekendEpochDay, shiftOccurrenceDays, resizeOccurrenceDays } from './monthmath.js';
@@ -1109,9 +1109,17 @@ export function TimeGrid({
       onDrop: (pt) => {
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
-        const at = (x) => { const d = Math.floor(x / MINUTES_DAY); return toISOWithOffset(dateAt(keyOfEpochDay(d), x - d * MINUTES_DAY)); };
-        // The end not dragged stays exactly as it was.
-        onResizeEvent({ instanceId: occ.instanceId, newStart: edge === 'start' ? at(result.s) : occ.start, newEnd: edge === 'end' ? at(result.e) : occ.end, edge, at: pt });
+        // The end not dragged stays exactly as it was, and the one dragged
+        // lands on the right side of it in a repeated hour (wallInstant).
+        const gap = SNAP_MIN * 60000;
+        const at = (x, near) => { const d = Math.floor(x / MINUTES_DAY); return toISOWithOffset(new Date(wallInstant(keyOfEpochDay(d), x - d * MINUTES_DAY, near))); };
+        onResizeEvent({
+          instanceId: occ.instanceId,
+          newStart: edge === 'start' ? at(result.s, { before: e0.getTime() - gap }) : occ.start,
+          newEnd: edge === 'end' ? at(result.e, { after: s0.getTime() + gap }) : occ.end,
+          edge,
+          at: pt,
+        });
       },
       onCancel: () => hidePreview(previewRef),
     });
@@ -1149,11 +1157,13 @@ export function TimeGrid({
         if (!result || !onResizeEvent) return;
         // The end not dragged stays exactly as it was: rebuilt from the
         // clock, a start in the repeated hour of a clock change moved by an
-        // hour (#185).
+        // hour (#185). The one dragged lands on the right side of it
+        // (wallInstant).
+        const gap = SNAP_MIN * 60000;
         onResizeEvent({
           instanceId: occ.instanceId,
-          newStart: edge === 'start' ? toISOWithOffset(dateAt(dayKey, result.sMin)) : occ.start,
-          newEnd: edge === 'end' ? toISOWithOffset(dateAt(dayKey, result.eMin)) : occ.end,
+          newStart: edge === 'start' ? toISOWithOffset(new Date(wallInstant(dayKey, result.sMin, { before: e0.getTime() - gap }))) : occ.start,
+          newEnd: edge === 'end' ? toISOWithOffset(new Date(wallInstant(dayKey, result.eMin, { after: s0.getTime() + gap }))) : occ.end,
           edge,
           at: pt,
         });

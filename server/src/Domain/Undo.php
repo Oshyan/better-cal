@@ -185,6 +185,127 @@ final class Undo
         return $this->apply($mutation, $authority);
     }
 
+    /**
+     * Whether a calendar's folders or place in the list changed since this
+     * placement by another way than moving it (its settings' folder boxes,
+     * which journal as the calendar): undoing the move would take that
+     * later choice back (#187 review). A rename, or anything else that
+     * leaves where it's filed alone, doesn't count.
+     */
+    private function placeChangedSince(array $mutation): bool
+    {
+        $calendarId = (int) $mutation['entity_id'];
+        $rows = $this->db->all(
+            "SELECT before_json, after_json FROM mutations WHERE user_id = ? AND entity = 'calendar' AND entity_id = ? AND id > ? AND undone = 0",
+            [(int) $mutation['user_id'], $calendarId, (int) $mutation['id']]
+        );
+        $filing = static function (?array $tables) use ($calendarId): array {
+            $folders = [];
+            foreach ($tables['calendar_folders'] ?? [] as $r) {
+                if ((int) ($r['calendar_id'] ?? 0) === $calendarId) {
+                    $folders[] = (int) $r['folder_id'];
+                }
+            }
+            sort($folders);
+            $position = null;
+            foreach ($tables['calendars'] ?? [] as $r) {
+                if ((int) ($r['id'] ?? 0) === $calendarId) {
+                    $position = $r['position'] ?? null;
+                }
+            }
+            return [$folders, $position === null ? null : (int) $position];
+        };
+        foreach ($rows as $r) {
+            $before = self::tables($r['before_json']);
+            $after = self::tables($r['after_json']);
+            if ($filing($before) !== $filing($after)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The newest journal entry's id for this user (0 when none): where a coalesce starts. */
+    public function lastId(int $userId): int
+    {
+        return (int) ($this->db->scalar('SELECT MAX(id) FROM mutations WHERE user_id = ?', [$userId]) ?? 0);
+    }
+
+    /**
+     * Merge the entries written since $sinceId into the first of them, so
+     * one undo puts back what one save did in several steps: each row as
+     * it was before the first step that touched it, and as the last left
+     * it (#187 review). Only entries about these events count, so a job
+     * writing its own meanwhile stays apart. Fewer than two: nothing to do.
+     *
+     * @param list<int> $eventIds
+     */
+    public function coalesce(int $userId, int $sinceId, string $summary, array $eventIds): void
+    {
+        [$in, $params] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
+        $rows = $this->db->all("SELECT * FROM mutations WHERE user_id = ? AND id > ? AND entity = 'event' AND entity_id IN $in ORDER BY id", array_merge([$userId, $sinceId], $params));
+        if (count($rows) < 2) {
+            return;
+        }
+        $before = [];
+        $after = [];
+        $seen = [];
+        $logOnly = false;
+        foreach ($rows as $row) {
+            if ($row['before_json'] === null && $row['after_json'] === null) {
+                $logOnly = true;
+            }
+            $b = self::tables($row['before_json']);
+            $a = self::tables($row['after_json']);
+            foreach (array_unique(array_merge(array_keys($b), array_keys($a))) as $table) {
+                $pk = self::TABLE_PK[$table] ?? ['id'];
+                $key = static fn(array $r): string => implode('|', array_map(static fn($c) => (string) ($r[$c] ?? ''), $pk));
+                $inBefore = [];
+                foreach ($b[$table] ?? [] as $r) {
+                    $inBefore[$key($r)] = $r;
+                }
+                $inAfter = [];
+                foreach ($a[$table] ?? [] as $r) {
+                    $inAfter[$key($r)] = $r;
+                }
+                foreach ($inBefore + $inAfter as $k => $_) {
+                    if (!isset($seen[$table][$k])) {
+                        $seen[$table][$k] = true;
+                        if (isset($inBefore[$k])) {
+                            $before[$table][$k] = $inBefore[$k];
+                        }
+                    }
+                }
+                foreach ($inBefore as $k => $_) {
+                    if (!isset($inAfter[$k])) {
+                        unset($after[$table][$k]);
+                    }
+                }
+                foreach ($inAfter as $k => $r) {
+                    $after[$table][$k] = $r;
+                }
+            }
+        }
+        $list = static fn(array $tables): array => array_map('array_values', $tables);
+        $keep = (int) $rows[0]['id'];
+        $this->db->update('mutations', [
+            'before_json' => $logOnly ? null : json_encode(['tables' => $list($before)], JSON_INVALID_UTF8_SUBSTITUTE),
+            'after_json' => $logOnly ? null : json_encode(['tables' => $list($after)], JSON_INVALID_UTF8_SUBSTITUTE),
+            'summary' => mb_substr($summary, 0, 300),
+        ], 'id = ?', [$keep]);
+        foreach (array_slice($rows, 1) as $row) {
+            try {
+                foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [(int) $row['id']]) as $ref) {
+                    $this->db->run($this->db->insertIgnore() . ' INTO mutation_calendar_refs (mutation_id, calendar_id) VALUES (?, ?)', [$keep, (int) $ref['calendar_id']]);
+                }
+                $this->db->run('DELETE FROM mutation_calendar_refs WHERE mutation_id = ?', [(int) $row['id']]);
+            } catch (\PDOException $e) {
+                // narrow-test compatibility: no refs table
+            }
+            $this->db->run('DELETE FROM mutations WHERE id = ?', [(int) $row['id']]);
+        }
+    }
+
     /** @return array{entity:string,op:string} */
     private function undoPlace(array $mutation, ?RequestAuthority $authority = null): array
     {
@@ -194,6 +315,14 @@ final class Undo
         $calendarId = (int) $mutation['entity_id'];
         if ($before === null || $this->db->scalar('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
             throw HttpError::badRequest('That calendar is no longer here to move back', 'not_undoable');
+        }
+        // Every folder it goes back into has to be there, or nothing moves:
+        // with the one it came from deleted, the undo took it out of the
+        // other and left it in none (#187 review).
+        foreach ($before as $place) {
+            if (isset($place['folder'], $place['at']) && $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [(int) $place['folder'], $userId]) === null) {
+                throw HttpError::badRequest('The folder it was in has been deleted, so it can\'t go back there', 'not_undoable');
+            }
         }
         $this->db->tx(function () use ($before, $userId, $calendarId, $mutation, $authority): void {
             $authority?->assertValid($this->db);
@@ -240,7 +369,7 @@ final class Undo
                 'SELECT id FROM mutations WHERE user_id = ? AND entity = ? AND entity_id = ? AND id > ? AND undone = 0 LIMIT 1',
                 [$userId, (string) $mutation['entity'], (int) $mutation['entity_id'], $mutationId]
             );
-            if ($newer !== null) {
+            if ($newer !== null || ((string) $mutation['entity'] === self::PLACE && $this->placeChangedSince($mutation))) {
                 throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
             }
         }

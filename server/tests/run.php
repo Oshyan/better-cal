@@ -1834,7 +1834,24 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $daily = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $eventsA->patch(1, $daily, ['scope' => 'this', 'instanceStart' => '2026-12-10T18:00:00+00:00', 'title' => 'Edited date']);
         $edited = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$daily]);
+        $sinceAll = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
         $eventsA->patch(1, $edited, ['calendarId' => 13, 'scope' => 'all', 'title' => 'Edited date, renamed']);
+        $allEntries = $adb->all('SELECT before_json, after_json, summary FROM mutations WHERE id > ?', [$sinceAll]);
+        $snapRow = static function (?string $json, int $id): ?array {
+            foreach (json_decode((string) $json, true)['tables']['events'] ?? [] as $r) {
+                if ((int) $r['id'] === $id) {
+                    return $r;
+                }
+            }
+            return null;
+        };
+        checkEq('edited date moved with the whole series: one save, one undo entry, with the series and the date as they were and are', [
+            1, "Moved 'Edited date' and its series to another calendar", [10, 10, 'Edited date'], [13, 13, 'Edited date, renamed'],
+        ], [
+            count($allEntries), $allEntries[0]['summary'] ?? null,
+            [(int) ($snapRow($allEntries[0]['before_json'], $daily)['calendar_id'] ?? 0), (int) ($snapRow($allEntries[0]['before_json'], $edited)['calendar_id'] ?? 0), $snapRow($allEntries[0]['before_json'], $edited)['title'] ?? null],
+            [(int) ($snapRow($allEntries[0]['after_json'], $daily)['calendar_id'] ?? 0), (int) ($snapRow($allEntries[0]['after_json'], $edited)['calendar_id'] ?? 0), $snapRow($allEntries[0]['after_json'], $edited)['title'] ?? null],
+        ]);
         checkEq('edited date moved with the whole series: the series and the date move, nothing splits off', [13, 13, 'Edited date, renamed', null, 0], [
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$daily]),
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited]),
@@ -1843,13 +1860,15 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Edited date%' AND recurrence_parent_id IS NULL AND deleted_at IS NULL"),
         ]);
         $edited2 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 2', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
-        $eventsA->patch(1, $edited2, ['scope' => 'this', 'instanceStart' => '2026-12-11T18:00:00+00:00', 'title' => 'Second edited date']);
+        $eventsA->patch(1, $edited2, ['scope' => 'this', 'instanceStart' => '2026-12-11T18:00:00+00:00', 'title' => 'Second edited date', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
         $edited2Date = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$edited2]);
-        $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following']);
-        checkEq('edited date moved with "this and following": the series splits there, the later part moves, nothing on its own', [10, 0, 1], [
+        // As the editor sends it: the date's details, with the title changed.
+        $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following', 'title' => 'Second edited, renamed', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
+        $later = $adb->one("SELECT calendar_id, title, start_utc FROM events WHERE calendar_id = 13 AND rrule IS NOT NULL AND deleted_at IS NULL AND title LIKE 'Second edited%'");
+        checkEq('edited date moved with "this and following": the later part moves and takes that date\'s time and the new title, nothing on its own', [10, 0, ['calendar_id' => 13, 'title' => 'Second edited, renamed', 'start_utc' => '2026-12-11 20:00:00']], [
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2]),
-            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title = 'Second edited date' AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL"),
-            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE calendar_id = 13 AND rrule IS NOT NULL AND title = 'Daily mover 2' AND deleted_at IS NULL"),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Second edited%' AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL"),
+            $later === null ? null : ['calendar_id' => (int) $later['calendar_id'], 'title' => $later['title'], 'start_utc' => $later['start_utc']],
         ]);
         $edited3 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 3', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $eventsA->patch(1, $edited3, ['scope' => 'this', 'instanceStart' => '2026-12-12T18:00:00+00:00', 'title' => 'Third edited date']);
@@ -9151,6 +9170,34 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $caught = null;
     try { $placeUndo->undoById(1, $first); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
     check('folders: an older move of a calendar moved again since is stale', $caught !== null && $caught->errorCode === 'stale_undo');
+    // Filed again from its settings since: stale too; renamed since: not.
+    $folderDomain->place(1, 11, 1, 0, 10);
+    $settingsMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $calendarDomain->patch(1, 1, ['folderIds' => [10, 11]]);
+    $caught = null;
+    try { $placeUndo->undoById(1, $settingsMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    checkEq('folders: a move filed again from its settings since is stale, and nothing changes', ['stale_undo', [10 => [2, 1], 11 => [1]]],
+        [$caught ? $caught->errorCode : null, $folderOrder()]);
+    $calendarDomain->patch(1, 1, ['folderIds' => [11]]);
+    $folderDomain->place(1, 10, 1, 0, 11);
+    $renamedMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $calendarDomain->patch(1, 1, ['name' => 'Owner feed, renamed again']);
+    $placeUndo->undoById(1, $renamedMove);
+    checkEq('folders: a move renamed since still undoes, keeping the name', [[10 => [2], 11 => [1]], 'Owner feed, renamed again'],
+        [$folderOrder(), $cdb->scalar('SELECT name FROM calendars WHERE id = 1')]);
+    $cdb->run("UPDATE calendars SET name = 'Owner feed' WHERE id = 1");
+    // The folder it came from deleted: refused, and it stays where it is.
+    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (13, 1, 'Short-lived', 2)");
+    $folderDomain->place(1, 13, 2, 0);
+    $folderDomain->place(1, 11, 2, 0, 13);
+    $goneMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $cdb->run('DELETE FROM folders WHERE id = 13');
+    $caught = null;
+    try { $placeUndo->undoById(1, $goneMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    checkEq("folders: undoing a move out of a deleted folder is refused, and it stays where it is", ['not_undoable', [2, 1], 0],
+        [$caught ? $caught->errorCode : null, $folderOrder()[11], (int) $cdb->scalar('SELECT undone FROM mutations WHERE id = ?', [$goneMove])]);
+    $folderDomain->unfile(1, 11, 2);
+    $folderDomain->place(1, 10, 2, 0);
     $folderDomain->place(1, 11, 1, 0, 10);
     $folderDomain->place(1, 11, 2, 0);
     $folderDomain->unfile(1, 10, 2);

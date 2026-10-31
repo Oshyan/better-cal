@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, calendarsEdited, calendarsSaved, calendarEditsNow } from './api.js';
+import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, calendarsEdited, calendarsSaved } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -1172,8 +1172,11 @@ export async function toggleCalendarVisible(cal) {
 }
 
 export async function updateCalendar(cal, fields) {
+  // A write to the calendars like a sidebar edit (calendarsEdited): a
+  // reload asked for before it doesn't put its old name back.
+  calendarsEdited();
   try {
-    const updated = await api('/calendars/' + cal.id, { method: 'PATCH', body: fields });
+    const updated = await api('/calendars/' + cal.id, { method: 'PATCH', body: fields }).finally(calendarsSaved);
     set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...updated } : c)) });
     toast('Calendar updated', { duration: 2500 });
     // What a calendar is comes with each of its events (a context event
@@ -1224,16 +1227,14 @@ function inTurn(write) {
   return run;
 }
 
-// A folder's order (#187): 'az' (A to Z) or 'manual' (your own). A failed
-// change goes back only if nothing newer was asked for since.
+// A folder's order (#187): 'az' (A to Z) or 'manual' (your own). Shown at
+// once; one that fails is put right by the reload after the last save.
 export async function setFolderSort(folder, sort) {
-  const was = folder.sort;
-  const edit = calendarsEdited();
+  calendarsEdited();
   set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort } : f)) });
   try {
     await inTurn(() => api('/folders/' + folder.id, { method: 'PATCH', body: { sort } }));
   } catch (e) {
-    if (edit === calendarEditsNow()) set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, sort: was } : f)) });
     toast('Failed: ' + e.message, { error: true });
   }
 }
@@ -1262,7 +1263,6 @@ export async function fileCalendar(cal, folder, at, from = null) {
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
-  await loadCalendars();
 }
 
 // Out of a folder, dragged back to the main list (#187).
@@ -1278,7 +1278,6 @@ export async function unfileCalendar(cal, folder) {
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
-  await loadCalendars();
 }
 
 // A new place in the main calendar list's own order (#187).
@@ -1293,7 +1292,6 @@ export async function placeCalendarInList(cal, at) {
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
-  await loadCalendars();
 }
 
 export async function createFolder(name) {

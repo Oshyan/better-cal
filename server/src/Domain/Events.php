@@ -1394,17 +1394,31 @@ final class Events
                 // date's. It was split off on its own whatever was asked
                 // (#187 review).
                 $whole = (string) ($in['scope'] ?? '');
-                if (in_array($whole, ['all', 'following'], true)) {
+                $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
+                // This and following: the series splits here, and the new
+                // part takes this date's details and the rest of the edit,
+                // as from any other date (#187 review).
+                if ($whole === 'following') {
+                    $this->patch($userId, (int) $event['recurrence_parent_id'], ['instanceStart' => $instance] + $in, $authority);
+                    return;
+                }
+                // All events: the series moves, edits and all, and the rest
+                // of the edit stays this date's (applied to the whole series
+                // it would rename it after this date). One save, so one
+                // undo puts back both (Undo::coalesce).
+                if ($whole === 'all') {
+                    $since = $this->undo->lastId($userId);
                     $this->patch($userId, (int) $event['recurrence_parent_id'], [
                         'calendarId' => $targetCalendar,
-                        'scope' => $whole,
-                        'instanceStart' => Time::iso(Time::fromDb((string) $event['recurrence_instance_utc'])),
+                        'scope' => 'all',
+                        'instanceStart' => $instance,
                     ], $authority);
                     $rest = array_diff_key($in, ['calendarId' => true, 'scope' => true, 'instanceStart' => true]);
                     $still = $this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $event['id']]);
                     if ($rest !== [] && $still !== null) {
                         $this->patch($userId, (int) $event['id'], $rest, $authority);
                     }
+                    $this->undo->coalesce($userId, $since, "Moved '" . (string) $event['title'] . "' and its series to another calendar", [(int) $event['recurrence_parent_id'], (int) $event['id']]);
                     return;
                 }
                 $this->detachToCalendar($userId, $event, null, $in);

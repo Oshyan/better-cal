@@ -167,11 +167,12 @@ export async function loadConfig() {
 
 // --- calendars -------------------------------------------------------------
 
-// Sidebar edits to calendars and folders (a drag, A to Z), counted, and
-// how many aren't saved yet: a reload asked for before the latest one
-// began, or answered while one is still on its way, holds an older order,
-// and landing put that back on screen (#187 review). The last edit's own
-// reload, after it's saved, brings the list.
+// Writes to calendars and folders (a drag, A to Z, a calendar's settings),
+// counted, and how many aren't saved yet. A reload only shows if none was
+// unsaved when it was asked for and none began before it answered: one
+// asked for between writes held an older order, and landing late put it
+// back on screen (#187 review). Once the last write is saved, however it
+// went, the list is asked for again, so the screen ends as saved.
 let calendarEdits = 0;
 let calendarsUnsaved = 0;
 export function calendarsEdited() {
@@ -180,15 +181,14 @@ export function calendarsEdited() {
 }
 export function calendarsSaved() {
   calendarsUnsaved = Math.max(0, calendarsUnsaved - 1);
-}
-export function calendarEditsNow() {
-  return calendarEdits;
+  if (calendarsUnsaved === 0) loadCalendars().catch(() => {});
 }
 
 export async function loadCalendars() {
   const asked = calendarEdits;
+  const clean = calendarsUnsaved === 0;
   const data = await api('/calendars');
-  if (asked === calendarEdits && calendarsUnsaved === 0) set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+  if (clean && asked === calendarEdits && calendarsUnsaved === 0) set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
   return data;
 }
 

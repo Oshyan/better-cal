@@ -2341,9 +2341,11 @@ console.log('--- chronological ordering across timezone offsets ---');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   let windows = 0;
+  let role = 'mine';
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
-    if (u.pathname.endsWith('/calendars/7') && o && o.method === 'PATCH') return json({ id: 7, role: JSON.parse(o.body).role });
+    if (u.pathname.endsWith('/calendars/7') && o && o.method === 'PATCH') { const b = JSON.parse(o.body); if (b.role) role = b.role; return json({ id: 7, role }); }
+    if (u.pathname.endsWith('/calendars') && (!o || !o.method || o.method === 'GET')) return json({ calendars: [{ id: 7, name: 'Sample', role }], folders: [], tags: [] });
     if (u.pathname.endsWith('/events')) { windows++; return json({ events: [] }); }
     return json({});
   };
@@ -2369,7 +2371,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   const savedWindow = globalThis.window;
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
-  const { fileCalendar, placeCalendarInList, setFolderSort } = await import('../src/app/actions.js');
+  const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar } = await import('../src/app/actions.js');
+  const { loadCalendars } = await import('../src/app/api.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -2377,26 +2380,28 @@ console.log('--- chronological ordering across timezone offsets ---');
   // A pretend server: the list's order, and each folder's.
   let server;
   const reset = () => {
-    server = { list: [1, 2, 3], folders: { 1: { sort: 'manual', ids: [1] }, 2: { sort: 'manual', ids: [] } } };
+    holds = [];
+    server = { list: [1, 2, 3], names: {}, folders: { 1: { sort: 'manual', ids: [1] }, 2: { sort: 'manual', ids: [] } } };
     put({
       calendars: server.list.map((id) => ({ id, name: 'Sample ' + id, folderIds: id === 1 ? [1] : [] })),
       folders: [{ id: 1, name: 'One', sort: 'manual', calendarIds: [1] }, { id: 2, name: 'Two', sort: 'manual', calendarIds: [] }],
     });
   };
   const listed = () => json({
-    calendars: server.list.map((id) => ({ id, name: 'Sample ' + id, folderIds: Object.keys(server.folders).map(Number).filter((f) => server.folders[f].ids.includes(id)) })),
+    calendars: server.list.map((id) => ({ id, name: server.names[id] || 'Sample ' + id, folderIds: Object.keys(server.folders).map(Number).filter((f) => server.folders[f].ids.includes(id)) })),
     folders: Object.keys(server.folders).map(Number).map((f) => ({ id: f, name: 'F' + f, sort: server.folders[f].sort, calendarIds: [...server.folders[f].ids] })),
     tags: [],
   });
-  let hold = null; // {match, promise}
+  let holds = []; // [{match, promise, fail}], each used once
+  const holdNext = (match, fail = false) => { let release; holds.push({ match, fail, promise: new Promise((r) => { release = r; }) }); return () => release(); };
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
     const method = (o && o.method) || 'GET';
     const body = o && o.body ? JSON.parse(o.body) : {};
-    if (hold && hold.match(u, method)) {
+    const hi = holds.findIndex((x) => x.match(u, method));
+    if (hi >= 0) {
       // Answered as things stood when asked, however late it lands.
-      const h = hold;
-      hold = null;
+      const [h] = holds.splice(hi, 1);
       const asked = u.pathname.endsWith('/calendars') && method === 'GET' ? listed() : null;
       await h.promise;
       if (h.fail) return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
@@ -2406,6 +2411,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     if ((m = u.pathname.match(/\/calendars\/(\d+)\/position$/))) { const id = Number(m[1]); server.list = server.list.filter((x) => x !== id); server.list.splice(body.at, 0, id); return json({ calendarIds: server.list }); }
     if ((m = u.pathname.match(/\/folders\/(\d+)\/calendars\/(\d+)$/))) { const f = server.folders[m[1]]; const id = Number(m[2]); f.ids = f.ids.filter((x) => x !== id); f.ids.splice(body.at, 0, id); return json({ calendarIds: f.ids }); }
     if ((m = u.pathname.match(/\/folders\/(\d+)$/)) && method === 'PATCH') { server.folders[m[1]].sort = body.sort; return json({ id: Number(m[1]), sort: body.sort }); }
+    if ((m = u.pathname.match(/\/calendars\/(\d+)$/)) && method === 'PATCH') { if (body.name) server.names[m[1]] = body.name; return json({ id: Number(m[1]), name: server.names[m[1]] }); }
     if (u.pathname.endsWith('/calendars') && method === 'GET') return listed();
     return json({});
   };
@@ -2413,41 +2419,76 @@ console.log('--- chronological ordering across timezone offsets ---');
   // Option-dragging calendar 1 into folder 2 keeps it in folder 1 at once:
   // filtering its folder ids by its own id dropped folder 1.
   reset();
-  let release;
-  hold = { match: (u, m) => m === 'POST', promise: new Promise((r) => { release = r; }) };
+  const releaseFile = holdNext((u, m) => m === 'POST');
   const filing = fileCalendar(st.calendars[0], st.folders[1], 0, null);
   await tick();
   eq('sidebar: a calendar added to a folder keeps the folder it was in, before it is saved', st.calendars[0].folderIds, [1, 2]);
-  release();
+  releaseFile();
   await filing;
-
-  // Two reorders in quick succession: the first one's reload, answered
-  // late, doesn't put its older order back.
-  reset();
-  let releaseRead;
-  hold = { match: (u, m) => m === 'GET' && u.pathname.endsWith('/calendars'), promise: new Promise((r) => { releaseRead = r; }) };
-  const first = placeCalendarInList(st.calendars[2], 0); // 3 to the top: [3, 1, 2]
   await tick(10);
-  await placeCalendarInList(st.calendars.find((c) => c.id === 2), 0); // 2 to the top: [2, 3, 1]
-  releaseRead();
-  await first;
-  eq('sidebar: an older reload answered late leaves the newer order', [st.calendars.map((c) => c.id), server.list], [[2, 3, 1], [2, 3, 1]]);
 
-  // A failed A to Z, answered after newer choices, doesn't take them back.
+  const order = () => st.calendars.map((c) => c.id);
+  // Two drags queued behind a slow save, and a reload asked for between
+  // them answered last: it doesn't put its older order back (#187 review).
   reset();
-  let failSort;
-  hold = { match: (u, m) => m === 'PATCH', promise: new Promise((r) => { failSort = r; }), fail: true };
-  const az = setFolderSort(st.folders[0], 'az');
+  const releaseFirst = holdNext((u, m) => m === 'POST');
+  const first = placeCalendarInList(st.calendars[2], 0); // 3 to the top
   await tick();
-  const manual = setFolderSort(st.folders[0], 'manual');
+  const second = placeCalendarInList(st.calendars.find((c) => c.id === 2), 0); // then 2
   await tick();
-  const azAgain = setFolderSort(st.folders[0], 'az');
+  eq('sidebar: two drags show at once, in the order made', order(), [2, 3, 1]);
+  // The next reload asked for (the change check's, or one after the first
+  // save) is held, as things stood, until everything else is done.
+  const releaseStray = holdNext((u, m) => m === 'GET' && u.pathname.endsWith('/calendars'));
+  releaseFirst();
+  await tick(3);
+  const stray = loadCalendars();
+  await second;
+  await tick(10);
+  releaseStray();
+  await first;
+  await stray;
+  await tick(10);
+  eq('sidebar: a reload asked for between saves and answered last leaves the saved order', [order(), server.list], [[2, 3, 1], [2, 3, 1]]);
+
+  // A drag that fails, then a sort change: once both are done the screen
+  // is as saved, the drag undone.
+  reset();
+  const failDrag = holdNext((u, m) => m === 'POST', true);
+  const drag = placeCalendarInList(st.calendars[2], 0);
   await tick();
-  failSort();
-  await az;
-  await manual;
-  await azAgain;
-  eq('sidebar: a failed older sort leaves the newer one', [st.folders[0].sort, server.folders[1].sort], ['az', 'az']);
+  const sorted = setFolderSort(st.folders[0], 'az');
+  failDrag();
+  await drag;
+  await sorted;
+  await tick(10);
+  eq('sidebar: a failed drag is put right once the saves after it are done', [order(), st.folders[0].sort], [[1, 2, 3], 'az']);
+
+  // A failed A to Z in one folder and a saved one in another: each shows
+  // as saved.
+  reset();
+  const failOne = holdNext((u, m) => m === 'PATCH' && u.pathname.endsWith('/folders/1'), true);
+  const one = setFolderSort(st.folders[0], 'az');
+  await tick();
+  const two = setFolderSort(st.folders[1], 'az');
+  failOne();
+  await one;
+  await two;
+  await tick(10);
+  eq('sidebar: a failed sort in one folder and a saved one in another each show as saved', st.folders.map((f) => f.sort), ['manual', 'az']);
+
+  // A rename from a calendar's settings, saved after a reload was asked
+  // for: the reload, answered later, doesn't put the old name back.
+  reset();
+  const releaseOld = holdNext((u, m) => m === 'GET' && u.pathname.endsWith('/calendars'));
+  const old = loadCalendars();
+  await tick();
+  await updateCalendar(st.calendars[0], { name: 'Renamed sample' });
+  await tick(10);
+  releaseOld();
+  await old;
+  await tick(10);
+  eq("sidebar: a reload asked for before a rename doesn't put the old name back", st.calendars[0].name, 'Renamed sample');
 
   globalThis.fetch = realFetch;
   put(saved);

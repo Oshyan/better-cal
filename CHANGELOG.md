@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.4.4 (2026-10-31)
 
 - **A release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185)):** fixes for what an independent review found 😅
   - An all-day event let go over the toolbar or below the calendar stays put, and resizing an event during or across a clock change keeps the end you didn't touch.
@@ -14,6 +14,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - A second finger no longer moves another finger's drag or starts one of its own, reschedule mode's arrow keys work after a jump to a far month, and "Loading" stays until every day on screen has arrived.
   - Next and Previous month pressed in quick succession land on the right month; the grid no longer slides back part way.
   - Smaller: plugin bands sharing a start time all show, once each, even when the plugin refreshes while they load, with a note if a plugin ever has more than can be shown, and the MCP server gives invitation times in Review on your Home clock.
+
+Operators: no database changes; update as usual.
 
 ## 1.4.3 (2026-10-30)
 

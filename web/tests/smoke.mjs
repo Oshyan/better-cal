@@ -2051,7 +2051,7 @@ console.log('--- chronological ordering across timezone offsets ---');
 // --- Event windows and records: the second release review (#185) ---
 {
   const realFetch = globalThis.fetch;
-  const { loadWindow, refreshWindow, ensureFullOccurrence, fetchPluginRanges } = await import('../src/app/api.js');
+  const { loadWindow, refreshWindow, ensureFullOccurrence, fetchPluginRanges, serialReloads } = await import('../src/app/api.js');
   const { state: st, set: put, invalidateRecords } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const DAY = 86400000;
@@ -2077,6 +2077,51 @@ console.log('--- chronological ordering across timezone offsets ---');
   await loadWindow(at(2029, 5, 19), at(2029, 6, 23));
   assert('capped: a series cut off over whole months still shows on the days asked for', st.occ.has('r77'));
   assert('capped: the rest of those months is asked for again when shown', !st.loadedRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))) || st.staleRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))));
+
+  // The days asked for failing after a capped answer stay to be asked for:
+  // the months counted as loaded, so a retry asked for nothing (#185).
+  const target2 = Date.parse(at(2032, 6, 15, 10));
+  let failDays = true;
+  let calls2 = 0;
+  handler = async (u) => {
+    calls2++;
+    const [s, e] = range(u);
+    if (e - s > 40 * DAY) return json({ events: [], capped: [78] });
+    if (failDays) return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+    return json({ events: s <= target2 && target2 < e ? [ev(78, at(2032, 6, 15, 10), at(2032, 6, 15, 11))] : [] });
+  };
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  await loadWindow(at(2032, 5, 19), at(2032, 6, 23));
+  failDays = false;
+  await loadWindow(at(2032, 5, 19), at(2032, 6, 23)); // as Retry does
+  eq('capped: the days asked for, failed once, are asked for again', [st.occ.has('r78'), calls2 > 2, st.windowStatus], [true, true, null]);
+
+  // A window waiting on a capped answer fetches its own days: they counted
+  // as loaded, then went stale with nothing asking again (#185).
+  const target3 = Date.parse(at(2033, 6, 26, 10));
+  let releaseWide;
+  const heldWide = new Promise((r) => { releaseWide = r; });
+  let releaseDays;
+  const heldDays = new Promise((r) => { releaseDays = r; });
+  handler = async (u) => {
+    const [s, e] = range(u);
+    if (e - s > 40 * DAY) { await heldWide; return json({ events: [], capped: [79] }); }
+    if (s < Date.parse(at(2033, 6, 20))) { await heldDays; return json({ events: [] }); }
+    return json({ events: s <= target3 && target3 < e ? [ev(79, at(2033, 6, 26, 10), at(2033, 6, 26, 11))] : [] });
+  };
+  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  const wa = loadWindow(at(2033, 5, 19), at(2033, 6, 23), { asView: false });
+  await tick();
+  const wb = loadWindow(at(2033, 6, 25), at(2033, 6, 28));
+  await tick();
+  releaseWide();
+  for (let i = 0; i < 10; i++) await tick();
+  releaseDays();
+  await wa;
+  await wb;
+  assert('capped: a window waiting on a capped answer fetches its own days', st.occ.has('r79'));
 
   // "Loading" stays while part of the view's days are in an older request
   // still on its way, even after the view's other months land.
@@ -2140,23 +2185,47 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('records: an answer from before a change is asked for again', [st.occ.get('d1').description, st.occ.get('d1').stale, detailCalls], ['After the change', false, 2]);
 
   // Plugin bands past the cap: ranges sharing one start, and a long one
-  // still overlapping, each come once, paged by start and id.
-  const all = [{ id: 1, start: '2031-05-01T00:00:00+00:00', end: '2031-05-30T00:00:00+00:00' }];
-  for (let i = 2; i <= 6; i++) all.push({ id: i, start: '2031-05-10T06:00:00+00:00', end: '2031-05-10T07:00:00+00:00' });
+  // still overlapping, each come once, paged by start and key. A refresh
+  // between pages gives them new ids, and keeps their keys.
+  let all = [{ id: 1, key: 'k1', start: '2031-05-01T00:00:00+00:00', end: '2031-05-30T00:00:00+00:00' }];
+  for (let i = 2; i <= 6; i++) all.push({ id: i, key: 'k' + i, start: '2031-05-10T06:00:00+00:00', end: '2031-05-10T07:00:00+00:00' });
   const CAP = 2;
-  const order = (x, y) => Date.parse(x.start) - Date.parse(y.start) || x.id - y.id;
+  const order = (x, y) => Date.parse(x.start) - Date.parse(y.start) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
+  let refreshAfter = 0;
+  let pageCalls = 0;
   handler = async (u) => {
+    pageCalls++;
+    if (pageCalls === refreshAfter + 1 && refreshAfter) all = all.map((r) => ({ ...r, id: r.id + 100 }));
     let rs = [...all].sort(order);
     const after = u.searchParams.get('afterStart');
     if (after) {
       const t = Date.parse(after);
-      const id = Number(u.searchParams.get('afterId'));
-      rs = rs.filter((r) => Date.parse(r.start) > t || (Date.parse(r.start) === t && r.id > id));
+      const key = u.searchParams.get('afterKey');
+      rs = rs.filter((r) => Date.parse(r.start) > t || (Date.parse(r.start) === t && r.key > key));
     }
     return json({ plugins: { tides: { truncated: rs.length > CAP, ranges: rs.slice(0, CAP) } } });
   };
   const bands = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
-  eq('bands: paging brings every range once, ties included', [bands.tides.ranges.map((r) => r.id), bands.tides.truncated], [[1, 2, 3, 4, 5, 6], false]);
+  eq('bands: paging brings every range once, ties included', [bands.tides.ranges.map((r) => r.key), bands.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], false]);
+  pageCalls = 0;
+  refreshAfter = 1;
+  const refreshed = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
+  eq('bands: a refresh between pages sends no range twice', refreshed.tides.ranges.map((r) => r.key), ['k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
+
+  // The change poll's other reloads: one at a time each, and an older one
+  // landing doesn't clear a newer one that failed (#185).
+  const { owed, part } = serialReloads();
+  const loads = [];
+  const load = () => new Promise((resolve, reject) => loads.push({ resolve, reject }));
+  part('people', load);
+  part('people', load);
+  eq('reloads: one at a time', loads.length, 1);
+  loads[0].resolve();
+  for (let i = 0; i < 5; i++) await tick();
+  eq('reloads: asked again meanwhile, it runs again once the first lands', loads.length, 2);
+  loads[1].reject(new Error('Down for a moment'));
+  for (let i = 0; i < 5; i++) await tick();
+  assert('reloads: a newer one that failed stays owed', owed.has('people'));
 
   put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
   st.occ.clear();
@@ -2187,6 +2256,13 @@ console.log('--- chronological ordering across timezone offsets ---');
   win.dispatchEvent(pe('pointermove', 2, 420, 420));
   win.dispatchEvent(pe('pointerup', 2, 420, 420));
   eq("drag: a second finger doesn't move or drop it", [moves.some((m) => m.x === 420), drops.length], [false, 0]);
+  // Nor, pressed on another event, starts a drag of its own beside it.
+  const other = [];
+  startPointerDrag({ ...down, pointerId: 3, clientX: 300, clientY: 300 }, { onLift: () => other.push('lift'), onDrop: (pt) => other.push(pt), onCancel: () => other.push('cancel') });
+  await new Promise((r) => setTimeout(r, 700));
+  win.dispatchEvent(pe('pointermove', 3, 320, 320));
+  win.dispatchEvent(pe('pointerup', 3, 320, 320));
+  eq('drag: a second finger on another event starts no drag beside it', [other, drops.length], [[], 0]);
   win.dispatchEvent(pe('pointermove', 1, 150, 150));
   win.dispatchEvent(pe('pointerup', 1, 150, 150));
   eq('drag: its own finger still drops it, where that finger is', drops.map((d) => d.x), [150]);

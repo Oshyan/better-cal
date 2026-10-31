@@ -36,6 +36,11 @@ export function autoScrolledJustNow(el) {
   return !!autoScroll && autoScroll.el === el && performance.now() - autoScroll.at < 120;
 }
 
+// The drag under way: one at a time. Lifted, it kept only its own finger;
+// a second finger on another event lifted that one too, and each dropped
+// on its own (#185).
+let current = null;
+
 // startPointerDrag(pointerdownEvent, opts)
 // opts: {
 //   makeGhost(): Node | null      ghost appended to body, moved via transform
@@ -57,6 +62,7 @@ export function startPointerDrag(e, opts) {
   // only on a Mac (elsewhere it's an ordinary press).
   const mac = /Mac/.test(navigator.platform || '') && navigator.maxTouchPoints < 2;
   if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && (e.button !== 0 || (mac && e.ctrlKey))) return () => {};
+  if (current && current.lifted()) return () => {};
   const isTouch = e.pointerType === 'touch';
   const startX = e.clientX, startY = e.clientY;
   let lifted = false;
@@ -67,6 +73,8 @@ export function startPointerDrag(e, opts) {
   let done = false;
 
   const gOff = opts.ghostOffset || { x: 8, y: 8 };
+  const self = { lifted: () => lifted && !done };
+  current = self;
 
   // Option (Mac) or Alt held during a drag makes the drop a copy. It is read
   // live, so pressing or releasing it mid-drag changes the outcome, and the
@@ -172,7 +180,8 @@ export function startPointerDrag(e, opts) {
   }
 
   // A second finger is a pinch or a two-finger scroll, never this drag.
-  // Once the drag has lifted, it is ignored (ours, above).
+  // Once the drag has lifted, it is ignored (ours, above), and starts no
+  // drag of its own (current).
   function onOtherDown(ev) {
     if (ev.pointerType === 'touch' && ev.pointerId !== e.pointerId && !lifted) cancel();
   }
@@ -204,6 +213,7 @@ export function startPointerDrag(e, opts) {
 
   function cleanup() {
     done = true;
+    if (current === self) current = null;
     clearTimeout(pressTimer);
     cancelAnimationFrame(raf);
     if (ghost) ghost.remove();

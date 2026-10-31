@@ -1147,10 +1147,13 @@ export function TimeGrid({
       onDrop: (pt) => {
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
+        // The end not dragged stays exactly as it was: rebuilt from the
+        // clock, a start in the repeated hour of a clock change moved by an
+        // hour (#185).
         onResizeEvent({
           instanceId: occ.instanceId,
-          newStart: toISOWithOffset(dateAt(dayKey, result.sMin)),
-          newEnd: toISOWithOffset(dateAt(dayKey, result.eMin)),
+          newStart: edge === 'start' ? toISOWithOffset(dateAt(dayKey, result.sMin)) : occ.start,
+          newEnd: edge === 'end' ? toISOWithOffset(dateAt(dayKey, result.eMin)) : occ.end,
           edge,
           at: pt,
         });

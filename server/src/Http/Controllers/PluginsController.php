@@ -304,12 +304,12 @@ final class PluginsController
         if ($end <= $start) {
             throw HttpError::badRequest('end must be after start');
         }
-        // One plugin's next page: after the last range sent, by its start and id.
+        // One plugin's next page: after the last range sent, by its start and key.
         $only = isset($req->query['plugin']) ? (string) $req->query['plugin'] : null;
         $after = null;
-        if (isset($req->query['afterStart']) || isset($req->query['afterId'])) {
+        if (isset($req->query['afterStart']) || isset($req->query['afterKey'])) {
             try {
-                $after = ['start' => Time::parseIso((string) ($req->query['afterStart'] ?? '')), 'id' => (int) ($req->query['afterId'] ?? 0)];
+                $after = ['start' => Time::parseIso((string) ($req->query['afterStart'] ?? '')), 'key' => (string) ($req->query['afterKey'] ?? '')];
             } catch (\InvalidArgumentException $e) {
                 throw HttpError::badRequest('afterStart must be an ISO timestamp');
             }

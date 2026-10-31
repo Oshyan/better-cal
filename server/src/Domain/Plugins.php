@@ -1775,18 +1775,21 @@ final class Plugins
             // A band tied to a calendar goes with it: a deleted calendar's
             // bands stop showing (and return if the delete is undone).
             $params = [$id, Time::toDb($end), Time::toDb($start)];
+            // Paged by start and source key, which a refresh keeps: it
+            // deletes and inserts a plugin's ranges, so their ids change, and
+            // a refresh between pages sent the range at the edge twice (#185).
             $page = '';
             if ($after !== null) {
-                $page = ' AND (r.start_utc > ? OR (r.start_utc = ? AND r.id > ?))';
+                $page = ' AND (r.start_utc > ? OR (r.start_utc = ? AND r.source_key > ?))';
                 $params[] = Time::toDb($after['start']);
                 $params[] = Time::toDb($after['start']);
-                $params[] = $after['id'];
+                $params[] = $after['key'];
             }
             $rows = $this->db->all(
                 'SELECT r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
                  LEFT JOIN calendars c ON c.id = r.calendar_id
                  WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)' . $page . '
-                 ORDER BY r.start_utc, r.id LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
+                 ORDER BY r.start_utc, r.source_key LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
                 $params
             );
             $truncated = count($rows) > self::RANGE_RESPONSE_CAP;
@@ -1797,6 +1800,7 @@ final class Plugins
                 'truncated' => $truncated,
                 'ranges' => array_map(static fn($r) => [
                     'id' => (int) $r['id'],
+                    'key' => (string) $r['source_key'],
                     'start' => Time::iso(Time::fromDb((string) $r['start_utc'])),
                     'end' => Time::iso(Time::fromDb((string) $r['end_utc'])),
                     'label' => (string) $r['label'],

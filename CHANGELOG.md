@@ -7,12 +7,12 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 ## Unreleased
 
 - **A release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185)):** fixes for what an independent review found 😅
-  - An all-day event let go over the toolbar or below the calendar stays put, and resizing an overnight event across a clock change keeps the end you didn't touch.
+  - An all-day event let go over the toolbar or below the calendar stays put, and resizing an event during or across a clock change keeps the end you didn't touch.
   - A required plugin credential can be cleared in Settings again; the plugin pauses until a new one is entered.
   - A very frequent repeating event (hourly, say) shows on every day you're looking at again.
   - Refreshes that fail are retried even when a newer one replaced them, as are people, saved views, settings and calendars; event details from before a change no longer come back.
-  - A second finger no longer moves another finger's drag, reschedule mode's arrow keys work after a jump to a far month, and "Loading" stays until every day on screen has arrived.
-  - Smaller: plugin bands sharing a start time all show, with a note if a plugin ever has more than can be shown, and the MCP server gives invitation times in Review on your Home clock.
+  - A second finger no longer moves another finger's drag or starts one of its own, reschedule mode's arrow keys work after a jump to a far month, and "Loading" stays until every day on screen has arrived.
+  - Smaller: plugin bands sharing a start time all show, once each, with a note if a plugin ever has more than can be shown, and the MCP server gives invitation times in Review on your Home clock.
 
 ## 1.4.3 (2026-10-30)
 

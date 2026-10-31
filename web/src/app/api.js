@@ -306,7 +306,11 @@ function noteCapped(ids) {
   }
 }
 
-async function fetchRange(s, e) {
+// widened: asked for in whole months around the days needed. Capped, it
+// isn't complete: marked stale before anything waiting on it looks, so a
+// failed or pending follow-up for the days needed leaves them to be asked
+// for again (#185).
+async function fetchRange(s, e, { widened = false } = {}) {
   if (e - s > MAX_SPAN_MS) {
     throw new ApiError('event_window_too_large', 'This date range is too wide to load safely. Narrow it and try again.', 422);
   }
@@ -331,6 +335,7 @@ async function fetchRange(s, e) {
     }
     const capped = Array.isArray(data.capped) ? data.capped : [];
     if (capped.length) noteCapped(capped);
+    if (capped.length && widened) markStale(startISO, endISO);
     // Whatever asked for it (a trip's stretch, a day, an older view), it
     // may have been what the view's "Loading" waited on.
     settleViewNote();
@@ -565,28 +570,25 @@ export async function loadWindow(startISO, endISO, { force = false, asView = tru
   // view request cannot create an unbounded burst of simultaneous responses.
   try {
     for (const gap of gaps) {
+      const parts = neededIn(gap);
+      const widened = !onlyNeeded(gap, parts);
       let capped = [];
       try {
-        capped = (await fetchRange(gap.start, gap.end)) || [];
+        capped = (await fetchRange(gap.start, gap.end, { widened })) || [];
       } catch (err) {
         // Widened to whole months, a gap can hold more than the server will
         // expand at once (a dense stretch): ask for just the days needed.
         if (!err || err.code !== 'event_window_too_large') throw err;
-        const parts = neededIn(gap);
-        if (onlyNeeded(gap, parts)) throw err;
+        if (!widened) throw err;
         for (const p of parts) await fetchRange(p.start, p.end);
       }
       // A series too frequent for the whole months (the server expands up to
       // 1,000 of one series a request) may fit the days needed, as it did
       // before requests were widened: an hourly one came back cut off before
-      // the days on screen. Ask for just those days, and leave the rest of
-      // the months to be asked for when they're shown (#185).
-      if (capped.length) {
-        const parts = neededIn(gap);
-        if (!onlyNeeded(gap, parts)) {
-          for (const p of parts) await fetchRange(p.start, p.end);
-          for (const r of missingRanges(gap.start, gap.end, parts)) markStale(iso(r.start), iso(r.end));
-        }
+      // the days on screen. The months came back stale (fetchRange); ask for
+      // just those days, and leave the rest to be asked for when shown.
+      if (capped.length && widened) {
+        for (const p of parts) await fetchRange(p.start, p.end);
       }
       boundCacheAfterMerge(startISO, endISO);
     }
@@ -736,26 +738,54 @@ export async function refreshWindow({ own = true } = {}) {
   return ok;
 }
 
+// The change poll's other reloads (people, saved views, settings,
+// calendars). One that failed is owed until one lands: the cursor moved on
+// and it was forgotten (#185). One at a time each: asked again while one is
+// on its way, it runs again once that lands. An older one landing after a
+// newer one failed cleared what was owed, and could put back what the newer
+// one replaced.
+export function serialReloads(stopped = () => false) {
+  const owed = new Set();
+  const running = new Map(); // name -> asked again meanwhile
+  const part = (name, load) => {
+    if (running.has(name)) { running.set(name, true); return; }
+    running.set(name, false);
+    owed.delete(name);
+    load().catch(() => { owed.add(name); }).finally(() => {
+      const again = running.get(name);
+      running.delete(name);
+      if (again && !stopped()) part(name, load);
+    });
+  };
+  return { owed, part };
+}
+
 // A plugin's ranges in a stretch. The server sends each plugin's earliest
 // ranges up to a cap and says when it stopped short (several tide stations
 // over a few months pass it), so this asks for the rest a page at a time,
-// after the last range sent by its start and id (#183). By start alone,
+// after the last range sent by its start and key (#183). By start alone,
 // ranges sharing a start, or a long one still overlapping, came back again
-// and paging stopped short (#185). Past 40 pages (20,000 ranges a plugin,
-// far past any real stretch) the plugin keeps truncated: true, and the
-// person is told.
+// and paging stopped short (#185). A range already sent isn't added twice
+// (one that moved in a refresh between pages). Past 40 pages (20,000 ranges
+// a plugin, far past any real stretch) the plugin keeps truncated: true,
+// and the person is told.
 const truncatedSeen = new Set();
 export async function fetchPluginRanges(start, end) {
   const first = await api('/plugins/ranges?' + new URLSearchParams({ start, end }));
   const out = {};
   for (const [pid, entry] of Object.entries(first.plugins || {})) {
     out[pid] = { ...entry, ranges: [...(entry.ranges || [])] };
+    const sent = new Set(out[pid].ranges.map((r) => r.key));
     let page = entry;
     for (let n = 1; page.truncated && (page.ranges || []).length > 0 && n < 40; n++) {
       const last = page.ranges[page.ranges.length - 1];
-      const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid, afterStart: last.start, afterId: String(last.id) }));
+      const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid, afterStart: last.start, afterKey: String(last.key) }));
       page = (d.plugins || {})[pid] || { truncated: false, ranges: [] };
-      out[pid].ranges.push(...(page.ranges || []));
+      for (const r of page.ranges || []) {
+        if (sent.has(r.key)) continue;
+        sent.add(r.key);
+        out[pid].ranges.push(r);
+      }
     }
     out[pid].truncated = !!page.truncated;
     if (out[pid].truncated && !truncatedSeen.has(pid)) {

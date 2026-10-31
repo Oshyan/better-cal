@@ -7229,7 +7229,7 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $bands = $own->rangesForWindow(new DateTimeImmutable('2030-01-01T00:00:00Z'), new DateTimeImmutable('2030-01-02T00:00:00Z'))['stations']['ranges'];
     checkEq("bands: a deleted calendar's bands stop showing; the rest carry their calendar", [['kept', $b], ['plugin-wide', null]], array_map(static fn($r) => [$r['label'], $r['calendarId']], $bands));
 
-    // Past the cap, paging after the last range by its start and id: ranges
+    // Past the cap, paging after the last range by its start and key: ranges
     // sharing a start, and a long one still overlapping, each come once.
     $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations'");
     $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, 'long', '2030-02-01 00:00:00', '2030-02-28 00:00:00', 'long')");
@@ -7249,10 +7249,21 @@ return new class implements BetterCal\Plugin\PluginInterface {
             break;
         }
         $last = end($page['ranges']);
-        $page = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'id' => $last['id']])['stations'];
+        $page = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'key' => $last['key']])['stations'];
         $pages++;
     }
     checkEq('bands: paging past the cap brings every range once, ties and long ones included', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, 2], [count($got), count(array_unique($got)), $pages]);
+    // A refresh between pages deletes and inserts the same ranges under new
+    // ids: the next page still starts after the last one sent.
+    $first = $own->rangesForWindow($ws, $we)['stations'];
+    $odb->run("CREATE TEMPORARY TABLE ranges_copy AS SELECT plugin_id, calendar_id, source_key, start_utc, end_utc, label FROM plugin_ranges WHERE plugin_id = 'stations'");
+    $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations'");
+    $odb->run('INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) SELECT plugin_id, calendar_id, source_key, start_utc, end_utc, label FROM ranges_copy');
+    $odb->run('DROP TABLE ranges_copy');
+    $last = end($first['ranges']);
+    $next = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'key' => $last['key']])['stations'];
+    $keys = array_merge(array_column($first['ranges'], 'key'), array_column($next['ranges'], 'key'));
+    checkEq('bands: a refresh between pages sends no range twice', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, false], [count($keys), count(array_unique($keys)), $next['truncated']]);
     checkEq('bands: a next page is for the plugin asked about', ['stations'], array_keys($own->rangesForWindow($ws, $we, 'stations')));
 
     foreach (['stations', 'follower'] as $pid) {

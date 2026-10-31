@@ -6,7 +6,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { adoptSettings } from './settings.js';
-import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges, serialReloads } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -247,9 +247,8 @@ export function App() {
     let windowOwed = false;
     let restOwed = false;
     // A reload that failed (people, saved views, settings, calendars) is
-    // owed until it lands: the cursor moved on and it was forgotten (#185).
-    const owed = new Set();
-    const part = (name, p) => p.then(() => { owed.delete(name); }, () => { owed.add(name); });
+    // owed until it lands (#185): serialReloads.
+    const { owed, part } = serialReloads(() => stopped);
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;
       // Nothing changes under a drag: the next check, after the drop, picks
@@ -286,19 +285,19 @@ export function App() {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
             set({ availSeq: state.availSeq + 1 });
           }
-          if (due('people')) part('people', loadPeople());
-          if (due('views')) part('views', loadSavedViews());
+          if (due('people')) part('people', loadPeople);
+          if (due('views')) part('views', loadSavedViews);
           // Settings changed on another device, unless this tab is
           // editing them right now.
           if (due('settings') && state.route !== 'settings') {
-            part('settings', api('/settings').then((r) => {
+            part('settings', () => api('/settings').then((r) => {
               const next = r && r.settings;
               // Most moves aren't settings; adopting identical ones would
               // only redraw everything that reads them.
               if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
             }));
           }
-          if (due('calendars') || statusMoved) part('calendars', loadCalendars());
+          if (due('calendars') || statusMoved) part('calendars', loadCalendars);
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.

@@ -2193,9 +2193,11 @@ console.log('--- chronological ordering across timezone offsets ---');
   const order = (x, y) => Date.parse(x.start) - Date.parse(y.start) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
   let refreshAfter = 0;
   let pageCalls = 0;
+  let gen = 1;
+  let refresh = (rs) => rs.map((r) => ({ ...r, id: r.id + 100 }));
   handler = async (u) => {
     pageCalls++;
-    if (pageCalls === refreshAfter + 1 && refreshAfter) all = all.map((r) => ({ ...r, id: r.id + 100 }));
+    if (pageCalls === refreshAfter + 1 && refreshAfter) { all = refresh(all); gen++; }
     let rs = [...all].sort(order);
     const after = u.searchParams.get('afterStart');
     if (after) {
@@ -2203,7 +2205,7 @@ console.log('--- chronological ordering across timezone offsets ---');
       const key = u.searchParams.get('afterKey');
       rs = rs.filter((r) => Date.parse(r.start) > t || (Date.parse(r.start) === t && r.key > key));
     }
-    return json({ plugins: { tides: { truncated: rs.length > CAP, ranges: rs.slice(0, CAP) } } });
+    return json({ plugins: { tides: { truncated: rs.length > CAP, gen: String(gen), ranges: rs.slice(0, CAP) } } });
   };
   const bands = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
   eq('bands: paging brings every range once, ties included', [bands.tides.ranges.map((r) => r.key), bands.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], false]);
@@ -2211,6 +2213,12 @@ console.log('--- chronological ordering across timezone offsets ---');
   refreshAfter = 1;
   const refreshed = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
   eq('bands: a refresh between pages sends no range twice', refreshed.tides.ranges.map((r) => r.key), ['k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
+  // A refresh that moves a range not yet sent to before the page edge:
+  // pages from the two sets lost it; the plugin's pages start again.
+  pageCalls = 0;
+  refresh = (rs) => rs.map((r) => (r.key === 'k6' ? { ...r, start: '2031-05-02T00:00:00+00:00', end: '2031-05-02T01:00:00+00:00' } : r));
+  const moved = await fetchPluginRanges('2031-05-01T00:00:00Z', '2031-05-20T00:00:00Z');
+  eq('bands: a range moved by a refresh between pages still comes, at its new time', [moved.tides.ranges.map((r) => r.key).sort(), moved.tides.ranges.find((r) => r.key === 'k6').start, moved.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], '2031-05-02T00:00:00+00:00', false]);
 
   // The change poll's other reloads: one at a time each, and an older one
   // landing doesn't clear a newer one that failed (#185).
@@ -2269,6 +2277,31 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (hadWindow) globalThis.window = savedWindow; else delete globalThis.window;
   if (hadDocument) globalThis.document = savedDocument; else delete globalThis.document;
   globalThis.requestAnimationFrame = realRaf;
+}
+
+// --- Next month mid-glide (#185) ---
+{
+  const hadWindow = 'window' in globalThis;
+  const savedWindow = globalThis.window;
+  if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
+  const { stepAnchor } = await import('../src/app/actions.js');
+  const { setGlideActive } = await import('../src/lib/glide.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const saved = { view: st.view, anchor: st.anchor, visibleMonth: st.visibleMonth, visibleDays: st.visibleDays, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, anchorSeen: st.anchorSeen };
+  // Rows changing height mid-glide left the grid months short of where it
+  // was going; Next stepped from there and the grid turned round.
+  const n = (st.scrollSeq || 0) + 1;
+  put({ view: 'month', anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-26', end: '2026-08-22' }, scrollSeq: n, glideSeq: n, anchorSeen: -1 });
+  setGlideActive(true);
+  stepAnchor(1);
+  eq('next month: while the grid glides, steps from where it is going', st.anchor, '2027-04-15');
+  setGlideActive(false);
+  // After a jump that didn't glide, from the month on screen, as before.
+  put({ anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, scrollSeq: st.scrollSeq + 1 });
+  stepAnchor(1);
+  eq('next month: otherwise from the month on screen', st.anchor, '2026-09-15');
+  put(saved);
+  if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
 // --- Resizing in a repeated hour (#185) ---

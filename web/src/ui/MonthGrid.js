@@ -40,6 +40,7 @@ import { useLongPress, RowMenu } from './rowmenu.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight, coveredAt } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
+import { setGlideActive } from '../lib/glide.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
@@ -407,6 +408,8 @@ export function MonthGrid({
   // cancelled the smooth scroll part way when a window load landed (#183).
   // It ends on arrival, or when you scroll yourself.
   const glideRef = useRef(null);
+  const setGlide = useCallback((g) => { glideRef.current = g; setGlideActive(!!g); }, []);
+  useEffect(() => () => { if (glideRef.current) setGlideActive(false); }, []);
   const anchorTopRef = useRef(null);
 
   // Scroll handling via rAF throttle.
@@ -414,7 +417,7 @@ export function MonthGrid({
     const el = scrollRef.current;
     if (!el) return;
     let raf = 0;
-    const endGlide = () => { glideRef.current = null; };
+    const endGlide = () => { if (glideRef.current) setGlide(null); };
     const onScroll = () => {
       const gl = glideRef.current;
       if (gl && anchorTopRef.current) {
@@ -422,7 +425,7 @@ export function MonthGrid({
         // target: a glide only ever closes in, so that's you scrolling (a
         // scrollbar drag, Page Down; Safari has no scrollend to say so).
         const dist = Math.abs(el.scrollTop - Math.min(anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight));
-        if (dist <= 1 || (gl.dist != null && dist > gl.dist + 1)) glideRef.current = null;
+        if (dist <= 1 || (gl.dist != null && dist > gl.dist + 1)) setGlide(null);
         else gl.dist = dist;
       }
       const g = geomRef.current;
@@ -442,7 +445,7 @@ export function MonthGrid({
       for (const t of yours) el.removeEventListener(t, endGlide);
       cancelAnimationFrame(raf);
     };
-  }, [recompute]);
+  }, [recompute, setGlide]);
 
   // Geometry changes (viewport resize, layout switch, container remount) must
   // not move the user in time: restore scrollTop from the last known top row
@@ -503,6 +506,13 @@ export function MonthGrid({
     const prev = prevGeoRef.current;
     prevGeoRef.current = geo;
     if (glideRef.current && pendingRowRef.current == null) {
+      // What's on screen stays put first, as it does outside a glide: rows
+      // above it changing height moved the grid months under the glide
+      // (March to the August before), and it had all that way to come back.
+      if (prev !== geo) {
+        const w = prev.weekAt(el.scrollTop);
+        setTop(geo.top(w) + ((el.scrollTop - prev.top(w)) / prev.height(w)) * geo.height(w));
+      }
       glideRef.current.dist = null; // re-aimed: the distance starts over
       el.scrollTo({ top: anchorTop(glideRef.current.row), behavior: 'smooth' });
       recompute();
@@ -555,12 +565,12 @@ export function MonthGrid({
         pendingRowRef.current = null;
         // Already there (Today on today): nothing will scroll, so no glide
         // to end; one left set would pull you back on the next load.
-        glideRef.current = Math.abs(top - el.scrollTop) > 1 ? { row: w, dist: null } : null;
+        setGlide(Math.abs(top - el.scrollTop) > 1 ? { row: w, dist: null } : null);
         el.scrollTo({ top, behavior: 'smooth' });
         return;
       }
     }
-    glideRef.current = null;
+    setGlide(null);
     pendingRowRef.current = w;
     if (el.clientHeight > 0) {
       applyAnchor(w);

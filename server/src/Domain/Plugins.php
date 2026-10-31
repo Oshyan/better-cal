@@ -1796,8 +1796,13 @@ final class Plugins
             if ($truncated) {
                 array_pop($rows);
             }
+            // Which set of ranges the page came from: a refresh replaces them
+            // all under new ids, so this changes with it, and a reader paging
+            // through starts again rather than mixing two sets (#185).
+            $gen = $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_ranges WHERE plugin_id = ?', [$id]);
             $out[$id] = [
                 'truncated' => $truncated,
+                'gen' => $gen['n'] . ':' . $gen['m'],
                 'ranges' => array_map(static fn($r) => [
                     'id' => (int) $r['id'],
                     'key' => (string) $r['source_key'],

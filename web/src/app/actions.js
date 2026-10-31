@@ -9,6 +9,7 @@ import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
 import { hereKeyOf } from '../lib/viewpos.js';
+import { glideActive } from '../lib/glide.js';
 import { repeatSentence } from '../lib/repeat.js';
 import { shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
@@ -111,8 +112,9 @@ export function stepAnchor(dir) {
   if (v === 'weeks2') return navigate(14 * dir);
   if (v === 'weeks3') return navigate(21 * dir);
   // Mid-glide the month on screen still reads as the one being left, so a
-  // quick second press steps from where the first one is going.
-  const gliding = Date.now() - lastStepAt < 900 && state.glideSeq === state.scrollSeq;
+  // second press steps from where the first one is going: while the grid
+  // says it's gliding, or soon after a press, before it has started.
+  const gliding = state.glideSeq === state.scrollSeq && (glideActive() || Date.now() - lastStepAt < 900);
   lastStepAt = Date.now();
   const fromAnchor = { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
   // The phone's 3-day ribbon shows about two weeks, often across two months,

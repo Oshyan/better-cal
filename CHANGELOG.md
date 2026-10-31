@@ -12,7 +12,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - A very frequent repeating event (hourly, say) shows on every day you're looking at again.
   - Refreshes that fail are retried even when a newer one replaced them, as are people, saved views, settings and calendars; event details from before a change no longer come back.
   - A second finger no longer moves another finger's drag or starts one of its own, reschedule mode's arrow keys work after a jump to a far month, and "Loading" stays until every day on screen has arrived.
-  - Smaller: plugin bands sharing a start time all show, once each, with a note if a plugin ever has more than can be shown, and the MCP server gives invitation times in Review on your Home clock.
+  - Next and Previous month pressed in quick succession land on the right month; the grid no longer slides back part way.
+  - Smaller: plugin bands sharing a start time all show, once each, even when the plugin refreshes while they load, with a note if a plugin ever has more than can be shown, and the MCP server gives invitation times in Review on your Home clock.
 
 ## 1.4.3 (2026-10-30)
 

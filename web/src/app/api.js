@@ -765,29 +765,46 @@ export function serialReloads(stopped = () => false) {
 // over a few months pass it), so this asks for the rest a page at a time,
 // after the last range sent by its start and key (#183). By start alone,
 // ranges sharing a start, or a long one still overlapping, came back again
-// and paging stopped short (#185). A range already sent isn't added twice
-// (one that moved in a refresh between pages). Past 40 pages (20,000 ranges
+// and paging stopped short (#185). A refresh between pages (gen changes)
+// starts the plugin's pages again: its ranges can move, and pages from two
+// sets missed some and kept others' old times. Past 40 pages (20,000 ranges
 // a plugin, far past any real stretch) the plugin keeps truncated: true,
-// and the person is told.
+// and the person is told; so does one refreshed on every page, after a few
+// fresh starts, with the ranges of its last start.
 const truncatedSeen = new Set();
 export async function fetchPluginRanges(start, end) {
   const first = await api('/plugins/ranges?' + new URLSearchParams({ start, end }));
   const out = {};
-  for (const [pid, entry] of Object.entries(first.plugins || {})) {
-    out[pid] = { ...entry, ranges: [...(entry.ranges || [])] };
-    const sent = new Set(out[pid].ranges.map((r) => r.key));
+  for (const [pid, firstPage] of Object.entries(first.plugins || {})) {
+    let entry = firstPage;
     let page = entry;
+    let ranges = [...(entry.ranges || [])];
+    let sent = new Set(ranges.map((r) => r.key));
+    let restarts = 0;
+    let mixed = false;
     for (let n = 1; page.truncated && (page.ranges || []).length > 0 && n < 40; n++) {
       const last = page.ranges[page.ranges.length - 1];
       const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid, afterStart: last.start, afterKey: String(last.key) }));
       page = (d.plugins || {})[pid] || { truncated: false, ranges: [] };
+      if (page.gen !== entry.gen) {
+        if (restarts < 3) {
+          restarts++;
+          const again = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid }));
+          entry = (again.plugins || {})[pid] || { truncated: false, ranges: [] };
+          page = entry;
+          ranges = [...(entry.ranges || [])];
+          sent = new Set(ranges.map((r) => r.key));
+          continue;
+        }
+        mixed = true;
+      }
       for (const r of page.ranges || []) {
         if (sent.has(r.key)) continue;
         sent.add(r.key);
-        out[pid].ranges.push(r);
+        ranges.push(r);
       }
     }
-    out[pid].truncated = !!page.truncated;
+    out[pid] = { ...entry, ranges, truncated: !!page.truncated || mixed };
     if (out[pid].truncated && !truncatedSeen.has(pid)) {
       truncatedSeen.add(pid);
       const pl = (state.plugins || []).find((p) => p.id === pid);

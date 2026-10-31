@@ -7135,7 +7135,8 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $odb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, plugin_id TEXT, role TEXT, subscription_authority TEXT, settings_json TEXT, position INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)");
     $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $odb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER)');
-    $odb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY, plugin_id TEXT, calendar_id INTEGER, source_key TEXT, start_utc TEXT, end_utc TEXT, label TEXT, color TEXT, detail_html TEXT)');
+    // AUTOINCREMENT: ids aren't reused after a delete, as in MySQL (a refresh's gen).
+    $odb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, source_key TEXT, start_utc TEXT, end_utc TEXT, label TEXT, color TEXT, detail_html TEXT)');
     $odb->run("INSERT INTO plugins (id, enabled) VALUES ('stations', 1), ('follower', 1)");
     $own = new BetterCal\Domain\Plugins($odb, $dir, []);
     $caught = null;
@@ -7264,6 +7265,7 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $next = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'key' => $last['key']])['stations'];
     $keys = array_merge(array_column($first['ranges'], 'key'), array_column($next['ranges'], 'key'));
     checkEq('bands: a refresh between pages sends no range twice', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, false], [count($keys), count(array_unique($keys)), $next['truncated']]);
+    check('bands: a refresh between pages says so (gen), for the reader to start again', $first['gen'] !== $next['gen'] && $next['gen'] === $own->rangesForWindow($ws, $we, 'stations')['stations']['gen']);
     checkEq('bands: a next page is for the plugin asked about', ['stations'], array_keys($own->rangesForWindow($ws, $we, 'stations')));
 
     foreach (['stations', 'follower'] as $pid) {

@@ -20,6 +20,12 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
 require dirname(__DIR__, 2) . '/src/bootstrap.php';
 require __DIR__ . '/lib.php';
 
+// The app as installed: repeating events need Composer's libraries.
+if (!class_exists(\Sabre\VObject\Reader::class)) {
+    fwrite(STDERR, "The database suite needs Composer's libraries: composer install in server/.\n");
+    exit(1);
+}
+
 use BetterCal\Infra\Db;
 use BetterCal\Infra\Migrator;
 

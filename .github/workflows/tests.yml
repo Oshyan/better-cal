@@ -56,8 +56,22 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: The MySQL driver
-        run: docker-php-ext-install pdo_mysql
+      # The app as installed: its libraries (repeating events need
+      # sabre/vobject) from the lock file, as the fresh-install job does.
+      - name: The MySQL driver, and Composer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libzip-dev unzip git
+          docker-php-ext-install zip pdo_mysql
+          php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
+          php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
+          php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) { fwrite(STDERR, "Composer installer signature mismatch\n"); exit(1); }'
+          php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
+      - name: composer install
+        working-directory: server
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --no-dev --no-interaction --prefer-dist
       - name: Database tests
         env:
           BC_TEST_DB: mariadb:3306

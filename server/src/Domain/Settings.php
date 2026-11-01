@@ -208,6 +208,17 @@ final class Settings
         return self::withDefaults(is_array($stored) ? $stored : []);
     }
 
+    /**
+     * Settings as the app shows and uses them (the settings endpoints and
+     * /me send these): where new events go is the calendar it is now
+     * (defaultCalendarId's own rule), not a stored id left by a calendar
+     * gone since.
+     */
+    public function resolved(int $userId, array $settings): array
+    {
+        return ['defaultCalendarId' => self::defaultCalendarId($this->db, $userId)] + $settings;
+    }
+
     /** Validate + merge the given keys into the stored settings; returns the merged result. */
     public function patch(int $userId, array $in, ?int $tokenId = null, ?string $sessionToken = null): array
     {

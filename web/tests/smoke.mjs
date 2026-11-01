@@ -2384,7 +2384,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   put({ calendars: cals, settings: { ...st.settings, defaultCalendarId: 9 } });
   eq('default calendar: the one chosen', defaultTargetCalendarId(), 9);
   put({ settings: { ...st.settings, defaultCalendarId: 3 } });
-  eq("default calendar: missing or not one that takes events, the oldest local that shows, whatever the list's order", defaultTargetCalendarId(), 9);
+  eq("default calendar: missing or not one that takes events, the oldest local until the settings catch up, whatever the list's order", defaultTargetCalendarId(), 5);
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');

@@ -504,6 +504,14 @@ final class Auth
         ];
     }
 
+    /** The signed-in account for /me, its settings as the app uses them (Settings::resolved). */
+    public function describe(array $user): array
+    {
+        $out = self::serializeUser($user);
+        $out['settings'] = (new Settings($this->db))->resolved((int) $user['id'], $out['settings']);
+        return $out;
+    }
+
     public static function serializeUser(array $user): array
     {
         $settings = null;

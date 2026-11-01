@@ -112,11 +112,11 @@ function ReviewCard({ item, onChanged }) {
           toast('Dismissed. Nothing was added.');
         } else if (res && res.reply) {
           const out = rsvpOutcome(res.reply, 'mail');
-          toast('Added. ' + out.text, { error: !!out.error });
+          toast('Added. ' + out.text, { error: !!out.error, undo: entriesOf(res) });
           loadReviewCount();
         } else {
           toast((d.isInvitation ? 'Added as a Maybe. You have not replied.' : 'Added to your calendar.')
-            + (res.settings ? ' Sender approval saved.' : ''));
+            + (res.settings ? ' Sender approval saved.' : ''), { undo: entriesOf(res) });
         }
       } else {
         toast(

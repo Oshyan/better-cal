@@ -445,22 +445,18 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
 }
 
 // The calendar a new event lands on when nothing else says otherwise: the
-// default chosen in Settings, always set while there's a local calendar.
-// Should it be missing, as the server picks (Settings::defaultCalendarId):
-// the oldest local calendar that shows and isn't the one made for
-// invitations, else the oldest local. Never the list's order, and never a
-// plugin's or a subscription's, which don't take new events.
+// default the server resolves and sends with the settings
+// (Settings::resolved). Only when the list is newer than the settings (it
+// was just deleted, say) is it missing here: then the oldest local
+// calendar, until the settings catch up. Never a plugin's or a
+// subscription's, which don't take new events.
 export function defaultTargetCalendarId() {
   const local = state.calendars.filter((c) => c.kind === 'local');
   const wanted = state.settings.defaultCalendarId;
   const byId = wanted != null && local.find((c) => c.id === wanted);
   if (byId) return byId.id;
-  const oldest = (list) => list.reduce((o, c) => (o == null || c.id < o.id ? c : o), null);
-  return (oldest(local.filter((c) => c.visible && c.name !== INVITATIONS)) || oldest(local))?.id;
+  return local.reduce((o, c) => (o == null || c.id < o.id ? c : o), null)?.id;
 }
-
-// The calendar the server makes for emailed invitations (MailIngest::INVITE_CALENDAR).
-const INVITATIONS = 'Invitations';
 
 export async function createEvent(fields) {
   const body = { tzid: localTz(), ...fields };
@@ -1203,7 +1199,7 @@ export async function updateCalendar(cal, fields) {
       send: () => api('/calendars/' + cal.id, { method: 'PATCH', body: fields }),
       revert: () => put(was),
     });
-    toast('Calendar updated', { duration: 2500 });
+    toast('Calendar updated', { duration: 2500, undo: entriesOf(updated) });
     // What a calendar is comes with each of its events (a context event
     // moves to the day's header): asked for again now, not at the next
     // change check up to half a minute on (#186).

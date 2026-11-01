@@ -172,7 +172,7 @@ final class AuthController
     public function me(Request $req): Response
     {
         return Response::json([
-            'user' => Auth::serializeUser($req->user),
+            'user' => $this->auth->describe($req->user),
             'csrf' => $req->csrf,
         ]);
     }

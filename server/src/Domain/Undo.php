@@ -97,6 +97,11 @@ final class Undo
      * an undo and any change to the same account never wait on each other
      * in opposite orders, and an undo's check sees every change committed
      * before it. Within a write() for the same account, just $fn.
+     *
+     * Lock order, for every transaction that changes an account's data:
+     * the account's row (here), then the request's credential (its session
+     * or key), then calendars (CalendarMoveGuard), then a Google account,
+     * then the rows changed.
      */
     public function write(int $userId, callable $fn): mixed
     {
@@ -352,6 +357,11 @@ final class Undo
                 $changed = null; // all of it: made or removed
                 if ($was !== null && $now !== null) {
                     $changed = self::fieldsChanged($table, $was, $now);
+                    foreach (self::TOGETHER[$table] ?? [] as $group) {
+                        if (array_intersect($changed, $group) !== []) {
+                            $changed = array_values(array_unique(array_merge($changed, $group)));
+                        }
+                    }
                     // An event deleted (or brought back) keeps its row: still
                     // a removal, as one gone from the table is.
                     if (in_array('deleted_at', $changed, true)) {
@@ -387,7 +397,7 @@ final class Undo
      * and never a reason an undo is stale.
      */
     private const BOOKKEEPING = ['updated_at', 'synctoken', 'last_polled_at', 'last_poll_status', 'last_poll_error',
-        'content_changed_at', 'last_ok_at', 'google_sync_token', 'geocoded_at', 'score', 'scored_at'];
+        'content_changed_at', 'last_ok_at', 'google_sync_token', 'score', 'scored_at'];
 
     /**
      * Columns holding an object of separate settings (a calendar's: its
@@ -398,8 +408,10 @@ final class Undo
     private const OBJECT_COLUMNS = ['calendars' => ['settings_json']];
 
     /**
-     * Columns that go back together: an address and where it was found on
-     * the map, so undoing a location doesn't leave the old place's pin.
+     * Columns that are one field: an address and where it was found on the
+     * map. A change to any of them touches all of them, and its undo puts
+     * all of them back, so undoing a location doesn't leave the old place's
+     * pin, nor a moved pin overwrite a newer address.
      */
     private const TOGETHER = ['events' => [['location', 'location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at', 'geocoded_at']]];
 
@@ -414,7 +426,7 @@ final class Undo
             }
             [$a, $b] = [self::object($was[$col] ?? null), self::object($now[$col] ?? null)];
             foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $key) {
-                if (($a[$key] ?? null) != ($b[$key] ?? null)) {
+                if (!array_key_exists($key, $a) || !array_key_exists($key, $b) || $a[$key] !== $b[$key]) {
                     $out[] = $col . '.' . $key;
                 }
             }
@@ -921,7 +933,7 @@ final class Undo
                             $merged = self::object($now);
                             [$was, $set] = [self::object($row[$col] ?? null), self::object($kept[$col] ?? null)];
                             foreach (array_unique(array_merge(array_keys($was), array_keys($set))) as $key) {
-                                if (($was[$key] ?? null) == ($set[$key] ?? null)) {
+                                if (array_key_exists($key, $was) === array_key_exists($key, $set) && ($was[$key] ?? null) === ($set[$key] ?? null)) {
                                     continue;
                                 }
                                 if (array_key_exists($key, $was)) {

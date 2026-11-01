@@ -1944,13 +1944,17 @@ final class Events
 
         $afterMaster = $this->get($userId, $masterId);
         $created = $this->get($userId, $newId);
+        // The dates skipped from here on go with the new series: what the old
+        // one skipped is part of what this changed (an older skip's undo
+        // there would put back nothing).
         $this->undo->record(
             $userId,
             'event',
             $masterId,
             'update',
             ['events' => array_merge([$master], $movedOverrides)] + $removedLinks,
-            ['events' => [$afterMaster, $created]]
+            ['events' => [$afterMaster, $created]],
+            touches: !empty($created['exdates_json']) ? [[Undo::keyOf('events', ['id' => $masterId]), 'exdates_json']] : []
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);

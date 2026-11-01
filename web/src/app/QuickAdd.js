@@ -26,7 +26,7 @@ import { describeRepeat, repeatPresets, repeatEnd, withRepeatEnd, retypeUntil } 
 import { fmtOffsetMinutes } from '../lib/reminders.js';
 import { useBackClose } from './backclose.js';
 import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
-import { api, loadPeople } from './api.js';
+import { api, loadPeople, entriesOf } from './api.js';
 import { saveQuickAddText, clearQuickAddText } from './drafts.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -299,7 +299,7 @@ export function QuickAdd() {
     // an event.
     if (d && d.intent === 'availability') {
       try {
-        await api('/people/' + d.personId + '/availability', {
+        const saved = await api('/people/' + d.personId + '/availability', {
           method: 'POST',
           body: { start: d.start, end: d.end, kind: d.kind },
         });
@@ -311,7 +311,7 @@ export function QuickAdd() {
           availSeq: state.availSeq + 1, quickAddOpen: false,
           ...(state.quickAddWindow ? { lastCreated: { occ: { title: d.personName + ' ' + d.kind, start: d.start, end: d.end, allDay: d.allDay }, message } } : {}),
         });
-        if (!state.quickAddWindow) toast(message);
+        if (!state.quickAddWindow) toast(message, { undo: entriesOf(saved) });
         loadPeople().catch(() => {});
       } catch (err) {
         toast(err.message || 'Could not record availability', { error: true });

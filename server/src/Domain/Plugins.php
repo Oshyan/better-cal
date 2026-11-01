@@ -664,6 +664,7 @@ final class Plugins
                 unset($cfg['plugins']);
             }
             $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($cfg), (int) $row['id']]);
+            $touches[] = [Undo::keyOf('calendars', ['id' => (int) $row['id']]), 'settings_json.plugins'];
         }
         $this->db->run('DELETE FROM plugins WHERE id = ?', [$id]);
         ActivityContext::with('plugin:' . $id, function () use ($userId, $id, $impact, $deleteCalendars, $touches): void {
@@ -1329,7 +1330,7 @@ final class Plugins
             $name = $this->templateName($userId, $id, $m, $plain);
         }
         $color = $color !== null && preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : $decl['color'];
-        $calId = $this->db->tx(function () use ($userId, $id, $m, $decl, $name, $color, $plain, $authority, $autoName): int {
+        $calId = (new Undo($this->db))->write($userId, function () use ($userId, $id, $m, $decl, $name, $color, $plain, $authority, $autoName): int {
             $authority?->assertValid($this->db);
             $count = (int) $this->db->scalar("SELECT COUNT(*) FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$userId, $id]);
             if ($count >= $decl['max']) {
@@ -1352,9 +1353,11 @@ final class Plugins
                 'settings_json' => json_encode($settings),
             ]);
             $this->markTokenChange($id, $authority);
+            // Log only (its settings hold a credential), but it's made.
+            (new Undo($this->db))->record($userId, 'calendar', $calId, 'create', null, null, "Added " . $decl['noun'] . " '" . $name . "'",
+                touches: [[Undo::keyOf('calendars', ['id' => $calId]), '*']]);
             return $calId;
         });
-        (new Undo($this->db))->record($userId, 'calendar', $calId, 'create', null, null, "Added " . $decl['noun'] . " '" . $name . "'");
         return $calId;
     }
 

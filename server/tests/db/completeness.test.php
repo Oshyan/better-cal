@@ -203,7 +203,10 @@ return static function (Db $db): void {
 
     $db->run("INSERT INTO plugins (id, version, enabled) VALUES ('sample', '1.0.0', 1)");
     $host = new PluginHost($db, 'sample', $u, new HttpClient(), [], []);
-    $pluginCal = $host->ensureCalendar('Sample items', '#557799');
+    $pluginCal = 0;
+    $journaled('a plugin making its calendar', function () use ($host, &$pluginCal): void {
+        $pluginCal = $host->ensureCalendar('Sample items', '#557799');
+    });
     $journaled("a plugin's sync: events added", fn() => $host->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First', 'start' => '2026-12-01', 'allDay' => true], ['sourceKey' => 'b', 'title' => 'Second', 'start' => '2026-12-02', 'allDay' => true]]));
     $journaled("a plugin's sync: one changed, one gone", fn() => (new PluginHost($db, 'sample', $u, new HttpClient(), [], []))->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First, renamed', 'start' => '2026-12-01', 'allDay' => true]]));
     $journaled('a subscription kept as a calendar of its own', fn() => $d->calendars->adopt($u, $feed));

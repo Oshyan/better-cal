@@ -73,9 +73,9 @@ return static function (Db $db): void {
     $d->events->deleteEvent($u, $standup, 'this', '2026-11-10T19:00:00+00:00');
     checkEq('undo: one date edited, then another date deleted: still undoes', null, refusal(fn() => $d->undo->undoById($u, $monday)));
 
-    // A series' shape (its times, rule and the dates it skips) stands on
-    // itself: undoing a time change after a date was deleted, moved off or
-    // split from would bring that date back, or leave half the series.
+    // A series' times stand on its rule and the dates it skips: undoing a
+    // time change after a date was deleted, moved off or split from would
+    // bring that date back, or leave half the series.
     $series = static fn(string $title, string $day) => (int) $d->events->create($u, eventAt($home, $title, $day, ['rrule' => 'FREQ=DAILY;COUNT=10']))['eventId'];
     $later = static fn(int $id, string $day) => $d->events->patch($u, $id, ['scope' => 'all', 'instanceStart' => $day . 'T18:00:00+00:00', 'start' => $day . 'T19:00:00+00:00', 'end' => $day . 'T20:00:00+00:00']);
     $a = $series('Morning run', '2026-12-01');
@@ -112,6 +112,21 @@ return static function (Db $db): void {
     $d->events->patch($u, $f, ['scope' => 'following', 'instanceStart' => '2026-12-07T18:00:00+00:00', 'title' => 'Read, later']);
     checkEq('undo: a date edited on its own, then the series split after it: still undoes', null, refusal(fn() => $d->undo->undoById($u, $aloud)));
 
+    // A date skipped, then the series split before it: the skip went with
+    // the new series, so undoing it on the old one would do nothing.
+    $g = $series('Walk', '2026-12-01');
+    $d->events->deleteEvent($u, $g, 'this', '2026-12-08T18:00:00+00:00');
+    $skipped = lastEntry($db, $u);
+    $d->events->patch($u, $g, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Walk, later']);
+    checkEq('undo: a date skipped, then the series split before it: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $skipped)));
+
+    // A setting turned off from unset is a change, and its undo unsets it.
+    $plain = (int) $d->calendars->create($u, ['name' => 'Plain'])['id'];
+    $d->calendars->patch($u, $plain, ['groupSimilar' => false]);
+    $d->undo->undoById($u, lastEntry($db, $u));
+    checkEq('undo: a setting turned off from unset goes back to unset', false,
+        array_key_exists('groupSimilar', json_decode((string) ($db->scalar('SELECT settings_json FROM calendars WHERE id = ?', [$plain]) ?? '{}'), true) ?: []));
+
     // A location goes back with its place on the map.
     $where = (int) $d->events->create($u, eventAt($home, 'Talk', '2026-12-15'))['eventId'];
     $d->events->patch($u, $where, ['location' => 'Sample Hall']);
@@ -120,6 +135,12 @@ return static function (Db $db): void {
     $d->undo->undoById($u, $located);
     checkEq('undo: a location undone takes its map place with it', [null, null],
         array_values($db->one('SELECT location, location_lat FROM events WHERE id = ?', [$where])));
+    $d->events->patch($u, $where, ['location' => 'Old Hall', 'locationLat' => 45.5, 'locationLng' => -122.6, 'locationProvider' => 'photon']);
+    $d->events->patch($u, $where, ['locationLat' => 45.6, 'locationLng' => -122.7, 'locationProvider' => 'photon']);
+    $pinMoved = lastEntry($db, $u);
+    $d->events->patch($u, $where, ['location' => 'New Hall']);
+    checkEq('undo: a pin moved, then a new address: the pin move is stale, and the address stays', ['stale_undo', 'New Hall'],
+        [refusal(fn() => $d->undo->undoById($u, $pinMoved)), $db->scalar('SELECT location FROM events WHERE id = ?', [$where])]);
 
     // A calendar's settings are separate settings: undoing a rename (which
     // stops its name following them) leaves a plugin's station changed since.
@@ -204,6 +225,9 @@ return static function (Db $db): void {
     checkEq('default calendar: deleting it moves it to the oldest local calendar left, and says which', [$next, $next],
         [Settings::defaultCalendarId($db, $v), $storedDefault($v)]);
     checkEq('default calendar: deleting another leaves it be', null, $dv->calendars->delete($v, $work));
+    $db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode(['defaultCalendarId' => 999999]), $v]);
+    checkEq('default calendar: the settings read says the calendar new events go to now, not a stored id gone since',
+        Settings::defaultCalendarId($db, $v), (new Settings($db))->resolved($v, (new Settings($db))->forUser($v))['defaultCalendarId']);
     checkEq("default calendar: it can't be set to none", 'invalid_request',
         refusal(fn() => (new Settings($db))->patch($v, ['defaultCalendarId' => null])));
 

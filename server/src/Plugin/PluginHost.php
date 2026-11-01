@@ -898,30 +898,34 @@ final class PluginHost
         if ($row !== null) {
             return (int) $row['id'];
         }
-        $id = $this->db->insert('calendars', [
-            'role' => in_array($role, ['mine', 'opportunities', 'context'], true) ? $role : 'context',
-            'user_id' => $this->userId,
-            'name' => mb_substr($name, 0, 160),
-            'color' => preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : '#5b8dd9',
-            'kind' => 'plugin',
-            'plugin_id' => $this->pluginId,
-            'subscription_authority' => \BetterCal\Domain\SubscriptionAuthority::OWNER,
-            'position' => \BetterCal\Domain\Order::endOfList($this->db, $this->userId),
-            // A Mine calendar would follow the global reminders, and a plugin
-            // can bring hundreds of items (every task due today), so it starts
-            // with none. The person turns them on in its calendar settings.
-            'settings_json' => $role === 'mine' ? json_encode(['reminderDefaults' => ['timed' => [], 'allDay' => []]]) : null,
-        ]);
-        (new Undo($this->db))->record(
-            $this->userId,
-            'calendar',
-            $id,
-            'create',
-            null,
-            null,
-            "Plugin '" . $this->pluginId . "' created calendar '" . $name . "'"
-        );
-        return $id;
+        $undo = new Undo($this->db);
+        return $undo->write($this->userId, function () use ($undo, $name, $color, $role): int {
+            $id = $this->db->insert('calendars', [
+                'role' => in_array($role, ['mine', 'opportunities', 'context'], true) ? $role : 'context',
+                'user_id' => $this->userId,
+                'name' => mb_substr($name, 0, 160),
+                'color' => preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : '#5b8dd9',
+                'kind' => 'plugin',
+                'plugin_id' => $this->pluginId,
+                'subscription_authority' => \BetterCal\Domain\SubscriptionAuthority::OWNER,
+                'position' => \BetterCal\Domain\Order::endOfList($this->db, $this->userId),
+                // A Mine calendar would follow the global reminders, and a plugin
+                // can bring hundreds of items (every task due today), so it starts
+                // with none. The person turns them on in its calendar settings.
+                'settings_json' => $role === 'mine' ? json_encode(['reminderDefaults' => ['timed' => [], 'allDay' => []]]) : null,
+            ]);
+            $undo->record(
+                $this->userId,
+                'calendar',
+                $id,
+                'create',
+                null,
+                null,
+                "Plugin '" . $this->pluginId . "' created calendar '" . $name . "'",
+                touches: [[Undo::keyOf('calendars', ['id' => $id]), '*']]
+            );
+            return $id;
+        });
     }
 
     /**

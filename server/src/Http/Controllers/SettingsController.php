@@ -19,19 +19,21 @@ final class SettingsController
 
     public function index(Request $req): Response
     {
-        return Response::json(['settings' => $this->settings->forUser((int) $req->user['id'])]);
+        $userId = (int) $req->user['id'];
+        return Response::json(['settings' => $this->settings->resolved($userId, $this->settings->forUser($userId))]);
     }
 
     public function patch(Request $req): Response
     {
         // A reminder address set with an API token is remembered with that token
         // and stops receiving mail once the token is revoked or expires (F6).
-        return Response::json(['settings' => $this->settings->patch(
-            (int) $req->user['id'],
+        $userId = (int) $req->user['id'];
+        return Response::json(['settings' => $this->settings->resolved($userId, $this->settings->patch(
+            $userId,
             $req->body,
             $req->authMethod === 'token' ? $req->tokenId : null,
             $req->authMethod === 'session' ? ($req->cookies[Auth::COOKIE] ?? null) : null,
-        )]);
+        ))]);
     }
 
     /** Read a pasted approved-senders list for the bulk editor; saving is the ordinary PATCH. */

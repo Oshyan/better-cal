@@ -17,9 +17,9 @@ return static function (Db $db): string {
     // from the rows, not the column: adding the column commits on its own,
     // so a run cut off before this loop leaves every member at 0 and comes
     // back here. A folder whose members share a place (all at 0, or some
-    // numbered and the rest still 0) is one not numbered through; the app
-    // numbers a folder whole (Folders::place). Numbered in one transaction,
-    // so a cut-off leaves nothing half done.
+    // numbered and the rest still 0) is one not numbered through: the app
+    // never gives two members one place (Order::place). Numbered in one
+    // transaction, so a cut-off leaves nothing half done.
     $db->tx(static function () use ($db): void {
         $rows = $db->all(
             'SELECT cf.folder_id, cf.calendar_id FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id

@@ -52,9 +52,36 @@ foreach ([
     [['mailApprovedSenders' => ['example.test']], 'orders@sub.example.test', false],
     [['mailApprovedSenders' => ['*.example.test']], 'orders@sub.example.test', true],
     [['mailApprovedSenders' => ['*.example.test']], 'orders@example.test', false],
+    [['mailApprovedSenders' => ['*.example.test']], 'orders@deep.sub.example.test', false],
+    [['mailApprovedSenders' => ['*.co.uk']], 'orders@example.co.uk', false],
     [['mailApprovedSenders' => ['gmail.com']], 'sam@gmail.com', false],
     [['mailApprovedSenders' => ['sam@gmail.com']], 'sam@gmail.com', true],
 ] as [$settings, $from, $expected]) checkEq('mail policy: mode and domain boundaries', $expected, MailPolicy::addsAutomatically($settings, $from));
+
+// Wildcards over a public suffix (#196): one label below a domain of its own.
+foreach (['*.co.uk', '*.com.au', '*.com'] as $broad) {
+    try { MailPolicy::rules([$broad]); check('mail policy: public suffix wildcard refused ' . $broad, false); }
+    catch (BetterCal\Http\HttpError $e) { check('mail policy: public suffix wildcard refused ' . $broad, str_contains($e->getMessage(), 'public suffix'), $e->getMessage()); }
+}
+checkEq('mail policy: a domain under a public suffix takes a wildcard', ['*.example.co.uk'], MailPolicy::rules(['*.example.co.uk']));
+
+// Non-ASCII senders (#196): domains are stored punycoded, so a rule typed
+// either way matches mail from either form; a non-ASCII local part keeps its
+// letters and is compared without regard to case like any other.
+if (function_exists('idn_to_ascii')) {
+    checkEq('mail policy: IDN domains stored as punycode, either spelling merged', ['jörg@xn--bcher-kva.example', 'xn--r8jz45g.test', '*.xn--bcher-kva.example'],
+        MailPolicy::rules(['Jörg@Bücher.Example', '例え.test', '*.bücher.example', '*.xn--bcher-kva.example', 'jörg@xn--bcher-kva.example']));
+    foreach ([
+        [['mailApprovedSenders' => ['xn--bcher-kva.example']], 'alex@BÜCHER.example', true],
+        [['mailApprovedSenders' => ['*.xn--bcher-kva.example']], 'alex@shop.bücher.example', true],
+        [['mailApprovedSenders' => ['jörg@xn--bcher-kva.example']], 'JÖRG@bücher.example', true],
+        [['mailApprovedSenders' => ['jörg@xn--bcher-kva.example']], 'jorg@bücher.example', false],
+    ] as [$settings, $from, $expected]) checkEq('mail policy: IDN and SMTPUTF8 senders match their rules', $expected, MailPolicy::addsAutomatically($settings, $from));
+    checkEq('mail policy: IDN domain can be approved from Review', 'xn--r8jz45g.test', MailPolicy::domainFor('Alex@例え.test'));
+    checkEq('mail list: IDN lines read like any other', ['xn--bcher-kva.example', 'alex@xn--r8jz45g.test'],
+        MailPolicy::parseList("@bücher.example\nAlex Example <alex@例え.test>")['rules']);
+}
+checkEq('mail policy: bytes that are not text are not an address', null, MailPolicy::address("\xff@example.test"));
 
 // The bulk editor's text (#151): one bad line never sinks the rest.
 $parsed = MailPolicy::parseList(implode("\n", [

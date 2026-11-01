@@ -1564,17 +1564,24 @@ final class Events
     }
 
     /**
-     * A weekly series starting on a day its BYDAY doesn't list moves to the
-     * first day it does, keeping its time (start and end columns, or []).
+     * A weekly or monthly series starting on a day its rule doesn't name
+     * (BYDAY, BYMONTHDAY, BYSETPOS) moves to the first day it does, keeping
+     * its time (start and end columns, or []). The iterator takes the start
+     * as a real occurrence, so left where it was the series would open with
+     * a day off its pattern (#193).
      */
     private static function alignedStart(array $row): array
     {
         if (empty($row['rrule'])) {
             return [];
         }
+        $rule = RepeatParser::ruleParts((string) $row['rrule']);
+        if (!in_array($rule['FREQ'] ?? '', ['WEEKLY', 'MONTHLY'], true) || (empty($rule['BYDAY']) && empty($rule['BYMONTHDAY']))) {
+            return [];
+        }
         $tz = Time::zone((string) $row['tzid']);
         $start = Time::fromDb((string) $row['start_utc'])->setTimezone($tz);
-        $n = Recurrence::daysToFirstByday((string) $row['rrule'], $start);
+        $n = self::dayDelta($start, RepeatParser::firstOn($rule, $start));
         if ($n === 0) {
             return [];
         }

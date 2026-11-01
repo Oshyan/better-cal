@@ -906,9 +906,10 @@ export async function search(q, opts = {}, limit = 50) {
 // new events go, put back with a calendar), or the window's events.
 export function afterUndo() {
   invalidateRecords();
-  // People's away times, plugins' bands, and the lists pages keep of their
-  // own (Review, Filters, feeds: undoSeq) are fetched on their own.
-  set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, undoSeq: (state.undoSeq || 0) + 1 });
+  // People's away times, plugins' bands, an open trip's members, and the
+  // lists pages keep of their own (Review, Filters, feeds: undoSeq) are
+  // fetched on their own.
+  set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, tripLinksSeq: state.tripLinksSeq + 1, undoSeq: (state.undoSeq || 0) + 1 });
   loadReviewCount().catch(() => {});
   loadCalendars().catch(() => {});
   loadPeople().catch(() => {});

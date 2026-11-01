@@ -2418,6 +2418,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   // An accept undone is open in Review again: pages' own lists reload
   // (undoSeq), and so do the badge, people and saved views.
   const seq = st.undoSeq || 0;
+  const tripSeq = st.tripLinksSeq;
   const fetched = new Set();
   let counted = false;
   globalThis.fetch = async (url) => {
@@ -2428,7 +2429,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     return json({ calendars: [], folders: [], tags: [], events: [] });
   };
   await undoEntries([43]);
-  eq('undo: own lists reload, and Review\'s count', [st.undoSeq, counted], [seq + 1, true]);
+  eq('undo: own lists reload, an open trip\'s members, and Review\'s count', [st.undoSeq, st.tripLinksSeq, counted], [seq + 1, tripSeq + 1, true]);
   // Only the newest load's answer is shown: an older one finishing later
   // (the accept's reload, after the undo's) is dropped, failures too; a
   // further page doesn't drop the load it adds to.

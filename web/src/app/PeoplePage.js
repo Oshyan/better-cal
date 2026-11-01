@@ -108,8 +108,8 @@ function PersonAvailability({ person }) {
     .then((d) => setSpans((d && d.spans) || []))
     .catch((e) => { if (!superseded(e)) setSpans([]); });
 
-  useEffect(() => { reload(); setEditing(null); }, [person.id]); // eslint-disable-line
-  useEffect(() => { if (undoSeq) reload(); }, [undoSeq]); // eslint-disable-line
+  useEffect(() => { reload(); }, [person.id, undoSeq]); // eslint-disable-line
+  useEffect(() => { setEditing(null); }, [person.id]);
 
   const clearForm = () => { setStartDate(''); setEndDate(''); setNote(''); setKind('away'); setEditing(null); };
 

@@ -1915,6 +1915,49 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         }
     }
 
+    // An invitation that carries a changed day with its series (the
+    // organizer moved one before inviting): the moved day is never lost,
+    // whichever of the two the file lists first. From a sender whose events
+    // are held, both wait, and adding the series makes the day a change to
+    // it; from an approved sender the series is added and the day waits as a
+    // change to it. It used to be dropped as part of the series.
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $runTiersA = (new ReflectionClass(MailIngest::class))->getMethod('runTiers');
+        $withMovedDay = static function (string $uid, string $organizer, bool $seriesFirst): string {
+            $series = "BEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:1\r\nDTSTAMP:20261101T120000Z\r\nDTSTART:20261102T180000Z\r\nDTEND:20261102T190000Z\r\nRRULE:FREQ=WEEKLY\r\nSUMMARY:Weekly sync\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\n";
+            $day = "BEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:0\r\nDTSTAMP:20261101T120000Z\r\nRECURRENCE-ID:20261116T180000Z\r\nDTSTART:20261116T170000Z\r\nDTEND:20261116T180000Z\r\nSUMMARY:Weekly sync\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\n";
+            return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:REQUEST\r\n" . ($seriesFirst ? $series . $day : $day . $series) . "END:VCALENDAR\r\n";
+        };
+        foreach (['series first' => true, 'changed day first' => false] as $order => $seriesFirst) {
+            $uid = 'moved-day-held-' . ($seriesFirst ? 'a' : 'b');
+            $runTiersA->invoke($mailA, 1, ['messageId' => "$uid@example.test", 'subject' => 'Invitation: Weekly sync', 'from' => 'organizer@held.example',
+                'icsParts' => [$withMovedDay($uid, 'organizer@held.example', $seriesFirst)], 'html' => null, 'text' => null], 'UTC');
+            $heldItems = $adb->all("SELECT * FROM review_items WHERE source_key = ? AND status = 'open' ORDER BY id", [$uid]);
+            $occurrences = array_map(static fn(array $r): ?string => json_decode((string) $r['payload_json'], true)['occurrence'] ?? null, $heldItems);
+            sort($occurrences);
+            checkEq("moved day with its series, $order: from a held sender both wait and nothing is added", [0, ['invite_new', 'invite_new'], [null, '2026-11-16 18:00:00']], [
+                (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ?', [$uid]), array_column($heldItems, 'kind'), $occurrences,
+            ]);
+            $seriesItem = (int) array_values(array_filter($heldItems, static fn(array $r): bool => !isset(json_decode((string) $r['payload_json'], true)['occurrence'])))[0]['id'];
+            $movedSeriesId = (int) $queueA->accept(1, $seriesItem)['eventId'];
+            $dayItem = $adb->one("SELECT * FROM review_items WHERE source_key = ? AND status = 'open'", [$uid]);
+            checkEq("moved day with its series, $order: adding the series makes the day a change to it", ['invite_change', $movedSeriesId, '2026-11-16 18:00:00', ['Starts', 'Ends']], [
+                $dayItem['kind'] ?? null, (int) ($dayItem['event_id'] ?? 0), json_decode((string) ($dayItem['payload_json'] ?? ''), true)['occurrence'] ?? null,
+                array_column(json_decode((string) ($dayItem['payload_json'] ?? ''), true)['diff'] ?? [], 'label'),
+            ]);
+
+            $uid = 'moved-day-auto-' . ($seriesFirst ? 'a' : 'b');
+            $runTiersA->invoke($mailA, 1, ['messageId' => "$uid@example.test", 'subject' => 'Invitation: Weekly sync', 'from' => 'organizer@example.test',
+                'icsParts' => [$withMovedDay($uid, 'organizer@example.test', $seriesFirst)], 'html' => null, 'text' => null], 'UTC');
+            $autoSeries = $adb->one('SELECT * FROM events WHERE uid = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$uid]);
+            $autoItems = $adb->all("SELECT * FROM review_items WHERE source_key = ? AND status = 'open'", [$uid]);
+            checkEq("moved day with its series, $order: from an approved sender the series is added and the day waits as a change to it", ['FREQ=WEEKLY', 0, ['invite_change'], (int) ($autoSeries['id'] ?? 0), '2026-11-16 18:00:00'], [
+                $autoSeries['rrule'] ?? null, (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ? AND recurrence_parent_id IS NOT NULL', [$uid]),
+                array_column($autoItems, 'kind'), (int) ($autoItems[0]['event_id'] ?? 0), json_decode((string) ($autoItems[0]['payload_json'] ?? ''), true)['occurrence'] ?? null,
+            ]);
+        }
+    }
+
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
     $placeBase = ['calendarId' => 10, 'start' => '2026-12-08T18:00:00+00:00', 'end' => '2026-12-08T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];
@@ -7663,14 +7706,16 @@ require __DIR__ . '/plugins.php';
     $adb->run("INSERT INTO mutations (id, created_at, before_json, after_json) VALUES (4, datetime('now', '-10 days'), '{}', NULL), (5, datetime('now', '-1 hour'), '{}', NULL)");
     $adb->run('INSERT INTO mutation_calendar_refs (mutation_id, calendar_id) VALUES (4, 8), (5, 9)');
     $adb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, label) VALUES ('tides', NULL, 'whole plugin'), ('tides', 7, 'here'), ('tides', 8, 'long gone'), ('tides', 9, 'just gone')");
-    $adb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('tides', '__options.stations', '[]'), ('tides', '__calstatus.7', '{}'), ('tides', '__calplace.7', '{}'), ('tides', '__calstatus.8', '{}'), ('tides', '__calplace.8', '{}'), ('tides', '__calstatus.9', '{}')");
+    // A plugin's own keys that start like the per-calendar ones (no calendar
+    // id after the prefix) are not calendar rows and are never pruned.
+    $adb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('tides', '__options.stations', '[]'), ('tides', '__calstatus.7', '{}'), ('tides', '__calplace.7', '{}'), ('tides', '__calstatus.8', '{}'), ('tides', '__calplace.8', '{}'), ('tides', '__calstatus.9', '{}'), ('tides', '__calstatus.text', '{}'), ('tides', '__calplace.0', '{}'), ('tides', '__calplace.7x', '{}')");
     $pruned = (new BetterCal\Domain\Activity($adb))->prune();
     checkEq('prune: snapshots older than 7 days cleared (count, not statement)', 3, $pruned['snapshotsCleared']);
     checkEq('prune: rows older than 90 days deleted', 1, $pruned['deleted']);
     checkEq('prune: recent rows untouched', 4, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
     $left = static fn(): array => [array_column($adb->all('SELECT label FROM plugin_ranges ORDER BY id'), 'label'), array_column($adb->all('SELECT k FROM plugin_kv ORDER BY k'), 'k')];
-    checkEq("prune: a deleted plugin calendar's bands and status rows go once its undo window closes; one still undoable keeps them",
-        [3, [['whole plugin', 'here', 'just gone'], ['__calplace.7', '__calstatus.7', '__calstatus.9', '__options.stations']]], [$pruned['pluginRowsForgotten'], $left()]);
+    checkEq("prune: a deleted plugin calendar's bands and status rows go once its undo window closes; one still undoable keeps them; a plugin's own key that only starts like one is not a calendar row",
+        [3, [['whole plugin', 'here', 'just gone'], ['__calplace.0', '__calplace.7', '__calplace.7x', '__calstatus.7', '__calstatus.9', '__calstatus.text', '__options.stations']]], [$pruned['pluginRowsForgotten'], $left()]);
     // The recent delete undone: the calendar is back, its rows with it.
     $adb->run('UPDATE mutations SET undone = 1 WHERE id = 5');
     $adb->run('INSERT INTO calendars (id) VALUES (9)');
@@ -7678,7 +7723,7 @@ require __DIR__ . '/plugins.php';
     // Removed with no entry holding it (an uninstall): nothing to wait for.
     $adb->run('DELETE FROM calendars WHERE id = 9');
     checkEq('prune: a calendar gone with no undo to wait for loses its rows at once',
-        [2, [['whole plugin', 'here'], ['__calplace.7', '__calstatus.7', '__options.stations']]], [(new BetterCal\Domain\Activity($adb))->prune()['pluginRowsForgotten'], $left()]);
+        [2, [['whole plugin', 'here'], ['__calplace.0', '__calplace.7', '__calplace.7x', '__calstatus.7', '__calstatus.text', '__options.stations']]], [(new BetterCal\Domain\Activity($adb))->prune()['pluginRowsForgotten'], $left()]);
 }
 
 // --- Job queue: stalled jobs -------------------------------------------------
@@ -10804,6 +10849,10 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $udb->run("INSERT INTO users (id, email, settings_json) VALUES (1, 'owner@example.test', '{}')");
     $migration46 = require dirname(__DIR__) . '/migrations/046_update_awareness.php';
     $migration46($udb);
+    $migration61 = require dirname(__DIR__) . '/migrations/061_update_newest.php';
+    check('migration 061: adds the newest version column and says so', str_contains($migration61($udb), 'step towards'));
+    $migration61($udb);
+    checkEq('migration 061: runs again harmlessly, the column added once', 1, count(array_filter($udb->all('PRAGMA table_info(app_update_state)'), static fn(array $c): bool => $c['name'] === 'newest_version')));
 
     // GitHub always redirects a release asset download to its storage, and the
     // client's budget counts every hop: a budget of 1 failed every real check
@@ -11232,6 +11281,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     // The release and its zip, verified as the update check verifies them.
     $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($rdb);
+    (require dirname(__DIR__) . '/migrations/061_update_newest.php')($rdb);
     $relManifest = Updates::manifestJson('2.0.0', 'routine', '1.0.0');
     $zipBody = 'zip-bytes';
     $zipAsset = static fn(string $url, string $digest) => ['name' => 'better-cal-2.0.0.zip', 'browser_download_url' => $url, 'digest' => $digest, 'size' => strlen($zipBody)];
@@ -11291,6 +11341,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $stepUpdates = static function (array $built) use ($oldKeys, &$sigFetches): array {
         $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
         (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
+        (require dirname(__DIR__) . '/migrations/061_update_newest.php')($db);
         $fetch = static function (string $url) use ($built, &$sigFetches): array {
             if (str_contains($url, 'api.github.com')) {
                 return ['status' => 200, 'body' => json_encode(array_column($built, 'release'))];
@@ -11309,7 +11360,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         };
         return [new Updates($db, ['version' => '9.8.0'], $fetch, $oldKeys), $db];
     };
-    [$stepping] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
+    [$stepping, $steppingDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
     $found = $stepping->newestRelease();
     checkEq('update: behind a key change, the newest release this copy verifies is offered, and the newest is named',
         ['9.9.0', '9.9.2'], [$found['version'], $found['newest']]);
@@ -11317,6 +11368,15 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('update: the step says what the newer releases need and to run the update again',
         str_contains($step, '9.9.2') && str_contains($step, "doesn't list") && str_contains($step, 'run the update again'));
     checkEq('update: the app\'s notice records the step too, never a release the updater would refuse', '9.9.0', $stepping->check(false)['latest_version']);
+    // The app says the step is one: its status carries the newest published
+    // version beside the one this copy verifies, with no error shown.
+    $steppingDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $steppingDb->run("INSERT INTO users VALUES (1, '{}')");
+    $steppingStatus = $stepping->status(1);
+    checkEq('update: the app\'s status names the step and the newest release it leads to, as no error', ['9.9.0', '9.9.2', null, true, true, ['9.9.2', null]], [
+        $steppingStatus['latestVersion'], $steppingStatus['newestVersion'], $steppingStatus['lastError'], $steppingStatus['available'], $steppingStatus['showBanner'],
+        array_values($steppingDb->one('SELECT newest_version, last_error FROM app_update_state WHERE id = 1')),
+    ]);
     checkEq('update: a newest release this copy verifies has no step to explain', [], BetterCal\Infra\Updater::steppingStone('9.9.2', '9.9.2'));
 
     [$stuck, $stuckDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key')]);
@@ -11331,12 +11391,19 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('update: the notice records nothing when no release verifies, and says why', $threw && $stuckDb->one('SELECT latest_version FROM app_update_state WHERE id = 1')['latest_version'] === null);
 
     $sigFetches = 0;
-    [$fine] = $stepUpdates([$stepRelease('9.9.2', 'old-key'), $stepRelease('9.9.1', 'new-key')]);
+    [$fine, $fineDb] = $stepUpdates([$stepRelease('9.9.2', 'old-key'), $stepRelease('9.9.1', 'new-key')]);
     $found = $fine->newestRelease();
     checkEq('update: a newest release this copy verifies is taken as before, without looking further back',
         ['9.9.2', '9.9.2', 1], [$found['version'], $found['newest'], $sigFetches]);
+    $fine->check(false);
+    $fineDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $fineDb->run("INSERT INTO users VALUES (1, '{}')");
+    $fineStatus = $fine->status(1);
+    checkEq('update: with nothing walked past the status names one version twice and no error', ['9.9.2', '9.9.2', null], [$fineStatus['latestVersion'], $fineStatus['newestVersion'], $fineStatus['lastError']]);
 
-    // Only a key this copy lacks is walked past; a broken newest release still stops the update.
+    // Only a key this copy lacks is walked past; a broken release still stops
+    // the update, and the stop names the release, since it may be one the
+    // walk reached after passing newer ones.
     [$broken] = $stepUpdates([$stepRelease('9.9.2', 'old-key', false), $stepRelease('9.9.0', 'old-key')]);
     try {
         $broken->newestRelease();
@@ -11344,7 +11411,15 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     } catch (BetterCal\Support\UntrustedSignature) {
         check('update: a newest release that is not immutable still stops the update', false);
     } catch (RuntimeException $e) {
-        check('update: a newest release that is not immutable still stops the update', str_contains($e->getMessage(), 'not immutable'));
+        check('update: a newest release that is not immutable still stops the update', str_contains($e->getMessage(), 'Release 9.9.2 is not immutable'));
+    }
+    [$walkedPast] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'old-key', false), $stepRelease('9.9.0', 'old-key')]);
+    try {
+        $walkedPast->newestRelease();
+        check('update: a release that is not immutable behind a walked-past one stops the update and is named', false);
+    } catch (RuntimeException $e) {
+        check('update: a release that is not immutable behind a walked-past one stops the update and is named',
+            !($e instanceof BetterCal\Support\UntrustedSignature) && str_contains($e->getMessage(), 'Release 9.9.1 is not immutable'));
     }
 
     exec('rm -r ' . escapeshellarg($tmp));

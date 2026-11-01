@@ -112,7 +112,18 @@ final class MailPolicy
         return self::domainAllowed($domain) ? $domain : null;
     }
 
-    /** Canonical entries: an exact address, a domain, or *.example.com for the domains one label under it. */
+    /**
+     * Canonical entries for a list being saved: an exact address, a domain,
+     * or *.example.com for the domains one label under it. A line that
+     * can't be a rule refuses the whole save and is named, so the owner
+     * knows which one to fix. The stored list is never re-read through
+     * this: a line an older version accepted and this one refuses (a
+     * wildcard over a public suffix, an address with an IP in it) would
+     * otherwise break every save and every "Always add from" until it was
+     * found and removed by hand (review of #196). Such a line stays in the
+     * list, matches nothing (addsAutomatically), and is named here only
+     * when the list is saved again.
+     */
     public static function rules(mixed $values): array
     {
         if (!is_array($values) || !array_is_list($values)) {
@@ -124,7 +135,7 @@ final class MailPolicy
             $value = strtolower(trim($value));
             [$rule, $problem] = self::rule($value);
             if ($problem === 'shared') {
-                throw HttpError::badRequest('Shared mail providers can only be approved as exact email addresses.');
+                throw HttpError::badRequest($value . ' is a shared mail provider, which can only be approved as an exact email address.');
             }
             if ($problem === 'public') {
                 throw HttpError::badRequest($value . ' would cover every domain under a public suffix; approve the domains you mean instead.');
@@ -235,7 +246,32 @@ final class MailPolicy
         return false;
     }
 
-    /** Caller holds the account lock; approval and adding the chosen item commit together. */
+    /**
+     * A rule as the owner should read it. A non-ASCII domain is stored as
+     * punycode (domain()); shown only in Unicode it could pass for a
+     * well-known name, and "Always add from" puts sender-chosen domains in
+     * the list, so the Unicode form is shown with the stored one beside it:
+     * "bücher.example (xn--bcher-kva.example)". An ASCII rule is shown as
+     * it is, and so is one this PHP can't convert.
+     */
+    public static function display(string $rule): string
+    {
+        if (!str_contains($rule, 'xn--') || !function_exists('idn_to_utf8')) return $rule;
+        $at = strrpos($rule, '@');
+        $domain = $at === false ? $rule : substr($rule, $at + 1);
+        $wild = str_starts_with($domain, '*.');
+        $unicode = idn_to_utf8($wild ? substr($domain, 2) : $domain, IDNA_NONTRANSITIONAL_TO_UNICODE | IDNA_CHECK_BIDI | IDNA_CHECK_CONTEXTJ, INTL_IDNA_VARIANT_UTS46);
+        if (!is_string($unicode) || $unicode === '' || ($wild ? '*.' . $unicode : $unicode) === $domain) return $rule;
+        $shown = ($at === false ? '' : substr($rule, 0, $at + 1)) . ($wild ? '*.' : '') . $unicode;
+        return $shown . ' (' . $rule . ')';
+    }
+
+    /**
+     * Caller holds the account lock; approval and adding the chosen item
+     * commit together. Only the rule being added is checked: the stored
+     * list's other lines stay as they are, whatever this version makes of
+     * them (rules()).
+     */
     public static function approve(Db $db, int $userId, string $from, string $scope): void
     {
         $rule = match ($scope) {
@@ -249,7 +285,9 @@ final class MailPolicy
         if (($settings['mailEventMode'] ?? 'approved') !== 'approved') {
             throw HttpError::conflict('mail_policy_changed', 'Your email setting changed. Reload Review before approving this sender.');
         }
-        $settings['mailApprovedSenders'] = self::rules([...($settings['mailApprovedSenders'] ?? []), $rule]);
+        $stored = is_array($settings['mailApprovedSenders'] ?? null) ? array_values(array_filter($settings['mailApprovedSenders'], 'is_string')) : [];
+        if (!in_array($rule, $stored, true)) $stored[] = $rule;
+        $settings['mailApprovedSenders'] = $stored;
         $db->update('users', ['settings_json' => json_encode($settings)], 'id = ?', [$userId]);
     }
 }

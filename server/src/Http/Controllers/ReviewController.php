@@ -94,8 +94,11 @@ final class ReviewController
             if ($isNew && $occurrence === null && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
                 $address = \BetterCal\Domain\MailPolicy::address($c['from']);
                 $domain = \BetterCal\Domain\MailPolicy::domainFor($c['from']);
-                if ($address !== null) $approve[] = self::action('approve_address', 'Always add from ' . $address, "/review/invitations/{$c['id']}/accept", ['approveSender' => 'address']);
-                if ($domain !== null) $approve[] = self::action('approve_domain', 'Always add from ' . $domain, "/review/invitations/{$c['id']}/accept", ['approveSender' => 'domain']);
+                // A non-ASCII domain reads as Unicode with its stored form
+                // beside it (MailPolicy::display): the sender chose it, and
+                // a lookalike must stay recognizable right where it is approved.
+                if ($address !== null) $approve[] = self::action('approve_address', 'Always add from ' . \BetterCal\Domain\MailPolicy::display($address), "/review/invitations/{$c['id']}/accept", ['approveSender' => 'address']);
+                if ($domain !== null) $approve[] = self::action('approve_domain', 'Always add from ' . \BetterCal\Domain\MailPolicy::display($domain), "/review/invitations/{$c['id']}/accept", ['approveSender' => 'domain']);
             }
             $items[] = [
                 'key' => $c['kind'] . ':' . $c['id'],

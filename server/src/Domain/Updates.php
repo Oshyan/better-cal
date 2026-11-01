@@ -85,17 +85,22 @@ final class Updates
                 $state = [
                     'checked_at' => Time::nowDb(),
                     'latest_version' => $version,
+                    'newest_version' => $version,
                     'priority' => 'routine',
                     'minimum_secure_version' => $previous['minimum_secure_version'] ?? null,
                     'release_url' => $this->releaseUrl($release, $version),
-                    'released_at' => $this->releasedAt($release),
+                    'released_at' => $this->releasedAt($release, $version),
                     'manifest_digest' => null,
                     'last_error' => null,
                 ];
             } else {
                 // The newest release this copy's keys verify: the notice must
-                // never name one the updater would then refuse (#194).
-                $state = $this->newestVerified($candidates, $previous)['state'];
+                // never name one the updater would then refuse (#194). The
+                // newest published one is stored with it (newest_version,
+                // the same version unless some were walked past), so the
+                // notice can say that the verified one is a step on the way.
+                ['state' => $state, 'newest' => $newest] = $this->newestVerified($candidates, $previous);
+                $state['newest_version'] = $newest;
             }
             $stored = $this->saveAcceptedState($state);
             if ($notify) $this->notifySecurityFloor($stored);
@@ -137,9 +142,14 @@ final class Updates
         $dismissed = $latest !== null && ($notice['dismissed_version'] ?? null) === $latest;
         $show = $preference !== 'off'
             && ($securityRequired || ($preference === 'all' && $available && !$dismissed));
+        $newest = is_string($state['newest_version'] ?? null) ? $state['newest_version'] : null;
         return [
             'currentVersion' => $current,
             'latestVersion' => $latest,
+            // The newest published release: above latestVersion only when
+            // this copy's keys can't verify it yet and latestVersion is the
+            // step that brings them (#194).
+            'newestVersion' => $newest ?? $latest,
             'priority' => $state['priority'] ?? null,
             'minimumSecureVersion' => $floor,
             'releaseUrl' => $state['release_url'] ?? null,
@@ -382,38 +392,43 @@ final class Updates
         }
     }
 
+    /**
+     * Every stop here names the release: the walk (newestVerified) can
+     * reach it after passing newer ones, so "the newest release" would
+     * point at the wrong one.
+     */
     private function verifiedManifestState(array $release, string $version, array $previous): array
     {
         if (($release['immutable'] ?? false) !== true) {
-            throw new \RuntimeException('The newest release is not immutable');
+            throw new \RuntimeException("Release $version is not immutable");
         }
         $url = $this->releaseUrl($release, $version);
         $assets = array_values(array_filter(is_array($release['assets'] ?? null) ? $release['assets'] : [],
             static fn($asset): bool => is_array($asset) && ($asset['name'] ?? null) === self::MANIFEST_NAME));
         if (count($assets) !== 1) {
-            throw new \RuntimeException('The release must contain exactly one ' . self::MANIFEST_NAME . ' asset');
+            throw new \RuntimeException("Release $version must contain exactly one " . self::MANIFEST_NAME . ' asset');
         }
         $asset = $assets[0];
         $tag = 'v' . $version;
         $expectedUrl = self::RELEASE_BASE . rawurlencode($tag) . '/' . self::MANIFEST_NAME;
         if (($asset['browser_download_url'] ?? null) !== $expectedUrl) {
-            throw new \RuntimeException('The release manifest download URL is not canonical');
+            throw new \RuntimeException("Release $version's manifest download URL is not canonical");
         }
         $digest = (string) ($asset['digest'] ?? '');
         if (preg_match('/^sha256:([0-9a-f]{64})$/D', $digest, $m) !== 1) {
-            throw new \RuntimeException('The release manifest has no valid GitHub SHA-256 digest');
+            throw new \RuntimeException("Release $version's manifest has no valid GitHub SHA-256 digest");
         }
         $manifestResponse = $this->get($expectedUrl, ['Accept: application/octet-stream']);
         if ($manifestResponse['status'] !== 200) {
-            throw new \RuntimeException('Release manifest returned HTTP ' . $manifestResponse['status']);
+            throw new \RuntimeException("Release $version's manifest returned HTTP " . $manifestResponse['status']);
         }
         $raw = $manifestResponse['body'];
         if ($raw === '' || strlen($raw) > self::MAX_MANIFEST_BYTES || !hash_equals($m[1], hash('sha256', $raw))) {
-            throw new \RuntimeException('Release manifest size or digest is invalid');
+            throw new \RuntimeException("Release $version's manifest size or digest is invalid");
         }
         $manifest = json_decode($raw, true, 8, JSON_THROW_ON_ERROR);
         if (!is_array($manifest) || array_keys($manifest) !== ['schemaVersion', 'version', 'priority', 'minimumSecureVersion']) {
-            throw new \RuntimeException('Release manifest schema is invalid');
+            throw new \RuntimeException("Release $version's manifest schema is invalid");
         }
         if ($manifest['schemaVersion'] !== 1 || $manifest['version'] !== $version
             || !in_array($manifest['priority'], ['routine', 'recommended', 'security'], true)
@@ -421,15 +436,15 @@ final class Updates
             || preg_match('/^\d+\.\d+\.\d+$/D', $manifest['minimumSecureVersion']) !== 1
             || version_compare($manifest['minimumSecureVersion'], $version, '>')
             || ($manifest['priority'] === 'security' && $manifest['minimumSecureVersion'] !== $version)) {
-            throw new \RuntimeException('Release manifest values are invalid');
+            throw new \RuntimeException("Release $version's manifest values are invalid");
         }
         $canonical = self::manifestJson($version, $manifest['priority'], $manifest['minimumSecureVersion']);
         if (!hash_equals($canonical, $raw)) {
-            throw new \RuntimeException('Release manifest is not canonical');
+            throw new \RuntimeException("Release $version's manifest is not canonical");
         }
         if (!empty($previous['minimum_secure_version'])
             && version_compare($manifest['minimumSecureVersion'], (string) $previous['minimum_secure_version'], '<')) {
-            throw new \RuntimeException('The cumulative minimum secure version moved backwards');
+            throw new \RuntimeException("Release $version's cumulative minimum secure version moved backwards");
         }
         // Only a signed release moves what this install remembers (0.9.86).
         // The newest version and the security floor only ever go up, so an
@@ -443,7 +458,7 @@ final class Updates
             'priority' => $manifest['priority'],
             'minimum_secure_version' => $manifest['minimumSecureVersion'],
             'release_url' => $url,
-            'released_at' => $this->releasedAt($release),
+            'released_at' => $this->releasedAt($release, $version),
             'manifest_digest' => $m[1],
             'last_error' => null,
         ];
@@ -463,17 +478,17 @@ final class Updates
     {
         $expected = 'https://github.com/Oshyan/better-cal/releases/tag/v' . $version;
         if (($release['html_url'] ?? null) !== $expected) {
-            throw new \RuntimeException('Release URL is not canonical');
+            throw new \RuntimeException("Release $version's URL is not canonical");
         }
         return $expected;
     }
 
-    private function releasedAt(array $release): ?string
+    private function releasedAt(array $release, string $version): ?string
     {
         $raw = $release['published_at'] ?? null;
         if (!is_string($raw) || $raw === '') return null;
         try { return Time::toDb(Time::parseIso($raw)); }
-        catch (\Throwable) { throw new \RuntimeException('Release publication time is invalid'); }
+        catch (\Throwable) { throw new \RuntimeException("Release $version's publication time is invalid"); }
     }
 
     /** @return array{status:int,body:string} */

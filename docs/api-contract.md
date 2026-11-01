@@ -284,7 +284,7 @@ The service worker shows the notification (`tag` is the `instanceId`, so a resen
 
 All session only.
 
-- `GET /updates` → `{currentVersion, latestVersion, priority, minimumSecureVersion, releaseUrl, releasedAt, checkedAt, lastError, preference, available, securityRequired, showBanner, dismissible}`. `preference` is the `updateNotifications` setting. `securityRequired` is true when this version is below the minimum secure version.
+- `GET /updates` → `{currentVersion, latestVersion, newestVersion, priority, minimumSecureVersion, releaseUrl, releasedAt, checkedAt, lastError, preference, available, securityRequired, showBanner, dismissible}`. `preference` is the `updateNotifications` setting. `securityRequired` is true when this version is below the minimum secure version. `latestVersion` is the newest release this copy's signing keys verify; `newestVersion` is the newest published one, above it only when the releases after `latestVersion` are signed with a key `latestVersion` brings, so the update takes two runs.
 - `POST /updates/check` → the same, after checking for a release now; 502 `update_check_failed` when the check fails.
 - `POST /updates/dismiss` → the same, with the latest version's notice dismissed. A required security update can't be dismissed (400).
 

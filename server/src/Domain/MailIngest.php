@@ -493,17 +493,17 @@ final class MailIngest
             $imip = self::parseImip($ics);
             if ($imip === null) { $warnings[] = 'An attached calendar could not be read.'; continue; }
             if ($imip['skipped'] !== []) $warnings[] = Ics::skippedMessage($imip['skipped']);
-            $series = [];
-            foreach ($imip['events'] as $ev) {
-                if (empty($ev['recurrence_instance_utc'])) $series[(string) ($ev['uid'] ?? '')] = true;
-            }
-            foreach ($imip['events'] as $eventIndex => $ev) {
-                // An occurrence sent along with its own series is part of a
-                // new invitation, which arrives whole through the series.
-                if (!empty($ev['recurrence_instance_utc']) && isset($series[(string) ($ev['uid'] ?? '')])
-                    && $this->db->scalar('SELECT 1 FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL', [$userId, (string) $ev['uid']]) === null) {
-                    continue;
-                }
+            // A series first, then its changed days, whatever order the file
+            // has them in: an invitation to a series the organizer already
+            // moved a day of carries both. Each day's change is then held as
+            // a change to that day, of a series just added (holdInviteChange)
+            // or one waiting in Review with it (the #192 hold, which becomes
+            // that once the series is added). It used to be dropped as part
+            // of the series, and the moved day was lost.
+            $events = $imip['events'];
+            uksort($events, static fn(int $a, int $b): int =>
+                (int) !empty($events[$a]['recurrence_instance_utc']) <=> (int) !empty($events[$b]['recurrence_instance_utc']) ?: $a <=> $b);
+            foreach ($events as $eventIndex => $ev) {
                 $eventMsg = $msg;
                 $eventMsg['transportKey'] = self::messageKey($msg) . ':imip:' . $partIndex . ':' . $eventIndex;
                 $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $eventMsg));

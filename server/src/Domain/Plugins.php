@@ -498,7 +498,13 @@ final class Plugins
                 $pluginId !== null ? [$prefix, $pluginId] : [$prefix]
             );
             foreach ($found as $r) {
-                $rows[] = [(string) $r['plugin_id'], (string) $r['k'], (int) substr((string) $r['k'], strlen($prefix))];
+                // Only a calendar id after the prefix: a plugin's own key
+                // that happens to start the same way (__calstatus.text)
+                // would read as calendar 0, which never exists, and be
+                // dropped at the next prune.
+                $suffix = substr((string) $r['k'], strlen($prefix));
+                if (!ctype_digit($suffix) || (int) $suffix <= 0) continue;
+                $rows[] = [(string) $r['plugin_id'], (string) $r['k'], (int) $suffix];
             }
         }
         if ($rows === []) {

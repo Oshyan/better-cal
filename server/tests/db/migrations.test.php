@@ -127,4 +127,11 @@ return static function (Db $db): void {
     $againSaid = (require dirname(__DIR__, 2) . '/migrations/060_undo_ground_again.php')($db);
     checkEq('migration 060: an entry 058 left without touches on a development build gets them, and nothing else changes',
         [[['events:779', 'title']], $rows + 1, true], [$touches($late), (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches'), str_contains($againSaid, 'stands on')]);
+    // 061: the newest published version beside the verified one; run again, the column is still one.
+    $newestSaid = $migration('061_update_newest.php')($db);
+    $migration('061_update_newest.php')($db);
+    checkEq('migration 061: adds the newest version column once and says so', [1, true], [
+        (int) $db->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'app_update_state' AND COLUMN_NAME = 'newest_version'"),
+        str_contains($newestSaid, 'step towards'),
+    ]);
 };

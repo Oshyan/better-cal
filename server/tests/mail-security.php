@@ -80,8 +80,46 @@ if (function_exists('idn_to_ascii')) {
     checkEq('mail policy: IDN domain can be approved from Review', 'xn--r8jz45g.test', MailPolicy::domainFor('Alex@例え.test'));
     checkEq('mail list: IDN lines read like any other', ['xn--bcher-kva.example', 'alex@xn--r8jz45g.test'],
         MailPolicy::parseList("@bücher.example\nAlex Example <alex@例え.test>")['rules']);
+    // Shown in Unicode with the stored form beside it, since "Always add
+    // from" puts a sender-chosen domain in the list and a lookalike must
+    // stay recognizable; an ASCII rule is shown as it is.
+    checkEq('mail policy: an IDN rule displays in Unicode with its punycode beside it', [
+        'bücher.example (xn--bcher-kva.example)', '*.bücher.example (*.xn--bcher-kva.example)',
+        'jörg@bücher.example (jörg@xn--bcher-kva.example)', 'alex@example.test', '*.example.test',
+    ], array_map([MailPolicy::class, 'display'], ['xn--bcher-kva.example', '*.xn--bcher-kva.example', 'jörg@xn--bcher-kva.example', 'alex@example.test', '*.example.test']));
 }
 checkEq('mail policy: bytes that are not text are not an address', null, MailPolicy::address("\xff@example.test"));
+
+// A stored line an older version accepted and this one refuses (a wildcard
+// over a public suffix, an address with an IP in it) never breaks the rest
+// of the list (review of #196): approving from Review adds its rule beside
+// it, matching goes on with the other lines, and only saving the list again
+// refuses, naming that line.
+$legacyDb = $mailDb();
+$legacyDb->run("UPDATE users SET settings_json = ? WHERE id = 1", [json_encode(['mailApprovedSenders' => ['*.co.uk', 'alex@[192.0.2.1]', 'venue.example.test']])]);
+MailPolicy::approve($legacyDb, 1, 'Bookings@Example.test', 'domain');
+MailPolicy::approve($legacyDb, 1, 'Bookings@Example.test', 'domain');
+$legacyList = json_decode((string) $legacyDb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['mailApprovedSenders'];
+checkEq('mail policy: approving from Review keeps a stored line this version refuses, and adds the new rule once',
+    ['*.co.uk', 'alex@[192.0.2.1]', 'venue.example.test', 'example.test'], $legacyList);
+foreach ([
+    ['orders@example.test', true],
+    ['desk@venue.example.test', true],
+    ['anyone@example.co.uk', false],
+    ['alex@[192.0.2.1]', false],
+] as [$from, $expected]) checkEq('mail policy: matching goes on beside a stored line this version refuses', $expected, MailPolicy::addsAutomatically(['mailApprovedSenders' => $legacyList], $from));
+try {
+    MailPolicy::rules($legacyList);
+    check('mail policy: saving a list with a line this version refuses names that line', false);
+} catch (BetterCal\Http\HttpError $e) {
+    check('mail policy: saving a list with a line this version refuses names that line', str_contains($e->getMessage(), '*.co.uk'));
+}
+try {
+    MailPolicy::rules(['gmail.com']);
+    check('mail policy: a shared provider refused by name', false);
+} catch (BetterCal\Http\HttpError $e) {
+    check('mail policy: a shared provider refused by name', str_contains($e->getMessage(), 'gmail.com'));
+}
 
 // The bulk editor's text (#151): one bad line never sinks the rest.
 $parsed = MailPolicy::parseList(implode("\n", [

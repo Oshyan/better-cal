@@ -1947,7 +1947,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             ]);
 
             $uid = 'moved-day-auto-' . ($seriesFirst ? 'a' : 'b');
-            $runTiersA->invoke($mailA, 1, ['messageId' => "$uid@example.test", 'subject' => 'Invitation: Weekly sync', 'from' => 'organizer@example.test',
+            $autoResult = $runTiersA->invoke($mailA, 1, ['messageId' => "$uid@example.test", 'subject' => 'Invitation: Weekly sync', 'from' => 'organizer@example.test',
                 'icsParts' => [$withMovedDay($uid, 'organizer@example.test', $seriesFirst)], 'html' => null, 'text' => null], 'UTC');
             $autoSeries = $adb->one('SELECT * FROM events WHERE uid = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$uid]);
             $autoItems = $adb->all("SELECT * FROM review_items WHERE source_key = ? AND status = 'open'", [$uid]);
@@ -1955,6 +1955,10 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
                 $autoSeries['rrule'] ?? null, (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ? AND recurrence_parent_id IS NOT NULL', [$uid]),
                 array_column($autoItems, 'kind'), (int) ($autoItems[0]['event_id'] ?? 0), json_decode((string) ($autoItems[0]['payload_json'] ?? ''), true)['occurrence'] ?? null,
             ]);
+            // The message's log row (what runTiers returns is what finish()
+            // writes) says the series was added, not that its day is held.
+            checkEq("moved day with its series, $order: the message is logged as created, naming the series", ['imip', 'created', (int) ($autoSeries['id'] ?? 0)],
+                [$autoResult['tier'], $autoResult['outcome'], $autoResult['eventId']]);
         }
     }
 
@@ -2148,6 +2152,49 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         checkEq('a series on the 1st and 15th dragged a day keeps its days and starts on the next of them', ['FREQ=MONTHLY;BYMONTHDAY=1,15', '2026-12-15 18:00:00'], [
             $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$twice]),
             $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$twice]),
+        ]);
+        // Across a month boundary the day landed on is the day meant too:
+        // "every 31st" dragged from 31 Jan to 1 Feb is "every 1st", from
+        // 1 Jan (31 Dec plus the day). With the rule left at 31 the start
+        // was realigned to 31 Jan, so 31 Dec was gone and 31 Jan stayed put.
+        $monthEnd = (int) $eventsA->create(1, ['title' => 'Month end', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=31', 'start' => '2026-12-31T18:00:00+00:00', 'end' => '2026-12-31T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $monthEnd, ['scope' => 'all', 'instanceStart' => '2027-01-31T18:00:00+00:00', 'start' => '2027-02-01T18:00:00+00:00', 'end' => '2027-02-01T19:00:00+00:00']);
+        checkEq('every 31st dragged from 31 Jan to 1 Feb runs on the 1st from 1 Jan', ['FREQ=MONTHLY;BYMONTHDAY=1', '2027-01-01 18:00:00', ['Month end'], ['Month end'], [], []], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$monthEnd]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$monthEnd]),
+            $onDay('Month end', '2027-01-01'),
+            $onDay('Month end', '2027-02-01'),
+            $onDay('Month end', '2027-01-31'),
+            $onDay('Month end', '2027-03-31'),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to every 31st from 31 Dec', ['FREQ=MONTHLY;BYMONTHDAY=31', '2026-12-31 18:00:00', ['Month end'], ['Month end'], []], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$monthEnd]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$monthEnd]),
+            $onDay('Month end', '2026-12-31'),
+            $onDay('Month end', '2027-01-31'),
+            $onDay('Month end', '2027-02-01'),
+        ]);
+        // "Every 30th" from 30 Jan, its 30 Apr dragged to 1 May: every 1st,
+        // opening on 1 Feb (30 Jan plus the day, aligned to the rule). It
+        // used to open on 30 Mar, 30 Jan gone and 30 Apr unmoved.
+        $thirtieth = (int) $eventsA->create(1, ['title' => 'Statement', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=30', 'start' => '2027-01-30T18:00:00+00:00', 'end' => '2027-01-30T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $thirtieth, ['scope' => 'all', 'instanceStart' => '2027-04-30T18:00:00+00:00', 'start' => '2027-05-01T18:00:00+00:00', 'end' => '2027-05-01T19:00:00+00:00']);
+        checkEq('every 30th with 30 Apr dragged to 1 May runs on the 1st from 1 Feb', ['FREQ=MONTHLY;BYMONTHDAY=1', '2027-02-01 18:00:00', ['Statement'], ['Statement'], [], []], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$thirtieth]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$thirtieth]),
+            $onDay('Statement', '2027-02-01'),
+            $onDay('Statement', '2027-05-01'),
+            $onDay('Statement', '2027-04-30'),
+            $onDay('Statement', '2027-03-30'),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to every 30th from 30 Jan', ['FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30 18:00:00', ['Statement'], ['Statement'], []], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$thirtieth]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$thirtieth]),
+            $onDay('Statement', '2027-01-30'),
+            $onDay('Statement', '2027-04-30'),
+            $onDay('Statement', '2027-05-01'),
         ]);
     }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
@@ -4207,8 +4254,10 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
     $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start_utc' => '2026-10-01 16:00:00', 'end_utc' => '2026-10-01 17:00:00'] + $fMon, $fMonthEdit('2026-11-16T09:00:00-08:00', '2026-11-16T10:00:00-08:00'));
     checkEq('a list of month days is left as it was; only the start moves', ['2026-10-02T09:00:00-07:00', null], [$fOut['start'], $fOut['rrule'] ?? null]);
 }
-    checkEq('month day shift: a move out of the month says nothing about the day meant', 'FREQ=MONTHLY;BYMONTHDAY=31',
+    checkEq('month day shift: a move out of the month names the day landed on', 'FREQ=MONTHLY;BYMONTHDAY=1',
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=31', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-11-01')));
+    checkEq('month day shift: a move to the same day of another month keeps the day', 'FREQ=MONTHLY;BYMONTHDAY=15',
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=15', new DateTimeImmutable('2026-10-15'), new DateTimeImmutable('2026-11-15')));
     checkEq('month day shift: the last day, an nth weekday and a plain monthly rule stay', ['FREQ=MONTHLY;BYMONTHDAY=-1', 'FREQ=MONTHLY;BYDAY=1MO', 'FREQ=MONTHLY'], [
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=-1', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-10-30')),
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
@@ -7342,7 +7391,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     // "in flight", and a write answers with what was sent plus an id.
     $googleCalls = [];
     $googleDuring = null;
-    $googleUids = ['g-single' => 'single@google'];
+    $googleUids = ['g-single' => 'single@google', 'g-series' => 'series@google'];
     $transport = static function (string $method, string $url, ?array $payload) use (&$googleCalls, &$googleDuring, $googleUids): array {
         $googleCalls[] = $method;
         if ($googleDuring !== null) {
@@ -7411,6 +7460,21 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $googleCalls = [];
     $gev->deleteEvent(1, 10, null, null, $kinds['API key'][0]);
     checkEq('google authority: and a delete with a live API key goes through', [['DELETE'], 0], [$googleCalls, (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE id = 10 AND deleted_at IS NULL')]);
+
+    // "This and following" from a Google series' first day is the whole
+    // series, as locally: one edit of the series, nothing inserted, and the
+    // rule is not bounded before its own start (#193 review).
+    $googleCalls = [];
+    (new ReflectionProperty($gev, 'splitEventId'))->setValue($gev, null);
+    $gev->patch(1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00'], $kinds['session'][0]);
+    checkEq('google following from the first day: the series itself is edited, nothing inserted, its rule and start kept', [['PATCH'], 'From the start', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null], [
+        $googleCalls,
+        $gw->scalar('SELECT title FROM events WHERE id = 11'),
+        $gw->scalar('SELECT rrule FROM events WHERE id = 11'),
+        $gw->scalar('SELECT start_utc FROM events WHERE id = 11'),
+        (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = 2 AND recurrence_parent_id IS NULL AND deleted_at IS NULL'),
+        $gev->splitEventId(),
+    ]);
 }
 
 // A plugin with required settings waits for them: no scheduled runs, no

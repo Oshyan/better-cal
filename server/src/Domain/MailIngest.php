@@ -483,6 +483,19 @@ final class MailIngest
         }
     }
 
+    /**
+     * The outcome a message's log row records when its attachment carried
+     * several VEVENTs: what was created, else a day held for Review, else
+     * the last. With the series applied before its changed days, a series
+     * added with its moved day held was logged as held, the last VEVENT's
+     * outcome, as if nothing had been added.
+     */
+    private static function outcomeThatMatters(?array $soFar, array $next): array
+    {
+        $rank = static fn(array $r): int => match ($r['outcome']) { 'created' => 2, 'held' => 1, default => 0 };
+        return $soFar !== null && $rank($soFar) > $rank($next) ? $soFar : $next;
+    }
+
     /** @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string} $msg */
     private function runTiers(int $userId, array $msg, string $tz, ?string $hereTz = null): array
     {
@@ -508,12 +521,12 @@ final class MailIngest
                 $eventMsg['transportKey'] = self::messageKey($msg) . ':imip:' . $partIndex . ':' . $eventIndex;
                 $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $eventMsg));
                 if ($outcome !== null) {
-                    $imipResult = [
+                    $imipResult = self::outcomeThatMatters($imipResult, [
                         'tier' => 'imip',
                         'outcome' => $outcome[0],
                         'eventId' => $outcome[1],
                         'error' => $outcome[2] ?? null,
-                    ];
+                    ]);
                 }
             }
         }

@@ -433,6 +433,14 @@ final class Events
     private function googlePatchFollowing(int $userId, array $calendar, array $master, array $in, ?RequestAuthority $authority = null): void
     {
         $instanceUtc = $this->requireInstance($in, $master);
+        // From the series' first day, "this and following" is the whole
+        // series, as in patchFollowing: split here, Google was sent a rule
+        // that ends before it begins, and the local copy showed the first
+        // day under both titles until Google's answer was next polled.
+        if ($instanceUtc === (string) $master['start_utc']) {
+            $this->googlePatchAll($userId, $calendar, $master, $in, $authority);
+            return;
+        }
         $masterId = (int) $master['id'];
         $instStart = Time::fromDb($instanceUtc);
         $duration = Recurrence::durationSeconds($master);

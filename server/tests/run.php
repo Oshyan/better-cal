@@ -7249,7 +7249,7 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $odb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT, consecutive_failures INTEGER DEFAULT 0, disabled_reason TEXT, changed_by_token_id INTEGER)');
     $odb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
-    $odb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, plugin_id TEXT, role TEXT, subscription_authority TEXT, settings_json TEXT, position INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)");
+    $odb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, plugin_id TEXT, provider TEXT, role TEXT, subscription_authority TEXT, settings_json TEXT, position INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)");
     undoJournal($odb);
     eventLinkTables($odb);
     // AUTOINCREMENT: ids aren't reused after a delete, as in MySQL (a refresh's gen).
@@ -7284,7 +7284,11 @@ return new class implements BetterCal\Plugin\PluginInterface {
     checkEq('own calendars: the name comes from the settings', 'Stations, Alpha Cove, ME', $row['name']);
     checkEq('own calendars: with the manifest colour, as a plugin calendar of its own', ['#336699', 'plugin', 'stations', 'context'], [$row['color'], $row['kind'], $row['plugin_id'], $row['role']]);
     checkEq('own calendars: its settings are stored with defaults filled', ['station' => '9999901', 'days' => 7], $own->ownSettingsPublic('stations', $row['settings_json']));
-    checkEq('own calendars: adding one is undoable', 1, (int) $odb->scalar("SELECT COUNT(*) FROM mutations WHERE entity = 'calendar' AND op = 'create' AND entity_id = ?", [$a]));
+    // Undoing the adding removes the calendar; it used to be a log-only entry.
+    $added = (int) $odb->scalar("SELECT MAX(id) FROM mutations WHERE entity = 'calendar' AND op = 'create' AND entity_id = ?", [$a]);
+    (new BetterCal\Domain\Undo($odb))->undoById(1, $added);
+    checkEq('own calendars: adding one is undoable, and undone the calendar is gone', [0, 1], [(int) $odb->scalar('SELECT COUNT(*) FROM calendars WHERE id = ?', [$a]), (int) $odb->scalar('SELECT undone FROM mutations WHERE id = ?', [$added])]);
+    $a = $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999901']);
     $b = $own->createOwnCalendar(1, 'stations', 'My own name', '#aa0000', ['station' => '9999902']);
     checkEq('own calendars: a name and colour given are kept', ['My own name', '#aa0000'], [$odb->scalar('SELECT name FROM calendars WHERE id = ?', [$b]), $odb->scalar('SELECT color FROM calendars WHERE id = ?', [$b])]);
     $caught = null;
@@ -7346,6 +7350,17 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', ?, 'x', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'gone'), ('stations', ?, 'y', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'kept'), ('stations', NULL, 'z', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'plugin-wide')", [$a, $b]);
     $bands = $own->rangesForWindow(new DateTimeImmutable('2030-01-01T00:00:00Z'), new DateTimeImmutable('2030-01-02T00:00:00Z'))['stations']['ranges'];
     checkEq("bands: a deleted calendar's bands stop showing; the rest carry their calendar", [['kept', $b], ['plugin-wide', null]], array_map(static fn($r) => [$r['label'], $r['calendarId']], $bands));
+    // Nor are they counted; the retention pass drops them with the place
+    // row kept for the calendar (removed outright here, no undo holds it).
+    $odb->run('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, calendar_id INTEGER, deleted_at TEXT)');
+    $odb->run('CREATE TABLE IF NOT EXISTS plugin_warnings (plugin_id TEXT, dismissed_at TEXT)');
+    $odb->run('CREATE TABLE IF NOT EXISTS plugin_proposals (plugin_id TEXT, status TEXT)');
+    checkEq("bands: a deleted calendar's bands and rows aren't counted against the plugin", [2, 1], [$own->impact(1, 'stations')['ranges'], $own->impact(1, 'stations')['kv']]);
+    checkEq("bands: the retention pass drops them, with the place row kept for the calendar", [2, ['kept', 'plugin-wide'], ['__options.stations']], [
+        Plugins::forgetGoneCalendars($odb),
+        array_column($odb->all("SELECT label FROM plugin_ranges WHERE plugin_id = 'stations' ORDER BY id"), 'label'),
+        array_column($odb->all("SELECT k FROM plugin_kv WHERE plugin_id = 'stations' ORDER BY k"), 'k'),
+    ]);
 
     // Past the cap, paging after the last range by its start and key: ranges
     // sharing a start, and a long one still overlapping, each come once.
@@ -7404,15 +7419,37 @@ require __DIR__ . '/plugins.php';
 // caught by the system health alert).
 {
     $adb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT)');
-    $adb->run("INSERT INTO mutations (created_at, before_json, after_json) VALUES
-        (datetime('now', '-100 days'), '{}', NULL),
-        (datetime('now', '-10 days'), NULL, '{}'),
-        (datetime('now', '-1 hour'), '{}', '{}')");
+    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
+    $adb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
+    $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY)');
+    $adb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, label TEXT)');
+    $adb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
+    $adb->run("INSERT INTO mutations (id, created_at, before_json, after_json) VALUES
+        (1, datetime('now', '-100 days'), '{}', NULL),
+        (2, datetime('now', '-10 days'), NULL, '{}'),
+        (3, datetime('now', '-1 hour'), '{}', '{}')");
+    // A plugin's calendars: one still here (7), one deleted ten days ago (8)
+    // and one an hour ago (9), each delete holding the calendar as it was.
+    $adb->run('INSERT INTO calendars (id) VALUES (7)');
+    $adb->run("INSERT INTO mutations (id, created_at, before_json, after_json) VALUES (4, datetime('now', '-10 days'), '{}', NULL), (5, datetime('now', '-1 hour'), '{}', NULL)");
+    $adb->run('INSERT INTO mutation_calendar_refs (mutation_id, calendar_id) VALUES (4, 8), (5, 9)');
+    $adb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, label) VALUES ('tides', NULL, 'whole plugin'), ('tides', 7, 'here'), ('tides', 8, 'long gone'), ('tides', 9, 'just gone')");
+    $adb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('tides', '__options.stations', '[]'), ('tides', '__calstatus.7', '{}'), ('tides', '__calplace.7', '{}'), ('tides', '__calstatus.8', '{}'), ('tides', '__calplace.8', '{}'), ('tides', '__calstatus.9', '{}')");
     $pruned = (new BetterCal\Domain\Activity($adb))->prune();
-    checkEq('prune: snapshots older than 7 days cleared (count, not statement)', 2, $pruned['snapshotsCleared']);
+    checkEq('prune: snapshots older than 7 days cleared (count, not statement)', 3, $pruned['snapshotsCleared']);
     checkEq('prune: rows older than 90 days deleted', 1, $pruned['deleted']);
-    checkEq('prune: recent rows untouched', 2, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
+    checkEq('prune: recent rows untouched', 4, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
+    $left = static fn(): array => [array_column($adb->all('SELECT label FROM plugin_ranges ORDER BY id'), 'label'), array_column($adb->all('SELECT k FROM plugin_kv ORDER BY k'), 'k')];
+    checkEq("prune: a deleted plugin calendar's bands and status rows go once its undo window closes; one still undoable keeps them",
+        [3, [['whole plugin', 'here', 'just gone'], ['__calplace.7', '__calstatus.7', '__calstatus.9', '__options.stations']]], [$pruned['pluginRowsForgotten'], $left()]);
+    // The recent delete undone: the calendar is back, its rows with it.
+    $adb->run('UPDATE mutations SET undone = 1 WHERE id = 5');
+    $adb->run('INSERT INTO calendars (id) VALUES (9)');
+    checkEq('prune: a calendar brought back keeps its rows', 0, (new BetterCal\Domain\Activity($adb))->prune()['pluginRowsForgotten']);
+    // Removed with no entry holding it (an uninstall): nothing to wait for.
+    $adb->run('DELETE FROM calendars WHERE id = 9');
+    checkEq('prune: a calendar gone with no undo to wait for loses its rows at once',
+        [2, [['whole plugin', 'here'], ['__calplace.7', '__calstatus.7', '__options.stations']]], [(new BetterCal\Domain\Activity($adb))->prune()['pluginRowsForgotten'], $left()]);
 }
 
 // --- Job queue: stalled jobs -------------------------------------------------

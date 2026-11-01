@@ -6,6 +6,7 @@ declare(strict_types=1);
 // what comes back when something it belonged to is gone, a list's order,
 // the default calendar, and whose last change "undo" means.
 
+use BetterCal\Domain\Activity;
 use BetterCal\Domain\ActivityContext;
 use BetterCal\Domain\Folders;
 use BetterCal\Domain\MailIngest;
@@ -392,6 +393,21 @@ return static function (Db $db): void {
     }, 'There and back'));
     checkEq('undo: a grouped change that changed a row and changed it back still touched it, so an older change to it is stale', ['There and back', 'stale_undo'],
         [$db->scalar('SELECT summary FROM mutations WHERE id = ?', [lastEntry($db, $r)]), refusal(fn() => $dr->undo->undoById($r, $renamed))]);
+
+    // A plugin calendar deleted: the bands and the status and place rows its
+    // plugin kept for it wait out the delete's undo window, then go.
+    $tideCal = (int) $d->calendars->create($u, ['name' => 'Tides, Sample Harbor'])['id'];
+    $db->run("UPDATE calendars SET kind = 'plugin', plugin_id = 'tides' WHERE id = ?", [$tideCal]);
+    $db->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('tides', ?, ?, '2026-12-01 10:00:00', '2026-12-01 11:00:00', 'Low tide')", [$tideCal, $tideCal . ':low']);
+    $db->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('tides', ?, '{\"text\": \"38 low tides\"}'), ('tides', ?, '{\"lat\": 1, \"lng\": 2}')", ['__calstatus.' . $tideCal, '__calplace.' . $tideCal]);
+    $d->calendars->delete($u, $tideCal);
+    $tideDeleted = lastEntry($db, $u);
+    $tideRows = static fn(): array => [$count('SELECT COUNT(*) FROM plugin_ranges WHERE calendar_id = ?', [$tideCal]), $count("SELECT COUNT(*) FROM plugin_kv WHERE plugin_id = 'tides' AND k IN (?, ?)", ['__calstatus.' . $tideCal, '__calplace.' . $tideCal])];
+    (new Activity($db))->prune();
+    checkEq("retention: a deleted plugin calendar's bands and status rows stay while the delete can be undone", [1, 2], $tideRows());
+    $db->run('UPDATE mutations SET created_at = DATE_SUB(NOW(), INTERVAL 8 DAY) WHERE id = ?', [$tideDeleted]);
+    (new Activity($db))->prune();
+    checkEq("retention: they go when the delete's undo window closes", [0, 0], $tideRows());
 
     // The account's row is held for the whole of a change: another
     // connection waiting for it gives up before the change is done. Every

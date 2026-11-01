@@ -116,8 +116,9 @@ final class Activity
     /**
      * Retention pass (worker, daily): drop snapshots past the undo window so
      * old entries become log-only, then drop entries past the log window.
+     * Then what plugins kept for calendars no undo can bring back any more.
      *
-     * @return array{snapshotsCleared:int, deleted:int}
+     * @return array{snapshotsCleared:int, deleted:int, pluginRowsForgotten:int}
      */
     public function prune(): array
     {
@@ -129,6 +130,7 @@ final class Activity
             [$undoCut]
         )->rowCount();
         $deleted = $this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
-        return ['snapshotsCleared' => $cleared, 'deleted' => $deleted];
+        $forgotten = Plugins::forgetGoneCalendars($this->db);
+        return ['snapshotsCleared' => $cleared, 'deleted' => $deleted, 'pluginRowsForgotten' => $forgotten];
     }
 }

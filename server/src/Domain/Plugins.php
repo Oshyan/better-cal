@@ -443,13 +443,70 @@ final class Plugins
         return [
             'events' => $events,
             'calendars' => count($calIds),
-            'ranges' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_ranges WHERE plugin_id = ?', [$id])['c'],
+            // Of calendars still here: a deleted calendar's bands and status
+            // rows wait out its undo window unseen (forgetGoneCalendars).
+            'ranges' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_ranges WHERE plugin_id = ? AND (calendar_id IS NULL OR calendar_id IN (SELECT id FROM calendars))', [$id])['c'],
             'warnings' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_warnings WHERE plugin_id = ? AND dismissed_at IS NULL', [$id])['c'],
-            'kv' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_kv WHERE plugin_id = ?', [$id])['c'],
+            'kv' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_kv WHERE plugin_id = ?', [$id])['c'] - count(self::calendarKvOfGone($this->db, $id)),
             // Uninstall purges these too; the receipt used to omit them, so an
             // open proposal disappeared without ever being counted.
             'proposals' => (int) $this->db->one("SELECT COUNT(*) c FROM plugin_proposals WHERE plugin_id = ? AND status = 'open'", [$id])['c'],
         ];
+    }
+
+    /**
+     * Drop what plugins kept for calendars that no longer exist: their
+     * bands, and the status line and place published for them. Not while
+     * an undo entry still holds the calendar as it was (its before
+     * snapshot): undone, the calendar comes back with its rows. Run after
+     * the activity retention pass clears old snapshots, so a deleted
+     * calendar's rows go when its undo window closes. Returns the rows
+     * dropped.
+     */
+    public static function forgetGoneCalendars(Db $db): int
+    {
+        $restorable = 'SELECT r.calendar_id FROM mutation_calendar_refs r JOIN mutations m ON m.id = r.mutation_id WHERE m.undone = 0 AND m.before_json IS NOT NULL';
+        $n = $db->run("DELETE FROM plugin_ranges WHERE calendar_id IS NOT NULL AND calendar_id NOT IN (SELECT id FROM calendars) AND calendar_id NOT IN ($restorable)")->rowCount();
+        $kv = self::calendarKvOfGone($db, null);
+        if ($kv === []) {
+            return $n;
+        }
+        [$in, $params] = Db::in(array_values(array_unique(array_column($kv, 2))));
+        $keep = array_map('intval', array_column($db->all("$restorable AND r.calendar_id IN $in", $params), 'calendar_id'));
+        foreach ($kv as [$pluginId, $k, $calendarId]) {
+            if (!in_array($calendarId, $keep, true)) {
+                $n += $db->run('DELETE FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$pluginId, $k])->rowCount();
+            }
+        }
+        return $n;
+    }
+
+    /**
+     * The status and place rows kept per calendar (the two prefixes) for
+     * calendars that no longer exist, for one plugin or all: [plugin id,
+     * key, calendar id] each.
+     *
+     * @return list<array{0:string,1:string,2:int}>
+     */
+    private static function calendarKvOfGone(Db $db, ?string $pluginId): array
+    {
+        $rows = [];
+        foreach ([self::CALENDAR_STATUS_KV_PREFIX, self::CALENDAR_PLACE_KV_PREFIX] as $prefix) {
+            // By prefix, not LIKE: an underscore in a pattern matches anything.
+            $found = $db->all(
+                'SELECT plugin_id, k FROM plugin_kv WHERE SUBSTR(k, 1, ' . strlen($prefix) . ') = ?' . ($pluginId !== null ? ' AND plugin_id = ?' : ''),
+                $pluginId !== null ? [$prefix, $pluginId] : [$prefix]
+            );
+            foreach ($found as $r) {
+                $rows[] = [(string) $r['plugin_id'], (string) $r['k'], (int) substr((string) $r['k'], strlen($prefix))];
+            }
+        }
+        if ($rows === []) {
+            return [];
+        }
+        [$in, $params] = Db::in(array_values(array_unique(array_column($rows, 2))));
+        $exists = array_map('intval', array_column($db->all("SELECT id FROM calendars WHERE id IN $in", $params), 'id'));
+        return array_values(array_filter($rows, static fn(array $r): bool => !in_array($r[2], $exists, true)));
     }
 
     /**
@@ -1353,9 +1410,11 @@ final class Plugins
                 'settings_json' => json_encode($settings),
             ]);
             $this->markTokenChange($id, $authority);
-            // Log only (its settings hold a credential), but it's made.
-            (new Undo($this->db))->record($userId, 'calendar', $calId, 'create', null, null, "Added " . $decl['noun'] . " '" . $name . "'",
-                touches: [[Undo::keyOf('calendars', ['id' => $calId]), '*']]);
+            // The row as stored, a secret among its settings sealed, so the
+            // entry undoes as any new calendar's does (Calendars::create).
+            (new Undo($this->db))->record($userId, 'calendar', $calId, 'create', null,
+                ['calendars' => [$this->db->one('SELECT * FROM calendars WHERE id = ?', [$calId])]],
+                "Added " . $decl['noun'] . " '" . $name . "'");
             return $calId;
         });
         return $calId;

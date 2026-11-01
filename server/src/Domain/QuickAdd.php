@@ -305,9 +305,11 @@ final class QuickAdd
      *   date/time/location phrases only, so restore the fallback title.
      * - Location or people the fallback found but the LLM dropped: union
      *   people (LLM first), backfill location.
-     * - Repeat: the fallback's rule wins when it found one (#165); either
-     *   way the start moves to the rule's first day, keeping the model's
-     *   time and length, so the series never opens with an extra day.
+     * - Repeat: the fallback's rule wins when it found one (#165), unless
+     *   an ordinal word is left in its title, a sign it read only part of
+     *   the phrase (#193); either way the start moves to the rule's first
+     *   day, keeping the model's time and length, so the series never opens
+     *   with an extra day.
      *
      * @param array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>} $llm
      */
@@ -378,7 +380,12 @@ final class QuickAdd
             $merged['location'] = $fallback['location'];
         }
 
-        $merged['rrule'] = ($fallback['rrule'] ?? null) ?: (($llm['rrule'] ?? null) ?: null);
+        // An ordinal left in the deterministic title means its rule read
+        // only part of the phrase (the title keeps the words the rule did
+        // not take); the model's rule stands then.
+        $llmRule = ($llm['rrule'] ?? null) ?: null;
+        $halfRead = $llmRule !== null && preg_match('/\b(?:first|second|third|fourth|fifth|last|\d{1,2}(?:st|nd|rd|th))\b/i', $fbTitle) === 1;
+        $merged['rrule'] = $halfRead ? $llmRule : (($fallback['rrule'] ?? null) ?: $llmRule);
         $merged['reminders'] = $fallback['reminders'] ?? null; // read from the text, never the model's
         if ($merged['rrule'] !== null) {
             try {

@@ -42,10 +42,10 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Counted from now:** in 2 weeks, 3 days from now, 3 weeks from Monday, Friday after next, end of the month, this weekend, next weekend.
 - **Times:** 7pm, 7:30 pm, 19:00, noon, midnight, "at 7" (1 to 7 are afternoon, 8 to 11 morning), this evening, Sunday evening.
 - **Time ranges and lengths:** 7-9pm, 11am-1pm, 10pm to 6am, for 2 hours, for 90 min.
-- **Zones:** EST, PT, GMT, UTC, CET and others, after a time. Two-letter ones only in capitals.
+- **Zones:** EST, PT, GMT, UTC, CET and others, after a time. Two-letter ones only in capitals, and not before an ordinary word ("3pm CT scan"); "3pm ET with Sam" is fine.
 - **All day:** "all day", or any date with no time.
-- **Several days:** Aug 3-7, Dec 30 to Jan 2, Mon-Fri, 3 weeks long, week-long, a length at the end ("Lisbon trip 2 weeks"), Fri 5pm to Sun 2pm.
-- **Repeats:** daily, weekdays, weekends, every Tuesday, Mondays and Thursdays, every other week, every 3 days, monthly, yearly, first Monday of the month, last day of the month, every Jan 27. A day range with one time repeats ("Standup Mon-Fri 9am"), and so does "daily" with a range.
+- **Several days:** Aug 3-7, Dec 30 to Jan 2, Mon-Fri, 3 weeks long, week-long, a length at the end ("Lisbon trip 2 weeks"), Fri 5pm to Sun 2pm, Mon-Fri 9am-5pm (one stretch, Monday morning to Friday evening).
+- **Repeats:** daily, weekdays, weekends, every Tuesday, Mondays and Thursdays, every other week, every 3 days, monthly, yearly, first Monday of the month, every 1st and 3rd Monday, every 1st and 15th, last day of the month, every Jan 27. A day range with one time repeats ("Standup Mon-Fri 9am"), and so does "daily" with a range.
 - **Repeat start and end:** starting Nov 3, until Dec 15, for 6 weeks, 10 times.
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
 - **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place.

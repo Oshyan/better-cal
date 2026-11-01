@@ -127,6 +127,15 @@ final class FallbackParser
             }
         }
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
+        // "Workshop Mon-Fri 9am-5pm": several days with a time range is one
+        // stretch, the first day at the start time to the last at the end
+        // time (a typed zone counts for both ends).
+        if ($stretch === null && $rangeEnd !== null && $timeFound && $endTime !== null && $repeat === null) {
+            $stretch = [$date->setTime($startTime[0], $startTime[1]), $rangeEnd->setTime($endTime[0], $endTime[1])];
+            if ($timeZone !== null) {
+                $stretch[1] = (new \DateTimeImmutable($stretch[1]->format('Y-m-d H:i'), Time::zone($timeZone)))->setTimezone($tz);
+            }
+        }
         if ($stretch !== null) {
             [$date, $startTime] = [$stretch[0], [(int) $stretch[0]->format('G'), (int) $stretch[0]->format('i')]];
             [$dateFound, $timeFound, $endTime, $rangeEnd] = [true, true, null, null];
@@ -491,17 +500,18 @@ final class FallbackParser
         // the next time the first comes round (today counts). At the very
         // start ("Mon-Fri schedule review") the range describes the title,
         // as a short day name does there, so it stays and no day in it is
-        // read as the date.
+        // read as the date, unless a time comes right after it ("Mon-Fri
+        // 9am-5pm workshop").
         $skip = null;
         if (($range = RepeatParser::dayRangeAt($work)) !== null) {
-            if (!$range['leading']) {
+            $tail = substr($work, $range['offset'] + strlen($range['match']));
+            if (!$range['leading'] || RepeatParser::timeFollows($tail)) {
                 $codes = ['SU' => 0, 'MO' => 1, 'TU' => 2, 'WE' => 3, 'TH' => 4, 'FR' => 5, 'SA' => 6];
                 $from = $codes[$range['from']];
                 $todayW = (int) $now->format('w');
                 $ahead = ($from - $todayW + 7) % 7;
                 $rest = $range['rest'];
                 // "Mon-Fri next week": in the next calendar week (from Monday).
-                $tail = substr($work, $range['offset'] + strlen($range['match']));
                 if (preg_match('/^\s*next\s+week\b/i', $tail, $nw) === 1) {
                     $ahead = ((1 - $todayW + 7) % 7 ?: 7) + ($from - 1 + 7) % 7;
                     $rest = substr($work, 0, $range['offset']) . ' ' . substr($tail, strlen($nw[0]));
@@ -597,10 +607,12 @@ final class FallbackParser
     private static function extractTime(string $work): array
     {
         // Three- and four-letter zones in any case; the two-letter ones only
-        // in capitals and not before a word ("3pm CT scan", "3pm pt").
+        // in capitals and not before a word ("3pm CT scan", "3pm pt"), unless
+        // that word is one of the parser's own ("3pm ET with Sam").
         $long = array_filter(array_keys(self::ZONE_ABBR), static fn(string $z): bool => strlen($z) > 2);
         $short = array_filter(array_keys(self::ZONE_ABBR), static fn(string $z): bool => strlen($z) === 2);
-        $zoneAlt = '(?:\s*\b(' . implode('|', $long) . '|(?-i:' . implode('|', $short) . ')(?!\s+[a-z]))\b)?';
+        $ours = '(?:with|at|on|for|until|till|today|tomorrow|tonight|next|this|every|starting)\b|w\/';
+        $zoneAlt = '(?:\s*\b(' . implode('|', $long) . '|(?-i:' . implode('|', $short) . ')(?!\s+(?!' . $ours . ')[a-z]))\b)?';
         $zone = static fn(array $m, int $i): ?string => isset($m[$i]) && $m[$i] !== '' ? (self::ZONE_ABBR[strtoupper($m[$i])] ?? null) : null;
         // Range with meridiem: "7-9pm", "7pm-9pm", "7:30pm to 9pm"
         if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {

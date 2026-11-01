@@ -21,7 +21,7 @@ final class RepeatParser
     private const DAYS_PLURAL = '(?:mondays|tuesdays|wednesdays|thursdays|fridays|saturdays|sundays)';
     // Between day names: a comma, "and", "&", or just a space ("mon wed fri").
     private const JOIN = '(?:\s*(?:,\s*and\b|,|&|\band\b)\s*|\s+)';
-    private const ORD = '(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)';
+    private const ORD = '(?:first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)';
     private const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
     private const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
     private const WEEKEND = ['SA', 'SU'];
@@ -67,7 +67,9 @@ final class RepeatParser
         $D = self::DAY;
         $list = $D . '(?:' . self::JOIN . $D . ')*';
         $plural = self::DAYS_PLURAL . '(?:' . self::JOIN . self::DAYS_PLURAL . ')*';
-        $ord = self::ORD;
+        // One ordinal or a list of them ("first and third", "1st, 3rd and 5th").
+        $ord = '(' . self::ORD . '(?:' . self::JOIN . self::ORD . ')*)';
+        $nth = '\d{1,2}(?:st|nd|rd|th)';
         $what = '(' . $D . '|weekday|weekend\s+day|day)';
 
         // Typed shortcut (Fantastical): ":weekly".
@@ -75,7 +77,8 @@ final class RepeatParser
             return [self::cut($work, $m[0]), ['FREQ' => self::freqWord($m[1])], null];
         }
         // "first Monday of the month", "last weekday of every month",
-        // "the 3rd Friday of each month", "last day of the month", and
+        // "the 3rd Friday of each month", "last day of the month", "every
+        // 1st and 3rd Monday", "first and third Monday of the month", and
         // "the first of every month" (a day, when no day is named).
         if (preg_match('/\b(?:(?:every|each|on)\s+)?(?:the\s+)?' . $ord . '\s+(?:' . $what . '\s+)?(?:of|in)\s+(?:the|each|every)\s+month\b/i', $work, $m)
             || preg_match('/\b(?:monthly|(?:every|each)\s+month)\s+on\s+(?:the\s+)?' . $ord . '\s+' . $what . '\b/i', $work, $m)
@@ -83,14 +86,16 @@ final class RepeatParser
         ) {
             return [self::cut($work, $m[0]), self::nthRule($m[1], ($m[2] ?? '') !== '' ? $m[2] : 'day'), null];
         }
-        // "monthly on the 15th", "the 15th of every month", "every 15th".
+        // "monthly on the 15th", "the 15th of every month", "every 15th",
+        // "every 1st and 15th".
         if (preg_match('/\b(?:monthly|(?:every|each)\s+month)\s+on\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b/i', $work, $m)
             || preg_match('/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\s+(?:of\s+)?(?:every|each)\s+month\b/i', $work, $m)
-            || preg_match('/\b(?:every|each)\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+(?:of\s+)?' . self::MONTH . '\b)/i', $work, $m)
+            || preg_match('/\b(?:every|each)\s+(' . $nth . '(?:' . self::JOIN . $nth . ')*)\b(?!\s+(?:of\s+)?' . self::MONTH . '\b)/i', $work, $m)
         ) {
-            $n = (int) $m[1];
-            if ($n >= 1 && $n <= 31) {
-                return [self::cut($work, $m[0]), ['FREQ' => 'MONTHLY', 'BYMONTHDAY' => (string) $n], null];
+            preg_match_all('/\d{1,2}/', $m[1], $days);
+            $days = array_values(array_unique(array_map('intval', $days[0])));
+            if ($days !== [] && min($days) >= 1 && max($days) <= 31) {
+                return [self::cut($work, $m[0]), ['FREQ' => 'MONTHLY', 'BYMONTHDAY' => implode(',', $days)], null];
             }
         }
         // "every Monday to Friday", "every Mon-Fri".
@@ -151,14 +156,15 @@ final class RepeatParser
         if (preg_match('/\b(?:on\s+)?(' . $plural . ')\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), ['FREQ' => 'WEEKLY', 'BYDAY' => self::codes($m[1])], null];
         }
-        // "Standup Mon-Fri 9am": a day range with a time (one time, not one
-        // at each end, which reads as a single stretch: "Fri 5pm to Sun 2pm")
-        // repeats on those days. Without a time it is one multi-day event,
-        // left to FallbackParser. At the very start the time must come right
-        // after it ("Mon-Fri 9am standup"); otherwise the range is part of
-        // the title ("Mon-Fri check friday 3pm").
-        if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work)
-            && (!$range['leading'] || preg_match('/^\s*(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|noon\b|midnight\b)/i', substr($work, $range['offset'] + strlen($range['match']))) === 1)) {
+        // "Standup Mon-Fri 9am": a day range with a single time repeats on
+        // those days. With a time range ("Workshop Mon-Fri 9am-5pm") or one
+        // time at each end ("Fri 5pm to Sun 2pm") it is one stretch, and
+        // without a time one multi-day event, both left to FallbackParser.
+        // At the very start the time must come right after it ("Mon-Fri 9am
+        // standup"); otherwise the range is part of the title ("Mon-Fri
+        // check friday 3pm").
+        if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work) && !self::hasTimeRange($work)
+            && (!$range['leading'] || self::timeFollows(substr($work, $range['offset'] + strlen($range['match']))))) {
             return [$range['rest'], ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']], null, true];
         }
         // "daily", "weekly on Tue and Thu", "biweekly", "annually". As the
@@ -283,8 +289,14 @@ final class RepeatParser
         $dom = (int) $day->format('j');
         $last = (int) $day->format('t');
         if (isset($rule['BYMONTHDAY'])) {
-            $want = (int) $rule['BYMONTHDAY'];
-            return $want === -1 ? $dom === $last : $dom === $want;
+            // One day or a list ("1,15"); a negative one counts from the end.
+            foreach (explode(',', $rule['BYMONTHDAY']) as $want) {
+                $want = (int) $want;
+                if ($want < 0 ? $dom === $last + 1 + $want : $dom === $want) {
+                    return true;
+                }
+            }
+            return false;
         }
         if ($byday === []) {
             return true;
@@ -300,9 +312,14 @@ final class RepeatParser
                     $hits[] = $d;
                 }
             }
-            $pos = (int) $rule['BYSETPOS'];
-            $pick = $pos > 0 ? ($hits[$pos - 1] ?? null) : ($hits[count($hits) + $pos] ?? null);
-            return $pick === $dom;
+            foreach (explode(',', $rule['BYSETPOS']) as $pos) {
+                $pos = (int) $pos;
+                $pick = $pos > 0 ? ($hits[$pos - 1] ?? null) : ($hits[count($hits) + $pos] ?? null);
+                if ($pick === $dom) {
+                    return true;
+                }
+            }
+            return false;
         }
         foreach ($byday as $entry) {
             if (preg_match('/^([+-]?\d)?([A-Z]{2})$/', $entry, $p) !== 1 || $p[2] !== $code) {
@@ -351,19 +368,20 @@ final class RepeatParser
         return implode(';', $parts);
     }
 
-    /** @return array<string,string> */
-    private static function nthRule(string $ordinal, string $what): array
+    /** @param string $ordinals one or more ("first", "1st and 3rd"). @return array<string,string> */
+    private static function nthRule(string $ordinals, string $what): array
     {
-        $n = [
+        preg_match_all('/' . self::ORD . '/i', $ordinals, $found);
+        $ns = array_values(array_unique(array_map(static fn(string $o): int => [
             'first' => 1, '1st' => 1, 'second' => 2, '2nd' => 2, 'third' => 3, '3rd' => 3,
             'fourth' => 4, '4th' => 4, 'fifth' => 5, '5th' => 5,
-        ][strtolower($ordinal)] ?? -1;
+        ][strtolower($o)] ?? -1, $found[0])));
         $what = strtolower(preg_replace('/\s+/', ' ', $what) ?? $what);
         return match ($what) {
-            'day' => ['FREQ' => 'MONTHLY', 'BYMONTHDAY' => (string) $n],
-            'weekday' => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', self::WEEKDAYS), 'BYSETPOS' => (string) $n],
-            'weekend day' => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', self::WEEKEND), 'BYSETPOS' => (string) $n],
-            default => ['FREQ' => 'MONTHLY', 'BYDAY' => $n . self::code($what)],
+            'day' => ['FREQ' => 'MONTHLY', 'BYMONTHDAY' => implode(',', $ns)],
+            'weekday' => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', self::WEEKDAYS), 'BYSETPOS' => implode(',', $ns)],
+            'weekend day' => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', self::WEEKEND), 'BYSETPOS' => implode(',', $ns)],
+            default => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', array_map(static fn(int $n): string => $n . self::code($what), $ns))],
         };
     }
 
@@ -408,6 +426,18 @@ final class RepeatParser
     private static function hasTime(string $work): bool
     {
         return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|\b(?:noon|midnight|tonight)\b|\bat\s+\d{1,2}\b|\b(?:in\s+the|this)\s+(?:morning|afternoon|evening)\b/i', $work) === 1;
+    }
+
+    /** A time range anywhere in $work ("9am-5pm", "7-9pm", "9:00 to 17:00"). */
+    private static function hasTimeRange(string $work): bool
+    {
+        return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|until)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\s*(?:-|–|—|to|until)\s*\d{1,2}:\d{2}\b/i', $work) === 1;
+    }
+
+    /** Whether $tail opens with a clock time ("9am", "at 9:30", "noon"). */
+    public static function timeFollows(string $tail): bool
+    {
+        return preg_match('/^\s*(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|noon\b|midnight\b)/i', $tail) === 1;
     }
 
     /** "Mon-Fri", "Monday through Friday": every day in the range, wrapping past Sunday. */

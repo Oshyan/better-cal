@@ -504,6 +504,12 @@ $repeatCases = [
     ['Rent on the 1st of every month', 'Rent', '2026-08-01T00:00', 'FREQ=MONTHLY;BYMONTHDAY=1'],
     ['Report every 2nd Tuesday of the month', 'Report', '2026-08-11T00:00', 'FREQ=MONTHLY;BYDAY=2TU'],
     ['Report last weekday of the month', 'Report', '2026-07-31T00:00', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'],
+    // Lists of ordinals (#193)
+    ['Team sync every 1st and 3rd Monday 10am', 'Team sync', '2026-08-03T10:00', 'FREQ=MONTHLY;BYDAY=1MO,3MO'],
+    ['Book club first and third Monday of the month 7pm', 'Book club', '2026-08-03T19:00', 'FREQ=MONTHLY;BYDAY=1MO,3MO'],
+    ['Rent every 2nd and 4th Tuesday of the month', 'Rent', '2026-08-11T00:00', 'FREQ=MONTHLY;BYDAY=2TU,4TU'],
+    ['Bills every 1st and 15th', 'Bills', '2026-08-01T00:00', 'FREQ=MONTHLY;BYMONTHDAY=1,15'],
+    ['Review first and last weekday of the month', 'Review', '2026-07-31T00:00', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1'],
     // Yearly
     ['Dues yearly', 'Dues', '2026-07-30T00:00', 'FREQ=YEARLY'],
     ['Taxes annually Apr 10', 'Taxes', '2027-04-10T00:00', 'FREQ=YEARLY'],
@@ -616,6 +622,14 @@ $phraseCases = [
     ['Shift Thu 10pm to Fri 6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
     ['Party Fri 8pm to 1am', 'Party', '2026-07-31T20:00', '2026-08-01T01:00', null],
     ['Hackathon Aug 3 9am to Aug 5 noon', 'Hackathon', '2026-08-03T09:00', '2026-08-05T12:00', null],
+    // A day range with a time range is one stretch, not a repeat (#193)
+    ['Workshop Mon-Fri 9am-5pm', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Workshop Monday through Friday 9am to 5pm', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Mon-Fri 9am-5pm workshop', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Workshop Mon-Fri 9am-5pm ET', 'Workshop', '2026-08-03T06:00', '2026-08-07T14:00', null],
+    // A two-letter zone before one of the parser's own words (#193)
+    ['Call 3pm ET with Sam', 'Call with Sam', '2026-07-30T12:00', '2026-07-30T13:00', null],
+    ['Call 3pm ET at the office', 'Call at the office', '2026-07-30T12:00', '2026-07-30T13:00', null],
 ];
 foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
     $d = $p($text);
@@ -3231,6 +3245,11 @@ checkEq('qam start moves to the rule\'s first day', '2026-08-06T16:00:00-07:00',
 checkEq('qam the move keeps the length', '2026-08-06T17:00:00-07:00', $m['end']);
 $m = QuickAdd::mergeLlm($mkLlm(['rrule' => null]), $mkFb(['rrule' => null]), $mergeNow);
 checkEq('qam no repeat stays none', null, $m['rrule']);
+// An ordinal left in the parser's title says its rule read only part of the phrase (#193).
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Alex', 'rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO']), $mkFb(['title' => 'Cocktails with Alex first and', 'rrule' => 'FREQ=MONTHLY;BYDAY=3MO']), $mergeNow);
+checkEq('qam a half-read ordinal phrase takes the model\'s rule', 'FREQ=MONTHLY;BYDAY=1MO,3MO', $m['rrule']);
+$m = QuickAdd::mergeLlm($mkLlm(['rrule' => null]), $mkFb(['title' => 'Cocktails with Alex first and', 'rrule' => 'FREQ=MONTHLY;BYDAY=3MO']), $mergeNow);
+checkEq('qam without a model rule the half-read one stands', 'FREQ=MONTHLY;BYDAY=3MO', $m['rrule']);
 checkEq('qam an alert read from the text survives the model draft (#33)', [30],
     QuickAdd::mergeLlm($mkLlm(), $mkFb(['reminders' => [30]]), $mergeNow)['reminders']);
 checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));
@@ -3978,6 +3997,12 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
     check('pattern ignores bounds', Recurrence::pattern('FREQ=WEEKLY;BYDAY=MO;COUNT=8') === Recurrence::pattern('FREQ=WEEKLY;UNTIL=20261201;BYDAY=MO'));
     $fAlign = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('alignedStart');
     checkEq('align: a Thursday 9:00 start of a Mon/Wed/Fri series moves to Friday 9:00', ['start_utc' => '2026-10-09 16:00:00', 'end_utc' => '2026-10-09 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
+    // Monthly rules too (#193): the 20th with "every 15th" waits for the next 15th, at 9:00 across the clock change.
+    checkEq('align: a monthly on the 15th started on the 20th moves to the next 15th', ['start_utc' => '2026-11-15 17:00:00', 'end_utc' => '2026-11-15 18:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
+    checkEq('align: first and third Monday started on a Thursday moves to the next listed Monday', ['start_utc' => '2026-10-19 16:00:00', 'end_utc' => '2026-10-19 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
+    checkEq('align: last weekday started mid-month moves to the month\'s last weekday', ['start_utc' => '2026-10-30 16:00:00', 'end_utc' => '2026-10-30 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
+    checkEq('align: a monthly start already on its day stays', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=20', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
+    checkEq('align: a plain monthly rule takes its start as its day', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;COUNT=6', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
 if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occurrence through sabre/vobject
     $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO'] + $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
     checkEq('series moved Monday to Tuesday: its day moves too', ['2026-10-06T09:00:00-07:00', 'FREQ=WEEKLY;BYDAY=TU'], [$fOut['start'], $fOut['rrule'] ?? null]);

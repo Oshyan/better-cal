@@ -38,13 +38,13 @@ $goldenWhens = [
     'July 31 8pm', 'Aug 3-7', 'Aug 3 to Aug 7', '2026-08-15', 'tomorrow at 9am', 'Monday 9:30am', 'at 19:00',
     '7-9pm', 'tonight', 'this evening', 'next week', 'in the morning', 'Sunday', 'Saturday 10am', 'Sat 10am',
     'Dec 20', 'the day after tomorrow', 'a week from Friday', 'every Tuesday', 'weekly', 'tomorrow for 2 hours',
-    'on Friday', 'on Saturday at 8pm', 'on Jan 5',
+    'on Friday', 'on Saturday at 8pm', 'on Jan 5', 'every 1st and 3rd Monday', '3pm ET with Sam',
 ];
 // Day ranges and stretches, on their own and against a few titles.
 $goldenExtra = [
     'Mon-Fri', 'Monday through Friday', 'Fri-Mon', 'Mon to Fri at 9am', 'Mon-Fri next week', 'Fri 5pm to Sun 2pm',
     'Thu 10pm to Fri 6am', 'Aug 3 9am to Aug 5 noon', 'daily Mon-Fri', 'Mon-Fri 9am', 'Mon–Fri', 'Mon—Fri 9am',
-    'Aug 3–7', 'Fri 5pm – Sun 2pm',
+    'Aug 3–7', 'Fri 5pm – Sun 2pm', 'Mon-Fri 9am-5pm', 'Monday through Friday 9am to 5pm',
 ];
 $goldenInputs = [];
 foreach ($goldenTitles as $title) {

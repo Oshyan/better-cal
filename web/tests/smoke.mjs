@@ -3592,6 +3592,11 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: last Friday', said('FREQ=MONTHLY;BYDAY=-1FR'), 'Monthly on the last Friday');
   eq('repeat: last day', said('FREQ=MONTHLY;BYMONTHDAY=-1'), 'Monthly on the last day');
   eq('repeat: last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), 'Monthly on the last weekday');
+  eq('repeat: first and third Monday', said('FREQ=MONTHLY;BYDAY=1MO,3MO'), 'Monthly on the first and third Monday');
+  eq('repeat: nth days that differ', said('FREQ=MONTHLY;BYDAY=1MO,-1FR'), 'Monthly on the first Monday and last Friday');
+  eq('repeat: two days of the month', said('FREQ=MONTHLY;BYMONTHDAY=1,15'), 'Monthly on day 1 and 15');
+  eq('repeat: first and last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1'), 'Monthly on the first and last weekday');
+  eq('repeat: a last day in a list cannot be said', said('FREQ=MONTHLY;BYMONTHDAY=1,-1'), null);
   eq('repeat: quarterly', said('FREQ=MONTHLY;INTERVAL=3'), 'Every 3 months');
   assert('repeat: yearly takes the start day', /^Yearly on /.test(said('FREQ=YEARLY', { start: thu })));
   eq('repeat: count', said('FREQ=WEEKLY;BYDAY=SU;COUNT=10'), 'Weekly on Sunday, 10 times');

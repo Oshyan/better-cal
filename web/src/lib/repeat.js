@@ -88,24 +88,29 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
   } else if (p.FREQ === 'MONTHLY') {
     text = every('month', 'Monthly');
     const byday = (p.BYDAY || '').split(',').filter(Boolean);
+    // Lists read as one phrase ("the first and third Monday", "day 1 and 15").
+    const andList = (items) => (items.length > 1 ? items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1] : items[0]);
     if (p.BYMONTHDAY) {
-      if (byday.length || p.BYSETPOS || p.BYMONTHDAY.includes(',')) return null;
-      const d = parseInt(p.BYMONTHDAY, 10);
-      if (d === -1) text += ' on the last day';
-      else if (d >= 1 && d <= 31) text += ' on day ' + d;
+      if (byday.length || p.BYSETPOS) return null;
+      const days = p.BYMONTHDAY.split(',').map((d) => parseInt(d, 10));
+      if (days.length === 1 && days[0] === -1) text += ' on the last day';
+      else if (days.every((d) => d >= 1 && d <= 31)) text += ' on day ' + andList(days);
       else return null;
     } else if (p.BYSETPOS) {
-      const pos = ORDINAL[parseInt(p.BYSETPOS, 10)];
+      const pos = p.BYSETPOS.split(',').map((n) => ORDINAL[parseInt(n, 10)]);
       const set = byday.join(',');
-      if (!pos) return null;
-      if (set === WEEKDAYS) text += ` on the ${pos} weekday`;
-      else if (set === WEEKEND) text += ` on the ${pos} weekend day`;
-      else if (byday.length === 1 && DAY_NAMES[byday[0]]) text += ` on the ${pos} ${DAY_NAMES[byday[0]]}`;
+      if (pos.some((o) => !o)) return null;
+      if (set === WEEKDAYS) text += ` on the ${andList(pos)} weekday`;
+      else if (set === WEEKEND) text += ` on the ${andList(pos)} weekend day`;
+      else if (byday.length === 1 && DAY_NAMES[byday[0]]) text += ` on the ${andList(pos)} ${DAY_NAMES[byday[0]]}`;
       else return null;
     } else if (byday.length) {
-      const m = /^([+-]?\d)([A-Z]{2})$/.exec(byday[0]);
-      if (byday.length !== 1 || !m || !ORDINAL[parseInt(m[1], 10)] || !DAY_NAMES[m[2]]) return null;
-      text += ` on the ${ORDINAL[parseInt(m[1], 10)]} ${DAY_NAMES[m[2]]}`;
+      const nth = byday.map((d) => /^([+-]?\d)([A-Z]{2})$/.exec(d));
+      if (nth.some((m) => !m || !ORDINAL[parseInt(m[1], 10)] || !DAY_NAMES[m[2]])) return null;
+      const days = [...new Set(nth.map((m) => m[2]))];
+      text += days.length === 1
+        ? ` on the ${andList(nth.map((m) => ORDINAL[parseInt(m[1], 10)]))} ${DAY_NAMES[days[0]]}`
+        : ' on the ' + andList(nth.map((m) => `${ORDINAL[parseInt(m[1], 10)]} ${DAY_NAMES[m[2]]}`));
     } else if (start) {
       text += ' on day ' + start.getDate();
     }

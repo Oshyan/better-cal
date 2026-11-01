@@ -10717,6 +10717,10 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $udb->run("INSERT INTO users (id, email, settings_json) VALUES (1, 'owner@example.test', '{}')");
     $migration46 = require dirname(__DIR__) . '/migrations/046_update_awareness.php';
     $migration46($udb);
+    $migration61 = require dirname(__DIR__) . '/migrations/061_update_newest.php';
+    check('migration 061: adds the newest version column and says so', str_contains($migration61($udb), 'step towards'));
+    $migration61($udb);
+    checkEq('migration 061: runs again harmlessly, the column added once', 1, count(array_filter($udb->all('PRAGMA table_info(app_update_state)'), static fn(array $c): bool => $c['name'] === 'newest_version')));
 
     // GitHub always redirects a release asset download to its storage, and the
     // client's budget counts every hop: a budget of 1 failed every real check
@@ -11145,6 +11149,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     // The release and its zip, verified as the update check verifies them.
     $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($rdb);
+    (require dirname(__DIR__) . '/migrations/061_update_newest.php')($rdb);
     $relManifest = Updates::manifestJson('2.0.0', 'routine', '1.0.0');
     $zipBody = 'zip-bytes';
     $zipAsset = static fn(string $url, string $digest) => ['name' => 'better-cal-2.0.0.zip', 'browser_download_url' => $url, 'digest' => $digest, 'size' => strlen($zipBody)];
@@ -11204,6 +11209,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $stepUpdates = static function (array $built) use ($oldKeys, &$sigFetches): array {
         $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
         (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
+        (require dirname(__DIR__) . '/migrations/061_update_newest.php')($db);
         $fetch = static function (string $url) use ($built, &$sigFetches): array {
             if (str_contains($url, 'api.github.com')) {
                 return ['status' => 200, 'body' => json_encode(array_column($built, 'release'))];
@@ -11235,8 +11241,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $steppingDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $steppingDb->run("INSERT INTO users VALUES (1, '{}')");
     $steppingStatus = $stepping->status(1);
-    checkEq('update: the app\'s status names the step and the newest release it leads to, as no error', ['9.9.0', '9.9.2', null, true, true], [
+    checkEq('update: the app\'s status names the step and the newest release it leads to, as no error', ['9.9.0', '9.9.2', null, true, true, ['9.9.2', null]], [
         $steppingStatus['latestVersion'], $steppingStatus['newestVersion'], $steppingStatus['lastError'], $steppingStatus['available'], $steppingStatus['showBanner'],
+        array_values($steppingDb->one('SELECT newest_version, last_error FROM app_update_state WHERE id = 1')),
     ]);
     checkEq('update: a newest release this copy verifies has no step to explain', [], BetterCal\Infra\Updater::steppingStone('9.9.2', '9.9.2'));
 

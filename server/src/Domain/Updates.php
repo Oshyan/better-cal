@@ -48,17 +48,6 @@ final class Updates
     /** The worker job's health row (worker.php HEALTH_JOB_LABELS). */
     public const HEALTH_SUBJECT = 'job:update_check';
     public const HEALTH_LABEL = 'Application update checks';
-    /**
-     * Behind a signing-key change (#194), latest_version is the newest
-     * release this copy verifies, a step towards the newest published one.
-     * That newer version is kept in the state row's one free text column,
-     * last_error, marked by this prefix, since the table has no column for
-     * it and a successful check otherwise leaves last_error empty. status()
-     * reads it back as newestVersion and never shows it as an error; a
-     * failed check overwrites it with its message, and the next successful
-     * check writes it again.
-     */
-    public const NEWEST_NOTE = 'newest published: ';
 
     /** @param ?\Closure(string,array):array{status:int,body:string} $fetch */
     public function __construct(
@@ -96,6 +85,7 @@ final class Updates
                 $state = [
                     'checked_at' => Time::nowDb(),
                     'latest_version' => $version,
+                    'newest_version' => $version,
                     'priority' => 'routine',
                     'minimum_secure_version' => $previous['minimum_secure_version'] ?? null,
                     'release_url' => $this->releaseUrl($release, $version),
@@ -106,12 +96,11 @@ final class Updates
             } else {
                 // The newest release this copy's keys verify: the notice must
                 // never name one the updater would then refuse (#194). The
-                // newest published one is kept with it, so the notice can say
-                // that the verified one is a step on the way.
-                ['state' => $state, 'version' => $verified, 'newest' => $newest] = $this->newestVerified($candidates, $previous);
-                if ($newest !== $verified) {
-                    $state['last_error'] = self::NEWEST_NOTE . $newest;
-                }
+                // newest published one is stored with it (newest_version,
+                // the same version unless some were walked past), so the
+                // notice can say that the verified one is a step on the way.
+                ['state' => $state, 'newest' => $newest] = $this->newestVerified($candidates, $previous);
+                $state['newest_version'] = $newest;
             }
             $stored = $this->saveAcceptedState($state);
             if ($notify) $this->notifySecurityFloor($stored);
@@ -153,15 +142,14 @@ final class Updates
         $dismissed = $latest !== null && ($notice['dismissed_version'] ?? null) === $latest;
         $show = $preference !== 'off'
             && ($securityRequired || ($preference === 'all' && $available && !$dismissed));
-        $note = is_string($state['last_error'] ?? null) && str_starts_with($state['last_error'], self::NEWEST_NOTE)
-            ? substr($state['last_error'], strlen(self::NEWEST_NOTE)) : null;
+        $newest = is_string($state['newest_version'] ?? null) ? $state['newest_version'] : null;
         return [
             'currentVersion' => $current,
             'latestVersion' => $latest,
             // The newest published release: above latestVersion only when
             // this copy's keys can't verify it yet and latestVersion is the
-            // step that brings them (NEWEST_NOTE).
-            'newestVersion' => $note ?? $latest,
+            // step that brings them (#194).
+            'newestVersion' => $newest ?? $latest,
             'priority' => $state['priority'] ?? null,
             'minimumSecureVersion' => $floor,
             'releaseUrl' => $state['release_url'] ?? null,
@@ -169,7 +157,7 @@ final class Updates
                 ? Time::dbToIso((string) $state['released_at']) : null,
             'checkedAt' => isset($state['checked_at']) && $state['checked_at'] !== null
                 ? Time::dbToIso((string) $state['checked_at']) : null,
-            'lastError' => $note === null ? ($state['last_error'] ?? null) : null,
+            'lastError' => $state['last_error'] ?? null,
             'preference' => $preference,
             'available' => $available,
             'securityRequired' => $securityRequired,

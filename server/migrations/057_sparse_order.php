@@ -6,21 +6,6 @@ use BetterCal\Domain\Order;
 use BetterCal\Infra\Db;
 
 return static function (Db $db): string {
-    $sqlite = $db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite';
-    $notes = [];
-
-    // An install that ran 056 before it kept the column changed: what it
-    // recorded is a few hours of entries, which fall back to the rule for
-    // older ones. The table is made again in its final shape.
-    $hasTouchColumn = $sqlite
-        ? in_array('touch', array_column($db->all('PRAGMA table_info(mutation_touches)'), 'name'), true)
-        : (int) $db->scalar('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', ['mutation_touches', 'touch']) > 0;
-    if ($hasTouchColumn) {
-        $db->run('DROP TABLE mutation_touches');
-        (require __DIR__ . '/056_mutation_touches.php')($db);
-        $notes[] = 'undo records remade';
-    }
-
     // Calendars and folder memberships in sparse order (Order::STEP apart),
     // so a move changes one row. The order itself stays as it was. Done
     // once: a list already spaced that far apart is left alone.
@@ -53,6 +38,5 @@ return static function (Db $db): string {
             $moved += $spaced($rows, 'UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', static fn($r, $p) => [$p, (int) $folderId, (int) $r['calendar_id']]);
         }
     }
-    $notes[] = $moved . ' places spaced out';
-    return 'Calendars and folders keep their order a step apart, so a move changes one row (' . implode('; ', $notes) . ').';
+    return 'Calendars and folders keep their order a step apart, so a move changes one row (' . $moved . ' places spaced out).';
 };

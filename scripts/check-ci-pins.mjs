@@ -13,7 +13,7 @@ for (const name of readdirSync(workflowDir).filter((file) => /\.ya?ml$/.test(fil
     const ref = match[1].split('@').pop();
     if (!/^[0-9a-f]{40}$/.test(ref || '')) problems.push(`${name}: mutable action reference: ${match[1]}`);
   }
-  for (const match of workflow.matchAll(/^\s*container:\s*(\S+)\s*$/gm)) {
+  for (const match of workflow.matchAll(/^\s*(?:container|image):\s*(\S+)\s*$/gm)) {
     if (!/@sha256:[0-9a-f]{64}$/.test(match[1])) problems.push(`${name}: mutable container reference: ${match[1]}`);
   }
   if (workflow.includes('https://getcomposer.org/installer')

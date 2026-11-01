@@ -167,8 +167,10 @@ export async function loadConfig() {
 
 // --- calendars -------------------------------------------------------------
 
-// Every write to calendars and folders goes through writeCalendars (#187):
-// a drag, A to Z, a checkbox, a calendar's settings, a folder's name.
+// Changes to calendars and folders made in the list go through
+// writeCalendars (#187): a drag, A to Z, a checkbox, a calendar's settings,
+// a folder's name. Ones that make or remove a calendar (create, delete,
+// refresh, claim) call the API and then reload the list.
 // - shown at once (show), then sent, one at a time in the order made;
 // - a failed one puts back what it showed (revert), unless a newer write
 //   to the same thing (key) came since;
@@ -794,8 +796,8 @@ export async function refreshWindow({ own = true } = {}) {
   return ok;
 }
 
-// The change poll's other reloads (people, saved views, settings,
-// calendars). One that failed is owed until one lands: the cursor moved on
+// The change poll's other reloads (people, saved views, settings; the
+// calendar list keeps its own, calendarsOwed). One that failed is owed until one lands: the cursor moved on
 // and it was forgotten (#185). One at a time each: asked again while one is
 // on its way, it runs again once that lands. An older one landing after a
 // newer one failed cleared what was owed, and could put back what the newer
@@ -888,17 +890,24 @@ export async function search(q, opts = {}, limit = 50) {
 
 // --- undo ------------------------------------------------------------------
 
+// After any undo, from a toast or the log: it could have been any event's
+// record, a calendar's place or settings, or the window's events.
+export function afterUndo() {
+  invalidateRecords();
+  loadCalendars().catch(() => {});
+  return refreshWindow();
+}
+
 export async function undo() {
   try {
     const data = await api('/undo', { method: 'POST' });
     toast('Undone: ' + (data.undone ? data.undone.op + ' ' + data.undone.entity : 'last change'));
-    invalidateRecords(); // could have been any event's record
-    // Any change can be undone, a calendar's place or settings among them.
-    loadCalendars().catch(() => {});
-    await refreshWindow();
+    await afterUndo();
     return true;
   } catch (e) {
-    toast(e.status === 404 ? 'Nothing to undo' : 'Undo failed: ' + e.message, { error: true });
+    // Your last change can't be undone, or changed since: the server says which.
+    const said = e.code === 'not_undoable' || e.code === 'stale_undo';
+    toast(e.status === 404 ? 'Nothing to undo' : said ? e.message : 'Undo failed: ' + e.message, { error: true });
     return false;
   }
 }

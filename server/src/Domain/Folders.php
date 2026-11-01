@@ -101,7 +101,10 @@ final class Folders
             $summary = $was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
                 : ($source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
                 : "Added '" . $name . "' to folder '" . $folder['name'] . "'");
-            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => $rows()], $summary);
+            // Numbered afresh, every place in the folder changed in effect
+            // (as Calendars::placeInList).
+            $touches = count($places) > 1 ? array_map(static fn(array $r) => [Undo::keyOf('calendar_folders', ['calendar_id' => $r[0], 'folder_id' => $id]), 'position'], $ordered) : [];
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => $rows()], $summary, touches: $touches);
             return ['calendarIds' => self::order($this->db, $id)];
         });
     }

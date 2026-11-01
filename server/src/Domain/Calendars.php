@@ -196,9 +196,7 @@ final class Calendars
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
-        // Last in the list, a step on (Order: places are sparse).
-        $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), 0) FROM calendars WHERE user_id = ?', [$userId]) ?? 0) + Order::STEP;
-        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession, $position): int {
+        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession): int {
             if ($creatorTokenId !== null) {
                 // Authentication happened before the controller ran. Lock and
                 // recheck at the durable boundary so a concurrent revoke either
@@ -215,7 +213,7 @@ final class Calendars
                 'source_url' => $sourceUrl === null
                     ? null
                     : FeedCredentials::sealSourceUrl($sourceUrl, $this->secret()),
-                'position' => $position,
+                'position' => Order::endOfList($this->db, $userId),
                 // What the calendar is to the person (migration 026): things I
                 // do, things I could do, or information. Changeable later.
                 'role' => in_array($in['role'] ?? null, self::ROLES, true) ? $in['role'] : ($kind === 'subscribed' ? 'opportunities' : 'mine'),
@@ -236,6 +234,10 @@ final class Calendars
                 ];
             }
             $id = $this->db->insert('calendars', $row);
+            if ($kind === 'local' && Settings::defaultCalendarId($this->db, $userId) === $id) {
+                // The only local calendar: new events go here (Settings).
+                Settings::setDefaultCalendar($this->db, $userId, $id);
+            }
             if (!empty($in['folderIds']) && is_array($in['folderIds'])) {
                 $this->setFolders($userId, $id, $in['folderIds']);
             }
@@ -284,9 +286,6 @@ final class Calendars
         }
         if (array_key_exists('visible', $in)) {
             $fields['visible'] = filter_var($in['visible'], FILTER_VALIDATE_BOOL) ? 1 : 0;
-        }
-        if (array_key_exists('position', $in)) {
-            $fields['position'] = (int) $in['position'];
         }
         if (array_key_exists('role', $in)) {
             if (!in_array($in['role'], self::ROLES, true)) {
@@ -431,8 +430,14 @@ final class Calendars
         return $this->serializeById($userId, $id);
     }
 
-    public function delete(int $userId, int $id): void
+    /**
+     * Delete a calendar and its events. When it was where new events go,
+     * that moves to the oldest local calendar left: its id is returned so
+     * the app can say so (null when it wasn't the default).
+     */
+    public function delete(int $userId, int $id): ?int
     {
+        $wasDefault = Settings::defaultCalendarId($this->db, $userId) === $id;
         $before = $this->db->tx(function () use ($userId, $id): array {
             CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
             $calendar = $this->get($userId, $id);
@@ -452,6 +457,12 @@ final class Calendars
             return $before;
         });
         $this->undo->record($userId, 'calendar', $id, 'delete', $before, null);
+        if (!$wasDefault) {
+            return null;
+        }
+        $next = Settings::defaultCalendarId($this->db, $userId);
+        Settings::setDefaultCalendar($this->db, $userId, $next);
+        return $next;
     }
 
     public function serializeById(int $userId, int $id, ?int $viewerTokenId = null): array
@@ -657,8 +668,7 @@ final class Calendars
         foreach (array_diff($want, $have) as $folderId) {
             $owned = $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [$folderId, $userId]);
             if ($owned !== null) {
-                $end = (int) $this->db->scalar('SELECT COALESCE(MAX(position), 0) FROM calendar_folders WHERE folder_id = ?', [$folderId]) + Order::STEP;
-                $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, $end]);
+                $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, Order::endOfFolder($this->db, $folderId)]);
             }
         }
     }
@@ -686,7 +696,10 @@ final class Calendars
             foreach ($places as $id => $pos) {
                 $this->db->run('UPDATE calendars SET position = ? WHERE id = ? AND user_id = ?', [$pos, $id, $userId]);
             }
-            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $rows()], "Moved '" . $cal['name'] . "' in the calendar list");
+            // Numbered afresh, every place changed in effect: a move in the
+            // list since makes its undo stale, as it does an earlier one's.
+            $touches = count($places) > 1 ? array_map(static fn(array $r) => [Undo::keyOf('calendars', ['id' => $r[0]]), 'position'], $ordered) : [];
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $rows()], "Moved '" . $cal['name'] . "' in the calendar list", touches: $touches);
             return array_map('intval', array_column($this->db->all('SELECT id FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]), 'id'));
         });
     }

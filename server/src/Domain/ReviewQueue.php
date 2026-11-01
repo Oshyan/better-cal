@@ -878,7 +878,7 @@ final class ReviewQueue
             $invite['reviewDismissedAt'] = Time::iso(Time::nowUtc());
             $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
             (new Undo($this->db))->record($userId, 'event', $eventId, 'refuse', null, null,
-                'Dismissed the reply reminder for "' . (string) $row['title'] . '" without answering');
+                'Dismissed the reply reminder for "' . (string) $row['title'] . '" without answering', touches: [[Undo::keyOf('events', ['id' => $eventId]), 'invite_json']]);
             return ['eventId' => $eventId];
         }));
     }

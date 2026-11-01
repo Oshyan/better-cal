@@ -63,10 +63,8 @@ export function CreateDrawer() {
     setBusy(true);
     try {
       if (kind === 'calendar') {
-        const created = await api('/calendars', { method: 'POST', body: { name: name.trim() || 'New calendar', color } });
-        if (folderId !== '' && created && created.id != null) {
-          await api('/calendars/' + created.id, { method: 'PATCH', body: { folderIds: [Number(folderId)] } }).catch(() => {});
-        }
+        // Filed as it's made: one save, one undo.
+        await api('/calendars', { method: 'POST', body: { name: name.trim() || 'New calendar', color, ...(folderId !== '' ? { folderIds: [Number(folderId)] } : {}) } });
         toast('Calendar created');
         await loadCalendars();
       } else if (kind === 'subscribe') {

@@ -12,8 +12,10 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - **Only** on a folder's header shows just that folder's calendars; click it again to bring back what was on.
   - **Drag a calendar** onto another folder to move it there, or hold Option (Alt) to add it there as well. Drag it to the main list to take it out of its folder.
   - **A–Z** on a folder or the main list sorts it by name; otherwise drag calendars into the order you like. Each folder keeps its own order.
+- **The default calendar is always set:** Settings, General, Default calendar. Deleting it moves it to another and says which. It used to fall back to the first calendar in the list.
+- **Undo knows what a change stands on:** undoing a calendar's creation after adding events to it, or a series change after editing one date of it, asks first instead of losing the newer work. A calendar deleted after its folder comes back unfiled. A toast's Undo undoes your own last change, or says it can't.
 
-Operators: two database changes (each folder's order of calendars, and what each change touched, for undo), applied automatically by `update.php` or the database update page.
+Operators: four database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, and a default calendar for every account), applied automatically by `update.php` or the database update page.
 
 ## 1.4.4 (2026-10-31)
 

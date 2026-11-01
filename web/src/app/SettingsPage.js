@@ -9,7 +9,7 @@ import { useStore, toast, shallowEq, set } from './store.js';
 import { api, logout, loadSystemHealth, loadCalendars, loadReviewCount, loadUpdates } from './api.js';
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
-import { saveSetting } from './actions.js';
+import { saveSetting, defaultTargetCalendarId } from './actions.js';
 import { holdReload } from './drafts.js';
 import { badgeSupported } from './badge.js';
 import { recentStarts } from './resume.js';
@@ -875,7 +875,6 @@ export function SettingsPage() {
   }, []);
 
   const save = (key) => (value) => saveSetting(key, value);
-  const localCals = calendars.filter((c) => c.editable);
 
   const signOut = async () => {
     setBusy(true);
@@ -981,12 +980,11 @@ export function SettingsPage() {
       <//>`}
       <${Row} label="Default calendar" hint="Where new events land unless you pick otherwise.">
         <select
-          value=${settings.defaultCalendarId == null ? '' : String(settings.defaultCalendarId)}
+          value=${String(defaultTargetCalendarId() ?? '')}
           aria-label="Default calendar"
-          onChange=${(e) => save('defaultCalendarId')(e.target.value === '' ? null : Number(e.target.value))}
+          onChange=${(e) => save('defaultCalendarId')(Number(e.target.value))}
         >
-          <option value="">None</option>
-          ${localCals.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}</option>`)}
+          ${calendars.filter((c) => c.kind === 'local').map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}</option>`)}
         </select>
       <//>
       <${HomeTimezoneRow} tz=${settings.tz} onChange=${save('tz')} />

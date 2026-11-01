@@ -22,6 +22,7 @@ Every suite must pass. CI runs them all on every push and pull request, and the 
 
 ```bash
 php server/tests/run.php                              # server
+BC_TEST_DB=127.0.0.1:3306 php server/tests/db/run.php # server, against MariaDB
 TZ=America/Los_Angeles node web/tests/smoke.mjs       # frontend logic
 node --experimental-vm-modules web/tests/static.mjs   # module graph, HTML/CSS cross-check
 node tools/mcp/test.mjs                               # MCP server
@@ -30,7 +31,11 @@ bash scripts/tests/release-security.sh                # release and signing chec
 ```
 
 - The deploy runs the smoke suite under five time zones, so a test that only passes in yours will be caught. Try another `TZ` before sending.
-- Add a test with any behavior change. The server suite is plain PHP with no database server: it uses SQLite in memory where it needs one, so PHP needs `pdo_sqlite` (`php8.4-sqlite3` on Debian and Ubuntu). The CalDAV and iCalendar checks also need `composer install` in `server/` and are skipped without it. The smoke suite is plain Node.
+- Add a test with any behavior change. The server has two suites:
+  - **`server/tests/run.php`** is plain PHP with no database server, for logic: parsing, recurrence, time zones, serializers, validation, anything that doesn't depend on how the database behaves. Where it needs a table it uses SQLite in memory, so PHP needs `pdo_sqlite` (`php8.4-sqlite3` on Debian and Ubuntu). The CalDAV and iCalendar checks also need `composer install` in `server/` and are skipped without it.
+  - **`server/tests/db/`** runs against MariaDB with the schema the migrations build, for anything that depends on the database: undo and the journal, foreign keys and what cascades, ordering, transactions and row locks, two connections at once, and migrations that change data. Each run makes its own database and drops it, so it needs a server where it may create databases: `BC_TEST_DB` (host:port), `BC_TEST_DB_USER` and `BC_TEST_DB_PASS` (root, no password by default). A throwaway one: `docker run -d --rm -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1 -p 127.0.0.1:3306:3306 mariadb:10.11`. Tests are `*.test.php` files there, each returning a function of the database.
+  - When a test needs a hand-written SQLite schema, or app code would need a branch for SQLite to pass it, it belongs in the database suite instead. Tests that touch the database move there area by area.
+- The smoke suite is plain Node.
 - Changing repeating events, time zones, or import and export (`Recurrence`, `Ics`, `Time`, `web/src/lib/dates.js`)? Also run `tools/tz-harness/run.sh`, which checks about 3,800 series against two independent calendar engines ([its README](tools/tz-harness/README.md)). It needs Composer's libraries in `server/vendor`, uv and Node, so it isn't part of the deploy.
 
 A few habits the codebase keeps:

@@ -444,16 +444,17 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   }
 }
 
-// The writable calendar a new event should land on when nothing else says
-// otherwise. Visibility is part of "writable" here: falling back to the first
-// local calendar in id order lands on whatever happens to be first, and if
-// that one is switched off the event is created and instantly invisible.
+// The calendar a new event lands on when nothing else says otherwise: the
+// default chosen in Settings, always set while there's a local calendar.
+// Should it be missing, the oldest local calendar, as the server does
+// (Settings::defaultCalendarId): never the list's order, and never a
+// plugin's or a subscription's, which don't take new events.
 export function defaultTargetCalendarId() {
+  const local = state.calendars.filter((c) => c.kind === 'local');
   const wanted = state.settings.defaultCalendarId;
-  const byId = wanted != null && state.calendars.find((c) => c.id === wanted);
+  const byId = wanted != null && local.find((c) => c.id === wanted);
   if (byId) return byId.id;
-  const local = state.calendars.filter((c) => c.kind !== 'subscribed');
-  return (local.find((c) => c.visible) || local[0] || {}).id;
+  return local.reduce((oldest, c) => (oldest == null || c.id < oldest.id ? c : oldest), null)?.id;
 }
 
 export async function createEvent(fields) {
@@ -1222,8 +1223,11 @@ export async function refreshCalendar(cal) {
 
 export async function deleteCalendar(cal) {
   try {
-    await api('/calendars/' + cal.id, { method: 'DELETE' });
-    toast('Calendar deleted', { title: cal.name, undoable: true });
+    const res = await api('/calendars/' + cal.id, { method: 'DELETE' });
+    // It was where new events go: that's moved to another (Settings).
+    const next = res && res.defaultCalendarId != null ? state.calendars.find((c) => c.id === res.defaultCalendarId) : null;
+    if (res && res.defaultCalendarId != null) set({ settings: { ...state.settings, defaultCalendarId: res.defaultCalendarId } });
+    toast('Calendar deleted' + (next ? '. New events now go to ' + next.name : ''), { title: cal.name, undoable: true });
     await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     refreshWindow();
     return true;

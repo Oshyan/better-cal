@@ -1140,6 +1140,7 @@ $gtdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pas
 $gtdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
 $gtdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
 $gtdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+(require __DIR__ . '/../migrations/056_mutation_touches.php')($gtdb);
 $gtdb->run("INSERT INTO users (id, email, settings_json) VALUES (1, 'owner@example.test', '{}')");
 $gtLogs = [];
 $gt = new PoliciedGeocoderTransport(
@@ -1367,6 +1368,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $rdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
 $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($rdb);
     $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
     $alice = ['organizer' => ['email' => 'alice@example.com', 'name' => 'Alice'], 'sequence' => 3, 'attendees' => []];
     checkEq('review hold: a no-op message creates no item', null, $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', $same, $alice, 'alice@example.com'));
@@ -1538,6 +1540,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $adb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $adb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($adb);
     $adb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $adb->run("CREATE TABLE plugin_proposals (id INTEGER PRIMARY KEY, plugin_id TEXT, user_id INTEGER, source_key TEXT, title TEXT, summary TEXT, rationale_html TEXT, plan_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, accepted_run_id TEXT, UNIQUE(plugin_id, source_key))");
     // Location provenance columns (migration 048), applied the way a deploy does.
@@ -2312,6 +2315,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT, source TEXT DEFAULT 'local', created_via TEXT DEFAULT 'web')");
     $ddb->run("CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $ddb->run("CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($ddb);
     $ddb->run("INSERT INTO users (id) VALUES (1)");
     $ddb->run("INSERT INTO calendars VALUES (1, 1, 'Imported', 'local', 'mine', 'ics'), (2, 1, 'Google', 'subscribed', 'mine', 'google'), (3, 1, 'Invitations', 'local', 'mine', 'ics'), (4, 1, 'Events feed', 'subscribed', 'opportunities', 'ics'), (5, 1, 'Weather', 'plugin', 'context', 'ics')");
     $soon = BetterCal\Support\Time::nowUtc()->add(new DateInterval('P3D'))->format('Y-m-d') . ' 02:00:00';
@@ -2419,6 +2423,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $budgetDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $budgetDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($budgetDb);
     $budgetDb->run('INSERT INTO users (id) VALUES (1)');
     $budgetDb->run("INSERT INTO calendars VALUES (1, 1, 'Example A', 'subscribed', 'mine', 'ics'), (2, 1, 'Example B', 'subscribed', 'mine', 'ics')");
     $denseStart = Time::nowUtc()->add(new DateInterval('P5D'))->format('Y-m-d H:i:s');
@@ -2514,6 +2519,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $rotateDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $rotateDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($rotateDb);
     $rotateDb->run('INSERT INTO users (id) VALUES (1)');
     $rotateDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'local', 'mine', 'ics')");
     foreach ([[1, 1, 'Alpha'], [2, 1, 'Beta'], [3, 2, 'Alpha'], [4, 2, 'Beta']] as [$id, $cal, $title]) {
@@ -2543,6 +2549,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $uidDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $uidDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($uidDb);
     $uidDb->run('INSERT INTO users (id) VALUES (1)');
     $uidDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'subscribed', 'mine', 'ics')");
     for ($id = 1; $id <= 40; $id++) {
@@ -3861,15 +3868,24 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     davJournal($udb);
     $udb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT)');
     $udb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($udb);
     $undo = new BetterCal\Domain\Undo($udb);
     $udb->run("INSERT INTO events VALUES (1, 1, 1, 'a', 'Renamed')");
     $undo->record(1, 'event', 1, 'update', ['events' => [['id' => 1, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'a', 'title' => 'Original']]], ['events' => [['id' => 1, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'a', 'title' => 'Renamed']]]);
     $udb->run("INSERT INTO events VALUES (2, 1, 1, 'b', 'New one')");
     $undo->record(1, 'event', 2, 'create', null, ['events' => [['id' => 2, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'b', 'title' => 'New one']]]);
-    $undo->record(1, 'event', 1, 'update', null, null, 'Updated at Google');
+    // A change the app made on its own (a feed's) is passed over.
+    BetterCal\Domain\ActivityContext::with('feed', fn() => $undo->record(1, 'calendar', 1, 'update', null, null, 'Feed checked'));
     checkEq('undo latest: a creation is what gets undone', ['event', 'create'], array_values($undo->undoLatest(1)));
     checkEq('undo latest: the created event is gone, the earlier edit stays', [['id' => 1, 'title' => 'Renamed']], $udb->all('SELECT id, title FROM events'));
     checkEq('undo latest: the earlier edit is next in line', ['update', 0], [$udb->scalar("SELECT op FROM mutations WHERE undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id DESC LIMIT 1"), (int) $udb->scalar('SELECT undone FROM mutations WHERE id = 1')]);
+    // Your own last change that can't be undone (sent to Google): said so,
+    // and the one before it is left alone.
+    $undo->record(1, 'event', 1, 'update', null, null, 'Updated at Google');
+    $caught = null;
+    try { $undo->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    checkEq("undo latest: your own last change that can't be undone is refused, and nothing older is undone", ['not_undoable', 'Renamed'],
+        [$caught ? $caught->errorCode : null, $udb->scalar('SELECT title FROM events WHERE id = 1')]);
 }
 
 // Thumbs are a state (#107): repeating the current one records nothing, the
@@ -4736,6 +4752,7 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     $sdb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $sdb->run('CREATE TABLE availability (id INTEGER PRIMARY KEY, person_id INTEGER, start_utc TEXT, end_utc TEXT, kind TEXT, note TEXT)');
     $sdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($sdb);
     $sdb->run("INSERT INTO people (id, user_id, name) VALUES (1, 1, 'Sam Sample'), (2, 2, 'Alex Example')");
     $sp = new BetterCal\Domain\People($sdb);
     $span = $sp->addSpan(1, 1, ['start' => '2026-08-10T00:00:00-07:00', 'end' => '2026-08-15T00:00:00-07:00', 'kind' => 'away', 'note' => 'Conference']);
@@ -6887,6 +6904,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     davJournal($edb);
     $edb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, deleted_at TEXT, updated_at TEXT)');
     $edb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($edb);
     $edb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER)');
     $edb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'mover')");
     $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (1, 1, 1, 'plg-mover-item:7', 'Moved item', '2030-03-06 00:00:00', '2030-03-07 00:00:00', 1, 'UTC')");
@@ -7029,6 +7047,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $gw->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
     $gw->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $gw->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($gw);
     $gw->run('CREATE TABLE filter_evals (id INTEGER PRIMARY KEY, filter_id INTEGER, event_id INTEGER, verdict TEXT, score REAL, evaluated_at TEXT)');
 
     // Google stand-in: every call is recorded, a hook can run while it's
@@ -7203,6 +7222,7 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $odb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
     $odb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, plugin_id TEXT, role TEXT, subscription_authority TEXT, settings_json TEXT, position INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)");
     $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($odb);
     $odb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER)');
     // AUTOINCREMENT: ids aren't reused after a delete, as in MySQL (a refresh's gen).
     $odb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, source_key TEXT, start_utc TEXT, end_utc TEXT, label TEXT, color TEXT, detail_html TEXT)');
@@ -7397,6 +7417,7 @@ require __DIR__ . '/plugins.php';
     $hdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $hdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
     $hdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($hdb);
     $health = new SystemHealth($hdb);
     $entries = fn(): array => array_column($hdb->all('SELECT summary FROM mutations ORDER BY id'), 'summary');
     $health->recordOk('geocoder:photon', 'job', null, 'Photon geocoding', false);
@@ -8025,6 +8046,7 @@ require __DIR__ . '/plugins.php';
     $tdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
     $tdb->run("INSERT INTO users (id, email) VALUES (1, 'owner@example.com')");
     $tdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($tdb);
     $throttle = new BetterCal\Infra\Throttle($tdb);
     $t0 = Time::parseIso('2026-09-17T12:00:00+00:00');
     $at = static fn(int $sec) => $t0->add(new DateInterval('PT' . $sec . 'S'));
@@ -8196,8 +8218,11 @@ require __DIR__ . '/plugins.php';
     )');
     $mdb->run("INSERT INTO calendars VALUES (1, 1, 'local', NULL, NULL, NULL), (2, 1, 'local', NULL, NULL, NULL)");
     $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT, is_container INTEGER, rrule TEXT, recurrence_parent_id INTEGER, google_event_id TEXT)');
+    $mdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $mdb->run("INSERT INTO users VALUES (1, '{}')");
     $mdb->run("INSERT INTO events VALUES (10, 1, 1, NULL, 0, NULL, NULL, NULL)");
     $mdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($mdb);
     $legacyCrossSnapshot = json_encode(['tables' => ['events' => [['id' => 20, 'calendar_id' => 2, 'uid' => 'legacy-shape']]]]);
     $mdb->run("INSERT INTO mutations (id, user_id, entity, entity_id, op, before_json, after_json) VALUES (99, 1, 'event', 10, 'update', ?, ?)", [$legacyCrossSnapshot, $legacyCrossSnapshot]);
     $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, google_account_id, status, total, done_count) VALUES (1, 2, 7, 'running', 2, 1)");
@@ -8458,6 +8483,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $tdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, is_container INTEGER, updated_at TEXT, deleted_at TEXT)');
     $tdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY AUTOINCREMENT, container_id INTEGER, event_id INTEGER, position INTEGER)');
     $tdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($tdb);
     $tdb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER, PRIMARY KEY (mutation_id, calendar_id))');
     $tdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', 1), (2, 1, 'local', 'ics', 1)");
     $tdb->run("INSERT INTO events VALUES
@@ -8732,6 +8758,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     // In-app change password (review of 0.9.87): current password required,
     // this exact session still live, every browser out, keys only on request.
     $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($pdb);
     $mine = $pauth->login('owner@example.com', 'newer-password');
     $pauth->login('owner@example.com', 'newer-password');
     $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'kept')");
@@ -8764,6 +8791,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $ddb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
     $ddb->run('CREATE TABLE rate_events (id INTEGER PRIMARY KEY, bucket TEXT, created_at TEXT)');
     $ddb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($ddb);
     $ddb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
     $ddb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
     $ddb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT)');
@@ -8878,6 +8906,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $odb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
     $odb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
     $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($odb);
     $odb->run("INSERT INTO users (id, email, password_hash, settings_json) VALUES (1, 'owner@example.com', ?, ?), (2, 'other@example.com', ?, ?)", [
         password_hash('pw', PASSWORD_DEFAULT),
         json_encode(['notifyEmail' => 'elsewhere@example.com', 'notifyEmailToken' => null]),
@@ -9097,9 +9126,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     davJournal($cdb);
     $cdb->run("CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER, sort TEXT NOT NULL DEFAULT 'manual')");
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
-    // Its foreign keys as in MySQL: a deleted folder takes its rows with it.
-    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
-    $cdb->run('PRAGMA foreign_keys = ON');
+    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
     $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
     $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
     $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
@@ -9141,12 +9168,12 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $agentSource,
         $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
     // What a change touched (Undo::touchesOf): rows that changed, not rows
-    // carried along; a calendar's place in the list as its own touch.
+    // carried along, and what a row made or removed belongs to.
     checkEq('touches: a rename touches the calendar\'s name, not the folders it is in', [['calendars:5', 'name']], BetterCal\Domain\Undo::touchesOf(
         ['calendars' => [['id' => 5, 'name' => 'A', 'position' => 1, 'updated_at' => 'x']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]],
         ['calendars' => [['id' => 5, 'name' => 'B', 'position' => 1, 'updated_at' => 'y']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]]
     ));
-    checkEq('touches: a new place in the list is its position, and a folder filed in is the whole row', [['calendars:5', 'position'], ['calendar_folders:5|4', '*']], BetterCal\Domain\Undo::touchesOf(
+    checkEq('touches: a new place in the list is its position, and a filing made is the whole row, joining its calendar and folder', [['calendars:5', 'position'], ['calendar_folders:5|4', '*'], ['calendars:5', '+'], ['folders:4', '+']], BetterCal\Domain\Undo::touchesOf(
         ['calendars' => [['id' => 5, 'position' => 1]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3]]],
         ['calendars' => [['id' => 5, 'position' => 2]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3], ['calendar_id' => 5, 'folder_id' => 4]]]
     ));
@@ -9164,225 +9191,10 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('order: moving one within the list changes only it', [2 => 0], BetterCal\Domain\Order::place([[1, 1024], [2, 2048], [3, 3072]], 2, 0));
     checkEq('order: no room between two, the list is numbered afresh', [7 => 2048, 2 => 3072], BetterCal\Domain\Order::place([[1, 1024], [2, 1025]], 7, 1));
 
-    // Migration 057: undo records in their final shape, places spaced out.
-    $m57 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $m57->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY)');
-    $m57->run('CREATE TABLE mutation_touches (mutation_id INTEGER, touch TEXT)');
-    $m57->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, position INTEGER)');
-    $m57->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER, PRIMARY KEY (calendar_id, folder_id))');
-    $m57->run('INSERT INTO calendars (id, user_id, position) VALUES (1, 1, 2), (2, 1, 0), (3, 1, 1), (4, 2, 0)');
-    $m57->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 9, 1), (3, 9, 0)');
-    (require __DIR__ . '/../migrations/057_sparse_order.php')($m57);
-    (require __DIR__ . '/../migrations/057_sparse_order.php')($m57);
-    checkEq('migration 057: undo records remade, places a step apart in the same order, and again changes nothing', [
-        ['mutation_id', 'row_key', 'col'], [[2, 1024], [3, 2048], [1, 3072]], [[3, 1024], [1, 2048]],
-    ], [
-        array_column($m57->all('PRAGMA table_info(mutation_touches)'), 'name'),
-        array_map(static fn($r) => [(int) $r['id'], (int) $r['position']], $m57->all('SELECT id, position FROM calendars WHERE user_id = 1 ORDER BY position')),
-        array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], $m57->all('SELECT calendar_id, position FROM calendar_folders ORDER BY position')),
-    ]);
-
-    // The folder order migration: each folder starts in the order it showed.
-    $mdb055 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $mdb055->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, position INTEGER)');
-    $mdb055->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, name TEXT, position INTEGER)');
-    $mdb055->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, PRIMARY KEY (calendar_id, folder_id))');
-    $mdb055->run('INSERT INTO calendars (id, position) VALUES (1, 2), (2, 0), (3, 1)');
-    $mdb055->run("INSERT INTO folders (id, name, position) VALUES (1, 'A', 0), (2, 'B', 1)");
-    $mdb055->run('INSERT INTO calendar_folders (calendar_id, folder_id) VALUES (1, 1), (2, 1), (3, 1), (1, 2), (3, 2)');
-    (require __DIR__ . '/../migrations/055_folder_order.php')($mdb055);
-    (require __DIR__ . '/../migrations/055_folder_order.php')($mdb055);
-    checkEq('migration 055: folders keep the order they showed, and run twice it changes nothing', [[2, 3, 1], [3, 1], ['manual', 'manual']], [
-        array_map('intval', array_column($mdb055->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = 1 ORDER BY position'), 'calendar_id')),
-        array_map('intval', array_column($mdb055->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = 2 ORDER BY position'), 'calendar_id')),
-        array_column($mdb055->all('SELECT sort FROM folders ORDER BY id'), 'sort'),
-    ]);
-    // Folders keep their own order, or list A to Z (#187).
-    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (10, 1, 'Alpha', 0), (11, 1, 'Beta', 1), (12, 2, 'Someone else', 0)");
-    $cdb->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 10, 0), (2, 10, 1)');
-    // What each change touched (migration 056), for undo's staleness check.
-    // As in MySQL: a Google calendar's entries keep no snapshots (the refs).
+    // Undo's records for the rest of this setup (migration 056, the refs).
+    // Folders, the calendar list and their undo: server/tests/db.
     $cdb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
-    $m056 = require __DIR__ . '/../migrations/056_mutation_touches.php';
-    $m056($cdb);
-    $m056($cdb);
-    check('migration 056: adds the table, and runs again harmlessly', $cdb->scalar("SELECT name FROM sqlite_master WHERE name = 'mutation_touches'") !== null);
-    $folderDomain = new BetterCal\Domain\Folders($cdb, new BetterCal\Domain\Undo($cdb));
-    $folderOrder = static fn() => array_column(array_map(static fn($f) => ['k' => $f['id'], 'v' => $f['calendarIds']], $calendarDomain->listAll(1)['folders']), 'v', 'k');
-    checkEq('folders: listed with their calendars in their own order, manual unless set', [[10 => [1, 2], 11 => []], ['manual', 'manual']],
-        [$folderOrder(), array_column($calendarDomain->listAll(1)['folders'], 'sort')]);
-    $folderDomain->place(1, 10, 2, 0);
-    checkEq('folders: a calendar moves to a new place in its folder', [10 => [2, 1], 11 => []], $folderOrder());
-    $folderDomain->place(1, 11, 1, 0, 10);
-    checkEq('folders: dragged to another folder, it leaves the first', [[10 => [2], 11 => [1]], [11]],
-        [$folderOrder(), $calendarDomain->listAll(1)['calendars'][0]['folderIds']]);
-    $folderDomain->place(1, 11, 2, 5);
-    checkEq('folders: added to another as well, it stays where it was (a place past the end is the end)', [10 => [2], 11 => [1, 2]], $folderOrder());
-    $lastMutation = $cdb->one('SELECT entity, entity_id, summary FROM mutations ORDER BY id DESC LIMIT 1');
-    checkEq('folders: the activity entry names the calendar and the folder', ['calendar', 2, "Added 'Agent feed' to folder 'Beta'"],
-        [$lastMutation['entity'], (int) $lastMutation['entity_id'], $lastMutation['summary']]);
-    $placeUndo = new BetterCal\Domain\Undo($cdb);
-    $placeUndo->undoLatest(1);
-    checkEq('folders: undone, it is out of the folder it was added to and still where it was', [10 => [2], 11 => [1]], $folderOrder());
-    // Undo puts back only the calendar it moved: a later change to the
-    // folder it came from stays (#187 review).
-    $folderDomain->place(1, 11, 2, 0);
-    $folderDomain->place(1, 10, 1, 0, 11);
-    $moveEntry = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $folderDomain->unfile(1, 11, 2);
-    checkEq('folders: before the undo, 1 moved to Alpha and 2 taken out of Beta', [10 => [1, 2], 11 => []], $folderOrder());
-    $placeUndo->undoById(1, $moveEntry);
-    checkEq("folders: undoing the older move puts 1 back in Beta; 2 stays out of it", [10 => [2], 11 => [1]], $folderOrder());
-    $folderDomain->place(1, 11, 1, 0);
-    $first = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $folderDomain->place(1, 10, 1, 0, 11);
-    $caught = null;
-    try { $placeUndo->undoById(1, $first); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    check('folders: an older move of a calendar moved again since is stale', $caught !== null && $caught->errorCode === 'stale_undo');
-    // Filed again from its settings since: stale too; renamed since: not.
-    $folderDomain->place(1, 11, 1, 0, 10);
-    $settingsMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $calendarDomain->patch(1, 1, ['folderIds' => [10, 11]]);
-    $caught = null;
-    try { $placeUndo->undoById(1, $settingsMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    checkEq('folders: a move filed again from its settings since is stale, and nothing changes', ['stale_undo', [10 => [2, 1], 11 => [1]]],
-        [$caught ? $caught->errorCode : null, $folderOrder()]);
-    $calendarDomain->patch(1, 1, ['folderIds' => [11]]);
-    // The same for a Google calendar, whose entries keep no snapshots.
-    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
-    $folderDomain->place(1, 10, 1, 0, 11);
-    $googleMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $calendarDomain->patch(1, 1, ['folderIds' => [10, 11]]);
-    $caught = null;
-    try { $placeUndo->undoById(1, $googleMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    checkEq('folders: a Google calendar filed again from its settings since: stale too, and nothing changes', ['stale_undo', [10 => [1, 2], 11 => [1]]],
-        [$caught ? $caught->errorCode : null, $folderOrder()]);
-    $calendarDomain->patch(1, 1, ['folderIds' => [11]]);
-    $cdb->run("UPDATE calendars SET provider = 'ics' WHERE id = 1");
-    $folderDomain->place(1, 10, 1, 0, 11);
-    $renamedMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $calendarDomain->patch(1, 1, ['name' => 'Owner feed, renamed again']);
-    $placeUndo->undoById(1, $renamedMove);
-    checkEq('folders: a move renamed since still undoes, keeping the name', [[10 => [2], 11 => [1]], 'Owner feed, renamed again'],
-        [$folderOrder(), $cdb->scalar('SELECT name FROM calendars WHERE id = 1')]);
-    $cdb->run("UPDATE calendars SET name = 'Owner feed' WHERE id = 1");
-    // The folder it came from deleted: refused, and it stays where it is.
-    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (13, 1, 'Short-lived', 2)");
-    $folderDomain->place(1, 13, 2, 0);
-    $folderDomain->place(1, 11, 2, 0, 13);
-    $goneMove = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $cdb->run('DELETE FROM folders WHERE id = 13');
-    $caught = null;
-    try { $placeUndo->undoById(1, $goneMove); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    checkEq("folders: undoing a move out of a deleted folder is refused, and it stays where it is", ['not_undoable', [2, 1], 0],
-        [$caught ? $caught->errorCode : null, $folderOrder()[11], (int) $cdb->scalar('SELECT undone FROM mutations WHERE id = ?', [$goneMove])]);
-    $folderDomain->unfile(1, 11, 2);
-    $folderDomain->place(1, 10, 2, 0);
-    $folderDomain->place(1, 11, 1, 0, 10);
-    $folderDomain->place(1, 11, 2, 0);
-    $folderDomain->unfile(1, 10, 2);
-    checkEq('folders: taken out of one folder, it stays in the other', [10 => [], 11 => [2, 1]], $folderOrder());
-    $calendarDomain->patch(1, 1, ['folderIds' => [11, 10]]);
-    checkEq("folders: filed from its settings, it keeps its place where it was and goes last where it's new", [10 => [1], 11 => [2, 1]], $folderOrder());
-    $folderDomain->patch(1, 11, ['sort' => 'az']);
-    checkEq('folders: a folder can list A to Z', 'az', $calendarDomain->listAll(1)['folders'][1]['sort']);
-    $caught = null;
-    try { $folderDomain->patch(1, 11, ['sort' => 'random']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    check('folders: an unknown sort is refused', $caught !== null && $caught->status === 400);
-    $caught = null;
-    try { $folderDomain->place(1, 12, 1, 0); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    check("folders: someone else's folder can't be filed into", $caught !== null && $caught->status === 404);
-    $listOrder = static fn() => array_column($calendarDomain->listAll(1)['calendars'], 'id');
-    $calendarDomain->placeInList(1, 2, 0);
-    checkEq('calendar list: a calendar moves to a new place in the list', [2, 1], $listOrder());
-    $reorderEntry = (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $calendarDomain->patch(1, 1, ['name' => 'Owner feed, renamed']);
-    $placeUndo->undoById(1, $reorderEntry);
-    checkEq("calendar list: undoing an older reorder puts it back and keeps another calendar's later rename", [[1, 2], 'Owner feed, renamed'],
-        [$listOrder(), $cdb->scalar('SELECT name FROM calendars WHERE id = 1')]);
-    // A Google calendar in the list no longer makes a reorder log-only.
-    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
-    $calendarDomain->placeInList(1, 2, 0);
-    check('calendar list: a reorder stays undoable with a Google calendar in the list',
-        $cdb->scalar('SELECT before_json FROM mutations ORDER BY id DESC LIMIT 1') !== null);
-    $placeUndo->undoLatest(1);
-    checkEq('calendar list: and undoes', [1, 2], $listOrder());
-    $cdb->run("UPDATE calendars SET provider = 'ics', name = 'Owner feed' WHERE id = 1");
-
-    // Undo puts back what a change changed, and only that (#187 review).
-    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (20, 1, 'Work', 10), (21, 1, 'Home', 11), (22, 1, 'Temp', 12)");
-    $foldersOf = static fn(int $cal) => array_map('intval', array_column($cdb->all('SELECT folder_id FROM calendar_folders WHERE calendar_id = ? AND folder_id >= 20 ORDER BY folder_id', [$cal]), 'folder_id'));
-    $latest = static fn() => (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
-    $folderDomain->place(1, 20, 2, 0);
-    $calendarDomain->patch(1, 2, ['name' => 'Agent feed, renamed']);
-    $renameEntry = $latest();
-    $folderDomain->place(1, 21, 2, 0, 20);
-    $placeUndo->undoById(1, $renameEntry);
-    checkEq('undo: a rename undone after a later drag puts back the name and leaves the drag', ['Agent feed', [21]],
-        [$cdb->scalar('SELECT name FROM calendars WHERE id = 2'), $foldersOf(2)]);
-    $calendarDomain->patch(1, 2, ['color' => '#112244']);
-    $colorEntry = $latest();
-    $calendarDomain->placeInList(1, 2, 0);
-    $placeUndo->undoById(1, $colorEntry);
-    checkEq('undo: a colour undone after a later move in the list puts back the colour and leaves the move', ['#445566', 2],
-        [$cdb->scalar('SELECT color FROM calendars WHERE id = 2'), $listOrder()[0]]);
-    $folderDomain->place(1, 22, 2, 0, 21);
-    $calendarDomain->patch(1, 2, ['color' => '#223355']);
-    $colorEntry = $latest();
-    $folderDomain->unfile(1, 22, 2);
-    $folderDomain->delete(1, 22);
-    $placeUndo->undoById(1, $colorEntry);
-    checkEq('undo: a colour undone after its folder was emptied and deleted still undoes', ['#445566', []],
-        [$cdb->scalar('SELECT color FROM calendars WHERE id = 2'), $foldersOf(2)]);
-    $folderDomain->place(1, 20, 1, 0);
-    $fileEntry = $latest();
-    $calendarDomain->placeInList(1, 1, 5);
-    $placeUndo->undoById(1, $fileEntry);
-    checkEq('undo: filing undone after a later move in the list, of the same calendar: not stale, and the move stays', [[], 1],
-        [$foldersOf(1), $listOrder()[count($listOrder()) - 1]]);
-    // A Google calendar's settings keep no snapshots, but what they
-    // changed still makes an earlier drag's undo stale, the toast's Undo
-    // (the newest that can be undone) included.
-    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
-    $folderDomain->place(1, 21, 1, 0);
-    $folderDomain->place(1, 20, 1, 0, 21);
-    $calendarDomain->patch(1, 1, ['folderIds' => [20, 21]]);
-    $caught = null;
-    try { $placeUndo->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
-    checkEq("undo: the newest undoable change is stale after a Google calendar's later settings, and nothing changes", ['stale_undo', [20, 21]],
-        [$caught ? $caught->errorCode : null, $foldersOf(1)]);
-    $cdb->run("UPDATE calendars SET provider = 'ics' WHERE id = 1");
-
-    // One save in several steps: one entry, as before the first and after
-    // the last; a save that fails records nothing.
-    $grouped = new BetterCal\Domain\Undo($cdb);
-    $before = $latest();
-    $grouped->group(function () use ($grouped): void {
-        $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'A', 'color' => '#000000']]], ['calendars' => [['id' => 2, 'name' => 'B', 'color' => '#000000']]]);
-        $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'B', 'color' => '#000000']]], ['calendars' => [['id' => 2, 'name' => 'C', 'color' => '#111111']]]);
-    }, 'Two steps');
-    $one = $cdb->one('SELECT id, summary, before_json, after_json FROM mutations WHERE id > ?', [$before]);
-    checkEq('undo group: one entry, before the first step and after the last, and what it changed', [1, 'Two steps', 'A', 'C', [['calendars:2', 'color'], ['calendars:2', 'name']]], [
-        (int) $cdb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$before]), $one['summary'],
-        json_decode($one['before_json'], true)['tables']['calendars'][0]['name'], json_decode($one['after_json'], true)['tables']['calendars'][0]['name'],
-        array_map(static fn($r) => [$r['row_key'], $r['col']], $cdb->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ? ORDER BY col', [(int) $one['id']])),
-    ]);
-    $before = $latest();
-    try {
-        $grouped->group(function () use ($grouped): void {
-            $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'A']]], ['calendars' => [['id' => 2, 'name' => 'B']]]);
-            throw new RuntimeException('a later step fails');
-        }, 'Fails');
-    } catch (RuntimeException $e) {
-    }
-    checkEq('undo group: a save that fails records nothing', 0, (int) $cdb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$before]));
-    // Many rows at once (a calendar of events deleted): every one recorded.
-    $many = array_map(static fn(int $i) => ['id' => 100000 + $i, 'calendar_id' => 2, 'title' => 'x'], range(1, 450));
-    $grouped->record(1, 'event', 100001, 'delete', ['events' => $many], []);
-    checkEq('undo: a change of 450 rows records what it changed for each', 450, (int) $cdb->scalar('SELECT COUNT(*) FROM mutation_touches WHERE mutation_id = ?', [$latest()]));
-
-    $cdb->run('DELETE FROM calendar_folders');
-    $cdb->run('DELETE FROM folders');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($cdb);
 
     $createdSource = 'https://feeds.example.test/new.ics?token=new-secret';
     $createdCalendar = $calendarDomain->create(1, ['name' => 'New sample feed'], 'subscribed', $createdSource);
@@ -9968,6 +9780,7 @@ use BetterCal\Infra\Secrets;
     $radb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, provider TEXT, google_account_id INTEGER, google_calendar_id TEXT, google_access_role TEXT, google_binding_version INTEGER DEFAULT 0, google_sync_token TEXT, last_poll_status TEXT, last_poll_error TEXT, settings_json TEXT)");
     davJournal($radb);
     $radb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($radb);
     $radb->run("INSERT INTO calendars (id, user_id, name, kind, provider, google_account_id, google_calendar_id, google_access_role, google_binding_version, google_sync_token, last_poll_status, last_poll_error, settings_json) VALUES
         (1, 1, 'Sample team', 'subscribed', 'google', NULL, 'team@example.test', 'reader', 3, 'sync-position', 'error', 'Google account disconnected', '{\"reminderDefaults\":\"defaults\"}'),
         (2, 1, 'Adopted copy', 'subscribed', 'ics', NULL, NULL, NULL, 0, NULL, 'ok', NULL, NULL),
@@ -10334,6 +10147,7 @@ use BetterCal\Domain\GoogleWriter;
     davJournal($rdb);
     $rdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
     $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($rdb);
     $rdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT)');
     $rdb->run('CREATE TABLE plugin_warnings (id INTEGER PRIMARY KEY, plugin_id TEXT, event_id INTEGER, severity TEXT, message TEXT, fix_text TEXT, dismissed_at TEXT)');
     $rdb->run("INSERT INTO plugins (id, enabled) VALUES ('sample', 1)");
@@ -10372,6 +10186,7 @@ use BetterCal\Domain\GoogleWriter;
     davJournal($pdb);
     $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
     $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($pdb);
     $pdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
     $pdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, created_via) VALUES (1, 1, 1, 'plg-sample-first', 'Original', '2026-10-01 00:00:00', '2026-10-02 00:00:00', 1, 'UTC', 'local', 'plugin:sample')");
     $host = new BetterCal\Plugin\PluginHost($pdb, 'sample', 1, new BetterCal\Infra\HttpClient(), [], []);
@@ -11857,6 +11672,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     $wdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $wdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
     $wdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (require __DIR__ . '/../migrations/056_mutation_touches.php')($wdb);
     $wdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, created_at TEXT, settings_json TEXT)');
     $wroot = sys_get_temp_dir() . '/bc-worker-watch-' . bin2hex(random_bytes(3));
     mkdir($wroot);

@@ -4,20 +4,36 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Infra\Db;
+
 /**
  * Places in a list kept as sparse numbers (#187): a step apart, so putting
  * one thing between two others changes only that one, and its undo is an
  * ordinary change to one row. Only when there's no room left between two
- * neighbours is the whole list numbered afresh. Pure.
+ * neighbours is the whole list numbered afresh. Anything new goes at the
+ * end (endOfList, endOfFolder), whoever makes it.
  */
 final class Order
 {
     public const STEP = 1024;
 
+    /** The place after the last of a person's calendars, for a new one. */
+    public static function endOfList(Db $db, int $userId): int
+    {
+        return (int) ($db->scalar('SELECT MAX(position) FROM calendars WHERE user_id = ?', [$userId]) ?? 0) + self::STEP;
+    }
+
+    /** The place after the last calendar in a folder, for one filed there. */
+    public static function endOfFolder(Db $db, int $folderId): int
+    {
+        return (int) ($db->scalar('SELECT MAX(position) FROM calendar_folders WHERE folder_id = ?', [$folderId]) ?? 0) + self::STEP;
+    }
+
     /**
      * New positions for putting $id at place $at (0 first; past the end is
      * the end) in a list given in its order as [[id, position], ...]
      * (with or without $id itself): id => position, only what changes.
+     * More than one changes only when the list was numbered afresh. Pure.
      *
      * @param list<array{0:int,1:int}> $ordered
      * @return array<int,int>

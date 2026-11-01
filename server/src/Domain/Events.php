@@ -222,7 +222,7 @@ final class Events
         $this->undo->record($userId, 'plugin_edit', (int) $event['id'], 'update', [], [], "Moved '" . (string) $event['title'] . "' in " . $name, [
             'pluginId' => $pluginId,
             'span' => $span['undo'] ?? $before,
-        ], [(int) $event['calendar_id']]);
+        ], [(int) $event['calendar_id']], Undo::timeTouches((int) $event['id']));
     }
 
     // ---- Google write-through ---------------------------------------------------
@@ -299,7 +299,10 @@ final class Events
 
     private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null): void
     {
-        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary . " on Google calendar '" . (string) $calendar['name'] . "'");
+        // No snapshots, but what it changed is known: the event, which an
+        // older undo of it (its tags, say) stands on.
+        $touches = $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
+        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary . " on Google calendar '" . (string) $calendar['name'] . "'", touches: $touches);
     }
 
     private function googleCreate(int $userId, array $calendar, array $row, array $in, ?RequestAuthority $authority = null): array

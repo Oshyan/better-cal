@@ -11,6 +11,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api } from './api.js';
+import { updateCalendar } from './actions.js';
 import { adoptSettings } from './settings.js';
 import { Icon } from '../ui/icons.js';
 import { localTz } from '../lib/dates.js';
@@ -188,10 +189,7 @@ export function Welcome() {
     const name = calName.trim();
     try {
       if (Object.keys(patch).length) await saveQuietly(patch);
-      if (pending && firstCal && name && name !== firstCal.name) {
-        const updated = await api('/calendars/' + firstCal.id, { method: 'PATCH', body: { name } });
-        set({ calendars: state.calendars.map((c) => (c.id === firstCal.id ? { ...c, ...updated } : c)) });
-      }
+      if (pending && firstCal && name && name !== firstCal.name && !(await updateCalendar(firstCal, { name }))) return;
     } catch (e) { toast('Could not save: ' + e.message, { error: true }); return; }
     setStep(2);
   };

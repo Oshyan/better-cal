@@ -906,6 +906,7 @@ final class PluginHost
             'kind' => 'plugin',
             'plugin_id' => $this->pluginId,
             'subscription_authority' => \BetterCal\Domain\SubscriptionAuthority::OWNER,
+            'position' => \BetterCal\Domain\Order::endOfList($this->db, $this->userId),
             // A Mine calendar would follow the global reminders, and a plugin
             // can bring hundreds of items (every task due today), so it starts
             // with none. The person turns them on in its calendar settings.

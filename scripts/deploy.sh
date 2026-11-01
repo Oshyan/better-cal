@@ -65,6 +65,14 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
     printf '%s\n' "${smoke_out}" | tail -1
   done
   php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
+  # The database suite needs a MariaDB to make its databases in (BC_TEST_DB
+  # in the environment; server/tests/db/run.php). CI runs it on every push
+  # either way.
+  if [ -n "${BC_TEST_DB:-}" ]; then
+    php "${DEPLOY_SNAPSHOT}/server/tests/db/run.php" | tail -1
+  else
+    echo "database suite: not run here (no BC_TEST_DB); CI runs it"
+  fi
   # Vendored frontend libraries must be exactly the pinned releases.
   node "${DEPLOY_SNAPSHOT}/scripts/vendor.mjs" --verify | tail -1
   node "${DEPLOY_SNAPSHOT}/scripts/check-ci-pins.mjs"

@@ -1057,6 +1057,7 @@ final class MailIngest
             'color' => self::INVITE_COLOR,
             'visible' => 1,
             'subscription_authority' => SubscriptionAuthority::OWNER,
+            'position' => Order::endOfList($db, $userId),
         ]);
     }
 

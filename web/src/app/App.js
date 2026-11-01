@@ -246,8 +246,8 @@ export function App() {
     // without repeating the rest of the change's reloads (#184).
     let windowOwed = false;
     let restOwed = false;
-    // A reload that failed (people, saved views, settings, calendars) is
-    // owed until it lands (#185): serialReloads.
+    // A reload that failed (people, saved views, settings) is owed until it
+    // lands (#185): serialReloads. The calendar list: calendarsOwed.
     const { owed, part } = serialReloads(() => stopped);
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;

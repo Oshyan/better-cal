@@ -31,6 +31,38 @@ final class Settings
         return $tz !== '' ? Time::normalizeTzid($tz) : null;
     }
 
+    /**
+     * The calendar new events go to when nothing says otherwise: the one
+     * chosen in Settings. Always set while there's a local calendar
+     * (setup sets it, deleting it moves it, migration 058 set it for
+     * accounts from before); if it's ever missing, the oldest local
+     * calendar, never one that depends on the list's order.
+     */
+    public static function defaultCalendarId(Db $db, int $userId): ?int
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        $chosen = is_array($settings) ? ($settings['defaultCalendarId'] ?? null) : null;
+        if (is_numeric($chosen) && (int) $chosen > 0) {
+            $owned = $db->scalar("SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'local'", [(int) $chosen, $userId]);
+            if ($owned !== null) {
+                return (int) $owned;
+            }
+        }
+        $oldest = $db->scalar("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY id LIMIT 1", [$userId]);
+        return $oldest !== null ? (int) $oldest : null;
+    }
+
+    /** Store the default calendar (setup, a calendar made or deleted, migration 058). */
+    public static function setDefaultCalendar(Db $db, int $userId, ?int $calendarId): void
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        $settings = is_array($settings) ? $settings : [];
+        $settings['defaultCalendarId'] = $calendarId;
+        $db->update('users', ['settings_json' => json_encode($settings)], 'id = ?', [$userId]);
+    }
+
     public const DEFAULTS = [
         'defaultView' => 'month',
         'defaultViewId' => null, // a saved view that "Default view" (0) applies; null = the built-in reset
@@ -150,6 +182,10 @@ final class Settings
         $updates = self::validate($in);
         if (array_key_exists('notifyEmail', $updates)) {
             $updates['notifyEmailToken'] = $updates['notifyEmail'] !== null ? $tokenId : null;
+        }
+        if (array_key_exists('defaultCalendarId', $updates) && $updates['defaultCalendarId'] === null) {
+            // There's always one while there's a calendar to have.
+            throw HttpError::badRequest('defaultCalendarId must reference one of your local calendars');
         }
         if (isset($updates['defaultCalendarId'])) {
             $owned = $this->db->scalar(

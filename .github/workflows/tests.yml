@@ -1,10 +1,11 @@
 # Every suite the deploy script gates on, on every push and pull request.
-# Nothing here needs a database, a secret or the network: the PHP suite runs
-# against SQLite in memory and pure functions, the smoke suite is frontend
-# logic under Node, the static check walks the module graph, and the MCP test
-# spawns the server on localhost. Only GitHub's own actions and the official
-# PHP image are used. One job also installs the PHP libraries the way a fresh
-# install does, on the minimum PHP.
+# Nothing here needs a secret or the network: the PHP suite runs against
+# SQLite in memory and pure functions, the database suite against a MariaDB
+# made for the job, the smoke suite is frontend logic under Node, the static
+# check walks the module graph, and the MCP test spawns the server on
+# localhost. Only GitHub's own actions and the official PHP and MariaDB images
+# are used. One job also installs the PHP libraries the way a fresh install
+# does, on the minimum PHP.
 name: tests
 
 on:
@@ -37,6 +38,30 @@ jobs:
         run: php server/tests/run.php
       - name: Deploy privilege-boundary tests
         run: bash scripts/tests/deploy-security.sh
+
+  # What depends on the database itself (server/tests/db): foreign keys, row
+  # locks, two connections at once, migrations' own SQL, against MariaDB 10.11
+  # with the schema the migrations build. The database is this job's alone.
+  database:
+    name: Database suite
+    runs-on: ubuntu-latest
+    container: php:8.4-cli@sha256:debadc2e36b857657846e2e952cbaf52702e55482dd3c2c43806f68d8c534a70
+    services:
+      mariadb:
+        image: mariadb:10.11@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The MySQL driver
+        run: docker-php-ext-install pdo_mysql
+      - name: Database tests
+        env:
+          BC_TEST_DB: mariadb:3306
+        run: php server/tests/db/run.php
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

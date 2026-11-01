@@ -5,12 +5,10 @@ declare(strict_types=1);
 use BetterCal\Infra\Db;
 
 return static function (Db $db): string {
-    $sqlite = $db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite';
-    $has = static function (string $table, string $column) use ($db, $sqlite): bool {
-        return $sqlite
-            ? in_array($column, array_column($db->all('PRAGMA table_info(' . $table . ')'), 'name'), true)
-            : (int) $db->scalar('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$table, $column]) > 0;
-    };
+    $has = static fn(string $table, string $column): bool => (int) $db->scalar(
+        'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+        [$table, $column]
+    ) > 0;
     // Each folder lists its calendars in its own order (#187), or A to Z.
     if (!$has('calendar_folders', 'position')) {
         $db->run('ALTER TABLE calendar_folders ADD COLUMN position INT NOT NULL DEFAULT 0');

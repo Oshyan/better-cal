@@ -32,7 +32,7 @@ server/
   data/              # generated static tables (IATA airports)
   plugins/           # bundled plugins, one folder each (plugin.json + Plugin.php): weather, sun, tides, ...
   migrations/        # NNN_name.sql (or .php returning fn(Db), for data changes that need app code), applied in order by migrate.php, tracked in schema_migrations
-  tests/             # run.php (+ plugins.php): plain PHP, no PHPUnit, no MySQL, no network
+  tests/             # run.php (+ plugins.php): plain PHP, no PHPUnit, no MySQL, no network; db/: against MariaDB (CONTRIBUTING.md)
 web/
   index.html         # app shell (served by the PHP front controller at /)
   sw.js              # service worker: cache-first shell, network-first API with cache fallback

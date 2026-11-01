@@ -2365,6 +2365,45 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
+// --- The default calendar, and what Undo says (#187 review) ---
+{
+  const hadWindow = 'window' in globalThis;
+  const savedWindow = globalThis.window;
+  if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
+  const realFetch = globalThis.fetch;
+  const { defaultTargetCalendarId, deleteCalendar } = await import('../src/app/actions.js');
+  const { undo } = await import('../src/app/api.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const saved = { calendars: st.calendars, settings: st.settings, toasts: st.toasts };
+  const cals = [
+    { id: 3, name: 'Tides', kind: 'plugin', visible: true },
+    { id: 9, name: 'Work', kind: 'local', visible: true },
+    { id: 5, name: 'Home', kind: 'local', visible: false },
+    { id: 2, name: 'Feed', kind: 'subscribed', visible: true },
+  ];
+  put({ calendars: cals, settings: { ...st.settings, defaultCalendarId: 9 } });
+  eq('default calendar: the one chosen', defaultTargetCalendarId(), 9);
+  put({ settings: { ...st.settings, defaultCalendarId: 3 } });
+  eq("default calendar: missing or not one that takes events, the oldest local, whatever the list's order", defaultTargetCalendarId(), 5);
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  globalThis.fetch = async (url, o) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/calendars/5') && o && o.method === 'DELETE') return json({ ok: true, defaultCalendarId: 9 });
+    if (u.pathname.endsWith('/undo')) return json({ error: { code: 'not_undoable', message: "The last change can't be undone here: Updated 'Lunch' on Google calendar 'Work'" } }, 400);
+    if (u.pathname.endsWith('/calendars')) return json({ calendars: cals.filter((c) => c.id !== 5), folders: [], tags: [] });
+    return json({});
+  };
+  put({ settings: { ...st.settings, defaultCalendarId: 5 }, toasts: [] });
+  await deleteCalendar(cals[2]);
+  eq('default calendar: deleting it moves it, and the toast says where new events go', [st.settings.defaultCalendarId, st.toasts.some((t) => /New events now go to Work/.test(t.text))], [9, true]);
+  put({ toasts: [] });
+  await undo();
+  eq("undo: your last change that can't be undone says so, in the server's words", st.toasts.some((t) => t.text.startsWith("The last change can't be undone here")), true);
+  globalThis.fetch = realFetch;
+  put(saved);
+  if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
+}
+
 // --- Sidebar edits: folder ids kept apart, and older answers don't win (#187 review) ---
 {
   const hadWindow = 'window' in globalThis;

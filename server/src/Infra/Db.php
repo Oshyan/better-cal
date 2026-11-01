@@ -85,12 +85,6 @@ final class Db
         $cols = array_keys($row);
         $colSql = implode(', ', array_map(static fn($c) => "`$c`", $cols));
         $placeholders = implode(', ', array_fill(0, count($cols), '?'));
-        if ($this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite') {
-            // SQLite (the tests): the same, in its own words.
-            $updates = implode(', ', array_map(static fn($c) => "`$c` = excluded.`$c`", $cols));
-            $this->run("INSERT INTO `$table` ($colSql) VALUES ($placeholders) ON CONFLICT DO UPDATE SET $updates", array_values($row));
-            return;
-        }
         $updates = implode(', ', array_map(static fn($c) => "`$c` = VALUES(`$c`)", $cols));
         $sql = "INSERT INTO `$table` ($colSql) VALUES ($placeholders) ON DUPLICATE KEY UPDATE $updates";
         $this->run($sql, array_values($row));
@@ -111,6 +105,38 @@ final class Db
             $pdo->rollBack();
             throw $e;
         }
+    }
+
+    /**
+     * tx(), run afresh when the database rolls it back to break a deadlock
+     * (MySQL rolls back the whole transaction, so running it again is safe
+     * for work that only touches the database). Inside an outer
+     * transaction, it's the outer one that was rolled back: not retried.
+     */
+    public function txRetrying(callable $fn, int $tries = 3): mixed
+    {
+        for ($i = 1; ; $i++) {
+            $outer = $this->pdo()->inTransaction();
+            try {
+                return $this->tx($fn);
+            } catch (\PDOException $e) {
+                if ($outer || $i >= $tries || !self::isDeadlock($e)) {
+                    throw $e;
+                }
+            }
+        }
+    }
+
+    public static function isDeadlock(\PDOException $e): bool
+    {
+        return (int) ($e->errorInfo[1] ?? 0) === 1213 || (string) $e->getCode() === '40001';
+    }
+
+    /** A row refused because a row it refers to isn't there (or one referring to it still is). */
+    public static function isForeignKeyViolation(\PDOException $e): bool
+    {
+        return in_array((int) ($e->errorInfo[1] ?? 0), [1451, 1452], true)
+            || str_contains(strtolower($e->getMessage()), 'foreign key constraint failed');
     }
 
     /**

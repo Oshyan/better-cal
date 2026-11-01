@@ -61,8 +61,9 @@ final class CalendarsController
 
     public function delete(Request $req, array $params): Response
     {
-        $this->calendars->delete($this->userId($req), (int) $params['id']);
-        return Response::json(['ok' => true]);
+        $nextDefault = $this->calendars->delete($this->userId($req), (int) $params['id']);
+        // Where new events go now, when it was this calendar.
+        return Response::json(['ok' => true] + ($nextDefault !== null ? ['defaultCalendarId' => $nextDefault] : []));
     }
 
     public function subscribe(Request $req): Response

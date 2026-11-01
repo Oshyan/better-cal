@@ -297,20 +297,8 @@ final class Proposals
 
     private function defaultCalendarId(int $userId): int
     {
-        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
-        $settings = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
-        $preferred = isset($settings['defaultCalendarId']) ? (int) $settings['defaultCalendarId'] : 0;
-        if ($preferred > 0) {
-            $ok = $this->db->one("SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'local'", [$preferred, $userId]);
-            if ($ok !== null) {
-                return $preferred;
-            }
-        }
-        $row = $this->db->one("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY position, id LIMIT 1", [$userId]);
-        if ($row === null) {
-            throw HttpError::badRequest('No writable calendar to accept this proposal into');
-        }
-        return (int) $row['id'];
+        return Settings::defaultCalendarId($this->db, $userId)
+            ?? throw HttpError::badRequest('No writable calendar to accept this proposal into');
     }
 
     private function require(int $userId, int $id, bool $forUpdate = false): array

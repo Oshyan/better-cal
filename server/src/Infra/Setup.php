@@ -245,7 +245,9 @@ final class Setup
         if ($db->scalar('SELECT id FROM calendars WHERE user_id = ? LIMIT 1', [$userId]) !== null) {
             return null;
         }
-        return $db->insert('calendars', ['user_id' => $userId, 'name' => 'Personal', 'color' => '#4a7dff', 'kind' => 'local']);
+        $id = $db->insert('calendars', ['user_id' => $userId, 'name' => 'Personal', 'color' => '#4a7dff', 'kind' => 'local', 'position' => \BetterCal\Domain\Order::endOfList($db, $userId)]);
+        \BetterCal\Domain\Settings::setDefaultCalendar($db, $userId, $id);
+        return $id;
     }
 
     /**

@@ -1333,6 +1333,7 @@ final class Plugins
                 'kind' => 'plugin',
                 'plugin_id' => $id,
                 'subscription_authority' => SubscriptionAuthority::OWNER,
+                'position' => Order::endOfList($this->db, $userId),
                 'settings_json' => json_encode($settings),
             ]);
             $this->markTokenChange($id, $authority);

@@ -344,7 +344,7 @@ try {
                     $modelAdmissions = (new BetterCal\Domain\ModelAdmission($db))->prune();
                     $externalAdmissions = (new BetterCal\Domain\ExternalActionAdmission($db))->prune();
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
-                        . ' deleted=' . $result['deleted'] . ' model_admissions=' . $modelAdmissions
+                        . ' deleted=' . $result['deleted'] . ' plugin_rows=' . $result['pluginRowsForgotten'] . ' model_admissions=' . $modelAdmissions
                         . ' external_action_admissions=' . $externalAdmissions . "\n";
                     break;
                 case 'update_check':

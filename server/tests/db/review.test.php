@@ -89,4 +89,38 @@ return static function (Db $db): void {
         $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]),
         $status($change),
     ]);
+
+    // Two versions of one invitation held side by side: adding one turns
+    // the other into a change of it; undone, both are as they were.
+    $x = freshUser($db);
+    $dx = domains($db);
+    $rx = new ReviewQueue($db, $dx->events);
+    $first = $rx->holdNewInvitation($x, 'potluck-d@example.test', $fields, $invite, 'host@example.test');
+    $second = $rx->holdNewInvitation($x, 'potluck-d@example.test', ['title' => 'Sample potluck, moved indoors'] + $fields, $invite, 'host@example.test');
+    $kind = static fn(int $item): array => array_values($db->one('SELECT kind, status, event_id FROM review_items WHERE id = ?', [$item]));
+    $secondBefore = $kind($second);
+    ActivityContext::takeEntries();
+    $rx->accept($x, $first);
+    checkEq('review: adding one version makes the other a change of it', ['invite_change', 'open'], array_slice($kind($second), 0, 2));
+    foreach ($toast() as $e) {
+        $dx->undo->undoById($x, $e);
+    }
+    checkEq('review: undone, the other version is a new invitation again, not a change of a removed event', [$secondBefore, 'open'], [$kind($second), $status($first)]);
+
+    // A sender approved with an add, then another approved: undoing the add
+    // takes back only the one it approved.
+    $y = freshUser($db);
+    $dy = domains($db);
+    $ry = new ReviewQueue($db, $dy->events);
+    $held = $ry->holdNewInvitation($y, 'potluck-e@example.test', $fields, $invite, 'host@example.test');
+    ActivityContext::takeEntries();
+    $ry->accept($y, $held, 'address');
+    $entries = $toast();
+    $dy->undo->write($y, fn() => \BetterCal\Domain\MailPolicy::approve($db, $y, 'friend@example.test', 'address'));
+    foreach ($entries as $e) {
+        $dy->undo->undoById($y, $e);
+    }
+    $senders = (new \BetterCal\Domain\Settings($db))->forUser($y)['mailApprovedSenders'] ?? [];
+    checkEq('review: undoing an add takes back its sender approval, and keeps one approved since', [false, true],
+        [in_array('host@example.test', $senders, true), in_array('friend@example.test', $senders, true)]);
 };

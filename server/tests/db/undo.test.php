@@ -148,9 +148,19 @@ return static function (Db $db): void {
     $d->events->patch($u, $looked, ['location' => 'Sample Hall']);
     $typed = lastEntry($db, $u);
     checkEq('lookup: placed only while it has no place, and not journaled', [true, false, $typed],
-        [$d->events->placeFromLookup($u, $looked, 45.5, -122.6, 'photon'), $d->events->placeFromLookup($u, $looked, 1, 1, null), lastEntry($db, $u)]);
+        [$d->events->placeFromLookup($u, $looked, 'Sample Hall', 45.5, -122.6, 'photon'), $d->events->placeFromLookup($u, $looked, 'Sample Hall', 1, 1, null), lastEntry($db, $u)]);
     checkEq('undo: an address typed, then looked up by the event view: still undoes, pin and all', [null, null, null],
         [refusal(fn() => $d->undo->undoById($u, $typed)), ...array_values($db->one('SELECT location, location_lat FROM events WHERE id = ?', [$looked]))]);
+    // A lookup that comes back after the address changed (on another
+    // device) isn't stored on the new address; nor is half a place, and a
+    // provider name is one PATCH would take.
+    $moved = (int) $d->events->create($u, eventAt($home, 'Brunch', '2026-12-17'))['eventId'];
+    $d->events->patch($u, $moved, ['location' => 'Sample Cafe']);
+    checkEq('lookup: a stale address is not placed', [false, null],
+        [$d->events->placeFromLookup($u, $moved, 'Old Sample Cafe', 45.5, -122.6, null), $db->scalar('SELECT location_lat FROM events WHERE id = ?', [$moved])]);
+    checkEq('lookup: both coordinates are required', 'invalid_request', refusal(fn() => $d->events->placeFromLookup($u, $moved, 'Sample Cafe', 45.5, null, null)));
+    $d->events->placeFromLookup($u, $moved, 'Sample Cafe', 45.5, -122.6, 'Not A Provider!');
+    checkEq('lookup: a provider name PATCH would refuse is not stored', null, $db->scalar('SELECT location_provider FROM events WHERE id = ?', [$moved]));
     // A new address is looked up afresh, not skipped as tried last month.
     $db->run('UPDATE events SET geocoded_at = NOW() WHERE id = ?', [$looked]);
     $d->events->patch($u, $looked, ['location' => 'Sample Annex']);

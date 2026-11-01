@@ -57,6 +57,7 @@ export const state = {
   confirmAsk: null,   // the open "are you sure?" (ConfirmDialog.js), or null
   activitySeq: 0,     // bumped by the change poll; an open Activity page adds new entries
   reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
+  reviewSeq: 0,       // bump to reload the Review page's list (an undo can reopen an item)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner
   updates: null,      // checked release metadata and this user's banner decision
   appUpdateReady: false, // a new version is active behind this page: the reload banner (updates.js)

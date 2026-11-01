@@ -192,7 +192,7 @@ final class EventsController
     /** The event view's lookup of an address (Events::placeFromLookup). */
     public function place(Request $req, array $params): Response
     {
-        $placed = $this->events->placeFromLookup((int) $req->user['id'], (int) $params['id'], $req->body['lat'] ?? null, $req->body['lng'] ?? null, $req->str('provider'));
+        $placed = $this->events->placeFromLookup((int) $req->user['id'], (int) $params['id'], (string) ($req->str('location') ?? ''), $req->body['lat'] ?? null, $req->body['lng'] ?? null, $req->str('provider'));
         return Response::json(['ok' => true, 'placed' => $placed]);
     }
 

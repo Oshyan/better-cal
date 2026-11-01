@@ -654,18 +654,22 @@ final class ReviewQueue
         // event as it was, the invitation stored on it, a sender approved
         // with it, and the item open in Review again.
         $result = ActivityContext::withRun('review', Ids::ulid(), fn(): array => $undo->write($userId, fn(): array => $undo->group(function () use ($userId, $id, $approveSender, $authority, $undo): array {
-            $item = fn(): ?array => $this->db->one('SELECT * FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]);
+            $itemBefore = $this->db->one('SELECT * FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]);
+            // The decided item, and every other version of the invitation
+            // held with it, which accepting closes or turns into changes.
+            $items = fn(): array => $this->db->all('SELECT * FROM review_items WHERE user_id = ? AND (id = ? OR (source_key = ? AND kind IN (?, ?))) ORDER BY id',
+                [$userId, $id, (string) ($itemBefore['source_key'] ?? ''), self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE]);
             $eventRows = fn(int $eventId): array => $eventId > 0 ? $this->db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ?', [$eventId, $eventId]) : [];
             $approved = fn() => (new Settings($this->db))->forUser($userId)['mailApprovedSenders'] ?? null;
-            $itemBefore = $item();
+            $itemsBefore = $items();
             $eventsBefore = $eventRows((int) ($itemBefore['event_id'] ?? 0));
             $approvedBefore = $approved();
             $out = $this->decide($userId, $id, $approveSender, $authority);
             if (!isset($out['error']) && $itemBefore !== null) {
                 $approvedAfter = $approved();
                 $undo->record($userId, 'review', $id, 'update',
-                    ['review_items' => [$itemBefore], 'events' => $eventsBefore],
-                    ['review_items' => [$item()], 'events' => $eventRows((int) ($out['eventId'] ?? 0))],
+                    ['review_items' => $itemsBefore, 'events' => $eventsBefore],
+                    ['review_items' => $items(), 'events' => $eventRows((int) ($out['eventId'] ?? 0))],
                     null,
                     $approvedAfter !== $approvedBefore ? ['settings' => ['mailApprovedSenders' => [$approvedBefore, $approvedAfter]]] : null);
             }

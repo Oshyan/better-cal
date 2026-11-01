@@ -67,7 +67,7 @@ final class Settings
     /**
      * Put settings back as a change found them (undo): each [before, after]
      * whose value is still what the change set, so a choice made since
-     * stays.
+     * stays; a list by what the change added and removed.
      *
      * @param array<string,array{0:mixed,1:mixed}> $changes
      */
@@ -77,8 +77,21 @@ final class Settings
         $current = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
         $back = [];
         foreach ($changes as $key => $pair) {
-            if (is_array($pair) && array_key_exists(1, $pair) && ($current[$key] ?? null) == $pair[1]) {
-                $back[$key] = $pair[0];
+            if (!is_array($pair) || !array_key_exists(1, $pair)) {
+                continue;
+            }
+            [$before, $after] = $pair;
+            $now = $current[$key] ?? null;
+            // A list (approved senders): put back by difference, so another
+            // change's entries since stay.
+            $list = static fn($v) => $v === null || (is_array($v) && array_is_list($v));
+            if (is_array($after) && array_is_list($after) && $list($before) && $list($now)) {
+                [$before, $now] = [$before ?? [], $now ?? []];
+                $added = array_filter($after, static fn($x) => !in_array($x, $before, true));
+                $removed = array_filter($before, static fn($x) => !in_array($x, $after, true));
+                $back[$key] = array_values(array_merge(array_filter($now, static fn($x) => !in_array($x, $added, true)), array_filter($removed, static fn($x) => !in_array($x, $now, true))));
+            } elseif ($now == $after) {
+                $back[$key] = $before;
             }
         }
         if ($back !== []) {

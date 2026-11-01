@@ -2204,18 +2204,24 @@ final class Events
      * (no journal entry, so it never stands between their edit and its
      * undo). Local events only; false when it had coordinates by then.
      */
-    public function placeFromLookup(int $userId, int $id, mixed $lat, mixed $lng, ?string $provider): bool
+    public function placeFromLookup(int $userId, int $id, string $location, mixed $lat, mixed $lng, ?string $provider): bool
     {
         try {
             [$lat, $lng] = [Coordinates::latitude($lat), Coordinates::longitude($lng)];
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
+        if ($lat === null || $lng === null || trim($location) === '') {
+            throw HttpError::badRequest('lat, lng and the location looked up are required');
+        }
+        $provider = $provider !== null && preg_match('/^[a-z0-9][a-z0-9.-]{0,31}$/', $provider) === 1 ? $provider : null;
         $now = Time::nowDb();
+        // Only for the address it looked up: one changed meanwhile (on another
+        // device) isn't given the old one's place.
         return $this->db->run(
             "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?, location_source = 'lookup', location_provider = ?, location_placed_at = ?
-             WHERE id = ? AND user_id = ? AND source = 'local' AND deleted_at IS NULL AND location_lat IS NULL AND location IS NOT NULL AND location <> ''",
-            [$lat, $lng, $now, $provider !== null ? mb_substr($provider, 0, 40) : null, $now, $id, $userId]
+             WHERE id = ? AND user_id = ? AND source = 'local' AND deleted_at IS NULL AND location_lat IS NULL AND location = ?",
+            [$lat, $lng, $now, $provider, $now, $id, $userId, $location]
         )->rowCount() > 0;
     }
 

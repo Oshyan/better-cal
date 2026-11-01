@@ -23,7 +23,7 @@
 // endpoints are. Kinds only differ in how their detail is drawn.
 
 import { html, useState, useEffect } from '../../vendor/index.js';
-import { set, toast, invalidateRecords } from './store.js';
+import { set, toast, invalidateRecords, useStore } from './store.js';
 import { api, entriesOf, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
 import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -115,7 +115,7 @@ function ReviewCard({ item, onChanged }) {
           // A reply that went (or may have) can't be taken back from here;
           // one that didn't is undone with the add.
           const went = res.reply.sent || ['sending', 'uncertain'].includes(res.reply.reason);
-          toast('Added. ' + out.text, { error: !!out.error, undo: went ? [] : entriesOf(res), note: went ? 'Reply sent' : null });
+          toast('Added. ' + out.text, { error: !!out.error, undo: went ? [] : entriesOf(res), note: went ? (res.reply.sent ? 'Reply sent' : 'Reply may have gone') : null });
           loadReviewCount();
         } else {
           toast((d.isInvitation ? 'Added as a Maybe. You have not replied.' : 'Added to your calendar.')
@@ -170,6 +170,7 @@ function ReviewCard({ item, onChanged }) {
 }
 
 export function ReviewPage() {
+  const reviewSeq = useStore((s) => s.reviewSeq || 0);
   const [items, setItems] = useState(null);
   const [showDecided, setShowDecided] = useState(false);
   const [nextBefore, setNextBefore] = useState(null);
@@ -186,7 +187,7 @@ export function ReviewPage() {
       loadReviewCount();
     }
   };
-  useEffect(() => { load(); }, [showDecided]);
+  useEffect(() => { load(); }, [showDecided, reviewSeq]);
 
   return html`<${PageShell}
     title="Review"

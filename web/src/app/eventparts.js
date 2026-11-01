@@ -244,7 +244,7 @@ export function useEventGeo(occ, active) {
             // Failure just means we geocode again next time.
             api('/events/' + occ.eventId + '/place', {
               method: 'POST',
-              body: { lat: point.lat, lng: point.lng, ...(res.provider ? { provider: res.provider } : {}) },
+              body: { location, lat: point.lat, lng: point.lng, ...(res.provider ? { provider: res.provider } : {}) },
             }).catch(() => {});
             patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng }, { edit: false });
           }

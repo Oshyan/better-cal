@@ -10,6 +10,7 @@ import { useStore, set, state, toast } from './store.js';
 import { api, entriesOf, loadPeople, refreshWindow } from './api.js';
 import { jumpToDate, openDetail, addAvailabilitySpan, updateAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
+import { useOwnList, superseded } from './lists.js';
 import { CalDot, Icon } from '../ui/icons.js';
 import { parseISO, occDayKey, fmtTime, dateOfDayKey, dayKeyOf, toISOWithOffset } from '../lib/dates.js';
 import { askConfirm } from './ConfirmDialog.js';
@@ -35,6 +36,7 @@ function fmtWhen(occ) {
 // jump-and-open behavior.
 function PersonEvents({ personId }) {
   const [list, setList] = useState(null); // null = loading
+  const [undoSeq] = useOwnList();
 
   useEffect(() => {
     let alive = true;
@@ -42,7 +44,7 @@ function PersonEvents({ personId }) {
       .then((d) => { if (alive) setList((d && d.results) || []); })
       .catch(() => { if (alive) setList([]); });
     return () => { alive = false; };
-  }, [personId]);
+  }, [personId, undoSeq]);
 
   const go = (occ) => {
     if (!state.occ.has(occ.instanceId)) {
@@ -100,12 +102,14 @@ function PersonAvailability({ person }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null); // the span being edited, or null
+  const [undoSeq, latest] = useOwnList();
 
-  const reload = () => api('/people/' + person.id + '/availability')
+  const reload = () => latest(api('/people/' + person.id + '/availability'))
     .then((d) => setSpans((d && d.spans) || []))
-    .catch(() => setSpans([]));
+    .catch((e) => { if (!superseded(e)) setSpans([]); });
 
   useEffect(() => { reload(); setEditing(null); }, [person.id]); // eslint-disable-line
+  useEffect(() => { if (undoSeq) reload(); }, [undoSeq]); // eslint-disable-line
 
   const clearForm = () => { setStartDate(''); setEndDate(''); setNote(''); setKind('away'); setEditing(null); };
 

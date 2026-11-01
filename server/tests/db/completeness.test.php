@@ -33,8 +33,34 @@ return static function (Db $db): void {
         }
         return $out;
     };
+    // What differs between two reads of a row, decided here rather than by
+    // Undo's own helper (a mistake shared by both would pass): a column
+    // whose text changed or that went to or from NULL, a calendar's settings
+    // by key. Bookkeeping columns undo neither keeps nor restores.
+    $bookkeeping = ['updated_at', 'synctoken', 'last_polled_at', 'last_poll_status', 'last_poll_error',
+        'content_changed_at', 'last_ok_at', 'google_sync_token', 'score', 'scored_at'];
+    $differs = static function (string $table, array $was, array $now) use ($bookkeeping): array {
+        $out = [];
+        foreach (array_diff(array_keys($was + $now), $bookkeeping) as $col) {
+            [$a, $b] = [$was[$col] ?? null, $now[$col] ?? null];
+            if ($a === null ? $b === null : ($b !== null && (string) $a === (string) $b)) {
+                continue;
+            }
+            if ($table === 'calendars' && $col === 'settings_json') {
+                [$x, $y] = [json_decode((string) $a, true) ?: [], json_decode((string) $b, true) ?: []];
+                foreach (array_keys($x + $y) as $k) {
+                    if (json_encode($x[$k] ?? null) !== json_encode($y[$k] ?? null) || array_key_exists($k, $x) !== array_key_exists($k, $y)) {
+                        $out[] = "$col.$k";
+                    }
+                }
+                continue;
+            }
+            $out[] = (string) $col;
+        }
+        return $out;
+    };
     // What an operation changed but its entries don't say.
-    $unjournaled = static function (callable $op, bool $vocabulary) use ($db, $read): array {
+    $unjournaled = static function (callable $op, bool $vocabulary) use ($db, $read, $differs): array {
         $since = (int) $db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations');
         $before = $read();
         $op();
@@ -59,7 +85,7 @@ return static function (Db $db): void {
                 }
                 continue;
             }
-            foreach (Undo::fieldsChanged((string) strstr($key, ":", true), $was, $now) as $col) {
+            foreach ($differs((string) strstr($key, ":", true), $was, $now) as $col) {
                 if (!isset($said[$key]['*']) && !isset($said[$key][$col])) {
                     $missing[] = "$key.$col";
                 }
@@ -102,7 +128,7 @@ return static function (Db $db): void {
     // Events, alone and in series.
     $event = 0;
     $journaled('making an event with tags and people', function () use ($d, $u, $home, &$event): void {
-        $event = (int) $d->events->create($u, eventAt($home, 'Dinner', '2026-12-10', ['tagNames' => ['food'], 'peopleNames' => ['Alex Example']]))['eventId'];
+        $event = (int) $d->events->create($u, eventAt($home, 'Dinner', '2026-12-10', ['tagNames' => ['food'], 'personNames' => ['Alex Example']]))['eventId'];
     });
     $journaled('an event edited', fn() => $d->events->patch($u, $event, ['title' => 'Dinner out', 'location' => 'Sample Bistro', 'tagNames' => ['food', 'friends']]));
     $journaled('an event moved to another calendar', fn() => $d->events->patch($u, $event, ['calendarId' => $work]));
@@ -149,7 +175,8 @@ return static function (Db $db): void {
     });
     $journaled('a person renamed', fn() => $people->update($u, $person, ['name' => 'Sam Sampler', 'notes' => 'Neighbor']));
     $other = (int) $people->create($u, ['name' => 'Alex Example'])['id'];
-    $d->events->create($u, eventAt($home, 'Coffee', '2026-12-11', ['peopleNames' => ['Alex Example']]));
+    $people->addSpan($u, $other, ['start' => '2026-12-08T00:00:00Z', 'end' => '2026-12-09T00:00:00Z']);
+    $d->events->create($u, eventAt($home, 'Coffee', '2026-12-11', ['personNames' => ['Alex Example']]));
     $journaled('a person renamed onto another (merged)', fn() => $people->update($u, $other, ['name' => 'Sam Sampler']));
     $journaled('a person deleted', fn() => $people->delete($u, $person));
 

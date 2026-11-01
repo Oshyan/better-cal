@@ -300,4 +300,38 @@ return static function (Db $db): void {
     $dw->undo->record($w, 'event', $edited, 'update', null, null, 'Updated at Google');
     checkEq("undo latest: your own last change that can't be undone is refused, and nothing older is undone", ['not_undoable', 'Renamed again'],
         [refusal(fn() => $dw->undo->undoLatest($w)), $db->scalar('SELECT title FROM events WHERE id = ?', [$edited])]);
+
+    // Text is compared as text: "01" to "1" is a change, undoes, and makes
+    // an older change to that title stale.
+    $t = freshUser($db);
+    $dt = domains($db);
+    $tcal = (int) Settings::defaultCalendarId($db, $t);
+    $title = static fn(int $id) => $db->scalar('SELECT title FROM events WHERE id = ?', [$id]);
+    $num = (int) $dt->events->create($t, eventAt($tcal, '01', '2026-12-20'))['eventId'];
+    $dt->events->patch($t, $num, ['title' => '1']);
+    $dt->undo->undoById($t, lastEntry($db, $t));
+    checkEq('undo: "01" renamed "1", undone, is "01" again', '01', $title($num));
+    $older = (int) $dt->events->create($t, eventAt($tcal, 'Original title', '2026-12-21'))['eventId'];
+    $dt->events->patch($t, $older, ['title' => '01']);
+    $first = lastEntry($db, $t);
+    $dt->events->patch($t, $older, ['title' => '1']);
+    checkEq('undo: a rename to "01", then "1": the first is stale, the later title stays', ['stale_undo', '1'],
+        [refusal(fn() => $dt->undo->undoById($t, $first)), $title($older)]);
+    checkEq('undo: values compared as stored text', [true, true, false, false, false],
+        [\BetterCal\Domain\Undo::same(1, '1'), \BetterCal\Domain\Undo::same(null, null), \BetterCal\Domain\Undo::same('01', '1'), \BetterCal\Domain\Undo::same('', null), \BetterCal\Domain\Undo::same('100', '1e2')]);
+
+    // A merge keeps the away times of the person merged away (they're the
+    // survivor's now), and one undo puts back both people as they were.
+    $m = freshUser($db);
+    $folk = new \BetterCal\Domain\People($db);
+    $alex = (int) $folk->create($m, ['name' => 'Alex Example'])['id'];
+    $sam = (int) $folk->create($m, ['name' => 'Sam Sample'])['id'];
+    $alexSpan = (int) $folk->addSpan($m, $alex, ['start' => '2026-12-01T00:00:00Z', 'end' => '2026-12-03T00:00:00Z'])['id'];
+    $samSpan = (int) $folk->addSpan($m, $sam, ['start' => '2026-12-10T00:00:00Z', 'end' => '2026-12-12T00:00:00Z'])['id'];
+    $owner = static fn(int $span) => (int) $db->scalar('SELECT person_id FROM availability WHERE id = ?', [$span]);
+    $folk->update($m, $alex, ['name' => 'Sam Sample']);
+    checkEq('people: merged, the away times of both are the survivor\'s', [$sam, $sam], [$owner($alexSpan), $owner($samSpan)]);
+    domains($db)->undo->undoById($m, lastEntry($db, $m));
+    checkEq('people: the merge undone, each has their own away times again', ['Alex Example', $alex, $sam],
+        [$db->scalar('SELECT name FROM people WHERE id = ?', [$alex]), $owner($alexSpan), $owner($samSpan)]);
 };

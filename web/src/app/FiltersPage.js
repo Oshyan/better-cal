@@ -11,6 +11,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
+import { useOwnList, superseded } from './lists.js';
 import { api, entriesOf, refreshWindow } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
@@ -177,18 +178,20 @@ export function FiltersPage() {
   const [editingId, setEditingId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [createSeq, setCreateSeq] = useState(0); // remounts the create form after a successful add
+  const [undoSeq, latest] = useOwnList();
 
   const load = async () => {
     try {
-      const data = await api('/filters');
+      const data = await latest(api('/filters'));
       setFilters(data.filters || []);
     } catch (e) {
+      if (superseded(e)) return;
       toast('Failed to load filters: ' + e.message, { error: true });
       setFilters([]);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [undoSeq]);
 
   // Esc anywhere cancels the inline edit (capture, so grid hotkeys never see it).
   useEffect(() => {

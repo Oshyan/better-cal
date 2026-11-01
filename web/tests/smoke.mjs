@@ -2415,17 +2415,36 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('undo: an answer without any has none', entriesOf({ ok: true }), []);
   await undoEntries(entriesOf(answer));
   eq("undo: a toast's Undo undoes just its own entries, newest first", posted, [42, 41]);
-  // An accept undone is open in Review again: its list reloads, and the badge.
-  const seq = st.reviewSeq || 0;
+  // An accept undone is open in Review again: pages' own lists reload
+  // (undoSeq), and so do the badge, people and saved views.
+  const seq = st.undoSeq || 0;
+  const fetched = new Set();
   let counted = false;
   globalThis.fetch = async (url) => {
     const u = new URL(String(url), 'http://app.test');
+    fetched.add(u.pathname.replace(/^.*\/api/, ''));
     if (u.pathname.endsWith('/review/count')) { counted = true; return json({ count: 1 }); }
     if (/\/activity\/\d+\/undo$/.test(u.pathname)) return json({ ok: true });
     return json({ calendars: [], folders: [], tags: [], events: [] });
   };
   await undoEntries([43]);
-  eq('undo: Review reloads its list and its count', [st.reviewSeq, counted], [seq + 1, true]);
+  eq('undo: own lists reload, and Review\'s count', [st.undoSeq, counted], [seq + 1, true]);
+  // Only the newest load's answer is shown: an older one finishing later
+  // (the accept's reload, after the undo's) is dropped, failures too; a
+  // further page doesn't drop the load it adds to.
+  const { loadGuard, superseded } = await import('../src/app/lists.js');
+  const latest = loadGuard();
+  const outcome = (p) => p.then(() => 'shown', (e) => (superseded(e) ? 'dropped' : 'failed'));
+  let release;
+  const older = outcome(latest(new Promise((r) => { release = r; })));
+  const newer = await latest(Promise.resolve('reopened'));
+  release('empty');
+  const oldFail = outcome(latest(Promise.reject(new Error('x'))));
+  await latest(Promise.resolve('fresh'));
+  const page = await latest(Promise.resolve('page 2'), true);
+  eq('own lists: an older answer after a newer one is dropped, its failure too; a further page is kept', [await older, newer, await oldFail, page],
+    ['dropped', 'reopened', 'dropped', 'page 2']);
+  eq('undo: people and saved views reload', ['/people', '/views'].map((p) => [...fetched].some((f) => f.endsWith(p))), [true, true]);
   globalThis.fetch = realFetch;
   put(saved);
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;

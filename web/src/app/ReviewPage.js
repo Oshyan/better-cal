@@ -23,7 +23,8 @@
 // endpoints are. Kinds only differ in how their detail is drawn.
 
 import { html, useState, useEffect } from '../../vendor/index.js';
-import { set, toast, invalidateRecords, useStore } from './store.js';
+import { set, toast, invalidateRecords } from './store.js';
+import { useOwnList, superseded } from './lists.js';
 import { api, entriesOf, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
 import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -170,24 +171,25 @@ function ReviewCard({ item, onChanged }) {
 }
 
 export function ReviewPage() {
-  const reviewSeq = useStore((s) => s.reviewSeq || 0);
+  const [undoSeq, latest] = useOwnList();
   const [items, setItems] = useState(null);
   const [showDecided, setShowDecided] = useState(false);
   const [nextBefore, setNextBefore] = useState(null);
 
   const load = async (more = false) => {
     try {
-      const data = await api('/review?status=' + (showDecided ? 'all' : 'open') + (more && nextBefore ? '&before=' + nextBefore : ''));
+      const data = await latest(api('/review?status=' + (showDecided ? 'all' : 'open') + (more && nextBefore ? '&before=' + nextBefore : '')), more);
       setItems((previous) => more ? [...new Map([...(previous || []), ...(data.items || [])].map((item) => [item.key, item])).values()] : (data.items || []));
       setNextBefore(data.nextBefore || null);
       loadReviewCount();
     } catch (e) {
+      if (superseded(e)) return;
       toast('Load failed: ' + e.message, { error: true });
       setItems([]);
       loadReviewCount();
     }
   };
-  useEffect(() => { load(); }, [showDecided, reviewSeq]);
+  useEffect(() => { load(); }, [showDecided, undoSeq]);
 
   return html`<${PageShell}
     title="Review"

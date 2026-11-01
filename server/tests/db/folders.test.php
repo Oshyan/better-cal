@@ -39,6 +39,15 @@ return static function (Db $db): void {
         array_values(array_map(static fn($v) => is_numeric($v) ? (int) $v : $v, $db->one('SELECT entity, entity_id, summary FROM mutations WHERE id = ?', [$latest()]))));
     $d->undo->undoLatest($u);
     checkEq('folders: undone, it is out of the folder it was added to and still where it was', [[$two], [$one]], $order());
+    // Dragged from one folder to another it was in as well: still a move
+    // from the one to the other. A folder gone meanwhile is not found.
+    $d->folders->place($u, $beta, $two, 1);
+    $d->folders->place($u, $beta, $two, 0, $alpha);
+    checkEq('folders: dragged between two folders it was in, the entry says from and to', "Moved 'Two' from folder 'Alpha' to 'Beta'",
+        $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$latest()]));
+    $d->undo->undoLatest($u);
+    $d->undo->undoLatest($u);
+    checkEq('folders: a folder that is gone is not found, nothing written', ['not_found', [[$two], [$one]]], [refusal(fn() => $d->folders->place($u, 999999, $two, 0)), $order()]);
 
     // Undo puts back only the calendar it moved: a later change to the
     // folder it came from stays.

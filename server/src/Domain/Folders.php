@@ -80,10 +80,10 @@ final class Folders
      */
     public function place(int $userId, int $id, int $calendarId, int $at, ?int $from = null): array
     {
-        $folder = $this->get($userId, $id);
-        $cal = $this->ownedCalendar($userId, $calendarId);
-        $source = $from !== null && $from !== $id ? $this->get($userId, $from) : null;
-        return $this->undo->write($userId, function () use ($userId, $id, $folder, $cal, $calendarId, $at, $source): array {
+        return $this->undo->write($userId, function () use ($userId, $id, $calendarId, $at, $from): array {
+            $folder = $this->get($userId, $id);
+            $cal = $this->ownedCalendar($userId, $calendarId);
+            $source = $from !== null && $from !== $id ? $this->get($userId, $from) : null;
             $ordered = array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], $this->db->all(
                 'SELECT cf.calendar_id, cf.position FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id WHERE cf.folder_id = ? ORDER BY cf.position, c.position, c.id',
                 [$id]
@@ -102,8 +102,8 @@ final class Folders
                 $this->db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$pos, $id, $c]);
             }
             $name = (string) $cal['name'];
-            $summary = $was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
-                : ($source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
+            $summary = $source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
+                : ($was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
                 : "Added '" . $name . "' to folder '" . $folder['name'] . "'");
             // Numbered afresh, every place in the folder changed in effect
             // (as Calendars::placeInList).
@@ -117,9 +117,9 @@ final class Folders
     /** Take a calendar out of this folder (it stays in the others it's in). */
     public function unfile(int $userId, int $id, int $calendarId): void
     {
-        $folder = $this->get($userId, $id);
-        $cal = $this->ownedCalendar($userId, $calendarId);
-        $this->undo->write($userId, function () use ($userId, $id, $folder, $cal, $calendarId): void {
+        $this->undo->write($userId, function () use ($userId, $id, $calendarId): void {
+            $folder = $this->get($userId, $id);
+            $cal = $this->ownedCalendar($userId, $calendarId);
             $before = $this->rows($calendarId, $id, null, []);
             $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$id, $calendarId]);
             $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => []], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'");

@@ -361,8 +361,8 @@ final class People
         if ($row === null) {
             throw HttpError::notFound('No such person');
         }
-        // A rename onto another person's name merges into them: both, and
-        // the events either is on, as they were.
+        // A rename onto another person's name merges into them: both, the
+        // events either is on and their away and busy times, as they were.
         $merging = isset($in['name']) && is_string($in['name'])
             ? $this->db->scalar('SELECT id FROM people WHERE user_id = ? AND name = ? AND id != ?', [$userId, self::normalizeName($in['name']), $id])
             : null;
@@ -372,6 +372,7 @@ final class People
             return [
                 'people' => $this->db->all("SELECT * FROM people WHERE id IN $in", $params),
                 'event_people' => $this->db->all("SELECT * FROM event_people WHERE person_id IN $in", $params),
+                'availability' => $this->db->all("SELECT * FROM availability WHERE person_id IN $in", $params),
             ];
         };
         $before = $snapshot();
@@ -401,6 +402,7 @@ final class People
                      SELECT event_id, ? FROM event_people WHERE person_id = ?',
                     [$survivorId, $id]
                 );
+                $this->db->run('UPDATE availability SET person_id = ? WHERE person_id = ?', [$survivorId, $id]);
                 $this->db->run('DELETE FROM people WHERE id = ?', [$id]);
                 $id = $survivorId;
             } else {

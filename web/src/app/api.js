@@ -906,11 +906,13 @@ export async function search(q, opts = {}, limit = 50) {
 // new events go, put back with a calendar), or the window's events.
 export function afterUndo() {
   invalidateRecords();
-  // People's away times, plugins' bands and Review's list are fetched on
-  // their own (an accept undone is open in Review again).
-  set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, reviewSeq: (state.reviewSeq || 0) + 1 });
+  // People's away times, plugins' bands, and the lists pages keep of their
+  // own (Review, Filters, feeds: undoSeq) are fetched on their own.
+  set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, undoSeq: (state.undoSeq || 0) + 1 });
   loadReviewCount().catch(() => {});
   loadCalendars().catch(() => {});
+  loadPeople().catch(() => {});
+  loadSavedViews().catch(() => {});
   api('/settings').then((d) => adoptSettings(d.settings)).catch(() => {});
   return refreshWindow();
 }

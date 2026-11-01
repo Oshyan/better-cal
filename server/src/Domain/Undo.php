@@ -452,11 +452,25 @@ final class Undo
     {
         $out = [];
         foreach (array_unique(array_merge(array_keys($was), array_keys($now))) as $col) {
-            if (!in_array($col, self::BOOKKEEPING, true) && ($was[$col] ?? null) != ($now[$col] ?? null)) {
+            if (!in_array($col, self::BOOKKEEPING, true) && !self::same($was[$col] ?? null, $now[$col] ?? null)) {
                 $out[] = (string) $col;
             }
         }
         return $out;
+    }
+
+    /**
+     * One stored value, as two reads of it can come back: the same text
+     * (the driver may answer 1 or "1"), or both NULL. Not loose equality:
+     * "01" and "1", or "" and NULL, are different values. Pure.
+     */
+    public static function same(mixed $a, mixed $b): bool
+    {
+        if ($a === null || $b === null) {
+            return $a === $b;
+        }
+        $text = static fn(mixed $v): string => is_bool($v) ? ($v ? '1' : '0') : (is_scalar($v) ? (string) $v : (string) json_encode($v));
+        return $text($a) === $text($b);
     }
 
     /** @param list<array{0:string,1:string}> $touches */
@@ -822,7 +836,7 @@ final class Undo
             'after' => $span,
         ]);
         [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result);
-        $this->db->tx(function () use ($event, $startUtc, $endUtc, $allDay, $mutation, $authority): void {
+        $this->write($userId, function () use ($event, $startUtc, $endUtc, $allDay, $mutation, $authority): void {
             $authority?->assertValid($this->db);
             $this->db->update('events', [
                 'start_utc' => $startUtc,

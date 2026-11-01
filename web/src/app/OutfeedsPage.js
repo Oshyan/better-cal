@@ -3,6 +3,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast } from './store.js';
 import { api } from './api.js';
+import { useOwnList, superseded } from './lists.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 
 export function OutfeedsSection() {
@@ -14,18 +15,20 @@ export function OutfeedsSection() {
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const calendars = useStore((s) => s.calendars);
+  const [undoSeq, latest] = useOwnList();
 
   const load = async () => {
     try {
-      const data = await api('/outfeeds');
+      const data = await latest(api('/outfeeds'));
       setFeeds(data.outfeeds || data.feeds || (Array.isArray(data) ? data : []));
     } catch (e) {
+      if (superseded(e)) return;
       toast('Failed to load feeds: ' + e.message, { error: true });
       setFeeds([]);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [undoSeq]);
 
   const create = async (e) => {
     e.preventDefault();

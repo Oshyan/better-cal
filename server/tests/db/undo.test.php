@@ -334,4 +334,79 @@ return static function (Db $db): void {
     domains($db)->undo->undoById($m, lastEntry($db, $m));
     checkEq('people: the merge undone, each has their own away times again', ['Alex Example', $alex, $sam],
         [$db->scalar('SELECT name FROM people WHERE id = ?', [$alex]), $owner($alexSpan), $owner($samSpan)]);
+
+    // --- The default calendar as calendars come and go ---------------------
+
+    // Deleting the last calendar of the person's own: new events go to the
+    // invitations calendar for now, but that isn't a choice, so the next
+    // calendar made takes over; undoing the making leaves no choice pointing
+    // at a calendar that's gone.
+    $c = freshUser($db);
+    $dc = domains($db);
+    $own = (int) Settings::defaultCalendarId($db, $c);
+    $invites = MailIngest::ensureInviteCalendar($db, $c);
+    $dc->calendars->delete($c, $own);
+    $deleted = lastEntry($db, $c);
+    checkEq('default calendar: with only the invitations calendar left it takes new events, and no choice is stored', [$invites, null],
+        [Settings::defaultCalendarId($db, $c), $storedDefault($c)]);
+    $fresh = (int) $dc->calendars->create($c, ['name' => 'Fresh start'])['id'];
+    $madeFresh = lastEntry($db, $c);
+    checkEq('default calendar: the next calendar made takes over from the invitations calendar', [$fresh, $fresh],
+        [Settings::defaultCalendarId($db, $c), $storedDefault($c)]);
+    $dc->undo->undoById($c, $madeFresh);
+    checkEq('default calendar: undoing the making leaves no choice pointing at the calendar that went', [null, $invites],
+        [$storedDefault($c), Settings::defaultCalendarId($db, $c)]);
+    $dc->undo->undoById($c, $deleted);
+    checkEq('default calendar: undoing the delete makes it the default again', $own, Settings::defaultCalendarId($db, $c));
+
+    // A choice made since stays: the delete moved the default to the next
+    // calendar, the person then chose another, and undoing the delete brings
+    // the calendar back without taking the choice away.
+    $g = freshUser($db);
+    $dg = domains($db);
+    $gFirst = (int) Settings::defaultCalendarId($db, $g);
+    $gNext = (int) $dg->calendars->create($g, ['name' => 'Next'])['id'];
+    $gChosen = (int) $dg->calendars->create($g, ['name' => 'Chosen'])['id'];
+    $dg->calendars->delete($g, $gFirst);
+    $gDeleted = lastEntry($db, $g);
+    checkEq('default calendar: deleting the default moves it to the oldest shown', $gNext, $storedDefault($g));
+    Settings::put($db, $g, ['defaultCalendarId' => $gChosen]);
+    $dg->undo->undoById($g, $gDeleted);
+    checkEq('default calendar: a choice made since the delete stays when the delete is undone', [$gChosen, true],
+        [$storedDefault($g), $db->scalar('SELECT id FROM calendars WHERE id = ?', [$gFirst]) !== null]);
+
+    // --- Grouped changes and the account's row ------------------------------
+
+    // A grouped change whose steps change a row and change it back shows
+    // nothing in the merged snapshots, but its steps touched the row: an
+    // older change to it is stale after it.
+    $r = freshUser($db);
+    $dr = domains($db);
+    $rcal = (int) Settings::defaultCalendarId($db, $r);
+    $round = (int) $dr->events->create($r, eventAt($rcal, 'Round trip', '2026-12-22'))['eventId'];
+    $dr->events->patch($r, $round, ['title' => 'Renamed']);
+    $renamed = lastEntry($db, $r);
+    $dr->undo->write($r, fn() => $dr->undo->group(function () use ($dr, $r, $round): void {
+        $dr->events->patch($r, $round, ['title' => 'There']);
+        $dr->events->patch($r, $round, ['title' => 'Renamed']);
+    }, 'There and back'));
+    checkEq('undo: a grouped change that changed a row and changed it back still touched it, so an older change to it is stale', ['There and back', 'stale_undo'],
+        [$db->scalar('SELECT summary FROM mutations WHERE id = ?', [lastEntry($db, $r)]), refusal(fn() => $dr->undo->undoById($r, $renamed))]);
+
+    // The account's row is held for the whole of a change: another
+    // connection waiting for it gives up before the change is done. Every
+    // change and every undo takes it first, so none waits on another in the
+    // opposite order.
+    $other = new Db(['dsn' => (string) getenv('BC_TEST_DSN'), 'user' => (string) getenv('BC_TEST_DB_USER'), 'pass' => (string) getenv('BC_TEST_DB_PASS')]);
+    $other->run('SET SESSION innodb_lock_wait_timeout = 1');
+    $heldDuring = null;
+    $dr->undo->write($r, function () use ($other, $r, &$heldDuring): void {
+        try {
+            $other->tx(static fn() => $other->all('SELECT id FROM users WHERE id = ? FOR UPDATE', [$r]));
+            $heldDuring = false;
+        } catch (\PDOException) {
+            $heldDuring = true;
+        }
+    });
+    check("undo: the account's row is held for the whole of a change", $heldDuring === true, var_export($heldDuring, true));
 };

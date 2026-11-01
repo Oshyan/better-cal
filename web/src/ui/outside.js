@@ -61,8 +61,11 @@ export function onOutsidePress(isInside, onOutside) {
   const handler = (e) => {
     if (isInside(e.target)) return;
     // Toasts float above every surface and answer for themselves: Undo on a
-    // toast must undo, not first close the sheet the change was made in.
-    if (e.target && e.target.closest && e.target.closest('.bc-toasts')) return;
+    // toast must undo, not first close the sheet the change was made in. So
+    // does a confirm or password step-up asked from inside the surface: its
+    // buttons are outside the panel, and taking the press would close the
+    // panel under the dialog and swallow the click.
+    if (e.target && e.target.closest && e.target.closest('.bc-toasts, .bc-stepup-backdrop')) return;
     consumeOutsidePress(e);
     onOutside(e);
   };

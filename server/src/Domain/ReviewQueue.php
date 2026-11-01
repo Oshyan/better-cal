@@ -968,9 +968,20 @@ final class ReviewQueue
             [$userId, $sourceKey, self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE]) as $pending) {
             $payload = self::payload($pending);
             $incoming = (array) ($payload['invite'] ?? []);
-            [$allowed] = MailIngest::imipMayMutate($stored, $incoming, (string) ($payload['from'] ?? ''), (string) $event['status']);
             $method = ($payload['method'] ?? '') === 'CANCEL' ? 'CANCEL' : 'REQUEST';
-            $diff = self::inviteDiff($event, $method, (array) ($payload['fields'] ?? []));
+            $occurrence = isset($payload['occurrence']) ? (string) $payload['occurrence'] : null;
+            if ($occurrence !== null) {
+                // One occurrence is numbered apart from its series (#155):
+                // judged as holdInviteChange and decide judge it, against its
+                // own sequence and the day as the calendar shows it, so a
+                // series change at a higher number doesn't close it.
+                $override = self::occurrenceRow($this->db, $eventId, $occurrence);
+                [$allowed] = MailIngest::imipMayMutate(MailIngest::occurrenceGate($stored, $override), $incoming, (string) ($payload['from'] ?? ''), (string) ($override['status'] ?? 'confirmed'));
+                $diff = self::occurrenceDiff($event, $occurrence, $method, (array) ($payload['fields'] ?? []), $override, Settings::homeTzid($this->db, $userId));
+            } else {
+                [$allowed] = MailIngest::imipMayMutate($stored, $incoming, (string) ($payload['from'] ?? ''), (string) $event['status']);
+                $diff = self::inviteDiff($event, $method, (array) ($payload['fields'] ?? []));
+            }
             if (!$allowed || $diff === [] || $event['deleted_at'] !== null) {
                 $this->close((int) $pending['id'], 'superseded');
             } elseif ($pending['kind'] === self::KIND_INVITE_NEW) {

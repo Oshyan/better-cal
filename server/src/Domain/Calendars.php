@@ -234,8 +234,11 @@ final class Calendars
                 ];
             }
             $id = $this->db->insert('calendars', $row);
+            $default = null;
             if ($kind === 'local' && Settings::defaultCalendarId($this->db, $userId) === $id) {
-                // The only local calendar: new events go here (Settings).
+                // The only local calendar of the person's own: new events go
+                // here (Settings). Undone, the choice is as it was.
+                $default = [Settings::chosenDefaultCalendarId($this->db, $userId), $id];
                 Settings::setDefaultCalendar($this->db, $userId, $id);
             }
             if (!empty($in['folderIds']) && is_array($in['folderIds'])) {
@@ -244,7 +247,7 @@ final class Calendars
             $this->undo->record($userId, 'calendar', $id, 'create', null, [
                 'calendars' => [$this->get($userId, $id)],
                 'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-            ]);
+            ], details: $default !== null ? ['settings' => ['defaultCalendarId' => $default]] : null);
             return $id;
         });
         return $this->serializeById($userId, $id);
@@ -455,12 +458,17 @@ final class Calendars
             ] + Undo::linksOf($this->db, array_map(static fn($e) => (int) $e['id'], $events));
             $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
             $next = null;
+            $stored = null;
             if ($wasDefault) {
                 $next = Settings::defaultCalendarId($this->db, $userId);
-                Settings::setDefaultCalendar($this->db, $userId, $next);
+                // Only the calendar the app made for invitations left: that's
+                // where new events go for now, but not a choice, so the next
+                // calendar made takes over (create()).
+                $stored = $next !== null && $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$next]) === MailIngest::INVITE_CALENDAR ? null : $next;
+                Settings::setDefaultCalendar($this->db, $userId, $stored);
             }
             // Undone, it's where new events go again.
-            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => [$id, $next]]] : null);
+            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => [$id, $stored]]] : null);
             return $next;
         });
     }

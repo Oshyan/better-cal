@@ -33,6 +33,12 @@ return static function (Db $db): void {
     $inFolder = static fn(int $f) => array_map('intval', array_column($db->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = ? ORDER BY position', [$f]), 'calendar_id'));
     checkEq('migration 055: folders keep the order they showed, and run twice it changes nothing', [[$c2, $c3, $c1], [$c3, $c1], ['manual', 'manual']],
         [$inFolder($f1), $inFolder($f2), array_column($db->all('SELECT sort FROM folders WHERE id IN (?, ?) ORDER BY id', [$f1, $f2]), 'sort')]);
+    // Cut off after the column was added (that commits on its own) and
+    // before any folder was numbered: run again, it numbers them.
+    $db->run('ALTER TABLE calendar_folders DROP COLUMN position');
+    $db->run('ALTER TABLE calendar_folders ADD COLUMN position INT NOT NULL DEFAULT 0');
+    $migration('055_folder_order.php')($db);
+    checkEq('migration 055: run again after one cut off before numbering, the folders are numbered', [[$c2, $c3, $c1], [$c3, $c1]], [$inFolder($f1), $inFolder($f2)]);
 
     // 057: places a step apart, in the same order; again, nothing changes.
     $migration('057_sparse_order.php')($db);
@@ -66,7 +72,13 @@ return static function (Db $db): void {
     $place = $insert('calendar_place', $shown, ['calendars' => [['id' => $shown, 'position' => 2]]], ['calendars' => [['id' => $shown, 'position' => 1]]]);
     $rename = $insert('calendar', $shown, ['calendars' => [['id' => $shown, 'name' => 'Old']]], ['calendars' => [['id' => $shown, 'name' => 'New']]]);
     $google = $insert('event', 4242, null, null);
-    $db->run('DELETE FROM mutation_touches WHERE mutation_id IN (?, ?, ?)', [$place, $rename, $google]);
+    // Older than the week, as when the worker's prune never ran: one that
+    // still has its snapshots can be undone, so it's filled in too; one
+    // without can't be, and is left.
+    $old = $insert('event', 777, ['events' => [['id' => 777, 'title' => 'Was']]], ['events' => [['id' => 777, 'title' => 'Is']]]);
+    $gone = $insert('event', 778, null, null);
+    $db->run('UPDATE mutations SET created_at = ? WHERE id IN (?, ?)', [gmdate('Y-m-d H:i:s', time() - 30 * 86400), $old, $gone]);
+    $db->run('DELETE FROM mutation_touches WHERE mutation_id IN (?, ?, ?, ?, ?)', [$place, $rename, $google, $old, $gone]);
 
     $said = (require dirname(__DIR__, 2) . '/migrations/058_undo_ground.php')($db);
     $touches = static fn(int $id): array => array_map(static fn($r) => [$r['row_key'], $r['col']],
@@ -76,11 +88,13 @@ return static function (Db $db): void {
     checkEq('migration 058: what a recent entry touched is filled in from its snapshots', Undo::touchesOf(
         ['calendars' => [['id' => $shown, 'name' => 'Old']]], ['calendars' => [['id' => $shown, 'name' => 'New']]]), $touches($rename));
     checkEq('migration 058: one that kept no snapshots touched all of its item', [['events:4242', '*']], $touches($google));
+    checkEq('migration 058: an older entry that still has its snapshots is filled in; one without is left', [Undo::touchesOf(
+        ['events' => [['id' => 777, 'title' => 'Was']]], ['events' => [['id' => 777, 'title' => 'Is']]]), []], [$touches($old), $touches($gone)]);
     checkEq('migration 058: the default calendar is the one the app was picking: the first shown in the list', $shown,
         json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$u]), true)['defaultCalendarId'] ?? null);
     $rows = (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches');
     $again = (require dirname(__DIR__, 2) . '/migrations/058_undo_ground.php')($db);
     check('migration 058: run again, nothing changes', $rows === (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches')
-        && str_contains($again, '0 old placements') && str_contains($again, '(0 set)'), $again);
+        && str_contains($again, '(0 entries filled in') && str_contains($again, '0 old placements') && str_contains($again, '(0 set)'), $again);
     check('migration 058: says what it did', str_contains($said, 'old placements'), $said);
 };

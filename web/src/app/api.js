@@ -251,22 +251,15 @@ export const loadPeople = newestOnly(() => api('/people'), (data) => set({ peopl
 
 // --- plugins ---------------------------------------------------------------
 
-export async function loadPlugins() {
-  try {
-    const data = await api('/plugins');
-    set({ plugins: data.plugins || [] });
-  } catch (e) { /* the ops page retries on open */ }
-}
+// Only the newest load's answer is kept (lists.js); neither ever rejects.
+const pluginsList = newestOnly(() => api('/plugins'), (data) => set({ plugins: data.plugins || [] }));
+export const loadPlugins = () => pluginsList().catch(() => { /* the ops page retries on open */ });
 
 // The sidebar badge: how many things are waiting on a decision (paused calendar
 // updates, held invitation changes, mail safety notices, unanswered invitations,
 // open proposals, and possible duplicates).
-export async function loadReviewCount() {
-  try {
-    const d = await api('/review/count');
-    set({ reviewCount: d.count || 0 });
-  } catch (e) { /* the page shows the real list */ }
-}
+const reviewCount = newestOnly(() => api('/review/count'), (d) => set({ reviewCount: d.count || 0 }));
+export const loadReviewCount = () => reviewCount().catch(() => { /* the page shows the real list */ });
 
 // --- system health ---------------------------------------------------------
 

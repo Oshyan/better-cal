@@ -109,6 +109,11 @@ $stderr = stream_get_contents($pipes[2]);
 foreach ($pipes as $pipe) fclose($pipe);
 if (proc_close($process) !== 0) throw new RuntimeException('SMTP sink: ' . $stderr);
 verifyMail('live SMTP delivers to loopback sink', $reply['sent'] && $evidence['wireReply']);
+// What the sent answer changed, for an older undo of this event: the
+// invitation and the status, not Planned or Maybe (that is Google's path).
+verifyMail('a sent reply stands on the invitation and status only', array_column($db->all(
+    "SELECT t.col FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id WHERE m.entity = 'event' AND m.entity_id = ? AND m.before_json IS NULL ORDER BY m.id DESC, t.col",
+    [$eventId]), 'col') === ['invite_json', 'status']);
 verifyMail('live SMTP barrier sees durable attempt and reserved capacity', $evidence['durable'] === 'sending' && $evidence['reserved'] === 1);
 verifyMail('live concurrent identical reply is refused at send barrier', $evidence['concurrent'] === 'rsvp_busy');
 verifyMail('reply completion preserves concurrent invitation metadata', json_decode($db->scalar('SELECT invite_json FROM events WHERE id=?', [$eventId]), true)['subject'] === 'Fresh sample metadata');

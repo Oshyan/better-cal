@@ -1007,7 +1007,8 @@ final class PluginHost
                 // Changed here after this run read its source (the person moved
                 // it, and the plugin wrote it back): this run's copy is older,
                 // so leave the row for the next run rather than move it back.
-                if ($cur !== null && (string) ($cur['updated_at'] ?? '') > $runStartedDb) {
+                // The start is floored to the second, so that second counts.
+                if ($cur !== null && (string) ($cur['updated_at'] ?? '') >= $runStartedDb) {
                     continue;
                 }
                 if ($cur === null) {
@@ -1157,7 +1158,7 @@ final class PluginHost
                 continue;
             }
             $seen[$key] = true;
-            [$startUtc, $endUtc] = self::rangeToUtc($r);
+            [$startUtc, $endUtc] = self::rangeToUtc($r, $this->ownerZone());
             $this->db->insert('plugin_ranges', [
                 'plugin_id' => $this->pluginId,
                 'calendar_id' => $calendarId,
@@ -1246,13 +1247,18 @@ final class PluginHost
         return [$s, max($e, $s), false];
     }
 
-    /** @return array{0:string,1:string} */
-    private static function rangeToUtc(array $r): array
+    /**
+     * A time with no offset is the owner's local time, as spanToUtc reads
+     * an event's: a band and the event it shades must not drift apart.
+     *
+     * @return array{0:string,1:string}
+     */
+    private static function rangeToUtc(array $r, ?\DateTimeZone $local = null): array
     {
         $start = (string) ($r['start'] ?? '');
         $end = (string) ($r['end'] ?? '');
-        $s = strlen($start) === 10 ? $start . ' 00:00:00' : Time::toDb(new \DateTimeImmutable($start));
-        $e = strlen($end) === 10 ? $end . ' 00:00:00' : Time::toDb(new \DateTimeImmutable($end));
+        $s = strlen($start) === 10 ? $start . ' 00:00:00' : Time::toDb(new \DateTimeImmutable($start, $local ?? Time::utc()));
+        $e = strlen($end) === 10 ? $end . ' 00:00:00' : Time::toDb(new \DateTimeImmutable($end, $local ?? Time::utc()));
         return [$s, max($e, $s)];
     }
 }

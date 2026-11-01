@@ -24,7 +24,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { set, toast, invalidateRecords } from './store.js';
-import { useOwnList, superseded } from './lists.js';
+import { useOwnList, superseded, pageItems, pageFailed } from './lists.js';
 import { api, entriesOf, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
 import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -79,7 +79,7 @@ function ReviewCard({ item, onChanged }) {
     try {
       if (item.kind === 'subscription' && action.name === 'remove' && !(await askConfirm({
         title: 'Remove this subscription?',
-        body: 'The calendar and the events it saved are deleted. This can\'t be undone.',
+        body: 'The calendar and the events it saved are deleted.',
         confirmLabel: 'Remove and delete events',
         danger: true,
       }))) return;
@@ -98,7 +98,8 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'duplicate') {
         toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
       } else if (item.kind === 'subscription') {
-        toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar');
+        // Removing deletes a calendar, which undo puts back; the others are log-only.
+        toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar', { undo: action.name === 'remove' ? entriesOf(res) : [] });
         await loadCalendars().catch(() => {});
       } else if (item.kind === 'plugin') {
         toast(action.name === 'enable' ? 'Plugin turned back on' : 'Plugin left off');
@@ -183,13 +184,14 @@ export function ReviewPage() {
     if (more && !page) return;
     try {
       const data = await latest(api('/review?status=' + (showDecided ? 'all' : 'open') + (page ? '&before=' + page.before : '')), page ? page.of : undefined);
-      setItems((previous) => page ? [...new Map([...(previous || []), ...(data.items || [])].map((item) => [item.key, item])).values()] : (data.items || []));
+      setItems((previous) => pageItems(previous, page, data.items || []));
       setCursor(data.nextBefore ? { before: data.nextBefore, of: latest.current() } : null);
       loadReviewCount();
     } catch (e) {
       if (superseded(e)) return;
       toast('Load failed: ' + e.message, { error: true });
       if (!page) setItems([]);
+      setCursor(pageFailed(page, cursor));
       loadReviewCount();
     }
   };

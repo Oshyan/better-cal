@@ -2465,6 +2465,35 @@ console.log('--- chronological ordering across timezone offsets ---');
   answers[0]('empty');
   eq('shared lists: only the newest answer is applied; the older load settles with it', [await first, await second, applied], ['with Alex', 'with Alex', ['with Alex']]);
   eq('undo: people and saved views reload', ['/people', '/views'].map((p) => [...fetched].some((f) => f.endsWith(p))), [true, true]);
+  // The badge and the plugin list the same way: a count from before an
+  // undo, answered after the undo's own reload, doesn't put the old number
+  // back; and a failed load never rejects (boot awaits them together).
+  const { loadReviewCount, loadPlugins } = await import('../src/app/api.js');
+  const pending = { count: [], plugins: [] };
+  globalThis.fetch = (url) => new Promise((resolve, reject) => {
+    const u = new URL(String(url), 'http://app.test');
+    const slot = u.pathname.endsWith('/review/count') ? 'count' : 'plugins';
+    pending[slot].push({ ok: (body) => resolve(json(body)), fail: () => reject(new TypeError('offline')) });
+  });
+  const counts = [loadReviewCount(), loadReviewCount()];
+  const lists = [loadPlugins(), loadPlugins()];
+  pending.count[1].ok({ count: 0 });
+  pending.plugins[1].ok({ plugins: [{ id: 'sample' }] });
+  pending.count[0].ok({ count: 7 });
+  pending.plugins[0].ok({ plugins: [] });
+  await Promise.all([...counts, ...lists]);
+  eq('badge and plugins: an older answer after a newer one is not applied', [st.reviewCount, st.plugins.map((p) => p.id)], [0, ['sample']]);
+  const failing = [loadReviewCount(), loadPlugins()];
+  pending.count[2].fail();
+  pending.plugins[2].fail();
+  eq('badge and plugins: a failed load settles quietly and keeps the last answer', [await Promise.all(failing).then(() => 'settled', () => 'rejected'), st.reviewCount], ['settled', 0]);
+  // Review's paged list: a further page adds by key, and a failed fresh
+  // load leaves no "Show older" to a list that isn't there, while a failed
+  // page keeps where it was.
+  const { pageItems, pageFailed } = await import('../src/app/lists.js');
+  const shown = [{ key: 'a' }, { key: 'b' }];
+  eq('review pages: a further page adds by key; a fresh answer replaces', [pageItems(shown, { before: 1 }, [{ key: 'b' }, { key: 'c' }]).map((i) => i.key), pageItems(shown, null, [{ key: 'z' }]).map((i) => i.key)], [['a', 'b', 'c'], ['z']]);
+  eq('review pages: a failed fresh load clears the cursor; a failed page keeps it', [pageFailed(null, { before: 1, of: 2 }), pageFailed({ before: 1, of: 2 }, { before: 1, of: 2 })], [null, { before: 1, of: 2 }]);
   globalThis.fetch = realFetch;
   put(saved);
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;

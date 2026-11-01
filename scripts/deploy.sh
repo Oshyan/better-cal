@@ -214,6 +214,19 @@ done
 EOF
 fi
 
+stage "pause: maintenance on"
+DEPLOY_TOUCHED=1
+# The site answers "updating" and the worker stops between jobs until the
+# migration is in (the same file bin/update.php writes), so no request and no
+# job runs across the two versions' code and schema; migrate.php waits out a
+# job already running. Written as a file, not through PHP: it has to work
+# with whatever version is on the server now, before the rsync.
+rssh_args env "APP_DIR=${APP_DIR}" "APP_USER=${APP_USER}" bash -s <<'EOF'
+set -euo pipefail
+printf '{"since":"%s","reason":"deploying"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  | sudo -n -u "${APP_USER}" -- tee "${APP_DIR}/.maintenance" >/dev/null
+EOF
+
 stage "rsync code"
 deploy_rsync "${APP_DIR}" "${DEPLOY_SNAPSHOT}"
 reconcile_release_plugins "${APP_DIR}" "${DEPLOY_SNAPSHOT}" "${APP_USER}"
@@ -249,6 +262,10 @@ if [ "${current_docroot}" != "${APP_DIR}/server/public" ]; then
   sudo -n -u "${APP_USER}" -- rm -rf "${DOCROOT}"
   sudo -n -u "${APP_USER}" -- ln -s "${APP_DIR}/server/public" "${DOCROOT}"
 fi
+# Code and schema both in: the next request clears the opcode cache
+# (Support\Maintenance::CODE_CHANGED), and the site is back.
+sudo -n -u "${APP_USER}" -- touch "${APP_DIR}/.code-changed"
+sudo -n -u "${APP_USER}" -- rm -f "${APP_DIR}/.maintenance"
 EOF
 
 disable_missing_plugins "${APP_DIR}" "${APP_USER}"

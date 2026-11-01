@@ -445,6 +445,7 @@ deploy_on_exit() {
       echo "!!! DEPLOY FAILED at: ${DEPLOY_STAGE} (exit ${rc})"
       echo "!!! Remote deployment state already changed, so the site may be stopped or half-updated."
       echo "!!! ${HEALTH_URL} is ${health}. Re-run this deploy to finish it."
+      echo "!!! If it is in maintenance mode (answering 503 \"updating\"), it stays there until a deploy finishes or ${APP_DIR}/.maintenance is removed by hand."
     } >&2
   else
     echo "Deploy stopped at: ${DEPLOY_STAGE} (exit ${rc}). Nothing on the server was changed." >&2

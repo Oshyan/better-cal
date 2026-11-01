@@ -1794,6 +1794,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $other = $applyA->invoke($mailA, 1, 'REQUEST', ['recurrence_instance_utc' => '2026-11-23 18:00:00', 'start_utc' => '2026-11-23 19:00:00', 'end_utc' => '2026-11-23 20:00:00',
             'location' => 'Cafe', 'invite' => ['method' => 'REQUEST', 'sequence' => 0] + $cancelInvite] + $occurrenceEv, 'UTC', ['messageId' => 'occ5@example.test'] + $occMsg);
         checkEq('one occurrence: another day is checked against its own sequence, not the series', 'held', $other[0]);
+        $otherItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
         // A change to the whole series keeps the day it changed earlier.
         $seriesChange = $queueA->holdInviteChange(1, $adb->one('SELECT * FROM events WHERE id = ?', [$seriesId]), 'series-uid', 'REQUEST',
             ['title' => 'Weekly sync (new agenda)', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => 'FREQ=WEEKLY'],
@@ -1803,6 +1804,12 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $adb->scalar('SELECT title FROM events WHERE id = ?', [$seriesId]),
             $adb->scalar('SELECT location FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
             $adb->scalar('SELECT start_utc FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
+        ]);
+        // The held change to the other day (its own number, 0, below the
+        // series' 5) is still waiting, and still about that day.
+        checkEq('one occurrence: accepting a series change keeps a held change to one day open, as a change to that day', ['open', ['Starts', 'Ends']], [
+            $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$otherItem]),
+            array_column(json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$otherItem]), true)['diff'], 'label'),
         ]);
     }
 
@@ -7143,7 +7150,7 @@ return new class implements BetterCal\\Plugin\\PluginInterface {
 };');
     $ndb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $ndb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT, consecutive_failures INTEGER DEFAULT 0, disabled_reason TEXT, changed_by_token_id INTEGER)');
-    $ndb->run('CREATE TABLE plugin_runs (id INTEGER PRIMARY KEY, plugin_id TEXT, job_id TEXT, run_id TEXT, started_at TEXT, duration_ms INTEGER, outcome TEXT, log_tail TEXT)');
+    $ndb->run('CREATE TABLE plugin_runs (id INTEGER PRIMARY KEY, plugin_id TEXT, job_id TEXT, run_id TEXT, calendar_id INTEGER, started_at TEXT, duration_ms INTEGER, outcome TEXT, log_tail TEXT)');
     $ndb->run("INSERT INTO plugins (id, enabled, settings_json) VALUES ('needy', 1, ?)", [json_encode(['workspace' => '  '])]);
     $needy = new BetterCal\Domain\Plugins($ndb, $dir, ['session_secret' => str_repeat('k', 32)]);
     checkEq('setup: required settings still empty are named', ['Workspace', 'API key'], $needy->missingRequired('needy'));
@@ -7154,6 +7161,19 @@ return new class implements BetterCal\\Plugin\\PluginInterface {
     $ndb->run("UPDATE plugins SET settings_json = ? WHERE id = 'needy'", [json_encode(['workspace' => 'sample', 'token' => ['__bettercalSecret' => 'sealed']])]);
     checkEq('setup: once filled (the key stored), nothing is missing', [], (new BetterCal\Domain\Plugins($ndb, $dir, []))->missingRequired('needy'));
     checkEq('setup: and its job comes due', [['plugin' => 'needy', 'job' => 'sync']], (new BetterCal\Domain\Plugins($ndb, $dir, []))->dueJobs());
+    // A run for one of its calendars (settings saved, Run on the card)
+    // refreshes nothing else, so the scheduled run is still due; the whole
+    // plugin's run is what resets the clock.
+    $scoped = new BetterCal\Domain\Plugins($ndb, $dir, ['session_secret' => str_repeat('k', 32)]);
+    checkEq('schedule: a run for one calendar is recorded as that calendar\'s', ['ok', 7], [$scoped->runJob(1, 'needy', 'sync', 7)['outcome'], (int) $ndb->scalar("SELECT calendar_id FROM plugin_runs WHERE plugin_id = 'needy' ORDER BY id DESC LIMIT 1")]);
+    checkEq('schedule: and leaves the whole plugin\'s run due', [['plugin' => 'needy', 'job' => 'sync']], $scoped->dueJobs());
+    checkEq('schedule: the whole plugin\'s run is what puts the next one off', ['ok', []], [$scoped->runJob(1, 'needy', 'sync')['outcome'], $scoped->dueJobs()]);
+    $fullRunId = (int) $ndb->scalar("SELECT id FROM plugin_runs WHERE plugin_id = 'needy' AND calendar_id IS NULL ORDER BY id DESC LIMIT 1");
+    for ($i = 0; $i < 25; $i++) {
+        $scoped->runJob(1, 'needy', 'sync', 7);
+    }
+    checkEq('schedule: a burst of one-calendar runs keeps the newest whole run, so the next is not due early', [1, []],
+        [(int) $ndb->scalar('SELECT COUNT(*) FROM plugin_runs WHERE id = ?', [$fullRunId]), $scoped->dueJobs()]);
 
     // Run now: a queued job is claimed by id, so the worker can't run it
     // too; where the server can't answer early (the command line), it stays

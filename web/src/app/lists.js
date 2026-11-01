@@ -50,6 +50,19 @@ export function newestOnly(fetch, apply) {
   };
 }
 
+/**
+ * A paged list after a load: a fresh answer replaces it; a further page adds
+ * to it by key, so an item the boundary moved onto isn't shown twice.
+ */
+export function pageItems(previous, page, items) {
+  return page ? [...new Map([...(previous || []), ...items].map((item) => [item.key, item])).values()] : items;
+}
+
+/** Its cursor after a failed load: a page keeps where older items continue; a fresh load has nothing to continue from. */
+export function pageFailed(page, cursor) {
+  return page ? cursor : null;
+}
+
 /** [undoSeq, latest]: put undoSeq in the effect that loads; latest as loadGuard's. */
 export function useOwnList() {
   const undoSeq = useStore((s) => s.undoSeq || 0);

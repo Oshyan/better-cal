@@ -43,9 +43,15 @@ $db = new Db($cfg['db']);
 // block each other while sharing one MySQL server. bin/update.php takes the
 // same lock to wait out a running job before it backs up.
 define('WORKER_LOCK', BetterCal\Infra\Updater::workerLockName((string) $cfg['db']['dsn']));
-$locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
+// A plugin run started from a request (Run now, settings saved; Plugins::
+// runQueuedNow) holds this lock for the seconds it takes. Waiting a little
+// for it, rather than giving up at once, keeps a reminder due this minute
+// from waiting for the next. The wait stays well under the minute between
+// ticks, so a long run (another tick's, an update's) still just skips this
+// one, and the maintenance check below is made again once the lock is held.
+$locked = $db->scalar('SELECT GET_LOCK(?, 20)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
-    exit(0); // another worker or database restore is running
+    exit(0); // another worker, a plugin run or a database restore is running
 }
 // No schema checks, constructors with database work, or writes before the
 // worker lock. Maintenance can begin after the initial fast check.

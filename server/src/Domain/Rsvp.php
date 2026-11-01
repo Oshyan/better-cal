@@ -270,13 +270,18 @@ final class Rsvp
         // back here: log only, but what it changed is the ground of an older
         // undo of this event. One that stays here ($before and $after given:
         // nothing was sent) is undoable like any change.
+        // What a sent answer changed: by mail the invitation and the status;
+        // at Google, Planned or Maybe too (answerAtGoogle resets attendance).
+        // Only those: marking more would make an older undo of this event
+        // stale for nothing.
         $entry = 0;
-        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, &$entry): void {
+        $touched = $via === 'google' ? ['invite_json', 'status', 'attendance'] : ['invite_json', 'status'];
+        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, $touched, &$entry): void {
             $undo = new Undo($this->db);
             $entry = ActivityContext::with('rsvp', fn() => $before !== null && $after !== null
                 ? $undo->record($userId, 'event', $eventId, 'update', ['events' => [$before]], ['events' => [$after]], $summary)
                 : $undo->record($userId, 'event', $eventId, 'update', null, null, $summary,
-                    touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], ['invite_json', 'status', 'attendance'])));
+                    touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], $touched)));
         };
         $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken), $journal)

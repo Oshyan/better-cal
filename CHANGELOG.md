@@ -12,7 +12,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - **Only** on a folder's header shows just that folder's calendars; click it again to bring back what was on.
   - **Drag a calendar** onto another folder to move it there, or hold Option (Alt) to add it there as well. Drag it to the main list to take it out of its folder.
   - **A–Z** on a folder or the main list sorts it by name; otherwise drag calendars into the order you like. Each folder keeps its own order.
-- **The default calendar is always set:** Settings, General, Default calendar. Deleting it moves it to another and says which. It used to fall back to the first calendar in the list.
+- **The default calendar is always set:** Settings, General, Default calendar. Deleting it moves it to another and says which. It used to fall back to the first calendar in the list. When only the Invitations calendar is left, the next calendar you make takes over as the default.
 - **Undo is more careful, and covers more:**
   - A toast's Undo undoes that toast's change, not whatever you did last.
   - Undoing something accepted from Review puts it back in Review, undecided, with the event and its invitation as they were.
@@ -21,8 +21,13 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - Undoing something that newer changes stand on asks first instead of losing them: a calendar's creation after events were added to it (imports too), a series' time after one of its dates was deleted, edited or split off.
   - Imports, people (added, renamed, merged, deleted) and calendars renamed from a phone's calendar app can be undone. A deleted calendar or edited date comes back with its tags, people and trip links, and a calendar deleted after its folder comes back unfiled.
   - A Google calendar's place in the list and whether it shows can be undone.
+- **An emailed change to one day of a repeating invitation stays in Review when you accept a change to the whole series.** It used to be closed as out of date.
+- **A plugin's scheduled refresh runs on time** after you save one of its calendars' settings or press Run on it; that run no longer counts as the whole plugin's.
+- **Reminders and polls due while a plugin run started from the page is still going** wait for it instead of skipping to the next minute.
+- **A question asked from the event panel** ("Send another reply?") no longer closes the panel under itself and swallows the first click.
+- **Removing a person no longer asks first:** the toast's Undo brings them back. Removing a subscription from Review can be undone from its toast too.
 
-Operators: four database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, and a default calendar for every account), applied automatically by `update.php` or the database update page.
+Operators: five database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, a default calendar for every account, and which calendar a plugin run was for), applied automatically by `update.php` or the database update page. `migrate.php` now waits out a running worker job before it starts.
 
 ## 1.4.4 (2026-10-31)
 

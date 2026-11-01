@@ -1641,12 +1641,17 @@ final class Plugins
             'plugin_id' => $id,
             'job_id' => $jobId,
             'run_id' => $runId,
+            'calendar_id' => $calendarId, // one calendar's run; null for the whole plugin's (dueJobs)
             'started_at' => $startedAt,
             'duration_ms' => $ms,
             'outcome' => $outcome,
             'log_tail' => mb_substr(trim($host->logTail() . ($error !== null ? "\nERROR: " . $error : '')), 0, 4000),
         ]);
-        $this->db->run('DELETE FROM plugin_runs WHERE plugin_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM plugin_runs WHERE plugin_id = ? ORDER BY id DESC LIMIT 20) keep)', [$id, $id]);
+        // The last 20 runs are kept for the ops page, and each job's newest
+        // whole-plugin run however old, so a burst of one-calendar runs can't
+        // make the scheduled run look as if it had never happened.
+        $this->db->run('DELETE FROM plugin_runs WHERE plugin_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM plugin_runs WHERE plugin_id = ? ORDER BY id DESC LIMIT 20) keep)'
+            . ' AND id NOT IN (SELECT id FROM (SELECT MAX(id) AS id FROM plugin_runs WHERE plugin_id = ? AND calendar_id IS NULL GROUP BY job_id) full_runs)', [$id, $id, $id]);
 
         if ($outcome === 'ok') {
             $this->db->run('UPDATE plugins SET consecutive_failures = 0 WHERE id = ?', [$id]);
@@ -1777,8 +1782,11 @@ final class Plugins
             }
             foreach (($m['jobs'] ?? []) as $job) {
                 $jobId = (string) $job['id'];
+                // Whole-plugin runs only: one for a single calendar (its
+                // settings saved, Run on its card) refreshed nothing else, so
+                // it can't put off the scheduled refresh of the rest.
                 $last = $this->db->scalar(
-                    'SELECT started_at FROM plugin_runs WHERE plugin_id = ? AND job_id = ? ORDER BY id DESC LIMIT 1',
+                    'SELECT started_at FROM plugin_runs WHERE plugin_id = ? AND job_id = ? AND calendar_id IS NULL ORDER BY id DESC LIMIT 1',
                     [$id, $jobId]
                 );
                 try {

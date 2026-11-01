@@ -185,7 +185,7 @@ The updater's steps yourself, as the user that owns the files, in the app direct
 2. **Get the new code.**
    - From a git clone: `git fetch --tags`, `git checkout vX.Y.Z`, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
    - From a release zip: unpack it into a fresh directory beside the current one (`unzip better-cal-X.Y.Z.zip -d /srv/better-cal-new`), copy `.env.php` and any plugins you added under `server/plugins/` into it, then swap: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`.
-3. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
+3. **Apply database changes:** `php server/bin/migrate.php`. It waits for a running worker job to finish first (up to 90 seconds), then lists each change it applies, or none.
 4. **Check it:** `https://cal.example.com/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version.
 
 Between steps 2 and 3, the new code runs against the old database for a few seconds. To avoid that, create an empty file named `.maintenance` in the app directory before step 2 (the site shows "updating" and the worker pauses) and delete it after step 3.

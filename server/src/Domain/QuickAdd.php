@@ -306,10 +306,10 @@ final class QuickAdd
      * - Location or people the fallback found but the LLM dropped: union
      *   people (LLM first), backfill location.
      * - Repeat: the fallback's rule wins when it found one (#165), unless
-     *   an ordinal word is left in its title, a sign it read only part of
-     *   the phrase (#193); either way the start moves to the rule's first
-     *   day, keeping the model's time and length, so the series never opens
-     *   with an extra day.
+     *   its title shows it read only part of the phrase (halfReadRule,
+     *   #193); either way the start moves to the rule's first day, keeping
+     *   the model's time and length, so the series never opens with an
+     *   extra day.
      *
      * @param array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>} $llm
      */
@@ -332,6 +332,30 @@ final class QuickAdd
             }
         }
         return $i === count($a);
+    }
+
+    /**
+     * Whether the deterministic parse read only part of a repeat phrase:
+     * the ordinal it did not take is left in its title (#193). The sign is
+     * an ordinal word that ends the title, alone or before a joiner, or one
+     * the model's title does not have. An ordinal both titles keep is part
+     * of the event's name, and the deterministic rule stands.
+     */
+    public static function halfReadRule(string $fbTitle, string $llmTitle): bool
+    {
+        $ord = '(?:first|second|third|fourth|fifth|last|\d{1,2}(?:st|nd|rd|th))';
+        if (preg_match('/\b' . $ord . '\b(?:\s*(?:,|and|&))?\s*$/i', $fbTitle) === 1) {
+            return true;
+        }
+        preg_match_all('/\b' . $ord . '\b/i', $fbTitle, $inFallback);
+        preg_match_all('/\b' . $ord . '\b/i', $llmTitle, $inModel);
+        $kept = array_map('strtolower', $inModel[0]);
+        foreach ($inFallback[0] as $word) {
+            if (!in_array(strtolower($word), $kept, true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function mergeLlm(array $llm, array $fallback, \DateTimeImmutable $now): array
@@ -380,12 +404,8 @@ final class QuickAdd
             $merged['location'] = $fallback['location'];
         }
 
-        // An ordinal left in the deterministic title means its rule read
-        // only part of the phrase (the title keeps the words the rule did
-        // not take); the model's rule stands then.
         $llmRule = ($llm['rrule'] ?? null) ?: null;
-        $halfRead = $llmRule !== null && preg_match('/\b(?:first|second|third|fourth|fifth|last|\d{1,2}(?:st|nd|rd|th))\b/i', $fbTitle) === 1;
-        $merged['rrule'] = $halfRead ? $llmRule : (($fallback['rrule'] ?? null) ?: $llmRule);
+        $merged['rrule'] = self::halfReadRule($fbTitle, $llmTitle) && $llmRule !== null ? $llmRule : (($fallback['rrule'] ?? null) ?: $llmRule);
         $merged['reminders'] = $fallback['reminders'] ?? null; // read from the text, never the model's
         if ($merged['rrule'] !== null) {
             try {

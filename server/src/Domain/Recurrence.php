@@ -467,6 +467,25 @@ final class Recurrence
         return self::joinParts($parts);
     }
 
+    /**
+     * A monthly rule's single day of the month moved with its series: "every
+     * 15th" dragged from the 15th to the 16th is "every 16th", the way a
+     * weekly BYDAY follows a drag to another weekday (shiftByday). Only a
+     * move within one month says which day was meant; a list of days, a
+     * day counted from the end or an nth-weekday form is left as it is.
+     */
+    public static function shiftBymonthday(string $rrule, \DateTimeImmutable $from, \DateTimeImmutable $to): string
+    {
+        $parts = self::rruleParts($rrule);
+        if (($parts['FREQ'] ?? '') !== 'MONTHLY' || !isset($parts['BYMONTHDAY']) || isset($parts['BYDAY']) || isset($parts['BYSETPOS'])
+            || preg_match('/^(?:[12]?\d|3[01])$/', $parts['BYMONTHDAY']) !== 1 || (int) $parts['BYMONTHDAY'] < 1
+            || $from->format('Y-m') !== $to->format('Y-m') || $from->format('j') === $to->format('j')) {
+            return $rrule;
+        }
+        $parts['BYMONTHDAY'] = $to->format('j');
+        return self::joinParts($parts);
+    }
+
     /** The rule without its bounds (COUNT, UNTIL): what decides which days a series falls on. */
     public static function pattern(?string $rrule): string
     {

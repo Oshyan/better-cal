@@ -127,10 +127,14 @@ final class FallbackParser
             }
         }
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
-        // "Workshop Mon-Fri 9am-5pm": several days with a time range is one
-        // stretch, the first day at the start time to the last at the end
-        // time (a typed zone counts for both ends).
-        if ($stretch === null && $rangeEnd !== null && $timeFound && $endTime !== null && $repeat === null) {
+        // "Workshop Mon-Fri 9am-5pm": several days with a daytime range is
+        // one stretch, the first day at the start time to the last at the
+        // end time (a typed zone counts for both ends). A range that ends at
+        // or before its start crosses midnight ("10pm-6am"): a night each
+        // day, never one stretch (a day range with it is a repeat, read by
+        // RepeatParser before this).
+        if ($stretch === null && $rangeEnd !== null && $timeFound && $endTime !== null && $repeat === null
+            && $endTime[0] * 60 + $endTime[1] > $startTime[0] * 60 + $startTime[1]) {
             $stretch = [$date->setTime($startTime[0], $startTime[1]), $rangeEnd->setTime($endTime[0], $endTime[1])];
             if ($timeZone !== null) {
                 $stretch[1] = (new \DateTimeImmutable($stretch[1]->format('Y-m-d H:i'), Time::zone($timeZone)))->setTimezone($tz);

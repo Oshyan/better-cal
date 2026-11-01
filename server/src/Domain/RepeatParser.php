@@ -67,9 +67,14 @@ final class RepeatParser
         $D = self::DAY;
         $list = $D . '(?:' . self::JOIN . $D . ')*';
         $plural = self::DAYS_PLURAL . '(?:' . self::JOIN . self::DAYS_PLURAL . ')*';
-        // One ordinal or a list of them ("first and third", "1st, 3rd and 5th").
-        $ord = '(' . self::ORD . '(?:' . self::JOIN . self::ORD . ')*)';
+        // One ordinal or a list of them ("first and third", "1st, 3rd and
+        // 5th"). The list is atomic: taken whole or not at all, so a lookahead
+        // after it judges the full phrase. Backtracking to a shorter list let
+        // "every 1st and 15th of <month>" pass as a monthly rule on the 1st
+        // with the rest of the phrase left in the title.
+        $ord = '((?>' . self::ORD . '(?:' . self::JOIN . self::ORD . ')*))';
         $nth = '\d{1,2}(?:st|nd|rd|th)';
+        $nthList = '((?>' . $nth . '(?:' . self::JOIN . $nth . ')*))';
         $what = '(' . $D . '|weekday|weekend\s+day|day)';
 
         // Typed shortcut (Fantastical): ":weekly".
@@ -90,7 +95,7 @@ final class RepeatParser
         // "every 1st and 15th".
         if (preg_match('/\b(?:monthly|(?:every|each)\s+month)\s+on\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b/i', $work, $m)
             || preg_match('/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\s+(?:of\s+)?(?:every|each)\s+month\b/i', $work, $m)
-            || preg_match('/\b(?:every|each)\s+(' . $nth . '(?:' . self::JOIN . $nth . ')*)\b(?!\s+(?:of\s+)?' . self::MONTH . '\b)/i', $work, $m)
+            || preg_match('/\b(?:every|each)\s+' . $nthList . '\b(?!\s+(?:of\s+)?' . self::MONTH . '\b)/i', $work, $m)
         ) {
             preg_match_all('/\d{1,2}/', $m[1], $days);
             $days = array_values(array_unique(array_map('intval', $days[0])));
@@ -157,13 +162,15 @@ final class RepeatParser
             return [self::cut($work, $m[0]), ['FREQ' => 'WEEKLY', 'BYDAY' => self::codes($m[1])], null];
         }
         // "Standup Mon-Fri 9am": a day range with a single time repeats on
-        // those days. With a time range ("Workshop Mon-Fri 9am-5pm") or one
-        // time at each end ("Fri 5pm to Sun 2pm") it is one stretch, and
-        // without a time one multi-day event, both left to FallbackParser.
-        // At the very start the time must come right after it ("Mon-Fri 9am
-        // standup"); otherwise the range is part of the title ("Mon-Fri
-        // check friday 3pm").
-        if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work) && !self::hasTimeRange($work)
+        // those days, and so does one with a time range that crosses
+        // midnight ("Shift Mon-Fri 10pm-6am": each night, not one stretch
+        // from Monday to Friday). With a daytime range ("Workshop Mon-Fri
+        // 9am-5pm") or one time at each end ("Fri 5pm to Sun 2pm") it is one
+        // stretch, and without a time one multi-day event, both left to
+        // FallbackParser. At the very start the time must come right after
+        // it ("Mon-Fri 9am standup"); otherwise the range is part of the
+        // title ("Mon-Fri check friday 3pm").
+        if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work) && !self::hasDaytimeRange($work)
             && (!$range['leading'] || self::timeFollows(substr($work, $range['offset'] + strlen($range['match']))))) {
             return [$range['rest'], ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']], null, true];
         }
@@ -428,10 +435,29 @@ final class RepeatParser
         return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|\b(?:noon|midnight|tonight)\b|\bat\s+\d{1,2}\b|\b(?:in\s+the|this)\s+(?:morning|afternoon|evening)\b/i', $work) === 1;
     }
 
-    /** A time range anywhere in $work ("9am-5pm", "7-9pm", "9:00 to 17:00"). */
-    private static function hasTimeRange(string $work): bool
+    /**
+     * A time range anywhere in $work whose end is later than its start on
+     * the clock ("9am-5pm", "7-9pm", "9:00 to 17:00"). One that ends at or
+     * before its start crosses midnight ("10pm-6am", "22:00-06:00") and is
+     * not one: the same words with a day range mean a night each day.
+     */
+    private static function hasDaytimeRange(string $work): bool
     {
-        return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|until)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\s*(?:-|–|—|to|until)\s*\d{1,2}:\d{2}\b/i', $work) === 1;
+        if (preg_match('/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i', $work, $m) === 1) {
+            $mer2 = strtolower($m[6]);
+            $mer1 = strtolower($m[3]) ?: $mer2;
+            $start = ((int) $m[1] % 12 + ($mer1 === 'pm' ? 12 : 0)) * 60 + (int) $m[2];
+            $end = ((int) $m[4] % 12 + ($mer2 === 'pm' ? 12 : 0)) * 60 + (int) $m[5];
+            // "11-1pm": a start with no meridiem of its own took the end's.
+            if ($m[3] === '' && $start >= $end && $start >= 720) {
+                $start -= 720;
+            }
+            return $end > $start;
+        }
+        if (preg_match('/\b(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b/', $work, $m) === 1) {
+            return (int) $m[3] * 60 + (int) $m[4] > (int) $m[1] * 60 + (int) $m[2];
+        }
+        return false;
     }
 
     /** Whether $tail opens with a clock time ("9am", "at 9:30", "noon"). */

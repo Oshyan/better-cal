@@ -142,6 +142,29 @@ return static function (Db $db): void {
     checkEq('undo: a pin moved, then a new address: the pin move is stale, and the address stays', ['stale_undo', 'New Hall'],
         [refusal(fn() => $d->undo->undoById($u, $pinMoved)), $db->scalar('SELECT location FROM events WHERE id = ?', [$where])]);
 
+    // The event view's lookup of an address isn't a change of the
+    // person's: their edit still undoes, and the looked-up place goes with it.
+    $looked = (int) $d->events->create($u, eventAt($home, 'Supper', '2026-12-16'))['eventId'];
+    $d->events->patch($u, $looked, ['location' => 'Sample Hall']);
+    $typed = lastEntry($db, $u);
+    checkEq('lookup: placed only while it has no place, and not journaled', [true, false, $typed],
+        [$d->events->placeFromLookup($u, $looked, 45.5, -122.6, 'photon'), $d->events->placeFromLookup($u, $looked, 1, 1, null), lastEntry($db, $u)]);
+    checkEq('undo: an address typed, then looked up by the event view: still undoes, pin and all', [null, null, null],
+        [refusal(fn() => $d->undo->undoById($u, $typed)), ...array_values($db->one('SELECT location, location_lat FROM events WHERE id = ?', [$looked]))]);
+    // A new address is looked up afresh, not skipped as tried last month.
+    $db->run('UPDATE events SET geocoded_at = NOW() WHERE id = ?', [$looked]);
+    $d->events->patch($u, $looked, ['location' => 'Sample Annex']);
+    checkEq('lookup: a new address is looked up again', null, $db->scalar('SELECT geocoded_at FROM events WHERE id = ?', [$looked]));
+
+    // A split carrying a skipped date, then another date skipped on the old
+    // series: the split still undoes (its mark is one way).
+    $h = $series('Jog', '2026-12-01');
+    $d->events->deleteEvent($u, $h, 'this', '2026-12-08T18:00:00+00:00');
+    $d->events->patch($u, $h, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Jog, later']);
+    $carried = lastEntry($db, $u);
+    $d->events->deleteEvent($u, $h, 'this', '2026-12-03T18:00:00+00:00');
+    checkEq('undo: a split carrying a skipped date, then an earlier date skipped: the split still undoes', null, refusal(fn() => $d->undo->undoById($u, $carried)));
+
     // A calendar's settings are separate settings: undoing a rename (which
     // stops its name following them) leaves a plugin's station changed since.
     $tides = (int) $d->calendars->create($u, ['name' => 'Tides, North Point'])['id'];

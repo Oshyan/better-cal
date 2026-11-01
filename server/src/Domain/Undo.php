@@ -25,13 +25,13 @@ final class Undo
     private const TABLE_ORDER = [
         'folders', 'tags', 'people', 'calendars', 'calendar_folders',
         'events', 'event_links', 'event_tags', 'event_people', 'out_feeds', 'filters', 'saved_views',
-        'availability',
+        'availability', 'review_items',
     ];
 
     private const TABLE_PK = [
         'folders' => ['id'], 'tags' => ['id'], 'people' => ['id'], 'calendars' => ['id'],
         'events' => ['id'], 'out_feeds' => ['id'], 'filters' => ['id'], 'saved_views' => ['id'],
-        'event_links' => ['id'], 'availability' => ['id'],
+        'event_links' => ['id'], 'availability' => ['id'], 'review_items' => ['id'],
         'calendar_folders' => ['calendar_id', 'folder_id'],
         'event_tags' => ['event_id', 'tag_id'],
         'event_people' => ['event_id', 'person_id'],
@@ -76,12 +76,14 @@ final class Undo
     }
 
     /**
-     * Changes recorded inside group(): kept back, and written as one entry
-     * when it ends. Null outside a group.
+     * Changes recorded inside group(), per connection: kept back, and
+     * written as one entry when it ends. Per connection, not per Undo, so a
+     * step made by another class's Undo (Events', within a Review decision)
+     * is part of the group too.
      *
-     * @var list<array<string,mixed>>|null
+     * @var array<int,list<array<string,mixed>>>
      */
-    private ?array $grouped = null;
+    private static array $groups = [];
 
     /**
      * The accounts whose rows are locked for a write() now, per connection.
@@ -188,8 +190,8 @@ final class Undo
      */
     public function record(int $userId, string $entity, int $entityId, string $op, ?array $beforeTables, ?array $afterTables, ?string $summary = null, ?array $details = null, array $calendarIds = [], array $touches = []): int
     {
-        if ($this->grouped !== null) {
-            $this->grouped[] = compact('userId', 'entity', 'entityId', 'op', 'beforeTables', 'afterTables', 'summary', 'details', 'calendarIds', 'touches');
+        if (isset(self::$groups[spl_object_id($this->db)])) {
+            self::$groups[spl_object_id($this->db)][] = compact('userId', 'entity', 'entityId', 'op', 'beforeTables', 'afterTables', 'summary', 'details', 'calendarIds', 'touches');
             return 0; // written when the group ends
         }
         if (!isset(self::$writing[spl_object_id($this->db) . ':' . $userId])
@@ -225,15 +227,16 @@ final class Undo
      */
     public function group(callable $fn, string $summary): mixed
     {
-        if ($this->grouped !== null) {
+        $key = spl_object_id($this->db);
+        if (isset(self::$groups[$key])) {
             return $fn();
         }
-        $this->grouped = [];
+        self::$groups[$key] = [];
         try {
             $result = $fn();
-            $records = $this->grouped;
+            $records = self::$groups[$key];
         } finally {
-            $this->grouped = null;
+            unset(self::$groups[$key]);
         }
         if ($records === []) {
             return $result;
@@ -249,9 +252,13 @@ final class Undo
         $logOnly = false;
         $calendarIds = [];
         $touches = [];
+        $settings = []; // each as before the first step and after the last
         foreach ($records as $r) {
             if ($r['beforeTables'] === null && $r['afterTables'] === null) {
                 $logOnly = true;
+            }
+            foreach ((array) ($r['details']['settings'] ?? []) as $name => $pair) {
+                $settings[$name] = isset($settings[$name]) ? [$settings[$name][0], $pair[1] ?? null] : $pair;
             }
             $calendarIds = array_merge($calendarIds, $r['calendarIds']);
             // What each step changed, snapshots or not: a step's own
@@ -292,7 +299,7 @@ final class Undo
         $this->record(
             $first['userId'], $first['entity'], $first['entityId'], 'update',
             $logOnly ? null : $list($before), $logOnly ? null : $list($after),
-            $summary, null, array_values(array_unique($calendarIds)), $touches
+            $summary, $settings !== [] ? ['settings' => $settings] : null, array_values(array_unique($calendarIds)), $touches
         );
         return $result;
     }
@@ -520,7 +527,9 @@ final class Undo
      * Whether a later change that marked a row of $table $later makes
      * undoing an earlier one that marked it $mine stale. "*" is the row
      * made or removed, "+" a row joining or leaving it (PARENTS), "~" a date
-     * of its series edited on its own, anything else a column changed. Pure.
+     * of its series edited on its own, "col^" one-way on col (an older
+     * change to col stands on it, it stands on nothing later), anything
+     * else a field changed. Pure.
      * - Undoing a row's making or removal stands on everything done to it
      *   since: a calendar made, then an event added to it.
      * - A row joining or leaving something changes nothing of that thing:
@@ -543,6 +552,14 @@ final class Undo
         }
         if ($later === '*') {
             return true;
+        }
+        // "col^": a change an older change to col stands on, that stands on
+        // nothing later itself (a split carrying the dates skipped).
+        if (str_ends_with($mine, '^')) {
+            return false;
+        }
+        if (str_ends_with($later, '^')) {
+            return $mine === substr($later, 0, -1);
         }
         $times = $table === 'events' ? self::SERIES_TIMES : [];
         $dates = $table === 'events' ? self::SERIES_DATES : [];

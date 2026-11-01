@@ -447,9 +447,11 @@ final class ReviewQueue
 
     // ---- Reading -------------------------------------------------------
 
+    /** The settings, as the app uses them (Settings::resolved): it adopts all of them from a Review answer. */
     public function mailSettings(int $userId): array
     {
-        return (new Settings($this->db))->forUser($userId);
+        $settings = new Settings($this->db);
+        return $settings->resolved($userId, $settings->forUser($userId));
     }
 
     /** @return list<array<string,mixed>> newest first */
@@ -646,187 +648,213 @@ final class ReviewQueue
      */
     public function accept(int $userId, int $id, ?string $approveSender = null, ?RequestAuthority $authority = null): array
     {
-        $result = ActivityContext::withRun('review', Ids::ulid(), fn(): array => (new Undo($this->db))->write($userId, function () use ($userId, $id, $approveSender, $authority): array {
-            $authority?->assertValid($this->db);
-            $row = $this->requireOpen($userId, $id);
-            $kind = (string) $row['kind'];
-            if (!in_array($kind, [self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE], true)) {
-                throw HttpError::notFound('No such invitation review item');
+        $undo = new Undo($this->db);
+        $title = (string) ($this->db->scalar('SELECT title FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]) ?? '');
+        // One entry for the decision, and its undo puts all of it back: the
+        // event as it was, the invitation stored on it, a sender approved
+        // with it, and the item open in Review again.
+        $result = ActivityContext::withRun('review', Ids::ulid(), fn(): array => $undo->write($userId, fn(): array => $undo->group(function () use ($userId, $id, $approveSender, $authority, $undo): array {
+            $item = fn(): ?array => $this->db->one('SELECT * FROM review_items WHERE id = ? AND user_id = ?', [$id, $userId]);
+            $eventRows = fn(int $eventId): array => $eventId > 0 ? $this->db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ?', [$eventId, $eventId]) : [];
+            $approved = fn() => (new Settings($this->db))->forUser($userId)['mailApprovedSenders'] ?? null;
+            $itemBefore = $item();
+            $eventsBefore = $eventRows((int) ($itemBefore['event_id'] ?? 0));
+            $approvedBefore = $approved();
+            $out = $this->decide($userId, $id, $approveSender, $authority);
+            if (!isset($out['error']) && $itemBefore !== null) {
+                $approvedAfter = $approved();
+                $undo->record($userId, 'review', $id, 'update',
+                    ['review_items' => [$itemBefore], 'events' => $eventsBefore],
+                    ['review_items' => [$item()], 'events' => $eventRows((int) ($out['eventId'] ?? 0))],
+                    null,
+                    $approvedAfter !== $approvedBefore ? ['settings' => ['mailApprovedSenders' => [$approvedBefore, $approvedAfter]]] : null);
             }
-            $payload = self::payload($row);
-            $incoming = is_array($payload['invite'] ?? null) ? $payload['invite'] : [];
-            if (!empty($incoming['organizer'])) $incoming['organizerTrust'] = 'owner';
-
-            if ($kind === self::KIND_INVITE_NEW) {
-                $uid = (string) ($payload['uid'] ?? '');
-                $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
-                if ($uid === '' || $fields === []) {
-                    $this->close((int) $row['id'], 'gone');
-                    return self::decisionError('review_gone', 'That invitation is incomplete and cannot be added. The item has been closed.');
-                }
-                $existing = $this->db->scalar(
-                    'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL LIMIT 1' . $this->forUpdate(),
-                    [$userId, $uid]
-                );
-                if ($existing !== null) {
-                    $this->close((int) $row['id'], 'superseded');
-                    return self::decisionError('review_stale', 'That invitation is already on your calendar. The duplicate item has been closed.');
-                }
-                if ($approveSender !== null) MailPolicy::approve($this->db, $userId, (string) ($payload['from'] ?? ''), $approveSender);
-                $calendarId = MailIngest::ensureInviteCalendar($this->db, $userId);
-                // Not answered yet, so a Maybe until the owner accepts.
-                $request = ($payload['method'] ?? '') === 'REQUEST';
-                if ($request) $incoming['myPartstat'] = 'NEEDS-ACTION';
-                $tier = in_array($payload['tier'] ?? 'imip', ['imip', 'markup', 'gcal-link', 'llm'], true) ? ($payload['tier'] ?? 'imip') : 'imip';
-                $occurrence = ActivityContext::with('mail:' . $tier . ':review', fn(): array => $this->events->create(
-                    $userId,
-                    ($request ? ['status' => 'tentative'] : []) + $fields + ['calendarId' => $calendarId, 'uid' => $uid],
-                    $authority
-                ));
-                $eventId = (int) $occurrence['eventId'];
-                MailIngest::storeInvite($this->db, $eventId, $incoming, false);
-                $this->db->run('UPDATE review_items SET event_id = ? WHERE id = ?', [$eventId, (int) $row['id']]);
-                $this->close((int) $row['id'], 'accepted');
-                $this->reconcilePending($userId, $eventId, (string) $row['source_key']);
-                return ['eventId' => $eventId];
-            }
-
-            $eventId = (int) ($row['event_id'] ?? 0);
-            $event = $this->db->one(
-                'SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL' . $this->forUpdate(),
-                [$eventId, $userId]
-            );
-            if ($event === null) {
-                $this->close((int) $row['id'], 'gone');
-                return self::decisionError('review_gone', 'That event no longer exists, so there is nothing to change. The item has been closed.');
-            }
-            $storedInvite = is_string($event['invite_json'] ?? null) ? json_decode((string) $event['invite_json'], true) : ($event['invite_json'] ?? null);
-            $storedTrustEstablished = MailIngest::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null);
-            $occurrence = isset($payload['occurrence']) ? (string) $payload['occurrence'] : null;
-            $overrideRow = $occurrence !== null ? self::occurrenceRow($this->db, $eventId, $occurrence) : null;
-            // One occurrence is checked against the series' organizer and its
-            // own sequence (MailIngest::occurrenceGate).
-            [$allowed, $why] = $occurrence !== null
-                ? MailIngest::imipMayMutate(MailIngest::occurrenceGate(is_array($storedInvite) ? $storedInvite : null, $overrideRow), $incoming, (string) ($payload['from'] ?? ''), (string) ($overrideRow['status'] ?? 'confirmed'))
-                : MailIngest::imipMayMutate(is_array($storedInvite) ? $storedInvite : null, $incoming, (string) ($payload['from'] ?? ''), (string) ($event['status'] ?? 'confirmed'));
-            if (!$allowed) {
-                $this->close((int) $row['id'], 'superseded');
-                return self::decisionError('review_stale', 'This change is out of date (' . $why . '): a newer version of the invitation has already been applied. The item has been closed.');
-            }
-            if ($occurrence !== null) {
-                // One occurrence never changes the whole series (#155): a
-                // cancellation skips it, a change becomes that occurrence's own
-                // exception, the way an edit to "this occurrence" does.
-                $method = (string) ($payload['method'] ?? '');
-                $fields = (array) ($payload['fields'] ?? []);
-                $cancel = $method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled';
-                $instance = (int) ($event['all_day'] ?? 0) === 1
-                    ? Time::fromDb($occurrence)->setTimezone(Time::zone((string) $event['tzid']))->format('Y-m-d')
-                    : Time::iso(Time::fromDb($occurrence));
-                $currentDiff = self::occurrenceDiff($event, $occurrence, $cancel ? 'CANCEL' : 'REQUEST', $fields, $overrideRow, Settings::homeTzid($this->db, $userId));
-                if ($currentDiff === []) {
-                    $this->close((int) $row['id'], 'superseded');
-                    return $cancel
-                        ? self::decisionError('review_stale', 'That occurrence is already skipped. The item has been closed.')
-                        : self::decisionError('review_stale', 'That occurrence already matches this change. The item has been closed.');
-                }
-                if ($cancel) {
-                    $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
-                    $this->close((int) $row['id'], 'accepted');
-                    return ['eventId' => $eventId, 'removed' => false];
-                }
-                if (!self::sameDiff($currentDiff, (array) ($payload['diff'] ?? []))) {
-                    $payload['diff'] = $currentDiff;
-                    $this->db->run(
-                        'UPDATE review_items SET summary = ?, payload_json = ? WHERE id = ?',
-                        [
-                            'That occurrence changed after this email arrived. Review the refreshed differences before applying it.',
-                            json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
-                            (int) $row['id'],
-                        ]
-                    );
-                    return self::decisionError('review_changed', 'That occurrence changed after this email arrived. The differences were refreshed; review them and try again.');
-                }
-                $patch = ['scope' => 'this', 'instanceStart' => $instance];
-                foreach (['title', 'start', 'end', 'allDay', 'location', 'description'] as $key) {
-                    if (array_key_exists($key, $fields)) $patch[$key] = $fields[$key];
-                }
-                if ($overrideRow !== null && (string) ($overrideRow['status'] ?? '') === 'cancelled') {
-                    $patch['status'] = 'confirmed';
-                }
-                $this->events->patch($userId, $eventId, $patch, $authority);
-                // The occurrence keeps its own sequence watermark; the series'
-                // organizer stays the one the owner approved.
-                $applied = self::occurrenceRow($this->db, $eventId, $occurrence);
-                if ($applied !== null) {
-                    if ($storedTrustEstablished && is_array($storedInvite) && !empty($storedInvite['organizer'])) {
-                        $incoming['organizer'] = $storedInvite['organizer'];
-                    }
-                    // Marked as this occurrence's own (MailIngest::occurrenceGate).
-                    if ($incoming !== []) $incoming['forOccurrence'] = $occurrence;
-                    MailIngest::storeInvite($this->db, (int) $applied['id'], $incoming === [] ? null : $incoming, true);
-                }
-                $this->close((int) $row['id'], 'accepted');
-                return ['eventId' => $eventId, 'removed' => false];
-            }
-
-            $method = (string) ($payload['method'] ?? '');
-            $fields = (array) ($payload['fields'] ?? []);
-            $currentDiff = self::inviteDiff($event, $method, $fields);
-            if ($currentDiff === []) {
-                $this->close((int) $row['id'], 'superseded');
-                return self::decisionError('review_stale', 'Your calendar already matches this invitation change. The item has been closed.');
-            }
-            if (!self::sameDiff($currentDiff, (array) ($payload['diff'] ?? []))) {
-                // The owner edited the event after this card was prepared. Do
-                // not apply a full emailed snapshot against a different state
-                // than the differences they reviewed. Refresh the card under
-                // this same lock; the next click evaluates the refreshed diff.
-                $payload['diff'] = $currentDiff;
-                $this->db->run(
-                    'UPDATE review_items SET title = ?, summary = ?, payload_json = ? WHERE id = ?',
-                    [
-                        mb_substr((string) $event['title'], 0, 300),
-                        'Your calendar changed after this email arrived. Review the refreshed differences before applying it.',
-                        json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
-                        (int) $row['id'],
-                    ]
-                );
-                return self::decisionError('review_changed', 'Your event changed after this email arrived. The differences were refreshed; review them and try again.');
-            }
-
-            // Once the owner has approved an organizer, later decisions cannot
-            // silently rebind it. A legacy auto-created invitation has no such
-            // marker; the first explicit owner decision establishes the anchor.
-            if ($storedTrustEstablished && is_array($storedInvite) && !empty($storedInvite['organizer'])) {
-                $incoming['organizer'] = $storedInvite['organizer'];
-            }
-            $patch = $method === 'CANCEL' ? ['status' => 'cancelled'] : $fields;
-            if ($method !== 'CANCEL' && (string) ($event['status'] ?? '') === 'cancelled') {
-                $patch['status'] = 'confirmed';
-            }
-            if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
-                $patch['scope'] = 'all';
-            }
-            $this->events->patch($userId, $eventId, $patch, $authority);
-            MailIngest::storeInvite($this->db, $eventId, $incoming === [] ? null : $incoming, true);
-            $this->close((int) $row['id'], 'accepted');
-            // The owner's choice (#132): an accepted cancellation removes the
-            // event right away, as an ordinary delete with Undo, instead of
-            // leaving it struck through.
-            $removed = false;
-            if ($method === 'CANCEL' && (new Settings($this->db))->forUser($userId)['removeAcceptedCancellations'] === true) {
-                $this->events->deleteEvent($userId, $eventId, null, null, $authority);
-                $removed = true;
-            }
-            $this->reconcilePending($userId, $eventId, (string) $row['source_key']);
-            return ['eventId' => $eventId, 'removed' => $removed];
-        }));
+            return $out;
+        }, "Accepted '" . $title . "' from Review")));
         if (isset($result['error'])) {
             throw HttpError::conflict((string) $result['error'], (string) $result['message']);
         }
         $row = $this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]);
         return ['item' => self::serialize($row ?? []), 'eventId' => (int) $result['eventId']] + (!empty($result['removed']) ? ['removed' => true] : []);
+    }
+
+    /** Apply the held change (accept's work, inside its write and group). */
+    private function decide(int $userId, int $id, ?string $approveSender, ?RequestAuthority $authority): array
+    {
+        $authority?->assertValid($this->db);
+        $row = $this->requireOpen($userId, $id);
+        $kind = (string) $row['kind'];
+        if (!in_array($kind, [self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE], true)) {
+            throw HttpError::notFound('No such invitation review item');
+        }
+        $payload = self::payload($row);
+        $incoming = is_array($payload['invite'] ?? null) ? $payload['invite'] : [];
+        if (!empty($incoming['organizer'])) $incoming['organizerTrust'] = 'owner';
+
+        if ($kind === self::KIND_INVITE_NEW) {
+            $uid = (string) ($payload['uid'] ?? '');
+            $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
+            if ($uid === '' || $fields === []) {
+                $this->close((int) $row['id'], 'gone');
+                return self::decisionError('review_gone', 'That invitation is incomplete and cannot be added. The item has been closed.');
+            }
+            $existing = $this->db->scalar(
+                'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL LIMIT 1' . $this->forUpdate(),
+                [$userId, $uid]
+            );
+            if ($existing !== null) {
+                $this->close((int) $row['id'], 'superseded');
+                return self::decisionError('review_stale', 'That invitation is already on your calendar. The duplicate item has been closed.');
+            }
+            if ($approveSender !== null) MailPolicy::approve($this->db, $userId, (string) ($payload['from'] ?? ''), $approveSender);
+            $calendarId = MailIngest::ensureInviteCalendar($this->db, $userId);
+            // Not answered yet, so a Maybe until the owner accepts.
+            $request = ($payload['method'] ?? '') === 'REQUEST';
+            if ($request) $incoming['myPartstat'] = 'NEEDS-ACTION';
+            $tier = in_array($payload['tier'] ?? 'imip', ['imip', 'markup', 'gcal-link', 'llm'], true) ? ($payload['tier'] ?? 'imip') : 'imip';
+            $occurrence = ActivityContext::with('mail:' . $tier . ':review', fn(): array => $this->events->create(
+                $userId,
+                ($request ? ['status' => 'tentative'] : []) + $fields + ['calendarId' => $calendarId, 'uid' => $uid],
+                $authority
+            ));
+            $eventId = (int) $occurrence['eventId'];
+            MailIngest::storeInvite($this->db, $eventId, $incoming, false);
+            $this->db->run('UPDATE review_items SET event_id = ? WHERE id = ?', [$eventId, (int) $row['id']]);
+            $this->close((int) $row['id'], 'accepted');
+            $this->reconcilePending($userId, $eventId, (string) $row['source_key']);
+            return ['eventId' => $eventId];
+        }
+
+        $eventId = (int) ($row['event_id'] ?? 0);
+        $event = $this->db->one(
+            'SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL' . $this->forUpdate(),
+            [$eventId, $userId]
+        );
+        if ($event === null) {
+            $this->close((int) $row['id'], 'gone');
+            return self::decisionError('review_gone', 'That event no longer exists, so there is nothing to change. The item has been closed.');
+        }
+        $storedInvite = is_string($event['invite_json'] ?? null) ? json_decode((string) $event['invite_json'], true) : ($event['invite_json'] ?? null);
+        $storedTrustEstablished = MailIngest::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null);
+        $occurrence = isset($payload['occurrence']) ? (string) $payload['occurrence'] : null;
+        $overrideRow = $occurrence !== null ? self::occurrenceRow($this->db, $eventId, $occurrence) : null;
+        // One occurrence is checked against the series' organizer and its
+        // own sequence (MailIngest::occurrenceGate).
+        [$allowed, $why] = $occurrence !== null
+            ? MailIngest::imipMayMutate(MailIngest::occurrenceGate(is_array($storedInvite) ? $storedInvite : null, $overrideRow), $incoming, (string) ($payload['from'] ?? ''), (string) ($overrideRow['status'] ?? 'confirmed'))
+            : MailIngest::imipMayMutate(is_array($storedInvite) ? $storedInvite : null, $incoming, (string) ($payload['from'] ?? ''), (string) ($event['status'] ?? 'confirmed'));
+        if (!$allowed) {
+            $this->close((int) $row['id'], 'superseded');
+            return self::decisionError('review_stale', 'This change is out of date (' . $why . '): a newer version of the invitation has already been applied. The item has been closed.');
+        }
+        if ($occurrence !== null) {
+            // One occurrence never changes the whole series (#155): a
+            // cancellation skips it, a change becomes that occurrence's own
+            // exception, the way an edit to "this occurrence" does.
+            $method = (string) ($payload['method'] ?? '');
+            $fields = (array) ($payload['fields'] ?? []);
+            $cancel = $method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled';
+            $instance = (int) ($event['all_day'] ?? 0) === 1
+                ? Time::fromDb($occurrence)->setTimezone(Time::zone((string) $event['tzid']))->format('Y-m-d')
+                : Time::iso(Time::fromDb($occurrence));
+            $currentDiff = self::occurrenceDiff($event, $occurrence, $cancel ? 'CANCEL' : 'REQUEST', $fields, $overrideRow, Settings::homeTzid($this->db, $userId));
+            if ($currentDiff === []) {
+                $this->close((int) $row['id'], 'superseded');
+                return $cancel
+                    ? self::decisionError('review_stale', 'That occurrence is already skipped. The item has been closed.')
+                    : self::decisionError('review_stale', 'That occurrence already matches this change. The item has been closed.');
+            }
+            if ($cancel) {
+                $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
+                $this->close((int) $row['id'], 'accepted');
+                return ['eventId' => $eventId, 'removed' => false];
+            }
+            if (!self::sameDiff($currentDiff, (array) ($payload['diff'] ?? []))) {
+                $payload['diff'] = $currentDiff;
+                $this->db->run(
+                    'UPDATE review_items SET summary = ?, payload_json = ? WHERE id = ?',
+                    [
+                        'That occurrence changed after this email arrived. Review the refreshed differences before applying it.',
+                        json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+                        (int) $row['id'],
+                    ]
+                );
+                return self::decisionError('review_changed', 'That occurrence changed after this email arrived. The differences were refreshed; review them and try again.');
+            }
+            $patch = ['scope' => 'this', 'instanceStart' => $instance];
+            foreach (['title', 'start', 'end', 'allDay', 'location', 'description'] as $key) {
+                if (array_key_exists($key, $fields)) $patch[$key] = $fields[$key];
+            }
+            if ($overrideRow !== null && (string) ($overrideRow['status'] ?? '') === 'cancelled') {
+                $patch['status'] = 'confirmed';
+            }
+            $this->events->patch($userId, $eventId, $patch, $authority);
+            // The occurrence keeps its own sequence watermark; the series'
+            // organizer stays the one the owner approved.
+            $applied = self::occurrenceRow($this->db, $eventId, $occurrence);
+            if ($applied !== null) {
+                if ($storedTrustEstablished && is_array($storedInvite) && !empty($storedInvite['organizer'])) {
+                    $incoming['organizer'] = $storedInvite['organizer'];
+                }
+                // Marked as this occurrence's own (MailIngest::occurrenceGate).
+                if ($incoming !== []) $incoming['forOccurrence'] = $occurrence;
+                MailIngest::storeInvite($this->db, (int) $applied['id'], $incoming === [] ? null : $incoming, true);
+            }
+            $this->close((int) $row['id'], 'accepted');
+            return ['eventId' => $eventId, 'removed' => false];
+        }
+
+        $method = (string) ($payload['method'] ?? '');
+        $fields = (array) ($payload['fields'] ?? []);
+        $currentDiff = self::inviteDiff($event, $method, $fields);
+        if ($currentDiff === []) {
+            $this->close((int) $row['id'], 'superseded');
+            return self::decisionError('review_stale', 'Your calendar already matches this invitation change. The item has been closed.');
+        }
+        if (!self::sameDiff($currentDiff, (array) ($payload['diff'] ?? []))) {
+            // The owner edited the event after this card was prepared. Do
+            // not apply a full emailed snapshot against a different state
+            // than the differences they reviewed. Refresh the card under
+            // this same lock; the next click evaluates the refreshed diff.
+            $payload['diff'] = $currentDiff;
+            $this->db->run(
+                'UPDATE review_items SET title = ?, summary = ?, payload_json = ? WHERE id = ?',
+                [
+                    mb_substr((string) $event['title'], 0, 300),
+                    'Your calendar changed after this email arrived. Review the refreshed differences before applying it.',
+                    json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+                    (int) $row['id'],
+                ]
+            );
+            return self::decisionError('review_changed', 'Your event changed after this email arrived. The differences were refreshed; review them and try again.');
+        }
+
+        // Once the owner has approved an organizer, later decisions cannot
+        // silently rebind it. A legacy auto-created invitation has no such
+        // marker; the first explicit owner decision establishes the anchor.
+        if ($storedTrustEstablished && is_array($storedInvite) && !empty($storedInvite['organizer'])) {
+            $incoming['organizer'] = $storedInvite['organizer'];
+        }
+        $patch = $method === 'CANCEL' ? ['status' => 'cancelled'] : $fields;
+        if ($method !== 'CANCEL' && (string) ($event['status'] ?? '') === 'cancelled') {
+            $patch['status'] = 'confirmed';
+        }
+        if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
+            $patch['scope'] = 'all';
+        }
+        $this->events->patch($userId, $eventId, $patch, $authority);
+        MailIngest::storeInvite($this->db, $eventId, $incoming === [] ? null : $incoming, true);
+        $this->close((int) $row['id'], 'accepted');
+        // The owner's choice (#132): an accepted cancellation removes the
+        // event right away, as an ordinary delete with Undo, instead of
+        // leaving it struck through.
+        $removed = false;
+        if ($method === 'CANCEL' && (new Settings($this->db))->forUser($userId)['removeAcceptedCancellations'] === true) {
+            $this->events->deleteEvent($userId, $eventId, null, null, $authority);
+            $removed = true;
+        }
+        $this->reconcilePending($userId, $eventId, (string) $row['source_key']);
+        return ['eventId' => $eventId, 'removed' => $removed];
     }
 
     /**

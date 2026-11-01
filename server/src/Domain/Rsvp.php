@@ -265,14 +265,18 @@ final class Rsvp
         }
         $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Maybe'][$partstat];
         $summary = $verb . " to '" . (string) $row['title'] . "'";
-        // Recorded with the answer, in the transaction that changes the event:
-        // not undoable (the answer goes to the organizer), but what it
-        // changed is the ground of an older undo of this event.
+        // Recorded with the answer, in the transaction that changes the event.
+        // An answer that goes to the organizer (or may have) can't be taken
+        // back here: log only, but what it changed is the ground of an older
+        // undo of this event. One that stays here ($before and $after given:
+        // nothing was sent) is undoable like any change.
         $entry = 0;
-        $journal = function () use ($userId, $eventId, $summary, &$entry): void {
+        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, &$entry): void {
             $undo = new Undo($this->db);
-            $entry = ActivityContext::with('rsvp', fn() => $undo->record($userId, 'event', $eventId, 'update', null, null, $summary,
-                touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], ['invite_json', 'status', 'attendance'])));
+            $entry = ActivityContext::with('rsvp', fn() => $before !== null && $after !== null
+                ? $undo->record($userId, 'event', $eventId, 'update', ['events' => [$before]], ['events' => [$after]], $summary)
+                : $undo->record($userId, 'event', $eventId, 'update', null, null, $summary,
+                    touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], ['invite_json', 'status', 'attendance'])));
         };
         $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken), $journal)
@@ -298,6 +302,7 @@ final class Rsvp
         (new Undo($this->db))->write((int) $row['user_id'], function () use ($row, &$invite, $partstat, $authority, $attempt, $block, &$outcome, $journal): void {
             $authority->assertValid($this->db);
             $current = $this->db->one('SELECT invite_json FROM events WHERE id = ? AND deleted_at IS NULL' . $this->db->forUpdate(), [(int) $row['id']]);
+            $before = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]);
             if ($current === null || json_decode((string) $current['invite_json'], true) !== $invite) {
                 throw HttpError::conflict('invitation_changed', 'This invitation changed. Reload before replying.');
             }
@@ -312,7 +317,8 @@ final class Rsvp
             $invite['reply'] = ['attemptId' => $attempt, 'partstat' => $partstat, 'at' => Time::iso(Time::nowUtc())] + $outcome;
             $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
             $this->db->run("UPDATE events SET status = ? WHERE id = ? AND status <> 'cancelled'", [$partstat === 'ACCEPTED' ? 'confirmed' : 'tentative', (int) $row['id']]);
-            $journal();
+            $sending = $outcome['reason'] === 'sending';
+            $journal($sending ? null : $before, $sending ? null : $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]));
         });
         if ($outcome['reason'] === 'sending') {
             $organizer = (string) $invite['organizer']['email'];

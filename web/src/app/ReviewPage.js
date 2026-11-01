@@ -112,7 +112,10 @@ function ReviewCard({ item, onChanged }) {
           toast('Dismissed. Nothing was added.');
         } else if (res && res.reply) {
           const out = rsvpOutcome(res.reply, 'mail');
-          toast('Added. ' + out.text, { error: !!out.error, undo: entriesOf(res) });
+          // A reply that went (or may have) can't be taken back from here;
+          // one that didn't is undone with the add.
+          const went = res.reply.sent || ['sending', 'uncertain'].includes(res.reply.reason);
+          toast('Added. ' + out.text, { error: !!out.error, undo: went ? [] : entriesOf(res), note: went ? 'Reply sent' : null });
           loadReviewCount();
         } else {
           toast((d.isInvitation ? 'Added as a Maybe. You have not replied.' : 'Added to your calendar.')

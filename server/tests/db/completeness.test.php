@@ -23,7 +23,7 @@ use BetterCal\Plugin\PluginHost;
 return static function (Db $db): void {
     // The tables undo restores, read whole: row key => row.
     $tables = ['folders', 'tags', 'people', 'calendars', 'calendar_folders', 'events', 'event_links', 'event_tags',
-        'event_people', 'out_feeds', 'filters', 'saved_views', 'availability'];
+        'event_people', 'out_feeds', 'filters', 'saved_views', 'availability', 'review_items'];
     $read = static function () use ($db, $tables): array {
         $out = [];
         foreach ($tables as $table) {

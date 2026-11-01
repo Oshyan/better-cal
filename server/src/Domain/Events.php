@@ -1954,7 +1954,7 @@ final class Events
             'update',
             ['events' => array_merge([$master], $movedOverrides)] + $removedLinks,
             ['events' => [$afterMaster, $created]],
-            touches: !empty($created['exdates_json']) ? [[Undo::keyOf('events', ['id' => $masterId]), 'exdates_json']] : []
+            touches: !empty($created['exdates_json']) ? [[Undo::keyOf('events', ['id' => $masterId]), 'exdates_json^']] : []
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
@@ -2195,6 +2195,28 @@ final class Events
                 $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $kind]);
             }
         }
+    }
+
+    /**
+     * Where an address was found on the map, by the event view's lookup:
+     * stored as the background lookup (GeocodeSweep) stores it, only while
+     * the event has no coordinates, and not as a change of the person's
+     * (no journal entry, so it never stands between their edit and its
+     * undo). Local events only; false when it had coordinates by then.
+     */
+    public function placeFromLookup(int $userId, int $id, mixed $lat, mixed $lng, ?string $provider): bool
+    {
+        try {
+            [$lat, $lng] = [Coordinates::latitude($lat), Coordinates::longitude($lng)];
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest($e->getMessage());
+        }
+        $now = Time::nowDb();
+        return $this->db->run(
+            "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?, location_source = 'lookup', location_provider = ?, location_placed_at = ?
+             WHERE id = ? AND user_id = ? AND source = 'local' AND deleted_at IS NULL AND location_lat IS NULL AND location IS NOT NULL AND location <> ''",
+            [$lat, $lng, $now, $provider !== null ? mb_substr($provider, 0, 40) : null, $now, $id, $userId]
+        )->rowCount() > 0;
     }
 
     /**
@@ -2606,6 +2628,11 @@ final class Events
                 }
                 if ($col === 'location' && $fields[$col] !== null) {
                     $fields[$col] = mb_substr($fields[$col], 0, 500);
+                }
+                // A new address is looked up afresh (the sweep skips one it
+                // tried in the last month), as a feed's is.
+                if ($col === 'location' && $fields[$col] !== ($current['location'] ?? null)) {
+                    $fields['geocoded_at'] = null;
                 }
                 if ($col === 'description' && $fields[$col] !== null) {
                     $fields[$col] = Sanitize::description(Ics::clip($fields[$col], Limits::get('DESCRIPTION_CHARS')));

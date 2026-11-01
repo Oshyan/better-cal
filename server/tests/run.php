@@ -1726,8 +1726,11 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $cancelResult = $queueA->accept(1, $cancelChange);
     checkEq('cancellation: with the setting on, accepting it removes the event and says so', [true, true],
         [!empty($cancelResult['removed']), $adb->scalar('SELECT deleted_at FROM events WHERE id = ?', [$cancelEventId]) !== null]);
-    check('cancellation: the removal is an ordinary delete in Activity, with a snapshot to undo',
-        $adb->scalar("SELECT before_json FROM mutations WHERE entity_id = ? AND op = 'delete' ORDER BY id DESC LIMIT 1", [$cancelEventId]) !== null);
+    // The decision is one entry, the removal in it, with what an undo puts back.
+    $cancelEntry = $adb->one('SELECT summary, before_json, after_json FROM mutations ORDER BY id DESC LIMIT 1');
+    check('cancellation: the removal is part of the decision\'s one entry, with a snapshot to undo',
+        str_starts_with((string) $cancelEntry['summary'], "Accepted '") && $cancelEntry['before_json'] !== null
+        && str_contains((string) $cancelEntry['after_json'], '"deleted_at":"'));
     $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettings]);
 
     // One occurrence (RECURRENCE-ID) never changes the whole series (review of

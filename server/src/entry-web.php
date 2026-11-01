@@ -198,6 +198,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/events/:id/relationship", [$eventsController, 'relationship']);
         $router->add('POST', "$base/events/:id/rsvp", [$eventsController, 'rsvp']);
         $router->add('POST', "$base/events/:id/feedback", [$eventsController, 'feedback']);
+        $router->add('POST', "$base/events/:id/place", [$eventsController, 'place']);
 
         $router->add('POST', "$base/quickadd", [$quickAddController, 'run']);
         $router->add('POST', "$base/undo", function (Request $req) use ($undo): Response {

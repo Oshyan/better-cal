@@ -239,17 +239,12 @@ export function useEventGeo(occ, active) {
         if (point) {
           setGeo({ status: 'ok', ...point });
           if (occ.source === 'local') {
-            // Persist quietly; failure just means we geocode again next time.
-            api('/events/' + occ.eventId, {
-              method: 'PATCH',
-              body: {
-                locationLat: point.lat,
-                locationLng: point.lng,
-                // A lookup, not a choice: the server keeps that apart.
-                locationSource: 'lookup',
-                ...(res.provider ? { locationProvider: res.provider } : {}),
-                ...(occ.recurring ? { scope: 'all' } : {}),
-              },
+            // Persist quietly, as the background lookup does: not a change of
+            // yours (no undo entry), and only while it has no place yet.
+            // Failure just means we geocode again next time.
+            api('/events/' + occ.eventId + '/place', {
+              method: 'POST',
+              body: { lat: point.lat, lng: point.lng, ...(res.provider ? { provider: res.provider } : {}) },
             }).catch(() => {});
             patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng }, { edit: false });
           }

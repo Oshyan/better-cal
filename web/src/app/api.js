@@ -906,6 +906,8 @@ export async function search(q, opts = {}, limit = 50) {
 // new events go, put back with a calendar), or the window's events.
 export function afterUndo() {
   invalidateRecords();
+  // People's away times and plugins' bands are fetched on their own.
+  set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1 });
   loadCalendars().catch(() => {});
   api('/settings').then((d) => adoptSettings(d.settings)).catch(() => {});
   return refreshWindow();

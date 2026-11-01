@@ -27,7 +27,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **A question asked from the event panel** ("Send another reply?") no longer closes the panel under itself and swallows the first click.
 - **Removing a person no longer asks first:** the toast's Undo brings them back. Removing a subscription from Review can be undone from its toast too.
 
-Operators: five database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, a default calendar for every account, and which calendar a plugin run was for), applied automatically by `update.php` or the database update page. `migrate.php` now waits out a running worker job before it starts.
+Operators: six database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, a default calendar for every account, which calendar a plugin run was for, and the undo one once more for installs updated from a development build), applied automatically by `update.php` or the database update page. `migrate.php` now waits out a running worker job before it starts.
 
 ## 1.4.4 (2026-10-31)
 

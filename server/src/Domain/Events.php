@@ -201,7 +201,8 @@ final class Events
         ]);
         try {
             // A time the plugin gives back with no offset is the owner's
-            // local time, as the host reads the plugin's events (syncEvents).
+            // local time (the Home zone in Settings; UTC until one is set),
+            // as undoing the move reads it (Undo::undoPluginEdit).
             [$startUtc, $endUtc, $isAllDay] = PluginHost::spanToUtc($span, Time::zone(Settings::homeTzid($this->db, $userId)));
         } catch (\Throwable) {
             throw new HttpError('plugin_edit_failed', $name . ' gave back a time Better-Cal could not read', 502);

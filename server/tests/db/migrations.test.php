@@ -5,6 +5,7 @@ declare(strict_types=1);
 // Migrations that change data, run again over rows made the way older
 // versions made them.
 
+use BetterCal\Domain\MailIngest;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 
@@ -39,6 +40,15 @@ return static function (Db $db): void {
     $db->run('ALTER TABLE calendar_folders ADD COLUMN position INT NOT NULL DEFAULT 0');
     $migration('055_folder_order.php')($db);
     checkEq('migration 055: run again after one cut off before numbering, the folders are numbered', [[$c2, $c3, $c1], [$c3, $c1]], [$inFolder($f1), $inFolder($f2)]);
+    // Left half numbered by an older build of this migration (no transaction
+    // then): members at 0, 1, 0. Run again, the folder is numbered through
+    // in the order it showed; the folder that was numbered is left alone.
+    $db->run('UPDATE calendar_folders SET position = 0 WHERE folder_id = ? AND calendar_id IN (?, ?)', [$f1, $c2, $c1]);
+    $db->run('UPDATE calendar_folders SET position = 1 WHERE folder_id = ? AND calendar_id = ?', [$f1, $c3]);
+    $db->run('UPDATE calendar_folders SET position = 1 WHERE folder_id = ? AND calendar_id = ?', [$f2, $c1]);
+    $db->run('UPDATE calendar_folders SET position = 0 WHERE folder_id = ? AND calendar_id = ?', [$f2, $c3]);
+    $migration('055_folder_order.php')($db);
+    checkEq('migration 055: a folder left half numbered is numbered through; one numbered is left alone', [[$c2, $c3, $c1], [$c3, $c1]], [$inFolder($f1), $inFolder($f2)]);
 
     // 057: places a step apart, in the same order; again, nothing changes.
     $migration('057_sparse_order.php')($db);
@@ -61,6 +71,17 @@ return static function (Db $db): void {
     $db->run('UPDATE calendars SET visible = 0, position = 1 WHERE id IN (?, ?)', [$hidden, $first]);
     $db->run('UPDATE calendars SET position = 2 WHERE id = ?', [$shown]);
     $db->run('UPDATE users SET settings_json = ? WHERE id = ?', ['{"defaultCalendarId":null}', $u]);
+    // Two more accounts: one whose invitations calendar comes first in the
+    // list, one with only the invitations calendar.
+    $v = freshUser($db);
+    $vOwn = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$v]);
+    $db->run('UPDATE calendars SET position = ? WHERE id = ?', [5, MailIngest::ensureInviteCalendar($db, $v)]);
+    $db->run('UPDATE calendars SET position = 9 WHERE id = ?', [$vOwn]);
+    $db->run('UPDATE users SET settings_json = ? WHERE id = ?', ['{}', $v]);
+    $w = freshUser($db);
+    $db->run('DELETE FROM calendars WHERE user_id = ?', [$w]);
+    MailIngest::ensureInviteCalendar($db, $w);
+    $db->run('UPDATE users SET settings_json = ? WHERE id = ?', ['{}', $w]);
 
     $insert = static function (string $entity, int $entityId, ?array $before, ?array $after) use ($db, $u): int {
         return $db->insert('mutations', [
@@ -90,11 +111,20 @@ return static function (Db $db): void {
     checkEq('migration 058: one that kept no snapshots touched all of its item', [['events:4242', '*']], $touches($google));
     checkEq('migration 058: an older entry that still has its snapshots is filled in; one without is left', [Undo::touchesOf(
         ['events' => [['id' => 777, 'title' => 'Was']]], ['events' => [['id' => 777, 'title' => 'Is']]]), []], [$touches($old), $touches($gone)]);
-    checkEq('migration 058: the default calendar is the one the app was picking: the first shown in the list', $shown,
-        json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$u]), true)['defaultCalendarId'] ?? null);
+    $stored = static fn(int $userId): mixed => json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]), true)['defaultCalendarId'] ?? null;
+    checkEq('migration 058: the default calendar is the one the app was picking: the first shown in the list', $shown, $stored($u));
+    checkEq('migration 058: never the invitations calendar: the own one behind it in the list, or nothing when it is the only one', [$vOwn, null], [$stored($v), $stored($w)]);
     $rows = (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches');
     $again = (require dirname(__DIR__, 2) . '/migrations/058_undo_ground.php')($db);
     check('migration 058: run again, nothing changes', $rows === (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches')
         && str_contains($again, '(0 entries filled in') && str_contains($again, '0 old placements') && str_contains($again, '(0 set)'), $again);
     check('migration 058: says what it did', str_contains($said, 'old placements'), $said);
+    // 060 is 058 again, for installs that ran it from a development build:
+    // an entry it left without touches gets them; where it ran as released, nothing changes.
+    $late = $insert('event', 779, ['events' => [['id' => 779, 'title' => '01']]], ['events' => [['id' => 779, 'title' => '1']]]);
+    $db->run('DELETE FROM mutation_touches WHERE mutation_id = ?', [$late]);
+    $rows = (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches');
+    $againSaid = (require dirname(__DIR__, 2) . '/migrations/060_undo_ground_again.php')($db);
+    checkEq('migration 060: an entry 058 left without touches on a development build gets them, and nothing else changes',
+        [[['events:779', 'title']], $rows + 1, true], [$touches($late), (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches'), str_contains($againSaid, 'stands on')]);
 };

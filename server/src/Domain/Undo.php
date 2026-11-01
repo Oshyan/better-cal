@@ -835,7 +835,10 @@ final class Undo
             'before' => Events::pluginSpan((string) $event['start_utc'], (string) $event['end_utc'], (int) $event['all_day'] === 1),
             'after' => $span,
         ]);
-        [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result);
+        // A time the plugin confirms with no offset is the owner's local
+        // time (the Home zone in Settings; UTC until one is set), read as
+        // the move itself reads it (Events::pluginReschedule).
+        [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result, Time::zone(Settings::homeTzid($this->db, $userId)));
         $this->write($userId, function () use ($event, $startUtc, $endUtc, $allDay, $mutation, $authority): void {
             $authority?->assertValid($this->db);
             $this->db->update('events', [

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use BetterCal\Domain\MailIngest;
 use BetterCal\Domain\Settings;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
@@ -71,8 +72,10 @@ return static function (Db $db): string {
     }
 
     // Where new events go, set for every account that has a local calendar
-    // (it's always set from now on): the one the app was picking, the
-    // first shown local calendar in the list, unless one was chosen.
+    // of its own: the one the app was picking, the first shown local
+    // calendar in the list, unless one was chosen. Never the calendar the
+    // app made for invitations: with only that one, nothing is stored, and
+    // the next calendar made takes over (Calendars::create).
     $set = 0;
     foreach ($db->all('SELECT id, settings_json FROM users') as $user) {
         $settings = is_string($user['settings_json']) ? json_decode($user['settings_json'], true) : null;
@@ -80,7 +83,7 @@ return static function (Db $db): string {
         if (is_numeric($chosen) && $db->scalar("SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'local'", [(int) $chosen, (int) $user['id']]) !== null) {
             continue;
         }
-        $pick = $db->scalar("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY visible DESC, position, id LIMIT 1", [(int) $user['id']]);
+        $pick = $db->scalar("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' AND name <> ? ORDER BY visible DESC, position, id LIMIT 1", [(int) $user['id'], MailIngest::INVITE_CALENDAR]);
         if ($pick !== null) {
             Settings::setDefaultCalendar($db, (int) $user['id'], (int) $pick);
             $set++;

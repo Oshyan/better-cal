@@ -218,13 +218,22 @@ stage "pause: maintenance on"
 DEPLOY_TOUCHED=1
 # The site answers "updating" and the worker stops between jobs until the
 # migration is in (the same file bin/update.php writes), so no request and no
-# job runs across the two versions' code and schema; migrate.php waits out a
-# job already running. Written as a file, not through PHP: it has to work
-# with whatever version is on the server now, before the rsync.
+# job runs across the two versions' code and schema. Then a job already
+# under way is waited out (the worker lock, as update.php waits) before any
+# file changes: a job loads classes as it goes, and must not pick up the new
+# version's halfway. The file is written as a file, and the wait uses the
+# code on the server now, since this runs before the rsync.
 rssh_args env "APP_DIR=${APP_DIR}" "APP_USER=${APP_USER}" bash -s <<'EOF'
 set -euo pipefail
 printf '{"since":"%s","reason":"deploying"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   | sudo -n -u "${APP_USER}" -- tee "${APP_DIR}/.maintenance" >/dev/null
+sudo -n -u "${APP_USER}" -- php -r '
+  require $argv[1] . "/server/src/bootstrap.php";
+  $cfg = config();
+  $db = new BetterCal\Infra\Db($cfg["db"]);
+  $held = (int) $db->scalar("SELECT GET_LOCK(?, 90)", [BetterCal\Infra\Updater::workerLockName((string) $cfg["db"]["dsn"])]) === 1;
+  if (!$held) { fwrite(STDERR, "A worker job is still running after 90 seconds.\n"); exit(1); }
+' "${APP_DIR}"
 EOF
 
 stage "rsync code"

@@ -6927,6 +6927,15 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     checkEq('plugin undo: the entry is marked undone', 1, (int) $edb->scalar("SELECT undone FROM mutations WHERE entity = 'plugin_edit'"));
     checkEq('plugin undo: CalDAV clients hear of the change', 1, (int) $edb->scalar('SELECT COUNT(*) FROM dav_changes WHERE calendar_id = 1'));
     checkEq('plugin undo: it reports an event update', ['entity' => 'event', 'op' => 'update'], $undone);
+    // A time the plugin confirms with no offset is the owner's local time,
+    // as the move itself read it: 10:00 in New York in January is 15:00 UTC.
+    $edb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $edb->run("INSERT INTO users (id, settings_json) VALUES (1, ?)", [json_encode(['tz' => 'America/New_York'])]);
+    $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (2, 1, 1, 'plg-mover-item:8', 'Timed item', '2030-01-02 16:00:00', '2030-01-02 17:00:00', 0, 'UTC')");
+    $undo->write(1, fn() => $undo->record(1, 'plugin_edit', 2, 'update', [], [], "Moved 'Timed item' in Mover", ['pluginId' => 'mover', 'span' => ['start' => '2030-01-02T10:00:00', 'end' => '2030-01-02T11:00:00', 'allDay' => false]], [1]));
+    $undo->undoLatest(1);
+    checkEq("plugin undo: a confirmed time with no offset is read in the owner's zone", ['2030-01-02 15:00:00', '2030-01-02 16:00:00'],
+        [$edb->scalar('SELECT start_utc FROM events WHERE id = 2'), $edb->scalar('SELECT end_utc FROM events WHERE id = 2')]);
 
     $edb->run("UPDATE events SET title = 'refuse' WHERE id = 1");
     $undo->write(1, fn() => $undo->record(1, 'plugin_edit', 1, 'update', [], [], 'Moved again', ['pluginId' => 'mover', 'span' => ['start' => '2030-03-09', 'end' => '2030-03-10', 'allDay' => true]], [1]));
@@ -6946,8 +6955,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     // or API key revoked before or during the write can't finish it.
     $edb->run("UPDATE plugins SET enabled = 1 WHERE id = 'mover'");
     $edb->run("UPDATE events SET title = 'Moved item', start_utc = '2030-03-02 00:00:00', end_utc = '2030-03-03 00:00:00' WHERE id = 1");
-    $edb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
-    $edb->run("INSERT INTO users (id, settings_json) VALUES (1, '{}')");
+    $edb->run("UPDATE users SET settings_json = '{}' WHERE id = 1");
     $edb->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
     $edb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
     $live = static function () use ($edb): void {

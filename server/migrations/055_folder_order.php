@@ -16,18 +16,23 @@ return static function (Db $db): string {
     // A folder starts in the order it showed before: the calendars'. Decided
     // from the rows, not the column: adding the column commits on its own,
     // so a run cut off before this loop leaves every member at 0 and comes
-    // back here. A folder of more than one all at 0 is one not yet numbered.
-    $rows = $db->all(
-        'SELECT cf.folder_id, cf.calendar_id FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id
-         WHERE cf.folder_id IN (SELECT folder_id FROM calendar_folders GROUP BY folder_id HAVING COUNT(*) > 1 AND MAX(position) = 0)
-         ORDER BY cf.folder_id, c.position, c.id'
-    );
-    $at = [];
-    foreach ($rows as $r) {
-        $f = (int) $r['folder_id'];
-        $at[$f] = ($at[$f] ?? -1) + 1;
-        $db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$at[$f], $f, (int) $r['calendar_id']]);
-    }
+    // back here. A folder whose members share a place (all at 0, or some
+    // numbered and the rest still 0) is one not numbered through; the app
+    // numbers a folder whole (Folders::place). Numbered in one transaction,
+    // so a cut-off leaves nothing half done.
+    $db->tx(static function () use ($db): void {
+        $rows = $db->all(
+            'SELECT cf.folder_id, cf.calendar_id FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id
+             WHERE cf.folder_id IN (SELECT folder_id FROM calendar_folders GROUP BY folder_id HAVING COUNT(*) > COUNT(DISTINCT position))
+             ORDER BY cf.folder_id, c.position, c.id'
+        );
+        $at = [];
+        foreach ($rows as $r) {
+            $f = (int) $r['folder_id'];
+            $at[$f] = ($at[$f] ?? -1) + 1;
+            $db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$at[$f], $f, (int) $r['calendar_id']]);
+        }
+    });
     if (!$has('folders', 'sort')) {
         $db->run("ALTER TABLE folders ADD COLUMN sort VARCHAR(8) NOT NULL DEFAULT 'manual'");
     }

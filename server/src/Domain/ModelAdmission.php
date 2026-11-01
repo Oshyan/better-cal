@@ -127,7 +127,7 @@ final class ModelAdmission
         string $message,
     ): array {
         try {
-            return $this->db->tx(function () use (
+            return (new Undo($this->db))->write($userId, function () use (
                 $userId,
                 $operation,
                 $principalKind,
@@ -142,7 +142,6 @@ final class ModelAdmission
                 $principalConcurrentLimit,
                 $message,
             ): array {
-                $this->lockAccount($userId);
                 $key = hash('sha256', $principalKind . ':' . $principalIdentity);
                 $hour = $now->sub(new \DateInterval('PT1H'));
                 $day = $now->sub(new \DateInterval('P1D'));
@@ -198,14 +197,6 @@ final class ModelAdmission
                 'AI processing is temporarily paused because its safety accounting is unavailable.',
                 $now->add(new \DateInterval('PT5M')),
             );
-        }
-    }
-
-    private function lockAccount(int $userId): void
-    {
-        $sql = 'SELECT id FROM users WHERE id = ?' . $this->db->forUpdate();
-        if ($this->db->scalar($sql, [$userId]) === null) {
-            throw new \RuntimeException('Model admission could not lock its account');
         }
     }
 

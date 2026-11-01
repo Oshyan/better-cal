@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { api, loadPeople, refreshWindow } from './api.js';
+import { api, entriesOf, loadPeople, refreshWindow } from './api.js';
 import { jumpToDate, openDetail, addAvailabilitySpan, updateAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { CalDot, Icon } from '../ui/icons.js';
@@ -218,8 +218,8 @@ export function PeoplePage() {
     if (!trimmed || trimmed === p.name) return;
     try {
       const merged = people.some((x) => x.id !== p.id && x.name.toLowerCase() === trimmed.toLowerCase());
-      await api('/people/' + p.id, { method: 'PATCH', body: { name: trimmed } });
-      toast(merged ? `Merged into ${trimmed}` : 'Renamed');
+      const saved = await api('/people/' + p.id, { method: 'PATCH', body: { name: trimmed } });
+      toast(merged ? `Merged into ${trimmed}` : 'Renamed', { undo: entriesOf(saved) });
       loadPeople();
       // Occurrences carry people as names, so every cached event still shows
       // the old one. Pull the window again rather than leaving the calendar
@@ -245,8 +245,8 @@ export function PeoplePage() {
 
   const remove = async (p) => {
     try {
-      await api('/people/' + p.id, { method: 'DELETE' });
-      toast(`Removed ${p.name} (events kept)`);
+      const saved = await api('/people/' + p.id, { method: 'DELETE' });
+      toast(`Removed ${p.name} (events kept)`, { undo: entriesOf(saved) });
       loadPeople();
       refreshWindow(); // their name is still on every cached occurrence
     } catch (err) {

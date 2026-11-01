@@ -98,6 +98,45 @@ return static function (Db $db): void {
     checkEq("undo: the date's going undone, its row made for it goes too", 0,
         $count('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$c]));
 
+    // Split, then an earlier date deleted: undoing the split is fine (the
+    // rule and a skipped date each go back on their own). A date edited on
+    // its own, then the series split later on: fine too.
+    $e = $series('Swim', '2026-12-01');
+    $d->events->patch($u, $e, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Swim, later']);
+    $split = lastEntry($db, $u);
+    $d->events->deleteEvent($u, $e, 'this', '2026-12-02T18:00:00+00:00');
+    checkEq('undo: a series split, then an earlier date deleted: the split still undoes', null, refusal(fn() => $d->undo->undoById($u, $split)));
+    $f = $series('Read', '2026-12-01');
+    $d->events->patch($u, $f, ['scope' => 'this', 'instanceStart' => '2026-12-02T18:00:00+00:00', 'title' => 'Read aloud']);
+    $aloud = lastEntry($db, $u);
+    $d->events->patch($u, $f, ['scope' => 'following', 'instanceStart' => '2026-12-07T18:00:00+00:00', 'title' => 'Read, later']);
+    checkEq('undo: a date edited on its own, then the series split after it: still undoes', null, refusal(fn() => $d->undo->undoById($u, $aloud)));
+
+    // A location goes back with its place on the map.
+    $where = (int) $d->events->create($u, eventAt($home, 'Talk', '2026-12-15'))['eventId'];
+    $d->events->patch($u, $where, ['location' => 'Sample Hall']);
+    $located = lastEntry($db, $u);
+    $db->run('UPDATE events SET location_lat = 45.5, location_lng = -122.6, geocoded_at = NOW() WHERE id = ?', [$where]); // the geocode sweep
+    $d->undo->undoById($u, $located);
+    checkEq('undo: a location undone takes its map place with it', [null, null],
+        array_values($db->one('SELECT location, location_lat FROM events WHERE id = ?', [$where])));
+
+    // A calendar's settings are separate settings: undoing a rename (which
+    // stops its name following them) leaves a plugin's station changed since.
+    $tides = (int) $d->calendars->create($u, ['name' => 'Tides, North Point'])['id'];
+    $db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode(['own' => ['station' => 'north'], 'autoName' => true]), $tides]);
+    $d->calendars->patch($u, $tides, ['name' => 'My tides']);
+    $renamedTides = lastEntry($db, $u);
+    $d->undo->write($u, function () use ($d, $db, $u, $tides): void {
+        $db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode(['own' => ['station' => 'south']]), $tides]);
+        $d->undo->record($u, 'calendar', $tides, 'update', null, null, 'Changed station', touches: [[BetterCal\Domain\Undo::keyOf('calendars', ['id' => $tides]), 'settings_json.own']]);
+    });
+    checkEq("undo: a rename undone after a plugin's station changed: not stale, the name follows again, the station stays", [null, 'Tides, North Point', ['own' => ['station' => 'south'], 'autoName' => true]], [
+        refusal(fn() => $d->undo->undoById($u, $renamedTides)),
+        $db->scalar('SELECT name FROM calendars WHERE id = ?', [$tides]),
+        json_decode((string) $db->scalar('SELECT settings_json FROM calendars WHERE id = ?', [$tides]), true),
+    ]);
+
     // --- What comes back when something it belonged to is gone -------------
 
     $shortLived = (int) $d->folders->create($u, ['name' => 'Short-lived'])['id'];

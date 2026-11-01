@@ -902,10 +902,12 @@ export async function search(q, opts = {}, limit = 50) {
 // --- undo ------------------------------------------------------------------
 
 // After any undo, from a toast or the log: it could have been any event's
-// record, a calendar's place or settings, or the window's events.
+// record, a calendar's place or settings, the account's settings (where
+// new events go, put back with a calendar), or the window's events.
 export function afterUndo() {
   invalidateRecords();
   loadCalendars().catch(() => {});
+  api('/settings').then((d) => adoptSettings(d.settings)).catch(() => {});
   return refreshWindow();
 }
 
@@ -924,16 +926,3 @@ export async function undoEntries(ids) {
   await afterUndo();
 }
 
-export async function undo() {
-  try {
-    const data = await api('/undo', { method: 'POST' });
-    toast('Undone: ' + (data.undone ? data.undone.op + ' ' + data.undone.entity : 'last change'));
-    await afterUndo();
-    return true;
-  } catch (e) {
-    // Your last change can't be undone, or changed since: the server says which.
-    const said = e.code === 'not_undoable' || e.code === 'stale_undo';
-    toast(e.status === 404 ? 'Nothing to undo' : said ? e.message : 'Undo failed: ' + e.message, { error: true });
-    return false;
-  }
-}

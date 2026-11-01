@@ -65,7 +65,7 @@ final class Feeds
                 throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
             }
             $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']), $skipped);
-            $count = $this->db->tx(function () use ($calendar, $parsed, $skipped): int {
+            $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($calendar, $parsed, $skipped): int {
                 // A token can be revoked while the remote server is answering.
                 // Lock user -> token -> calendar, then reread every governing
                 // field. Revocation/reset or an owner adopting the feed either

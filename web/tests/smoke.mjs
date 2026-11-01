@@ -2372,7 +2372,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { defaultTargetCalendarId, deleteCalendar } = await import('../src/app/actions.js');
-  const { undo } = await import('../src/app/api.js');
+  const { undoEntries: undoOwn } = await import('../src/app/api.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const saved = { calendars: st.calendars, settings: st.settings, toasts: st.toasts };
   const cals = [
@@ -2384,12 +2384,12 @@ console.log('--- chronological ordering across timezone offsets ---');
   put({ calendars: cals, settings: { ...st.settings, defaultCalendarId: 9 } });
   eq('default calendar: the one chosen', defaultTargetCalendarId(), 9);
   put({ settings: { ...st.settings, defaultCalendarId: 3 } });
-  eq("default calendar: missing or not one that takes events, the oldest local, whatever the list's order", defaultTargetCalendarId(), 5);
+  eq("default calendar: missing or not one that takes events, the oldest local that shows, whatever the list's order", defaultTargetCalendarId(), 9);
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
     if (u.pathname.endsWith('/calendars/5') && o && o.method === 'DELETE') return json({ ok: true, defaultCalendarId: 9 });
-    if (u.pathname.endsWith('/undo')) return json({ error: { code: 'not_undoable', message: "The last change can't be undone here: Updated 'Lunch' on Google calendar 'Work'" } }, 400);
+    if (u.pathname.endsWith('/undo')) return json({ error: { code: 'not_undoable', message: "This entry is log-only and cannot be undone" } }, 400);
     if (u.pathname.endsWith('/calendars')) return json({ calendars: cals.filter((c) => c.id !== 5), folders: [], tags: [] });
     return json({});
   };
@@ -2397,8 +2397,24 @@ console.log('--- chronological ordering across timezone offsets ---');
   await deleteCalendar(cals[2]);
   eq('default calendar: deleting it moves it, and the toast says where new events go', [st.settings.defaultCalendarId, st.toasts.some((t) => /New events now go to Work/.test(t.text))], [9, true]);
   put({ toasts: [] });
-  await undo();
-  eq("undo: your last change that can't be undone says so, in the server's words", st.toasts.some((t) => t.text.startsWith("The last change can't be undone here")), true);
+  await undoOwn([7]);
+  eq("undo: a change that can't be undone says so, in the server's words", st.toasts.some((t) => t.text.startsWith('This entry is log-only')), true);
+  // A write's answer says which journal entries it made; a toast's Undo
+  // undoes just those, newest first, whatever came after.
+  const { api: call, entriesOf, undoEntries } = await import('../src/app/api.js');
+  const posted = [];
+  globalThis.fetch = async (url, o) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/events/5')) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Undo-Entries': '41,42' } });
+    const m = u.pathname.match(/\/activity\/(\d+)\/undo$/);
+    if (m) { posted.push(Number(m[1])); return json({ ok: true }); }
+    return json({ calendars: [], folders: [], tags: [], events: [] });
+  };
+  const answer = await call('/events/5', { method: 'PATCH', body: {} });
+  eq("undo: a write's answer says which entries it made", entriesOf(answer), [41, 42]);
+  eq('undo: an answer without any has none', entriesOf({ ok: true }), []);
+  await undoEntries(entriesOf(answer));
+  eq("undo: a toast's Undo undoes just its own entries, newest first", posted, [42, 41]);
   globalThis.fetch = realFetch;
   put(saved);
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
@@ -2411,7 +2427,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar, toggleCalendarVisible } = await import('../src/app/actions.js');
-  const { loadCalendars, calendarsOwed, undo } = await import('../src/app/api.js');
+  const { loadCalendars, calendarsOwed, undoEntries } = await import('../src/app/api.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -2459,7 +2475,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     }
     if (u.pathname.endsWith('/calendars') && method === 'GET' && failReads > 0) { failReads--; return json({ error: { code: 'server', message: 'Down for a moment' } }, 500); }
     if (u.pathname.endsWith('/calendars') && method === 'GET') reads++;
-    if (u.pathname.endsWith('/undo') && method === 'POST') return json({ undone: { entity: 'calendar', op: 'update' } });
+    if (u.pathname.endsWith('/undo') && method === 'POST') return json({ ok: true, undone: { entity: 'calendar', op: 'update' } });
     if (u.pathname.endsWith('/calendars') && method === 'GET') return listed();
     return json({});
   };
@@ -2598,7 +2614,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   reset();
   await tick(10);
   const readsBefore = reads;
-  await undo();
+  await undoEntries([3]);
   await tick(10);
   assert('sidebar: an undo reloads the list', reads > readsBefore);
 

@@ -65,6 +65,28 @@ final class Settings
     }
 
     /**
+     * Put settings back as a change found them (undo): each [before, after]
+     * whose value is still what the change set, so a choice made since
+     * stays.
+     *
+     * @param array<string,array{0:mixed,1:mixed}> $changes
+     */
+    public static function restore(Db $db, int $userId, array $changes): void
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?' . $db->forUpdate(), [$userId]);
+        $current = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+        $back = [];
+        foreach ($changes as $key => $pair) {
+            if (is_array($pair) && array_key_exists(1, $pair) && ($current[$key] ?? null) == $pair[1]) {
+                $back[$key] = $pair[0];
+            }
+        }
+        if ($back !== []) {
+            self::put($db, $userId, $back);
+        }
+    }
+
+    /**
      * Merge values into the stored settings, unchecked: for the app's own
      * changes (and undo putting them back), not a person's (patch()). Call
      * in the change's write (Undo::write), which holds the account's row.

@@ -1007,13 +1007,15 @@ final class PluginHost
                     continue;
                 }
                 if ($cur === null) {
-                    $this->db->insert('events', $cols + [
+                    $made = $this->db->insert('events', $cols + [
                         'user_id' => $this->userId,
                         'calendar_id' => $calendarId,
                         'uid' => $key,
                         'source' => 'local',
                         'created_via' => 'plugin:' . $this->pluginId,
                     ]);
+                    // The row, not its calendar (as a feed poll's).
+                    $touches[] = [Undo::keyOf('events', ['id' => $made]), '*'];
                     $journal[$key] = ChangeLog::OP_ADD;
                     $added++;
                 } else {

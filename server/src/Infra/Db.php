@@ -135,8 +135,7 @@ final class Db
     /** A row refused because a row it refers to isn't there (or one referring to it still is). */
     public static function isForeignKeyViolation(\PDOException $e): bool
     {
-        return in_array((int) ($e->errorInfo[1] ?? 0), [1451, 1452], true)
-            || str_contains(strtolower($e->getMessage()), 'foreign key constraint failed');
+        return in_array((int) ($e->errorInfo[1] ?? 0), [1451, 1452], true);
     }
 
     /**

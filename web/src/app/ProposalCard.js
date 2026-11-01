@@ -8,7 +8,7 @@
 
 import { html, useState } from '../../vendor/index.js';
 import { toast } from './store.js';
-import { api, refreshWindow } from './api.js';
+import { api, refreshWindow, afterUndo } from './api.js';
 import { Icon } from '../ui/icons.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 import { isPendingLocation } from '../lib/maps.js';
@@ -42,7 +42,7 @@ export function ProposalCard({ p, onChanged }) {
     setBusy(true);
     try {
       const r = await api('/proposals/' + p.id + path, { method: 'POST', body });
-      toast(typeof okMsg === 'function' ? okMsg(r) : okMsg, { undoable: false });
+      toast(typeof okMsg === 'function' ? okMsg(r) : okMsg);
       refreshWindow();
       await onChanged();
       if (after) after(r);
@@ -65,7 +65,7 @@ export function ProposalCard({ p, onChanged }) {
     { reviewToken: p.reviewToken },
   );
   const reject = () => act('/reject', 'Dismissed', null, { reviewToken: p.reviewToken });
-  const undo = () => act('/undo', 'Put back. The proposal is open again');
+  const undo = () => act('/undo', 'Put back. The proposal is open again', afterUndo);
 
   return html`<div class="bc-proposal${p.status !== 'open' ? ' is-' + p.status : ''}">
     <div class="bc-proposal-head">

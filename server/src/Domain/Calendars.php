@@ -460,7 +460,7 @@ final class Calendars
                 Settings::setDefaultCalendar($this->db, $userId, $next);
             }
             // Undone, it's where new events go again.
-            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => $id]] : null);
+            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => [$id, $next]]] : null);
             return $next;
         });
     }

@@ -42,8 +42,7 @@ final class MailAdmission
     /** Policy, capacity and the first durable representation share one account lock. */
     public function createMailEvent(int $userId, string $key, string $from, callable $create, callable $hold): array
     {
-        return $this->db->tx(function () use ($userId, $key, $from, $create, $hold): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $key, $from, $create, $hold): array {
             $settings = (new Settings($this->db))->forUser($userId);
             $auto = MailPolicy::addsAutomatically($settings, $from);
             $mode = (string) $settings['mailEventMode'];
@@ -71,8 +70,7 @@ final class MailAdmission
         ?\DateTimeImmutable $now = null,
     ): array {
         $now ??= Time::nowUtc();
-        return $this->db->tx(function () use ($userId, $messageKey, $from, $create, $now): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $messageKey, $from, $create, $now): array {
             $decision = $this->eventDecision($userId, self::senderKey($from), $now);
             if (!$decision['allowed']) {
                 return $decision + ['value' => null];
@@ -97,8 +95,7 @@ final class MailAdmission
         ?\DateTimeImmutable $now = null,
     ): array {
         $now ??= Time::nowUtc();
-        return $this->db->tx(function () use ($userId, $messageKey, $from, $create, $now): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $messageKey, $from, $create, $now): array {
             $decision = $this->eventDecision($userId, self::senderKey($from), $now);
             if (!$decision['allowed']) {
                 return $decision + ['value' => null];
@@ -157,8 +154,7 @@ final class MailAdmission
         ?\DateTimeImmutable $now = null,
     ): array {
         $now ??= Time::nowUtc();
-        return $this->db->tx(function () use ($userId, $messageKey, $from, $now): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $messageKey, $from, $now): array {
             $senderKey = self::senderKey($from);
             $hour = $now->sub(new \DateInterval('PT1H'));
             $day = $now->sub(new \DateInterval('P1D'));
@@ -308,14 +304,6 @@ final class MailAdmission
             }
         }
         return false;
-    }
-
-    private function lockAccount(int $userId): void
-    {
-        $sql = 'SELECT id FROM users WHERE id = ?' . $this->db->forUpdate();
-        if ($this->db->scalar($sql, [$userId]) === null) {
-            throw new \RuntimeException('Mail admission could not lock its account');
-        }
     }
 
     private function count(string $kind, int $userId, \DateTimeImmutable $since, ?string $senderKey = null): int

@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
-import { api, entriesOf, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
+import { api, entriesOf, refreshWindow, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -446,16 +446,21 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
 
 // The calendar a new event lands on when nothing else says otherwise: the
 // default chosen in Settings, always set while there's a local calendar.
-// Should it be missing, the oldest local calendar, as the server does
-// (Settings::defaultCalendarId): never the list's order, and never a
+// Should it be missing, as the server picks (Settings::defaultCalendarId):
+// the oldest local calendar that shows and isn't the one made for
+// invitations, else the oldest local. Never the list's order, and never a
 // plugin's or a subscription's, which don't take new events.
 export function defaultTargetCalendarId() {
   const local = state.calendars.filter((c) => c.kind === 'local');
   const wanted = state.settings.defaultCalendarId;
   const byId = wanted != null && local.find((c) => c.id === wanted);
   if (byId) return byId.id;
-  return local.reduce((oldest, c) => (oldest == null || c.id < oldest.id ? c : oldest), null)?.id;
+  const oldest = (list) => list.reduce((o, c) => (o == null || c.id < o.id ? c : o), null);
+  return (oldest(local.filter((c) => c.visible && c.name !== INVITATIONS)) || oldest(local))?.id;
 }
+
+// The calendar the server makes for emailed invitations (MailIngest::INVITE_CALENDAR).
+const INVITATIONS = 'Invitations';
 
 export async function createEvent(fields) {
   const body = { tzid: localTz(), ...fields };
@@ -742,7 +747,7 @@ export function sendFeedback(occ, signal) {
     });
 }
 
-export { undo, refreshWindow };
+export { refreshWindow };
 
 // --- trips (container events, docs/api-contract.md, Trips) -------------------
 // Attach/detach are relationships, not edits: members keep their own
@@ -1319,8 +1324,8 @@ export async function placeCalendarInList(cal, at) {
 
 export async function createFolder(name) {
   try {
-    await writeCalendars({ send: () => api('/folders', { method: 'POST', body: { name } }) });
-    toast('Folder created');
+    const made = await writeCalendars({ send: () => api('/folders', { method: 'POST', body: { name } }) });
+    toast('Folder created', { undo: entriesOf(made) });
     return true;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
@@ -1332,13 +1337,13 @@ export async function renameFolder(folder, name) {
   const was = folder.name;
   const put = (v) => set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, name: v } : f)) });
   try {
-    await writeCalendars({
+    const saved = await writeCalendars({
       key: 'folder:' + folder.id + ':name',
       show: () => put(name),
       send: () => api('/folders/' + folder.id, { method: 'PATCH', body: { name } }),
       revert: () => put(was),
     });
-    toast('Folder renamed');
+    toast('Folder renamed', { undo: entriesOf(saved) });
     return true;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });

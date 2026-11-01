@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-// The database suite (server/tests/README.md): what depends on the
-// database itself, against MariaDB or MySQL with the schema the migrations
-// build. Foreign keys, row locks, two connections at once and the
+// The database suite (CONTRIBUTING.md says which suite a test goes in):
+// what depends on the database itself, against MariaDB or MySQL with the
+// schema the migrations build. Foreign keys, row locks, two connections at once and the
 // migrations' own SQL are the production ones here; the pure-PHP suite
 // (../run.php) keeps the rest.
 //

@@ -8,7 +8,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { api, loadCalendars, loadPeople } from './api.js';
+import { api, entriesOf, loadCalendars, loadPeople } from './api.js';
 import { createFolder } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PALETTE } from '../lib/color.js';
@@ -64,8 +64,8 @@ export function CreateDrawer() {
     try {
       if (kind === 'calendar') {
         // Filed as it's made: one save, one undo.
-        await api('/calendars', { method: 'POST', body: { name: name.trim() || 'New calendar', color, ...(folderId !== '' ? { folderIds: [Number(folderId)] } : {}) } });
-        toast('Calendar created');
+        const made = await api('/calendars', { method: 'POST', body: { name: name.trim() || 'New calendar', color, ...(folderId !== '' ? { folderIds: [Number(folderId)] } : {}) } });
+        toast('Calendar created', { undo: entriesOf(made) });
         await loadCalendars();
       } else if (kind === 'subscribe') {
         await api('/calendars/subscribe', { method: 'POST', body: { url, name: name.trim() || undefined } });
@@ -89,11 +89,11 @@ export function CreateDrawer() {
             ? 'Nothing imported: ' + (res.skipped || []).map((s) => s.file + ' (' + s.reason + ')').join('; ')
             : 'Imported ' + (res.imported || 0) + ' events into ' + n + ' calendar' + (n === 1 ? '' : 's')
               + (skipped ? '; skipped ' + (res.skipped || []).map((s) => s.file + ' (' + s.reason + ')').join('; ') : ''),
-          { error: n === 0, duration: skipped ? 15000 : undefined });
+          { error: n === 0, duration: skipped ? 15000 : undefined, undo: entriesOf(res) });
         } else {
           const again = (res && res.alreadyThere) || 0;
           toast('Imported ' + ((res && res.imported) || 0) + ' events' + (into && res ? ' into ' + res.name : '')
-            + (again ? '; ' + again + ' already there' : ''));
+            + (again ? '; ' + again + ' already there' : ''), { undo: entriesOf(res) });
         }
         const eventSkips = (res && res.skippedEvents) || ((res && res.calendars) || []).flatMap(c => c.skippedEvents || []);
         if (eventSkips.length) toast(eventSkips.length + ' event(s) skipped. ' + eventSkips.slice(0, 3).map(s => (s.title || 'Untitled event') + ': ' + s.reason).join('; ') + '. Correct their dates, then import the corrected .ics file into its existing calendar.', { error: true, duration: 20000 });
@@ -105,7 +105,7 @@ export function CreateDrawer() {
           method: 'POST',
           body: { name: name.trim(), notes: notes.trim() || null },
         });
-        toast(person.created ? `Added ${person.name}` : `${person.name} already exists`);
+        toast(person.created ? `Added ${person.name}` : `${person.name} already exists`, { undo: entriesOf(person) });
         // The People page auto-expands whoever peopleFocus names once the
         // refreshed list lands.
         set({ peopleFocus: person.name });

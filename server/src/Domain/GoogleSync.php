@@ -133,7 +133,8 @@ final class GoogleSync
         }
         unset($changes);
         self::assertWithinDeadline($deadline);
-        return $this->db->tx(function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline): int {
+        // The account first, as every change to its data takes it (Undo::write).
+        return (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -149,8 +150,9 @@ final class GoogleSync
                 return 0;
             }
             // The last HTTP request may have been in flight when reset landed.
-            // The calendar comes first, matching compromise reset and event
-            // writers; then the account lock makes reset/finalization atomic.
+            // After the account and the calendar, as compromise reset and
+            // event writers take them, the Google account's lock makes
+            // reset/finalization atomic.
             $this->auth->assertUsable($account, true);
             if ($learnedRole !== null) {
                 $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);

@@ -34,7 +34,7 @@ return static function (Db $db): void {
         return $out;
     };
     // What an operation changed but its entries don't say.
-    $unjournaled = static function (callable $op) use ($db, $read): array {
+    $unjournaled = static function (callable $op, bool $vocabulary) use ($db, $read): array {
         $since = (int) $db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations');
         $before = $read();
         $op();
@@ -48,9 +48,10 @@ return static function (Db $db): void {
             $was = $before[$key] ?? null;
             $now = $after[$key] ?? null;
             if ($was === null || $now === null) {
-                // A tag is a name, made the first time it's used and left
-                // when that's undone (another event may have it by then).
-                if ($was === null && str_starts_with($key, 'tags:')) {
+                // A tag, or a person named on an event, is a name: made the
+                // first time it's used and left when that's undone (another
+                // event may have it by then).
+                if ($was === null && $vocabulary && (str_starts_with($key, 'tags:') || str_starts_with($key, 'people:'))) {
                     continue;
                 }
                 if (!isset($said[$key]['*'])) {
@@ -58,7 +59,7 @@ return static function (Db $db): void {
                 }
                 continue;
             }
-            foreach (Undo::changedColumns($was, $now) as $col) {
+            foreach (Undo::fieldsChanged((string) strstr($key, ":", true), $was, $now) as $col) {
                 if (!isset($said[$key]['*']) && !isset($said[$key][$col])) {
                     $missing[] = "$key.$col";
                 }
@@ -66,8 +67,9 @@ return static function (Db $db): void {
         }
         return $missing;
     };
-    $journaled = static function (string $what, callable $op) use ($unjournaled): void {
-        $missing = $unjournaled($op);
+    // $vocabulary false: the operation is making the person itself.
+    $journaled = static function (string $what, callable $op, bool $vocabulary = true) use ($unjournaled): void {
+        $missing = $unjournaled($op, $vocabulary);
         check("journal: $what says everything it changed", $missing === [], implode(', ', array_slice($missing, 0, 12)));
     };
 
@@ -138,7 +140,7 @@ return static function (Db $db): void {
     $person = 0;
     $journaled('a person added', function () use ($people, $u, &$person): void {
         $person = (int) $people->create($u, ['name' => 'Sam Sample'])['id'];
-    });
+    }, false);
     $span = 0;
     $journaled('an away time added, moved and removed', function () use ($people, $u, $person, &$span): void {
         $span = (int) $people->addSpan($u, $person, ['start' => '2026-12-01T00:00:00Z', 'end' => '2026-12-05T00:00:00Z'])['id'];
@@ -156,6 +158,29 @@ return static function (Db $db): void {
         $id = (int) $views->create($u, ['name' => 'Week', 'config' => ['view' => 'week']])['id'];
         $views->patch($u, $id, ['name' => 'This week']);
         $views->delete($u, $id);
+    });
+
+    $filters = new \BetterCal\Domain\Filters($db, $d->undo, new \BetterCal\Infra\JobQueue($db));
+    $journaled('a filter made, changed and deleted', function () use ($filters, $u): void {
+        $id = (int) $filters->create($u, ['name' => 'Quiet', 'scope' => 'global', 'type' => 'keyword', 'action' => 'dim', 'config' => ['pattern' => 'webinar']])['id'];
+        $filters->patch($u, $id, ['action' => 'hide']);
+        $filters->delete($u, $id);
+    });
+
+    // Quick add, and a phone's or desktop app's calendar (CalDAV).
+    $quick = new \BetterCal\Domain\QuickAdd($db, new \BetterCal\Infra\LlmGateway([]), $d->events, new Settings($db));
+    $journaled('an event made with quick add', fn() => $quick->run($u, 'Lunch with Alex Example tomorrow at noon', 'UTC', true, $home));
+    $token = (new \BetterCal\Domain\ApiTokens($db))->create($u, 'Phone');
+    $dav = new \BetterCal\Dav\CalendarBackend($db, $d->undo, fn() => \BetterCal\Domain\RequestAuthority::credential($u, (int) $token['id'], null));
+    $davEvent = static fn(string $title) => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:dav-1@example.test\r\nDTSTAMP:20261101T000000Z\r\n"
+        . "DTSTART:20261218T180000Z\r\nDTEND:20261218T190000Z\r\nSUMMARY:$title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    $journaled('an event made from a phone', fn() => $dav->createCalendarObject($home, 'dav-1@example.test.ics', $davEvent('From the phone')));
+    $journaled('an event changed from a phone', fn() => $dav->updateCalendarObject($home, 'dav-1@example.test.ics', $davEvent('From the phone, changed')));
+    $journaled('an event deleted from a phone', fn() => $dav->deleteCalendarObject($home, 'dav-1@example.test.ics'));
+    $journaled('a calendar renamed from a phone', function () use ($dav, $home): void {
+        $patch = new \Sabre\DAV\PropPatch(['{DAV:}displayname' => 'Renamed on the phone']);
+        $dav->updateCalendar($home, $patch);
+        $patch->commit();
     });
 
     // What comes in from outside: a file, a feed, a plugin.
@@ -179,7 +204,7 @@ return static function (Db $db): void {
     $db->run("INSERT INTO plugins (id, version, enabled) VALUES ('sample', '1.0.0', 1)");
     $host = new PluginHost($db, 'sample', $u, new HttpClient(), [], []);
     $pluginCal = $host->ensureCalendar('Sample items', '#557799');
-    $host->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First', 'start' => '2026-12-01', 'allDay' => true], ['sourceKey' => 'b', 'title' => 'Second', 'start' => '2026-12-02', 'allDay' => true]]);
+    $journaled("a plugin's sync: events added", fn() => $host->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First', 'start' => '2026-12-01', 'allDay' => true], ['sourceKey' => 'b', 'title' => 'Second', 'start' => '2026-12-02', 'allDay' => true]]));
     $journaled("a plugin's sync: one changed, one gone", fn() => (new PluginHost($db, 'sample', $u, new HttpClient(), [], []))->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First, renamed', 'start' => '2026-12-01', 'allDay' => true]]));
     $journaled('a subscription kept as a calendar of its own', fn() => $d->calendars->adopt($u, $feed));
 };

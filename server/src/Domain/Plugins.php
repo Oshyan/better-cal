@@ -629,6 +629,9 @@ final class Plugins
             $key = Undo::keyOf('calendars', ['id' => $cid]);
             $touches = array_merge($touches, $deleteCalendars ? [[$key, '*']] : [[$key, 'kind'], [$key, 'plugin_id'], [$key, 'name']]);
             if ($deleteCalendars) {
+                foreach ($this->db->all('SELECT id FROM events WHERE calendar_id = ?', [$cid]) as $e) {
+                    $touches[] = [Undo::keyOf('events', ['id' => (int) $e['id']]), '*'];
+                }
                 $this->db->run('DELETE FROM events WHERE calendar_id = ?', [$cid]);
                 $this->db->run('DELETE FROM calendars WHERE id = ?', [$cid]);
             } else {
@@ -1039,7 +1042,7 @@ final class Plugins
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid settings: ' . json_encode($errs));
         }
-        return $this->db->tx(function () use ($userId, $calendarId, $id, $clean, $authority): array {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $calendarId, $id, $clean, $authority): array {
             $authority?->assertValid($this->db);
             $raw = $this->db->scalar('SELECT settings_json FROM calendars WHERE id = ? AND user_id = ?' . $this->db->forUpdate(), [$calendarId, $userId]);
             if ($raw === null && $this->db->one('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
@@ -1048,6 +1051,7 @@ final class Plugins
             $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
             $all['plugins'][$id] = $this->sealValues($id, 'calendarSettings', array_merge($all['plugins'][$id] ?? [], $clean));
             $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
+            $this->journalSettings($userId, $calendarId, $id, 'plugins');
             $this->markTokenChange($id, $authority);
             return $this->publicValues($id, 'calendarSettings', $all['plugins'][$id]);
         });
@@ -1374,12 +1378,13 @@ final class Plugins
         $secret = (string) ($this->cfg['session_secret'] ?? '');
         $current = PluginSecrets::open($id, 'ownCalendarSettings', self::storedOwn($cal['settings_json'] !== null ? (string) $cal['settings_json'] : null), $secret);
         $plain = $this->validatedOwn($userId, $calendarId, $id, $m, $current, $values);
-        return $this->db->tx(function () use ($userId, $calendarId, $id, $plain, $authority): array {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $calendarId, $id, $plain, $authority): array {
             $authority?->assertValid($this->db);
             $raw = $this->db->scalar('SELECT settings_json FROM calendars WHERE id = ? AND user_id = ?' . $this->db->forUpdate(), [$calendarId, $userId]);
             $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
             $all['own'] = $this->sealValues($id, 'ownCalendarSettings', $plain);
             $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
+            $this->journalSettings($userId, $calendarId, $id, 'own');
             $this->markTokenChange($id, $authority);
             $this->refreshAutoName($userId, $calendarId);
             return $this->publicValues($id, 'ownCalendarSettings', $all['own']);
@@ -1415,8 +1420,29 @@ final class Plugins
         $plain = PluginSecrets::open($id, 'ownCalendarSettings', self::withDefaults($m['ownCalendarSettings'] ?? [], self::storedOwn((string) $cal['settings_json'])), (string) ($this->cfg['session_secret'] ?? ''));
         $name = $this->templateName($userId, $id, $m, $plain);
         if ($name !== (string) $cal['name']) {
-            $this->db->run('UPDATE calendars SET name = ? WHERE id = ?', [$name, $calendarId]);
+            $undo = new Undo($this->db);
+            $undo->write($userId, function () use ($undo, $userId, $calendarId, $name, $cal): void {
+                $this->db->run('UPDATE calendars SET name = ? WHERE id = ?', [$name, $calendarId]);
+                // An older undo of its name stands on it (not undoable itself:
+                // it follows the settings).
+                ActivityContext::with('plugin:' . (string) $cal['plugin_id'], fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, null,
+                    "Renamed '" . $cal['name'] . "' to '" . $name . "' to follow its settings",
+                    touches: [[Undo::keyOf('calendars', ['id' => $calendarId]), 'name']]));
+            });
         }
+    }
+
+    /**
+     * A plugin's settings for a calendar saved: log only (a credential among
+     * them isn't put back), but an older undo of the calendar's settings
+     * (its reminders, say) stands on them.
+     */
+    private function journalSettings(int $userId, int $calendarId, string $id, string $key): void
+    {
+        $name = (string) $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$calendarId]);
+        (new Undo($this->db))->record($userId, 'calendar', $calendarId, 'update', null, null,
+            "Changed " . $this->displayName($id) . " settings for '" . $name . "'",
+            touches: [[Undo::keyOf('calendars', ['id' => $calendarId]), 'settings_json.' . $key]]);
     }
 
     /**

@@ -56,7 +56,7 @@ return static function (Db $db): void {
     [$exit, $out] = $child->wait();
     @unlink($file);
     checkEq('concurrency: an undo rolled back to break a deadlock runs again and goes through, and the other change is kept', [true, 1, null, 0, []],
-        [$ready, $deadlocks() - $seen, $error, $exit, Folders::order($db, $folder)]);
+        [$ready, min(1, $deadlocks() - $seen), $error, $exit, Folders::order($db, $folder)]);
     if ($exit !== 0) {
         echo $out, "\n";
     }

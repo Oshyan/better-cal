@@ -306,7 +306,7 @@ final class MailIngest
                 $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => 'Message processing failed (' . (new \ReflectionClass($e))->getShortName() . ').'];
             }
         }
-        $this->db->tx(function () use ($userId, $msg, $result): void {
+        (new Undo($this->db))->write($userId, function () use ($userId, $msg, $result): void {
             if ($result['outcome'] === 'error' || !empty($result['partialError']) || isset($msg['oversize'])) {
                 $this->review->holdMailError($userId, self::messageKey($msg), (string) ($msg['from'] ?? ''), (string) ($msg['subject'] ?? ''), (string) $result['error']);
             }
@@ -403,7 +403,7 @@ final class MailIngest
 
     public function failTransport(int $userId, string $key, array $envelope, string $reason): void
     {
-        $this->db->tx(function () use ($userId, $key, $envelope, $reason): void {
+        (new Undo($this->db))->write($userId, function () use ($userId, $key, $envelope, $reason): void {
             $row = $this->db->one('SELECT * FROM mail_ingest WHERE transport_key = ?', [$key]);
             $from = (string) (($envelope['from'] ?? '') ?: ($row['from_addr'] ?? ''));
             $subject = (string) (($envelope['subject'] ?? '') ?: ($row['subject'] ?? ''));
@@ -418,7 +418,7 @@ final class MailIngest
     {
         foreach ($this->db->all('SELECT * FROM mail_ingest WHERE outcome = ? ORDER BY id LIMIT 100', [self::OUTCOME_STARTED]) as $row) {
             $key = (string) ($row['transport_key'] ?? $row['message_id']);
-            $this->db->tx(function () use ($userId, $row, $key): void {
+            (new Undo($this->db))->write($userId, function () use ($userId, $row, $key): void {
                 $reason = 'Processing stopped before this email could be read.';
                 $this->review->holdMailError($userId, $key, (string) ($row['from_addr'] ?? ''), (string) ($row['subject'] ?? ''), $reason);
                 $this->db->update('mail_ingest', ['outcome' => 'error', 'error' => $reason], 'id = ?', [(int) $row['id']]);

@@ -104,11 +104,10 @@ final class Proposals
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid plan: ' . implode('; ', $errs));
         }
-        return $this->db->tx(function () use ($userId, $pluginId, $sourceKey, $in): array {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $pluginId, $sourceKey, $in): array {
             // Every proposal lifecycle mutation takes the same account lock.
             // That makes upsert-versus-accept and double decisions serial even
             // before the proposal row exists.
-            $this->lockAccount($userId);
             $existing = $this->db->one(
                 'SELECT * FROM plugin_proposals WHERE user_id = ? AND plugin_id = ? AND source_key = ?' . $this->forUpdate(),
                 [$userId, $pluginId, $sourceKey]
@@ -169,8 +168,7 @@ final class Proposals
      */
     public function withdraw(int $userId, string $pluginId, string $sourceKey): bool
     {
-        return $this->db->tx(function () use ($userId, $pluginId, $sourceKey): bool {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $pluginId, $sourceKey): bool {
             return $this->db->run(
                 "DELETE FROM plugin_proposals
                  WHERE user_id = ? AND plugin_id = ? AND source_key = ? AND status = 'open'",
@@ -181,8 +179,7 @@ final class Proposals
 
     public function reject(int $userId, int $id, string $reviewToken): array
     {
-        return $this->db->tx(function () use ($userId, $id, $reviewToken): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $id, $reviewToken): array {
             $p = $this->require($userId, $id, true);
             if ((string) $p['status'] !== 'open') {
                 throw HttpError::conflict('proposal_decided', 'This proposal was already ' . (string) $p['status'] . '.');
@@ -309,11 +306,6 @@ final class Proposals
             throw HttpError::notFound('No such proposal');
         }
         return $p;
-    }
-
-    private function lockAccount(int $userId): void
-    {
-        $this->db->scalar('SELECT id FROM users WHERE id = ?' . $this->forUpdate(), [$userId]);
     }
 
     private function forUpdate(): string

@@ -53,7 +53,9 @@ try {
         try {
             (require $file)($db);
         } catch (\Throwable $e) {
-            // The rest of that file is skipped; the other files still run.
+            // One failure for the throw; the rest of that file is skipped
+            // (a block wrapped in scenario() keeps a throw to itself), and
+            // the other files still run.
             check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
         }
     }

@@ -3,36 +3,67 @@
 declare(strict_types=1);
 
 // Every change to what undo knows (the tables an undo restores) is in the
-// journal: for each operation below, every row it made, removed or changed,
-// and each column it changed, appears in what its entries touched (Undo's
-// touches). A writer that forgets fails here, rather than an undo later
-// silently overwriting or deleting newer work.
+// journal, and the journal can put it back. For each operation below:
+// every row it made, removed or changed, and each column it changed,
+// appears in what its entries touched (Undo's touches), so a writer that
+// forgets fails here rather than an undo later silently overwriting or
+// deleting newer work; and, for a change that undoes, each of its entries
+// is undone and every row compared with how it was before, so a writer
+// whose snapshots are wrong, or who records nothing where it should, is
+// caught by the rows and not only by the touches. A writer that is log-only
+// on purpose (a feed's poll, a plugin's sync, an answer that went out) is
+// checked to be so.
 
 use BetterCal\Domain\CalendarImport;
+use BetterCal\Domain\Duplicates;
+use BetterCal\Domain\Events;
 use BetterCal\Domain\Feeds;
+use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
+use BetterCal\Domain\Labels;
+use BetterCal\Domain\MailAdmission;
+use BetterCal\Domain\MailIngest;
 use BetterCal\Domain\People;
+use BetterCal\Domain\Plugins;
+use BetterCal\Domain\Proposals;
+use BetterCal\Domain\Recurrence;
+use BetterCal\Domain\ReviewQueue;
+use BetterCal\Domain\Rsvp;
 use BetterCal\Domain\SavedViews;
 use BetterCal\Domain\Settings;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
+use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\HttpClient;
+use BetterCal\Infra\JobQueue;
 use BetterCal\Plugin\PluginHost;
+use BetterCal\Support\Time;
 
 return static function (Db $db): void {
-    // The tables undo restores, read whole: row key => row.
+    // The tables undo restores, in the order it puts rows back (what a row
+    // belongs to before the row), and each one's key.
     $tables = ['folders', 'tags', 'people', 'calendars', 'calendar_folders', 'events', 'event_links', 'event_tags',
         'event_people', 'out_feeds', 'filters', 'saved_views', 'availability', 'review_items'];
+    $keys = ['calendar_folders' => ['calendar_id', 'folder_id'], 'event_tags' => ['event_id', 'tag_id'], 'event_people' => ['event_id', 'person_id']];
+    // Every row of them: row key => row. Review's notices (a mail limit, a
+    // model limit, an email that couldn't be read) are information the app
+    // keeps for the person and never part of a snapshot; the decisions (an
+    // invitation or a change held) are, so only those count here.
     $read = static function () use ($db, $tables): array {
         $out = [];
         foreach ($tables as $table) {
-            foreach ($db->all("SELECT * FROM `$table`") as $row) {
+            $where = $table === 'review_items' ? " WHERE kind IN ('invite_new', 'invite_change')" : '';
+            foreach ($db->all("SELECT * FROM `$table`" . $where) as $row) {
                 $out[Undo::keyOf($table, $row)] = $row;
             }
         }
         return $out;
     };
+    // The account settings an undo may put back (where new events go, the
+    // senders approved with an add), by account.
+    $readSettings = static fn(): array => array_column($db->all('SELECT id, settings_json FROM users'), 'settings_json', 'id');
     // What differs between two reads of a row, decided here rather than by
     // Undo's own helper (a mistake shared by both would pass): a column
     // whose text changed or that went to or from NULL, a calendar's settings
@@ -59,44 +90,169 @@ return static function (Db $db): void {
         }
         return $out;
     };
+    // What changed between two reads, as row key => ['*'] for a row made or
+    // removed (which, as a word) or the columns that differ. A tag, or a
+    // person named on an event, is a name: made the first time it's used
+    // and left when that's undone (another event may have it by then), so
+    // one made isn't a change ($vocabulary) unless the operation is making
+    // the person itself.
+    $changes = static function (array $before, array $after, bool $vocabulary) use ($differs): array {
+        $out = [];
+        foreach ($before + $after as $key => $_) {
+            $was = $before[$key] ?? null;
+            $now = $after[$key] ?? null;
+            if ($was === null || $now === null) {
+                if ($was === null && $vocabulary && (str_starts_with($key, 'tags:') || str_starts_with($key, 'people:'))) {
+                    continue;
+                }
+                $out[$key] = $was === null ? ['*' => 'made'] : ['*' => 'removed'];
+                continue;
+            }
+            $cols = $differs((string) strstr($key, ':', true), $was, $now);
+            if ($cols !== []) {
+                $out[$key] = array_fill_keys($cols, 'changed');
+            }
+        }
+        return $out;
+    };
     // What an operation changed but its entries don't say.
-    $unjournaled = static function (callable $op, bool $vocabulary) use ($db, $read, $differs): array {
-        $since = (int) $db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations');
-        $before = $read();
-        $op();
-        $after = $read();
+    $unjournaled = static function (int $since, array $before, array $after, bool $vocabulary) use ($db, $changes): array {
         $said = [];
         foreach ($db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id > ?', [$since]) as $t) {
             $said[$t['row_key']][$t['col']] = true;
         }
         $missing = [];
-        foreach ($before + $after as $key => $_) {
-            $was = $before[$key] ?? null;
-            $now = $after[$key] ?? null;
-            if ($was === null || $now === null) {
-                // A tag, or a person named on an event, is a name: made the
-                // first time it's used and left when that's undone (another
-                // event may have it by then).
-                if ($was === null && $vocabulary && (str_starts_with($key, 'tags:') || str_starts_with($key, 'people:'))) {
-                    continue;
-                }
-                if (!isset($said[$key]['*'])) {
-                    $missing[] = $key . ' ' . ($was === null ? 'made' : 'removed');
-                }
-                continue;
-            }
-            foreach ($differs((string) strstr($key, ":", true), $was, $now) as $col) {
+        foreach ($changes($before, $after, $vocabulary) as $key => $cols) {
+            foreach ($cols as $col => $how) {
                 if (!isset($said[$key]['*']) && !isset($said[$key][$col])) {
-                    $missing[] = "$key.$col";
+                    $missing[] = $col === '*' ? "$key $how" : "$key.$col";
                 }
             }
         }
         return $missing;
     };
-    // $vocabulary false: the operation is making the person itself.
-    $journaled = static function (string $what, callable $op, bool $vocabulary = true) use ($unjournaled): void {
-        $missing = $unjournaled($op, $vocabulary);
-        check("journal: $what says everything it changed", $missing === [], implode(', ', array_slice($missing, 0, 12)));
+    // What's still different from before after an operation's entries
+    // were undone.
+    $left = static function (array $before, array $now, bool $vocabulary) use ($changes): array {
+        $out = [];
+        foreach ($changes($before, $now, $vocabulary) as $key => $cols) {
+            foreach ($cols as $col => $how) {
+                $out[] = $col === '*' ? ($how === 'made' ? "$key made and still there" : "$key removed and not back") : "$key.$col";
+            }
+        }
+        return $out;
+    };
+    // Put the tables back as the operation left them, and its entries back
+    // in force, so the next operation builds on it as the app would: rows
+    // the undo brought back go, rows it removed come back, rows it changed
+    // are as the operation left them.
+    $redo = static function (array $after, array $settings, array $entryIds) use ($db, $tables, $keys, $read): void {
+        $now = $read();
+        $table = static fn(string $key): string => (string) strstr($key, ':', true);
+        foreach (array_reverse($tables) as $t) {
+            foreach ($now as $key => $row) {
+                if ($table($key) === $t && !isset($after[$key])) {
+                    $pk = $keys[$t] ?? ['id'];
+                    $db->run("DELETE FROM `$t` WHERE " . implode(' AND ', array_map(static fn($c) => "`$c` = ?", $pk)), array_map(static fn($c) => $row[$c], $pk));
+                }
+            }
+        }
+        foreach ($tables as $t) {
+            $rows = array_filter($after, static fn(string $key): bool => $table($key) === $t, ARRAY_FILTER_USE_KEY);
+            if ($t === 'events') {
+                // A date of a series refers to its series: the series first.
+                uasort($rows, static fn(array $a, array $b): int => [(int) ($a['recurrence_parent_id'] !== null), (int) $a['id']] <=> [(int) ($b['recurrence_parent_id'] !== null), (int) $b['id']]);
+            }
+            foreach ($rows as $row) {
+                $db->upsert($t, $row);
+            }
+        }
+        foreach ($settings as $id => $json) {
+            $db->update('users', ['settings_json' => $json], 'id = ?', [(int) $id]);
+        }
+        if ($entryIds !== []) {
+            [$in, $params] = Db::in($entryIds);
+            $db->run("UPDATE mutations SET undone = 0 WHERE id IN $in", $params);
+        }
+    };
+
+    // A stand-in plugin whose events can be moved from here (events:edit):
+    // the source confirms whatever it's asked, and the undo of a move goes
+    // back through it (Undo::undoPluginEdit). Another with calendars of its
+    // own, named from a setting.
+    $pluginDir = sys_get_temp_dir() . '/bc-db-plugins-' . bin2hex(random_bytes(4));
+    mkdir($pluginDir . '/mover', 0700, true);
+    mkdir($pluginDir . '/stations', 0700, true);
+    file_put_contents($pluginDir . '/mover/plugin.json', json_encode(['id' => 'mover', 'name' => 'Mover', 'version' => '1.0.0', 'permissions' => ['events:write', 'events:edit'], 'jobs' => []]));
+    file_put_contents($pluginDir . '/mover/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\EditablePlugin {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+    public function applyEdit(BetterCal\Plugin\PluginHost $host, array $edit): array { return $edit["after"]; }
+};');
+    file_put_contents($pluginDir . '/stations/plugin.json', json_encode([
+        'id' => 'stations', 'name' => 'Stations', 'version' => '1.0.0', 'permissions' => ['events:write'], 'jobs' => [],
+        'ownCalendars' => ['noun' => 'station calendar', 'name' => 'Stations, {station}', 'color' => '#336699', 'max' => 2],
+        'ownCalendarSettings' => [['key' => 'station', 'type' => 'text', 'label' => 'Station', 'required' => true]],
+    ]));
+    file_put_contents($pluginDir . '/stations/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+};');
+    $registry = new Plugins($db, $pluginDir, ['session_secret' => str_repeat('t', 32)]);
+    // The undo every entry is restored with: it knows the plugins, for a
+    // move written through to one.
+    $restorer = new Undo($db, $registry);
+
+    /**
+     * Run an operation and check its journal. $vocabulary false: the
+     * operation is making the person itself. $undoable: true, each entry
+     * is undone, newest first, and the rows compared with before; false,
+     * its entries are log-only on purpose (and there is at least one);
+     * null, it's nothing for the journal (no entry, and nothing undo knows
+     * changed). $except: changes the writer is known not to say, each one
+     * a gap to close (the check fails once it's closed, so the list is
+     * kept honest).
+     */
+    $journaled = static function (string $what, callable $op, bool $vocabulary = true, ?bool $undoable = true, array $except = []) use ($db, $read, $readSettings, $unjournaled, $left, $redo, $restorer): void {
+        $since = (int) $db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations');
+        $before = $read();
+        $op();
+        $after = $read();
+        $settingsAfter = $readSettings();
+        $missing = $unjournaled($since, $before, $after, $vocabulary);
+        sort($missing);
+        sort($except);
+        check("journal: $what says everything it changed" . ($except !== [] ? ' (but what it is known not to)' : ''), $missing === $except,
+            'unsaid: ' . implode(', ', array_slice($missing, 0, 12)) . ($except !== [] ? '; expected unsaid: ' . implode(', ', $except) : ''));
+        $entries = $db->all('SELECT id, user_id, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations WHERE id > ? ORDER BY id DESC', [$since]);
+        $logOnly = array_column(array_filter($entries, static fn(array $e): bool => (int) $e['log_only'] === 1), 'id');
+        if ($undoable === null) {
+            checkEq("journal: $what is nothing for the journal", [], array_column($entries, 'id'));
+            return;
+        }
+        if (!$undoable) {
+            $withSnapshots = array_diff(array_column($entries, 'id'), $logOnly);
+            check("journal: $what is log-only by design", $entries !== [] && $withSnapshots === [], $entries === [] ? 'no entry made' : 'entries with snapshots: #' . implode(', #', $withSnapshots));
+            return;
+        }
+        check("journal: $what keeps snapshots to undo", $entries !== [] && $logOnly === [], $entries === [] ? 'no entry made' : 'log-only entries: #' . implode(', #', $logOnly));
+        $refused = [];
+        foreach ($entries as $e) {
+            if ((int) $e['log_only'] === 1) {
+                continue;
+            }
+            try {
+                $restorer->undoById((int) $e['user_id'], (int) $e['id']);
+            } catch (HttpError $x) {
+                $refused[] = '#' . $e['id'] . ' ' . $x->errorCode . ': ' . $x->getMessage();
+            }
+        }
+        check("undo: $what undoes", $refused === [], implode('; ', $refused));
+        $still = $left($before, $read(), $vocabulary);
+        check("undo: $what undone leaves every row as it was", $still === [], implode(', ', array_slice($still, 0, 12)));
+        $redo($after, $settingsAfter, array_column($entries, 'id'));
     };
 
     $u = freshUser($db);
@@ -187,7 +343,7 @@ return static function (Db $db): void {
         $views->delete($u, $id);
     });
 
-    $filters = new \BetterCal\Domain\Filters($db, $d->undo, new \BetterCal\Infra\JobQueue($db));
+    $filters = new Filters($db, $d->undo, new JobQueue($db));
     $journaled('a filter made, changed and deleted', function () use ($filters, $u): void {
         $id = (int) $filters->create($u, ['name' => 'Quiet', 'scope' => 'global', 'type' => 'keyword', 'action' => 'dim', 'config' => ['pattern' => 'webinar']])['id'];
         $filters->patch($u, $id, ['action' => 'hide']);
@@ -226,15 +382,135 @@ return static function (Db $db): void {
     $fed = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ?', [$feed, 'imported-1@example.test']);
     $d->events->setAttendance($u, $fed, 'going');
     $changedFeed = str_replace(['SUMMARY:Imported one', "BEGIN:VEVENT\r\nUID:imported-2"], ['SUMMARY:Imported one, renamed', "BEGIN:VEVENT\r\nUID:gone-2"], $ics);
-    $journaled("a feed's poll: an event changed, one gone, one new", fn() => $feeds->sync($calendarRow(), Ics::parse($changedFeed)));
+    $journaled("a feed's poll: an event changed, one gone, one new", fn() => $feeds->sync($calendarRow(), Ics::parse($changedFeed)), true, false);
 
     $db->run("INSERT INTO plugins (id, version, enabled) VALUES ('sample', '1.0.0', 1)");
     $host = new PluginHost($db, 'sample', $u, new HttpClient(), [], []);
     $pluginCal = 0;
     $journaled('a plugin making its calendar', function () use ($host, &$pluginCal): void {
         $pluginCal = $host->ensureCalendar('Sample items', '#557799');
-    });
-    $journaled("a plugin's sync: events added", fn() => $host->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First', 'start' => '2026-12-01', 'allDay' => true], ['sourceKey' => 'b', 'title' => 'Second', 'start' => '2026-12-02', 'allDay' => true]]));
-    $journaled("a plugin's sync: one changed, one gone", fn() => (new PluginHost($db, 'sample', $u, new HttpClient(), [], []))->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First, renamed', 'start' => '2026-12-01', 'allDay' => true]]));
-    $journaled('a subscription kept as a calendar of its own', fn() => $d->calendars->adopt($u, $feed));
+    }, true, false);
+    $journaled("a plugin's sync: events added", fn() => $host->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First', 'start' => '2026-12-01', 'allDay' => true], ['sourceKey' => 'b', 'title' => 'Second', 'start' => '2026-12-02', 'allDay' => true]]), true, false);
+    $journaled("a plugin's sync: one changed, one gone", fn() => (new PluginHost($db, 'sample', $u, new HttpClient(), [], []))->syncEvents($pluginCal, [['sourceKey' => 'a', 'title' => 'First, renamed', 'start' => '2026-12-01', 'allDay' => true]]), true, false);
+    $journaled('a subscription kept as a calendar of its own', fn() => $d->calendars->adopt($u, $feed), true, false);
+
+    // A Google calendar's poll ends in the write GoogleSync::poll makes
+    // once Google has answered: Feeds::sync of the snapshot and the sync
+    // position, inside Undo::write. The fetch itself needs Google, so the
+    // oracle runs that write with the answer given. Google-backed rows are
+    // a cache of Google's, so the entries are log-only by design.
+    $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'owner@example.test', 'refresh_token_enc' => 'sealed-sample', 'scopes' => 'calendar']);
+    $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+        'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'subscription_authority' => 'owner',
+        'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
+    $journaled("a Google calendar's poll (GoogleSync's write, with Google's answer given)", fn() => (new Undo($db))->write($u, function () use ($db, $feeds, $googleCal, $ics): void {
+        $feeds->sync($db->one('SELECT * FROM calendars WHERE id = ?', [$googleCal]), Ics::parse($ics), true);
+        $db->update('calendars', ['google_sync_token' => 'sample-token'], 'id = ?', [$googleCal]);
+    }), true, false);
+
+    // Emailed invitations: held for Review, decided there, and answered.
+    // The Invitations calendar is the app's own, made once for the account
+    // rather than by any one decision, so it's made here first.
+    $inviteCal = MailIngest::ensureInviteCalendar($db, $u);
+    $review = new ReviewQueue($db, $d->events);
+    $invite = ['method' => 'REQUEST', 'kind' => 'invitation', 'organizer' => ['email' => 'host@example.test', 'name' => 'Sample Host'],
+        'attendees' => [['email' => 'owner@example.test', 'partstat' => 'NEEDS-ACTION']], 'sequence' => 0];
+    $fields = ['title' => 'Sample potluck', 'start' => '2026-12-12T01:00:00+00:00', 'end' => '2026-12-12T03:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];
+    $held = 0;
+    $journaled('an emailed invitation held for Review', function () use ($review, $u, $fields, $invite, &$held): void {
+        $held = $review->holdNewInvitation($u, 'potluck@example.test', $fields, $invite, 'host@example.test');
+    }, true, false);
+    $journaled('an invitation added from Review, its sender approved', fn() => $review->accept($u, $held, 'address'));
+    $invited = (int) $db->scalar('SELECT event_id FROM review_items WHERE id = ?', [$held]);
+    $change = 0;
+    $moved = ['start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00'] + $fields;
+    $journaled('an emailed change held for Review', function () use ($review, $db, $u, $invited, $moved, $invite, &$change): void {
+        $change = (int) $review->holdInviteChange($u, $db->one('SELECT * FROM events WHERE id = ?', [$invited]), 'potluck@example.test', 'REQUEST', $moved, ['sequence' => 1] + $invite, 'host@example.test');
+    }, true, false);
+    $journaled('a change accepted from Review', fn() => $review->accept($u, $change));
+    $second = (int) $review->holdInviteChange($u, $db->one('SELECT * FROM events WHERE id = ?', [$invited]), 'potluck@example.test', 'REQUEST', ['title' => 'Sample potluck, indoors'] + $moved, ['sequence' => 2] + $invite, 'host@example.test');
+    // Dismissing closes the item without saying so. Nothing stands on a
+    // dismissal (an accept's undo puts back only the items it closed or
+    // rewrote itself, and a closed item can't be dismissed), so no undo
+    // goes wrong; still a gap in what the journal says, kept here until
+    // ReviewQueue::dismiss touches the item it closes.
+    $journaled('a change dismissed in Review', fn() => $review->dismiss($u, $second), true, false, ["review_items:$second.decided_at", "review_items:$second.status"]);
+    $journaled('an unanswered invitation taken out of Review', fn() => $review->dismissReply($u, $invited), true, false);
+    // Review's notices are information, not changes: nothing for the journal.
+    $journaled('a mail limit noted in Review', fn() => $review->holdMailLimit($u, 'event_account_day', 'Paused for today.', '', 'Sample subject', 'someone@example.test'), true, null);
+
+    // An invitation answered: kept here when no account can send the reply
+    // (undoable like any change); sent, or possibly sent, when one can
+    // (log-only: the organizer may have it).
+    $session = bin2hex(random_bytes(16));
+    $db->insert('sessions', ['token_hash' => hash('sha256', $session), 'user_id' => $u, 'csrf' => 'x', 'authenticated_at' => Time::nowDb(), 'expires_at' => '2030-01-01 00:00:00']);
+    $journaled('an invitation answered, with no account to send the reply', fn() => (new Rsvp($db, new EmailSender([]), []))->answer($u, $invited, 'accepted', $session));
+    $smtp = ['smtp' => ['host' => '127.0.0.1', 'port' => 1, 'from' => 'owner@example.test']];
+    $journaled('an invitation answered by mail', fn() => (new Rsvp($db, new EmailSender($smtp), $smtp))->answer($u, $invited, 'declined', $session), true, false);
+
+    // Mail read by the worker: each message as the fetcher hands it over.
+    $mail = new MailIngest($db, $d->events, null, new MailAdmission($db));
+    $message = static fn(string $id, string $from, array $more): array => $more + ['messageId' => $id, 'subject' => 'Sample invitation', 'from' => $from, 'icsParts' => [], 'html' => null, 'text' => null];
+    $imip = static fn(string $uid, string $method, int $sequence, string $title, string $day, string $organizer = 'host@example.test'): string =>
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:$method\r\nBEGIN:VEVENT\r\nUID:$uid\r\nDTSTAMP:20261101T000000Z\r\n"
+        . "DTSTART:{$day}T180000Z\r\nDTEND:{$day}T190000Z\r\nSUMMARY:$title\r\nSEQUENCE:$sequence\r\nORGANIZER;CN=Sample Host:mailto:$organizer\r\n"
+        . "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    Settings::put($db, $u, ['mailApprovedSenders' => []]);
+    $journaled('an emailed invitation from a sender not approved: held', fn() => $mail->ingestMessage($u, $message('m1@example.test', 'host@example.test', ['icsParts' => [$imip('mail-1@example.test', 'REQUEST', 0, 'Sample dinner', '20261219')]]), 'UTC'), true, false);
+    Settings::put($db, $u, ['mailApprovedSenders' => ['host@example.test']]);
+    $journaled('an emailed invitation from an approved sender: added', fn() => $mail->ingestMessage($u, $message('m2@example.test', 'host@example.test', ['icsParts' => [$imip('mail-2@example.test', 'REQUEST', 0, 'Sample lunch', '20261220')]]), 'UTC'));
+    $journaled('an emailed change to an event you have: held', fn() => $mail->ingestMessage($u, $message('m3@example.test', 'host@example.test', ['icsParts' => [$imip('mail-2@example.test', 'REQUEST', 1, 'Sample lunch, moved', '20261221')]]), 'UTC'), true, false);
+    $journaled('an emailed cancellation of it: held', fn() => $mail->ingestMessage($u, $message('m4@example.test', 'host@example.test', ['icsParts' => [$imip('mail-2@example.test', 'CANCEL', 2, 'Sample lunch', '20261220')]]), 'UTC'), true, false);
+    $journaled('an emailed change from someone other than the organizer: refused', fn() => $mail->ingestMessage($u, $message('m5@example.test', 'other@example.test', ['icsParts' => [$imip('mail-2@example.test', 'REQUEST', 3, 'Sample lunch, taken over', '20261222', 'other@example.test')]]), 'UTC'), true, false);
+    $markup = '<html><body><script type="application/ld+json">' . json_encode(['@context' => 'https://schema.org', '@type' => 'Event', 'name' => 'Sample workshop',
+        'startDate' => '2026-12-22T10:00:00-08:00', 'endDate' => '2026-12-22T12:00:00-08:00', 'location' => ['@type' => 'Place', 'name' => 'Sample Hall']]) . '</script></body></html>';
+    $journaled("a booking read from an email's markup: added", fn() => $mail->ingestMessage($u, $message('m6@example.test', 'host@example.test', ['html' => $markup]), 'UTC'));
+    // The admission around a mail event, with the event it admits.
+    $journaled('an email admitted and its event made', fn() => (new MailAdmission($db))->createEvent($u, 'sample-message-key', 'host@example.test', fn(): int => (int) $d->events->create($u, eventAt($inviteCal, 'Admitted', '2026-12-23'))['eventId']));
+
+    // The duplicate check and the person's word on a pair: the pairs are
+    // the check's own, outside undo; Activity gets a note of each.
+    $twin = (int) $d->calendars->create($u, ['name' => 'Twin'])['id'];
+    $d->events->create($u, eventAt($home, 'Sample recital', '2026-12-24'));
+    $d->events->create($u, eventAt($twin, 'Sample recital', '2026-12-24'));
+    $duplicates = new Duplicates($db);
+    $journaled('the duplicate check: pairs found', fn() => $duplicates->scan($u), true, false);
+    $pair = (int) $db->scalar('SELECT MAX(id) FROM event_duplicates WHERE user_id = ?', [$u]);
+    check('duplicates: the check found the pair', $pair > 0);
+    $journaled('a pair decided: not the same event', fn() => $duplicates->decide($u, $pair, 'dismissed'), true, false);
+
+    // A plugin's proposals: the proposal is the plugin's, outside undo;
+    // accepting one makes its trip and events like any change.
+    $proposals = new Proposals($db, $d->events, $trips);
+    $plan = static fn(string $title): array => ['trip' => ['title' => $title, 'start' => '2027-01-08', 'end' => '2027-01-10', 'calendarId' => $home],
+        'events' => [['title' => 'Train out', 'start' => '2027-01-08T09:00:00+00:00', 'end' => '2027-01-08T11:00:00+00:00', 'calendarId' => $home],
+            ['title' => 'Train back', 'start' => '2027-01-10T16:00:00+00:00', 'end' => '2027-01-10T18:00:00+00:00', 'calendarId' => $home]]];
+    $proposal = [];
+    $journaled("a plugin's proposal made", function () use ($proposals, $u, $plan, &$proposal): void {
+        $proposal = $proposals->upsert($u, 'sample', ['sourceKey' => 'trip-1', 'title' => 'A weekend away', 'plan' => $plan('Weekend away')]);
+    }, true, null);
+    $journaled('a proposal accepted: its trip and events made', fn() => $proposals->accept($u, (int) $proposal['id'], (string) $proposal['reviewToken']));
+    $declined = $proposals->upsert($u, 'sample', ['sourceKey' => 'trip-2', 'title' => 'Another weekend', 'plan' => $plan('Another weekend')]);
+    $journaled('a proposal rejected', fn() => $proposals->reject($u, (int) $declined['id'], (string) $declined['reviewToken']), true, null);
+    $proposals->upsert($u, 'sample', ['sourceKey' => 'trip-3', 'title' => 'Never mind', 'plan' => $plan('Never mind')]);
+    $journaled('a proposal withdrawn', fn() => $proposals->withdraw($u, 'sample', 'trip-3'), true, null);
+
+    // Plugins' calendars: one of a person's own, named from its settings;
+    // an event moved on a plugin calendar, written through to its source;
+    // a plugin uninstalled, its calendars kept or taken with it.
+    $db->run("INSERT INTO plugins (id, version, enabled) VALUES ('mover', '1.0.0', 1), ('stations', '1.0.0', 1)");
+    $own = 0;
+    $journaled("a plugin calendar of your own added, named from its settings", function () use ($registry, $u, &$own): void {
+        $own = $registry->createOwnCalendar($u, 'stations', null, null, ['station' => 'North Point']);
+    }, true, false);
+    $journaled("its settings changed, and its name following them", fn() => $registry->saveOwnCalendarSettings($u, $own, 'stations', ['station' => 'South Cove']), true, false);
+    $pluginUndo = new Undo($db, $registry);
+    $pluginEvents = new Events($db, new Recurrence(), $pluginUndo, new Labels($db), new Filters($db, $pluginUndo, new JobQueue($db)), new Trips($db, $pluginUndo), $registry);
+    $mover = new PluginHost($db, 'mover', $u, new HttpClient(), (array) $registry->manifest('mover'), []);
+    $moverCal = $mover->ensureCalendar('Mover items', '#446688');
+    $mover->syncEvents($moverCal, [['sourceKey' => 'item-1', 'title' => 'Movable', 'start' => '2026-12-28', 'allDay' => true]]);
+    $movable = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ?', [$moverCal]);
+    $journaled('an event moved on a plugin calendar, written through to its source', fn() => $pluginEvents->patch($u, $movable, ['start' => '2026-12-29', 'end' => '2026-12-30', 'allDay' => true]));
+    $journaled('a plugin uninstalled, its calendars kept', fn() => $registry->uninstall($u, 'stations', false), true, false);
+    $journaled('a plugin uninstalled with its calendars', fn() => $registry->uninstall($u, 'mover', true), true, false);
 };

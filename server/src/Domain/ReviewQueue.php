@@ -174,19 +174,29 @@ final class ReviewQueue
      *
      * @param array<string,mixed> $fields Events::create payload without calendarId/uid
      * @param array<string,mixed>|null $invite organizer, attendees and sequence
+     * @param ?string $occurrence RECURRENCE-ID (UTC, DB format) when the email
+     *   changes one occurrence of a series that isn't on the calendar (#192).
+     *   $fields is then that occurrence's Events::patch payload, never made
+     *   an event of its own: once the series is added, reconcilePending turns
+     *   the item into a change to that occurrence.
      */
-    public function holdNewInvitation(int $userId, string $uid, array $fields, ?array $invite, string $fromAddr, string $tier = 'imip', string $mode = 'approved'): int
+    public function holdNewInvitation(int $userId, string $uid, array $fields, ?array $invite, string $fromAddr, string $tier = 'imip', string $mode = 'approved', ?string $occurrence = null): int
     {
         $invite = is_array($invite) ? $invite : [];
         $sequence = (int) ($invite['sequence'] ?? 0);
-        $candidateKey = hash('sha256', json_encode([$uid, $fromAddr, $fields, $invite], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES) ?: '');
+        $candidateKey = hash('sha256', json_encode([$uid, $fromAddr, $fields, $invite, $occurrence], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES) ?: '');
         $who = (string) ($invite['organizer']['name'] ?? '') ?: (string) ($invite['organizer']['email'] ?? '') ?: $fromAddr;
-        $summary = $mode === 'review'
-            ? 'Your email setting holds every new event for Review. This event has not been added.'
-            : 'Event from ' . ($fromAddr ?: 'an unreadable sender') . '. This sender is not approved, so the event has not been added.';
+        if ($occurrence !== null) {
+            $summary = ($who !== '' ? $who : 'The organizer') . ' changed one occurrence of a repeating event that is not on your calendar yet.'
+                . ' Once that series is added, this becomes a change to that occurrence. Nothing has been added.';
+        } else {
+            $summary = $mode === 'review'
+                ? 'Your email setting holds every new event for Review. This event has not been added.'
+                : 'Event from ' . ($fromAddr ?: 'an unreadable sender') . '. This sender is not approved, so the event has not been added.';
+        }
         $sourceKey = mb_substr($uid, 0, 255);
 
-        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $fields, $invite, $fromAddr, $sequence, $candidateKey, $summary, $sourceKey, $tier): int {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $fields, $invite, $fromAddr, $sequence, $candidateKey, $summary, $sourceKey, $tier, $occurrence): int {
             foreach ($this->db->all(
                 "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC",
                 [$userId, self::KIND_INVITE_NEW, $sourceKey]
@@ -211,9 +221,10 @@ final class ReviewQueue
                     'invite' => $invite,
                     'sequence' => $sequence,
                     'candidateKey' => $candidateKey,
-                ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+                ] + ($occurrence !== null ? ['occurrence' => $occurrence] : []), JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
             ]);
-            $this->journalHeld($userId, $held, 'create', null, 'Held an emailed invitation to "' . mb_substr((string) ($fields['title'] ?? '(untitled)'), 0, 200) . '" for Review');
+            $this->journalHeld($userId, $held, 'create', null, 'Held an emailed ' . ($occurrence !== null ? 'change to one occurrence of' : 'invitation to')
+                . ' "' . mb_substr((string) ($fields['title'] ?? '(untitled)'), 0, 200) . '" for Review');
             return $held;
         });
     }
@@ -726,6 +737,20 @@ final class ReviewQueue
                 'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL LIMIT 1' . $this->forUpdate(),
                 [$userId, $uid]
             );
+            // A change to one occurrence held before its series (#192) is
+            // never made an event of its own: it would pass for the whole
+            // series. It waits for the series; once that is on the calendar
+            // (added here, automatically, or any other way) it becomes a
+            // change to that occurrence, shown before it is applied.
+            if (isset($payload['occurrence'])) {
+                if ($existing === null) {
+                    return self::decisionError('review_waiting', 'This changes one occurrence of a repeating event that is not on your calendar. Add the series first and this becomes a change to that occurrence, or dismiss it.');
+                }
+                $this->reconcilePending($userId, (int) $existing, (string) $row['source_key']);
+                return (string) $this->db->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $row['id']]) === 'open'
+                    ? self::decisionError('review_changed', 'That series is on your calendar now, so this is a change to one of its occurrences. Review the differences and try again.')
+                    : self::decisionError('review_stale', 'That series is on your calendar, but this change to one of its occurrences no longer applies to it. The item has been closed.');
+            }
             if ($existing !== null) {
                 $this->close((int) $row['id'], 'superseded');
                 return self::decisionError('review_stale', 'That invitation is already on your calendar. The duplicate item has been closed.');
@@ -788,8 +813,21 @@ final class ReviewQueue
                     ? self::decisionError('review_stale', 'That occurrence is already skipped. The item has been closed.')
                     : self::decisionError('review_stale', 'That occurrence already matches this change. The item has been closed.');
             }
+            // The day named may no longer be one of the series' occurrences:
+            // the owner moved the series, or changed its rule, since the
+            // email arrived (#192). Events refuses it (nothing written yet);
+            // the item is closed, with the reason, rather than left to fail
+            // the same way on every press.
+            $staleOccurrence = fn(): array => self::decisionError('review_stale',
+                'That day is no longer an occurrence of this series, which was moved or changed since this email arrived, so there is nothing to change. The item has been closed.');
             if ($cancel) {
-                $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
+                try {
+                    $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
+                } catch (HttpError $e) {
+                    if ($e->errorCode !== 'invalid_recurrence_instance') throw $e;
+                    $this->close((int) $row['id'], 'superseded');
+                    return $staleOccurrence();
+                }
                 $this->close((int) $row['id'], 'accepted');
                 return ['eventId' => $eventId, 'removed' => false];
             }
@@ -806,13 +844,19 @@ final class ReviewQueue
                 return self::decisionError('review_changed', 'That occurrence changed after this email arrived. The differences were refreshed; review them and try again.');
             }
             $patch = ['scope' => 'this', 'instanceStart' => $instance];
-            foreach (['title', 'start', 'end', 'allDay', 'location', 'description'] as $key) {
+            foreach (['title', 'start', 'end', 'allDay', 'tzid', 'location', 'description'] as $key) {
                 if (array_key_exists($key, $fields)) $patch[$key] = $fields[$key];
             }
             if ($overrideRow !== null && (string) ($overrideRow['status'] ?? '') === 'cancelled') {
                 $patch['status'] = 'confirmed';
             }
-            $this->events->patch($userId, $eventId, $patch, $authority);
+            try {
+                $this->events->patch($userId, $eventId, $patch, $authority);
+            } catch (HttpError $e) {
+                if ($e->errorCode !== 'invalid_recurrence_instance') throw $e;
+                $this->close((int) $row['id'], 'superseded');
+                return $staleOccurrence();
+            }
             // The occurrence keeps its own sequence watermark; the series'
             // organizer stays the one the owner approved.
             $applied = self::occurrenceRow($this->db, $eventId, $occurrence);
@@ -987,10 +1031,19 @@ final class ReviewQueue
             } elseif ($pending['kind'] === self::KIND_INVITE_NEW) {
                 // It arrived before the first version was added. It is now a
                 // change, not a second event or a silently discarded revision.
+                // One about a single occurrence (#192) is a change to that
+                // day, worded and applied as holdInviteChange holds one.
                 $payload['method'] = $method;
                 $payload['diff'] = $diff;
-                $this->db->update('review_items', ['kind' => self::KIND_INVITE_CHANGE, 'event_id' => $eventId,
-                    'summary' => 'Another emailed version is waiting. Compare it with the event you added.',
+                if ($occurrence !== null) {
+                    $who = (string) ($incoming['organizer']['name'] ?? '') ?: (string) ($incoming['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
+                    $day = self::occurrenceLabel($event, $occurrence, Settings::homeTzid($this->db, $userId));
+                    $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
+                    $summary = ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence of the series you added: $changed. Accepting changes just that one.";
+                } else {
+                    $summary = 'Another emailed version is waiting. Compare it with the event you added.';
+                }
+                $this->db->update('review_items', ['kind' => self::KIND_INVITE_CHANGE, 'event_id' => $eventId, 'summary' => $summary,
                     'payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE)], 'id = ?', [(int) $pending['id']]);
             }
         }

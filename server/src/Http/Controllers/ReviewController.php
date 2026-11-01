@@ -85,12 +85,13 @@ final class ReviewController
             $fields = is_array($c['detail']['fields'] ?? null) ? $c['detail']['fields'] : [];
             $heldInvite = is_array($c['detail']['invite'] ?? null) ? $c['detail']['invite'] : [];
             $replyable = $isNew && Rsvp::kind($heldInvite) === 'invitation' && Rsvp::blocker($heldInvite, config()) === null;
-            // One occurrence: a cancellation can be accepted (it skips that
-            // one); any other change is shown for the owner to make by hand.
-            $occurrence = !$isNew && isset($c['detail']['occurrence']) ? (string) $c['detail']['occurrence'] : null;
+            // One occurrence: accepting skips that one (a cancellation) or
+            // changes just that one (#155). Held before its series (#192) it
+            // is still only that one day: approving its sender adds nothing.
+            $occurrence = isset($c['detail']['occurrence']) ? (string) $c['detail']['occurrence'] : null;
             $occurrenceCancel = $occurrence !== null && ($c['method'] === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled');
             $approve = [];
-            if ($isNew && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
+            if ($isNew && $occurrence === null && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
                 $address = \BetterCal\Domain\MailPolicy::address($c['from']);
                 $domain = \BetterCal\Domain\MailPolicy::domainFor($c['from']);
                 if ($address !== null) $approve[] = self::action('approve_address', 'Always add from ' . $address, "/review/invitations/{$c['id']}/accept", ['approveSender' => 'address']);
@@ -123,12 +124,12 @@ final class ReviewController
                     // A new invitation that can be answered from here offers
                     // adding and accepting in one decision, so no second
                     // "not replied" item follows.
-                    ...($isNew && $this->rsvp !== null && $replyable
+                    ...($isNew && $occurrence === null && $this->rsvp !== null && $replyable
                         ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
                         : []),
-                    ...($occurrence !== null && !$occurrenceCancel ? [] : [self::action('accept', $isNew ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
+                    self::action('accept', $isNew && $occurrence === null ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
-                        : "/review/invite-changes/{$c['id']}/accept")]),
+                        : "/review/invite-changes/{$c['id']}/accept"),
                     ...$approve,
                     self::action('dismiss', 'Dismiss', $isNew
                         ? "/review/invitations/{$c['id']}/dismiss"

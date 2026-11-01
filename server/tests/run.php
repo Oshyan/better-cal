@@ -1813,6 +1813,78 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         ]);
     }
 
+    // A change to one occurrence that arrives before its series is on the
+    // calendar (#192): held as that one day, never an event of its own, and
+    // a change to that occurrence once the series is added. The sender's
+    // domain is approved above, so this also shows the hold doesn't depend
+    // on the sender policy.
+    $earlyInvite = ['method' => 'REQUEST', 'organizer' => ['email' => 'organizer@example.test'], 'attendees' => [], 'sequence' => 0, 'myPartstat' => 'NEEDS-ACTION'];
+    $earlyMsg = ['messageId' => 'early@example.test', 'subject' => 'Updated: Planning call', 'from' => 'organizer@example.test'];
+    // The 16 Nov occurrence (Mondays 18:00 UTC), moved an hour earlier and
+    // sent in another zone.
+    $earlyOcc = ['uid' => 'early-uid', 'title' => 'Planning call', 'start_utc' => '2026-11-16 17:00:00', 'end_utc' => '2026-11-16 18:00:00',
+        'all_day' => false, 'tzid' => 'Europe/Berlin', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed',
+        'recurrence_instance_utc' => '2026-11-16 18:00:00', 'invite' => $earlyInvite];
+    $early = $applyA->invoke($mailA, 1, 'REQUEST', $earlyOcc, 'UTC', $earlyMsg);
+    $earlyItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_new' AND source_key = 'early-uid' AND status = 'open'");
+    $earlyPayload = json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$earlyItem]), true);
+    checkEq('occurrence before its series: held as that one day, with its zone, and no event is made', ['held', null, 0, '2026-11-16 18:00:00', 'Europe/Berlin', true], [
+        $early[0], $early[1], (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE uid = 'early-uid'"),
+        $earlyPayload['occurrence'] ?? null, $earlyPayload['fields']['tzid'] ?? null,
+        str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$earlyItem]), 'not on your calendar yet'),
+    ]);
+    checkEq('occurrence before its series: cancelling a day of a series that isn\'t there changes nothing', ['skipped', null],
+        array_slice($applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL'] + $earlyInvite] + $earlyOcc, 'UTC', ['messageId' => 'early-cancel@example.test'] + $earlyMsg), 0, 2));
+    try {
+        $queueA->accept(1, $earlyItem);
+        check('occurrence before its series: accepting it adds nothing', false);
+    } catch (HttpError $e) {
+        checkEq('occurrence before its series: accepting it says to add the series first, and the item stays', [409, 'review_waiting', 'open', 0], [
+            $e->status, $e->errorCode, $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$earlyItem]),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE uid = 'early-uid'"),
+        ]);
+    }
+    // The series is added from Review: the held day is now a change to that
+    // occurrence of it, judged by its own sequence (0, below the series' 1),
+    // listing only what moved, with no "Repeats" row.
+    $earlySeries = ['title' => 'Planning call', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
+    $earlySeriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'early-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test'))['eventId'];
+    $earlyRow = $adb->one('SELECT * FROM review_items WHERE id = ?', [$earlyItem]);
+    $earlyPayload = json_decode((string) $earlyRow['payload_json'], true);
+    checkEq('occurrence before its series: adding the series makes it a change to that occurrence, with the day\'s own differences',
+        ['invite_change', 'open', $earlySeriesId, '2026-11-16 18:00:00', ['Starts', 'Ends'], true], [
+        $earlyRow['kind'], $earlyRow['status'], (int) $earlyRow['event_id'], $earlyPayload['occurrence'] ?? null,
+        array_column($earlyPayload['diff'] ?? [], 'label'),
+        str_contains((string) $earlyRow['summary'], 'Mon 16 Nov 2026 occurrence of the series you added') && str_contains((string) $earlyRow['summary'], 'Accepting changes just that one'),
+    ]);
+    if (class_exists(\Sabre\VObject\Reader::class)) { // changing an occurrence proves it through sabre/vobject
+        $queueA->accept(1, $earlyItem);
+        $earlyOv = $adb->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$earlySeriesId, '2026-11-16 18:00:00']);
+        checkEq('occurrence before its series: accepting the change makes that day its own exception, in the zone the email gave', ['2026-11-16 17:00:00', 'Europe/Berlin', 'FREQ=WEEKLY', '2026-11-02 18:00:00', 'UTC'], [
+            $earlyOv['start_utc'] ?? null, $earlyOv['tzid'] ?? null,
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$earlySeriesId]), $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$earlySeriesId]), $adb->scalar('SELECT tzid FROM events WHERE id = ?', [$earlySeriesId]),
+        ]);
+        // Held for a day of the series, which the owner then moves to
+        // Tuesdays: that day is no longer an occurrence, so accepting closes
+        // the item and says why instead of failing on every press.
+        $late = $applyA->invoke($mailA, 1, 'REQUEST', ['start_utc' => '2026-11-30 19:00:00', 'end_utc' => '2026-11-30 20:00:00', 'recurrence_instance_utc' => '2026-11-30 18:00:00',
+            'tzid' => 'UTC', 'invite' => ['sequence' => 1] + $earlyInvite] + $earlyOcc, 'UTC', ['messageId' => 'late@example.test'] + $earlyMsg);
+        $lateItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$earlySeriesId]);
+        $eventsA->patch(1, $earlySeriesId, ['scope' => 'all', 'start' => '2026-11-03T18:00:00+00:00', 'end' => '2026-11-03T19:00:00+00:00']);
+        try {
+            $queueA->accept(1, $lateItem);
+            check('occurrence of a moved series: accepting it changes nothing', false);
+        } catch (HttpError $e) {
+            checkEq('occurrence of a moved series: the item closes, saying that day is no longer an occurrence, and the series is untouched',
+                ['held', 409, 'review_stale', true, 'superseded', '2026-11-03 18:00:00', 1], [
+                $late[0], $e->status, $e->errorCode, str_contains($e->getMessage(), 'no longer an occurrence'),
+                $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$lateItem]),
+                $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$earlySeriesId]),
+                (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$earlySeriesId]),
+            ]);
+        }
+    }
+
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
     $placeBase = ['calendarId' => 10, 'start' => '2026-12-08T18:00:00+00:00', 'end' => '2026-12-08T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];

@@ -4,6 +4,21 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Quick add reads more of what people type** ([#193](https://github.com/Oshyan/better-cal/issues/193)):
+  - "every 1st and 3rd Monday", "first and third Monday of the month" and "every 1st and 15th" make one monthly repeat on all those days, and the repeat chip says so.
+  - "Workshop Mon-Fri 9am-5pm" is one event from Monday morning to Friday evening, when the end time is later in the day than the start; "Mon-Fri 10pm-6am" still repeats, each night to the next morning, and "Mon-Fri 9am" each weekday.
+  - "Call 3pm ET with Sam" reads the Eastern time; "3pm CT scan" is still just words.
+  - A monthly repeat whose date you change on the card starts on the first day its rule names.
+- **Repeating events:** "this and following" or ending a series from its first day edits the whole series, so that day no longer shows twice. Dragging an "every 15th" series as a whole moves its day with it ("every 16th"). A rename no longer moves a series whose first day was off its pattern.
+- **Emailed changes to one day of a repeating invitation** ([#192](https://github.com/Oshyan/better-cal/issues/192)): one that arrives before the series is on your calendar waits in Review and becomes a change to that day once you add the series, keeping the zone the organizer gave it. It used to be closed silently or, when accepted, turn the whole series into one event. If you moved the series since, accepting the change closes it and says the day is no longer an occurrence. Review's Accept button is back for emailed moves of one day. An invitation that already carries a moved day keeps that day: it waits in Review as a change to that occurrence instead of being dropped.
+- **Approved senders** ([#196](https://github.com/Oshyan/better-cal/issues/196)): addresses and domains with non-ASCII characters can be approved and matched; Review's "Always add from" shows such a domain in Unicode with its stored form beside it. `*.example.com` covers only the domains one level under it, as documented, and a wildcard over a public suffix like `*.co.uk` or `*.com` is refused. An entry saved by an earlier version that is no longer accepted doesn't block "Always add from" or saving the list; saving names it so you can remove it.
+- **Plugin calendars** ([#195](https://github.com/Oshyan/better-cal/issues/195)): deleting one clears its bands and the status its plugin kept for it once the delete can no longer be undone, and they no longer count toward the plugin's "N bands" meanwhile. Adding a plugin calendar can be undone from Activity, like adding any calendar.
+- **Updating from a version before 1.3.0 works again** ([#194](https://github.com/Oshyan/better-cal/issues/194)): releases since 1.4.0 are signed with a key those versions don't list, so the updater stopped. It now installs the newest release your copy can verify, says why that is a step, and the next run brings you to the newest. The app's update notice and Settings, About say the same instead of failing the check, and an update that stops on a broken release names it.
+
+Operators: one database change (the update notice's newest-release column), applied automatically by `update.php` or the database update page. An install on a version before 1.3.0 updates in two runs of `update.php`; the first says so.
+
 ## 1.4.5 (2026-11-01)
 
 - **Moving a repeating event to another calendar from the editor moves the series** ([#186](https://github.com/Oshyan/better-cal/issues/186)): Apply to switches to all events and lights up, so you can still pick just this one. It used to split that one date off the series.

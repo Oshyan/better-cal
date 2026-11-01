@@ -3992,7 +3992,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
         'CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, consecutive_failures INTEGER NOT NULL DEFAULT 0)',
         'CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY, plugin_id TEXT)',
         'CREATE TABLE plugin_warnings (id INTEGER PRIMARY KEY, plugin_id TEXT)',
-        'CREATE TABLE app_update_state (id INTEGER PRIMARY KEY, latest_version TEXT, minimum_secure_version TEXT)',
+        'CREATE TABLE app_update_state (id INTEGER PRIMARY KEY, latest_version TEXT, newest_version TEXT, minimum_secure_version TEXT)',
         'CREATE TABLE user_update_notices (user_id INTEGER PRIMARY KEY, dismissed_version TEXT)',
     ] as $sql) {
         $ccdb->run($sql);

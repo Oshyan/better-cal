@@ -84,7 +84,9 @@ final class ChangeCursor
         }
         $ranges = $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_ranges');
         $warnings = $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_warnings');
-        $update = $this->db->one('SELECT latest_version, minimum_secure_version FROM app_update_state WHERE id = 1') ?? [];
+        // newest_version too: the notice's wording changes when a newer release
+        // appears behind the one this copy can verify, with latest_version as it was.
+        $update = $this->db->one('SELECT latest_version, newest_version, minimum_secure_version FROM app_update_state WHERE id = 1') ?? [];
         $dismissed = $this->db->scalar('SELECT dismissed_version FROM user_update_notices WHERE user_id = ?', [$userId]);
         return substr(hash('sha256', implode('|', [
             $health['n'] . ':' . $health['f'] . ':' . $health['since'],
@@ -92,7 +94,7 @@ final class ChangeCursor
             $google,
             $plugins,
             $ranges['n'] . ':' . $ranges['m'] . ':' . $warnings['n'] . ':' . $warnings['m'],
-            (string) ($update['latest_version'] ?? '') . ':' . (string) ($update['minimum_secure_version'] ?? '') . ':' . (string) ($dismissed ?? ''),
+            (string) ($update['latest_version'] ?? '') . ':' . (string) ($update['newest_version'] ?? '') . ':' . (string) ($update['minimum_secure_version'] ?? '') . ':' . (string) ($dismissed ?? ''),
         ])), 0, 16);
     }
 }

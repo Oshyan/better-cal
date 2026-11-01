@@ -502,7 +502,7 @@ return new class implements BetterCal\Plugin\PluginInterface {
     $own = 0;
     $journaled("a plugin calendar of your own added, named from its settings", function () use ($registry, $u, &$own): void {
         $own = $registry->createOwnCalendar($u, 'stations', null, null, ['station' => 'North Point']);
-    }, true, false);
+    }, true, true);
     $journaled("its settings changed, and its name following them", fn() => $registry->saveOwnCalendarSettings($u, $own, 'stations', ['station' => 'South Cove']), true, false);
     $pluginUndo = new Undo($db, $registry);
     $pluginEvents = new Events($db, new Recurrence(), $pluginUndo, new Labels($db), new Filters($db, $pluginUndo, new JobQueue($db)), new Trips($db, $pluginUndo), $registry);

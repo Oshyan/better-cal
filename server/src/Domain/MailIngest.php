@@ -807,32 +807,50 @@ final class MailIngest
         // An email about ONE occurrence (RECURRENCE-ID) of a series the owner
         // has must never be applied to the series itself (review of 0.9.87):
         // accepting it skips that occurrence or changes just that one (#155).
-        if ($occurrence !== null && $existing !== null) {
+        if ($occurrence !== null) {
             $cancel = $method === 'CANCEL' || ($ev['status'] ?? '') === 'cancelled';
             $occurrenceFields = [];
             if (!$cancel) {
-                $zone = Time::zone(is_string($ev['tzid'] ?? null) && $ev['tzid'] !== '' ? $ev['tzid'] : $tz);
+                // Its zone travels with it (#192): an occurrence the
+                // organizer moved into another zone is shown in that zone,
+                // not the series'.
+                $occurrenceTzid = is_string($ev['tzid'] ?? null) && $ev['tzid'] !== '' ? $ev['tzid'] : $tz;
+                $zone = Time::zone($occurrenceTzid);
                 $occurrenceFields = [
                     'title' => (string) ($ev['title'] ?? '(untitled)'),
                     'start' => Time::iso((new \DateTimeImmutable((string) $ev['start_utc'], Time::utc()))->setTimezone($zone)),
                     'end' => Time::iso((new \DateTimeImmutable((string) $ev['end_utc'], Time::utc()))->setTimezone($zone)),
                     'allDay' => (bool) ($ev['all_day'] ?? false),
+                    'tzid' => $occurrenceTzid,
                     'location' => isset($ev['location']) && $ev['location'] !== '' ? (string) $ev['location'] : null,
                     'description' => isset($ev['description']) && $ev['description'] !== '' ? (string) $ev['description'] : null,
                 ];
             }
-            $held = $this->review->holdInviteChange(
-                $userId,
-                $existing,
-                $uid,
-                $cancel ? 'CANCEL' : 'REQUEST',
-                $occurrenceFields,
-                $ev['invite'] ?? null,
-                $fromAddr,
-                self::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null),
-                $occurrence,
-            );
-            return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
+            if ($existing !== null) {
+                $held = $this->review->holdInviteChange(
+                    $userId,
+                    $existing,
+                    $uid,
+                    $cancel ? 'CANCEL' : 'REQUEST',
+                    $occurrenceFields,
+                    $ev['invite'] ?? null,
+                    $fromAddr,
+                    self::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null),
+                    $occurrence,
+                );
+                return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
+            }
+            // Before its series is on the calendar (#192): the series may be
+            // waiting in Review itself. Made an event of its own it would
+            // later pass for the whole series, so it waits as a change to
+            // that one day, and becomes one once the series is added
+            // (ReviewQueue::reconcilePending). Cancelling a day of a series
+            // that isn't there changes nothing.
+            if ($cancel) {
+                return ['skipped', null];
+            }
+            $result = $this->createNew($userId, $msg, $uid, $occurrenceFields, (array) ($ev['invite'] ?? []), 'imip', $occurrence);
+            return $result['error'] === null ? [$result['outcome'], $result['eventId']] : [$result['outcome'], $result['eventId'], $result['error']];
         }
 
         // From here on, a message about an event the owner ALREADY HAS never
@@ -963,28 +981,38 @@ final class MailIngest
         ], $tier);
     }
 
-    /** Every new mail event, including bookings and first REQUEST invitations. */
-    private function createNew(int $userId, array $msg, string $uid, array $fields, array $invite, string $tier): array
+    /**
+     * Every new mail event, including bookings and first REQUEST invitations.
+     * A change to one occurrence of a series not on the calendar
+     * ($occurrence) is only ever held, whatever the sender policy: there is
+     * no event to make of it.
+     */
+    private function createNew(int $userId, array $msg, string $uid, array $fields, array $invite, string $tier, ?string $occurrence = null): array
     {
         $from = (string) ($msg['from'] ?? '');
-        $admitted = $this->admission->createMailEvent(
-            $userId, self::messageKey($msg), $from,
-            function (string $mode) use ($userId, $uid, $fields, $invite): int {
-                $request = ($invite['method'] ?? '') === 'REQUEST';
-                $occurrence = $this->events->create($userId,
-                    ($request ? ['status' => 'tentative'] : []) + $fields
-                    + ['calendarId' => $this->inviteCalendarId($userId), 'uid' => $uid]);
-                $eventId = (int) $occurrence['eventId'];
-                if ($request) {
-                    $invite['myPartstat'] = 'NEEDS-ACTION';
-                    $invite['organizerTrust'] = 'mail-policy';
-                    $invite['admissionMode'] = $mode;
-                }
-                self::storeInvite($this->db, $eventId, $invite, false);
-                return $eventId;
-            },
-            fn(string $mode): int => $this->review->holdNewInvitation($userId, $uid, $fields, $invite, $from, $tier, $mode),
-        );
+        $hold = fn(string $mode): int => $this->review->holdNewInvitation($userId, $uid, $fields, $invite, $from, $tier, $mode, $occurrence);
+        if ($occurrence !== null) {
+            $admitted = $this->admission->createInvitationCandidate($userId, self::messageKey($msg), $from, fn(): int => $hold('approved')) + ['held' => true];
+        } else {
+            $admitted = $this->admission->createMailEvent(
+                $userId, self::messageKey($msg), $from,
+                function (string $mode) use ($userId, $uid, $fields, $invite): int {
+                    $request = ($invite['method'] ?? '') === 'REQUEST';
+                    $made = $this->events->create($userId,
+                        ($request ? ['status' => 'tentative'] : []) + $fields
+                        + ['calendarId' => $this->inviteCalendarId($userId), 'uid' => $uid]);
+                    $eventId = (int) $made['eventId'];
+                    if ($request) {
+                        $invite['myPartstat'] = 'NEEDS-ACTION';
+                        $invite['organizerTrust'] = 'mail-policy';
+                        $invite['admissionMode'] = $mode;
+                    }
+                    self::storeInvite($this->db, $eventId, $invite, false);
+                    return $eventId;
+                },
+                $hold,
+            );
+        }
         if (!$admitted['allowed']) {
             return $this->limited($userId, $msg, $tier, $admitted);
         }

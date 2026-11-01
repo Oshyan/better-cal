@@ -274,6 +274,25 @@ final class Updater
     }
 
     /**
+     * What to say when the newest release this copy can verify ($to) is not
+     * the newest there is ($newest): the ones after $to are signed with a
+     * key this copy doesn't list, and $to is the step that brings it (#194).
+     * Empty when they are the same release.
+     *
+     * @return list<string>
+     */
+    public static function steppingStone(string $to, string $newest): array
+    {
+        if ($to === $newest) {
+            return [];
+        }
+        return [
+            "Newer releases, up to $newest, are signed with a key this copy of Better-Cal doesn't list yet, so $to is the",
+            "newest one it can verify. Updating to $to brings that key; run the update again afterwards for the newest.",
+        ];
+    }
+
+    /**
      * Where an update that stopped in the middle of its swap really is. The
      * previous copy present and the unpacked one gone: both renames happened,
      * so it's "swapped". Otherwise the old code is still in place (this runs

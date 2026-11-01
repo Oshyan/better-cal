@@ -11001,6 +11001,86 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     catch (RuntimeException) { $threw = true; }
     check('update: a download that doesn\'t match is refused and not saved', $threw && !file_exists("$tmp/dl2.zip"));
 
+    // Behind a change to config/release-keys.php (#194): a copy whose list
+    // lacks the key the newest releases are signed with gets the newest one
+    // its keys do verify, as a step, and never a release it couldn't install.
+    $stepPairs = ['old-key' => sodium_crypto_sign_keypair(), 'new-key' => sodium_crypto_sign_keypair()];
+    $oldKeys = [['id' => 'old-key', 'type' => 'ed25519', 'publicKey' => base64_encode(sodium_crypto_sign_publickey($stepPairs['old-key']))]];
+    $stepRelease = static function (string $v, string $signer, bool $immutable = true) use ($stepPairs): array {
+        $manifest = Updates::manifestJson($v, 'routine', '9.9.0');
+        $statement = BetterCal\Support\ReleaseSignature::statement($v, str_repeat('0', 40), hash('sha256', ''), hash('sha256', $manifest));
+        $sig = json_encode(['statement' => $statement, 'signatures' => [['key' => $signer, 'type' => 'ed25519',
+            'sig' => base64_encode(sodium_crypto_sign_detached($statement, sodium_crypto_sign_secretkey($stepPairs[$signer])))]]]);
+        return ['manifest' => $manifest, 'sig' => $sig, 'release' => [
+            'tag_name' => "v$v", 'draft' => false, 'prerelease' => false, 'immutable' => $immutable,
+            'html_url' => "https://github.com/Oshyan/better-cal/releases/tag/v$v", 'published_at' => '2026-10-08T12:00:00Z',
+            'assets' => [
+                ['name' => Updates::MANIFEST_NAME, 'browser_download_url' => Updates::RELEASE_BASE . "v$v/" . Updates::MANIFEST_NAME, 'digest' => 'sha256:' . hash('sha256', $manifest)],
+                ['name' => BetterCal\Support\ReleaseSignature::ASSET, 'browser_download_url' => Updates::RELEASE_BASE . "v$v/" . BetterCal\Support\ReleaseSignature::ASSET, 'digest' => 'sha256:' . hash('sha256', $sig), 'size' => strlen($sig)],
+            ],
+        ]];
+    };
+    $sigFetches = 0;
+    // A 9.8.0 install listing only old-key, and GitHub's list of built releases, newest first. @return array{Updates,BetterCal\Infra\Db}
+    $stepUpdates = static function (array $built) use ($oldKeys, &$sigFetches): array {
+        $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+        (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
+        $fetch = static function (string $url) use ($built, &$sigFetches): array {
+            if (str_contains($url, 'api.github.com')) {
+                return ['status' => 200, 'body' => json_encode(array_column($built, 'release'))];
+            }
+            foreach ($built as $b) {
+                $base = Updates::RELEASE_BASE . $b['release']['tag_name'] . '/';
+                if ($url === $base . Updates::MANIFEST_NAME) {
+                    return ['status' => 200, 'body' => $b['manifest']];
+                }
+                if ($url === $base . BetterCal\Support\ReleaseSignature::ASSET) {
+                    $sigFetches++;
+                    return ['status' => 200, 'body' => $b['sig']];
+                }
+            }
+            return ['status' => 404, 'body' => ''];
+        };
+        return [new Updates($db, ['version' => '9.8.0'], $fetch, $oldKeys), $db];
+    };
+    [$stepping] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
+    $found = $stepping->newestRelease();
+    checkEq('update: behind a key change, the newest release this copy verifies is offered, and the newest is named',
+        ['9.9.0', '9.9.2'], [$found['version'], $found['newest']]);
+    $step = implode(' ', BetterCal\Infra\Updater::steppingStone($found['version'], $found['newest']));
+    check('update: the step says what the newer releases need and to run the update again',
+        str_contains($step, '9.9.2') && str_contains($step, "doesn't list") && str_contains($step, 'run the update again'));
+    checkEq('update: the app\'s notice records the step too, never a release the updater would refuse', '9.9.0', $stepping->check(false)['latest_version']);
+    checkEq('update: a newest release this copy verifies has no step to explain', [], BetterCal\Infra\Updater::steppingStone('9.9.2', '9.9.2'));
+
+    [$stuck, $stuckDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key')]);
+    try {
+        $stuck->newestRelease();
+        check('update: no release verifying is said plainly, naming the newest', false);
+    } catch (BetterCal\Support\UntrustedSignature $e) {
+        check('update: no release verifying is said plainly, naming the newest', str_contains($e->getMessage(), '9.9.2') && str_contains($e->getMessage(), "doesn't list"));
+    }
+    $threw = false;
+    try { $stuck->check(false); } catch (RuntimeException $e) { $threw = str_contains($e->getMessage(), "doesn't list"); }
+    check('update: the notice records nothing when no release verifies, and says why', $threw && $stuckDb->one('SELECT latest_version FROM app_update_state WHERE id = 1')['latest_version'] === null);
+
+    $sigFetches = 0;
+    [$fine] = $stepUpdates([$stepRelease('9.9.2', 'old-key'), $stepRelease('9.9.1', 'new-key')]);
+    $found = $fine->newestRelease();
+    checkEq('update: a newest release this copy verifies is taken as before, without looking further back',
+        ['9.9.2', '9.9.2', 1], [$found['version'], $found['newest'], $sigFetches]);
+
+    // Only a key this copy lacks is walked past; a broken newest release still stops the update.
+    [$broken] = $stepUpdates([$stepRelease('9.9.2', 'old-key', false), $stepRelease('9.9.0', 'old-key')]);
+    try {
+        $broken->newestRelease();
+        check('update: a newest release that is not immutable still stops the update', false);
+    } catch (BetterCal\Support\UntrustedSignature) {
+        check('update: a newest release that is not immutable still stops the update', false);
+    } catch (RuntimeException $e) {
+        check('update: a newest release that is not immutable still stops the update', str_contains($e->getMessage(), 'not immutable'));
+    }
+
     exec('rm -r ' . escapeshellarg($tmp));
 }
 

@@ -9,6 +9,7 @@ use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\Notifier;
 use BetterCal\Support\Time;
+use BetterCal\Support\UntrustedSignature;
 
 /**
  * Release awareness. The app itself only fetches release metadata and
@@ -64,7 +65,8 @@ final class Updates
         $startingState = $this->row();
         $startingRevision = (int) ($startingState['revision'] ?? 0);
         try {
-            $release = $this->newestCandidate();
+            $candidates = $this->candidates();
+            $release = $candidates->current(); // the newest, before any check; throws when there is none
 
             $version = substr((string) $release['tag_name'], 1);
             $current = $this->currentVersion();
@@ -91,7 +93,9 @@ final class Updates
                     'last_error' => null,
                 ];
             } else {
-                $state = $this->verifiedManifestState($release, $version, $previous);
+                // The newest release this copy's keys verify: the notice must
+                // never name one the updater would then refuse (#194).
+                $state = $this->newestVerified($candidates, $previous)['state'];
             }
             $stored = $this->saveAcceptedState($state);
             if ($notify) $this->notifySecurityFloor($stored);
@@ -162,11 +166,18 @@ final class Updates
         $this->saveNotice($userId, ['dismissed_version' => $status['latestVersion']]);
     }
 
-    /** The newest published vX.Y.Z release in GitHub's list, unverified. */
-    private function newestCandidate(): array
+    /**
+     * The published vX.Y.Z releases in GitHub's list, unverified, newest
+     * first: each page's highest version first, and the next page only read
+     * when a caller looks past the last one (so the usual check costs the
+     * one page the newest release is on). Throws when the list holds none.
+     *
+     * @return \Generator<int,array>
+     */
+    private function candidates(): \Generator
     {
-        $candidates = [];
-        for ($page = 1; $page <= self::MAX_RELEASE_PAGES && $candidates === []; $page++) {
+        $any = false;
+        for ($page = 1; $page <= self::MAX_RELEASE_PAGES; $page++) {
             $releaseResponse = $this->get(self::releasePageUrl($page), [
                 'Accept: application/vnd.github+json',
                 'X-GitHub-Api-Version: 2026-03-10',
@@ -178,6 +189,7 @@ final class Updates
             if (!is_array($releases) || !array_is_list($releases)) {
                 throw new \RuntimeException('GitHub Releases response was not a list');
             }
+            $candidates = [];
             foreach ($releases as $candidate) {
                 $tag = is_array($candidate) ? (string) ($candidate['tag_name'] ?? '') : '';
                 if (preg_match('/^v(\d+\.\d+\.\d+)$/D', $tag) === 1
@@ -185,36 +197,73 @@ final class Updates
                     $candidates[] = $candidate;
                 }
             }
+            usort($candidates, static fn(array $a, array $b): int => version_compare(
+                substr((string) $b['tag_name'], 1),
+                substr((string) $a['tag_name'], 1)
+            ));
+            foreach ($candidates as $candidate) {
+                $any = true;
+                yield $candidate;
+            }
             if (count($releases) < self::RELEASE_PAGE_SIZE) {
                 break; // the end of the list
             }
         }
-        if ($candidates === [] && $page > self::MAX_RELEASE_PAGES) {
+        if (!$any && $page > self::MAX_RELEASE_PAGES) {
             throw new \RuntimeException('No published Better-Cal application release among the newest '
                 . (self::RELEASE_PAGE_SIZE * self::MAX_RELEASE_PAGES) . ' releases');
         }
-        if ($candidates === []) {
+        if (!$any) {
             throw new \RuntimeException('No published Better-Cal application release was found');
         }
-        usort($candidates, static fn(array $a, array $b): int => version_compare(
-            substr((string) $b['tag_name'], 1),
-            substr((string) $a['tag_name'], 1)
-        ));
-        return $candidates[0];
     }
 
     /**
-     * For bin/update.php: the newest published app release, verified as the
-     * update check verifies it (immutable, canonical manifest and its GitHub
-     * digest), with its release zip when it has one. Nothing is stored.
+     * The newest release this copy's keys verify, walking back from the
+     * newest. A release signed only by a key that a later release than this
+     * copy added to config/release-keys.php can't be installed from here,
+     * but the newest one signed by a key this copy lists can, and once it
+     * runs, its list verifies the rest (#194). Only that failure is walked
+     * past: a release that isn't immutable, has a bad manifest or no
+     * signature at all stops the check as before, since that is a broken or
+     * tampered release, not a key this copy lacks. 'newest' is the newest
+     * published version, the same as 'version' unless some were walked past.
      *
-     * @return array{version:string,priority:string,minimumSecureVersion:?string,releaseUrl:string,notes:string,zip:?array{url:string,sha256:string,size:int},signature:?array{url:string,sha256:string,size:int},manifestSha256:string}
+     * @return array{release:array,version:string,state:array,newest:string}
+     */
+    private function newestVerified(\Generator $candidates, array $previous): array
+    {
+        $newest = null;
+        for (; $candidates->valid(); $candidates->next()) {
+            $release = $candidates->current();
+            $version = substr((string) $release['tag_name'], 1);
+            $newest ??= $version;
+            try {
+                $state = $this->verifiedManifestState($release, $version, $previous);
+            } catch (UntrustedSignature) {
+                continue;
+            }
+            return ['release' => $release, 'version' => $version, 'state' => $state, 'newest' => $newest];
+        }
+        throw new UntrustedSignature("No release this copy of Better-Cal can verify: $newest and the published releases before it"
+            . ' are all signed with keys it doesn\'t list');
+    }
+
+    /**
+     * For bin/update.php: the newest published app release this copy's keys
+     * verify, checked as the update check checks it (immutable, canonical
+     * manifest and its GitHub digest, signed), with its release zip when it
+     * has one. 'newest' is the newest published version; when it differs,
+     * the releases after 'version' are signed with keys this copy doesn't
+     * list (newestVerified). Throws UntrustedSignature when none verifies.
+     * Nothing is stored.
+     *
+     * @return array{version:string,newest:string,priority:string,minimumSecureVersion:?string,releaseUrl:string,notes:string,zip:?array{url:string,sha256:string,size:int},signature:?array{url:string,sha256:string,size:int},manifestSha256:string}
      */
     public function newestRelease(): array
     {
-        $release = $this->newestCandidate();
-        $version = substr((string) $release['tag_name'], 1);
-        $state = $this->verifiedManifestState($release, $version, $this->row());
+        ['release' => $release, 'version' => $version, 'state' => $state, 'newest' => $newest]
+            = $this->newestVerified($this->candidates(), $this->row());
         $name = 'better-cal-' . $version . '.zip';
         $zips = array_values(array_filter(is_array($release['assets'] ?? null) ? $release['assets'] : [],
             static fn($asset): bool => is_array($asset) && ($asset['name'] ?? null) === $name));
@@ -248,6 +297,7 @@ final class Updates
         }
         return [
             'version' => $version,
+            'newest' => $newest,
             'priority' => (string) $state['priority'],
             'minimumSecureVersion' => $state['minimum_secure_version'],
             'releaseUrl' => (string) $state['release_url'],

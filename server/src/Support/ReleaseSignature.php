@@ -92,7 +92,7 @@ final class ReleaseSignature
                 return $fields + ['key' => $sig['key']];
             }
         }
-        throw new \RuntimeException('No signature on this release verifies with a key this copy of Better-Cal trusts');
+        throw new UntrustedSignature('No signature on this release verifies with a key this copy of Better-Cal trusts');
     }
 
     private static function check(array $key, array $sig, string $statement): bool

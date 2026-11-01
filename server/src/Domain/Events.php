@@ -1543,11 +1543,13 @@ final class Events
         $length = Time::fromDb((string) ($occFields['end_utc'] ?? $occ['end_utc']))->getTimestamp() - Time::fromDb((string) $occFields['start_utc'])->getTimestamp();
         $date = (new \DateTimeImmutable(Time::fromDb((string) $master['start_utc'])->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
             ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
-        // "Every Monday" moved to a Tuesday becomes "every Tuesday", unless the
-        // same edit chose the days itself.
+        // "Every Monday" moved to a Tuesday becomes "every Tuesday", and
+        // "every 15th" moved to the 16th "every 16th" (left as it was, the
+        // series opened on a day off its own pattern), unless the same edit
+        // chose the days itself.
         $rule = (string) ($in['rrule'] ?? $master['rrule']);
-        if ($days % 7 !== 0 && Recurrence::pattern($rule) === Recurrence::pattern((string) $master['rrule'])) {
-            $shifted = Recurrence::shiftByday($rule, $days);
+        if ($days !== 0 && Recurrence::pattern($rule) === Recurrence::pattern((string) $master['rrule'])) {
+            $shifted = Recurrence::shiftBymonthday(Recurrence::shiftByday($rule, $days), $occWas, $occNow);
             if ($shifted !== $rule) {
                 $in['rrule'] = $shifted;
             }
@@ -1589,6 +1591,21 @@ final class Events
             'start_utc' => Time::toDb($start->modify('+' . $n . ' days')),
             'end_utc' => Time::toDb(Time::fromDb((string) $row['end_utc'])->setTimezone($tz)->modify('+' . $n . ' days')),
         ];
+    }
+
+    /**
+     * Whether an edit changed which days a series falls on: its rule's
+     * pattern (FREQ, BYDAY, BYMONTHDAY, BYSETPOS, interval) or its start
+     * date. A rename, a new time of day or a new zone does not.
+     */
+    private static function daysChanged(array $before, array $after): bool
+    {
+        if (Recurrence::pattern((string) ($before['rrule'] ?? '')) !== Recurrence::pattern((string) ($after['rrule'] ?? ''))) {
+            return true;
+        }
+        $was = Time::fromDb((string) $before['start_utc'])->setTimezone(Time::zone((string) $before['tzid']));
+        $now = Time::fromDb((string) $after['start_utc'])->setTimezone(Time::zone((string) $after['tzid']));
+        return self::dayDelta($was, $now) !== 0;
     }
 
     /** Whole calendar days from one local date to another. */
@@ -1638,11 +1655,19 @@ final class Events
         $shift = null;
         if ($isSeries && !empty(($fields + $event)['rrule'])) {
             $after = array_merge($event, $fields);
-            $tz = Time::zone((string) $event['tzid']);
-            $moved = self::dayDelta(Time::fromDb((string) $event['start_utc'])->setTimezone($tz), Time::fromDb((string) $after['start_utc'])->setTimezone(Time::zone((string) $after['tzid'])));
-            if (Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern(Recurrence::shiftByday((string) $event['rrule'], $moved))) {
+            $from = Time::fromDb((string) $event['start_utc'])->setTimezone(Time::zone((string) $event['tzid']));
+            $to = Time::fromDb((string) $after['start_utc'])->setTimezone(Time::zone((string) $after['tzid']));
+            $moved = self::dayDelta($from, $to);
+            $followed = Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $event['rrule'], $moved), $from, $to);
+            if (Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern($followed)) {
                 // Same days, moved together: skipped and edited days follow.
                 $shift = self::seriesKeyShift($event, $after);
+                // A move the rule could not follow (a list of month days) lands
+                // the start on its next listed day; a rename or a new time
+                // leaves an off-pattern start where it was.
+                if ($moved !== 0) {
+                    $fields = array_merge($fields, self::alignedStart($after));
+                }
             } else {
                 // The days themselves changed: the series starts on its first
                 // listed day, and old keys no longer name places in it.
@@ -1917,6 +1942,14 @@ final class Events
     {
         $instanceUtc = $this->requireInstance($in, $master);
         $masterId = (int) $master['id'];
+        // From the series' first day, "this and following" is every day of
+        // it: the series itself changes, no split. Bounded before its own
+        // start, the old series still showed that start (the iterator yields
+        // it regardless of UNTIL), so the day appeared twice.
+        if ($instanceUtc === (string) $master['start_utc']) {
+            $this->patchAll($userId, $master, $in);
+            return $masterId;
+        }
         $instStart = Time::fromDb($instanceUtc);
         $duration = Recurrence::durationSeconds($master);
         $allDay = (int) $master['all_day'] === 1;
@@ -1930,12 +1963,17 @@ final class Events
         $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $newMaster['rrule'] = $this->followingRrule($master, $instanceUtc);
         $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
+        $rest = $newMaster; // the rest of the series as it was
         $newMaster = array_merge($newMaster, $this->columnPatch($newMaster, $in));
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
             $newMaster['rrule'] = (string) $in['rrule'];
         }
-        // New days chosen for the rest of the series: it starts on the first.
-        $newMaster = array_merge($newMaster, self::alignedStart($newMaster));
+        // New days chosen for the rest of the series, or a new start date:
+        // it starts on the first listed day. A rename alone leaves a start
+        // off the pattern where it is (that day is the one being edited).
+        if (self::daysChanged($rest, $newMaster)) {
+            $newMaster = array_merge($newMaster, self::alignedStart($newMaster));
+        }
 
         $movedOverrides = $this->db->all(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
@@ -2077,6 +2115,11 @@ final class Events
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
         $masterId = (int) $master['id'];
+        // From the first day it is the whole series (see patchFollowing).
+        if ($instanceUtc === (string) $master['start_utc']) {
+            $this->deleteAll($userId, $master);
+            return;
+        }
         $instStart = Time::fromDb($instanceUtc);
         $allDay = (int) $master['all_day'] === 1;
         $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
@@ -2170,7 +2213,13 @@ final class Events
             $made = $this->db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $instanceUtc]) === null;
             $targetId = (int) $this->ensureOverride($userId, $event, $instanceUtc)['id'];
         } elseif ($isMaster && $scope === 'following') {
-            $targetId = $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]);
+            // From the first day it is the whole series (see patchFollowing),
+            // edited dates included.
+            if ($this->requireInstance(['instanceStart' => $instanceStart], $event) === (string) $event['start_utc']) {
+                $scope = 'all';
+            } else {
+                $targetId = $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]);
+            }
         }
         $target = $this->get($userId, $targetId);
         $beforeRows = [$target];

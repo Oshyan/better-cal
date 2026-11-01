@@ -476,6 +476,14 @@ $repeatCases = [
     ['Gym Fri-Sun 8pm', 'Gym', '2026-07-31T20:00', 'FREQ=WEEKLY;BYDAY=FR,SA,SU'],
     ['Standup Mon–Fri 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Mon-Fri check at 7pm', 'Mon-Fri check', '2026-07-30T19:00', null],
+    // A time range that crosses midnight is a night on each day, not one
+    // stretch from the first day to the last (a daytime range is; #193 review)
+    ['Shift Mon-Fri 10pm-6am', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Shift Mon-Fri 10pm to 6am', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Mon-Fri 10pm-6am shift', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Shift Mon-Fri 22:00-06:00', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Shift Thu-Sat 11pm-7am', 'Shift', '2026-07-30T23:00', 'FREQ=WEEKLY;BYDAY=TH,FR,SA'],
+    ['Open house Sat-Sun 10am-4pm', 'Open house', '2026-08-01T10:00', null],
     // Weekly
     ['Piano every Tuesday 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
     ['Piano Tuesdays at 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
@@ -542,6 +550,10 @@ $repeatCases = [
     ['Pickup from school every Monday starting Nov 3', 'Pickup from school', '2026-11-09T00:00', 'FREQ=WEEKLY;BYDAY=MO'],
     // Not repeats
     ['Meet each other Friday', 'Meet each other', '2026-07-31T00:00', null],
+    // An ordinal list before a month name is no monthly rule: the list is
+    // taken whole, so the month lookahead sees it (once it backtracked to
+    // "every 1st" and read a rule on the 1st; #193 review)
+    ['Taxes every 1st and 15th of Jan', 'Taxes every 1st and 15th of Jan', '2026-07-30T11:00', null],
     ['Lunch tomorrow at noon', 'Lunch', '2026-07-31T12:00', null],
     ['Annual checkup tomorrow 9am', 'Annual checkup', '2026-07-31T09:00', null],
     ['Study every day 7 until 9pm', 'Study', '2026-07-30T19:00', 'FREQ=DAILY'],
@@ -627,6 +639,10 @@ $phraseCases = [
     ['Workshop Monday through Friday 9am to 5pm', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
     ['Mon-Fri 9am-5pm workshop', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
     ['Workshop Mon-Fri 9am-5pm ET', 'Workshop', '2026-08-03T06:00', '2026-08-07T14:00', null],
+    ['Open house Sat-Sun 10am-4pm', 'Open house', '2026-08-01T10:00', '2026-08-02T16:00', null],
+    // One that crosses midnight repeats; each night ends the next morning
+    ['Shift Mon-Fri 10pm-6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
+    ['Shift Mon-Fri 10pm to 6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
     // A two-letter zone before one of the parser's own words (#193)
     ['Call 3pm ET with Sam', 'Call with Sam', '2026-07-30T12:00', '2026-07-30T13:00', null],
     ['Call 3pm ET at the office', 'Call at the office', '2026-07-30T12:00', '2026-07-30T13:00', null],
@@ -2021,6 +2037,75 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited3]),
             (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title = 'Third edited date' AND calendar_id = 13 AND recurrence_parent_id IS NULL AND deleted_at IS NULL"),
         ]);
+        // "This and following" from a series' first day is the whole series
+        // (#193 review): bounded before its own start, the old series still
+        // showed that day (the iterator yields the start whatever UNTIL
+        // says), so it appeared twice, under the old name and the new.
+        $onDay = static function (string $title, string $day) use ($adb): array {
+            $seen = [];
+            foreach ($adb->all('SELECT * FROM events WHERE title LIKE ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$title . '%']) as $row) {
+                foreach (Recurrence::sabreExpand($row, Time::fromDb($day . ' 00:00:00'), Time::fromDb($day . ' 23:59:59')) as $occ) {
+                    $seen[] = (string) $row['title'];
+                }
+            }
+            sort($seen);
+            return $seen;
+        };
+        $firstDay = (int) $eventsA->create(1, $placeBase + ['title' => 'Team sync', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
+        $eventsA->patch(1, $firstDay, ['scope' => 'this', 'instanceStart' => '2026-12-15T18:00:00+00:00', 'title' => 'Team sync, one day']);
+        $eventsA->patch(1, $firstDay, ['scope' => 'following', 'instanceStart' => '2026-12-08T18:00:00+00:00', 'title' => 'Team sync, renamed']);
+        checkEq('following from the first day: the series itself is renamed, no split, and the day shows once', ['Team sync, renamed', 'FREQ=WEEKLY;BYDAY=TU', '2026-12-08 18:00:00', 1, ['Team sync, renamed'], 'Team sync, one day'], [
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$firstDay]),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$firstDay]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$firstDay]),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Team sync%' AND recurrence_parent_id IS NULL AND deleted_at IS NULL"),
+            $onDay('Team sync', '2026-12-08'),
+            $adb->scalar('SELECT title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$firstDay]),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('following from the first day undoes like a series edit', ['Team sync', ['Team sync']], [
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$firstDay]),
+            $onDay('Team sync', '2026-12-08'),
+        ]);
+        $eventsA->deleteEvent(1, $firstDay, 'following', '2026-12-08T18:00:00+00:00');
+        checkEq('ending a series from its first day removes it, edited dates included', [[], 0], [
+            $onDay('Team sync', '2026-12-08'),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Team sync%' AND deleted_at IS NULL"),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes', [['Team sync'], 2], [
+            $onDay('Team sync', '2026-12-08'),
+            (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Team sync%' AND deleted_at IS NULL"),
+        ]);
+        // A series stored on a day off its own pattern (quick add before
+        // #193 could do this), renamed from that day on: the start stays,
+        // since that day is the one being edited (Q2 of the review).
+        $offPattern = (int) $eventsA->create(1, ['title' => 'Invoices', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start' => '2026-12-15T18:00:00+00:00', 'end' => '2026-12-15T19:00:00+00:00'] + $placeBase)['eventId'];
+        $adb->run("UPDATE events SET start_utc = '2026-12-20 18:00:00', end_utc = '2026-12-20 19:00:00' WHERE id = ?", [$offPattern]);
+        $eventsA->patch(1, $offPattern, ['scope' => 'following', 'instanceStart' => '2026-12-20T18:00:00+00:00', 'title' => 'Invoices, renamed']);
+        checkEq('a rename from an off-pattern first day keeps that day', ['Invoices, renamed', '2026-12-20 18:00:00', ['Invoices, renamed']], [
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$offPattern]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$offPattern]),
+            $onDay('Invoices', '2026-12-20'),
+        ]);
+        $eventsA->patch(1, $offPattern, ['scope' => 'all', 'instanceStart' => '2026-12-20T18:00:00+00:00', 'title' => 'Invoices, renamed again']);
+        checkEq('and so does a rename of all its days', '2026-12-20 18:00:00', $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$offPattern]));
+        // Dragged a day as a whole, a series on the 15th becomes one on the
+        // 16th; one on the 1st and 15th keeps its days and opens on the next.
+        $dragged = (int) $eventsA->create(1, ['title' => 'Rent', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start' => '2026-12-15T18:00:00+00:00', 'end' => '2026-12-15T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $dragged, ['scope' => 'all', 'instanceStart' => '2027-01-15T18:00:00+00:00', 'start' => '2027-01-16T18:00:00+00:00', 'end' => '2027-01-16T19:00:00+00:00']);
+        checkEq('a series on the 15th dragged a day later runs on the 16th', ['FREQ=MONTHLY;BYMONTHDAY=16', '2026-12-16 18:00:00', [], ['Rent']], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$dragged]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$dragged]),
+            $onDay('Rent', '2027-02-15'),
+            $onDay('Rent', '2027-02-16'),
+        ]);
+        $twice = (int) $eventsA->create(1, ['title' => 'Bills', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start' => '2026-12-01T18:00:00+00:00', 'end' => '2026-12-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $twice, ['scope' => 'all', 'instanceStart' => '2026-12-15T18:00:00+00:00', 'start' => '2026-12-16T18:00:00+00:00', 'end' => '2026-12-16T19:00:00+00:00']);
+        checkEq('a series on the 1st and 15th dragged a day keeps its days and starts on the next of them', ['FREQ=MONTHLY;BYMONTHDAY=1,15', '2026-12-15 18:00:00'], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$twice]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$twice]),
+        ]);
     }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
@@ -3322,6 +3407,22 @@ $m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Alex', 'rrule' => 'FR
 checkEq('qam a half-read ordinal phrase takes the model\'s rule', 'FREQ=MONTHLY;BYDAY=1MO,3MO', $m['rrule']);
 $m = QuickAdd::mergeLlm($mkLlm(['rrule' => null]), $mkFb(['title' => 'Cocktails with Alex first and', 'rrule' => 'FREQ=MONTHLY;BYDAY=3MO']), $mergeNow);
 checkEq('qam without a model rule the half-read one stands', 'FREQ=MONTHLY;BYDAY=3MO', $m['rrule']);
+// An ordinal that is part of the event's name, kept by both titles, is no
+// such sign: the deterministic rule stands over the model's (#193 review).
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Last call with Alex', 'rrule' => 'FREQ=WEEKLY;BYDAY=WE']), $mkFb(['title' => 'Last call with Alex', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU']), $mergeNow);
+checkEq('qam an ordinal in the event\'s name leaves the parser\'s rule in charge', 'FREQ=WEEKLY;BYDAY=TU', $m['rrule']);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'First aid class', 'rrule' => 'FREQ=WEEKLY;BYDAY=WE']), $mkFb(['title' => 'First aid class', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO']), $mergeNow);
+checkEq('qam an ordinal opening the name is the name too', 'FREQ=WEEKLY;BYDAY=MO', $m['rrule']);
+// One the model's title lacks was part of the phrase the parser read only half of.
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Alex', 'rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO']), $mkFb(['title' => 'Cocktails first with Alex', 'rrule' => 'FREQ=MONTHLY;BYDAY=3MO']), $mergeNow);
+checkEq('qam an ordinal the model\'s title lacks takes the model\'s rule', 'FREQ=MONTHLY;BYDAY=1MO,3MO', $m['rrule']);
+checkEq('qam half-read: a dangling ordinal, with or without its joiner', [true, true, true, false, false], [
+    QuickAdd::halfReadRule('Cocktails with Alex first and', 'Cocktails with Alex'),
+    QuickAdd::halfReadRule('Cocktails with Alex first', 'Cocktails with Alex first'),
+    QuickAdd::halfReadRule('Bills 1st,', 'Bills'),
+    QuickAdd::halfReadRule('Last call with Alex', 'Last call with Alex'),
+    QuickAdd::halfReadRule('21st birthday planning', '21st Birthday Planning'),
+]);
 checkEq('qam an alert read from the text survives the model draft (#33)', [30],
     QuickAdd::mergeLlm($mkLlm(), $mkFb(['reminders' => [30]]), $mergeNow)['reminders']);
 checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));
@@ -4051,7 +4152,25 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
     checkEq('series edit to 10:00 moves the series start to 10:00 on its own first day', ['2026-10-05T10:00:00-07:00', '2026-10-05T11:30:00-07:00'], [$fOut['start'], $fOut['end']]);
     $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
     checkEq('series edit a day later moves the series a day later', '2026-10-06T09:00:00-07:00', $fOut['start']);
+    // "Every 15th" dragged a day later as a whole is "every 16th", as a
+    // weekly day follows a drag; left at 15 the series opened on the 16th
+    // and then ran on 15ths (#193 review).
+    $f15 = ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start_utc' => '2026-10-15 16:00:00', 'end_utc' => '2026-10-15 17:00:00'] + $fMon;
+    $fMonthEdit = static fn(string $s, string $e): array => ['scope' => 'all', 'instanceStart' => '2026-11-15T09:00:00-08:00', 'start' => $s, 'end' => $e];
+    $fOut = $fRebase->invoke($fEvents, $f15, $fMonthEdit('2026-11-16T09:00:00-08:00', '2026-11-16T10:00:00-08:00'));
+    checkEq('series on the 15th moved to the 16th: its day moves too', ['2026-10-16T09:00:00-07:00', 'FREQ=MONTHLY;BYMONTHDAY=16'], [$fOut['start'], $fOut['rrule'] ?? null]);
+    $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=15', 'start_utc' => '2026-09-15 16:00:00', 'end_utc' => '2026-09-15 17:00:00'] + $fMon, $fMonthEdit('2026-11-14T09:00:00-08:00', '2026-11-14T10:00:00-08:00'));
+    checkEq('every other month on the 15th moved a day earlier keeps its interval', 'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=14', $fOut['rrule'] ?? null);
+    $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start_utc' => '2026-10-01 16:00:00', 'end_utc' => '2026-10-01 17:00:00'] + $fMon, $fMonthEdit('2026-11-16T09:00:00-08:00', '2026-11-16T10:00:00-08:00'));
+    checkEq('a list of month days is left as it was; only the start moves', ['2026-10-02T09:00:00-07:00', null], [$fOut['start'], $fOut['rrule'] ?? null]);
 }
+    checkEq('month day shift: a move out of the month says nothing about the day meant', 'FREQ=MONTHLY;BYMONTHDAY=31',
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=31', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-11-01')));
+    checkEq('month day shift: the last day, an nth weekday and a plain monthly rule stay', ['FREQ=MONTHLY;BYMONTHDAY=-1', 'FREQ=MONTHLY;BYDAY=1MO', 'FREQ=MONTHLY'], [
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=-1', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-10-30')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+    ]);
     $fShift = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('seriesKeyShift');
     $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-05 17:00:00', 'end_utc' => '2026-10-05 18:00:00'] + $fMon);
     checkEq('series moved to 10:00: skipped and edited days keep their place, across DST', ['2026-10-12 17:00:00', '2026-11-02 18:00:00'], [$fMap('2026-10-12 16:00:00'), $fMap('2026-11-02 17:00:00')]);
@@ -4074,6 +4193,19 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
     checkEq('align: first and third Monday started on a Thursday moves to the next listed Monday', ['start_utc' => '2026-10-19 16:00:00', 'end_utc' => '2026-10-19 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
     checkEq('align: last weekday started mid-month moves to the month\'s last weekday', ['start_utc' => '2026-10-30 16:00:00', 'end_utc' => '2026-10-30 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
     checkEq('align: a monthly start already on its day stays', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=20', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
+    checkEq('align: a list of month days dragged off them starts on the next listed one', ['start_utc' => '2026-10-15 16:00:00', 'end_utc' => '2026-10-15 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start_utc' => '2026-10-02 16:00:00', 'end_utc' => '2026-10-02 17:00:00'] + $fMon));
+    // What makes a split series realign (#193 review, Q2): the rule's days or
+    // its start date, never a rename, a new time or a new zone.
+    $fDays = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('daysChanged');
+    $fOff = ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon;
+    checkEq('days changed: rename, time and zone no; days, date and frequency yes', [false, false, false, true, true, true], [
+        $fDays->invoke(null, $fOff, ['title' => 'Renamed'] + $fOff),
+        $fDays->invoke(null, $fOff, ['start_utc' => '2026-10-20 18:00:00', 'end_utc' => '2026-10-20 19:00:00'] + $fOff),
+        $fDays->invoke(null, $fOff, ['tzid' => 'America/New_York', 'start_utc' => '2026-10-20 13:00:00'] + $fOff),
+        $fDays->invoke(null, $fOff, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=16'] + $fOff),
+        $fDays->invoke(null, $fOff, ['start_utc' => '2026-10-21 16:00:00', 'end_utc' => '2026-10-21 17:00:00'] + $fOff),
+        $fDays->invoke(null, $fOff, ['rrule' => 'FREQ=WEEKLY'] + $fOff),
+    ]);
     checkEq('align: a plain monthly rule takes its start as its day', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;COUNT=6', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
 if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occurrence through sabre/vobject
     $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO'] + $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));

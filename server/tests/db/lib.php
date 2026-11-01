@@ -166,19 +166,44 @@ function waitFor(callable $cond, float $seconds = 10.0, float $every = 0.02): bo
     return false;
 }
 
+/** This connection's thread id on the server, for another connection to look for it in INNODB_TRX. */
+function connectionId(Db $db): int
+{
+    return (int) $db->scalar('SELECT CONNECTION_ID()');
+}
+
 /**
- * Whether some transaction is waiting on a row lock now. Ask it no more
+ * Whether the connection with that thread id is waiting on a row lock now.
+ * INNODB_TRX lists every connection on the server, so a count of all
+ * waiters would also see another suite's on a shared local server, and a
+ * child would commit before this suite's undo had arrived. Ask it no more
  * often than every 150ms: the server refreshes what INNODB_TRX shows only
  * when nobody has read it for 100ms, so a tighter poll reads the same
  * stale answer for as long as it keeps asking (waitForWaiter).
  */
-function someoneWaits(Db $db): bool
+function someoneWaits(Db $db, int $threadId): bool
 {
-    return (int) $db->scalar("SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT'") > 0;
+    return (int) $db->scalar(
+        "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT' AND trx_mysql_thread_id = ?",
+        [$threadId]
+    ) > 0;
 }
 
-/** Wait until another connection is seen waiting on a row lock, at most $seconds. */
-function waitForWaiter(Db $db, float $seconds = 15.0): bool
+/** Wait until the connection with that thread id is seen waiting on a row lock, at most $seconds. */
+function waitForWaiter(Db $db, int $threadId, float $seconds = 15.0): bool
 {
-    return waitFor(static fn() => someoneWaits($db), $seconds, 0.15);
+    return waitFor(static fn() => someoneWaits($db, $threadId), $seconds, 0.15);
+}
+
+/** Remove a directory this suite made under the system temp dir, with everything in it. */
+function removeTree(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+    $entries = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($entries as $entry) {
+        $entry->isDir() ? rmdir((string) $entry) : unlink((string) $entry);
+    }
+    rmdir($dir);
 }

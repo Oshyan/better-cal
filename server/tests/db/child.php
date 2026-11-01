@@ -3,25 +3,26 @@
 declare(strict_types=1);
 
 // A second connection for concurrency.test.php, in its own process: holds a
-// change open until the test's own connection is seen waiting on it, then
-// finishes. Exit 0 when it committed after seeing the other wait, 4 when it
-// committed without ever seeing anyone wait (the two didn't overlap, so the
-// test proved nothing), 3 when the database rolled it back to break a
-// deadlock.
+// change open until the test's own connection (its server thread id is the
+// second argument) is seen waiting on it, then finishes. Exit 0 when it
+// committed after seeing that connection wait, 4 when it committed without
+// ever seeing it wait (the two didn't overlap, so the test proved nothing),
+// 3 when the database rolled it back to break a deadlock.
 
 require dirname(__DIR__, 2) . '/src/bootstrap.php';
 require __DIR__ . '/lib.php';
 
 use BetterCal\Infra\Db;
 
-[, $scenario, $userId, $calendarId, $folderId, $marker, $from] = $argv + [5 => '', 6 => ''];
+[, $scenario, $waiter, $userId, $calendarId, $folderId, $marker, $from] = $argv + [6 => '', 7 => ''];
 $db = new Db(['dsn' => (string) getenv('BC_TEST_DSN'), 'user' => (string) getenv('BC_TEST_DB_USER'), 'pass' => (string) getenv('BC_TEST_DB_PASS')]);
+$waiter = (int) $waiter;
 $userId = (int) $userId;
 $calendarId = (int) $calendarId;
 $folderId = (int) $folderId;
 $sawWait = false;
-$hold = static function () use ($db, &$sawWait): void {
-    $sawWait = waitForWaiter($db);
+$hold = static function () use ($db, $waiter, &$sawWait): void {
+    $sawWait = waitForWaiter($db, $waiter);
 };
 
 try {

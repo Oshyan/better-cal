@@ -12,6 +12,10 @@ use BetterCal\Infra\Db;
 
 return static function (Db $db): void {
     $marker = static fn(): string => sys_get_temp_dir() . '/bc-db-test-' . bin2hex(random_bytes(4));
+    // The undo runs on this connection; each child watches for this thread
+    // id and no other, so a waiter of some other run on a shared server
+    // can't release it early.
+    $waiter = connectionId($db);
     // Deadlocks the server broke since $seen; null where it keeps no count
     // (deadlockCount), in which case the check falls back to what the two
     // connections report.
@@ -23,7 +27,7 @@ return static function (Db $db): void {
 
     // A drag committed while the undo waits for it: the undo sees it and
     // is stale, rather than putting back over it.
-    scenario('concurrency: a move committed while an undo waits on it', function () use ($db, $marker): void {
+    scenario('concurrency: a move committed while an undo waits on it', function () use ($db, $marker, $waiter): void {
         $u = freshUser($db);
         $d = domains($db);
         $cal = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$u]);
@@ -32,7 +36,7 @@ return static function (Db $db): void {
         $d->folders->place($u, $first, $cal, 0);
         $filed = lastEntry($db, $u);
         $file = $marker();
-        $child = new Child(['drag', $u, $cal, $second, $file, $first]);
+        $child = new Child(['drag', $waiter, $u, $cal, $second, $file, $first]);
         $ready = waitFor(static fn() => is_file($file));
         $code = refusal(fn() => $d->undo->undoById($u, $filed));
         [$exit, $out] = $child->wait();
@@ -48,7 +52,7 @@ return static function (Db $db): void {
     // account and waits for the filing; the other holds the filing and
     // waits for the account. The database rolls the undo back, and it runs
     // again once the other is in.
-    scenario('concurrency: an undo rolled back to break a deadlock', function () use ($db, $marker, $deadlocksSince): void {
+    scenario('concurrency: an undo rolled back to break a deadlock', function () use ($db, $marker, $waiter, $deadlocksSince): void {
         $v = freshUser($db);
         $dv = domains($db);
         $vcal = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$v]);
@@ -57,7 +61,7 @@ return static function (Db $db): void {
         $vfiled = lastEntry($db, $v);
         $seen = deadlockCount($db);
         $file = $marker();
-        $child = new Child(['deadlock', $v, $vcal, $folder, $file]);
+        $child = new Child(['deadlock', $waiter, $v, $vcal, $folder, $file]);
         $ready = waitFor(static fn() => is_file($file));
         $error = null;
         try {
@@ -81,7 +85,7 @@ return static function (Db $db): void {
     // with. Without lockRows the undo removes the link first and then
     // waits for the event, the holder wants the link, and the database
     // rolls one of them back.
-    scenario('concurrency: an undo takes its rows in the writers\' order', function () use ($db, $marker, $deadlocksSince): void {
+    scenario('concurrency: an undo takes its rows in the writers\' order', function () use ($db, $marker, $waiter, $deadlocksSince): void {
         $w = freshUser($db);
         $dw = domains($db);
         $wcal = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$w]);
@@ -90,7 +94,7 @@ return static function (Db $db): void {
         $made = lastEntry($db, $w);
         $seen = deadlockCount($db);
         $file = $marker();
-        $child = new Child(['order', $w, $event, $tag, $file]);
+        $child = new Child(['order', $waiter, $w, $event, $tag, $file]);
         $ready = waitFor(static fn() => is_file($file));
         $code = refusal(fn() => $dw->undo->undoById($w, $made));
         [$exit, $out] = $child->wait();

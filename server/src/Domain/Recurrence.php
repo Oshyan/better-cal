@@ -470,16 +470,21 @@ final class Recurrence
     /**
      * A monthly rule's single day of the month moved with its series: "every
      * 15th" dragged from the 15th to the 16th is "every 16th", the way a
-     * weekly BYDAY follows a drag to another weekday (shiftByday). Only a
-     * move within one month says which day was meant; a list of days, a
-     * day counted from the end or an nth-weekday form is left as it is.
+     * weekly BYDAY follows a drag to another weekday (shiftByday). The day
+     * landed on is the day meant across a month boundary too: "every 31st"
+     * dragged from 31 Jan to 1 Feb is "every 1st". Bounded to one month,
+     * the rule stayed at 31 while the start moved a day, and the whole-series
+     * realignment (Events::patchAll) then pushed the start to the next 31st:
+     * the series lost its earlier day and the dragged one never moved. A
+     * list of days, a day counted from the end or an nth-weekday form is
+     * left as it is.
      */
     public static function shiftBymonthday(string $rrule, \DateTimeImmutable $from, \DateTimeImmutable $to): string
     {
         $parts = self::rruleParts($rrule);
         if (($parts['FREQ'] ?? '') !== 'MONTHLY' || !isset($parts['BYMONTHDAY']) || isset($parts['BYDAY']) || isset($parts['BYSETPOS'])
             || preg_match('/^(?:[12]?\d|3[01])$/', $parts['BYMONTHDAY']) !== 1 || (int) $parts['BYMONTHDAY'] < 1
-            || $from->format('Y-m') !== $to->format('Y-m') || $from->format('j') === $to->format('j')) {
+            || $from->format('j') === $to->format('j')) {
             return $rrule;
         }
         $parts['BYMONTHDAY'] = $to->format('j');

@@ -310,7 +310,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 | `notifyEmailToken` | read-only | `null` | the API token that set `notifyEmail`, or null when it was set from a browser |
 | `updateNotifications` | `all`\|`security`\|`off` | `all` | which release notices the app shows; tokens can't set `off` |
 | `mailEventMode` | `any`\|`approved`\|`review` | `approved` | which emailed events are added ([email-ingest.md](email-ingest.md)) |
-| `mailApprovedSenders` | list of exact addresses, domains or `*.example.com` subdomain rules | `[]` | stored in canonical form; common shared mailbox domains are refused unless given as exact addresses; replacing the list doesn't decide existing Review items |
+| `mailApprovedSenders` | list of exact addresses, domains or `*.example.com` rules (the domains one label under it) | `[]` | stored in canonical form (lowercased, non-ASCII domains punycoded); common shared mailbox domains are refused unless given as exact addresses, as is a wildcard over a public suffix like `*.co.uk`; replacing the list doesn't decide existing Review items |
 | `overviewMode` | `month`\|`3day` or `null` | `null` | layout for the overview slot; null lets the client use its device default |
 | `folderVisibility` | object: folder id → `{mode:"all"\|"none"\|"custom", custom:[calendarId]}` (at most 200 folders, 500 ids each) | `{}` | per-folder calendar visibility; meaning is up to the client |
 | `sidebarActiveOnly` | boolean | `false` | sidebar lists only checked calendars and people; display only |

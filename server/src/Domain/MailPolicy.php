@@ -17,10 +17,81 @@ final class MailPolicy
         'mail.com', 'gmx.com', 'gmx.net', 'zoho.com', 'yandex.com', 'yandex.ru',
     ];
 
+    /**
+     * Wildcard bases a rule may not use: *.co.uk would approve every sender
+     * under a public suffix, as would *.com. The list is short on purpose,
+     * the familiar two-part suffixes rather than the whole public suffix
+     * list; a wildcard needs a domain of its own under it.
+     */
+    public const PUBLIC_SUFFIXES = [
+        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'net.uk', 'nhs.uk', 'sch.uk',
+        'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'id.au', 'asn.au',
+        'co.nz', 'net.nz', 'org.nz', 'ac.nz', 'govt.nz', 'school.nz',
+        'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp', 'gr.jp', 'ad.jp', 'ed.jp', 'lg.jp',
+        'co.za', 'org.za', 'net.za', 'ac.za', 'gov.za', 'web.za',
+        'com.br', 'net.br', 'org.br', 'gov.br', 'edu.br',
+        'com.mx', 'org.mx', 'net.mx', 'gob.mx', 'edu.mx',
+        'co.in', 'net.in', 'org.in', 'firm.in', 'gen.in', 'ind.in', 'ac.in', 'edu.in', 'gov.in', 'res.in',
+        'com.sg', 'net.sg', 'org.sg', 'edu.sg', 'gov.sg',
+        'com.hk', 'net.hk', 'org.hk', 'edu.hk', 'gov.hk', 'idv.hk',
+        'com.tw', 'net.tw', 'org.tw', 'edu.tw', 'gov.tw', 'idv.tw',
+        'co.kr', 'ne.kr', 'or.kr', 'ac.kr', 'go.kr', 're.kr', 'pe.kr',
+        'com.ar', 'net.ar', 'org.ar', 'edu.ar', 'gob.ar',
+        'com.tr', 'net.tr', 'org.tr', 'edu.tr', 'gov.tr', 'gen.tr', 'web.tr',
+        'com.cn', 'net.cn', 'org.cn', 'edu.cn', 'gov.cn', 'ac.cn',
+        'co.il', 'org.il', 'net.il', 'ac.il', 'gov.il', 'muni.il',
+        'com.my', 'net.my', 'org.my', 'edu.my', 'gov.my',
+        'co.id', 'or.id', 'ac.id', 'go.id', 'web.id', 'my.id',
+        'com.ph', 'net.ph', 'org.ph', 'edu.ph', 'gov.ph',
+        'co.th', 'or.th', 'ac.th', 'go.th', 'in.th',
+        'com.vn', 'net.vn', 'org.vn', 'edu.vn', 'gov.vn',
+        'com.pk', 'net.pk', 'org.pk', 'edu.pk', 'gov.pk',
+        'com.eg', 'com.sa', 'com.ua', 'com.pl', 'com.pe', 'com.co', 'com.ve', 'com.uy', 'com.ec', 'com.py', 'com.bo',
+        'com.ng', 'co.ke', 'com.gh', 'co.ug', 'co.tz',
+        'co.at', 'or.at', 'ac.at', 'gv.at', 'co.hu', 'com.pt', 'com.gr', 'com.ro', 'com.ru', 'org.ru', 'net.ru',
+    ];
+
+    /**
+     * An address as rules store and match it: the domain in the form
+     * domain() gives, the local part lowercased (every letter alike, so an
+     * SMTPUTF8 local part works), or null when it isn't an address.
+     */
     public static function address(string $value): ?string
     {
+        $value = trim($value);
+        $at = strrpos($value, '@');
+        if ($at === false || !mb_check_encoding($value, 'UTF-8')) return null;
+        $domain = self::domain(substr($value, $at + 1));
+        if ($domain === null) return null;
+        $value = mb_strtolower(substr($value, 0, $at)) . '@' . $domain;
+        return strlen($value) <= 254 && filter_var($value, FILTER_VALIDATE_EMAIL, FILTER_FLAG_EMAIL_UNICODE) !== false ? $value : null;
+    }
+
+    /**
+     * A domain as rules store and match it: lowercase ASCII, with any
+     * non-ASCII label punycoded (IDNA 2008), or null when it isn't a
+     * hostname. Without PHP's intl extension a non-ASCII name can't be
+     * converted, so it is refused rather than stored in a form that would
+     * never match a sender.
+     */
+    public static function domain(string $value): ?string
+    {
         $value = strtolower(trim($value));
-        return strlen($value) <= 254 && filter_var($value, FILTER_VALIDATE_EMAIL) !== false ? $value : null;
+        if (preg_match('/[\x80-\xff]/', $value) === 1) {
+            if (!function_exists('idn_to_ascii') || !mb_check_encoding($value, 'UTF-8')) return null;
+            $ascii = idn_to_ascii($value, IDNA_NONTRANSITIONAL_TO_ASCII | IDNA_CHECK_BIDI | IDNA_CHECK_CONTEXTJ, INTL_IDNA_VARIANT_UTS46);
+            if (!is_string($ascii)) return null;
+            $value = $ascii;
+        }
+        $ok = strlen($value) <= 253
+            && preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9]{1,59})$/D', $value) === 1;
+        return $ok ? $value : null;
+    }
+
+    /** A wildcard over this base would cover every domain under a public suffix. */
+    private static function tooBroad(string $base): bool
+    {
+        return !str_contains($base, '.') || in_array($base, self::PUBLIC_SUFFIXES, true);
     }
 
     /** Shared domains and their subdomains cannot acquire broad approval. */
@@ -41,7 +112,7 @@ final class MailPolicy
         return self::domainAllowed($domain) ? $domain : null;
     }
 
-    /** Canonical entries: an exact address, a domain, or *.example.com for its subdomains. */
+    /** Canonical entries: an exact address, a domain, or *.example.com for the domains one label under it. */
     public static function rules(mixed $values): array
     {
         if (!is_array($values) || !array_is_list($values)) {
@@ -51,25 +122,43 @@ final class MailPolicy
         foreach ($values as $value) {
             if (!is_string($value)) throw HttpError::badRequest('Each approved sender must be text');
             $value = strtolower(trim($value));
-            $problem = self::ruleProblem($value);
+            [$rule, $problem] = self::rule($value);
             if ($problem === 'shared') {
                 throw HttpError::badRequest('Shared mail providers can only be approved as exact email addresses.');
             }
+            if ($problem === 'public') {
+                throw HttpError::badRequest($value . ' would cover every domain under a public suffix; approve the domains you mean instead.');
+            }
+            if ($problem === 'intl') {
+                throw HttpError::badRequest($value . ' has a non-ASCII domain name, which this server cannot convert: PHP\'s intl extension is missing.');
+            }
             if ($problem !== null) throw HttpError::badRequest('Invalid approved sender: ' . $value);
-            $out[$value] = true;
+            $out[$rule] = true;
         }
         return array_keys($out);
     }
 
-    /** Why a canonical (lowercased, trimmed) entry can't be a rule: 'invalid', 'shared', or null when it can. */
-    private static function ruleProblem(string $value): ?string
+    /**
+     * The stored form of a trimmed entry and null, or null and why it can't
+     * be a rule: 'invalid', 'shared', 'public' (a wildcard over a public
+     * suffix) or 'intl' (a non-ASCII name this PHP can't convert).
+     *
+     * @return array{?string, ?string}
+     */
+    private static function rule(string $value): array
     {
-        if (self::address($value) !== null) return null;
-        $domain = str_starts_with($value, '*.') ? substr($value, 2) : $value;
-        if (strlen($domain) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $domain) !== 1) {
-            return 'invalid';
+        if (($address = self::address($value)) !== null) return [$address, null];
+        $wild = str_starts_with($value, '*.');
+        $base = $wild ? substr($value, 2) : $value;
+        if ($wild && !str_contains($base, '.')) return [null, 'public'];
+        $domain = self::domain($base);
+        if ($domain === null) {
+            $nonAscii = preg_match('/[\x80-\xff]/', $value) === 1;
+            return [null, $nonAscii && !function_exists('idn_to_ascii') ? 'intl' : 'invalid'];
         }
-        return self::domainAllowed($domain) ? null : 'shared';
+        if ($wild && self::tooBroad($domain)) return [null, 'public'];
+        if (!self::domainAllowed($domain)) return [null, 'shared'];
+        return [$wild ? '*.' . $domain : $domain, null];
     }
 
     public const LIST_TEXT_MAX = 200_000;
@@ -108,16 +197,19 @@ final class MailPolicy
             $entry = strtolower(trim($entry, " \t\"'"));
             if (str_starts_with($entry, 'mailto:')) $entry = substr($entry, 7);
             if (str_starts_with($entry, '@')) $entry = substr($entry, 1);
-            $problem = $entry === '' ? 'invalid' : self::ruleProblem($entry);
-            if ($problem === null) {
-                $rules[$entry] = true;
+            [$rule, $problem] = $entry === '' ? [null, 'invalid'] : self::rule($entry);
+            if ($rule !== null) {
+                $rules[$rule] = true;
                 continue;
             }
             $invalid[] = [
                 'line' => mb_substr($line, 0, 200),
-                'reason' => $problem === 'shared'
-                    ? 'a shared mail provider, which can only be approved as an exact address'
-                    : 'not an address or a domain',
+                'reason' => match ($problem) {
+                    'shared' => 'a shared mail provider, which can only be approved as an exact address',
+                    'public' => 'a wildcard over a public suffix, which would cover every domain under it',
+                    'intl' => 'a non-ASCII domain name, which this server cannot convert without PHP\'s intl extension',
+                    default => 'not an address or a domain',
+                },
             ];
         }
         return ['rules' => array_keys($rules), 'invalid' => $invalid];
@@ -129,12 +221,16 @@ final class MailPolicy
         if ($mode === 'any') return true;
         if ($mode !== 'approved' || ($address = self::address($from)) === null) return false;
         $domain = substr($address, strrpos($address, '@') + 1);
+        // *.example.test covers one label below it (mail.example.test), so a
+        // wildcard matches when its base is the sender's domain minus its
+        // first label. A base that is a public suffix never matches, even
+        // one saved before such wildcards were refused.
+        $parent = substr($domain, strpos($domain, '.') + 1);
         foreach ($settings['mailApprovedSenders'] ?? [] as $rule) {
             if ($rule === $address) return true;
             if (!self::domainAllowed($domain)) continue;
             if ($rule === $domain) return true;
-            if (is_string($rule) && str_starts_with($rule, '*.') && self::domainAllowed(substr($rule, 2))
-                && str_ends_with($domain, substr($rule, 1)) && $domain !== substr($rule, 2)) return true;
+            if ($rule === '*.' . $parent && !self::tooBroad($parent)) return true;
         }
         return false;
     }

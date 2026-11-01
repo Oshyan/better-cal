@@ -1001,7 +1001,7 @@ export function SettingsPage() {
           <option value="review">Hold everything for Review</option>
         </select>
       <//>
-      <${Row} label="Approved senders" hint="Approve an address or a domain from Review, or edit the list as text: one per line, an address, a domain, or *.example.com for its subdomains (a pasted CSV uses its first column). Shared mail providers can only be approved as exact addresses. Sender addresses can be forged; keep your ingest address private. Approvals are used only in From approved senders mode.">
+      <${Row} label="Approved senders" hint="Approve an address or a domain from Review, or edit the list as text: one per line, an address, a domain, or *.example.com for the domains one label under it (a pasted CSV uses its first column). Shared mail providers can only be approved as exact addresses. Sender addresses can be forged; keep your ingest address private. Approvals are used only in From approved senders mode.">
         <${ApprovedSenders} senders=${settings.mailApprovedSenders || []} save=${save('mailApprovedSenders')} />
       <//>
       <${Row} label="Cancelled invitations" hint="When an organizer cancels, the cancellation waits in Review. Accepting it normally keeps the event, struck through, as a record. With this on, accepting removes it instead; Undo brings it back.">

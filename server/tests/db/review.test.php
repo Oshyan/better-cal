@@ -123,4 +123,26 @@ return static function (Db $db): void {
     $senders = (new \BetterCal\Domain\Settings($db))->forUser($y)['mailApprovedSenders'] ?? [];
     checkEq('review: undoing an add takes back its sender approval, and keeps one approved since', [false, true],
         [in_array('host@example.test', $senders, true), in_array('friend@example.test', $senders, true)]);
+
+    // A newer emailed version held after the add stands on it: the add no
+    // longer undoes, so that version isn't overwritten or left pointing at
+    // an event undo removed. Once in a slot of its own, once rewriting the
+    // newest slot when the meeting's are full.
+    foreach ([1 => 'its own slot', 3 => 'the newest slot rewritten'] as $others => $how) {
+        $z = freshUser($db);
+        $dz = domains($db);
+        $rz = new ReviewQueue($db, $dz->events);
+        $uid = 'potluck-f' . $others . '@example.test';
+        $added = $rz->holdNewInvitation($z, $uid, $fields, $invite, 'host@example.test');
+        for ($i = 1; $i <= $others; $i++) {
+            $rz->holdNewInvitation($z, $uid, ['title' => "Sample potluck, version $i"] + $fields, $invite, 'host@example.test');
+        }
+        ActivityContext::takeEntries();
+        $event = (int) $rz->accept($z, $added)['eventId'];
+        $entries = $toast();
+        $later = ['start' => '2026-12-14T01:00:00+00:00', 'end' => '2026-12-14T03:00:00+00:00'] + $fields;
+        $rz->holdInviteChange($z, $db->one('SELECT * FROM events WHERE id = ?', [$event]), $uid, 'REQUEST', $later, ['sequence' => 2] + $invite, 'host@example.test');
+        checkEq("review: a newer version held after an add ($how): the add is stale, the event stays", ['stale_undo', 1],
+            [refusal(fn() => $dz->undo->undoById($z, $entries[0])), $live($event)]);
+    }
 };

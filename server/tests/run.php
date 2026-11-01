@@ -1510,6 +1510,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $idb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, uid TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, created_via TEXT, end_utc TEXT, rrule TEXT)');
     $idb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $idb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    undoJournal($idb);
     $emptyEvents = (new ReflectionClass(Events::class))->newInstanceWithoutConstructor();
     $ingest = new MailIngest($idb, $emptyEvents, null, new BetterCal\Domain\MailAdmission($idb));
     $apply = (new ReflectionClass(MailIngest::class))->getMethod('applyImipEvent');

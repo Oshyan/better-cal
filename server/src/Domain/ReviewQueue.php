@@ -195,7 +195,7 @@ final class ReviewQueue
                     return (int) $open['id'];
                 }
             }
-            return $this->db->insert('review_items', [
+            $held = $this->db->insert('review_items', [
                 'user_id' => $userId,
                 'kind' => self::KIND_INVITE_NEW,
                 'event_id' => null,
@@ -213,7 +213,22 @@ final class ReviewQueue
                     'candidateKey' => $candidateKey,
                 ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
             ]);
+            $this->journalHeld($userId, $held, 'create', null, 'Held an emailed invitation to "' . mb_substr((string) ($fields['title'] ?? '(untitled)'), 0, 200) . '" for Review');
+            return $held;
         });
+    }
+
+    /**
+     * An emailed version held for Review, in Activity (log only: the item is
+     * yours to decide, not to undo). What it made or rewrote is the ground of
+     * an older undo: an accept undone would otherwise put back over a newer
+     * version, or remove the event one now stands on.
+     */
+    private function journalHeld(int $userId, int $itemId, string $op, ?int $eventId, string $summary): void
+    {
+        (new Undo($this->db))->record($userId, 'review', $itemId, $op, null, null, $summary,
+            touches: array_merge([[Undo::keyOf('review_items', ['id' => $itemId]), '*']],
+                $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '+']] : []));
     }
 
     /**
@@ -300,8 +315,11 @@ final class ReviewQueue
             // One meeting keeps at most a few competing candidates: the first
             // ones received stay, and the newest slot follows the latest
             // claim, so one known UID cannot fill the whole Review ceiling.
+            $journal = fn(int $id, string $op) => $this->journalHeld($userId, $id, $op, (int) $event['id'],
+                'Held an emailed ' . ($method === 'CANCEL' ? 'cancellation of' : 'change to') . ' "' . mb_substr($title, 0, 200) . '" for Review');
             if (count($open) >= self::CHANGES_PER_EVENT) {
                 $this->db->update('review_items', $row + ['created_at' => Time::nowDb()], 'id = ?', [(int) $open[0]['id']]);
+                $journal((int) $open[0]['id'], 'update');
                 return (int) $open[0]['id'];
             }
             // An unaccepted sequence is only a sender claim, even when the
@@ -317,12 +335,14 @@ final class ReviewQueue
                 );
                 return null;
             }
-            return $this->db->insert('review_items', [
+            $held = $this->db->insert('review_items', [
                 'user_id' => $userId,
                 'kind' => self::KIND_INVITE_CHANGE,
                 'event_id' => (int) $event['id'],
                 'source_key' => $sourceKey,
             ] + $row);
+            $journal($held, 'create');
+            return $held;
         });
     }
 

@@ -3,6 +3,14 @@ import { useStore, toast, set } from './store.js';
 import { checkUpdates, dismissUpdate } from './api.js';
 import { reloadForUpdate } from './drafts.js';
 
+// Behind a signing-key change the latest version this copy can verify is a
+// step towards the newest published one, and the update takes two runs; the
+// notice says so rather than naming the step as if it were the newest.
+function steppingStone(update) {
+  const newest = update && update.newestVersion;
+  return newest && newest !== update.latestVersion ? `; releases up to ${newest} need it first` : '';
+}
+
 export function UpdateBanner() {
   const update = useStore((s) => s.updates);
   const [busy, setBusy] = useState(false);
@@ -12,9 +20,7 @@ export function UpdateBanner() {
   const recommended = update.priority === 'recommended';
   const text = required
     ? `A Better-Cal security update is required. Update to ${update.minimumSecureVersion} or newer.`
-    : recommended
-      ? `Better-Cal ${update.latestVersion} is recommended.`
-      : `Better-Cal ${update.latestVersion} is available.`;
+    : `Better-Cal ${update.latestVersion} is ${recommended ? 'recommended' : 'available'}${steppingStone(update)}.`;
   const dismiss = async () => {
     setBusy(true);
     try { await dismissUpdate(); }
@@ -57,7 +63,7 @@ export function UpdateSettings({ update }) {
     setChecking(true);
     try {
       const next = await checkUpdates();
-      toast(next.available ? `Better-Cal ${next.latestVersion} is available` : 'Better-Cal is up to date');
+      toast(next.available ? `Better-Cal ${next.latestVersion} is available${steppingStone(next)}` : 'Better-Cal is up to date');
     } catch (e) {
       toast(e.message || 'Could not check for updates', { error: true });
     } finally {
@@ -69,7 +75,7 @@ export function UpdateSettings({ update }) {
     : update.securityRequired
       ? `Security update required: ${update.minimumSecureVersion} or newer`
       : update.available
-        ? `Version ${update.latestVersion} is available`
+        ? `Version ${update.latestVersion} is available${steppingStone(update)}`
         : `Up to date (checked ${new Date(update.checkedAt).toLocaleString()})`;
   return html`<span class="bc-set-value">${status}${update && update.lastError ? html`<br /><span class="bc-sys-bad">Last check failed: ${update.lastError}</span>` : ''}</span>
     <button type="button" class="bc-btn" disabled=${checking} onClick=${check}>${checking ? 'Checking…' : 'Check now'}</button>

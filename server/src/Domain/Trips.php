@@ -80,7 +80,7 @@ final class Trips
 
     public function attach(int $userId, int $containerId, int $eventId): void
     {
-        $this->db->tx(function () use ($userId, $containerId, $eventId): void {
+        $this->undo->write($userId, function () use ($userId, $containerId, $eventId): void {
             [$container, $member, $calendarIds] = $this->lockEvents($userId, $containerId, $eventId);
             self::assertLinkable($container, $member);
             if ($this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]) !== null) {
@@ -100,7 +100,7 @@ final class Trips
 
     public function detach(int $userId, int $containerId, int $eventId): void
     {
-        $this->db->tx(function () use ($userId, $containerId, $eventId): void {
+        $this->undo->write($userId, function () use ($userId, $containerId, $eventId): void {
             [$container, $member, $calendarIds] = $this->lockEvents($userId, $containerId, $eventId, true);
             $link = $this->db->one('SELECT * FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]);
             if ($link === null) {

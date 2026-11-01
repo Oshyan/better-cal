@@ -122,7 +122,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $fields['color'] = '#' . strtolower($m[1]);
                 }
                 if ($fields !== []) {
-                    $this->db->tx(function () use ($calendar, $fields, $mutations): void {
+                    $this->undo->write((int) $calendar['user_id'], function () use ($calendar, $fields, $mutations): void {
                         $this->assertAuthority((int) $calendar['user_id']);
                         CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
                         $fresh = $this->calendarRow((int) $calendar['id']);
@@ -131,6 +131,10 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                         }
                         $this->assertWritable($fresh);
                         $this->db->update('calendars', $fields, 'id = ?', [(int) $calendar['id']]);
+                        // Renamed or recolored from a phone or desktop app:
+                        // undoable, as from the app.
+                        $this->undo->record((int) $calendar['user_id'], 'calendar', (int) $calendar['id'], 'update',
+                            ['calendars' => [$fresh]], ['calendars' => [$this->calendarRow((int) $calendar['id'])]]);
                     });
                 }
                 return true;
@@ -250,7 +254,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     {
         $calendar = $this->calendarRow($calendarId);
         $this->assertWritable($calendar);
-        return $this->db->tx(function () use ($calendarId, $objectUri, $calendar) {
+        return $this->undo->write((int) $calendar['user_id'], function () use ($calendarId, $objectUri, $calendar) {
             $this->assertAuthority((int) $calendar['user_id']);
             $fresh = CalendarMoveGuard::lockCalendar($this->db, (int) $calendarId);
             if ($fresh !== null && (string) $fresh['kind'] === 'local') {
@@ -283,11 +287,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
         }
         [$in, $params] = Db::in($ids);
-        $this->db->tx(function () use ($in, $params): void {
+        $this->undo->write((int) $calendar['user_id'], function () use ($in, $params, $calendar, $masterId, $rows): void {
             $this->db->run("UPDATE events SET deleted_at = ? WHERE id IN $in", [Time::nowDb(), ...$params]);
+            $afterRows = $this->db->all("SELECT * FROM events WHERE id IN $in", $params);
+            $this->undo->record((int) $calendar['user_id'], 'event', $masterId, 'delete', ['events' => $rows], ['events' => $afterRows]);
         });
-        $afterRows = $this->db->all("SELECT * FROM events WHERE id IN $in", $params);
-        $this->undo->record((int) $calendar['user_id'], 'event', $masterId, 'delete', ['events' => $rows], ['events' => $afterRows]);
         ChangeLog::record($this->db, (int) $calendar['id'], $uid, ChangeLog::OP_DELETE);
     }
 
@@ -324,7 +328,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw new BadRequest('Object URI must be "<UID>.ics" matching the VEVENT UID');
         }
 
-        return $this->db->tx(function () use ($masters, $parsedOverrides, $calendarId, $uid): ?string {
+        return $this->undo->write((int) $this->calendarRow($calendarId)['user_id'], function () use ($masters, $parsedOverrides, $calendarId, $uid): ?string {
             $this->assertAuthority((int) $this->calendarRow($calendarId)['user_id']);
             $this->assertMoveMutable($calendarId);
             $calendar = $this->calendarRow($calendarId);
@@ -384,9 +388,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     ]);
                 }
             }
-            // Overrides dropped from the PUT body are gone for good.
+            // Overrides dropped from the PUT body are gone for good (with what
+            // they carried, for undo).
+            $removedLinks = [];
             foreach ($existingByInstance as $instance => $row) {
                 if (!isset($seenInstances[$instance])) {
+                    $removedLinks = array_merge_recursive($removedLinks, Undo::linksOf($this->db, [(int) $row['id']]));
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }
@@ -399,7 +406,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 'event',
                 $masterId,
                 $isNewObject ? 'create' : 'update',
-                $beforeRows === [] ? null : ['events' => $beforeRows],
+                $beforeRows === [] ? null : ['events' => $beforeRows] + $removedLinks,
                 ['events' => $afterRows]
             );
             ChangeLog::record($this->db, $calendarId, $uid, $isNewObject ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY);

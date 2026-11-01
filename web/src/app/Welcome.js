@@ -11,7 +11,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api } from './api.js';
-import { updateCalendar } from './actions.js';
+import { updateCalendar, defaultTargetCalendarId } from './actions.js';
 import { adoptSettings } from './settings.js';
 import { Icon } from '../ui/icons.js';
 import { localTz } from '../lib/dates.js';
@@ -64,7 +64,8 @@ export function Welcome() {
   // Reopened from Settings it opens right there; on its own, on the calendar.
   const show = ((pending && !s.later && s.route === 'calendar') || s.open) && !s.busy;
 
-  const firstCal = (s.calendars || []).find((c) => c.kind === 'local' && c.editable) || null;
+  // The calendar new events go to, offered for a name of the person's own.
+  const firstCal = (s.calendars || []).find((c) => c.id === defaultTargetCalendarId()) || null;
   // Kept outside the component: an action on step 2 (Browse plugins, Connect
   // Google) leaves the calendar, which unmounts this, and coming back should
   // land on the list you left, not on step 1.

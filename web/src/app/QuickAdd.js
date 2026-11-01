@@ -113,7 +113,7 @@ function parseWants(d) {
   if (d.location) want.location = d.location;
   want.rrule = d.rrule || '';
   if (d.calendarId != null &&
-      state.calendars.some((c) => c.id === d.calendarId && c.kind !== 'subscribed')) {
+      state.calendars.some((c) => c.id === d.calendarId && c.kind === 'local')) {
     want.calendarId = d.calendarId;
   }
   return want;

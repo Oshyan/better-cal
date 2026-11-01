@@ -142,7 +142,11 @@ final class People
             ? mb_substr(trim($in['notes']), 0, self::MAX_NOTES) : null;
         // Visible by default: a person you just added is a person you meant
         // to see; hiding is the deliberate act, not the starting state.
-        $id = $this->db->insert('people', ['user_id' => $userId, 'name' => $name, 'notes' => $notes, 'show_on_calendar' => 1]);
+        $id = $this->undo()->write($userId, function () use ($userId, $name, $notes): int {
+            $id = $this->db->insert('people', ['user_id' => $userId, 'name' => $name, 'notes' => $notes, 'show_on_calendar' => 1]);
+            $this->undo()->record($userId, 'person', $id, 'create', null, ['people' => [$this->db->one('SELECT * FROM people WHERE id = ?', [$id])]]);
+            return $id;
+        });
         return ['id' => $id, 'name' => $name, 'notes' => $notes, 'created' => true];
     }
 
@@ -162,6 +166,11 @@ final class People
     /** @param array{start?:mixed,end?:mixed,kind?:mixed,note?:mixed} $in */
     public function addSpan(int $userId, int $personId, array $in): array
     {
+        return $this->undo()->write($userId, fn(): array => $this->addSpanLocked($userId, $personId, $in));
+    }
+
+    private function addSpanLocked(int $userId, int $personId, array $in): array
+    {
         $person = $this->requirePerson($userId, $personId);
         $start = self::instant($in['start'] ?? null, 'start');
         $end = self::instant($in['end'] ?? null, 'end');
@@ -179,7 +188,7 @@ final class People
             'note' => $note,
         ]);
         $row = $this->db->one('SELECT * FROM availability WHERE id = ?', [$id]);
-        (new Undo($this->db))->record(
+        $this->undo()->record(
             $userId,
             'availability',
             $id,
@@ -199,6 +208,11 @@ final class People
      * @param array{start?:mixed,end?:mixed,kind?:mixed,note?:mixed} $in
      */
     public function updateSpan(int $userId, int $personId, int $spanId, array $in): array
+    {
+        return $this->undo()->write($userId, fn(): array => $this->updateSpanLocked($userId, $personId, $spanId, $in));
+    }
+
+    private function updateSpanLocked(int $userId, int $personId, int $spanId, array $in): array
     {
         $person = $this->requirePerson($userId, $personId);
         $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
@@ -229,7 +243,7 @@ final class People
         }
         $this->db->update('availability', $fields, 'id = ?', [$spanId]);
         $after = $this->db->one('SELECT * FROM availability WHERE id = ?', [$spanId]);
-        (new Undo($this->db))->record(
+        $this->undo()->record(
             $userId,
             'availability',
             $spanId,
@@ -244,13 +258,18 @@ final class People
 
     public function deleteSpan(int $userId, int $personId, int $spanId): void
     {
+        $this->undo()->write($userId, fn() => $this->deleteSpanLocked($userId, $personId, $spanId));
+    }
+
+    private function deleteSpanLocked(int $userId, int $personId, int $spanId): void
+    {
         $person = $this->requirePerson($userId, $personId);
         $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
         $count = $this->db->run('DELETE FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId])->rowCount();
         if ($count === 0) {
             throw HttpError::notFound('No such away or busy time');
         }
-        (new Undo($this->db))->record(
+        $this->undo()->record(
             $userId,
             'availability',
             $spanId,
@@ -333,10 +352,29 @@ final class People
      */
     public function update(int $userId, int $id, array $in): array
     {
+        return $this->undo()->write($userId, fn(): array => $this->updateLocked($userId, $id, $in));
+    }
+
+    private function updateLocked(int $userId, int $id, array $in): array
+    {
         $row = $this->db->one('SELECT id, name, notes FROM people WHERE id = ? AND user_id = ?', [$id, $userId]);
         if ($row === null) {
             throw HttpError::notFound('No such person');
         }
+        // A rename onto another person's name merges into them: both, and
+        // the events either is on, as they were.
+        $merging = isset($in['name']) && is_string($in['name'])
+            ? $this->db->scalar('SELECT id FROM people WHERE user_id = ? AND name = ? AND id != ?', [$userId, self::normalizeName($in['name']), $id])
+            : null;
+        $ids = $merging !== null ? [$id, (int) $merging] : [$id];
+        $snapshot = function () use ($ids): array {
+            [$in, $params] = Db::in($ids);
+            return [
+                'people' => $this->db->all("SELECT * FROM people WHERE id IN $in", $params),
+                'event_people' => $this->db->all("SELECT * FROM event_people WHERE person_id IN $in", $params),
+            ];
+        };
+        $before = $snapshot();
 
         if (array_key_exists('notes', $in)) {
             $notes = $in['notes'] !== null ? mb_substr((string) $in['notes'], 0, self::MAX_NOTES) : null;
@@ -370,6 +408,7 @@ final class People
             }
         }
 
+        $this->undo()->record($userId, 'person', $id, 'update', $before, $snapshot());
         $out = $this->db->one('SELECT id, name, notes, show_on_calendar FROM people WHERE id = ?', [$id]);
         return [
             'id' => (int) $out['id'],
@@ -382,10 +421,26 @@ final class People
     /** Remove a person and their event links (events themselves untouched). */
     public function delete(int $userId, int $id): void
     {
-        $count = $this->db->run('DELETE FROM people WHERE id = ? AND user_id = ?', [$id, $userId])->rowCount();
-        if ($count === 0) {
-            throw HttpError::notFound('No such person');
-        }
+        $this->undo()->write($userId, function () use ($userId, $id): void {
+            $person = $this->db->one('SELECT * FROM people WHERE id = ? AND user_id = ?', [$id, $userId]);
+            if ($person === null) {
+                throw HttpError::notFound('No such person');
+            }
+            $before = [
+                'people' => [$person],
+                'event_people' => $this->db->all('SELECT * FROM event_people WHERE person_id = ?', [$id]),
+                'availability' => $this->db->all('SELECT * FROM availability WHERE person_id = ?', [$id]),
+            ];
+            $this->db->run('DELETE FROM people WHERE id = ?', [$id]);
+            $this->undo()->record($userId, 'person', $id, 'delete', $before, null);
+        });
+    }
+
+    private ?Undo $undo = null;
+
+    private function undo(): Undo
+    {
+        return $this->undo ??= new Undo($this->db);
     }
 
     /**

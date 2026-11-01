@@ -183,7 +183,7 @@ final class GoogleController
             $role = 'reader';
         }
         $sessionToken = (string) ($req->cookies[Auth::COOKIE] ?? '');
-        $calendar = $this->db->tx(function () use ($userId, $account, $googleCalendarId, $name, $req, $role, $sessionToken): array {
+        $calendar = (new \BetterCal\Domain\Undo($this->db))->write($userId, function () use ($userId, $account, $googleCalendarId, $name, $req, $role, $sessionToken): array {
             // Serialize the durable subscription with the exact initiating
             // session and compromise quarantine. Reconnecting the account
             // cannot revive a request whose session the reset deleted.

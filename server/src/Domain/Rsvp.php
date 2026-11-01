@@ -268,15 +268,19 @@ final class Rsvp
             : $this->answerByMail($row, $invite, $partstat, $authority, $retryUncertain);
 
         $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Maybe'][$partstat];
-        ActivityContext::with('rsvp', fn() => (new Undo($this->db))->record(
+        // Not undoable (the answer has gone to the organizer), but what it
+        // changed is the ground of an older undo of this event.
+        $undo = new Undo($this->db);
+        $undo->write($userId, fn() => ActivityContext::with('rsvp', fn() => $undo->record(
             $userId,
             'event',
             $eventId,
             'update',
             null,
             null,
-            $verb . " to '" . (string) $row['title'] . "'" . ($outcome['sent'] ? '' : ' (not sent: ' . ($outcome['message'] ?? 'unknown') . ')')
-        ));
+            $verb . " to '" . (string) $row['title'] . "'" . ($outcome['sent'] ? '' : ' (not sent: ' . ($outcome['message'] ?? 'unknown') . ')'),
+            touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], ['invite_json', 'status', 'attendance'])
+        )));
         // Journal so other open clients see the answer on their next cursor poll.
         ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
         return ['myPartstat' => $partstat] + $outcome;
@@ -291,7 +295,7 @@ final class Rsvp
         $block = self::blocker($invite, $this->cfg);
         $outcome = ['sent' => false, 'reason' => $block['code'] ?? null, 'message' => $block['text'] ?? null];
         $attempt = bin2hex(random_bytes(16));
-        $this->db->tx(function () use ($row, &$invite, $partstat, $authority, $attempt, $block, &$outcome): void {
+        (new Undo($this->db))->write((int) $row['user_id'], function () use ($row, &$invite, $partstat, $authority, $attempt, $block, &$outcome): void {
             $authority->assertValid($this->db);
             $current = $this->db->one('SELECT invite_json FROM events WHERE id = ? AND deleted_at IS NULL' . $this->db->forUpdate(), [(int) $row['id']]);
             if ($current === null || json_decode((string) $current['invite_json'], true) !== $invite) {
@@ -330,7 +334,7 @@ final class Rsvp
                 ? ['sent' => true, 'reason' => null, 'message' => null]
                 : ['sent' => false, 'reason' => 'uncertain', 'message' => 'The reply could not be confirmed. It may have been sent; retrying can send another copy.'];
         }
-        $this->db->tx(function () use ($row, $attempt, $outcome, $authority): void {
+        (new Undo($this->db))->write((int) $row['user_id'], function () use ($row, $attempt, $outcome, $authority): void {
             $authority->assertValid($this->db);
             $fresh = $this->db->scalar('SELECT invite_json FROM events WHERE id = ? AND deleted_at IS NULL' . $this->db->forUpdate(), [(int) $row['id']]);
             $current = json_decode((string) $fresh, true);
@@ -389,7 +393,7 @@ final class Rsvp
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
         // answer to the organizer by itself; nobody else gets mail.
         $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false));
-        $this->db->tx(function () use ($check, $calendar, $resp, $row): void {
+        (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row): void {
             $check(true);
             $this->google->apply($calendar, [$resp]);
             // The answer decides Planned or Maybe again (Events::relationship),

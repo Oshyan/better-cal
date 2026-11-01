@@ -13,7 +13,11 @@ Security fixes are tracked privately as GitHub security advisories until they sh
   - **Drag a calendar** onto another folder to move it there, or hold Option (Alt) to add it there as well. Drag it to the main list to take it out of its folder.
   - **A–Z** on a folder or the main list sorts it by name; otherwise drag calendars into the order you like. Each folder keeps its own order.
 - **The default calendar is always set:** Settings, General, Default calendar. Deleting it moves it to another and says which. It used to fall back to the first calendar in the list.
-- **Undo knows what a change stands on:** undoing a calendar's creation after adding events to it, or a series change after editing one date of it, asks first instead of losing the newer work. A calendar deleted after its folder comes back unfiled. A toast's Undo undoes your own last change, or says it can't.
+- **Undo is more careful, and covers more:**
+  - A toast's Undo undoes that toast's change, not whatever you did last.
+  - Undoing something that newer changes stand on asks first instead of losing them: a calendar's creation after events were added to it (imports too), a series' time after one of its dates was deleted, edited or split off.
+  - Imports, people (added, renamed, merged, deleted) and calendars renamed from a phone's calendar app can be undone. A deleted calendar or edited date comes back with its tags, people and trip links, and a calendar deleted after its folder comes back unfiled.
+  - A Google calendar's place in the list and whether it shows can be undone.
 
 Operators: four database changes (each folder's order of calendars, what each change touched for undo, calendars' places spaced out, and a default calendar for every account), applied automatically by `update.php` or the database update page.
 

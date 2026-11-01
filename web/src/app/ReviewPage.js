@@ -24,7 +24,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { set, toast, invalidateRecords } from './store.js';
-import { api, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
+import { api, entriesOf, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
 import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
@@ -121,7 +121,7 @@ function ReviewCard({ item, onChanged }) {
       } else {
         toast(
           accepted ? (d.occurrence ? (d.method === 'CANCEL' ? 'That occurrence is skipped; the rest of the series is unchanged' : 'Applied to that occurrence; the rest of the series is unchanged') : d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
-          { undoable: accepted && item.kind === 'invite_change' },
+          { undo: accepted && item.kind === 'invite_change' ? entriesOf(res) : [] },
         );
       }
       invalidateRecords();

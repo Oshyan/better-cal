@@ -6,7 +6,7 @@
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { state, set, toast, useStore } from './store.js';
-import { api, refreshWindow, loadCalendars } from './api.js';
+import { api, refreshWindow, loadCalendars, afterUndo } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { SchemaForm } from './SchemaForm.js';
@@ -179,7 +179,8 @@ function PluginRow({ p }) {
         type="button" class="bc-link-btn" disabled=${busy}
         title=${'Reverse all ' + lr.undoableMutations + ' change(s) this run made'}
         onClick=${() => act(
-          () => api('/plugins/runs/' + lr.runId + '/undo', { method: 'POST' }),
+          // A run's undo can have changed any calendar or event record.
+          async () => { await api('/plugins/runs/' + lr.runId + '/undo', { method: 'POST' }); await afterUndo(); },
           'Run undone',
         )}
       >Undo this run (${lr.undoableMutations})</button>`}

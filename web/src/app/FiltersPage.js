@@ -11,7 +11,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
-import { api, refreshWindow } from './api.js';
+import { api, entriesOf, refreshWindow } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
@@ -206,8 +206,8 @@ export function FiltersPage() {
   const create = async (body) => {
     setBusy(true);
     try {
-      await api('/filters', { method: 'POST', body });
-      toast(body.type === 'prompt' ? 'Filter created; evaluating in the background' : 'Filter created', { title: body.name || null, undoable: true });
+      const saved = await api('/filters', { method: 'POST', body });
+      toast(body.type === 'prompt' ? 'Filter created; evaluating in the background' : 'Filter created', { title: body.name || null, undo: entriesOf(saved) });
       setCreateSeq((n) => n + 1);
       await load();
       refreshWindow();
@@ -220,8 +220,8 @@ export function FiltersPage() {
   const saveEdit = async (id, body) => {
     setBusy(true);
     try {
-      await api('/filters/' + id, { method: 'PATCH', body });
-      toast('Filter updated', { title: body.name || null, undoable: true });
+      const saved = await api('/filters/' + id, { method: 'PATCH', body });
+      toast('Filter updated', { title: body.name || null, undo: entriesOf(saved) });
       setEditingId(null);
       await load();
       refreshWindow();
@@ -233,8 +233,8 @@ export function FiltersPage() {
 
   const toggle = async (f) => {
     try {
-      await api('/filters/' + f.id, { method: 'PATCH', body: { enabled: !f.enabled } });
-      toast(f.enabled ? 'Filter disabled' : 'Filter enabled', { title: f.name || null, undoable: true });
+      const saved = await api('/filters/' + f.id, { method: 'PATCH', body: { enabled: !f.enabled } });
+      toast(f.enabled ? 'Filter disabled' : 'Filter enabled', { title: f.name || null, undo: entriesOf(saved) });
       await load();
       refreshWindow();
     } catch (err) {
@@ -245,8 +245,8 @@ export function FiltersPage() {
   const remove = async (f) => {
     if (f.id === editingId) setEditingId(null);
     try {
-      await api('/filters/' + f.id, { method: 'DELETE' });
-      toast('Filter deleted', { title: f.name || null, undoable: true });
+      const saved = await api('/filters/' + f.id, { method: 'DELETE' });
+      toast('Filter deleted', { title: f.name || null, undo: entriesOf(saved) });
       await load();
       refreshWindow();
     } catch (err) {

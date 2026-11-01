@@ -404,6 +404,19 @@ function bc_handle_api(Request $request, array $cfg): void
             && !in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)) {
             \BetterCal\Dav\ChangeLog::touchAccount($db, (int) $request->user['id']);
         }
+        // The entries this request journaled that can be undone: its
+        // toast's Undo undoes exactly these, not whatever came last.
+        $entries = Domain\ActivityContext::takeEntries();
+        if ($entries !== [] && $response->status < 400) {
+            [$in, $params] = \BetterCal\Infra\Db::in($entries);
+            $undoable = array_map('intval', array_column($db->all(
+                "SELECT id FROM mutations WHERE id IN $in AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id",
+                $params
+            ), 'id'));
+            if ($undoable !== []) {
+                $response = $response->withHeader('X-Undo-Entries', implode(',', $undoable));
+            }
+        }
         if ($request->authMethod === 'session' && $request->sessionCacheId !== null && $request->offlineUntil !== null) {
             $response = $response
                 ->withHeader('X-BetterCal-Session', $request->sessionCacheId)

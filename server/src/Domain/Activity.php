@@ -19,7 +19,7 @@ final class Activity
     public const LOG_DAYS = 90;
     public const MAX_LIMIT = 100;
 
-    /** Sources the API accepts as filters; 'mail' and 'plugin' match every mail:* / plugin:* source. */
+    /** Sources the API accepts as filters; 'mail', 'plugin' and 'dedup' match every mail:* / plugin:* / dedup:* source too. */
     public const SOURCES = ['web', 'api', 'caldav', 'feed', 'mail', 'quickadd', 'rsvp', 'import', 'geocode', 'system', 'plugin', 'review', 'dedup'];
 
     public function __construct(private readonly Db $db)
@@ -52,6 +52,8 @@ final class Activity
                 }
                 if ($s === 'mail' || $s === 'plugin') {
                     $conds[] = "source LIKE '$s:%'";
+                } elseif ($s === 'dedup') {
+                    $conds[] = "(source = 'dedup' OR source LIKE 'dedup:%')";
                 } else {
                     $conds[] = 'source = ?';
                     $params[] = $s;

@@ -22,14 +22,16 @@ try {
     if ($scenario === 'drag') {
         // A drag of the calendar from one folder to another, as the app
         // makes it, committed only once the undo waits on it.
-        $db->tx(function () use ($db, $userId, $calendarId, $folderId, $marker, $from): void {
-            domains($db)->folders->place($userId, $folderId, $calendarId, 0, (int) $from);
+        $d = domains($db);
+        $d->undo->write($userId, function () use ($d, $db, $userId, $calendarId, $folderId, $marker, $from): void {
+            $d->folders->place($userId, $folderId, $calendarId, 0, (int) $from);
             touch($marker);
             waitFor(static fn() => someoneWaits($db), 15.0);
         });
     } elseif ($scenario === 'deadlock') {
-        // A change that holds the calendar's filing, then journals itself,
-        // which needs the account's row: the undo holds that and waits for
+        // A change that doesn't go through Undo::write (none in the app
+        // should): it holds the calendar's filing, then journals itself,
+        // which needs the account's row; the undo holds that and waits for
         // the filing. Bigger than the undo (a few rows written first, none
         // of them the account's), so the database picks the undo to roll back.
         $db->tx(function () use ($db, $userId, $calendarId, $folderId, $marker): void {

@@ -76,7 +76,18 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
   }
   if (state.serverState) set({ serverState: null });
   if (res.headers.get('X-BetterCal-Offline') === '1' && requestEpoch === authEpoch) set({ offlineReadOnly: true });
+  // The journal entries this write made that can be undone (entriesOf), on
+  // the answer itself: two writes at once can't mix up whose they are.
+  const entries = (res.headers.get('X-Undo-Entries') || '').split(',').map(Number).filter((n) => n > 0);
+  if (entries.length && data && typeof data === 'object') Object.defineProperty(data, UNDO_ENTRIES, { value: entries });
   return data;
+}
+
+const UNDO_ENTRIES = Symbol('undo entries');
+
+/** The journal entries a write's answer says it made, for its toast's Undo. */
+export function entriesOf(data) {
+  return (data && data[UNDO_ENTRIES]) || [];
 }
 
 // --- session ---------------------------------------------------------------
@@ -896,6 +907,21 @@ export function afterUndo() {
   invalidateRecords();
   loadCalendars().catch(() => {});
   return refreshWindow();
+}
+
+// A toast's Undo: just the entries its change made, newest first. One a
+// later change stands on isn't overwritten from a toast: the log offers
+// that, with a warning.
+export async function undoEntries(ids) {
+  try {
+    for (const id of [...ids].sort((a, b) => b - a)) {
+      await api('/activity/' + id + '/undo', { method: 'POST', body: {} });
+    }
+    toast('Undone');
+  } catch (e) {
+    toast(e.code === 'stale_undo' ? 'Changed since, so not undone here. Activity can undo it anyway.' : e.code === 'not_undoable' ? e.message : 'Undo failed: ' + e.message, { error: true });
+  }
+  await afterUndo();
 }
 
 export async function undo() {

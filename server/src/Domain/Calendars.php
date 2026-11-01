@@ -131,7 +131,7 @@ final class Calendars
      */
     public function orphanedGoogleCalendar(int $userId, string $googleCalendarId, bool $lock = false): ?int
     {
-        $forUpdate = $lock && $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $forUpdate = $lock ? $this->db->forUpdate() : '';
         $id = $this->db->scalar(
             "SELECT id FROM calendars
              WHERE user_id = ? AND kind = 'subscribed' AND provider = 'google'
@@ -196,7 +196,7 @@ final class Calendars
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
-        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession): int {
+        $id = $this->undo->write($userId, function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession): int {
             if ($creatorTokenId !== null) {
                 // Authentication happened before the controller ran. Lock and
                 // recheck at the durable boundary so a concurrent revoke either
@@ -241,19 +241,18 @@ final class Calendars
             if (!empty($in['folderIds']) && is_array($in['folderIds'])) {
                 $this->setFolders($userId, $id, $in['folderIds']);
             }
+            $this->undo->record($userId, 'calendar', $id, 'create', null, [
+                'calendars' => [$this->get($userId, $id)],
+                'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
+            ]);
             return $id;
         });
-        $created = $this->get($userId, $id);
-        $this->undo->record($userId, 'calendar', $id, 'create', null, [
-            'calendars' => [$created],
-            'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-        ]);
         return $this->serializeById($userId, $id);
     }
 
     public function patch(int $userId, int $id, array $in, ?int $viewerTokenId = null): array
     {
-        return $this->db->tx(function () use ($userId, $id, $in, $viewerTokenId): array {
+        return $this->undo->write($userId, function () use ($userId, $id, $in, $viewerTokenId): array {
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $id);
             if ($calendar === null || (int) $calendar['user_id'] !== $userId) {
                 throw HttpError::notFound('No such calendar');
@@ -349,7 +348,6 @@ final class Calendars
         return $this->serializeById($userId, $id, $viewerTokenId);
     }
 
-    /** Delete calendar + events. Fully captured in the mutation log, so undo restores everything. */
     /**
      * Adopt a subscribed calendar as local (docs/migration.md "transition
      * mode"): the feed link is severed, every event becomes an editable
@@ -359,7 +357,7 @@ final class Calendars
      */
     public function adopt(int $userId, int $id): array
     {
-        $this->db->tx(function () use ($userId, $id): void {
+        $this->undo->write($userId, function () use ($userId, $id): void {
             CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
             $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$id, $userId]);
             if ($row === null) {
@@ -382,7 +380,15 @@ final class Calendars
                     last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
                 [$id]
             );
+            $events = array_map('intval', array_column($this->db->all("SELECT id FROM events WHERE calendar_id = ? AND source <> 'local'", [$id]), 'id'));
             $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);
+            // One way, so not undoable; but what it changed is the ground of
+            // an older undo of this calendar (its source, Google's link) and
+            // of its events.
+            $before = ['calendars' => [$row]];
+            $after = ['calendars' => [$this->db->one('SELECT * FROM calendars WHERE id = ?', [$id])]];
+            $this->undo->record($userId, 'calendar', $id, 'update', null, null, "Kept '" . $row['name'] . "' as a calendar of its own",
+                touches: array_merge(Undo::touchesOf($before, $after), array_map(static fn(int $e) => [Undo::keyOf('events', ['id' => $e]), 'source'], $events)));
         });
         return $this->serializeById($userId, $id);
     }
@@ -396,7 +402,7 @@ final class Calendars
     {
         $before = $this->db->tx(function () use ($userId, $id, $sessionToken): array {
             RequestAuthority::credential($userId, null, $sessionToken)->assertValid($this->db, true, true);
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?' . $lock, [$id, $userId]);
             if ($row === null) {
                 throw HttpError::notFound('Calendar not found');
@@ -437,32 +443,26 @@ final class Calendars
      */
     public function delete(int $userId, int $id): ?int
     {
-        $wasDefault = Settings::defaultCalendarId($this->db, $userId) === $id;
-        $before = $this->db->tx(function () use ($userId, $id): array {
+        return $this->undo->write($userId, function () use ($userId, $id): ?int {
             CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
             $calendar = $this->get($userId, $id);
+            $wasDefault = Settings::defaultCalendarId($this->db, $userId) === $id;
             $events = $this->db->all('SELECT * FROM events WHERE calendar_id = ?', [$id]);
             $before = [
                 'calendars' => [$calendar],
                 'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
                 'events' => $events,
-            ];
-            $eventIds = array_map(static fn($e) => (int) $e['id'], $events);
-            if ($eventIds !== []) {
-                [$in, $params] = Db::in($eventIds);
-                $before['event_tags'] = $this->db->all("SELECT * FROM event_tags WHERE event_id IN $in", $params);
-                $before['event_people'] = $this->db->all("SELECT * FROM event_people WHERE event_id IN $in", $params);
-            }
+            ] + Undo::linksOf($this->db, array_map(static fn($e) => (int) $e['id'], $events));
             $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
-            return $before;
+            $next = null;
+            if ($wasDefault) {
+                $next = Settings::defaultCalendarId($this->db, $userId);
+                Settings::setDefaultCalendar($this->db, $userId, $next);
+            }
+            // Undone, it's where new events go again.
+            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => $id]] : null);
+            return $next;
         });
-        $this->undo->record($userId, 'calendar', $id, 'delete', $before, null);
-        if (!$wasDefault) {
-            return null;
-        }
-        $next = Settings::defaultCalendarId($this->db, $userId);
-        Settings::setDefaultCalendar($this->db, $userId, $next);
-        return $next;
     }
 
     public function serializeById(int $userId, int $id, ?int $viewerTokenId = null): array
@@ -686,7 +686,7 @@ final class Calendars
         if ($cal === null) {
             throw HttpError::notFound('Calendar not found');
         }
-        return $this->db->tx(function () use ($userId, $calendarId, $at, $cal): array {
+        return $this->undo->write($userId, function () use ($userId, $calendarId, $at, $cal): array {
             $ordered = array_map(static fn($r) => [(int) $r['id'], (int) $r['position']],
                 $this->db->all('SELECT id, position FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]));
             $places = Order::place($ordered, $calendarId, $at);
@@ -698,7 +698,10 @@ final class Calendars
             }
             // Numbered afresh, every place changed in effect: a move in the
             // list since makes its undo stale, as it does an earlier one's.
+            // A move marks the list (a renumbering's undo is stale on a
+            // later move in it, even of a calendar made since).
             $touches = count($places) > 1 ? array_map(static fn(array $r) => [Undo::keyOf('calendars', ['id' => $r[0]]), 'position'], $ordered) : [];
+            $touches[] = ['order:calendars:' . $userId, count($places) > 1 ? '*' : '+'];
             $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $rows()], "Moved '" . $cal['name'] . "' in the calendar list", touches: $touches);
             return array_map('intval', array_column($this->db->all('SELECT id FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]), 'id'));
         });

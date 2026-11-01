@@ -11,10 +11,12 @@ return static function (Db $db): string {
     // unreleased build): undo can't put it back any more. Log only.
     $placed = $db->run("UPDATE mutations SET before_json = NULL, after_json = NULL WHERE entity = 'calendar_place' AND (before_json IS NOT NULL OR after_json IS NOT NULL)")->rowCount();
 
-    // What each entry of the last week changed, for those from before undo
-    // recorded it (056): an older one's undo is stale on these as on any
-    // later change. One that kept no snapshots (a change sent to Google) is
-    // taken to have changed all of its item, as undo assumed before.
+    // What each entry of the last week changed, as undo records it now: for
+    // one from before undo recorded it (056) all of it, for one since then
+    // anything an earlier build left out. An older entry's undo is stale on
+    // these as on any later change. One from before 056 that kept no
+    // snapshots (a change sent to Google) is taken to have changed all of
+    // its item, as undo assumed then.
     $tables = ['event' => 'events', 'calendar' => 'calendars', 'folder' => 'folders', 'person' => 'people',
         'tag' => 'tags', 'filter' => 'filters', 'saved_view' => 'saved_views', 'availability' => 'availability', 'outfeed' => 'out_feeds'];
     $since = gmdate('Y-m-d H:i:s', time() - 8 * 86400);
@@ -22,9 +24,9 @@ return static function (Db $db): string {
     $after = 0;
     while (true) {
         $rows = $db->all(
-            'SELECT m.id, m.entity, m.entity_id, m.before_json, m.after_json FROM mutations m
-             WHERE m.id > ? AND m.created_at >= ? AND NOT EXISTS (SELECT 1 FROM mutation_touches t WHERE t.mutation_id = m.id)
-             ORDER BY m.id LIMIT 200',
+            'SELECT m.id, m.entity, m.entity_id, m.before_json, m.after_json,
+                    EXISTS (SELECT 1 FROM mutation_touches t WHERE t.mutation_id = m.id) AS has_touches
+             FROM mutations m WHERE m.id > ? AND m.created_at >= ? ORDER BY m.id LIMIT 200',
             [$after, $since]
         );
         if ($rows === []) {
@@ -41,6 +43,9 @@ return static function (Db $db): string {
             $touches = Undo::touchesOf($before, $afterTables);
             if ((string) $m['entity'] === 'plugin_edit') {
                 $touches = Undo::timeTouches((int) $m['entity_id']);
+            } elseif ((int) $m['has_touches'] === 1) {
+                // Recorded since 056: what its snapshots show is there; this
+                // adds only what an earlier build left out (what rows belong to).
             } elseif ($touches === [] && $before === null && $afterTables === null && isset($tables[(string) $m['entity']]) && (int) $m['entity_id'] > 0) {
                 $touches = [[Undo::keyOf($tables[(string) $m['entity']], ['id' => (int) $m['entity_id']]), '*']];
             }
@@ -55,7 +60,9 @@ return static function (Db $db): string {
                 }
                 $db->run($db->insertIgnore() . ' INTO mutation_touches (mutation_id, row_key, col) VALUES ' . implode(', ', array_fill(0, count($chunk), '(?, ?, ?)')), $params);
             }
-            $filled++;
+            if ($unique !== []) {
+                $filled++;
+            }
         }
     }
 

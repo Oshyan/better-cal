@@ -32,9 +32,10 @@ return static function (Db $db): void {
         echo $out, "\n";
     }
 
-    // A deadlock: the undo holds the account and waits for the filing; the
-    // other change holds the filing and waits for the account. The
-    // database rolls the undo back, and it runs again once the other is in.
+    // A deadlock with a change that skipped Undo::write: the undo holds the
+    // account and waits for the filing; the other holds the filing and
+    // waits for the account. The database rolls the undo back, and it runs
+    // again once the other is in.
     $v = freshUser($db);
     $dv = domains($db);
     $vcal = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$v]);

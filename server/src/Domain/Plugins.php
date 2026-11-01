@@ -613,11 +613,21 @@ final class Plugins
      */
     public function uninstall(int $userId, string $id, bool $deleteCalendars): array
     {
+        return (new Undo($this->db))->write($userId, fn(): array => $this->uninstallLocked($userId, $id, $deleteCalendars));
+    }
+
+    private function uninstallLocked(int $userId, string $id, bool $deleteCalendars): array
+    {
         $this->cancelPendingJobs($id, 'cancelled because the plugin was uninstalled');
         $impact = $this->impact($userId, $id);
         $cals = $this->db->all("SELECT id, name FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$userId, $id]);
+        // Its calendars, removed or made ordinary: an older undo of them (a
+        // rename, a filing) stands on them.
+        $touches = [];
         foreach ($cals as $cal) {
             $cid = (int) $cal['id'];
+            $key = Undo::keyOf('calendars', ['id' => $cid]);
+            $touches = array_merge($touches, $deleteCalendars ? [[$key, '*']] : [[$key, 'kind'], [$key, 'plugin_id'], [$key, 'name']]);
             if ($deleteCalendars) {
                 $this->db->run('DELETE FROM events WHERE calendar_id = ?', [$cid]);
                 $this->db->run('DELETE FROM calendars WHERE id = ?', [$cid]);
@@ -653,7 +663,7 @@ final class Plugins
             $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($cfg), (int) $row['id']]);
         }
         $this->db->run('DELETE FROM plugins WHERE id = ?', [$id]);
-        ActivityContext::with('plugin:' . $id, function () use ($userId, $id, $impact, $deleteCalendars): void {
+        ActivityContext::with('plugin:' . $id, function () use ($userId, $id, $impact, $deleteCalendars, $touches): void {
             (new Undo($this->db))->record(
                 $userId,
                 'calendar',
@@ -662,7 +672,8 @@ final class Plugins
                 null,
                 null,
                 "Uninstalled plugin '" . $id . "' (" . $impact['events'] . ' events '
-                    . ($deleteCalendars ? 'deleted' : 'archived') . ', ' . $impact['ranges'] . ' ranges purged)'
+                    . ($deleteCalendars ? 'deleted' : 'archived') . ', ' . $impact['ranges'] . ' ranges purged)',
+                touches: $touches
             );
         });
         return $impact;

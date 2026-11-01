@@ -344,8 +344,7 @@ final class ReviewQueue
         return $this->db->tx(function () use ($userId, $reason, $message, $retryAt, $subject, $fromAddr): int {
             // The same account lock as MailAdmission makes concurrent denials
             // update one aggregate instead of racing two open rows or counts.
-            $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
-            $this->db->scalar('SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : ''), [$userId]);
+            $this->db->scalar('SELECT id FROM users WHERE id = ?' . $this->db->forUpdate(), [$userId]);
             $row = $this->db->one(
                 "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
                 [$userId, self::KIND_MAIL_LIMIT, $reason]
@@ -406,8 +405,7 @@ final class ReviewQueue
     ): int {
         $sourceKey = mb_substr($reason . ':calendar:' . $calendarId, 0, 255);
         return $this->db->tx(function () use ($userId, $reason, $message, $retryAt, $calendarId, $calendarName, $batchSize, $sourceKey, $operation): int {
-            $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
-            $this->db->scalar('SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : ''), [$userId]);
+            $this->db->scalar('SELECT id FROM users WHERE id = ?' . $this->db->forUpdate(), [$userId]);
             $row = $this->db->one(
                 "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
                 [$userId, self::KIND_MODEL_LIMIT, $sourceKey]
@@ -653,7 +651,7 @@ final class ReviewQueue
      */
     public function accept(int $userId, int $id, ?string $approveSender = null, ?RequestAuthority $authority = null): array
     {
-        $result = ActivityContext::withRun('review', Ids::ulid(), fn(): array => $this->db->tx(function () use ($userId, $id, $approveSender, $authority): array {
+        $result = ActivityContext::withRun('review', Ids::ulid(), fn(): array => (new Undo($this->db))->write($userId, function () use ($userId, $id, $approveSender, $authority): array {
             $authority?->assertValid($this->db);
             $this->lockAccount($userId);
             $row = $this->requireOpen($userId, $id);
@@ -866,7 +864,7 @@ final class ReviewQueue
      */
     public function dismissReply(int $userId, int $eventId): array
     {
-        return ActivityContext::with('review', fn(): array => $this->db->tx(function () use ($userId, $eventId): array {
+        return ActivityContext::with('review', fn(): array => (new Undo($this->db))->write($userId, function () use ($userId, $eventId): array {
             $row = $this->db->one(
                 'SELECT id, title, invite_json FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL' . $this->forUpdate(),
                 [$eventId, $userId]
@@ -982,8 +980,7 @@ final class ReviewQueue
 
     private function lockAccount(int $userId): void
     {
-        $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
-        if ($this->db->scalar('SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : ''), [$userId]) === null) {
+        if ($this->db->scalar('SELECT id FROM users WHERE id = ?' . $this->db->forUpdate(), [$userId]) === null) {
             throw new \RuntimeException('Review decision could not lock its account');
         }
     }
@@ -998,7 +995,7 @@ final class ReviewQueue
 
     private function forUpdate(): string
     {
-        return (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        return $this->db->forUpdate();
     }
 
     /** @return array{error:string,message:string} */

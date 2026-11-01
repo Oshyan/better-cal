@@ -201,8 +201,7 @@ final class Proposals
     public function accept(int $userId, int $id, string $reviewToken): array
     {
         $runId = Ids::ulid();
-        $result = $this->db->tx(function () use ($userId, $id, $reviewToken, $runId): array {
-            $this->lockAccount($userId);
+        $result = (new Undo($this->db))->write($userId, function () use ($userId, $id, $reviewToken, $runId): array {
             $p = $this->require($userId, $id, true);
             if ((string) $p['status'] !== 'open') {
                 throw HttpError::conflict('proposal_decided', 'This proposal was already ' . (string) $p['status'] . '.');
@@ -269,8 +268,7 @@ final class Proposals
     /** Reverse an acceptance: undo the whole run, reopen the proposal. */
     public function undoAccept(int $userId, int $id): array
     {
-        return $this->db->tx(function () use ($userId, $id): array {
-            $this->lockAccount($userId);
+        return (new Undo($this->db))->write($userId, function () use ($userId, $id): array {
             $p = $this->require($userId, $id, true);
             if ((string) $p['status'] !== 'accepted' || $p['accepted_run_id'] === null) {
                 throw HttpError::conflict('proposal_not_accepted', 'This proposal has not been accepted.');
@@ -320,7 +318,7 @@ final class Proposals
 
     private function forUpdate(): string
     {
-        return $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        return $this->db->forUpdate();
     }
 
     /** Persist an effective local destination for every materialized item. */

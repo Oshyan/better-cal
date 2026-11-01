@@ -17,6 +17,9 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
     putenv('BETTERCAL_SESSION_SECRET=' . bin2hex(random_bytes(32)));
 }
 
+// A change to undoable data journaled outside Undo::write fails the run.
+putenv('BETTERCAL_STRICT_JOURNAL=1');
+
 require dirname(__DIR__, 2) . '/src/bootstrap.php';
 require __DIR__ . '/lib.php';
 
@@ -54,6 +57,7 @@ try {
             check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
         }
     }
+    check('every change to undoable data was journaled in Undo::write', BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
 } finally {
     $server->exec("DROP DATABASE IF EXISTS `$name`");
 }

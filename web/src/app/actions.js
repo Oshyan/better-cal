@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
+import { api, entriesOf, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -388,7 +388,7 @@ function maybePromptTripExit(occ, newStart, newEnd) {
           const ext = extendTripSpan(trip, { ...occ, start: newStart, end: newEnd });
           if (!ext) return;
           api('/events/' + trip.eventId, { method: 'PATCH', body: { start: ext.start, end: ext.end } })
-            .then(() => { toast(said('Extended', timeChange(trip, { ...ext, allDay: trip.allDay })), { title: itemName(trip), undoable: true }); refreshWindow(); })
+            .then((saved) => { toast(said('Extended', timeChange(trip, { ...ext, allDay: trip.allDay })), { title: itemName(trip), undo: entriesOf(saved) }); refreshWindow(); })
             .catch((err) => toast('Extend failed: ' + err.message, { error: true }));
         },
       },
@@ -403,14 +403,14 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
   if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
   try {
-    await api('/events/' + occ.eventId, {
+    const saved = await api('/events/' + occ.eventId, {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Moved at Google' : 'Moved') + seriesWords(occ, scope || 'this', 'this');
-    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -426,14 +426,14 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
   try {
-    await api('/events/' + occ.eventId, {
+    const saved = await api('/events/' + occ.eventId, {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Resized at Google' : 'Resized') + seriesWords(occ, scope || 'this', 'this');
-    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
+    toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -490,7 +490,7 @@ export async function createEvent(fields) {
       // Created at Google through the connector: no local snapshot to undo to.
       toast('Created at Google' + repeats, { title: itemName(occ), note: NO_UNDO });
     } else {
-      toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undoable: true });
+      toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undo: entriesOf(occ) });
     }
     if (!state.quickAddWindow) refreshWindow(); // no calendar behind quick add's own window
     return occ;
@@ -544,7 +544,7 @@ export async function updateEvent(occ, fields, scope, words = null) {
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
     toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
-      title: fields.title || itemName(occ), undoable: !wentToGoogle, note: NO_UNDO,
+      title: fields.title || itemName(occ), undo: entriesOf(res), note: NO_UNDO,
     });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
@@ -573,8 +573,8 @@ export async function deleteEvent(occ, scope) {
   set({ popover: null, editor: null });
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
-    await api('/events/' + occ.eventId, { method: 'DELETE', body });
-    toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undoable: !googleBacked(occ), note: NO_UNDO });
+    const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body });
+    toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
     for (const r of removed) state.occ.set(r.instanceId, r);
@@ -592,7 +592,7 @@ export async function copyEventTo(occ, calendarId, scope) {
     const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
     if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { title: created.title || itemName(occ), duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast('Copied to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { title: created.title || itemName(occ), duration: 4000, undo: entriesOf(created), note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -612,7 +612,7 @@ export async function duplicateEvent(occ) {
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
     refreshWindow();
     set({ popover: null, editor: { mode: 'edit', occ: created, focus: 'date' } });
-    toast('Duplicated. Set its new date.', { title: created.title || itemName(occ), duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast('Duplicated. Set its new date.', { title: created.title || itemName(occ), duration: 4000, undo: entriesOf(created), note: NO_UNDO });
     return created;
   } catch (e) {
     toast('Duplicate failed: ' + e.message, { error: true });
@@ -631,7 +631,7 @@ export async function copyEventAt({ instanceId, newStart, newEnd }) {
     const body = { duplicate: true, scope: occ.recurring ? 'this' : 'all', start: newStart, end: newEnd };
     if (occ.recurring) body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast(said('Copied' + (cal.provider === 'google' ? ' at Google' : ''), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: created.title || itemName(occ), undoable: cal.provider !== 'google', note: NO_UNDO });
+    toast(said('Copied' + (cal.provider === 'google' ? ' at Google' : ''), timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: created.title || itemName(occ), undo: entriesOf(created), note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -668,7 +668,7 @@ export async function setRelationship(occ, relationship, scope) {
     const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
-    toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: !google, note: NO_UNDO });
+    toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
     if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
     else if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
     return relationship;
@@ -704,7 +704,7 @@ export async function setAttendance(occ, attendance, scope) {
     const body = { attendance };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
-    toast((ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: true });
+    toast((ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res) });
     // Hidden events leave the window payload on the next fetch, and a series
     // answer changes more than this one occurrence; refresh so the cache
     // agrees with the server (undo refreshes again to restore).
@@ -756,15 +756,15 @@ function bumpTripLinks() {
 
 export async function attachToTrip(tripOcc, memberOcc, { silent } = {}) {
   try {
-    await api('/events/' + tripOcc.eventId + '/links', {
+    const saved = await api('/events/' + tripOcc.eventId + '/links', {
       method: 'POST',
       body: { eventId: memberOcc.eventId },
     });
-    if (!silent) toast('Added to ' + (tripOcc.title || 'the trip'), { title: itemName(memberOcc), undoable: true });
+    if (!silent) toast('Added to ' + (tripOcc.title || 'the trip'), { title: itemName(memberOcc), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
     maybePromptExtendTrip(tripOcc, memberOcc);
-    return true;
+    return entriesOf(saved);
   } catch (e) {
     toast('Could not add to trip: ' + e.message, { error: true });
     return false;
@@ -773,9 +773,9 @@ export async function attachToTrip(tripOcc, memberOcc, { silent } = {}) {
 
 export async function detachFromTrip(tripEventId, memberOcc, { silent } = {}) {
   try {
-    await api('/events/' + tripEventId + '/links/' + memberOcc.eventId, { method: 'DELETE' });
+    const saved = await api('/events/' + tripEventId + '/links/' + memberOcc.eventId, { method: 'DELETE' });
     const trip = [...state.occ.values()].find((o) => o.isContainer && o.eventId === tripEventId);
-    if (!silent) toast('Removed from ' + ((trip && trip.title) || 'its trip'), { title: itemName(memberOcc), undoable: true });
+    if (!silent) toast('Removed from ' + ((trip && trip.title) || 'its trip'), { title: itemName(memberOcc), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
     return true;
@@ -796,11 +796,11 @@ export function maybePromptExtendTrip(tripOcc, memberOcc) {
     dismissLabel: 'Keep',
     onAction: async () => {
       try {
-        await api('/events/' + tripOcc.eventId, {
+        const saved = await api('/events/' + tripOcc.eventId, {
           method: 'PATCH',
           body: { start: ext.start, end: ext.end, ...(tripOcc.recurring ? { scope: 'all' } : {}) },
         });
-        toast(said('Extended', timeChange(tripOcc, { ...ext, allDay: tripOcc.allDay })), { title: itemName(tripOcc), undoable: true });
+        toast(said('Extended', timeChange(tripOcc, { ...ext, allDay: tripOcc.allDay })), { title: itemName(tripOcc), undo: entriesOf(saved) });
         refreshWindow();
       } catch (e) {
         toast('Extend failed: ' + e.message, { error: true });
@@ -829,8 +829,8 @@ export async function deleteTripOnly(occ) {
   const removed = removeOccurrencesOfEvent(occ.eventId);
   set({ popover: null });
   try {
-    await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
-    toast('Trip removed, its events kept', { title: itemName(occ), undoable: true });
+    const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
+    toast('Trip removed, its events kept', { title: itemName(occ), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
@@ -845,16 +845,18 @@ export async function deleteTripOnly(occ) {
 export async function deleteTripAndMembers(occ, members) {
   set({ popover: null });
   try {
+    // One Undo for all of it: the trip, then its events.
+    const entries = [];
     for (const m of members) {
-      await api('/events/' + m.eventId, {
+      entries.push(...entriesOf(await api('/events/' + m.eventId, {
         method: 'DELETE',
         body: m.recurring ? { scope: 'all' } : {},
-      });
+      })));
       removeOccurrencesOfEvent(m.eventId);
     }
-    await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
+    entries.push(...entriesOf(await api('/events/' + occ.eventId, { method: 'DELETE', body: {} })));
     removeOccurrencesOfEvent(occ.eventId);
-    toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undoable: true });
+    toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undo: entries });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
@@ -898,8 +900,8 @@ export async function moveEventToCalendar(occ, calendarId, scope) {
   try {
     const body = { calendarId };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast('Moved to ' + cal.name + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undoable: true });
+    const saved = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast('Moved to ' + cal.name + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(saved) });
     refreshWindow();
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -928,8 +930,8 @@ export async function linkPersonToEvent(occ, person, scope) {
   try {
     const body = { personIds: [...ids, addId] };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast('Added ' + personName, { title: itemName(occ), undoable: true });
+    const saved = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast('Added ' + personName, { title: itemName(occ), undo: entriesOf(saved) });
     refreshWindow();
   } catch (e) {
     toast('Link failed: ' + e.message, { error: true });
@@ -945,12 +947,12 @@ export async function resizeAvailabilitySpanDays(spanId, startDeltaDays, endDelt
   if (!sp || (!startDeltaDays && !endDeltaDays)) return;
   const shift = (iso, d) => toISOWithOffset(addDaysDate(parseISO(iso), d));
   try {
-    await api('/people/' + sp.personId + '/availability/' + spanId, {
+    const saved = await api('/people/' + sp.personId + '/availability/' + spanId, {
       method: 'PATCH',
       body: { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) },
     });
     const next = { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) };
-    toast(said(spanKind(sp) + ' time changed', timeChange(sp, next)), { title: sp.name, undoable: true });
+    toast(said(spanKind(sp) + ' time changed', timeChange(sp, next)), { title: sp.name, undo: entriesOf(saved) });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Resize failed: ' + e.message, { error: true });
@@ -964,11 +966,11 @@ export async function moveAvailabilitySpan(spanId, deltaDays) {
   if (!sp || !deltaDays) return;
   const shift = (iso) => toISOWithOffset(addDaysDate(parseISO(iso), deltaDays));
   try {
-    await api('/people/' + sp.personId + '/availability/' + spanId, {
+    const saved = await api('/people/' + sp.personId + '/availability/' + spanId, {
       method: 'PATCH',
       body: { start: shift(sp.start), end: shift(sp.end) },
     });
-    toast(said(spanKind(sp) + ' time moved', timeChange(sp, { start: shift(sp.start), end: shift(sp.end) })), { title: sp.name, undoable: true });
+    toast(said(spanKind(sp) + ' time moved', timeChange(sp, { start: shift(sp.start), end: shift(sp.end) })), { title: sp.name, undo: entriesOf(saved) });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -985,8 +987,8 @@ export async function moveTrip(occ, deltaDays, withMembers) {
   try {
     const body = { start: newStart, end: newEnd };
     if (withMembers) body.moveMembers = true;
-    await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast(said(withMembers ? 'Moved with its events' : 'Moved', timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: itemName(occ), undoable: true });
+    const saved = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast(said(withMembers ? 'Moved with its events' : 'Moved', timeChange(occ, { start: newStart, end: newEnd, allDay: occ.allDay })), { title: itemName(occ), undo: entriesOf(saved) });
     refreshWindow();
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });
@@ -1075,7 +1077,7 @@ export async function saveViewAs(name) {
   try {
     const view = await api('/views', { method: 'POST', body: { name, config: captureViewConfig() } });
     set({ savedViews: [...state.savedViews, view], activeViewId: view.id });
-    toast('View saved', { title: name, undoable: true });
+    toast('View saved', { title: name, undo: entriesOf(view) });
     return view;
   } catch (e) {
     toast('Save failed: ' + e.message, { error: true });
@@ -1087,7 +1089,7 @@ export async function updateSavedView(view, fields) {
   try {
     const updated = await api('/views/' + view.id, { method: 'PATCH', body: fields });
     set({ savedViews: state.savedViews.map((v) => (v.id === view.id ? updated : v)) });
-    toast('View updated', { title: updated.name || view.name, undoable: true });
+    toast('View updated', { title: updated.name || view.name, undo: entriesOf(updated) });
     return updated;
   } catch (e) {
     toast('Update failed: ' + e.message, { error: true });
@@ -1097,12 +1099,12 @@ export async function updateSavedView(view, fields) {
 
 export async function deleteSavedView(view) {
   try {
-    await api('/views/' + view.id, { method: 'DELETE' });
+    const saved = await api('/views/' + view.id, { method: 'DELETE' });
     set({
       savedViews: state.savedViews.filter((v) => v.id !== view.id),
       activeViewId: state.activeViewId === view.id ? null : state.activeViewId,
     });
-    toast('View deleted', { title: view.name, undoable: true });
+    toast('View deleted', { title: view.name, undo: entriesOf(saved) });
   } catch (e) {
     toast('Delete failed: ' + e.message, { error: true });
   }
@@ -1227,7 +1229,7 @@ export async function deleteCalendar(cal) {
     // It was where new events go: that's moved to another (Settings).
     const next = res && res.defaultCalendarId != null ? state.calendars.find((c) => c.id === res.defaultCalendarId) : null;
     if (res && res.defaultCalendarId != null) set({ settings: { ...state.settings, defaultCalendarId: res.defaultCalendarId } });
-    toast('Calendar deleted' + (next ? '. New events now go to ' + next.name : ''), { title: cal.name, undoable: true });
+    toast('Calendar deleted' + (next ? '. New events now go to ' + next.name : ''), { title: cal.name, undo: entriesOf(res) });
     await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     refreshWindow();
     return true;
@@ -1265,7 +1267,7 @@ export async function fileCalendar(cal, folder, at, from = null) {
   // are numbered apart.
   const folderIds = [...new Set([...(cal.folderIds || []).filter((id) => !from || id !== from.id), folder.id])];
   try {
-    await writeCalendars({
+    const saved = await writeCalendars({
       show: () => set({
         folders: state.folders.map((f) => {
           if (f.id === folder.id) { const ids = withoutCal(f.calendarIds); ids.splice(at, 0, cal.id); return { ...f, calendarIds: ids }; }
@@ -1276,7 +1278,7 @@ export async function fileCalendar(cal, folder, at, from = null) {
       }),
       send: () => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'POST', body: from ? { at, from: from.id } : { at } }),
     });
-    if (!was) toast((from ? 'Moved to ' : 'Added to ') + folder.name, { title: cal.name, undoable: true });
+    if (!was) toast((from ? 'Moved to ' : 'Added to ') + folder.name, { title: cal.name, undo: entriesOf(saved) });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
@@ -1285,14 +1287,14 @@ export async function fileCalendar(cal, folder, at, from = null) {
 // Out of a folder, dragged back to the main list (#187).
 export async function unfileCalendar(cal, folder) {
   try {
-    await writeCalendars({
+    const saved = await writeCalendars({
       show: () => set({
         folders: state.folders.map((f) => (f.id === folder.id ? { ...f, calendarIds: (f.calendarIds || []).filter((id) => id !== cal.id) } : f)),
         calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, folderIds: (c.folderIds || []).filter((id) => id !== folder.id) } : c)),
       }),
       send: () => api('/folders/' + folder.id + '/calendars/' + cal.id, { method: 'DELETE' }),
     });
-    toast('Taken out of ' + folder.name, { title: cal.name, undoable: true });
+    toast('Taken out of ' + folder.name, { title: cal.name, undo: entriesOf(saved) });
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });
   }
@@ -1347,8 +1349,8 @@ export async function renameFolder(folder, name) {
 // Delete only applies to empty folders; the caller checks and explains.
 export async function deleteFolder(folder) {
   try {
-    await writeCalendars({ send: () => api('/folders/' + folder.id, { method: 'DELETE' }) });
-    toast('Folder deleted', { title: folder.name, undoable: true });
+    const saved = await writeCalendars({ send: () => api('/folders/' + folder.id, { method: 'DELETE' }) });
+    toast('Folder deleted', { title: folder.name, undo: entriesOf(saved) });
     return true;
   } catch (e) {
     toast('Failed: ' + e.message, { error: true });

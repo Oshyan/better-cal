@@ -286,7 +286,7 @@ final class GoogleMove
                 if ($calendarAtCutover === null) {
                     throw new \RuntimeException('The calendar disappeared before move completion');
                 }
-                $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $lock = $this->db->forUpdate();
                 if ($this->db->one('SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND google_event_id IS NULL LIMIT 1' . $lock, [$calendarId]) !== null) {
                     throw new \RuntimeException('Some events still need uploading. Retry the move to finish safely.');
                 }

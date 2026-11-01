@@ -69,7 +69,7 @@ final class ExternalActionAdmission
     /** Acquire the shared count-and-insert lock inside the caller's transaction. */
     public function lock(): void
     {
-        $suffix = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $suffix = $this->db->forUpdate();
         if ($this->db->scalar('SELECT id FROM external_action_lock WHERE id = 1' . $suffix) === null) {
             throw new \RuntimeException('external action admission lock is missing');
         }

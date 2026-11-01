@@ -38,6 +38,11 @@ final class SavedViews
 
     public function create(int $userId, array $in): array
     {
+        return $this->undo->write($userId, fn(): array => $this->createLocked($userId, $in));
+    }
+
+    private function createLocked(int $userId, array $in): array
+    {
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
             throw HttpError::badRequest('name is required');
@@ -59,6 +64,11 @@ final class SavedViews
     }
 
     public function patch(int $userId, int $id, array $in): array
+    {
+        return $this->undo->write($userId, fn(): array => $this->patchLocked($userId, $id, $in));
+    }
+
+    private function patchLocked(int $userId, int $id, array $in): array
     {
         $before = $this->get($userId, $id);
         $fields = [];
@@ -87,6 +97,11 @@ final class SavedViews
     }
 
     public function delete(int $userId, int $id): void
+    {
+        $this->undo->write($userId, fn() => $this->deleteLocked($userId, $id));
+    }
+
+    private function deleteLocked(int $userId, int $id): void
     {
         $view = $this->get($userId, $id);
         $this->db->run('DELETE FROM saved_views WHERE id = ?', [$id]);

@@ -882,7 +882,7 @@ final class Duplicates
         if (!in_array($status, ['linked', 'dismissed'], true)) {
             throw HttpError::badRequest('status must be linked or dismissed');
         }
-        $this->db->tx(function () use ($userId, $pairId, $status, $authority): void {
+        (new Undo($this->db))->write($userId, function () use ($userId, $pairId, $status, $authority): void {
             $authority?->assertValid($this->db);
             $pair = $this->db->one(
                 'SELECT p.*, a.title FROM event_duplicates p JOIN events a ON a.id = p.event_a WHERE p.id = ? AND p.user_id = ?',
@@ -892,7 +892,9 @@ final class Duplicates
                 throw HttpError::notFound('No such pair');
             }
             $this->db->update('event_duplicates', ['status' => $status, 'basis' => 'owner', 'decided_at' => Time::nowDb()], 'id = ?', [$pairId]);
-            ActivityContext::with('dedup', fn() => (new Undo($this->db))->record(
+            // The person's own decision (dedup:owner), told apart from the
+            // automatic scan's for undoing their last change (Undo::undoLatest).
+            ActivityContext::with('dedup:owner', fn() => (new Undo($this->db))->record(
                 $userId,
                 'event',
                 (int) $pair['event_a'],

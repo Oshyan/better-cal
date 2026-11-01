@@ -65,13 +65,19 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
     printf '%s\n' "${smoke_out}" | tail -1
   done
   php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
-  # The database suite needs a MariaDB to make its databases in (BC_TEST_DB
-  # in the environment; server/tests/db/run.php). CI runs it on every push
-  # either way.
+  # The database suite needs a MariaDB it may make databases in (BC_TEST_DB
+  # in the environment; server/tests/db/run.php). Without one here, CI must
+  # have passed on this very commit, that suite included.
   if [ -n "${BC_TEST_DB:-}" ]; then
     php "${DEPLOY_SNAPSHOT}/server/tests/db/run.php" | tail -1
   else
-    echo "database suite: not run here (no BC_TEST_DB); CI runs it"
+    ci="$(gh run list --repo Oshyan/better-cal --workflow tests.yml --commit "${DEPLOY_COMMIT}" --limit 1 \
+      --json status,conclusion --jq '.[0] | [.status, .conclusion] | @tsv' 2>/dev/null || true)"
+    if [ "${ci}" != $'completed\tsuccess' ]; then
+      echo "database suite: not run (no BC_TEST_DB here), and CI hasn't passed on ${DEPLOY_COMMIT:0:7}. Set BC_TEST_DB, or push and wait for CI." >&2
+      false
+    fi
+    echo "database suite: passed in CI on ${DEPLOY_COMMIT:0:7}"
   fi
   # Vendored frontend libraries must be exactly the pinned releases.
   node "${DEPLOY_SNAPSHOT}/scripts/vendor.mjs" --verify | tail -1

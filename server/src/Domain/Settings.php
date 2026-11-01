@@ -35,8 +35,10 @@ final class Settings
      * The calendar new events go to when nothing says otherwise: the one
      * chosen in Settings. Always set while there's a local calendar
      * (setup sets it, deleting it moves it, migration 058 set it for
-     * accounts from before); if it's ever missing, the oldest local
-     * calendar, never one that depends on the list's order.
+     * accounts from before). When it's missing, or for the next one after
+     * a delete: the oldest local calendar that shows, not the one the app
+     * made for invitations; failing that, the oldest local. Never the
+     * list's order.
      */
     public static function defaultCalendarId(Db $db, int $userId): ?int
     {
@@ -49,17 +51,29 @@ final class Settings
                 return (int) $owned;
             }
         }
-        $oldest = $db->scalar("SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY id LIMIT 1", [$userId]);
+        $oldest = $db->scalar(
+            "SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY (visible = 1 AND name <> ?) DESC, id LIMIT 1",
+            [$userId, MailIngest::INVITE_CALENDAR]
+        );
         return $oldest !== null ? (int) $oldest : null;
     }
 
     /** Store the default calendar (setup, a calendar made or deleted, migration 058). */
     public static function setDefaultCalendar(Db $db, int $userId, ?int $calendarId): void
     {
-        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        self::put($db, $userId, ['defaultCalendarId' => $calendarId]);
+    }
+
+    /**
+     * Merge values into the stored settings, unchecked: for the app's own
+     * changes (and undo putting them back), not a person's (patch()). Call
+     * in the change's write (Undo::write), which holds the account's row.
+     */
+    public static function put(Db $db, int $userId, array $values): void
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?' . $db->forUpdate(), [$userId]);
         $settings = is_string($raw) ? json_decode($raw, true) : null;
-        $settings = is_array($settings) ? $settings : [];
-        $settings['defaultCalendarId'] = $calendarId;
+        $settings = array_merge(is_array($settings) ? $settings : [], array_intersect_key($values, self::DEFAULTS));
         $db->update('users', ['settings_json' => json_encode($settings)], 'id = ?', [$userId]);
     }
 

@@ -312,8 +312,7 @@ final class MailAdmission
 
     private function lockAccount(int $userId): void
     {
-        $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
-        $sql = 'SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : '');
+        $sql = 'SELECT id FROM users WHERE id = ?' . $this->db->forUpdate();
         if ($this->db->scalar($sql, [$userId]) === null) {
             throw new \RuntimeException('Mail admission could not lock its account');
         }

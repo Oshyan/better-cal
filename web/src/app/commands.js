@@ -15,7 +15,7 @@ import {
   VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, showOnlyRel, showAllRel,
   jumpToTarget,
 } from './actions.js';
-import { api, loadPeople } from './api.js';
+import { api, entriesOf, loadPeople } from './api.js';
 import { localTz, todayKey } from '../lib/dates.js';
 import { parseJumpTarget } from '../lib/jumpparse.js';
 
@@ -79,7 +79,7 @@ export function buildCommands() {
           if (!n) return false;
           try {
             const r = await api('/people', { method: 'POST', body: { name: n } });
-            toast(r && r.created === false ? n + ' already exists' : 'Added ' + n, { undoable: r ? r.created !== false : true });
+            toast(r && r.created === false ? n + ' already exists' : 'Added ' + n, { undo: entriesOf(r) });
             await loadPeople();
             return true;
           } catch (e) {

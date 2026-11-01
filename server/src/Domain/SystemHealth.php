@@ -474,7 +474,7 @@ final class SystemHealth
 
     private function lockedRow(string $subject): ?array
     {
-        $lock = $this->driver() === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $this->db->forUpdate();
         return $this->db->one('SELECT * FROM system_health WHERE subject = ?' . $lock, [$subject]);
     }
 

@@ -142,7 +142,7 @@ final class GoogleAuth
         }
         $this->db->tx(function () use ($userId, $account, $authority): void {
             $authority->assertValid($this->db, true, true);
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             // Calendar -> account -> move is the same order as polling,
             // write-through, move start and compromise reset. The FK delete
             // then cannot deadlock a writer by acquiring the parent first.
@@ -207,7 +207,7 @@ final class GoogleAuth
     public function assertUsable(array $account, bool $forUpdate = false): array
     {
         $id = (int) ($account['id'] ?? 0);
-        $lock = $forUpdate && $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $forUpdate ? $this->db->forUpdate() : '';
         $fresh = $id > 0 ? $this->db->one('SELECT * FROM google_accounts WHERE id = ?' . $lock, [$id]) : null;
         if ($fresh === null) {
             throw HttpError::conflict('google_disconnected', 'The Google account is disconnected; reconnect it under Settings, Connections.');

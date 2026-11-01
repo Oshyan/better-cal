@@ -144,10 +144,10 @@ return static function (Db $db): void {
     // the last; a save that fails records nothing.
     $grouped = new Undo($db);
     $before = $latest();
-    $grouped->group(function () use ($grouped, $u, $two): void {
+    $grouped->write($u, fn() => $grouped->group(function () use ($grouped, $u, $two): void {
         $grouped->record($u, 'calendar', $two, 'update', ['calendars' => [['id' => $two, 'name' => 'A', 'color' => '#000000']]], ['calendars' => [['id' => $two, 'name' => 'B', 'color' => '#000000']]]);
         $grouped->record($u, 'calendar', $two, 'update', ['calendars' => [['id' => $two, 'name' => 'B', 'color' => '#000000']]], ['calendars' => [['id' => $two, 'name' => 'C', 'color' => '#111111']]]);
-    }, 'Two steps');
+    }, 'Two steps'));
     $entry = $db->one('SELECT id, summary, before_json, after_json FROM mutations WHERE user_id = ? AND id > ?', [$u, $before]);
     checkEq('undo group: one entry, before the first step and after the last, and what it changed', [1, 'Two steps', 'A', 'C', [["calendars:$two", 'color'], ["calendars:$two", 'name']]], [
         (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ? AND id > ?', [$u, $before]), $entry['summary'],
@@ -156,7 +156,7 @@ return static function (Db $db): void {
     ]);
     $before = $latest();
     try {
-        $db->tx(fn() => $grouped->group(function () use ($grouped, $u, $two): void {
+        $grouped->write($u, fn() => $grouped->group(function () use ($grouped, $u, $two): void {
             $grouped->record($u, 'calendar', $two, 'update', ['calendars' => [['id' => $two, 'name' => 'A']]], ['calendars' => [['id' => $two, 'name' => 'B']]]);
             throw new RuntimeException('a later step fails');
         }, 'Fails'));
@@ -165,7 +165,7 @@ return static function (Db $db): void {
     checkEq('undo group: a save that fails records nothing', $before, $latest());
     // Many rows at once (a calendar of events deleted): every one recorded.
     $many = array_map(static fn(int $i) => ['id' => 100000 + $i, 'calendar_id' => $two, 'title' => 'x'], range(1, 450));
-    $grouped->record($u, 'event', 100001, 'delete', ['events' => $many], []);
+    $grouped->write($u, fn() => $grouped->record($u, 'event', 100001, 'delete', ['events' => $many], []));
     checkEq('undo: a change of 450 rows records what it changed for each, and the calendar they were in', 451,
         (int) $db->scalar('SELECT COUNT(*) FROM mutation_touches WHERE mutation_id = ?', [$latest()]));
 };

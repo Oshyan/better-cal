@@ -44,7 +44,7 @@ final class CalendarMoveGuard
 
     public static function lockCalendar(Db $db, int $calendarId): ?array
     {
-        $lock = $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $db->forUpdate();
         try {
             return $db->one('SELECT * FROM calendars WHERE id = ?' . $lock, [$calendarId]);
         } catch (\PDOException $e) {
@@ -64,7 +64,7 @@ final class CalendarMoveGuard
             // a snapshot established before the calendar-row lock was
             // acquired. A locking read is current, and keeps the universal
             // calendar -> move lock order used by starts, writers and reset.
-            $lock = $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $db->forUpdate();
             $move = $db->one(
                 "SELECT status, cancelled_at FROM calendar_moves
                  WHERE calendar_id = ? AND status IN ('queued', 'running') AND cancelled_at IS NULL

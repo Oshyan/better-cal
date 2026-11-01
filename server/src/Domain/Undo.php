@@ -63,8 +63,12 @@ final class Undo
      */
     private const LOCAL_CALENDAR_COLUMNS = ['position', 'visible'];
 
-    /** Where a person's own changes come from, for undoing the last one (undoLatest). */
-    private const OWN_SOURCES = ['web', 'quickadd', 'review'];
+    /**
+     * Where a person's own changes come from, for undoing the last one
+     * (undoLatest): the app, quick add, review decisions, invitation
+     * answers and duplicate decisions.
+     */
+    private const OWN_SOURCES = ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'];
 
     /** $plugins: the plugin registry undo uses for plugin edits (tests pass one with a stand-in plugin). */
     public function __construct(private readonly Db $db, private readonly ?Plugins $plugins = null)
@@ -80,9 +84,88 @@ final class Undo
     private ?array $grouped = null;
 
     /**
+     * The accounts whose rows are locked for a write() now, per connection.
+     *
+     * @var array<string,true>
+     */
+    private static array $writing = [];
+
+    /**
+     * Every change undo should know of is made here: in one transaction,
+     * the account's row locked first, then $fn, which records its entries
+     * (record() refuses anywhere else). Undo takes the same lock first, so
+     * an undo and any change to the same account never wait on each other
+     * in opposite orders, and an undo's check sees every change committed
+     * before it. Within a write() for the same account, just $fn.
+     */
+    public function write(int $userId, callable $fn): mixed
+    {
+        $key = spl_object_id($this->db) . ':' . $userId;
+        if (isset(self::$writing[$key])) {
+            return $fn();
+        }
+        if ($this->db->pdo()->inTransaction()) {
+            // Rows this transaction already locked come before the account:
+            // the order an undo waiting on the account could deadlock with.
+            self::misuse('Undo::write inside a transaction that began elsewhere');
+        }
+        return $this->db->tx(function () use ($key, $userId, $fn): mixed {
+            if ($this->db->forUpdate() !== '') {
+                $this->db->one('SELECT id FROM users WHERE id = ?' . $this->db->forUpdate(), [$userId]);
+            }
+            self::$writing[$key] = true;
+            try {
+                return $fn();
+            } finally {
+                unset(self::$writing[$key]);
+            }
+        });
+    }
+
+    /** @var list<string> journaling mistakes seen, in the test suites (misuse) */
+    private static array $misuses = [];
+
+    /**
+     * A journaling mistake in the code. The change itself still goes
+     * through as it did before the rule; production logs it, and the test
+     * suites (BETTERCAL_STRICT_JOURNAL) keep each, with where it came from,
+     * and fail on them (misuses()).
+     */
+    private static function misuse(string $what): void
+    {
+        if (getenv('BETTERCAL_STRICT_JOURNAL') !== '1') {
+            error_log('undo: ' . $what);
+            return;
+        }
+        $at = [];
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
+            $file = (string) ($frame['file'] ?? '');
+            if ($file !== '' && $file !== __FILE__ && !str_ends_with($file, '/Infra/Db.php') && !str_ends_with($file, '/ActivityContext.php')) {
+                $at[] = basename($file) . ':' . ($frame['line'] ?? 0);
+                if (count($at) === 4) {
+                    break;
+                }
+            }
+        }
+        self::$misuses[$what . ' at ' . implode(' < ', $at)] = true;
+    }
+
+    /** The journaling mistakes the test suites ran into, each once. @return list<string> */
+    public static function misuses(): array
+    {
+        return array_keys(self::$misuses);
+    }
+
+    /**
      * $touches: what the change changed that its snapshots don't show, as
      * [row key (keyOf), column] pairs: a change sent to Google or a plugin,
-     * which keeps no snapshots, or a list numbered afresh.
+     * which keeps no snapshots, or a list numbered afresh. $details may say
+     * which of the account's settings the change also changed, as
+     * ['settings' => [key => value before]]; undo puts them back.
+     *
+     * A change to anything undo knows (snapshots or touches) is recorded
+     * inside write(); a note that changed nothing of the kind may be
+     * recorded anywhere.
      *
      * @param array<string,list<array>>|null $beforeTables
      * @param array<string,list<array>>|null $afterTables
@@ -94,31 +177,23 @@ final class Undo
             $this->grouped[] = compact('userId', 'entity', 'entityId', 'op', 'beforeTables', 'afterTables', 'summary', 'details', 'calendarIds', 'touches');
             return;
         }
-        $mutationId = 0;
-        try {
-            $mutationId = $this->db->insert('mutations', [
-                'user_id' => $userId,
-                'entity' => $entity,
-                'entity_id' => $entityId,
-                'op' => $op,
-                'before_json' => $beforeTables === null ? null : json_encode(['tables' => $beforeTables], JSON_INVALID_UTF8_SUBSTITUTE),
-                'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
-                'source' => ActivityContext::get(),
-                'run_id' => ActivityContext::runId(),
-                'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables, Settings::homeTzid($this->db, $userId)), 0, 300),
-                'details_json' => $details === null ? null : json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE),
-            ]);
-        } catch (\PDOException $e) {
-            // Pre-011 schema during a rolling deploy: fall back to core columns.
-            $mutationId = $this->db->insert('mutations', [
-                'user_id' => $userId,
-                'entity' => $entity,
-                'entity_id' => $entityId,
-                'op' => $op,
-                'before_json' => $beforeTables === null ? null : json_encode(['tables' => $beforeTables], JSON_INVALID_UTF8_SUBSTITUTE),
-                'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
-            ]);
+        if (!isset(self::$writing[spl_object_id($this->db) . ':' . $userId])
+            && ($beforeTables !== null || $afterTables !== null || $touches !== [])) {
+            self::misuse("Undo::record of $entity $op outside Undo::write");
         }
+        $mutationId = $this->db->insert('mutations', [
+            'user_id' => $userId,
+            'entity' => $entity,
+            'entity_id' => $entityId,
+            'op' => $op,
+            'before_json' => $beforeTables === null ? null : json_encode(['tables' => $beforeTables], JSON_INVALID_UTF8_SUBSTITUTE),
+            'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
+            'source' => ActivityContext::get(),
+            'run_id' => ActivityContext::runId(),
+            'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables, Settings::homeTzid($this->db, $userId)), 0, 300),
+            'details_json' => $details === null ? null : json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE),
+        ]);
+        ActivityContext::noteEntry($mutationId);
         // Before the refs: a Google calendar's entry has its snapshots
         // emptied there, and what it changed has to stay known.
         $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables), $touches));
@@ -206,6 +281,32 @@ final class Undo
         return $result;
     }
 
+    /**
+     * What hangs off these events (their tags, people and trip links), for
+     * a change that removes them: the database takes those with them, and
+     * undo puts them back.
+     *
+     * @param list<int> $eventIds
+     * @return array<string,list<array>>
+     */
+    public static function linksOf(Db $db, array $eventIds): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($eventIds)), 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            foreach ([
+                'event_tags' => ["event_id IN $in", $params],
+                'event_people' => ["event_id IN $in", $params],
+                'event_links' => ["event_id IN $in OR container_id IN $in", array_merge($params, $params)],
+            ] as $table => [$where, $args]) {
+                foreach ($db->all("SELECT * FROM $table WHERE $where", $args) as $row) {
+                    $out[$table][self::keyOf($table, $row)] = $row;
+                }
+            }
+        }
+        return array_map('array_values', $out);
+    }
+
     /** A row's key: "table:id", or the parts of a composite key joined by "|". */
     public static function keyOf(string $table, array $row): string
     {
@@ -238,10 +339,17 @@ final class Undo
                 $was = $b[$k] ?? null;
                 $now = $a[$k] ?? null;
                 $changed = null; // all of it: made or removed
-                if ($was === null || $now === null) {
+                if ($was !== null && $now !== null) {
+                    $changed = self::changedColumns($was, $now);
+                    // An event deleted (or brought back) keeps its row: still
+                    // a removal, as one gone from the table is.
+                    if (in_array('deleted_at', $changed, true)) {
+                        $changed = null;
+                    }
+                }
+                if ($changed === null) {
                     $out[] = [$k, '*'];
                 } else {
-                    $changed = self::changedColumns($was, $now);
                     foreach ($changed as $col) {
                         $out[] = [$k, $col];
                     }
@@ -261,12 +369,21 @@ final class Undo
         return $out;
     }
 
-    /** The columns that differ between two versions of a row, updated_at aside. Pure. */
-    private static function changedColumns(array $was, array $now): array
+    /**
+     * Columns that keep the app's own accounts, not anything a person
+     * changed or would undo: when a row was last written, a calendar's sync
+     * token and poll state, when an address was looked up. Never put back,
+     * and never a reason an undo is stale.
+     */
+    private const BOOKKEEPING = ['updated_at', 'synctoken', 'last_polled_at', 'last_poll_status', 'last_poll_error',
+        'content_changed_at', 'last_ok_at', 'google_sync_token', 'geocoded_at', 'score', 'scored_at'];
+
+    /** The columns that differ between two versions of a row, bookkeeping aside. Pure. */
+    public static function changedColumns(array $was, array $now): array
     {
         $out = [];
         foreach (array_unique(array_merge(array_keys($was), array_keys($now))) as $col) {
-            if ($col !== 'updated_at' && ($was[$col] ?? null) != ($now[$col] ?? null)) {
+            if (!in_array($col, self::BOOKKEEPING, true) && ($was[$col] ?? null) != ($now[$col] ?? null)) {
                 $out[] = (string) $col;
             }
         }
@@ -326,7 +443,7 @@ final class Undo
             );
             foreach ($later as $t) {
                 foreach (array_keys($cols[(string) $t['row_key']] ?? []) as $mine) {
-                    if (self::conflicts((string) $mine, (string) $t['col'])) {
+                    if (self::conflicts((string) $mine, (string) $t['col'], strstr((string) $t['row_key'], ':', true) ?: '')) {
                         return true;
                     }
                 }
@@ -336,21 +453,29 @@ final class Undo
     }
 
     /**
-     * Whether a later change that marked a row $later makes undoing an
-     * earlier one that marked it $mine stale. "*" is the row made or
-     * removed, "+" a row joining or leaving it (PARENTS), "~" a date of its
-     * series edited on its own, anything else a column changed. Pure.
+     * What decides which dates a repeating event has, and when: changes to
+     * any of these stand on each other (a time changed, then one date
+     * skipped: undoing the time would bring that date back).
+     */
+    private const SERIES_SHAPE = ['start_utc', 'end_utc', 'tzid', 'all_day', 'rrule', 'exdates_json'];
+
+    /**
+     * Whether a later change that marked a row of $table $later makes
+     * undoing an earlier one that marked it $mine stale. "*" is the row
+     * made or removed, "+" a row joining or leaving it (PARENTS), "~" a date
+     * of its series edited on its own, anything else a column changed. Pure.
      * - Undoing a row's making or removal stands on everything done to it
      *   since: a calendar made, then an event added to it.
      * - A row joining or leaving something changes nothing of that thing:
      *   an event added to a calendar doesn't make its rename stale, and a
      *   calendar deleted, then its folder, still comes back (without that
      *   filing, apply).
-     * - A date edited on its own stands on the series as it was, and the
-     *   other way round; two dates of one series don't.
-     * - Otherwise, the same column.
+     * - A date edited on its own stands on when the series' dates are (its
+     *   times and rule), and the other way round; not on the dates skipped
+     *   or the series' title, and two dates of one series don't.
+     * - Otherwise, the same column, or two of a series' shape.
      */
-    public static function conflicts(string $mine, string $later): bool
+    public static function conflicts(string $mine, string $later, string $table = ''): bool
     {
         if ($mine === '*') {
             return true;
@@ -361,10 +486,12 @@ final class Undo
         if ($later === '*') {
             return true;
         }
+        $shape = $table === 'events' ? self::SERIES_SHAPE : [];
         if ($mine === '~' || $later === '~') {
-            return $mine !== $later;
+            $other = $mine === '~' ? $later : $mine;
+            return $other !== '~' && $other !== 'exdates_json' && in_array($other, $shape, true);
         }
-        return $mine === $later;
+        return $mine === $later || (in_array($mine, $shape, true) && in_array($later, $shape, true));
     }
 
     /**
@@ -400,6 +527,25 @@ final class Undo
         return array_values(array_unique(array_filter($ids, static fn(int $id): bool => $id > 0)));
     }
 
+    /**
+     * Whether a change made, removed or changed (beyond what's local) a
+     * Google calendar, read from its own rows: one deleted is no longer
+     * there to look up. Pure.
+     */
+    private static function googleInSnapshots(?array $before, ?array $after): bool
+    {
+        $ids = self::calendarIdsOf($before, $after);
+        foreach ([$before, $after] as $tables) {
+            foreach ($tables['calendars'] ?? [] as $row) {
+                if (is_array($row) && in_array((int) ($row['id'] ?? 0), $ids, true)
+                    && ($row['kind'] ?? '') === 'subscribed' && ($row['provider'] ?? '') === 'google') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** @param list<int> $explicitCalendarIds */
     private function recordCalendarRefs(int $mutationId, ?array $beforeTables, ?array $afterTables, array $explicitCalendarIds = []): void
     {
@@ -418,7 +564,8 @@ final class Undo
                 ]);
             }
             [$in, $params] = Db::in($ids);
-            if ($this->db->scalar("SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google' LIMIT 1", $params) !== null) {
+            if (self::googleInSnapshots($beforeTables, $afterTables)
+                || $this->db->scalar("SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google' LIMIT 1", $params) !== null) {
                 // Google-backed edits are activity-only by design. Make
                 // that permanent so adopt-back-to-local cannot revive a
                 // provider-cache snapshot created after the move.
@@ -642,12 +789,15 @@ final class Undo
             if ($this->db->forUpdate() !== '') {
                 $this->db->one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $mutation['user_id']]);
             }
-            // Link deltas (and older link snapshots) carry their calendars in
-            // the durable reference table, not full event rows.
-            if ($mutation['entity'] === 'event_links') {
-                foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [$mutation['id']]) as $ref) $calendarIds[] = (int) $ref['calendar_id'];
+            // The calendars it named when recorded, as well as those its rows
+            // show: a trip link's, or one deleted since.
+            foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [$mutation['id']]) as $ref) {
+                $calendarIds[] = (int) $ref['calendar_id'];
             }
             CalendarMoveGuard::lockAndAssertMutable($this->db, $calendarIds);
+            if (self::googleInSnapshots($before, $after)) {
+                throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
+            }
             foreach (array_values(array_unique($calendarIds)) as $calendarId) {
                 $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
                 if ($calendar !== null && (string) $calendar['kind'] === 'subscribed'
@@ -756,6 +906,12 @@ final class Undo
                     }
                 }
             }
+            // Settings it changed on the way (where new events go, for a
+            // calendar deleted), as they were.
+            $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+            if (is_array($details) && is_array($details['settings'] ?? null)) {
+                Settings::put($this->db, (int) $mutation['user_id'], $details['settings']);
+            }
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
         });
 
@@ -836,9 +992,10 @@ final class Undo
     }
 
     /**
-     * Put a row back: whole when it's gone (or $changed is null, for a row
-     * the change removed), else just the columns it changed. False when
-     * something it belongs to is gone since (a deleted folder, a calendar).
+     * Put a row back: whole for a row the change removed ($changed null),
+     * else just the columns it changed. False when it can't: something it
+     * belongs to is gone since (a deleted folder, a calendar), or the row
+     * it changed is.
      *
      * @param list<string>|null $changed
      */
@@ -852,7 +1009,12 @@ final class Undo
         }
         $where = implode(' AND ', $conds);
         try {
-            if ($changed !== null && $this->db->scalar("SELECT 1 FROM `$table` WHERE $where", $params) !== null) {
+            if ($changed !== null) {
+                // A row it kept and changed, gone since: what it changed has
+                // nowhere to go back to (it isn't brought back for that).
+                if ($this->db->scalar("SELECT 1 FROM `$table` WHERE $where", $params) === null) {
+                    return false;
+                }
                 $sets = implode(', ', array_map(static fn($c) => "`$c` = ?", $changed));
                 $this->db->run("UPDATE `$table` SET $sets WHERE $where", array_merge(array_map(static fn($c) => $row[$c] ?? null, $changed), $params));
                 return true;

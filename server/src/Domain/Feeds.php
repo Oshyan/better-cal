@@ -71,7 +71,7 @@ final class Feeds
                 // field. Revocation/reset or an owner adopting the feed either
                 // commits first and discards this response, or waits for sync.
                 SubscriptionAuthority::lockForPoll($this->db, $calendar);
-                $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $lock = $this->db->forUpdate();
                 $current = $this->db->one('SELECT * FROM calendars WHERE id = ?' . $lock, [(int) $calendar['id']]);
                 if ($current === null
                     || (string) ($current['kind'] ?? '') !== 'subscribed'
@@ -281,7 +281,12 @@ final class Feeds
         $removedCount = 0;
         $protected = array_fill_keys(array_filter(array_column($skipped, 'uid')), true);
         $unknownSkipped = count(array_filter($skipped, static fn(array $s): bool => empty($s['uid']))) > 0;
-        $this->db->tx(function () use ($parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId, $deadline): void {
+        // What it changes, for undo: a feed's poll isn't undoable (the next
+        // one would redo it), but an older undo of these events (an
+        // attendance, a tag) stands on them.
+        $touches = [];
+        $undo = new Undo($this->db);
+        $undo->write($userId, function () use ($parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -330,6 +335,9 @@ final class Feeds
                         'source' => 'feed',
                         'created_via' => 'feed',
                     ]);
+                    // The row, not its calendar: undoing the subscription
+                    // still takes what its polls brought.
+                    $touches[] = [Undo::keyOf('events', ['id' => $id]), '*'];
                     if ($ev['recurrence_instance_utc'] === null) {
                         $masterIdByUid[(string) $ev['uid']] = $id;
                         $newMasterUids[(string) $ev['uid']] = true;
@@ -365,6 +373,9 @@ final class Feeds
                         $changed['location_provider'] = null;
                         $changed['location_placed_at'] = null;
                     }
+                    foreach (array_keys($changed) as $col) {
+                        $touches[] = [Undo::keyOf('events', ['id' => (int) $current['id']]), (string) $col];
+                    }
                     $changed['updated_at'] = Time::nowDb();
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);
                     $changedUids[(string) $current['uid']] = true;
@@ -395,11 +406,29 @@ final class Feeds
                 if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {
                     continue;
                 }
+                $touches = array_merge($touches, Undo::touchesOf(['events' => [$row]] + Undo::linksOf($this->db, [(int) $row['id']]), null));
                 $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 $changedUids[(string) $row['uid']] = true;
                 $removedCount++;
             }
             self::assertSyncDeadline($deadline);
+            // Activity: one roll-up entry per poll that changed anything
+            // (log only; the next poll would redo an undo, so none is
+            // offered). A write's own copy of Google's answer (journal
+            // false) is the write's entry.
+            $parts = array_filter([
+                $addedTitles !== [] ? count($addedTitles) . ' added' : null,
+                $updatedEventIds !== [] ? count($updatedEventIds) . ' updated' : null,
+                $removedCount > 0 ? $removedCount . ' removed' : null,
+            ]);
+            if ($journal && $parts !== []) {
+                ActivityContext::with('feed', fn() => $undo->record(
+                    $userId, 'calendar', $calendarId, 'update', null, null,
+                    "Feed '" . (string) $calendar['name'] . "': " . implode(', ', $parts),
+                    ['addedTitles' => array_slice($addedTitles, 0, 20)],
+                    touches: $touches
+                ));
+            }
         });
 
         // CalDAV change journal: one entry per affected object (uid).
@@ -420,39 +449,11 @@ final class Feeds
             ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE);
         }
 
-        // Activity log: one roll-up entry per poll that changed anything
-        // (log-only; the next poll would redo an undo, so none is offered).
-        $addedCount = count($addedTitles);
-        $updatedCount = count($updatedEventIds);
-        if ($addedCount + $updatedCount + $removedCount > 0) {
+        // The publisher touched something. This is what "stale" is judged
+        // against: not whether the feed HAS events (a dead feed keeps
+        // serving its old ones forever) but when it last changed any.
+        if (count($addedTitles) + count($updatedEventIds) + $removedCount > 0) {
             $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]);
-        }
-        if ($journal && $addedCount + $updatedCount + $removedCount > 0) {
-            // The publisher touched something. This is what "stale" is judged
-            // against: not whether the feed HAS events (a dead feed keeps
-            // serving its old ones forever) but when it last changed any.
-            $parts = [];
-            if ($addedCount > 0) {
-                $parts[] = $addedCount . ' added';
-            }
-            if ($updatedCount > 0) {
-                $parts[] = $updatedCount . ' updated';
-            }
-            if ($removedCount > 0) {
-                $parts[] = $removedCount . ' removed';
-            }
-            ActivityContext::with('feed', function () use ($userId, $calendarId, $calendar, $parts, $addedTitles): void {
-                (new Undo($this->db))->record(
-                    $userId,
-                    'calendar',
-                    $calendarId,
-                    'update',
-                    null,
-                    null,
-                    "Feed '" . (string) $calendar['name'] . "': " . implode(', ', $parts),
-                    ['addedTitles' => array_slice($addedTitles, 0, 20)]
-                );
-            });
         }
 
         return $upserts;

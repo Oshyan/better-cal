@@ -1,9 +1,9 @@
-// Undo toasts: shown after every mutation, Undo calls POST /undo and
-// refreshes the affected window.
+// Undo toasts: shown after every mutation; Undo undoes the entries that
+// change made (undoEntries) and refreshes what they touched.
 
 import { html } from '../../vendor/index.js';
 import { useStore, dismissToast } from './store.js';
-import { undo } from './api.js';
+import { undoEntries } from './api.js';
 import { Icon } from '../ui/icons.js';
 
 export function Toasts() {
@@ -14,7 +14,7 @@ export function Toasts() {
       <span class=${'bc-toast-text' + (t.title ? ' has-title' : '')} onClick=${() => dismissToast(t.id)}>${t.title
         ? html`<b class="bc-toast-title">${t.title}</b><span class="bc-toast-what">${t.text}</span>`
         : t.text}</span>
-      ${t.undoable && html`<button type="button" class="bc-toast-undo" onClick=${async () => { dismissToast(t.id); await undo(); }}>Undo</button>`}
+      ${t.undoable && html`<button type="button" class="bc-toast-undo" onClick=${async () => { dismissToast(t.id); await undoEntries(t.undo); }}>Undo</button>`}
       ${!t.undoable && t.note && html`<span class="bc-toast-note">${t.note}</span>`}
       ${t.actionLabel && html`<button type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); if (t.onAction) t.onAction(); }}>${t.actionLabel}</button>`}
       ${t.actions && t.actions.map((a) => html`<button key=${a.label} type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); a.run(); }}>${a.label}</button>`)}

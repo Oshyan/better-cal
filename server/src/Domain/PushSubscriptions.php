@@ -116,7 +116,7 @@ final class PushSubscriptions
             // index gap) before deciding whether this credential may update
             // it, so a token cannot race a browser/other token and take over
             // its device by replacing the keys and creator id.
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             $aliases = $this->db->all(
                 'SELECT id, user_id, endpoint_hash, created_by_token_id FROM push_subscriptions WHERE ' . $this->identitySql() . ' = ? ORDER BY id' . $lock,
                 [$sub['endpoint']]

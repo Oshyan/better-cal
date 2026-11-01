@@ -148,8 +148,9 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
   });
   const attachSelected = async () => {
     const chosen = pickList.filter((o) => selected.has(o.eventId));
-    for (const o of chosen) await attachToTrip(occ, o, { silent: true });
-    if (chosen.length > 0) toast(chosen.length + (chosen.length === 1 ? ' event added' : ' events added'), { title: occ.title || 'Untitled trip', undoable: true });
+    const entries = [];
+    for (const o of chosen) entries.push(...((await attachToTrip(occ, o, { silent: true })) || []));
+    if (chosen.length > 0) toast(chosen.length + (chosen.length === 1 ? ' event added' : ' events added'), { title: occ.title || 'Untitled trip', undo: entries });
     setSelected(new Set());
     setAdding(false);
   };

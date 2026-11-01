@@ -204,7 +204,7 @@ final class Events
         } catch (\Throwable) {
             throw new HttpError('plugin_edit_failed', $name . ' gave back a time Better-Cal could not read', 502);
         }
-        $this->db->tx(function () use ($event, $startUtc, $endUtc, $isAllDay, $authority): void {
+        $this->undo->write($userId, function () use ($userId, $event, $startUtc, $endUtc, $isAllDay, $authority, $name, $pluginId, $span, $before): void {
             $authority?->assertValid($this->db);
             $this->db->update('events', [
                 'start_utc' => $startUtc,
@@ -214,15 +214,15 @@ final class Events
                 'updated_at' => Time::nowDb(),
             ], 'id = ?', [(int) $event['id']]);
             ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
+            // Undoable like any move: undoing writes the previous time back to
+            // the source (Undo::undoPluginEdit). The plugin may say exactly what
+            // to put back (an overdue task shown on today goes back to its real
+            // due date); otherwise it's where the event showed before.
+            $this->undo->record($userId, 'plugin_edit', (int) $event['id'], 'update', [], [], "Moved '" . (string) $event['title'] . "' in " . $name, [
+                'pluginId' => $pluginId,
+                'span' => $span['undo'] ?? $before,
+            ], [(int) $event['calendar_id']], Undo::timeTouches((int) $event['id']));
         });
-        // Undoable like any move: undoing writes the previous time back to
-        // the source (Undo::undoPluginEdit). The plugin may say exactly what
-        // to put back (an overdue task shown on today goes back to its real
-        // due date); otherwise it's where the event showed before.
-        $this->undo->record($userId, 'plugin_edit', (int) $event['id'], 'update', [], [], "Moved '" . (string) $event['title'] . "' in " . $name, [
-            'pluginId' => $pluginId,
-            'span' => $span['undo'] ?? $before,
-        ], [(int) $event['calendar_id']], Undo::timeTouches((int) $event['id']));
     }
 
     // ---- Google write-through ---------------------------------------------------
@@ -985,7 +985,7 @@ final class Events
     public function create(int $userId, array $in, ?RequestAuthority $authority = null): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
-        return $this->db->tx(function () use ($userId, $in, $calendarId, $authority): array {
+        return $this->undo->write($userId, function () use ($userId, $in, $calendarId, $authority): array {
             // The request's credential is locked first (user before calendar),
             // so the checks around a Google write below keep the lock order.
             $authority?->assertValid($this->db);
@@ -1254,7 +1254,7 @@ final class Events
         }
         sort($memberCalendarIds, SORT_NUMERIC);
         $memberCalendarIds = array_values(array_unique($memberCalendarIds));
-        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $memberAuthority, $event, $snapshotChanging, $authority): void {
+        $this->undo->write($userId, function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $memberAuthority, $event, $snapshotChanging, $authority): void {
             // As in create(): the credential is locked before the calendars.
             $authority?->assertValid($this->db);
             $locked = CalendarMoveGuard::lockCalendars($this->db, $calendarIds);
@@ -1277,7 +1277,7 @@ final class Events
                 throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
             }
             if ($movingMembers) {
-                $lockSuffix = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $lockSuffix = $this->db->forUpdate();
                 $freshRows = $this->db->all(
                     'SELECT e.id, e.calendar_id, e.source, c.kind, COALESCE(c.provider, \'ics\') AS provider
                      FROM event_links l JOIN events e ON e.id = l.event_id JOIN calendars c ON c.id = e.calendar_id
@@ -1789,6 +1789,7 @@ final class Events
         $copyFromId = $existingOverrideId ?? ($master !== null ? (int) $master['id'] : null);
 
         $beforeRows = array_values(array_filter([$master, $existingOverrideId !== null ? $source : null]));
+        $removedLinks = $existingOverrideId !== null ? Undo::linksOf($this->db, [$existingOverrideId]) : [];
         $newId = $this->db->tx(function () use ($row, $copyFromId, $existingOverrideId, $master, $instanceUtc, $userId, $in): int {
             $id = $this->db->insert('events', $row);
             if ($copyFromId !== null) {
@@ -1819,7 +1820,7 @@ final class Events
             'event',
             $newId,
             'update',
-            ['events' => $beforeRows],
+            ['events' => $beforeRows] + $removedLinks,
             ['events' => $afterRows] + $this->labels->eventLinkRows($newId),
             "Moved one occurrence of '" . (string) $source['title'] . "' to another calendar"
         );
@@ -1897,7 +1898,8 @@ final class Events
             return $id;
         });
         $created = $this->get($userId, $newId);
-        $this->undo->record($userId, 'event', $masterId, 'update', ['events' => [$master]], ['events' => [$master, $created]]);
+        // The date's row, with the tags and people it took from the series.
+        $this->undo->record($userId, 'event', $masterId, 'update', ['events' => [$master]], ['events' => [$master, $created]] + Undo::linksOf($this->db, [$newId]));
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
@@ -1930,6 +1932,8 @@ final class Events
             [$masterId, $instanceUtc]
         );
 
+        // What the removed dates' rows carry goes with them (tags, people, trip links).
+        $removedLinks = Undo::linksOf($this->db, array_map(static fn($ov) => (int) $ov['id'], $movedOverrides));
         $newId = $this->db->tx(function () use ($masterId, $oldRrule, $newMaster, $movedOverrides): int {
             $this->db->update('events', ['rrule' => $oldRrule, 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
             foreach ($movedOverrides as $ov) {
@@ -1945,7 +1949,7 @@ final class Events
             'event',
             $masterId,
             'update',
-            ['events' => array_merge([$master], $movedOverrides)],
+            ['events' => array_merge([$master], $movedOverrides)] + $removedLinks,
             ['events' => [$afterMaster, $created]]
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
@@ -1957,7 +1961,7 @@ final class Events
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
-        $this->db->tx(function () use ($userId, $id, $scope, $instanceStart, $event, $authority): void {
+        $this->undo->write($userId, function () use ($userId, $id, $scope, $instanceStart, $event, $authority): void {
             // As in create(): the credential is locked before the calendar.
             $authority?->assertValid($this->db);
             $calendarId = (int) $event['calendar_id'];
@@ -2042,6 +2046,7 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        $removedLinks = $override !== null ? Undo::linksOf($this->db, [(int) $override['id']]) : [];
         $this->db->tx(function () use ($masterId, $exdates, $override): void {
             $this->db->update('events', ['exdates_json' => json_encode($exdates), 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
             if ($override !== null) {
@@ -2049,7 +2054,7 @@ final class Events
             }
         });
         $after = $this->get($userId, $masterId);
-        $before = ['events' => $override !== null ? [$master, $override] : [$master]];
+        $before = ['events' => $override !== null ? [$master, $override] : [$master]] + $removedLinks;
         $this->undo->record($userId, 'event', $masterId, 'update', $before, ['events' => [$after]]);
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
@@ -2065,6 +2070,7 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        $removedLinks = Undo::linksOf($this->db, array_map(static fn($ov) => (int) $ov['id'], $movedOverrides));
         $this->db->tx(function () use ($masterId, $newRrule, $movedOverrides): void {
             $this->db->update('events', ['rrule' => $newRrule, 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
             foreach ($movedOverrides as $ov) {
@@ -2077,7 +2083,7 @@ final class Events
             'event',
             $masterId,
             'update',
-            ['events' => array_merge([$master], $movedOverrides)],
+            ['events' => array_merge([$master], $movedOverrides)] + $removedLinks,
             ['events' => [$after]]
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
@@ -2087,6 +2093,7 @@ final class Events
     {
         $parent = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $override['recurrence_parent_id']]);
         $instanceUtc = (string) $override['recurrence_instance_utc'];
+        $removedLinks = Undo::linksOf($this->db, [(int) $override['id']]);
         $this->db->tx(function () use ($parent, $override, $instanceUtc): void {
             if ($parent !== null) {
                 $exdates = $this->withExdate($parent, $instanceUtc);
@@ -2101,7 +2108,7 @@ final class Events
             'event',
             (int) $override['id'],
             'delete',
-            ['events' => $beforeRows],
+            ['events' => $beforeRows] + $removedLinks,
             ['events' => $afterParent !== null ? [$afterParent] : []]
         );
         ChangeLog::record($this->db, (int) $override['calendar_id'], (string) $override['uid'], ChangeLog::OP_MODIFY);
@@ -2120,7 +2127,7 @@ final class Events
         $event = $this->get($userId, $id);
         $structural = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
             && in_array($scope, ['this', 'following'], true);
-        $this->db->tx(function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural): void {
+        $this->undo->write($userId, function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural): void {
             $calendarId = (int) $event['calendar_id'];
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
             if ($structural && $calendar !== null && (string) $calendar['kind'] === 'local') {
@@ -2143,8 +2150,11 @@ final class Events
         $event = $this->get($userId, $id);
         $isMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
         $targetId = $id;
+        $made = false; // the date's own row, made for this answer
         if ($isMaster && $scope === 'this') {
-            $targetId = (int) $this->ensureOverride($userId, $event, $this->requireInstance(['instanceStart' => $instanceStart], $event))['id'];
+            $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $event);
+            $made = $this->db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $instanceUtc]) === null;
+            $targetId = (int) $this->ensureOverride($userId, $event, $instanceUtc)['id'];
         } elseif ($isMaster && $scope === 'following') {
             $targetId = $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]);
         }
@@ -2162,7 +2172,11 @@ final class Events
         foreach ($beforeRows as $r) {
             $afterRows[] = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $r['id']]);
         }
-        $this->undo->record($userId, 'event', $targetId, 'update', ['events' => $beforeRows], ['events' => array_values(array_filter($afterRows))]);
+        // A date's row made for this answer is part of it: undone, the row
+        // goes, and the date follows its series again.
+        $this->undo->record($userId, 'event', $targetId, 'update',
+            ['events' => $made ? [] : $beforeRows],
+            ['events' => array_values(array_filter($afterRows))] + ($made ? Undo::linksOf($this->db, [$targetId]) : []));
         ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
 
         // Triage on feed events doubles as ranking training signal (PRD 5.8):

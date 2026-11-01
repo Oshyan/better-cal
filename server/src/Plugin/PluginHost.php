@@ -953,7 +953,9 @@ final class PluginHost
             throw new \RuntimeException('syncEvents: calendar ' . $calendarId . ' is not owned by ' . $this->pluginId);
         }
         $runStartedDb = gmdate('Y-m-d H:i:s', (int) floor($this->startedAt));
-        $result = $this->db->tx(function () use ($calendarId, $events, $maxEvents, $runStartedDb): array {
+        // What it changes, for undo, as a feed poll does (Feeds::sync).
+        $touches = [];
+        $result = (new Undo($this->db))->write($this->userId, function () use ($calendarId, $events, $maxEvents, $runStartedDb, &$touches): array {
             // Check and load the existing snapshot inside the same transaction
             // so a concurrent writer cannot grow it between admission and
             // materialization.
@@ -1022,6 +1024,9 @@ final class PluginHost
                         }
                     }
                     if ($changed !== []) {
+                        foreach (array_keys($changed) as $c) {
+                            $touches[] = [Undo::keyOf('events', ['id' => (int) $cur['id']]), (string) $c];
+                        }
                         $changed['updated_at'] = Time::nowDb();
                         $this->db->update('events', $changed, 'id = ?', [(int) $cur['id']]);
                         $journal[$key] = ChangeLog::OP_MODIFY;
@@ -1035,6 +1040,7 @@ final class PluginHost
                     if ($this->budgetRemaining() <= 2.0) {
                         throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
                     }
+                    $touches = array_merge($touches, Undo::touchesOf(['events' => [$r]] + Undo::linksOf($this->db, [(int) $r['id']]), null));
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $r['id']]);
                     $journal[(string) $uid] = ChangeLog::OP_DELETE;
                     $removed++;
@@ -1050,7 +1056,7 @@ final class PluginHost
                 ChangeLog::record($this->db, $calendarId, (string) $uid, $op);
             }
             if ($added + $updated + $removed > 0) {
-                ActivityContext::with('plugin:' . $this->pluginId, function () use ($calendarId, $added, $updated, $removed): void {
+                ActivityContext::with('plugin:' . $this->pluginId, function () use ($calendarId, $added, $updated, $removed, $touches): void {
                     (new Undo($this->db))->record(
                         $this->userId,
                         'calendar',
@@ -1058,7 +1064,8 @@ final class PluginHost
                         'update',
                         null,
                         null,
-                        ucfirst($this->pluginId) . ' sync: ' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed'
+                        ucfirst($this->pluginId) . ' sync: ' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed',
+                        touches: $touches
                     );
                 });
             }

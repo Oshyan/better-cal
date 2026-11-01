@@ -67,7 +67,36 @@ return static function (Db $db): void {
     $d->events->patch($u, $standup, ['scope' => 'this', 'instanceStart' => '2026-11-08T19:00:00+00:00', 'title' => 'Standup, Sunday']);
     $sunday = lastEntry($db, $u);
     $d->events->patch($u, $standup, ['scope' => 'all', 'instanceStart' => '2026-11-02T19:00:00+00:00', 'title' => 'Daily standup']);
-    checkEq('undo: one date edited, then the series renamed: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $sunday)));
+    checkEq("undo: one date edited, then the series renamed: still undoes (the date's own row goes)", null, refusal(fn() => $d->undo->undoById($u, $sunday)));
+    $d->events->patch($u, $standup, ['scope' => 'this', 'instanceStart' => '2026-11-09T19:00:00+00:00', 'title' => 'Standup, Monday']);
+    $monday = lastEntry($db, $u);
+    $d->events->deleteEvent($u, $standup, 'this', '2026-11-10T19:00:00+00:00');
+    checkEq('undo: one date edited, then another date deleted: still undoes', null, refusal(fn() => $d->undo->undoById($u, $monday)));
+
+    // A series' shape (its times, rule and the dates it skips) stands on
+    // itself: undoing a time change after a date was deleted, moved off or
+    // split from would bring that date back, or leave half the series.
+    $series = static fn(string $title, string $day) => (int) $d->events->create($u, eventAt($home, $title, $day, ['rrule' => 'FREQ=DAILY;COUNT=10']))['eventId'];
+    $later = static fn(int $id, string $day) => $d->events->patch($u, $id, ['scope' => 'all', 'instanceStart' => $day . 'T18:00:00+00:00', 'start' => $day . 'T19:00:00+00:00', 'end' => $day . 'T20:00:00+00:00']);
+    $a = $series('Morning run', '2026-12-01');
+    $later($a, '2026-12-01');
+    $timeChange = lastEntry($db, $u);
+    $d->events->deleteEvent($u, $a, 'this', '2026-12-03T19:00:00+00:00');
+    checkEq('undo: a series moved to another time, then one date deleted: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
+    $b = $series('Evening walk', '2026-12-01');
+    $later($b, '2026-12-01');
+    $timeChange = lastEntry($db, $u);
+    $d->events->patch($u, $b, ['scope' => 'following', 'instanceStart' => '2026-12-05T19:00:00+00:00', 'title' => 'Evening walk, longer']);
+    checkEq('undo: a series moved to another time, then split from a date on: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
+    $c = $series('Lunch', '2026-12-01');
+    $later($c, '2026-12-01');
+    $timeChange = lastEntry($db, $u);
+    $d->events->setAttendance($u, $c, 'going', 'this', '2026-12-04T19:00:00+00:00');
+    $answered = lastEntry($db, $u);
+    checkEq('undo: a series moved to another time, then one date marked going: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
+    $d->undo->undoById($u, $answered);
+    checkEq("undo: the date's going undone, its row made for it goes too", 0,
+        $count('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$c]));
 
     // --- What comes back when something it belonged to is gone -------------
 
@@ -139,6 +168,13 @@ return static function (Db $db): void {
     checkEq("default calendar: it can't be set to none", 'invalid_request',
         refusal(fn() => (new Settings($db))->patch($v, ['defaultCalendarId' => null])));
 
+    // --- A toast's own entries ---------------------------------------------
+
+    ActivityContext::takeEntries();
+    $d->calendars->patch($u, $home, ['color' => '#224466']);
+    checkEq("entries: a write notes what it journaled, for its toast's Undo (X-Undo-Entries)", [lastEntry($db, $u)], ActivityContext::takeEntries());
+    checkEq('entries: and forgets them once taken', [], ActivityContext::takeEntries());
+
     // --- Whose last change "undo" means ----------------------------------
 
     $w = freshUser($db);
@@ -152,4 +188,20 @@ return static function (Db $db): void {
         [$count('SELECT COUNT(*) FROM calendars WHERE id = ?', [$byKey]), $db->scalar('SELECT name FROM calendars WHERE id = ?', [$first])]);
     $dw->undo->undoLatest($w);
     checkEq("undo latest: from the app, the app's last change, past the feed's", 'Personal', $db->scalar('SELECT name FROM calendars WHERE id = ?', [$first]));
+    // A creation is undone by removing what it made, and the change before
+    // it is next in line.
+    $dw->events->create($w, eventAt($first, 'Original'));
+    $edited = (int) $db->scalar('SELECT MAX(id) FROM events WHERE calendar_id = ?', [$first]);
+    $dw->events->patch($w, $edited, ['title' => 'Renamed']);
+    $made = (int) $dw->events->create($w, eventAt($first, 'New one', '2026-12-09'))['eventId'];
+    checkEq('undo latest: right after a creation, the creation is undone', [['event', 'create'], 0],
+        [array_values($dw->undo->undoLatest($w)), $count('SELECT COUNT(*) FROM events WHERE id = ?', [$made])]);
+    $dw->undo->undoLatest($w);
+    checkEq('undo latest: and then the edit before it', 'Original', $db->scalar('SELECT title FROM events WHERE id = ?', [$edited]));
+    // Your own last change that can't be undone (one sent to Google): said
+    // so, and nothing older is undone instead.
+    $dw->events->patch($w, $edited, ['title' => 'Renamed again']);
+    $dw->undo->record($w, 'event', $edited, 'update', null, null, 'Updated at Google');
+    checkEq("undo latest: your own last change that can't be undone is refused, and nothing older is undone", ['not_undoable', 'Renamed again'],
+        [refusal(fn() => $dw->undo->undoLatest($w)), $db->scalar('SELECT title FROM events WHERE id = ?', [$edited])]);
 };

@@ -34,6 +34,24 @@ final class ActivityContext
         return self::$runId;
     }
 
+    /** The journal entries this request recorded, for its toast's Undo (entry-web). @var list<int> */
+    private static array $entries = [];
+
+    public static function noteEntry(int $id): void
+    {
+        if ($id > 0 && count(self::$entries) < 200) {
+            self::$entries[] = $id;
+        }
+    }
+
+    /** The entries recorded since the last call, and forget them. @return list<int> */
+    public static function takeEntries(): array
+    {
+        $out = self::$entries;
+        self::$entries = [];
+        return $out;
+    }
+
     /** Run $fn tagged with a run id (plus a source), restoring both after. */
     public static function withRun(string $source, string $runId, callable $fn): mixed
     {

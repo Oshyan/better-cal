@@ -9,10 +9,7 @@ use BetterCal\Infra\Db;
 // some through the API keeps them where they are, unused, rather than lose
 // them in an upgrade.
 return static function (Db $db): string {
-    $driver = (string) $db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $exists = $driver === 'sqlite'
-        ? (int) $db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'calendar_tags'") > 0
-        : (int) $db->scalar("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'calendar_tags'") > 0;
+    $exists = (int) $db->scalar("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'calendar_tags'") > 0;
     if (!$exists) {
         return 'calendar tags already gone';
     }

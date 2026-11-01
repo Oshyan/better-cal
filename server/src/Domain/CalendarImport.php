@@ -79,7 +79,8 @@ final class CalendarImport
         }
         // Masters before their edited occurrences, so each override finds its parent.
         usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
-        return $this->db->tx(function () use ($parsed, $skippedEvents, $userId, $name, $color, $intoCalendarId): array {
+        $undo = new Undo($this->db);
+        return $undo->write($userId, function () use ($parsed, $skippedEvents, $userId, $name, $color, $intoCalendarId, $undo): array {
             if ($intoCalendarId !== null) {
                 $target = CalendarMoveGuard::lockCalendar($this->db, $intoCalendarId);
                 if ($target === null || (int) $target['user_id'] !== $userId) throw HttpError::notFound('No such calendar');
@@ -92,6 +93,7 @@ final class CalendarImport
             $calendarId = $intoCalendarId
                 ?? (int) $this->calendars->create($userId, ['name' => $name] + ($color !== null ? ['color' => $color] : []))['id'];
             $imported = 0;
+            $importedIds = [];
             $alreadyThere = 0;
             $masterIdByUid = [];
             $seen = [];
@@ -140,7 +142,20 @@ final class CalendarImport
                 if ($ev['recurrence_instance_utc'] === null) {
                     $masterIdByUid[(string) $ev['uid']] = $id;
                 }
+                $importedIds[] = $id;
                 $imported++;
+            }
+            // Undoable: undone, the events it brought in go (and an undo of
+            // the calendar's making knows they're in it).
+            if ($importedIds !== []) {
+                $rows = [];
+                foreach (array_chunk($importedIds, 500) as $chunk) {
+                    [$in, $params] = Db::in($chunk);
+                    $rows = array_merge($rows, $this->db->all("SELECT * FROM events WHERE id IN $in", $params));
+                }
+                $calendarName = (string) $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$calendarId]);
+                ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, ['events' => $rows],
+                    'Imported ' . $imported . ($imported === 1 ? ' event' : ' events') . " into '" . $calendarName . "'"));
             }
             return ['calendarId' => $calendarId, 'imported' => $imported, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
         });

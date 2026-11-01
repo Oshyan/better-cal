@@ -81,6 +81,11 @@ final class Filters
 
     public function create(int $userId, array $in): array
     {
+        return $this->undo->write($userId, fn(): array => $this->createLocked($userId, $in));
+    }
+
+    private function createLocked(int $userId, array $in): array
+    {
         $scope = (string) ($in['scope'] ?? '');
         if (!in_array($scope, self::SCOPES, true)) {
             throw HttpError::badRequest('scope must be global|folder|calendar');
@@ -111,6 +116,11 @@ final class Filters
     }
 
     public function patch(int $userId, int $id, array $in): array
+    {
+        return $this->undo->write($userId, fn(): array => $this->patchLocked($userId, $id, $in));
+    }
+
+    private function patchLocked(int $userId, int $id, array $in): array
     {
         $before = $this->get($userId, $id);
         $fields = [];
@@ -175,6 +185,11 @@ final class Filters
     }
 
     public function delete(int $userId, int $id): void
+    {
+        $this->undo->write($userId, fn() => $this->deleteLocked($userId, $id));
+    }
+
+    private function deleteLocked(int $userId, int $id): void
     {
         $filter = $this->get($userId, $id);
         $this->db->run('DELETE FROM filters WHERE id = ?', [$id]);

@@ -96,7 +96,7 @@ final class ApiTokens
     public function revokeWithImpact(int $userId, int $id): ?array
     {
         return $this->db->tx(function () use ($userId, $id): ?array {
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             // Match compromise reset and durable channel creation: user first,
             // then token. A token holder cannot keep recovery deadlocking by
             // racing child-row inserts against token deletion.
@@ -133,7 +133,7 @@ final class ApiTokens
      */
     public static function assertStillValid(Db $db, int $tokenId, int $userId, bool $forUpdate = false): void
     {
-        $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $forUpdate ? $db->forUpdate() : '';
         if ($lock !== '') {
             $db->one('SELECT id FROM users WHERE id = ?' . $lock, [$userId]);
         }

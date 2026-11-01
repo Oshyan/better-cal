@@ -516,14 +516,19 @@ let toastSeq = 0;
 // is time to read it and reach the button; six for a plain notice. The toast
 // draws its countdown and leaves when that animation ends (Toasts.js); the
 // timer below is the backstop for a browser that runs no animation.
+// opts.undo: the journal entries the toast's change made (entriesOf on its
+// request's answer); its Undo undoes exactly those, and shows only when
+// there are some.
 export function toast(text, opts = {}) {
   const id = ++toastSeq;
-  const duration = opts.duration || (opts.undoable ? 10000 : 6000);
+  const undo = Array.isArray(opts.undo) ? opts.undo : [];
+  const duration = opts.duration || (undo.length ? 10000 : 6000);
   set({
     toasts: [...state.toasts, {
       id, text, duration,
       title: opts.title || null,
-      undoable: !!opts.undoable,
+      undo,
+      undoable: undo.length > 0,
       // Shown where Undo would be, for a write that has no undo (Google).
       note: opts.note || null,
       error: !!opts.error,

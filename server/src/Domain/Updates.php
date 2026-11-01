@@ -467,7 +467,7 @@ final class Updates
     private function saveAcceptedState(array $state): array
     {
         return $this->db->tx(function () use ($state): array {
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             $current = $this->db->one('SELECT * FROM app_update_state WHERE id = 1' . $lock) ?? ['id' => 1, 'revision' => 0];
             $incomingVersion = (string) ($state['latest_version'] ?? '');
             $storedVersion = (string) ($current['latest_version'] ?? '');

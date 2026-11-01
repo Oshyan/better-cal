@@ -68,7 +68,7 @@ final class SubscriptionAuthority
                     'reason' => 'Updates are paused because the API key that added this feed was revoked or expired. Its saved events are still visible. Choose Keep updating to make it account-owned, make it local to stop following the feed, or delete it.',
                 ];
         }
-        $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $forUpdate ? $db->forUpdate() : '';
         if ($lock !== '') {
             // Compromise reset locks the user before deleting tokens. Match
             // that order before the post-fetch token lock so recovery cannot

@@ -31,14 +31,21 @@ final class Folders
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
-        $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM folders WHERE user_id = ?', [$userId]) ?? 0);
-        $id = $this->db->insert('folders', ['user_id' => $userId, 'name' => mb_substr($name, 0, 120), 'position' => $position]);
-        $created = $this->get($userId, $id);
-        $this->undo->record($userId, 'folder', $id, 'create', null, ['folders' => [$created]]);
-        return self::serialize($created);
+        return $this->undo->write($userId, function () use ($userId, $name): array {
+            $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM folders WHERE user_id = ?', [$userId]) ?? 0);
+            $id = $this->db->insert('folders', ['user_id' => $userId, 'name' => mb_substr($name, 0, 120), 'position' => $position]);
+            $created = $this->get($userId, $id);
+            $this->undo->record($userId, 'folder', $id, 'create', null, ['folders' => [$created]]);
+            return self::serialize($created);
+        });
     }
 
     public function patch(int $userId, int $id, array $in): array
+    {
+        return $this->undo->write($userId, fn(): array => $this->patchLocked($userId, $id, $in));
+    }
+
+    private function patchLocked(int $userId, int $id, array $in): array
     {
         $before = $this->get($userId, $id);
         $fields = [];
@@ -48,9 +55,6 @@ final class Folders
                 throw HttpError::badRequest('name cannot be empty');
             }
             $fields['name'] = mb_substr($name, 0, 120);
-        }
-        if (array_key_exists('position', $in)) {
-            $fields['position'] = (int) $in['position'];
         }
         if (array_key_exists('sort', $in)) {
             if (!in_array($in['sort'], self::SORTS, true)) {
@@ -79,7 +83,7 @@ final class Folders
         $folder = $this->get($userId, $id);
         $cal = $this->ownedCalendar($userId, $calendarId);
         $source = $from !== null && $from !== $id ? $this->get($userId, $from) : null;
-        return $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId, $at, $source): array {
+        return $this->undo->write($userId, function () use ($userId, $id, $folder, $cal, $calendarId, $at, $source): array {
             $ordered = array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], $this->db->all(
                 'SELECT cf.calendar_id, cf.position FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id WHERE cf.folder_id = ? ORDER BY cf.position, c.position, c.id',
                 [$id]
@@ -104,6 +108,7 @@ final class Folders
             // Numbered afresh, every place in the folder changed in effect
             // (as Calendars::placeInList).
             $touches = count($places) > 1 ? array_map(static fn(array $r) => [Undo::keyOf('calendar_folders', ['calendar_id' => $r[0], 'folder_id' => $id]), 'position'], $ordered) : [];
+            $touches[] = ['order:folder:' . $id, count($places) > 1 ? '*' : '+'];
             $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => $rows()], $summary, touches: $touches);
             return ['calendarIds' => self::order($this->db, $id)];
         });
@@ -114,7 +119,7 @@ final class Folders
     {
         $folder = $this->get($userId, $id);
         $cal = $this->ownedCalendar($userId, $calendarId);
-        $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId): void {
+        $this->undo->write($userId, function () use ($userId, $id, $folder, $cal, $calendarId): void {
             $before = $this->rows($calendarId, $id, null, []);
             $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$id, $calendarId]);
             $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => []], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'");
@@ -159,10 +164,12 @@ final class Folders
 
     public function delete(int $userId, int $id): void
     {
-        $folder = $this->get($userId, $id);
-        $links = $this->db->all('SELECT * FROM calendar_folders WHERE folder_id = ?', [$id]);
-        $this->db->run('DELETE FROM folders WHERE id = ?', [$id]);
-        $this->undo->record($userId, 'folder', $id, 'delete', ['folders' => [$folder], 'calendar_folders' => $links], null);
+        $this->undo->write($userId, function () use ($userId, $id): void {
+            $folder = $this->get($userId, $id);
+            $links = $this->db->all('SELECT * FROM calendar_folders WHERE folder_id = ?', [$id]);
+            $this->db->run('DELETE FROM folders WHERE id = ?', [$id]);
+            $this->undo->record($userId, 'folder', $id, 'delete', ['folders' => [$folder], 'calendar_folders' => $links], null);
+        });
     }
 
     public static function serialize(array $row): array

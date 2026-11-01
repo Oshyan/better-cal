@@ -98,7 +98,7 @@ final class Auth
 
         $tokenHash = hash('sha256', $token);
         return $this->db->tx(function () use ($tokenHash, $pushEndpointHash): int {
-            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $lock = $this->db->forUpdate();
             $owner = $this->db->scalar('SELECT user_id FROM sessions WHERE token_hash = ?', [$tokenHash]);
             if ($owner === null) return 0;
             if ($lock !== '') $this->db->one('SELECT id FROM users WHERE id = ?' . $lock, [(int) $owner]);
@@ -313,7 +313,7 @@ final class Auth
         if ($token === null || $token === '') {
             throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
         }
-        $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $lock = $forUpdate ? $db->forUpdate() : '';
         $user = $db->one('SELECT id FROM users WHERE id = ?' . $lock, [$userId]);
         if ($user === null) {
             throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');

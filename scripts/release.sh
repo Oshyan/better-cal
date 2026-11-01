@@ -76,6 +76,9 @@ release_signature() (
   # Installs check an update with the key list of the release they run, so
   # this one must also verify with the previous release's list: a newly added
   # key can sign on its own only once a release listing it has shipped.
+  # Installs further back are covered by update.php itself: when the newest
+  # release doesn't verify with their keys, it installs the newest one that
+  # does as a step (#194), so the previous release is the only one to check here.
   local prev
   prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$tag^" 2>/dev/null || true)
   if [[ -n "$prev" ]] && git cat-file -e "$prev:server/config/release-keys.php" 2>/dev/null; then

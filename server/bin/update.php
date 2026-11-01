@@ -38,6 +38,7 @@ use BetterCal\Support\Cli;
 use BetterCal\Support\Maintenance;
 use BetterCal\Support\ReleaseSignature;
 use BetterCal\Support\SettingsFile;
+use BetterCal\Support\UntrustedSignature;
 
 $opt = getopt('', ['check', 'yes', 'finish', 'rollback', 'allow-plain', 'help']);
 if (isset($opt['help'])) {
@@ -99,14 +100,29 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         return 1;
     }
     Cli::say("This is Better-Cal $current. Checking for a newer release...");
-    $release = (new Updates($db, $cfg))->newestRelease();
+    // The newest release this copy's keys verify. Behind a change to
+    // config/release-keys.php, that may be an older one than the newest
+    // published, and the update happens in two steps (#194).
+    try {
+        $release = (new Updates($db, $cfg))->newestRelease();
+    } catch (UntrustedSignature $e) {
+        Cli::say();
+        return manualKeys($e->getMessage());
+    }
     $to = $release['version'];
     if (version_compare($to, $current, '<=')) {
+        if (version_compare($release['newest'], $current, '>')) {
+            Cli::say();
+            return manualKeys("Better-Cal {$release['newest']} is available, but it and every release after $current are signed with keys this copy doesn't list");
+        }
         Cli::say("Up to date: $current is the newest release.");
         return 0;
     }
     Cli::say();
     Cli::say("Better-Cal $to is available" . ($release['priority'] === 'security' ? ' (a security update)' : '') . '.');
+    foreach (Updater::steppingStone($to, $release['newest']) as $line) {
+        Cli::say('  ' . $line);
+    }
 
     // The release must be signed by a key this copy trusts (config/release-keys.php):
     // GitHub's checks alone would let anyone who took over the GitHub account
@@ -577,5 +593,14 @@ function manual(string $why, string $to): int
 {
     Cli::say($why);
     Cli::say("Update by hand instead (docs/install.md, Updating), to v$to.");
+    return 1;
+}
+
+/** No published release verifies with this copy's keys: the plain way out, not a bare failure. */
+function manualKeys(string $why): int
+{
+    Cli::say($why . ', so the updater can\'t verify one to install.');
+    Cli::say('Update by hand instead (docs/install.md, Updating). The version you put in place lists the keys that verify');
+    Cli::say('the updates after it, so the updater works again from there.');
     return 1;
 }

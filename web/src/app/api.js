@@ -7,6 +7,7 @@ import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
 import { clearResume } from './resume-storage.js';
+import { newestOnly } from './lists.js';
 
 const BASE = '/api/v1';
 // Monotonic local authentication generation. Logout, a live 401 and a new
@@ -244,11 +245,9 @@ export async function loadCalendars() {
 
 // --- people ----------------------------------------------------------------
 
-export async function loadPeople() {
-  const data = await api('/people');
-  set({ people: data.people || [] });
-  return data;
-}
+// Only the newest load's answer is kept: an older one finishing later (a
+// save's reload, after an undo's) can't put back the list from before.
+export const loadPeople = newestOnly(() => api('/people'), (data) => set({ people: data.people || [] }));
 
 // --- plugins ---------------------------------------------------------------
 
@@ -315,11 +314,7 @@ export async function dismissUpdate() {
 
 // --- saved views -----------------------------------------------------------
 
-export async function loadSavedViews() {
-  const data = await api('/views');
-  set({ savedViews: data.views || [] });
-  return data;
-}
+export const loadSavedViews = newestOnly(() => api('/views'), (data) => set({ savedViews: data.views || [] }));
 
 // --- events window loading -------------------------------------------------
 

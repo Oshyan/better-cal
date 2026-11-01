@@ -174,18 +174,22 @@ export function ReviewPage() {
   const [undoSeq, latest] = useOwnList();
   const [items, setItems] = useState(null);
   const [showDecided, setShowDecided] = useState(false);
-  const [nextBefore, setNextBefore] = useState(null);
+  // Where older items continue, and which load's list it belongs to: a
+  // further page adds to that list only (lists.js).
+  const [cursor, setCursor] = useState(null); // {before, of}
 
   const load = async (more = false) => {
+    const page = more ? cursor : null;
+    if (more && !page) return;
     try {
-      const data = await latest(api('/review?status=' + (showDecided ? 'all' : 'open') + (more && nextBefore ? '&before=' + nextBefore : '')), more);
-      setItems((previous) => more ? [...new Map([...(previous || []), ...(data.items || [])].map((item) => [item.key, item])).values()] : (data.items || []));
-      setNextBefore(data.nextBefore || null);
+      const data = await latest(api('/review?status=' + (showDecided ? 'all' : 'open') + (page ? '&before=' + page.before : '')), page ? page.of : undefined);
+      setItems((previous) => page ? [...new Map([...(previous || []), ...(data.items || [])].map((item) => [item.key, item])).values()] : (data.items || []));
+      setCursor(data.nextBefore ? { before: data.nextBefore, of: latest.current() } : null);
       loadReviewCount();
     } catch (e) {
       if (superseded(e)) return;
       toast('Load failed: ' + e.message, { error: true });
-      setItems([]);
+      if (!page) setItems([]);
       loadReviewCount();
     }
   };
@@ -206,6 +210,6 @@ export function ReviewPage() {
     ${(items || []).map((item) => (item.kind === 'proposal'
       ? html`<${ProposalCard} key=${item.key} p=${item.detail} onChanged=${load} />`
       : html`<${ReviewCard} key=${item.key} item=${item} onChanged=${load} />`))}
-    ${nextBefore && html`<button type="button" class="bc-btn" onClick=${() => load(true)}>Show older notices and decisions</button>`}
+    ${cursor && html`<button type="button" class="bc-btn" onClick=${() => load(true)}>Show older notices and decisions</button>`}
   </${PageShell}>`;
 }

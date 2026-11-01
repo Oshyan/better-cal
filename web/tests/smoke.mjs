@@ -2432,8 +2432,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('undo: own lists reload, an open trip\'s members, and Review\'s count', [st.undoSeq, st.tripLinksSeq, counted], [seq + 1, tripSeq + 1, true]);
   // Only the newest load's answer is shown: an older one finishing later
   // (the accept's reload, after the undo's) is dropped, failures too; a
-  // further page doesn't drop the load it adds to.
-  const { loadGuard, superseded } = await import('../src/app/lists.js');
+  // further page adds only to the list its cursor came from.
+  const { loadGuard, superseded, newestOnly } = await import('../src/app/lists.js');
   const latest = loadGuard();
   const outcome = (p) => p.then(() => 'shown', (e) => (superseded(e) ? 'dropped' : 'failed'));
   let release;
@@ -2442,9 +2442,28 @@ console.log('--- chronological ordering across timezone offsets ---');
   release('empty');
   const oldFail = outcome(latest(Promise.reject(new Error('x'))));
   await latest(Promise.resolve('fresh'));
-  const page = await latest(Promise.resolve('page 2'), true);
-  eq('own lists: an older answer after a newer one is dropped, its failure too; a further page is kept', [await older, newer, await oldFail, page],
+  const of = latest.current();
+  const page = await latest(Promise.resolve('page 2'), of);
+  eq('own lists: an older answer after a newer one is dropped, its failure too; a further page of the list is kept', [await older, newer, await oldFail, page],
     ['dropped', 'reopened', 'dropped', 'page 2']);
+  // A refresh begun (an undo restored a newer item, so the page boundary
+  // moves), then "Show older" from the old list's cursor: that page is
+  // dropped rather than added after the new first page, skipping an item.
+  let refreshed;
+  const refresh = outcome(latest(new Promise((r) => { refreshed = r; })));
+  const stalePage = outcome(latest(Promise.resolve('older from the old cursor'), of));
+  refreshed('new first page');
+  eq('own lists: a page from a cursor before a refresh is dropped; the refresh is kept', [await stalePage, await refresh], ['dropped', 'shown']);
+  // The store's shared lists: an older answer after a newer one isn't
+  // applied, and a caller awaiting the older load sees the newer list.
+  const applied = [];
+  const answers = [];
+  const shared = newestOnly(() => new Promise((r) => answers.push(r)), (d) => applied.push(d));
+  const first = shared();
+  const second = shared();
+  answers[1]('with Alex');
+  answers[0]('empty');
+  eq('shared lists: only the newest answer is applied; the older load settles with it', [await first, await second, applied], ['with Alex', 'with Alex', ['with Alex']]);
   eq('undo: people and saved views reload', ['/people', '/views'].map((p) => [...fetched].some((f) => f.endsWith(p))), [true, true]);
   globalThis.fetch = realFetch;
   put(saved);

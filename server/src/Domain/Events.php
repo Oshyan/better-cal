@@ -1388,36 +1388,32 @@ final class Events
         $targetCalendar = isset($in['calendarId']) ? (int) $in['calendarId'] : null;
         if ($targetCalendar !== null && $targetCalendar !== (int) $event['calendar_id'] && $google === null) {
             if (!empty($event['recurrence_parent_id'])) {
-                // An edited date moved with its series (Apply to: all, or
-                // this and following): the series moves from here, as from
-                // any of its dates, and the rest of the edit stays this
-                // date's. It was split off on its own whatever was asked
-                // (#187 review).
+                // A date edited on its own, moved to another calendar: on its
+                // own (no scope), or with all events. Not with the following
+                // ones: that split drops later edited dates and this date's
+                // own details along with them (#188).
                 $whole = (string) ($in['scope'] ?? '');
-                $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
-                // This and following isn't offered from a date edited on its
-                // own: the split drops later edited dates and the date's own
-                // details along with them (#188). This one, or all.
                 if ($whole === 'following') {
                     throw HttpError::badRequest('A date edited on its own moves on its own or with all events, not with the following ones', 'scope_unavailable');
                 }
-                // All events: the series moves, edits and all, and the rest
-                // of the edit stays this date's (applied to the whole series
-                // it would rename it after this date). One save, so one
-                // undo puts back both (Undo::coalesce).
+                // All events: the series moves, edited dates and all, and the
+                // rest of the edit stays this date's (applied to the whole
+                // series it would rename it after this date, #189). One
+                // save, one undo (Undo::group).
                 if ($whole === 'all') {
-                    $since = $this->undo->lastId($userId);
-                    $this->patch($userId, (int) $event['recurrence_parent_id'], [
-                        'calendarId' => $targetCalendar,
-                        'scope' => 'all',
-                        'instanceStart' => $instance,
-                    ], $authority);
-                    $rest = array_diff_key($in, ['calendarId' => true, 'scope' => true, 'instanceStart' => true]);
-                    $still = $this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $event['id']]);
-                    if ($rest !== [] && $still !== null) {
-                        $this->patch($userId, (int) $event['id'], $rest, $authority);
-                    }
-                    $this->undo->coalesce($userId, $since, "Moved '" . (string) $event['title'] . "' and its series to another calendar", [(int) $event['recurrence_parent_id'], (int) $event['id']]);
+                    $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
+                    $this->db->tx(fn() => $this->undo->group(function () use ($userId, $event, $in, $targetCalendar, $instance, $authority): void {
+                        $this->patch($userId, (int) $event['recurrence_parent_id'], [
+                            'calendarId' => $targetCalendar,
+                            'scope' => 'all',
+                            'instanceStart' => $instance,
+                        ], $authority);
+                        $rest = array_diff_key($in, ['calendarId' => true, 'scope' => true, 'instanceStart' => true]);
+                        $still = $this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $event['id']]);
+                        if ($rest !== [] && $still !== null) {
+                            $this->patch($userId, (int) $event['id'], $rest, $authority);
+                        }
+                    }, "Moved '" . (string) $event['title'] . "' and its series to another calendar"));
                     return;
                 }
                 $this->detachToCalendar($userId, $event, null, $in);

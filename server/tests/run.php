@@ -9097,7 +9097,9 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     davJournal($cdb);
     $cdb->run("CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER, sort TEXT NOT NULL DEFAULT 'manual')");
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
-    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
+    // Its foreign keys as in MySQL: a deleted folder takes its rows with it.
+    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (calendar_id, folder_id))');
+    $cdb->run('PRAGMA foreign_keys = ON');
     $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
     $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
     $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
@@ -9140,17 +9142,45 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
     // What a change touched (Undo::touchesOf): rows that changed, not rows
     // carried along; a calendar's place in the list as its own touch.
-    checkEq('touches: a rename touches the calendar, not the folders it is in', ['calendars:5'], BetterCal\Domain\Undo::touchesOf(
+    checkEq('touches: a rename touches the calendar\'s name, not the folders it is in', [['calendars:5', 'name']], BetterCal\Domain\Undo::touchesOf(
         ['calendars' => [['id' => 5, 'name' => 'A', 'position' => 1, 'updated_at' => 'x']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]],
         ['calendars' => [['id' => 5, 'name' => 'B', 'position' => 1, 'updated_at' => 'y']], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3, 'position' => 0]]]
     ));
-    checkEq('touches: filing in a folder, and a new place in the list', ['calendars:5', 'calendar_position:5', 'calendar_folders:5|4'], BetterCal\Domain\Undo::touchesOf(
+    checkEq('touches: a new place in the list is its position, and a folder filed in is the whole row', [['calendars:5', 'position'], ['calendar_folders:5|4', '*']], BetterCal\Domain\Undo::touchesOf(
         ['calendars' => [['id' => 5, 'position' => 1]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3]]],
         ['calendars' => [['id' => 5, 'position' => 2]], 'calendar_folders' => [['calendar_id' => 5, 'folder_id' => 3], ['calendar_id' => 5, 'folder_id' => 4]]]
     ));
     checkEq('touches: only updated_at changed is no change', [], BetterCal\Domain\Undo::touchesOf(
         ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'a']]], ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'b']]]
     ));
+
+    // Sparse places (Order): one moves, the rest stay; no room, all afresh.
+    checkEq('order: into an empty list, first or last, between two', [[7 => 1024], [7 => 0], [7 => 3072], [7 => 1536]], [
+        BetterCal\Domain\Order::place([], 7, 0),
+        BetterCal\Domain\Order::place([[1, 1024], [2, 2048]], 7, 0),
+        BetterCal\Domain\Order::place([[1, 1024], [2, 2048]], 7, 9),
+        BetterCal\Domain\Order::place([[1, 1024], [2, 2048]], 7, 1),
+    ]);
+    checkEq('order: moving one within the list changes only it', [2 => 0], BetterCal\Domain\Order::place([[1, 1024], [2, 2048], [3, 3072]], 2, 0));
+    checkEq('order: no room between two, the list is numbered afresh', [7 => 2048, 2 => 3072], BetterCal\Domain\Order::place([[1, 1024], [2, 1025]], 7, 1));
+
+    // Migration 057: undo records in their final shape, places spaced out.
+    $m57 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $m57->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY)');
+    $m57->run('CREATE TABLE mutation_touches (mutation_id INTEGER, touch TEXT)');
+    $m57->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, position INTEGER)');
+    $m57->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER, position INTEGER, PRIMARY KEY (calendar_id, folder_id))');
+    $m57->run('INSERT INTO calendars (id, user_id, position) VALUES (1, 1, 2), (2, 1, 0), (3, 1, 1), (4, 2, 0)');
+    $m57->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 9, 1), (3, 9, 0)');
+    (require __DIR__ . '/../migrations/057_sparse_order.php')($m57);
+    (require __DIR__ . '/../migrations/057_sparse_order.php')($m57);
+    checkEq('migration 057: undo records remade, places a step apart in the same order, and again changes nothing', [
+        ['mutation_id', 'row_key', 'col'], [[2, 1024], [3, 2048], [1, 3072]], [[3, 1024], [1, 2048]],
+    ], [
+        array_column($m57->all('PRAGMA table_info(mutation_touches)'), 'name'),
+        array_map(static fn($r) => [(int) $r['id'], (int) $r['position']], $m57->all('SELECT id, position FROM calendars WHERE user_id = 1 ORDER BY position')),
+        array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], $m57->all('SELECT calendar_id, position FROM calendar_folders ORDER BY position')),
+    ]);
 
     // The folder order migration: each folder starts in the order it showed.
     $mdb055 = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
@@ -9171,6 +9201,8 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (10, 1, 'Alpha', 0), (11, 1, 'Beta', 1), (12, 2, 'Someone else', 0)");
     $cdb->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (1, 10, 0), (2, 10, 1)');
     // What each change touched (migration 056), for undo's staleness check.
+    // As in MySQL: a Google calendar's entries keep no snapshots (the refs).
+    $cdb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
     $m056 = require __DIR__ . '/../migrations/056_mutation_touches.php';
     $m056($cdb);
     $m056($cdb);
@@ -9187,7 +9219,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $folderDomain->place(1, 11, 2, 5);
     checkEq('folders: added to another as well, it stays where it was (a place past the end is the end)', [10 => [2], 11 => [1, 2]], $folderOrder());
     $lastMutation = $cdb->one('SELECT entity, entity_id, summary FROM mutations ORDER BY id DESC LIMIT 1');
-    checkEq('folders: the activity entry names the calendar and the folder', ['calendar_place', 2, "Added 'Agent feed' to folder 'Beta'"],
+    checkEq('folders: the activity entry names the calendar and the folder', ['calendar', 2, "Added 'Agent feed' to folder 'Beta'"],
         [$lastMutation['entity'], (int) $lastMutation['entity_id'], $lastMutation['summary']]);
     $placeUndo = new BetterCal\Domain\Undo($cdb);
     $placeUndo->undoLatest(1);
@@ -9276,6 +9308,79 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $placeUndo->undoLatest(1);
     checkEq('calendar list: and undoes', [1, 2], $listOrder());
     $cdb->run("UPDATE calendars SET provider = 'ics', name = 'Owner feed' WHERE id = 1");
+
+    // Undo puts back what a change changed, and only that (#187 review).
+    $cdb->run("INSERT INTO folders (id, user_id, name, position) VALUES (20, 1, 'Work', 10), (21, 1, 'Home', 11), (22, 1, 'Temp', 12)");
+    $foldersOf = static fn(int $cal) => array_map('intval', array_column($cdb->all('SELECT folder_id FROM calendar_folders WHERE calendar_id = ? AND folder_id >= 20 ORDER BY folder_id', [$cal]), 'folder_id'));
+    $latest = static fn() => (int) $cdb->scalar('SELECT MAX(id) FROM mutations');
+    $folderDomain->place(1, 20, 2, 0);
+    $calendarDomain->patch(1, 2, ['name' => 'Agent feed, renamed']);
+    $renameEntry = $latest();
+    $folderDomain->place(1, 21, 2, 0, 20);
+    $placeUndo->undoById(1, $renameEntry);
+    checkEq('undo: a rename undone after a later drag puts back the name and leaves the drag', ['Agent feed', [21]],
+        [$cdb->scalar('SELECT name FROM calendars WHERE id = 2'), $foldersOf(2)]);
+    $calendarDomain->patch(1, 2, ['color' => '#112244']);
+    $colorEntry = $latest();
+    $calendarDomain->placeInList(1, 2, 0);
+    $placeUndo->undoById(1, $colorEntry);
+    checkEq('undo: a colour undone after a later move in the list puts back the colour and leaves the move', ['#445566', 2],
+        [$cdb->scalar('SELECT color FROM calendars WHERE id = 2'), $listOrder()[0]]);
+    $folderDomain->place(1, 22, 2, 0, 21);
+    $calendarDomain->patch(1, 2, ['color' => '#223355']);
+    $colorEntry = $latest();
+    $folderDomain->unfile(1, 22, 2);
+    $folderDomain->delete(1, 22);
+    $placeUndo->undoById(1, $colorEntry);
+    checkEq('undo: a colour undone after its folder was emptied and deleted still undoes', ['#445566', []],
+        [$cdb->scalar('SELECT color FROM calendars WHERE id = 2'), $foldersOf(2)]);
+    $folderDomain->place(1, 20, 1, 0);
+    $fileEntry = $latest();
+    $calendarDomain->placeInList(1, 1, 5);
+    $placeUndo->undoById(1, $fileEntry);
+    checkEq('undo: filing undone after a later move in the list, of the same calendar: not stale, and the move stays', [[], 1],
+        [$foldersOf(1), $listOrder()[count($listOrder()) - 1]]);
+    // A Google calendar's settings keep no snapshots, but what they
+    // changed still makes an earlier drag's undo stale, the toast's Undo
+    // (the newest that can be undone) included.
+    $cdb->run("UPDATE calendars SET provider = 'google' WHERE id = 1");
+    $folderDomain->place(1, 21, 1, 0);
+    $folderDomain->place(1, 20, 1, 0, 21);
+    $calendarDomain->patch(1, 1, ['folderIds' => [20, 21]]);
+    $caught = null;
+    try { $placeUndo->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    checkEq("undo: the newest undoable change is stale after a Google calendar's later settings, and nothing changes", ['stale_undo', [20, 21]],
+        [$caught ? $caught->errorCode : null, $foldersOf(1)]);
+    $cdb->run("UPDATE calendars SET provider = 'ics' WHERE id = 1");
+
+    // One save in several steps: one entry, as before the first and after
+    // the last; a save that fails records nothing.
+    $grouped = new BetterCal\Domain\Undo($cdb);
+    $before = $latest();
+    $grouped->group(function () use ($grouped): void {
+        $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'A', 'color' => '#000000']]], ['calendars' => [['id' => 2, 'name' => 'B', 'color' => '#000000']]]);
+        $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'B', 'color' => '#000000']]], ['calendars' => [['id' => 2, 'name' => 'C', 'color' => '#111111']]]);
+    }, 'Two steps');
+    $one = $cdb->one('SELECT id, summary, before_json, after_json FROM mutations WHERE id > ?', [$before]);
+    checkEq('undo group: one entry, before the first step and after the last, and what it changed', [1, 'Two steps', 'A', 'C', [['calendars:2', 'color'], ['calendars:2', 'name']]], [
+        (int) $cdb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$before]), $one['summary'],
+        json_decode($one['before_json'], true)['tables']['calendars'][0]['name'], json_decode($one['after_json'], true)['tables']['calendars'][0]['name'],
+        array_map(static fn($r) => [$r['row_key'], $r['col']], $cdb->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ? ORDER BY col', [(int) $one['id']])),
+    ]);
+    $before = $latest();
+    try {
+        $grouped->group(function () use ($grouped): void {
+            $grouped->record(1, 'calendar', 2, 'update', ['calendars' => [['id' => 2, 'name' => 'A']]], ['calendars' => [['id' => 2, 'name' => 'B']]]);
+            throw new RuntimeException('a later step fails');
+        }, 'Fails');
+    } catch (RuntimeException $e) {
+    }
+    checkEq('undo group: a save that fails records nothing', 0, (int) $cdb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$before]));
+    // Many rows at once (a calendar of events deleted): every one recorded.
+    $many = array_map(static fn(int $i) => ['id' => 100000 + $i, 'calendar_id' => 2, 'title' => 'x'], range(1, 450));
+    $grouped->record(1, 'event', 100001, 'delete', ['events' => $many], []);
+    checkEq('undo: a change of 450 rows records what it changed for each', 450, (int) $cdb->scalar('SELECT COUNT(*) FROM mutation_touches WHERE mutation_id = ?', [$latest()]));
+
     $cdb->run('DELETE FROM calendar_folders');
     $cdb->run('DELETE FROM folders');
 

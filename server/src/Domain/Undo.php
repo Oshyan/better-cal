@@ -11,18 +11,15 @@ use BetterCal\Support\Time;
 
 /**
  * Mutation log + undo. Each mutating API call records before/after snapshots
- * as {"tables": {table: [rows...]}}. Undo restores every before-row (upsert)
- * and deletes rows that exist only in after (i.e. rows the mutation created).
+ * as {"tables": {table: [rows...]}}, and what it changed: each row it made
+ * or removed, and each column it changed in a row it kept (touchesOf). Undo
+ * puts back exactly that: rows made are removed, rows removed come back,
+ * and changed columns return to their earlier values. A row only carried
+ * along in a snapshot is left alone. An undo is stale when a later change,
+ * not undone, changed any of the same (staleFor).
  */
 final class Undo
 {
-    /**
-     * A calendar's place in a folder or the calendar list (#187): undone by
-     * putting just that calendar back where it was, so later changes to
-     * the others stay. Newer moves of the same calendar make it stale.
-     */
-    public const PLACE = 'calendar_place';
-
     /** Restore order respects FK dependencies; deletions run in reverse. */
     private const TABLE_ORDER = [
         'folders', 'tags', 'people', 'calendars', 'calendar_folders',
@@ -45,17 +42,23 @@ final class Undo
     }
 
     /**
+     * Changes recorded inside group(): kept back, and written as one entry
+     * when it ends. Null outside a group.
+     *
+     * @var list<array<string,mixed>>|null
+     */
+    private ?array $grouped = null;
+
+    /**
      * @param array<string,list<array>>|null $beforeTables
      * @param array<string,list<array>>|null $afterTables
      */
-    /**
-     * $touches: what the change touched beyond its snapshots' rows (a
-     * calendar's place, which has no rows of its own; see touchesOf).
-     *
-     * @param list<string> $touches
-     */
-    public function record(int $userId, string $entity, int $entityId, string $op, ?array $beforeTables, ?array $afterTables, ?string $summary = null, ?array $details = null, array $calendarIds = [], array $touches = []): void
+    public function record(int $userId, string $entity, int $entityId, string $op, ?array $beforeTables, ?array $afterTables, ?string $summary = null, ?array $details = null, array $calendarIds = []): void
     {
+        if ($this->grouped !== null) {
+            $this->grouped[] = compact('userId', 'entity', 'entityId', 'op', 'beforeTables', 'afterTables', 'summary', 'details', 'calendarIds');
+            return;
+        }
         $mutationId = 0;
         try {
             $mutationId = $this->db->insert('mutations', [
@@ -82,61 +85,147 @@ final class Undo
             ]);
         }
         // Before the refs: a Google calendar's entry has its snapshots
-        // emptied there, and what it touched has to stay known.
-        $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables), $touches));
+        // emptied there, and what it changed has to stay known.
+        $this->recordTouches($mutationId, self::touchesOf($beforeTables, $afterTables));
         $this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds);
     }
 
     /**
-     * The rows a change actually changed, as "table:key" (a composite key
-     * joined by "|"), plus "calendar_position:<id>" when a calendar's place
-     * in the list moved. A row in both snapshots and the same apart from
-     * its updated_at was only carried along, so it isn't counted: a rename
-     * doesn't touch the folders a calendar is in. Pure.
+     * Run $fn and record everything it changes as one entry, so one undo
+     * puts back one save made in several steps: each row as it was before
+     * the first step that touched it, and as the last left it. Run it
+     * inside the caller's transaction; if $fn throws, nothing is recorded.
+     * A group inside a group is part of the outer one.
+     */
+    public function group(callable $fn, string $summary): mixed
+    {
+        if ($this->grouped !== null) {
+            return $fn();
+        }
+        $this->grouped = [];
+        try {
+            $result = $fn();
+            $records = $this->grouped;
+        } finally {
+            $this->grouped = null;
+        }
+        if ($records === []) {
+            return $result;
+        }
+        if (count($records) === 1) {
+            $r = $records[0];
+            $this->record($r['userId'], $r['entity'], $r['entityId'], $r['op'], $r['beforeTables'], $r['afterTables'], $summary, $r['details'], $r['calendarIds']);
+            return $result;
+        }
+        $before = [];
+        $after = [];
+        $seen = [];
+        $logOnly = false;
+        $calendarIds = [];
+        foreach ($records as $r) {
+            if ($r['beforeTables'] === null && $r['afterTables'] === null) {
+                $logOnly = true;
+            }
+            $calendarIds = array_merge($calendarIds, $r['calendarIds']);
+            $b = $r['beforeTables'] ?? [];
+            $a = $r['afterTables'] ?? [];
+            foreach (array_unique(array_merge(array_keys($b), array_keys($a))) as $table) {
+                $inBefore = [];
+                foreach ($b[$table] ?? [] as $row) {
+                    $inBefore[self::keyOf($table, $row)] = $row;
+                }
+                $inAfter = [];
+                foreach ($a[$table] ?? [] as $row) {
+                    $inAfter[self::keyOf($table, $row)] = $row;
+                }
+                foreach ($inBefore + $inAfter as $k => $_) {
+                    if (!isset($seen[$table][$k])) {
+                        $seen[$table][$k] = true;
+                        if (isset($inBefore[$k])) {
+                            $before[$table][$k] = $inBefore[$k];
+                        }
+                    }
+                }
+                foreach ($inBefore as $k => $_) {
+                    if (!isset($inAfter[$k])) {
+                        unset($after[$table][$k]);
+                    }
+                }
+                foreach ($inAfter as $k => $row) {
+                    $after[$table][$k] = $row;
+                }
+            }
+        }
+        $list = static fn(array $tables): array => array_map('array_values', $tables);
+        $first = $records[0];
+        $this->record(
+            $first['userId'], $first['entity'], $first['entityId'], 'update',
+            $logOnly ? null : $list($before), $logOnly ? null : $list($after),
+            $summary, null, array_values(array_unique($calendarIds))
+        );
+        return $result;
+    }
+
+    /** A row's key: "table:id", or the parts of a composite key joined by "|". */
+    private static function keyOf(string $table, array $row): string
+    {
+        return $table . ':' . implode('|', array_map(static fn($c) => (string) ($row[$c] ?? ''), self::TABLE_PK[$table] ?? ['id']));
+    }
+
+    /**
+     * What a change changed, as [row key, column] pairs: "*" for a row it
+     * made or removed, and each column that differs for a row in both
+     * snapshots (updated_at aside). A row the same in both was only carried
+     * along: a rename doesn't touch the folders a calendar is in. Pure.
      *
-     * @return list<string>
+     * @return list<array{0:string,1:string}>
      */
     public static function touchesOf(?array $before, ?array $after): array
     {
         $out = [];
         foreach (array_unique(array_merge(array_keys($before ?? []), array_keys($after ?? []))) as $table) {
-            $pk = self::TABLE_PK[$table] ?? ['id'];
-            $keyed = static function (array $rows) use ($pk): array {
-                $byKey = [];
-                foreach ($rows as $r) {
-                    if (is_array($r)) {
-                        $byKey[implode('|', array_map(static fn($c) => (string) ($r[$c] ?? ''), $pk))] = $r;
-                    }
-                }
-                return $byKey;
-            };
-            $b = $keyed($before[$table] ?? []);
-            $a = $keyed($after[$table] ?? []);
+            $b = [];
+            foreach ($before[$table] ?? [] as $r) {
+                if (is_array($r)) $b[self::keyOf($table, $r)] = $r;
+            }
+            $a = [];
+            foreach ($after[$table] ?? [] as $r) {
+                if (is_array($r)) $a[self::keyOf($table, $r)] = $r;
+            }
             foreach ($b + $a as $k => $_) {
-                $was = $b[$k] ?? null;
-                $now = $a[$k] ?? null;
-                $strip = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['updated_at' => true]);
-                if ($strip($was) == $strip($now)) {
+                if (!isset($b[$k]) || !isset($a[$k])) {
+                    $out[] = [$k, '*'];
                     continue;
                 }
-                $out[] = $table . ':' . $k;
-                if ($table === 'calendars' && (string) ($was['position'] ?? '') !== (string) ($now['position'] ?? '')) {
-                    $out[] = 'calendar_position:' . $k;
+                foreach (array_unique(array_merge(array_keys($b[$k]), array_keys($a[$k]))) as $col) {
+                    if ($col !== 'updated_at' && ($b[$k][$col] ?? null) != ($a[$k][$col] ?? null)) {
+                        $out[] = [$k, (string) $col];
+                    }
                 }
             }
         }
         return $out;
     }
 
-    /** @param list<string> $touches */
+    /** @param list<array{0:string,1:string}> $touches */
     private function recordTouches(int $mutationId, array $touches): void
     {
         if ($mutationId <= 0 || $touches === []) {
             return;
         }
+        $unique = [];
+        foreach ($touches as [$row, $col]) {
+            $unique[mb_substr($row, 0, 160) . "\n" . mb_substr($col, 0, 64)] = [mb_substr($row, 0, 160), mb_substr($col, 0, 64)];
+        }
         try {
-            foreach (array_values(array_unique($touches)) as $touch) {
-                $this->db->run($this->db->insertIgnore() . ' INTO mutation_touches (mutation_id, touch) VALUES (?, ?)', [$mutationId, mb_substr($touch, 0, 191)]);
+            // In batches: a calendar of thousands of events deleted at once
+            // wrote a row at a time, ten times slower.
+            foreach (array_chunk(array_values($unique), 200) as $chunk) {
+                $params = [];
+                foreach ($chunk as [$row, $col]) {
+                    array_push($params, $mutationId, $row, $col);
+                }
+                $this->db->run($this->db->insertIgnore() . ' INTO mutation_touches (mutation_id, row_key, col) VALUES ' . implode(', ', array_fill(0, count($chunk), '(?, ?, ?)')), $params);
             }
         } catch (\PDOException $e) {
             $message = strtolower($e->getMessage());
@@ -149,32 +238,55 @@ final class Undo
 
     /**
      * Whether a later change, not undone, changed what this one would put
-     * back: the same item (the rule before migration 056, for older
-     * entries), or any of the same rows or places.
+     * back: made or removed one of its rows, or changed one of the same
+     * columns. An entry from before migration 056 has no record of what it
+     * changed: it's worked out from its snapshots, and the older rule (any
+     * later change to the same item) holds too.
      */
     private function staleFor(array $mutation): bool
     {
         $id = (int) $mutation['id'];
         $userId = (int) $mutation['user_id'];
-        if ($this->db->scalar(
-            'SELECT id FROM mutations WHERE user_id = ? AND entity = ? AND entity_id = ? AND id > ? AND undone = 0 LIMIT 1',
-            [$userId, (string) $mutation['entity'], (int) $mutation['entity_id'], $id]
-        ) !== null) {
-            return true;
-        }
         try {
-            return $this->db->scalar(
-                'SELECT m.id FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
-                 WHERE m.user_id = ? AND m.id > ? AND m.undone = 0
-                   AND t.touch IN (SELECT touch FROM mutation_touches WHERE mutation_id = ?) LIMIT 1',
-                [$userId, $id, $id]
-            ) !== null;
+            $mine = array_map(static fn($r) => [(string) $r['row_key'], (string) $r['col']],
+                $this->db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ?', [$id]));
         } catch (\PDOException $e) {
-            if (str_contains(strtolower($e->getMessage()), 'no such table: mutation_touches') || (string) $e->getCode() === '42S02') {
+            if (!str_contains(strtolower($e->getMessage()), 'no such table: mutation_touches') && (string) $e->getCode() !== '42S02') {
+                throw $e;
+            }
+            $mine = null;
+        }
+        if ($mine === null || $mine === []) {
+            if ($this->db->scalar(
+                'SELECT id FROM mutations WHERE user_id = ? AND entity = ? AND entity_id = ? AND id > ? AND undone = 0 LIMIT 1',
+                [$userId, (string) $mutation['entity'], (int) $mutation['entity_id'], $id]
+            ) !== null) {
+                return true;
+            }
+            if ($mine === null) {
                 return false;
             }
-            throw $e;
+            $mine = self::touchesOf(self::tables($mutation['before_json']), self::tables($mutation['after_json']));
         }
+        $cols = [];
+        foreach ($mine as [$row, $col]) {
+            $cols[$row][$col] = true;
+        }
+        foreach (array_chunk(array_keys($cols), 200) as $rows) {
+            [$in, $params] = Db::in($rows);
+            $later = $this->db->all(
+                "SELECT t.row_key, t.col FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
+                 WHERE t.row_key IN $in AND m.user_id = ? AND m.id > ? AND m.undone = 0",
+                array_merge($params, [$userId, $id])
+            );
+            foreach ($later as $t) {
+                $have = $cols[(string) $t['row_key']] ?? [];
+                if ((string) $t['col'] === '*' || isset($have['*']) || isset($have[(string) $t['col']])) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** @param list<int> $explicitCalendarIds */
@@ -262,157 +374,33 @@ final class Undo
         return $line;
     }
 
-    /** @return array{entity:string,op:string} */
+    /**
+     * Undo the newest change that can be undone, through the same checks as
+     * any other: a later change kept no undo record (a Google calendar's,
+     * say) still makes it stale.
+     *
+     * @return array{entity:string,op:string}
+     */
     public function undoLatest(int $userId, ?RequestAuthority $authority = null): array
     {
-        $mutation = $this->db->one(
+        $id = $this->db->scalar(
             // A creation has only an after snapshot; it is undone by deleting
             // what it made. Requiring a before snapshot skipped it and undid
             // the change before it instead. Log-only rows have neither.
-            'SELECT * FROM mutations WHERE user_id = ? AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id DESC LIMIT 1',
+            'SELECT id FROM mutations WHERE user_id = ? AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id DESC LIMIT 1',
             [$userId]
         );
-        if ($mutation === null) {
+        if ($id === null) {
             throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
         }
-        if ((string) $mutation['entity'] === 'plugin_edit') {
-            return $this->undoPluginEdit($mutation, $authority);
-        }
-        if ((string) $mutation['entity'] === self::PLACE) {
-            return $this->undoPlace($mutation, $authority);
-        }
-        return $this->apply($mutation, $authority);
-    }
-
-    /** The newest journal entry's id for this user (0 when none): where a coalesce starts. */
-    public function lastId(int $userId): int
-    {
-        return (int) ($this->db->scalar('SELECT MAX(id) FROM mutations WHERE user_id = ?', [$userId]) ?? 0);
-    }
-
-    /**
-     * Merge the entries written since $sinceId into the first of them, so
-     * one undo puts back what one save did in several steps: each row as
-     * it was before the first step that touched it, and as the last left
-     * it (#187 review). Only entries about these events count, so a job
-     * writing its own meanwhile stays apart. Fewer than two: nothing to do.
-     *
-     * @param list<int> $eventIds
-     */
-    public function coalesce(int $userId, int $sinceId, string $summary, array $eventIds): void
-    {
-        [$in, $params] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
-        $rows = $this->db->all("SELECT * FROM mutations WHERE user_id = ? AND id > ? AND entity = 'event' AND entity_id IN $in ORDER BY id", array_merge([$userId, $sinceId], $params));
-        if (count($rows) < 2) {
-            return;
-        }
-        $before = [];
-        $after = [];
-        $seen = [];
-        $logOnly = false;
-        foreach ($rows as $row) {
-            if ($row['before_json'] === null && $row['after_json'] === null) {
-                $logOnly = true;
-            }
-            $b = self::tables($row['before_json']);
-            $a = self::tables($row['after_json']);
-            foreach (array_unique(array_merge(array_keys($b), array_keys($a))) as $table) {
-                $pk = self::TABLE_PK[$table] ?? ['id'];
-                $key = static fn(array $r): string => implode('|', array_map(static fn($c) => (string) ($r[$c] ?? ''), $pk));
-                $inBefore = [];
-                foreach ($b[$table] ?? [] as $r) {
-                    $inBefore[$key($r)] = $r;
-                }
-                $inAfter = [];
-                foreach ($a[$table] ?? [] as $r) {
-                    $inAfter[$key($r)] = $r;
-                }
-                foreach ($inBefore + $inAfter as $k => $_) {
-                    if (!isset($seen[$table][$k])) {
-                        $seen[$table][$k] = true;
-                        if (isset($inBefore[$k])) {
-                            $before[$table][$k] = $inBefore[$k];
-                        }
-                    }
-                }
-                foreach ($inBefore as $k => $_) {
-                    if (!isset($inAfter[$k])) {
-                        unset($after[$table][$k]);
-                    }
-                }
-                foreach ($inAfter as $k => $r) {
-                    $after[$table][$k] = $r;
-                }
-            }
-        }
-        $list = static fn(array $tables): array => array_map('array_values', $tables);
-        $keep = (int) $rows[0]['id'];
-        $this->db->update('mutations', [
-            'before_json' => $logOnly ? null : json_encode(['tables' => $list($before)], JSON_INVALID_UTF8_SUBSTITUTE),
-            'after_json' => $logOnly ? null : json_encode(['tables' => $list($after)], JSON_INVALID_UTF8_SUBSTITUTE),
-            'summary' => mb_substr($summary, 0, 300),
-        ], 'id = ?', [$keep]);
-        foreach (array_slice($rows, 1) as $row) {
-            try {
-                foreach ($this->db->all('SELECT touch FROM mutation_touches WHERE mutation_id = ?', [(int) $row['id']]) as $t) {
-                    $this->db->run($this->db->insertIgnore() . ' INTO mutation_touches (mutation_id, touch) VALUES (?, ?)', [$keep, (string) $t['touch']]);
-                }
-                $this->db->run('DELETE FROM mutation_touches WHERE mutation_id = ?', [(int) $row['id']]);
-            } catch (\PDOException $e) {
-                // before migration 056, and narrow tests
-            }
-            try {
-                foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [(int) $row['id']]) as $ref) {
-                    $this->db->run($this->db->insertIgnore() . ' INTO mutation_calendar_refs (mutation_id, calendar_id) VALUES (?, ?)', [$keep, (int) $ref['calendar_id']]);
-                }
-                $this->db->run('DELETE FROM mutation_calendar_refs WHERE mutation_id = ?', [(int) $row['id']]);
-            } catch (\PDOException $e) {
-                // narrow-test compatibility: no refs table
-            }
-            $this->db->run('DELETE FROM mutations WHERE id = ?', [(int) $row['id']]);
-        }
-    }
-
-    /** @return array{entity:string,op:string} */
-    private function undoPlace(array $mutation, ?RequestAuthority $authority = null): array
-    {
-        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
-        $before = is_array($details) && is_array($details['before'] ?? null) ? $details['before'] : null;
-        $userId = (int) $mutation['user_id'];
-        $calendarId = (int) $mutation['entity_id'];
-        if ($before === null || $this->db->scalar('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
-            throw HttpError::badRequest('That calendar is no longer here to move back', 'not_undoable');
-        }
-        $this->db->tx(function () use ($before, $userId, $calendarId, $mutation, $authority): void {
-            $authority?->assertValid($this->db);
-            // Every folder it goes back into has to be there, held until
-            // this is done, or nothing moves: with the one it came from
-            // deleted, it was taken out of the other and left in none.
-            foreach ($before as $place) {
-                if (isset($place['folder'], $place['at']) && $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?' . $this->db->forUpdate(), [(int) $place['folder'], $userId]) === null) {
-                    throw HttpError::badRequest('The folder it was in has been deleted, so it can\'t go back there', 'not_undoable');
-                }
-            }
-            foreach ($before as $place) {
-                $at = isset($place['at']) ? (int) $place['at'] : null;
-                if (!empty($place['list'])) {
-                    if ($at !== null) {
-                        Calendars::putInList($this->db, $userId, $calendarId, $at);
-                    }
-                } elseif (isset($place['folder']) && $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [(int) $place['folder'], $userId]) !== null) {
-                    Folders::putAt($this->db, (int) $place['folder'], $calendarId, $at);
-                }
-            }
-            $this->db->update('mutations', ['undone' => 1], 'id = ?', [(int) $mutation['id']]);
-        });
-        return ['entity' => 'calendar', 'op' => 'update'];
+        return $this->undoById($userId, (int) $id, false, $authority);
     }
 
     /**
      * Undo one specific activity entry (docs: 7-day window). Refuses
      * log-only rows (no snapshots, or snapshots already pruned) and, unless
-     * $force, rows whose entity has newer un-undone mutations (undoing under
-     * those would silently clobber later edits).
+     * $force, rows a later change has changed the same things as
+     * (staleFor): undoing under those would silently clobber later edits.
      *
      * @return array{entity:string,op:string}
      */
@@ -438,16 +426,7 @@ final class Undo
             }
             return $this->undoPluginEdit($mutation, $authority);
         }
-        // Checked and undone together, so nothing slips in between.
-        return $this->db->tx(function () use ($mutation, $force, $authority): array {
-            if (!$force && $this->staleFor($mutation)) {
-                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
-            }
-            if ((string) $mutation['entity'] === self::PLACE) {
-                return $this->undoPlace($mutation, $authority);
-            }
-            return $this->apply($mutation, $authority);
-        });
+        return $this->apply($mutation, $authority, $force);
     }
 
     /**
@@ -542,7 +521,7 @@ final class Undo
         return ['entity' => 'event', 'op' => 'update'];
     }
 
-    private function apply(array $mutation, ?RequestAuthority $authority = null): array
+    private function apply(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
     {
 
         $before = self::tables($mutation['before_json']);
@@ -561,7 +540,7 @@ final class Undo
             }
         }
 
-        $this->db->tx(function () use ($mutation, $before, $after, $calendarIds, $authority): void {
+        $this->db->tx(function () use ($mutation, $before, $after, $calendarIds, $authority, $force): void {
             // The credential that asked for the undo must still be valid as it's saved.
             $authority?->assertValid($this->db);
             // Recovery uses this lock before changing channel authorization.
@@ -600,6 +579,14 @@ final class Undo
                 || $current['after_json'] !== $mutation['after_json']) {
                 throw HttpError::badRequest('This entry can no longer be undone', 'not_undoable');
             }
+            // The rows it puts back, held until it's done (after the same
+            // locks as any other change takes, in the same order), then the
+            // check: a change committed meanwhile is seen, and one that
+            // comes after waits for this.
+            $this->lockRows($before, $after);
+            if (!$force && $this->staleFor($mutation)) {
+                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+            }
             // Delete rows created by the mutation (present in after, absent from before).
             foreach (array_reverse(self::TABLE_ORDER) as $table) {
                 $beforeKeys = [];
@@ -612,9 +599,30 @@ final class Undo
                     }
                 }
             }
-            // Restore original rows.
+            // Restore what it changed: rows it removed come back whole, and a
+            // row it kept gets back only the columns it changed. A row only
+            // carried along is left as it is now.
+            $afterByKey = [];
+            foreach ($after as $table => $rows) {
+                foreach ($rows as $row) {
+                    $afterByKey[$table][$this->pkKey($table, $row)] = $row;
+                }
+            }
             foreach (self::TABLE_ORDER as $table) {
                 foreach ($before[$table] ?? [] as $row) {
+                    $kept = $afterByKey[$table][$this->pkKey($table, $row)] ?? null;
+                    $changed = null;
+                    if ($kept !== null) {
+                        $changed = [];
+                        foreach (array_unique(array_merge(array_keys($row), array_keys($kept))) as $col) {
+                            if ($col !== 'updated_at' && ($row[$col] ?? null) != ($kept[$col] ?? null)) {
+                                $changed[] = $col;
+                            }
+                        }
+                        if ($changed === []) {
+                            continue;
+                        }
+                    }
                     if ($table === 'calendars') {
                         $live = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['id']]);
                         if ($live !== null) {
@@ -644,7 +652,7 @@ final class Undo
                             if (array_key_exists($key, $live)) $row[$key] = $live[$key];
                         }
                     }
-                    $this->db->upsert($table, $row);
+                    $this->restoreRow($table, $row, $changed);
                 }
             }
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
@@ -683,6 +691,68 @@ final class Undo
             $parts[] = (string) ($row[$col] ?? '');
         }
         return implode('|', $parts);
+    }
+
+    /**
+     * Lock the rows an undo puts back, so a change to them waits for it.
+     * Locks only on MySQL (forUpdate); SQLite's transactions hold the whole
+     * database already.
+     */
+    private function lockRows(array $before, array $after): void
+    {
+        if ($this->db->forUpdate() === '') {
+            return;
+        }
+        foreach (self::TABLE_ORDER as $table) {
+            $keys = [];
+            foreach ([$before[$table] ?? [], $after[$table] ?? []] as $rows) {
+                foreach ($rows as $row) {
+                    $keys[$this->pkKey($table, $row)] = $row;
+                }
+            }
+            foreach ($keys as $row) {
+                $conds = [];
+                $params = [];
+                foreach (self::TABLE_PK[$table] ?? ['id'] as $col) {
+                    $conds[] = "`$col` = ?";
+                    $params[] = $row[$col] ?? null;
+                }
+                $this->db->one("SELECT 1 FROM `$table` WHERE " . implode(' AND ', $conds) . $this->db->forUpdate(), $params);
+            }
+        }
+    }
+
+    /**
+     * Put a row back: whole when it's gone (or $changed is null, for a row
+     * the change removed), else just the columns it changed. Something it
+     * belongs to that's gone since (a deleted folder, a calendar) means it
+     * can't go back: refused, not a server error.
+     *
+     * @param list<string>|null $changed
+     */
+    private function restoreRow(string $table, array $row, ?array $changed): void
+    {
+        $conds = [];
+        $params = [];
+        foreach (self::TABLE_PK[$table] ?? ['id'] as $col) {
+            $conds[] = "`$col` = ?";
+            $params[] = $row[$col] ?? null;
+        }
+        $where = implode(' AND ', $conds);
+        try {
+            if ($changed !== null && $this->db->scalar("SELECT 1 FROM `$table` WHERE $where", $params) !== null) {
+                $sets = implode(', ', array_map(static fn($c) => "`$c` = ?", $changed));
+                $this->db->run("UPDATE `$table` SET $sets WHERE $where", array_merge(array_map(static fn($c) => $row[$c] ?? null, $changed), $params));
+                return;
+            }
+            $this->db->upsert($table, $row);
+        } catch (\PDOException $e) {
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, 'foreign key') || (string) $e->getCode() === '23000' && str_contains($message, 'constraint')) {
+                throw HttpError::badRequest("Something this change belonged to is gone since, so it can't be put back", 'not_undoable');
+            }
+            throw $e;
+        }
     }
 
     private function deleteByPk(string $table, array $row): void

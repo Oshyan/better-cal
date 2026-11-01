@@ -299,7 +299,7 @@ export function App() {
           }
           // Owed a reload after a write whose own one didn't land
           // (writeCalendars): asked again until one does.
-          if (due('calendars') || statusMoved || calendarsOwed()) part('calendars', loadCalendars);
+          if (reload || statusMoved || calendarsOwed()) loadCalendars().catch(() => {});
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.

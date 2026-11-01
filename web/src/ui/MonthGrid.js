@@ -20,7 +20,7 @@ import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallbac
 import { gridMove } from './gridmove.js';
 import {
   keyOfEpochDay, epochDayOfKey, weekIndexOfKey,
-  dayKeysOfWeek, dateOfDayKey, addDaysDate, parseISO, toISOWithOffset,
+  dayKeysOfWeek, dateOfDayKey, addDaysDate, toISOWithOffset,
   todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart, fmtDayLong,
 } from '../lib/dates.js';
 import {

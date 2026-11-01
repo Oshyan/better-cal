@@ -176,10 +176,13 @@ export async function loadConfig() {
 //   asked for and none began before it answered: one asked for between
 //   writes held an older list, and landing late put it back on screen;
 // - once the last write is done, however it went, the list is owed a
-//   reload until one lands (calendarsOwed: the change check asks again).
+//   reload until one lands (calendarsOwed: the change check asks again);
+// - and of two reloads, an older answer never replaces a newer one.
 let calendarEdits = 0;
 let calendarsUnsaved = 0;
 let calendarsDirty = false;
+let calendarLoads = 0;
+let calendarsShown = 0;
 let calendarTurn = Promise.resolve();
 const latestByKey = new Map();
 export function writeCalendars({ key = null, show = null, send, revert = null }) {
@@ -206,10 +209,22 @@ export function calendarsOwed() {
 export async function loadCalendars() {
   const asked = calendarEdits;
   const clean = calendarsUnsaved === 0;
-  const data = await api('/calendars');
-  if (clean && asked === calendarEdits && calendarsUnsaved === 0) {
-    set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
-    calendarsDirty = false;
+  const load = ++calendarLoads;
+  let data;
+  try {
+    data = await api('/calendars');
+  } catch (e) {
+    calendarsDirty = true;
+    throw e;
+  }
+  if (load > calendarsShown) {
+    if (clean && asked === calendarEdits && calendarsUnsaved === 0) {
+      set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+      calendarsShown = load;
+      calendarsDirty = false;
+    } else {
+      calendarsDirty = true;
+    }
   }
   return data;
 }
@@ -878,6 +893,8 @@ export async function undo() {
     const data = await api('/undo', { method: 'POST' });
     toast('Undone: ' + (data.undone ? data.undone.op + ' ' + data.undone.entity : 'last change'));
     invalidateRecords(); // could have been any event's record
+    // Any change can be undone, a calendar's place or settings among them.
+    loadCalendars().catch(() => {});
     await refreshWindow();
     return true;
   } catch (e) {

@@ -1180,10 +1180,21 @@ export async function toggleCalendarVisible(cal) {
   }
 }
 
+// A calendar's settings: shown at once and put back if the save fails
+// (writeCalendars). The answer isn't laid over the list: it's from before
+// any write still queued, and put back what those showed. What the server
+// made of it (a colour tidied, say) comes with the reload after.
 export async function updateCalendar(cal, fields) {
+  const now = state.calendars.find((c) => c.id === cal.id) || cal;
+  const was = Object.fromEntries(Object.keys(fields).map((k) => [k, now[k]]));
+  const put = (values) => set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...values } : c)) });
   try {
-    const updated = await writeCalendars({ send: () => api('/calendars/' + cal.id, { method: 'PATCH', body: fields }) });
-    set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...updated } : c)) });
+    const updated = await writeCalendars({
+      key: 'calendar:' + cal.id + ':' + Object.keys(fields).sort().join(','),
+      show: () => put(fields),
+      send: () => api('/calendars/' + cal.id, { method: 'PATCH', body: fields }),
+      revert: () => put(was),
+    });
     toast('Calendar updated', { duration: 2500 });
     // What a calendar is comes with each of its events (a context event
     // moves to the day's header): asked for again now, not at the next

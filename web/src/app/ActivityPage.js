@@ -4,7 +4,7 @@
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { state, set, toast, insertOccurrence, useStore } from './store.js';
-import { api, refreshWindow } from './api.js';
+import { api, refreshWindow, loadCalendars } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { occDayKey } from '../lib/dates.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -122,6 +122,7 @@ export function ActivityPage() {
       setEntries((prev) => prev.map((x) => (x.id === entry.id ? { ...x, undone: true, undoable: false } : x)));
       toast('Undone: ' + entry.summary);
       refreshWindow();
+      loadCalendars().catch(() => {});
     } catch (e) {
       if (e.code === 'stale_undo') {
         if (await askConfirm({

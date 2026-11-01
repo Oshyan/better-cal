@@ -196,7 +196,8 @@ final class Calendars
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
-        $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendars WHERE user_id = ?', [$userId]) ?? 0);
+        // Last in the list, a step on (Order: places are sparse).
+        $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), 0) FROM calendars WHERE user_id = ?', [$userId]) ?? 0) + Order::STEP;
         $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession, $position): int {
             if ($creatorTokenId !== null) {
                 // Authentication happened before the controller ran. Lock and
@@ -656,7 +657,7 @@ final class Calendars
         foreach (array_diff($want, $have) as $folderId) {
             $owned = $this->db->scalar('SELECT id FROM folders WHERE id = ? AND user_id = ?', [$folderId, $userId]);
             if ($owned !== null) {
-                $end = (int) $this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendar_folders WHERE folder_id = ?', [$folderId]);
+                $end = (int) $this->db->scalar('SELECT COALESCE(MAX(position), 0) FROM calendar_folders WHERE folder_id = ?', [$folderId]) + Order::STEP;
                 $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, $end]);
             }
         }
@@ -664,7 +665,8 @@ final class Calendars
 
     /**
      * Put a calendar at a place in the calendar list's own order (0 first),
-     * the order the main list shows when it isn't A to Z (#187).
+     * the order the main list shows when it isn't A to Z (#187). Places are
+     * sparse (Order): one row changes, and its undo is the ordinary kind.
      *
      * @return list<int> every calendar id, in the new order
      */
@@ -675,34 +677,18 @@ final class Calendars
             throw HttpError::notFound('Calendar not found');
         }
         return $this->db->tx(function () use ($userId, $calendarId, $at, $cal): array {
-            $was = array_search($calendarId, self::listOrder($this->db, $userId), true);
-            $order = self::putInList($this->db, $userId, $calendarId, $at);
-            // Only this calendar's place, for Undo to put back (Undo::PLACE):
-            // the whole list's rows put back the others' later changes too,
-            // and a Google calendar among them left the move log-only.
-            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Moved '" . $cal['name'] . "' in the calendar list", [
-                'before' => [['list' => true, 'at' => $was === false ? null : (int) $was]],
-                'after' => [['list' => true, 'at' => (int) array_search($calendarId, $order, true)]],
-            ], [], ['calendar_position:' . $calendarId]);
-            return $order;
+            $ordered = array_map(static fn($r) => [(int) $r['id'], (int) $r['position']],
+                $this->db->all('SELECT id, position FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]));
+            $places = Order::place($ordered, $calendarId, $at);
+            [$in, $params] = Db::in(array_keys($places));
+            $rows = fn(): array => $this->db->all("SELECT * FROM calendars WHERE id IN $in", $params);
+            $before = $rows();
+            foreach ($places as $id => $pos) {
+                $this->db->run('UPDATE calendars SET position = ? WHERE id = ? AND user_id = ?', [$pos, $id, $userId]);
+            }
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendars' => $before], ['calendars' => $rows()], "Moved '" . $cal['name'] . "' in the calendar list");
+            return array_map('intval', array_column($this->db->all('SELECT id FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]), 'id'));
         });
-    }
-
-    /** @return list<int> the user's calendars in the list's own order */
-    public static function listOrder(Db $db, int $userId): array
-    {
-        return array_map('intval', array_column($db->all('SELECT id FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]), 'id'));
-    }
-
-    /** @return list<int> the new order, with the calendar at its place */
-    public static function putInList(Db $db, int $userId, int $calendarId, int $at): array
-    {
-        $order = array_values(array_filter(self::listOrder($db, $userId), static fn(int $c) => $c !== $calendarId));
-        array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
-        foreach ($order as $i => $id) {
-            $db->run('UPDATE calendars SET position = ? WHERE id = ? AND user_id = ?', [$i, $id, $userId]);
-        }
-        return $order;
     }
 
     /**

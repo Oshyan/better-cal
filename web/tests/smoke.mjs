@@ -2372,7 +2372,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar, toggleCalendarVisible } = await import('../src/app/actions.js');
-  const { loadCalendars, calendarsOwed } = await import('../src/app/api.js');
+  const { loadCalendars, calendarsOwed, undo } = await import('../src/app/api.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -2394,6 +2394,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   });
   let holds = []; // [{match, promise, fail}], each used once
   let failReads = 0; // the next reloads of the list that fail
+  let reads = 0; // reloads of the list answered
   const holdNext = (match, fail = false) => { let release; holds.push({ match, fail, promise: new Promise((r) => { release = r; }) }); return () => release(); };
   globalThis.fetch = async (url, o) => {
     const u = new URL(String(url), 'http://app.test');
@@ -2418,6 +2419,8 @@ console.log('--- chronological ordering across timezone offsets ---');
       return json({ id: Number(m[1]), name: server.names[m[1]] || 'Sample ' + m[1], visible: !server.hidden[m[1]] });
     }
     if (u.pathname.endsWith('/calendars') && method === 'GET' && failReads > 0) { failReads--; return json({ error: { code: 'server', message: 'Down for a moment' } }, 500); }
+    if (u.pathname.endsWith('/calendars') && method === 'GET') reads++;
+    if (u.pathname.endsWith('/undo') && method === 'POST') return json({ undone: { entity: 'calendar', op: 'update' } });
     if (u.pathname.endsWith('/calendars') && method === 'GET') return listed();
     return json({});
   };
@@ -2525,6 +2528,53 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('sidebar: a failed A to Z goes back, with its reload failing too, and a reload is owed', [st.folders[0].sort, calendarsOwed()], ['manual', true]);
   await loadCalendars();
   eq('sidebar: a reload that lands settles what was owed', calendarsOwed(), false);
+
+  // A calendar's settings save: shown at once, and its answer, landing
+  // after a newer change, isn't laid over it (#187 review).
+  reset();
+  await tick(10);
+  const releaseRename = holdNext((u, m) => m === 'PATCH' && u.pathname.endsWith('/calendars/2'));
+  const renaming = updateCalendar(st.calendars[1], { name: 'Renamed at once' });
+  await tick();
+  eq('sidebar: a settings change shows at once', st.calendars[1].name, 'Renamed at once');
+  const hiding = toggleCalendarVisible(st.calendars[1]);
+  await tick();
+  releaseRename();
+  await renaming;
+  await hiding;
+  await tick(10);
+  eq("sidebar: a settings save's answer doesn't undo a newer checkbox click", [st.calendars[1].name, st.calendars[1].visible, server.hidden[2]], ['Renamed at once', false, true]);
+  reset();
+  await tick(10);
+  const failRename = holdNext((u, m) => m === 'PATCH', true);
+  const failing = updateCalendar(st.calendars[0], { name: 'Not saved' });
+  await tick();
+  failRename();
+  await failing;
+  await tick(10);
+  eq('sidebar: a settings change that fails goes back', st.calendars[0].name, 'Sample 1');
+
+  // Undo, from a toast or the log, brings the list up to date: a drag it
+  // undid showed where it had gone.
+  reset();
+  await tick(10);
+  const readsBefore = reads;
+  await undo();
+  await tick(10);
+  assert('sidebar: an undo reloads the list', reads > readsBefore);
+
+  // Of two reloads, the older answer, landing last, doesn't replace the newer.
+  reset();
+  await tick(10);
+  const releaseFirstRead = holdNext((u, m) => m === 'GET' && u.pathname.endsWith('/calendars'));
+  const firstRead = loadCalendars();
+  await tick();
+  server.names[1] = 'Newer name';
+  await loadCalendars();
+  server.names[1] = 'Even newer, unseen';
+  releaseFirstRead();
+  await firstRead;
+  eq('sidebar: an older reload answered last leaves the newer list', st.calendars[0].name, 'Newer name');
 
   globalThis.fetch = realFetch;
   put(saved);

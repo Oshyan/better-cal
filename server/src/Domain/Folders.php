@@ -70,7 +70,9 @@ final class Folders
      * Put a calendar in this folder at a place in its own order (0 first),
      * taking it out of folder $from on the way when given: a calendar
      * dragged from one folder to another (#187). Within the same folder,
-     * it's a move to a new place.
+     * it's a move to a new place. Places are sparse (Order), so this
+     * changes only the calendar's own rows, and its undo is the ordinary
+     * kind: just those rows go back.
      */
     public function place(int $userId, int $id, int $calendarId, int $at, ?int $from = null): array
     {
@@ -78,18 +80,28 @@ final class Folders
         $cal = $this->ownedCalendar($userId, $calendarId);
         $source = $from !== null && $from !== $id ? $this->get($userId, $from) : null;
         return $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId, $at, $source): array {
-            $ids = $source !== null ? [$id, (int) $source['id']] : [$id];
-            $before = self::places($this->db, $calendarId, $ids);
+            $ordered = array_map(static fn($r) => [(int) $r['calendar_id'], (int) $r['position']], $this->db->all(
+                'SELECT cf.calendar_id, cf.position FROM calendar_folders cf JOIN calendars c ON c.id = cf.calendar_id WHERE cf.folder_id = ? ORDER BY cf.position, c.position, c.id',
+                [$id]
+            ));
+            $places = Order::place($ordered, $calendarId, $at);
+            $was = in_array($calendarId, array_map(static fn($r) => $r[0], $ordered), true);
+            $rows = fn(): array => $this->rows($calendarId, $id, $source !== null ? (int) $source['id'] : null, array_keys($places));
+            $before = $rows();
             if ($source !== null) {
-                self::putAt($this->db, (int) $source['id'], $calendarId, null);
+                $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [(int) $source['id'], $calendarId]);
             }
-            self::putAt($this->db, $id, $calendarId, $at);
-            $was = $before[0]['at'] !== null;
+            if (!$was) {
+                $this->db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $id, $places[$calendarId]]);
+            }
+            foreach ($places as $c => $pos) {
+                $this->db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$pos, $id, $c]);
+            }
             $name = (string) $cal['name'];
             $summary = $was ? "Moved '" . $name . "' within folder '" . $folder['name'] . "'"
                 : ($source !== null ? "Moved '" . $name . "' from folder '" . $source['name'] . "' to '" . $folder['name'] . "'"
                 : "Added '" . $name . "' to folder '" . $folder['name'] . "'");
-            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], $summary, ['before' => $before, 'after' => self::places($this->db, $calendarId, $ids)], [], self::touches($calendarId, $ids));
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => $rows()], $summary);
             return ['calendarIds' => self::order($this->db, $id)];
         });
     }
@@ -100,58 +112,28 @@ final class Folders
         $folder = $this->get($userId, $id);
         $cal = $this->ownedCalendar($userId, $calendarId);
         $this->db->tx(function () use ($userId, $id, $folder, $cal, $calendarId): void {
-            $before = self::places($this->db, $calendarId, [$id]);
-            self::putAt($this->db, $id, $calendarId, null);
-            $this->undo->record($userId, Undo::PLACE, $calendarId, 'update', [], [], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'", ['before' => $before, 'after' => self::places($this->db, $calendarId, [$id])], [], self::touches($calendarId, [$id]));
+            $before = $this->rows($calendarId, $id, null, []);
+            $this->db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$id, $calendarId]);
+            $this->undo->record($userId, 'calendar', $calendarId, 'update', ['calendar_folders' => $before], ['calendar_folders' => []], "Took '" . $cal['name'] . "' out of folder '" . $folder['name'] . "'");
         });
     }
 
     /**
-     * Where a calendar is in each of these folders: [{folder, at}], at null
-     * when it isn't in one. What Undo puts back (Undo::PLACE): only this
-     * calendar's place, so later changes to the others stay (#187 review).
+     * The calendar_folders rows a placement can change: the calendar's own
+     * in this folder and the one it leaves, and any others it gave a new
+     * place (only when the folder was numbered afresh).
      *
-     * @param list<int> $folderIds
-     * @return list<array{folder:int,at:?int}>
+     * @param list<int> $others
      */
-    public static function places(Db $db, int $calendarId, array $folderIds): array
+    private function rows(int $calendarId, int $folderId, ?int $fromId, array $others): array
     {
-        return array_map(static function (int $f) use ($db, $calendarId): array {
-            $i = array_search($calendarId, self::order($db, $f), true);
-            return ['folder' => $f, 'at' => $i === false ? null : (int) $i];
-        }, $folderIds);
-    }
-
-    /**
-     * What a placement touched, for Undo's staleness check: the calendar's
-     * filing in each folder, keyed as the settings' own filing changes are.
-     *
-     * @param list<int> $folderIds
-     * @return list<string>
-     */
-    public static function touches(int $calendarId, array $folderIds): array
-    {
-        return array_map(static fn(int $f) => 'calendar_folders:' . $calendarId . '|' . $f, $folderIds);
-    }
-
-    /** Put a calendar at a place in a folder's own order, or out of it (null). */
-    public static function putAt(Db $db, int $folderId, int $calendarId, ?int $at): void
-    {
-        $order = array_values(array_filter(self::order($db, $folderId), static fn(int $c) => $c !== $calendarId));
-        $in = $db->scalar('SELECT calendar_id FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$folderId, $calendarId]) !== null;
-        if ($at === null) {
-            if ($in) {
-                $db->run('DELETE FROM calendar_folders WHERE folder_id = ? AND calendar_id = ?', [$folderId, $calendarId]);
-            }
-        } else {
-            array_splice($order, max(0, min($at, count($order))), 0, [$calendarId]);
-            if (!$in) {
-                $db->run('INSERT INTO calendar_folders (calendar_id, folder_id, position) VALUES (?, ?, ?)', [$calendarId, $folderId, 0]);
-            }
+        $out = $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ? AND folder_id IN (?, ?)', [$calendarId, $folderId, $fromId ?? $folderId]);
+        $others = array_values(array_diff($others, [$calendarId]));
+        if ($others !== []) {
+            [$in, $params] = Db::in($others);
+            $out = array_merge($out, $this->db->all("SELECT * FROM calendar_folders WHERE folder_id = ? AND calendar_id IN $in", array_merge([$folderId], $params)));
         }
-        foreach ($order as $i => $c) {
-            $db->run('UPDATE calendar_folders SET position = ? WHERE folder_id = ? AND calendar_id = ?', [$i, $folderId, $c]);
-        }
+        return $out;
     }
 
     /** A folder's calendars in its own order (ties by the calendars' order). */

@@ -85,6 +85,12 @@ final class Db
         $cols = array_keys($row);
         $colSql = implode(', ', array_map(static fn($c) => "`$c`", $cols));
         $placeholders = implode(', ', array_fill(0, count($cols), '?'));
+        if ($this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            // SQLite (the tests): the same, in its own words.
+            $updates = implode(', ', array_map(static fn($c) => "`$c` = excluded.`$c`", $cols));
+            $this->run("INSERT INTO `$table` ($colSql) VALUES ($placeholders) ON CONFLICT DO UPDATE SET $updates", array_values($row));
+            return;
+        }
         $updates = implode(', ', array_map(static fn($c) => "`$c` = VALUES(`$c`)", $cols));
         $sql = "INSERT INTO `$table` ($colSql) VALUES ($placeholders) ON DUPLICATE KEY UPDATE $updates";
         $this->run($sql, array_values($row));

@@ -1631,9 +1631,21 @@ final class Events
      * edited one showed twice (0.9.15, as Thunderbird and Nextcloud do it).
      * Null when nothing moved.
      *
+     * A monthly or yearly series' occurrences are not evenly spaced, so its
+     * keys follow the occurrence instead of the day count: a key that is the
+     * nth occurrence of its month (or year) under the old rule becomes the
+     * nth of the month the start moved to under the new one, which may name
+     * another day ("every 30th" dragged from 30 Jan to 1 Feb is "every 1st",
+     * rebaseSeriesEdit). Counted in days, the edited 30 Apr landed on 2 May
+     * beside the series' own 1 May, and a skipped 30 Apr came back. A key
+     * that is no occurrence of the old rule, or whose month has none under
+     * the new rule, moves by the days as before. $aligned is the series as
+     * it will be stored (alignedStart), so the new rule is read from a start
+     * on its own pattern.
+     *
      * @return null|callable(string): string  old instance key => new one
      */
-    private static function seriesKeyShift(array $before, array $after): ?callable
+    private static function seriesKeyShift(array $before, array $after, ?array $aligned = null): ?callable
     {
         $oldTz = Time::zone((string) $before['tzid']);
         $newTz = Time::zone((string) $after['tzid']);
@@ -1646,11 +1658,51 @@ final class Events
         }
         $days = self::dayDelta($was, $now);
         $time = $newAllDay ? '00:00:00' : $now->format('H:i:s');
-        return static function (string $key) use ($oldTz, $newTz, $days, $time): string {
+        $byDays = static function (string $key) use ($oldTz, $newTz, $days, $time): string {
             $date = (new \DateTimeImmutable(Time::fromDb($key)->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
                 ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
             return Time::toDb((new \DateTimeImmutable($date . ' ' . $time, $newTz))->setTimezone(Time::utc()));
         };
+        $freq = RepeatParser::ruleParts((string) ($after['rrule'] ?? ''))['FREQ'] ?? '';
+        if (!in_array($freq, ['MONTHLY', 'YEARLY'], true)
+            || $freq !== (RepeatParser::ruleParts((string) ($before['rrule'] ?? ''))['FREQ'] ?? '')
+            || !class_exists(\Sabre\VObject\Component\VCalendar::class)) {
+            return $byDays;
+        }
+        $unit = $freq === 'MONTHLY' ? 'month' : 'year';
+        $periods = $freq === 'MONTHLY'
+            ? ((int) $now->format('Y') * 12 + (int) $now->format('n')) - ((int) $was->format('Y') * 12 + (int) $was->format('n'))
+            : (int) $now->format('Y') - (int) $was->format('Y');
+        // The rules without their bounds: a key near the series' end must
+        // still find its occurrence in a month the old UNTIL did not reach.
+        $oldRule = ['rrule' => Recurrence::pattern((string) $before['rrule'])] + $before;
+        $newRule = ['rrule' => Recurrence::pattern((string) $after['rrule'])] + ($aligned ?? $after);
+        return static function (string $key) use ($byDays, $oldTz, $newTz, $unit, $periods, $oldRule, $newRule): string {
+            $local = Time::fromDb($key)->setTimezone($oldTz);
+            $n = array_search($key, self::occurrencesIn($oldRule, $local, $unit, $oldTz), true);
+            if ($n === false) {
+                return $byDays($key);
+            }
+            $target = (new \DateTimeImmutable($local->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $newTz))
+                ->modify(($periods >= 0 ? '+' : '') . $periods . ' ' . $unit);
+            return self::occurrencesIn($newRule, $target, $unit, $newTz)[$n] ?? $byDays($key);
+        };
+    }
+
+    /**
+     * The instance keys of a series' occurrences in the month or year (local
+     * to $tz) that holds $day, in order.
+     *
+     * @return list<string>
+     */
+    private static function occurrencesIn(array $master, \DateTimeImmutable $day, string $unit, \DateTimeZone $tz): array
+    {
+        $from = new \DateTimeImmutable($day->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $tz);
+        $to = $from->modify('+1 ' . $unit);
+        return array_map(
+            static fn(array $occ): string => Time::toDb($occ['start']),
+            Recurrence::sabreExpand($master, $from->setTimezone(Time::utc()), $to->setTimezone(Time::utc()))
+        );
     }
 
     private function patchAll(int $userId, array $event, array $in): void
@@ -1668,14 +1720,13 @@ final class Events
             $moved = self::dayDelta($from, $to);
             $followed = Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $event['rrule'], $moved), $from, $to);
             if (Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern($followed)) {
-                // Same days, moved together: skipped and edited days follow.
-                $shift = self::seriesKeyShift($event, $after);
                 // A move the rule could not follow (a list of month days) lands
                 // the start on its next listed day; a rename or a new time
                 // leaves an off-pattern start where it was.
-                if ($moved !== 0) {
-                    $fields = array_merge($fields, self::alignedStart($after));
-                }
+                $aligned = $moved !== 0 ? self::alignedStart($after) : [];
+                // Same days, moved together: skipped and edited days follow.
+                $shift = self::seriesKeyShift($event, $after, array_merge($after, $aligned));
+                $fields = array_merge($fields, $aligned);
             } else {
                 // The days themselves changed: the series starts on its first
                 // listed day, and old keys no longer name places in it.
@@ -1729,6 +1780,21 @@ final class Events
                             'all_day' => (int) $after['all_day'],
                             'tzid' => (string) $after['tzid'],
                         ];
+                    } else {
+                        // One moved to its own time goes to the day its
+                        // occurrence moved to, keeping that time and its
+                        // distance in days from the occurrence. Left where
+                        // it was, it stood on the old day while the day it
+                        // was an edit of had moved on.
+                        $by = self::dayDelta(
+                            Time::fromDb((string) $ov['recurrence_instance_utc'])->setTimezone(Time::zone((string) $event['tzid'])),
+                            Time::fromDb($key)->setTimezone(Time::zone((string) $after['tzid']))
+                        );
+                        if ($by !== 0) {
+                            $ovTz = Time::zone((string) $ov['tzid']);
+                            $onDay = static fn(string $utc): string => Time::toDb(Time::fromDb($utc)->setTimezone($ovTz)->modify(($by >= 0 ? '+' : '') . $by . ' days'));
+                            $set += ['start_utc' => $onDay((string) $ov['start_utc']), 'end_utc' => $onDay((string) $ov['end_utc'])];
+                        }
                     }
                     $this->db->update('events', $set, 'id = ?', [(int) $ov['id']]);
                 }

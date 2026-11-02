@@ -2196,6 +2196,101 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $onDay('Statement', '2027-04-30'),
             $onDay('Statement', '2027-05-01'),
         ]);
+        // A monthly series dragged across a month boundary keeps its edited
+        // and skipped days on the matching days of the new rule. Moved by
+        // the drag's number of days, as a daily or weekly series' are, the
+        // edited 30 Apr of "every 30th" dragged from 30 Jan to 1 Feb landed
+        // on 2 May (April is a day shorter than January): the series' own
+        // 1 May showed beside it, and a skipped day came back.
+        $shown = static function (string $title, string $day) use ($adb): array {
+            $seen = [];
+            foreach ($adb->all('SELECT * FROM events WHERE title LIKE ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$title . '%']) as $row) {
+                $overrides = $adb->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $row['id']]);
+                foreach ((new Recurrence())->expand($row, $overrides, Time::fromDb($day . ' 00:00:00'), Time::fromDb($day . ' 23:59:59')) as $occ) {
+                    $seen[] = (string) $occ['row']['title'] . ' ' . Time::toDb($occ['start']);
+                }
+            }
+            sort($seen);
+            return $seen;
+        };
+        $override = static fn(int $master): array => $adb->one('SELECT recurrence_instance_utc, start_utc, end_utc, title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$master]) ?? [];
+        $ledger = (int) $eventsA->create(1, ['title' => 'Ledger', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=30', 'start' => '2027-01-30T18:00:00+00:00', 'end' => '2027-01-30T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $ledger, ['scope' => 'this', 'instanceStart' => '2027-04-30T18:00:00+00:00', 'title' => 'Ledger, April review']);
+        $eventsA->deleteEvent(1, $ledger, 'this', '2027-06-30T18:00:00+00:00');
+        $eventsA->patch(1, $ledger, ['scope' => 'all', 'instanceStart' => '2027-01-30T18:00:00+00:00', 'start' => '2027-02-01T18:00:00+00:00', 'end' => '2027-02-01T19:00:00+00:00']);
+        checkEq('every 30th dragged from 30 Jan to 1 Feb: the edited 30 Apr is the 1 May, the skipped 30 Jun the 1 Jul', [
+            'FREQ=MONTHLY;BYMONTHDAY=1', '2027-02-01 18:00:00',
+            ['recurrence_instance_utc' => '2027-05-01 18:00:00', 'start_utc' => '2027-05-01 18:00:00', 'end_utc' => '2027-05-01 19:00:00', 'title' => 'Ledger, April review'],
+            ['Ledger, April review 2027-05-01 18:00:00'], [], ['Ledger 2027-04-01 18:00:00'],
+            ['2027-07-01 18:00:00'], [], ['Ledger 2027-08-01 18:00:00'],
+        ], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$ledger]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$ledger]),
+            $override($ledger),
+            $shown('Ledger', '2027-05-01'), $shown('Ledger', '2027-05-02'), $shown('Ledger', '2027-04-01'),
+            json_decode((string) $adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$ledger]), true), $shown('Ledger', '2027-07-01'), $shown('Ledger', '2027-08-01'),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes with the edit on 30 Apr and the skip on 30 Jun', [
+            'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30 18:00:00', '2027-04-30 18:00:00', ['2027-06-30 18:00:00'],
+            ['Ledger, April review 2027-04-30 18:00:00'], [], ['Ledger 2027-05-30 18:00:00'],
+        ], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$ledger]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$ledger]),
+            $override($ledger)['recurrence_instance_utc'] ?? null,
+            json_decode((string) $adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$ledger]), true),
+            $shown('Ledger', '2027-04-30'), $shown('Ledger', '2027-06-30'), $shown('Ledger', '2027-05-30'),
+        ]);
+        // A day moved to another time on its own keeps that time, on the
+        // day its occurrence moved to.
+        $audit = (int) $eventsA->create(1, ['title' => 'Audit', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=30', 'start' => '2027-01-30T18:00:00+00:00', 'end' => '2027-01-30T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $audit, ['scope' => 'this', 'instanceStart' => '2027-04-30T18:00:00+00:00', 'title' => 'Audit, evening', 'start' => '2027-04-30T20:00:00+00:00', 'end' => '2027-04-30T21:30:00+00:00']);
+        $eventsA->patch(1, $audit, ['scope' => 'all', 'instanceStart' => '2027-01-30T18:00:00+00:00', 'start' => '2027-02-01T18:00:00+00:00', 'end' => '2027-02-01T19:00:00+00:00']);
+        checkEq('a day moved to 20:00 on its own follows the drag to 1 May, still at 20:00', [
+            ['recurrence_instance_utc' => '2027-05-01 18:00:00', 'start_utc' => '2027-05-01 20:00:00', 'end_utc' => '2027-05-01 21:30:00', 'title' => 'Audit, evening'],
+            ['Audit, evening 2027-05-01 20:00:00'], [],
+        ], [$override($audit), $shown('Audit', '2027-05-01'), $shown('Audit', '2027-04-30')]);
+        // Out of February: "every 28th" from 28 Feb dragged to 1 Mar is
+        // "every 1st", and its edited 28 Apr is the 1 May (not 29 Apr).
+        $payroll = (int) $eventsA->create(1, ['title' => 'Payroll', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=28', 'start' => '2027-02-28T18:00:00+00:00', 'end' => '2027-02-28T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $payroll, ['scope' => 'this', 'instanceStart' => '2027-04-28T18:00:00+00:00', 'title' => 'Payroll, checked']);
+        $eventsA->patch(1, $payroll, ['scope' => 'all', 'instanceStart' => '2027-02-28T18:00:00+00:00', 'start' => '2027-03-01T18:00:00+00:00', 'end' => '2027-03-01T19:00:00+00:00']);
+        checkEq('every 28th dragged from 28 Feb to 1 Mar: the edited 28 Apr is the 1 May', [
+            'FREQ=MONTHLY;BYMONTHDAY=1', '2027-03-01 18:00:00', '2027-05-01 18:00:00', ['Payroll, checked 2027-05-01 18:00:00'], [],
+        ], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$payroll]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$payroll]),
+            $override($payroll)['recurrence_instance_utc'] ?? null,
+            $shown('Payroll', '2027-05-01'), $shown('Payroll', '2027-04-29'),
+        ]);
+        // Back into a shorter month: "every 1st" from 1 Mar dragged to 28 Feb
+        // is "every 28th", and its skipped 1 Jun is the 28 May (not 31 May).
+        $lease = (int) $eventsA->create(1, ['title' => 'Lease', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1', 'start' => '2027-03-01T18:00:00+00:00', 'end' => '2027-03-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->deleteEvent(1, $lease, 'this', '2027-06-01T18:00:00+00:00');
+        $eventsA->patch(1, $lease, ['scope' => 'all', 'instanceStart' => '2027-03-01T18:00:00+00:00', 'start' => '2027-02-28T18:00:00+00:00', 'end' => '2027-02-28T19:00:00+00:00']);
+        checkEq('every 1st dragged from 1 Mar to 28 Feb: the skipped 1 Jun is the 28 May', [
+            'FREQ=MONTHLY;BYMONTHDAY=28', '2027-02-28 18:00:00', ['2027-05-28 18:00:00'], [], ['Lease 2027-04-28 18:00:00'],
+        ], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$lease]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$lease]),
+            json_decode((string) $adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$lease]), true),
+            $shown('Lease', '2027-05-28'), $shown('Lease', '2027-04-28'),
+        ]);
+        // When the month an edited day moves to has no such day ("every 1st"
+        // dragged from 1 Feb to 31 Jan: April has no 31st), the edit keeps
+        // the drag's days instead and stands on its own, so nothing is lost.
+        $gym = (int) $eventsA->create(1, ['title' => 'Gym fee', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1', 'start' => '2027-02-01T18:00:00+00:00', 'end' => '2027-02-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $gym, ['scope' => 'this', 'instanceStart' => '2027-05-01T18:00:00+00:00', 'title' => 'Gym fee, paid late']);
+        $eventsA->patch(1, $gym, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'start' => '2027-01-31T18:00:00+00:00', 'end' => '2027-01-31T19:00:00+00:00']);
+        checkEq('every 1st dragged from 1 Feb to 31 Jan: the edited 1 May has no 31 Apr to go to and keeps the drag\'s day', [
+            'FREQ=MONTHLY;BYMONTHDAY=31', '2027-01-31 18:00:00', '2027-04-30 18:00:00',
+            ['Gym fee, paid late 2027-04-30 18:00:00'], ['Gym fee 2027-03-31 18:00:00'], ['Gym fee 2027-05-31 18:00:00'],
+        ], [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$gym]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$gym]),
+            $override($gym)['recurrence_instance_utc'] ?? null,
+            $shown('Gym fee', '2027-04-30'), $shown('Gym fee', '2027-03-31'), $shown('Gym fee', '2027-05-31'),
+        ]);
     }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);

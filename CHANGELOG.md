@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Very large calendars can be deleted and undone** ([#191](https://github.com/Oshyan/better-cal/issues/191)): one with tens of thousands of events failed with "Delete failed" (before 1.4.5 it was deleted with nothing in Activity to undo). Its events are now kept for undo in pieces, so the delete goes through and Undo brings everything back.
+
 ## 1.4.6 (2026-11-01)
 
 - **Quick add reads more of what people type** ([#193](https://github.com/Oshyan/better-cal/issues/193)):

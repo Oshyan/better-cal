@@ -129,6 +129,8 @@ final class Activity
              WHERE created_at < ? AND (before_json IS NOT NULL OR after_json IS NOT NULL)',
             [$undoCut]
         )->rowCount();
+        // And the rows a large entry kept in pieces, with them.
+        Undo::dropUnusedPieces($this->db);
         $deleted = $this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
         $forgotten = Plugins::forgetGoneCalendars($this->db);
         return ['snapshotsCleared' => $cleared, 'deleted' => $deleted, 'pluginRowsForgotten' => $forgotten];

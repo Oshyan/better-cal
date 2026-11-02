@@ -90,6 +90,30 @@ final class Db
         $this->run($sql, array_values($row));
     }
 
+    /**
+     * upsert() for many rows with the same columns, in one statement: undo
+     * putting back tens of thousands of events. All or none of them.
+     *
+     * @param list<array<string,mixed>> $rows
+     */
+    public function upsertMany(string $table, array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+        $cols = array_keys($rows[0]);
+        $colSql = implode(', ', array_map(static fn($c) => "`$c`", $cols));
+        $tuple = '(' . implode(', ', array_fill(0, count($cols), '?')) . ')';
+        $updates = implode(', ', array_map(static fn($c) => "`$c` = VALUES(`$c`)", $cols));
+        $params = [];
+        foreach ($rows as $row) {
+            foreach ($cols as $c) {
+                $params[] = $row[$c] ?? null;
+            }
+        }
+        $this->run("INSERT INTO `$table` ($colSql) VALUES " . implode(', ', array_fill(0, count($rows), $tuple)) . " ON DUPLICATE KEY UPDATE $updates", $params);
+    }
+
     public function tx(callable $fn): mixed
     {
         $pdo = $this->pdo();

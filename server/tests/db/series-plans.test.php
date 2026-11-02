@@ -170,6 +170,22 @@ return static function (Db $db): void {
         // The migration's backfill: a row with no list, filled by equality.
         $db->run("UPDATE events SET override_fields = NULL WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$s]);
         $shown = $db->one("SELECT start_utc, end_utc, title FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$s]);
+        // A feed's poll (and Google's, which goes through it): ownership from what changed.
+        $calendarId = (int) $db->insert('calendars', ['user_id' => $u, 'name' => 'Sample feed', 'kind' => 'subscribed', 'color' => '#336699']);
+        $feeds = new BetterCal\Domain\Feeds($db);
+        $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
+        $ev = static fn(string $title, ?string $key, string $start, string $loc = 'Sample Hall'): array => ['uid' => 'sample-feed-series', 'title' => $title, 'description' => null,
+            'location' => $loc, 'url' => null, 'start_utc' => $start, 'end_utc' => substr($start, 0, 11) . '19:00:00', 'all_day' => 0, 'tzid' => 'UTC',
+            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => $key];
+        $feedOwn = static fn() => json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE calendar_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$calendarId]), true);
+        $feeds->sync($calendar, [$ev('Choir', null, '2027-01-05 18:00:00'), $ev('Rehearsal', '2027-01-12 18:00:00', '2027-01-12 18:00:00')]);
+        checkEq('sync: an edited day never seen, by equality', ['title'], $feedOwn());
+        $feeds->sync($calendar, [$ev('Rehearsal', null, '2027-01-05 18:00:00'), $ev('Rehearsal', '2027-01-12 18:00:00', '2027-01-12 18:00:00')]);
+        checkEq('sync: echoed unchanged after the series took the same title, it keeps its own title', ['title'], $feedOwn());
+        $feeds->sync($calendar, [$ev('Choir', null, '2027-01-05 18:00:00'), $ev('Rehearsal', '2027-01-12 18:00:00', '2027-01-12 18:00:00', 'Sample Annex')]);
+        checkEq('sync: its place changed there to one the master doesn\'t have is its own', ['title', 'location'], $feedOwn());
+        $feeds->sync($calendar, [$ev('Choir', null, '2027-01-05 18:00:00'), $ev('Choir', '2027-01-12 18:00:00', '2027-01-12 18:00:00', 'Sample Annex')]);
+        checkEq('sync: its title put back to the series\' there is inherited', ['location'], $feedOwn());
         $migration = require dirname(__DIR__, 2) . '/migrations/063_override_fields.php';
         $said = $migration($db);
         checkEq('migration 063 run again fills only the rows still without a list, changing no value', [true, ['title'], $shown], [

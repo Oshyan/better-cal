@@ -285,8 +285,19 @@ final class Feeds
         // one would redo it), but an older undo of these events (an
         // attendance, a tag) stands on them.
         $touches = [];
+        // An edited day's own fields follow from what changed at the other
+        // end (series-model.md, Rows from Elsewhere): its master's values as
+        // this poll brings them.
+        $ownColumn = \BetterCal\Domain\Series\OwnFields::hasColumn($this->db);
+        $parsedMasters = [];
+        foreach ($parsed as $pm) {
+            if ($pm['recurrence_instance_utc'] === null) {
+                $parsedMasters[(string) $pm['uid']] = ['title' => $pm['title'], 'description' => Sanitize::description($pm['description']), 'location' => $pm['location'],
+                    'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status']];
+            }
+        }
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -327,6 +338,11 @@ final class Feeds
                 }
 
                 $current = $existingByKey[$key] ?? null;
+                $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
+                if ($ownColumn && $feedMaster !== null) {
+                    $own = \BetterCal\Domain\Series\OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
+                    $columns['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode($own);
+                }
                 if ($current === null) {
                     $id = $this->db->insert('events', $columns + [
                         'user_id' => $userId,

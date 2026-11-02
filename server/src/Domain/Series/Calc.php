@@ -57,8 +57,16 @@ final class Calc
     /** @param array{0:int,1:int,2:int} $clock */
     public static function at(int $dn, array $clock, string $tz): \DateTimeImmutable
     {
-        return (new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($dn), $clock[0], $clock[1], $clock[2]), Time::zone($tz)))
-            ->setTimezone(Time::utc());
+        $wall = sprintf('%s %02d:%02d:%02d', Cal::date($dn), $clock[0], $clock[1], $clock[2]);
+        $zone = Time::zone($tz);
+        $at = new \DateTimeImmutable($wall, $zone);
+        // A clock time that happens twice is the first, in daylight time, as
+        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second.
+        $earlier = (new \DateTimeImmutable('@' . ($at->getTimestamp() - 3600)))->setTimezone($zone);
+        if ($earlier->format('Y-m-d H:i:s') === $wall) {
+            $at = $earlier;
+        }
+        return $at->setTimezone(Time::utc());
     }
 
     public function key(int $dn): string

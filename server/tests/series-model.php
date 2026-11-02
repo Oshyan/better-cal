@@ -502,8 +502,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Choir changed to Monday and Thursday: from Thu 7 Jan, both Rehearsals outside (keep them), the skip forgotten', [
         'FREQ=WEEKLY;BYDAY=MO,TH', smAt('2027-01-07 19:00'), ['keep', 'delete'], [2, 3], null,
     ], [$p['writes']['master']['rrule'] ?? null, $p['writes']['master']['start_utc'] ?? null, smOptions($p, 'outside'), array_keys($p['writes']['detach']), array_key_exists('exdates_json', $p['writes']['master']) ? $p['writes']['master']['exdates_json'] : 'kept']);
-    check('Choir changed to Monday and Thursday: the summary names the two days that became events of their own',
-        str_contains($p['plan']['summary'], "2 edited days became events of their own: 'Rehearsal' and 'Rehearsal'"), $p['plan']['summary']);
+    checkEq('Choir changed to Monday and Thursday: the ownership sentence and the Activity summary name both days', [
+        "Two edited days become events of their own: 'Rehearsal' on 13 Apr and 'Rehearsal' on 11 May.", true, ['day' => null],
+    ], [$p['plan']['ownership'] ?? null, str_contains($p['plan']['summary'], "Two edited days became events of their own: 'Rehearsal' on 13 Apr and 'Rehearsal' on 11 May."),
+        ['day' => smGroup($p, 'outside')['day'] ?? null]]);
+    checkEq('a per-day group names its day: Choir\'s moved-days choice is drawn on 23 Mar', '2027-03-24T02:00:00Z',
+        smGroup(smPlan($choir, $choirRows, smDrag($choir, '2027-03-09 19:00', '2027-03-10 19:00')), 'movedDays')['day'] ?? null);
     $p = smPlan($choir2, $rows, ['rrule' => 'FREQ=WEEKLY;BYDAY=TH']);
     checkEq('Tuesday changed to Thursday: the drag\'s mapping is offered first', [['map', 'keep'], smAt('2027-04-15 19:00')],
         [smOptions($p, 'reading'), $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null]);

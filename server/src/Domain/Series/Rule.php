@@ -240,11 +240,15 @@ final class Rule
                 $seen[$n] = true;
                 $out[] = ['t' => 'day', 'n' => $n];
             }
-            // A day from the start and one from the end can be one day.
-            $hasPos = array_filter($bmd, static fn(int $n): bool => $n > 0) !== [];
-            $hasNeg = array_filter($bmd, static fn(int $n): bool => $n < 0) !== [];
-            if ($hasPos && $hasNeg) {
-                return null;
+            // A day from the start and one from the end are one day in a
+            // month of some length (the 31st and the last): another day set.
+            foreach ($bmd as $p) {
+                foreach ($bmd as $q) {
+                    if ($p > 0 && $q < 0 && $p - $q - 1 >= 28 && $p - $q - 1 <= 31) {
+                        $r->fixedDays = 'overlap';
+                        return null;
+                    }
+                }
             }
             usort($out, static fn(array $a, array $b): int => ($a['n'] < 0 ? 100 + $a['n'] : $a['n']) <=> ($b['n'] < 0 ? 100 + $b['n'] : $b['n']));
             return $out;

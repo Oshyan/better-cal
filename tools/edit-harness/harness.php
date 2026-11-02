@@ -55,6 +55,13 @@ try {
     });
     $runner = new Runner($db, domains($db), $seed);
     $runner->run($cases, $onlyFamily, $onlyEdit, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases): void {
+        // HARNESS_SLOW=seconds names each case that took longer.
+        static $last = null;
+        $now = microtime(true);
+        if (getenv('HARNESS_SLOW') !== false && $last !== null && $now - $last > (float) getenv('HARNESS_SLOW')) {
+            fwrite(STDERR, sprintf("case %d took %.1fs: %s %s %s\n", $i, $now - $last, $result['spec']['series']['family'], $result['spec']['series']['rrule'] ?? '', $result['spec']['edit']['kind']));
+        }
+        $last = $now;
         if (!$quiet && $result['records'] !== []) {
             $spec = $result['spec'];
             foreach ($result['records'] as $rec) {

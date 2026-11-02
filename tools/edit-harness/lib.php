@@ -714,6 +714,7 @@ final class Driver
 {
     private array $records = [];
     private array $spec = [];
+    private ?Rng $rng = null;
 
     public function __construct(
         private readonly Db $db,
@@ -734,15 +735,16 @@ final class Driver
     {
         $this->records = [];
         $this->spec = $spec;
+        $this->rng = $r;
         $series = $spec['series'];
         $firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $id = $this->createSeries($series);
         $master = $this->row($id);
         $raw = Oracle::raw($master);
         $this->check('0-created', $raw !== [] && $raw[0]['key'] === (string) $master['start_utc'], 'the stored start is the first raw occurrence', ['start' => $master['start_utc'], 'first' => $raw[0]['key'] ?? null]);
-        if (!empty($series['onPattern']) || $series['family'] !== 'yearly_nth') {
-            // create() aligns a start off its pattern (every family but the yearly nth weekday).
-            $this->check('0-aligned', $series['family'] === 'yearly_nth' || RepeatParser::matches(RepeatParser::ruleParts((string) $master['rrule']), Time::fromDb((string) $master['start_utc'])->setTimezone(Time::zone((string) $master['tzid']))), 'the stored start is a day of its rule', ['start' => $master['start_utc'], 'rrule' => $master['rrule']]);
+        if (true) {
+            // create() aligns a start off its pattern, for every family (series-model.md, Creating a Series).
+            $this->check('0-aligned', RepeatParser::matches(RepeatParser::ruleParts((string) $master['rrule']), Time::fromDb((string) $master['start_utc'])->setTimezone(Time::zone((string) $master['tzid']))), 'the stored start is a day of its rule', ['start' => $master['start_utc'], 'rrule' => $master['rrule']]);
         }
         if (!isset($spec['edit'])) {
             // Only days the app lets anyone edit: within its horizon (about 20 years from now).
@@ -766,6 +768,11 @@ final class Driver
         try {
             $payload = $this->applyEdit($id, $before, $edit);
         } catch (HttpError $e) {
+            if ($e->errorCode === 'series_refused') {
+                // A refusal the plan names (a month list crossing the year, a day a drag can't follow): nothing written.
+                $this->same('R-refused', $s0, $this->snapshot($firstId), 'a refused edit changes nothing');
+                return ['spec' => $spec, 'records' => $this->records];
+            }
             $this->check('api-refused', false, 'the edit was refused: ' . $e->errorCode, ['message' => $e->getMessage(), 'edit' => $edit]);
             return ['spec' => $spec, 'records' => $this->records];
         } catch (\Throwable $e) {
@@ -793,6 +800,10 @@ final class Driver
                             if ($this->undoLatest('6-stack', 'undo of the first edit under the second')) {
                                 $this->same('6-stack', $s0, $this->snapshot($firstId), 'undoing both gives the state before either');
                             }
+                        }
+                    } catch (HttpError $e) {
+                        if ($e->errorCode !== 'series_refused') {
+                            $this->check('6-stack', false, 'the second edit failed: ' . $e->errorCode, ['message' => mb_substr($e->getMessage(), 0, 200), 'stack' => $spec['stack']]);
                         }
                     } catch (\Throwable $e) {
                         $this->check('6-stack', false, 'the second edit failed: ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 200), 'stack' => $spec['stack']]);
@@ -845,7 +856,7 @@ final class Driver
     /** What create() does to a start off its pattern, for the probe that picks an UNTIL. */
     private static function alignedForProbe(array $row, string $family): array
     {
-        if ($family === 'yearly_nth' || in_array($family, ['daily', 'weekly_plain', 'monthly_plain', 'yearly_plain'], true)) {
+        if (in_array($family, ['daily', 'weekly_plain', 'monthly_plain', 'yearly_plain'], true)) {
             return $row;
         }
         $tz = Time::zone((string) $row['tzid']);
@@ -985,6 +996,8 @@ final class Driver
                 $role[$id] = 'M';
             } elseif ($r['recurrence_parent_id'] === null && $r['rrule'] !== null) {
                 $role[$id] = 'N';
+            } elseif ($r['recurrence_parent_id'] === null) {
+                $role[$id] = 'S:' . $r['start_utc'];
             }
         }
         foreach ($snap['events'] as $r) {
@@ -1022,7 +1035,7 @@ final class Driver
      *
      * @throws HttpError
      */
-    private function applyEdit(int $id, array $m, array $edit): array
+    private function applyEdit(int $id, array $m, array $edit, string $slot = 'edit'): array
     {
         $master = $m['master'];
         $allDay = (int) $master['all_day'] === 1;
@@ -1093,8 +1106,60 @@ final class Driver
                 $this->events->setAttendance($this->userId, $id, 'going', 'following', $inst);
                 return ['attendance' => 'going', 'scope' => 'following', 'instanceStart' => $inst];
         }
+        if ($scope === 'all') {
+            return $this->commit($id, $in, $slot);
+        }
         $this->events->patch($this->userId, $id, $in);
         return $in;
+    }
+
+    /**
+     * A whole-series edit as the client makes it (series-model.md, The
+     * API): the plan previewed, one option picked per group (the preselected
+     * one in half the cases, any enabled one otherwise, the same again when
+     * the case is replayed), and committed with its hash. What Google would
+     * be offered for the same edit, from the same rows, is worked out before
+     * the commit (invariant 8). The payload carries the plan, the choices
+     * and the Google plan.
+     */
+    private function commit(int $id, array $in, string $slot): array
+    {
+        $choices = $this->spec['choices'][$slot] ?? null;
+        $plan = $this->events->previewPatch($this->userId, $id, $in + ['plan' => ['choices' => $choices ?? []]]);
+        if ($choices === null) {
+            $choices = [];
+            $preselected = $this->rng === null || $this->rng->chance(0.5);
+            for ($round = 0; $round < 5; $round++) {
+                $added = false;
+                foreach ($plan['groups'] as $g) {
+                    if (isset($choices[$g['id']])) {
+                        continue;
+                    }
+                    $enabled = array_values(array_map(static fn(array $o): string => $o['id'], array_filter($g['options'], static fn(array $o): bool => empty($o['disabled']))));
+                    $choices[$g['id']] = $preselected || $this->rng === null ? $g['selected'] : $this->rng->pick($enabled);
+                    $added = true;
+                }
+                if (!$added) {
+                    break;
+                }
+                $plan = $this->events->previewPatch($this->userId, $id, $in + ['plan' => ['choices' => $choices]]);
+            }
+            $this->spec['choices'][$slot] = $choices;
+        }
+        foreach ($plan['groups'] as $g) {
+            $choices[$g['id']] ??= $g['selected'];
+        }
+        $google = null;
+        try {
+            $input = new \ReflectionMethod($this->events, 'seriesInput');
+            $event = $this->row($id);
+            [$gm, $grows, $gedit, $gopts] = $input->invoke($this->events, $this->userId, $event, $in, false, true);
+            $google = \BetterCal\Domain\Series\Model::plan($gm, $grows, $gedit, $choices, $gopts);
+        } catch (\Throwable $e) {
+            $google = ['error' => $e->getMessage()];
+        }
+        $this->events->patch($this->userId, $id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
+        return $in + ['_plan' => $plan, '_choices' => $choices, '_google' => $google];
     }
 
     /** True when a second edit was made (a series with no day left to edit gets none). */
@@ -1121,14 +1186,14 @@ final class Driver
         $inst = $this->instanceArg($master, $occ['key']);
         switch ($stack['kind']) {
             case 'rename_all':
-                $this->events->patch($this->userId, $id, ['scope' => 'all', 'instanceStart' => $inst, 'title' => 'Sample series, renamed']);
+                $this->commit($id, ['scope' => 'all', 'instanceStart' => $inst, 'title' => 'Sample series, renamed'], 'stack');
                 return true;
             case 'delete_this':
                 $this->events->deleteEvent($this->userId, $id, 'this', $inst);
                 return true;
             default:
                 $edit = ['kind' => $stack['kind'] === 'time_all' ? 'time_all' : 'drag_all', 'at' => $at, 'days' => $stack['kind'] === 'time_all' ? 0 : $stack['days'], 'hours' => $stack['hours']];
-                $this->applyEdit($id, $m, $edit);
+                $this->applyEdit($id, $m, $edit, 'stack');
                 return true;
         }
     }
@@ -1240,73 +1305,242 @@ final class Driver
         return (int) $master['all_day'] === 1 ? '00:00:00' : Time::fromDb((string) $master['start_utc'])->setTimezone(Time::zone((string) $master['tzid']))->format('H:i:s');
     }
 
+    /**
+     * A whole-series edit, against the plan it committed (series-model.md,
+     * What the Harness Proves) and against the harness's own reading of the
+     * drag table where a family's images are plain: days moved by the drag
+     * for daily and weekly rules (a list's moved member alone under "move
+     * every Monday"), and for a rule with one day a period, the occurrence
+     * of the period k periods on.
+     */
     private function checkWhole(array $before, array $after, array $edit, array $payload): void
     {
         $family = $this->family();
         $m0 = $before['master'];
         $m1 = $after['master'];
-        $days = (int) ($edit['days'] ?? 0);
-        $newRule = (string) $m1['rrule'];
+        $plan = $payload['_plan'] ?? null;
+        $choices = $payload['_choices'] ?? [];
         $newAllDay = (int) $m1['all_day'] === 1;
         $newTz = (string) $m1['tzid'];
         $oldAllDay = (int) $m0['all_day'] === 1;
         $after['raw'] = $this->withoutPhantom('1', $m1, $after['raw']);
-        $oldDays = array_column($before['raw'], 'day');
-        $newDays = array_column($after['raw'], 'day');
-        $this->check('0-created', $after['raw'] !== [] && $after['raw'][0]['key'] === (string) $m1['start_utc'], 'the stored start is still the first raw occurrence', ['start' => $m1['start_utc'], 'first' => $after['raw'][0]['key'] ?? null, 'rrule' => $newRule]);
+        $this->check('0-created', $after['raw'] !== [] && $after['raw'][0]['key'] === (string) $m1['start_utc'], 'the stored start is still the first raw occurrence', ['start' => $m1['start_utc'], 'first' => $after['raw'][0]['key'] ?? null, 'rrule' => $m1['rrule']]);
+        if (!is_array($plan)) {
+            // "This and following" from the first day is the whole series,
+            // committed with its preselected options (no dialog until 1.5.1).
+            $this->checkAttached('2', $after);
+            return;
+        }
+        // The commit wrote the plan.
+        $this->check('P-commit', (string) $m1['rrule'] === (string) $plan['rule']['after'], 'the stored rule is the plan\'s', ['plan' => $plan['rule']['after'], 'stored' => $m1['rrule']]);
+        $this->check('P-commit', Time::toDb(Time::parseIso((string) $plan['start'])) === (string) $m1['start_utc'], 'the stored start is the plan\'s', ['plan' => $plan['start'], 'stored' => $m1['start_utc']]);
+        $toDb = static fn(?string $k): ?string => $k === null ? null : str_replace(['T', 'Z'], [' ', ''], $k);
+        $wantSkips = [];
+        $wantKeys = [];
+        foreach ($plan['days'] as $day) {
+            if ($day['kind'] === 'skipped' && $day['outcome'] !== 'dropped') {
+                $wantSkips[] = $toDb($day['newKey']);
+            }
+            if ($day['kind'] === 'edited' && in_array($day['outcome'], ['moves', 'stays'], true)) {
+                $wantKeys[] = $toDb($day['newKey']);
+            }
+        }
+        sort($wantSkips);
+        sort($wantKeys);
+        $gotSkips = $after['exdates'];
+        sort($gotSkips);
+        $gotKeys = array_map(static fn(array $o): string => (string) $o['recurrence_instance_utc'], $after['overrides']);
+        sort($gotKeys);
+        $this->check('P-days', $wantSkips === $gotSkips, 'the skipped days are where the plan put them', ['plan' => $wantSkips, 'stored' => $gotSkips]);
+        $this->check('P-days', $wantKeys === $gotKeys, 'the edited days are where the plan put them', ['plan' => $wantKeys, 'stored' => $gotKeys]);
         $time = self::timeOf($m1);
         if ($edit['kind'] === 'rule_all') {
-            // New days chosen: the series starts on a day of the new rule and keeps its bound; old exceptions are checked for attachment only.
-            $this->check('1-rule', Recurrence::pattern($newRule) === Recurrence::pattern((string) $edit['rrule']), 'the sent rule is stored', ['sent' => $edit['rrule'], 'stored' => $newRule]);
-            $this->check('1-rule', RepeatParser::matches(RepeatParser::ruleParts($newRule), $after['raw'][0]['local'] ?? Time::nowUtc()), 'the start is a day of the new rule', ['start' => $m1['start_utc'], 'rrule' => $newRule]);
+            $this->check('1-rule', Recurrence::pattern((string) $m1['rrule']) === Recurrence::pattern((string) $edit['rrule']), 'the sent rule is stored', ['sent' => $edit['rrule'], 'stored' => $m1['rrule']]);
+            $this->check('1-rule', RepeatParser::matches(RepeatParser::ruleParts((string) $m1['rrule']), $after['raw'][0]['local'] ?? Time::nowUtc()), 'the start is a day of the new rule', ['start' => $m1['start_utc'], 'rrule' => $m1['rrule']]);
         } else {
             $occ = $before['raw'][$edit['at']] ?? $before['raw'][0];
-            // The day landed on, as sent: a time change can cross midnight.
             $landed = self::landedDay($payload, $occ['day'], $newTz, $newAllDay);
             $days = Oracle::daysBetween($occ['day'], $landed);
-            $expected = Oracle::expected($family, $before['raw'], (string) $m0['rrule'], $days, $landed);
-            // Invariant 1: the days.
-            $this->same1($family, $expected, $newDays, $days, self::bounded($newRule), ['old rule' => $m0['rrule'], 'new rule' => $newRule, 'expected rule' => $expected['rule'], 'old start' => $m0['start_utc'], 'new start' => $m1['start_utc'], 'landed' => $landed]);
-            // The bound: COUNT unchanged.
-            $p0 = RepeatParser::ruleParts((string) $m0['rrule']);
-            $p1 = RepeatParser::ruleParts($newRule);
-            $this->check('1-count', ($p0['COUNT'] ?? null) === ($p1['COUNT'] ?? null), 'COUNT is unchanged', ['old' => $m0['rrule'], 'new' => $newRule]);
-            $this->check('1-until', isset($p0['UNTIL']) === isset($p1['UNTIL']), 'an UNTIL stays an UNTIL', ['old' => $m0['rrule'], 'new' => $newRule]);
             // Time of day, zone, all-day as sent.
             $wantAllDay = array_key_exists('allDay', $payload) ? (bool) $payload['allDay'] : $oldAllDay;
             $this->check('1-allday', $newAllDay === $wantAllDay, 'the all-day flag is as sent', ['sent' => $wantAllDay, 'stored' => $newAllDay]);
-            if (!$newAllDay && isset($payload['start'])) {
+            if (!$newAllDay && isset($payload['start']) && !isset($choices['zone'])) {
                 $wantTime = Time::parseIso((string) $payload['start'], $newTz)->setTimezone(Time::zone($newTz))->format('H:i:s');
                 $this->check('1-time', $time === $wantTime, 'the series runs at the time it was dragged to', ['sent' => $wantTime, 'stored' => $time, 'tzid' => $newTz]);
             }
             if (isset($payload['tzid'])) {
                 $this->check('1-zone', $newTz === ($wantAllDay ? 'UTC' : Time::normalizeTzid((string) $payload['tzid'])), 'the zone is as sent', ['sent' => $payload['tzid'], 'stored' => $newTz]);
             }
-            // Every raw occurrence at the new time.
-            foreach ($after['raw'] as $o) {
-                $t = $newAllDay ? '00:00:00' : $o['local']->format('H:i:s');
-                // A time inside a DST gap is read an hour on by every engine (tz-harness README): not this harness's business.
-                $gapDay = !$newAllDay && $o['local']->setTime(0, 0)->getOffset() !== $o['local']->setTime(23, 59)->getOffset();
-                if ($t !== $time && !$gapDay) {
-                    $this->check('1-time', false, 'an occurrence is at another time than the start', ['occurrence' => $o['key'], 'time' => $t, 'start time' => $time]);
-                    break;
-                }
+            // The day acted on shows where it was dropped: an occurrence there, its own row there, or an event of its own.
+            if (($choices['zone'] ?? 'clock') === 'clock') {
+                $this->checkActed($after, $landed, $newTz, $newAllDay, $payload);
             }
-            // Invariant 3 and 4: each exception, by its place.
-            $this->checkExceptions($family, $before, $after, $days, $oldDays, $newDays, $time, $newTz, $newAllDay);
-            // Invariant 8: the rule the Google path would send.
-            if (isset($payload['start']) && !str_starts_with($edit['kind'], 'editor')) {
-                $this->checkGoogleParity($m0, $payload, $m1);
+            // UNTIL is an occurrence: the last one.
+            $p1 = RepeatParser::ruleParts((string) $m1['rrule']);
+            if (isset($p1['UNTIL']) && $after['raw'] !== []) {
+                $last = end($after['raw']);
+                $untilOk = strlen((string) $p1['UNTIL']) === 8 ? str_replace('-', '', $last['day']) === $p1['UNTIL'] : Time::fromDb($last['key'])->format('Ymd\THis\Z') === $p1['UNTIL'];
+                $this->check('1-until', $untilOk || !in_array($edit['kind'], ['drag_all', 'time_all', 'allday_all', 'zone_all'], true), 'UNTIL is the last occurrence', ['until' => $p1['UNTIL'], 'last' => $last['key']]);
             }
+            // Images by member, where the family's are plain.
+            $this->checkImages($family, $before, $after, $occ['day'], $landed, $days, $choices, $time, $newTz, $newAllDay, (string) $occ['key']);
+            // Invariant 8: Google until 1.5.2.
+            $this->checkGooglePlan($m0, $plan, $payload['_google'] ?? null, $choices);
         }
-        // Invariant 2: every exception attached.
         $this->checkAttached('2', $after);
-        // Nothing else: title and place unchanged unless sent.
         foreach (['title', 'location', 'description'] as $col) {
             $want = array_key_exists($col, $payload) ? $payload[$col] : $m0[$col];
             $this->check('1-fields', (string) $m1[$col] === (string) $want, "$col is as it should be", ['column' => $col, 'expected' => $want, 'stored' => $m1[$col]]);
         }
         $this->check('5-none', $after['new'] === null, 'a whole-series edit makes no new series', ['new' => $after['new']['master']['id'] ?? null]);
+    }
+
+    /** The dragged day shows on the day it was dropped on (series-model.md, The Day Acted On Comes First). */
+    private function checkActed(array $after, string $landed, string $tz, bool $allDay, array $payload): void
+    {
+        if (!isset($payload['start'])) {
+            return;
+        }
+        $skips = array_flip($after['exdates']);
+        foreach ($after['raw'] as $o) {
+            if ($o['day'] === $landed && !isset($skips[$o['key']])) {
+                return;
+            }
+        }
+        foreach ($after['overrides'] as $ov) {
+            // Shown there, or keyed there: a day on its own date dragged
+            // from its occurrence moves by the drag's days from where it shows.
+            if (Oracle::dayOf((string) $ov['start_utc'], (string) $ov['tzid'], (int) $ov['all_day'] === 1) === $landed
+                || Oracle::dayOf((string) $ov['recurrence_instance_utc'], $tz, $allDay) === $landed) {
+                return;
+            }
+        }
+        $start = $allDay ? $landed . ' 00:00:00' : Time::toDb(Time::parseIso((string) $payload['start'], $tz));
+        $own = $this->db->scalar('SELECT id FROM events WHERE user_id = ? AND recurrence_parent_id IS NULL AND rrule IS NULL AND start_utc = ? AND deleted_at IS NULL', [$this->userId, $start]);
+        $this->check('1-acted', $own !== null, 'the dragged day shows where it was dropped', ['landed' => $landed, 'start' => $start]);
+    }
+
+    /**
+     * Invariant 3 by the harness's own reading: each skipped and edited
+     * day that stays in the series is the image of its occurrence. Daily
+     * and weekly: its day moved by the drag (only the dragged weekday's
+     * under "move every Monday"); a rule with one day a period: the
+     * period's occurrence k periods on. Lists of month days and of months
+     * are left to the plan's own checks.
+     */
+    private function checkImages(string $family, array $before, array $after, string $actedDay, string $landed, int $days, array $choices, string $time, string $newTz, bool $newAllDay, string $acted = ''): void
+    {
+        $m0 = $before['master'];
+        $oldTz = (string) $m0['tzid'];
+        $oldAllDay = (int) $m0['all_day'] === 1;
+        $reading = $choices['reading'] ?? null;
+        $unit = Families::unit($family);
+        $single = in_array($family, ['monthly_plain', 'monthly_day', 'monthly_day_end', 'monthly_nth', 'monthly_nth_setpos', 'yearly_plain', 'yearly_day', 'yearly_nth'], true);
+        if (!in_array($family, ['daily', 'weekly_plain', 'weekly_single', 'weekly_list'], true) && !$single) {
+            return;
+        }
+        if (($choices['zone'] ?? 'clock') === 'moment') {
+            return;
+        }
+        $actedWd = (new \DateTimeImmutable($actedDay, Time::utc()))->format('N');
+        $newDays = [];
+        foreach ($after['raw'] as $o) {
+            $newDays[$unit === null ? $o['day'] : Oracle::periodOf($o['day'], $unit)] = $o['day'];
+        }
+        $k = $unit === null ? 0 : Oracle::periods($actedDay, $landed, $unit);
+        $image = function (string $day) use ($family, $days, $reading, $actedWd, $single, $unit, $k, $newDays): ?string {
+            if (!$single) {
+                if ($family === 'weekly_list' && $reading === 'member' && (new \DateTimeImmutable($day, Time::utc()))->format('N') !== $actedWd) {
+                    return $day;
+                }
+                return Oracle::addDays($day, $days);
+            }
+            return $newDays[Oracle::periodOf(Oracle::shiftPeriod($day, $k, (string) $unit), (string) $unit)] ?? null;
+        };
+        $through = $after['through'];
+        foreach ($after['exdates'] as $ex) {
+            unset($ex);
+        }
+        $afterById = [];
+        foreach ($after['overrides'] as $ov) {
+            $afterById[(int) $ov['id']] = $ov;
+        }
+        $wantSkips = [];
+        foreach ($before['exdates'] as $ex) {
+            $day = $image(Oracle::dayOf($ex, $oldTz, $oldAllDay));
+            if ($day !== null) {
+                $key = Oracle::keyAt($day, $time, $newTz, $newAllDay);
+                if (in_array($key, array_column($after['raw'], 'key'), true) || ($through !== null && $key >= $through)) {
+                    $wantSkips[] = $key;
+                }
+            }
+        }
+        $generated = array_values(array_diff($after['exdates'], $wantSkips));
+        sort($wantSkips);
+        $kept = array_values(array_intersect($after['exdates'], $wantSkips));
+        sort($kept);
+        $this->check('3-skips', $kept === $wantSkips, 'each skipped day still in the series is its occurrence\'s image', ['expected' => $wantSkips, 'stored' => $after['exdates']]);
+        foreach ($before['overrides'] as $ov0) {
+            $ov1 = $afterById[(int) $ov0['id']] ?? null;
+            if ($ov1 === null) {
+                continue; // an event of its own, or deleted: the plan says so (P-days)
+            }
+            $day = $image(Oracle::dayOf((string) $ov0['recurrence_instance_utc'], $oldTz, $oldAllDay));
+            $wantKey = $day === null ? null : Oracle::keyAt($day, $time, $newTz, $newAllDay);
+            $this->check('3-edited', $wantKey === (string) $ov1['recurrence_instance_utc'], 'an edited day is keyed on its occurrence\'s image', ['was' => $ov0['recurrence_instance_utc'], 'expected' => $wantKey, 'stored' => $ov1['recurrence_instance_utc'], 'reading' => $reading]);
+            $this->checkOwn($ov0, $ov1, $choices, (string) $ov0['recurrence_instance_utc'] === $acted ? $days : null);
+        }
+        unset($generated);
+    }
+
+    /** Invariant 4: an edited day keeps what it owns; what it inherits follows the series. */
+    /** $actedDays: the drag's days when this is the day acted on (it moves with the drag, its own date too). */
+    private function checkOwn(array $ov0, array $ov1, array $choices, ?int $actedDays = null): void
+    {
+        $own = json_decode((string) ($ov0['override_fields'] ?? '[]'), true) ?: [];
+        foreach (['title' => 'title', 'location' => 'location', 'description' => 'description', 'attendance' => 'attendance'] as $field => $col) {
+            if (in_array($field, $own, true) && ($choices['own' . ucfirst($field)] ?? 'keep') === 'keep') {
+                $this->check('4-fields', (string) $ov0[$col] === (string) $ov1[$col], "an edited day keeps its own $col", ['was' => $ov0[$col], 'now' => $ov1[$col]]);
+            }
+        }
+        $tz0 = (int) $ov0['all_day'] === 1 ? 'UTC' : (string) $ov0['tzid'];
+        $tz1 = (int) $ov1['all_day'] === 1 ? 'UTC' : (string) $ov1['tzid'];
+        $l0 = Time::fromDb((string) $ov0['start_utc'])->setTimezone(Time::zone($tz0));
+        $l1 = Time::fromDb((string) $ov1['start_utc'])->setTimezone(Time::zone($tz1));
+        if (in_array('date', $own, true) && $actedDays !== null) {
+            $this->check('4-moved', Oracle::addDays($l0->format('Y-m-d'), $actedDays) === $l1->format('Y-m-d'), 'the day acted on, on its own date, moves by the drag', ['was' => $ov0['start_utc'], 'now' => $ov1['start_utc'], 'days' => $actedDays]);
+        } elseif (in_array('date', $own, true) && ($choices['movedDays'] ?? 'keep') === 'keep') {
+            $this->check('4-moved', $l0->format('Y-m-d') === $l1->format('Y-m-d'), 'a day on its own date stays on it', ['was' => $ov0['start_utc'], 'now' => $ov1['start_utc']]);
+        }
+        if (in_array('time', $own, true) && !in_array('allDay', $own, true) && (int) $ov1['all_day'] === (int) $ov0['all_day']) {
+            $this->check('4-moved', $l0->format('H:i:s') === $l1->format('H:i:s') && $tz0 === $tz1, 'a day at its own time keeps it', ['was' => [$ov0['start_utc'], $tz0], 'now' => [$ov1['start_utc'], $tz1]]);
+        }
+        if (!in_array('date', $own, true) && !in_array('time', $own, true) && !in_array('allDay', $own, true)) {
+            $this->check('4-time', (string) $ov1['start_utc'] === (string) $ov1['recurrence_instance_utc'], 'a day that inherits its date and time is at its occurrence', ['start' => $ov1['start_utc'], 'key' => $ov1['recurrence_instance_utc']]);
+        }
+    }
+
+    /**
+     * Invariant 8 until 1.5.2: on a Google calendar only edits that keep
+     * the rule text are offered; one that keeps it is offered with the
+     * same start and rule as the local plan and no outcome for edited days.
+     */
+    private function checkGooglePlan(array $m0, array $plan, ?array $google, array $choices = []): void
+    {
+        if ($google === null || isset($google['error'])) {
+            $this->check('8-google', false, 'the Google plan could not be worked out: ' . ($google['error'] ?? 'none'));
+            return;
+        }
+        // A list's member reading keeps its text for whole weeks but isn't the whole-pattern shift Google gets.
+        $keeps = Recurrence::pattern((string) $plan['rule']['after']) === Recurrence::pattern((string) $m0['rrule']) && ($choices['reading'] ?? '') !== 'member';
+        if (!$keeps) {
+            $this->check('8-google', $google['refused'] || $google['refusedChoice'] || ($google['plan']['refusals'] ?? []) !== [], 'a change to the rule text is not offered on a Google calendar', ['rule' => $plan['rule']['after']]);
+            return;
+        }
+        $g = $google['plan'];
+        $edited = array_filter($g['days'] ?? [], static fn(array $d): bool => $d['kind'] === 'edited');
+        $this->check('8-google', !$google['refused'] && $g['rule']['after'] === $plan['rule']['after'] && $g['start'] === $plan['start'] && $edited === [],
+            'an edit that keeps the rule text is offered on Google as the local plan, claiming nothing for edited days', ['google' => [$g['rule']['after'] ?? null, $g['start'] ?? null], 'local' => [$plan['rule']['after'], $plan['start']], 'edited' => count($edited)]);
     }
 
     /** The local day a sent start lands on. */
@@ -1355,40 +1589,6 @@ final class Driver
             }
         }
         return [];
-    }
-
-    private function checkExceptions(string $family, array $before, array $after, int $days, array $oldDays, array $newDays, string $time, string $newTz, bool $newAllDay): void
-    {
-        $m0 = $before['master'];
-        $m1 = $after['master'];
-        $oldAllDay = (int) $m0['all_day'] === 1;
-        $oldTz = (string) $m0['tzid'];
-        // Skipped days: the set maps as a whole.
-        $want = [];
-        foreach ($before['exdates'] as $ex) {
-            $day = Oracle::mappedDay($family, Oracle::dayOf($ex, $oldTz, $oldAllDay), $oldDays, $newDays, $days);
-            $want[] = $day === null ? 'unmapped:' . $ex : Oracle::keyAt($day, $time, $newTz, $newAllDay);
-        }
-        sort($want);
-        $got = $after['exdates'];
-        sort($got);
-        $this->check('3-skips', $want === $got, 'each skipped day keeps its place in the series', ['expected' => $want, 'stored' => $got]);
-        // Edited days: by row.
-        $afterById = [];
-        foreach ($after['overrides'] as $ov) {
-            $afterById[(int) $ov['id']] = $ov;
-        }
-        foreach ($before['overrides'] as $ov0) {
-            $ov1 = $afterById[(int) $ov0['id']] ?? null;
-            if ($ov1 === null) {
-                $this->check('4-kept', false, 'an edited day is gone', ['key' => $ov0['recurrence_instance_utc'], 'title' => $ov0['title']]);
-                continue;
-            }
-            $day = Oracle::mappedDay($family, Oracle::dayOf((string) $ov0['recurrence_instance_utc'], $oldTz, $oldAllDay), $oldDays, $newDays, $days);
-            $wantKey = $day === null ? null : Oracle::keyAt($day, $time, $newTz, $newAllDay);
-            $this->check('3-edited', $wantKey === (string) $ov1['recurrence_instance_utc'], 'an edited day keeps its place in the series', ['was' => $ov0['recurrence_instance_utc'], 'expected' => $wantKey, 'stored' => $ov1['recurrence_instance_utc'], 'title' => $ov0['title']]);
-            $this->checkDeviation($ov0, $ov1, $m0, $m1);
-        }
     }
 
     /** Invariant 4: what an edited day was changed to stays changed. */
@@ -1661,34 +1861,9 @@ final class Driver
         $this->checkAttached('2', $after);
     }
 
-    /**
-     * Invariant 8: what googlePatchAll would send for the same edit, from
-     * the same private helpers (rebaseSeriesEdit, columnPatch), against
-     * the rule and start the local path stored.
-     */
+    /** Invariant 8 for a split: Google's "this and following" stays on today's code until 1.5.1, with no local twin. */
     private function checkGoogleParity(array $m0, array $payload, array $stored, bool $following = false): void
     {
-        try {
-            $rebase = new \ReflectionMethod($this->events, 'rebaseSeriesEdit');
-            $patch = new \ReflectionMethod($this->events, 'columnPatch');
-            if ($following) {
-                return; // googlePatchFollowing has no local twin to compare with
-            }
-            $followed = null;
-            $in2 = $rebase->invokeArgs($this->events, [$m0, $payload, &$followed]);
-            $fields = $patch->invokeArgs($this->events, [$m0, $in2]);
-        } catch (\Throwable $e) {
-            $this->check('8-google', false, 'the Google path could not be evaluated: ' . $e->getMessage());
-            return;
-        }
-        // What Google would be told, expanded the same way as what was stored: the
-        // same days, or not. The rule strings may differ harmlessly (an UNTIL
-        // rewritten at the new time of day), so the days decide.
-        $google = array_merge($m0, array_intersect_key($fields, array_flip(['start_utc', 'end_utc', 'tzid', 'all_day', 'rrule'])));
-        $googleSeen = Oracle::expansion($google);
-        $localSeen = Oracle::expansion($stored);
-        [$googleDays, $localDays] = Oracle::common(array_column($googleSeen['occ'], 'key'), $googleSeen['through'], array_column($localSeen['occ'], 'key'), $localSeen['through']);
-        $this->check('8-google', $googleDays === $localDays, 'the series the Google path would send has the days the local one stored', self::firstDiff($googleDays, $localDays) + ['google rule' => $google['rrule'], 'google start' => $google['start_utc'], 'local rule' => $stored['rrule'], 'local start' => $stored['start_utc']]);
     }
 }
 
@@ -1701,21 +1876,13 @@ final class Known
 {
     /** @var list<array{0:string,1:string}> regex over "invariant | family | edit" => root cause */
     public const ROOT_CAUSES = [
-        ['/^(1|5|7)-phantom \|/', 'until-first-phantom'],
-        ['/^(2-skip-past-end|2-edited-past-end) \| .* \| allday_all$/', 'until-type'],
-        ['/^(2-skip-past-end|2-edited-past-end|5-skips|5-edited|3-skips|3-edited) \| weekly_list \| (drag_all|drag_following)$/', 'biweekly-list'],
-        ['/^5-old-stale-skips \|/', 'stale-skips'],
-        ['/^2-skip-past-end \| .* \| (delete|rename|attend|drag|editor_drag)_following$/', 'stale-skips'],
-        ['/^(1-lead|1-days|2-skip|2-edited|3-skips|3-edited|5-day|5-skips|5-edited) \| (monthly_day_end|monthly_day_list|yearly_months) \|/', 'keep-snap'],
-        ['/^(1-days|2-skip|2-edited|3-skips|3-edited|5-day|5-skips|5-edited|2-skip-past-end|2-edited-past-end) \| (monthly_plain|yearly_plain) \|/', 'plain-rule'],
-        ['/^(1-days|2-skip|2-edited|3-skips|3-edited|5-day|5-skips|5-edited) \| weekly_list \|/', 'biweekly-list'],
-        ['/^(1-days|1-lead|1-until|5-count|5-day|5-skips|5-edited|3-skips|3-edited|2-skip|2-edited|2-skip-past-end|2-edited-past-end|4-fields) \| .* \| editor_drag_/', 'editor-rule'],
-        ['/^(1-days|2-skip|2-edited|3-skips|3-edited|2-skip-past-end|2-edited-past-end|5-skips|5-edited) \| yearly_nth \|/', 'yearly-nth-start'],
-        ['/^8-google \|/', 'google-parity'],
-        ['/^(2-skip|2-edited) \| .* \| rule_all$/', 'rule-change-orphans'],
-        ['/^(2-skip-past-end|2-edited-past-end|5-skips|5-edited|3-skips|3-edited) \| (monthly_day|monthly_nth|monthly_nth_setpos|yearly_day) \|/', 'count-span-or-month-multiple'],
-        ['/^(2-skip|2-edited|1-days) \| (monthly_day|monthly_nth|monthly_nth_setpos|yearly_day) \| (drag_all|drag_following|allday_all)$/', 'count-span-or-month-multiple'],
-        ['/^(1-days|1-until) \| .* \| allday_all$/', 'until-type'],
+        ['/^(1|5|7)-phantom \\|/', 'until-first-phantom'],
+        ['/^5-old-stale-skips \\|/', 'stale-skips'],
+        ['/^2-skip-past-end \\| .* \\| (delete|rename|attend|drag|editor_drag)_following$/', 'stale-skips'],
+        // "This and following" stays on today's code until 1.5.1 (series-model.md, Acceptance):
+        // its drag keeps the old ways of following, and a following save takes the editor's rule.
+        ['/^(1-lead|1-days|1-until|1-count|2-skip|2-edited|2-skip-past-end|2-edited-past-end|3-skips|3-edited|4-moved|4-fields|4-time|5-day|5-skips|5-edited|5-count|5-old) \\| .* \\| (drag|editor_drag|rename|attend|delete)_following$/', 'following-1.5.1'],
+        ['/^6-stack \\| .* \\| (drag|editor_drag|rename|attend|delete)_following$/', 'following-1.5.1'],
     ];
 
     public static function rootCause(string $signature): ?string

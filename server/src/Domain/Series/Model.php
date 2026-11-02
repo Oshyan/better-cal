@@ -128,10 +128,8 @@ final class Model
             $this->landedDn = Cal::dnOf($at);
             $this->clock1 = $this->allDay1 ? [0, 0, 0] : [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')];
             $this->len1 = max(0, Time::fromDb((string) $landed['end_utc'])->getTimestamp() - Time::fromDb((string) $landed['start_utc'])->getTimestamp());
-            if ($this->allDay1 && !$this->allDay0) {
-                // A timed series made all-day takes the dates of its days in its old zone.
-                $this->landedDn = $this->actedDn0 + ($this->landedDn - Cal::dnOf(Time::fromDb($this->acted)->setTimezone(Time::zone($this->tz1))));
-            }
+            // A timed series made all-day arrives as dates already
+            // (Events::columnPatch dates it in its old zone).
         }
 
         $content = [];
@@ -318,7 +316,9 @@ final class Model
         $default = null;
         foreach ($readings as $r) {
             $opt = ['id' => $r['id'], 'label' => $r['label']];
-            if ($this->google && !$r['textKept'] && ($this->kind === 'drag' || $delta !== 0)) {
+            // On Google until 1.5.2: only a reading that keeps the rule text
+            // as written (a list only as its whole-pattern shift).
+            if ($this->google && ($r['rule']->pattern() !== $this->r0->pattern() || $r['id'] === 'member') && ($this->kind === 'drag' || $delta !== 0)) {
                 $r['disabled'] = true;
                 $r['code'] = 'google';
                 $r['reason'] = self::REASONS['google'];
@@ -511,7 +511,7 @@ final class Model
      * it named an enabled one, else the default). A group with one option
      * is no choice and isn't listed.
      */
-    private function pick(string $id, string $label, array $options, string $default): string
+    private function pick(string $id, string $label, array $options, string $default, array $extra = []): string
     {
         $enabled = array_values(array_filter($options, static fn(array $o): bool => empty($o['disabled'])));
         if ($enabled === []) {
@@ -520,7 +520,7 @@ final class Model
         $ids = array_map(static fn(array $o): string => $o['id'], $enabled);
         $sel = in_array($this->choices[$id] ?? null, $ids, true) ? $this->choices[$id] : (in_array($default, $ids, true) ? $default : $ids[0]);
         if (count($options) > 1) {
-            $this->groups[] = ['id' => $id, 'label' => $label, 'selected' => $sel, 'options' => $options];
+            $this->groups[] = ['id' => $id, 'label' => $label, 'selected' => $sel, 'options' => $options] + $extra;
         }
         return $sel;
     }
@@ -553,11 +553,13 @@ final class Model
         };
         $horizon = max([$this->actedDn0, $this->old->startDn, ...$exDns]) + $span;
         $oldOcc = $this->old->bounded() ? $this->old->all() : $this->old->occurrences($horizon);
-        if (!$this->old->bounded() && $this->r0->supported()) {
+        if (!$newRule && !$this->old->bounded() && $this->r0->supported()) {
             // Sparse losses: keep walking until an image turns up.
             $extra = $horizon;
+            $step = $span * 4;
             while (count(array_filter(array_map(fn(int $d): ?int => $image($d, $this->r0->memberOf($d)), $oldOcc), static fn($x): bool => $x !== null)) === 0 && $extra < $horizon + 400 * 366) {
-                $extra += $span * 4;
+                $extra += $step;
+                $step *= 2;
                 $oldOcc = $this->old->occurrences($extra);
             }
         }
@@ -682,6 +684,8 @@ final class Model
         }
         $last1 = $calc1->last();
         $inside = fn(?int $d): bool => $d !== null && $calc1->isOccurrence($d);
+        // A generated skip past the new end needs nothing (Bounds, gains at the edges).
+        $genSkips = array_values(array_filter($genSkips, $inside));
 
         // Skipped days.
         $newExdates = [];
@@ -739,7 +743,7 @@ final class Model
             $outside = $this->pick('outside', 'Edited days outside the new series', [
                 ['id' => 'keep', 'label' => $one ? 'Keep it as an event of its own' : 'Keep them as events of their own'],
                 ['id' => 'delete', 'label' => $one ? 'Delete it' : 'Delete them'],
-            ], 'keep');
+            ], 'keep', $one ? ['day' => str_replace(' ', 'T', (string) $this->rows[array_key_first($outsideRows)]['recurrence_instance_utc']) . 'Z'] : []);
         }
         $movedRows = [];
         foreach ($placeRows as $id => $img) {
@@ -756,7 +760,7 @@ final class Model
             $moveOwnDates = $this->pick('movedDays', 'Days moved on their own', [
                 ['id' => 'keep', 'label' => $one !== null ? 'Keep ' . Words::date($shownDn, $this->thisYear) : 'Keep their dates'],
                 ['id' => 'move', 'label' => $one !== null ? 'Move to ' . Words::date($toDn, $this->thisYear) : 'Move them with their events'],
-            ], 'keep') === 'move';
+            ], 'keep', $one !== null ? ['day' => str_replace(' ', 'T', (string) $one['recurrence_instance_utc']) . 'Z'] : []) === 'move';
         }
 
         // Content fields: inherited ones follow; own ones are a choice.
@@ -825,10 +829,9 @@ final class Model
         foreach ($placeRows as $id => $img) {
             $row = $this->rows[$id];
             $own = $this->ownOf($row);
-            if ($id === $actedRowId) {
-                $own = array_values(array_diff($own, ['date', 'time', 'length', 'allDay']));
-            }
-            [$start, $end, $allDay, $tz] = $this->place($row, $own, (int) $img, $calc1, $clock1, $moveOwnDates);
+            // The day acted on moves the way the series does: its own date by
+            // the drag's days (where it shows, so it lands where dropped).
+            [$start, $end, $allDay, $tz] = $this->place($row, $own, (int) $img, $calc1, $clock1, $moveOwnDates || $id === $actedRowId);
             $cols = [];
             $put = function (string $col, mixed $value) use (&$cols, $row): void {
                 if ((string) ($row[$col] ?? '') !== (string) ($value ?? '')) {
@@ -856,9 +859,6 @@ final class Model
                         $put($col, $v);
                     }
                 }
-            }
-            if ($id === $actedRowId) {
-                $ownAfter = array_values(array_diff($ownAfter, ['date', 'time', 'length', 'allDay']));
             }
             $encoded = OwnFields::encode($ownAfter);
             if ((string) ($row['override_fields'] ?? '') !== $encoded) {
@@ -952,9 +952,13 @@ final class Model
             . (in_array($this->kind, ['drag', 'newrule', 'norule'], true) || $words !== $wordsBefore ? Words::lower($wordsBefore) . ', now ' . Words::lower($words) . ', from ' . Words::dayMonth($newStart, $this->thisYear) : Words::lower($words) . ', as before')
             . '.';
         $detachCount = count(array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited'));
+        $ownership = null;
         if ($detachCount > 0) {
-            $names = array_values(array_map(static fn(array $d): string => "'" . ($d['title'] ?? '') . "'", array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited')));
-            $summary .= ' ' . ($detachCount === 1 ? 'One edited day became an event of its own: ' : $detachCount . ' edited days became events of their own: ') . Words::andList($names) . '.';
+            $names = array_values(array_map(fn(array $d): string => "'" . ($d['title'] ?? '') . "' on " . Words::dayMonth($this->old->dnOf(str_replace(['T', 'Z'], [' ', ''], (string) $d['key'])), $this->thisYear),
+                array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited')));
+            $summary .= ' ' . ($detachCount === 1 ? 'One edited day became an event of its own: ' : Words::count($detachCount) . ' edited days became events of their own: ') . Words::andList($names) . '.';
+            // The dialog's sentence (series-model.md, The Plan, line 7).
+            $ownership = ($detachCount === 1 ? 'One edited day becomes an event of its own: ' : Words::count($detachCount) . ' edited days become events of their own: ') . Words::andList($names) . '.';
         }
 
         // Keys in the plan read as instants: 2027-04-14T02:00:00Z.
@@ -979,7 +983,7 @@ final class Model
             'notes' => $this->notes,
             'fields' => $fieldsWords,
             'summary' => $summary,
-        ];
+        ] + ($ownership !== null ? ['ownership' => $ownership] : []);
         return [
             'plan' => $plan,
             'writes' => [

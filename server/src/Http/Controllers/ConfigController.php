@@ -32,6 +32,8 @@ final class ConfigController
             'maptilerKey' => $key !== '' ? $key : null,
             'mapStyle' => $userSettings['mapStyle'] ?? 'streets-v2',
             'placeSearch' => PlaceProviders::describe($this->cfg['places'] ?? []),
+            // Whole-series edits preview their plan (series-model.md, The API): a client sends preview only when it sees this.
+            'seriesPlans' => true,
         ]);
     }
 }

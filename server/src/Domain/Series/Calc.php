@@ -51,6 +51,23 @@ final class Calc
     /** The UTC instant of the occurrence on a local day (a gap's clock time moves forward). */
     public function instant(int $dn): \DateTimeImmutable
     {
+        $r = $this->rule;
+        // The expander (sabre/vobject 4.6.1, RRuleIterator::nextWeekly)
+        // skips the weeks an INTERVAL leaves out by jumping from their week
+        // start without setting the clock again. When that week start falls
+        // in a skipped hour, the gap-shifted clock (03:30 for 02:30) carries
+        // to the next counted week start, and an occurrence on that day has
+        // it. The app's days are sabre's, so the key is too.
+        if (!$this->allDay && $r->freq === 'WEEKLY' && $r->interval > 1 && !$r->bare && $r->hour === null && $r->minute === null
+            && Cal::wd($dn) === $r->weekStart() && in_array($r->weekStart(), $r->members, true)) {
+            $turn = $dn - 7 * ($r->interval - 1);
+            if ($turn > $this->startDn) {
+                $at = self::at($turn, $this->clock, $this->tz)->setTimezone($this->zone());
+                if ($at->format('H:i:s') !== sprintf('%02d:%02d:%02d', ...$this->clock)) {
+                    return self::at($dn, [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')], $this->tz);
+                }
+            }
+        }
         return self::at($dn, $this->clock, $this->tz);
     }
 

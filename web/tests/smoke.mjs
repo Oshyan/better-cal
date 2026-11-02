@@ -4665,6 +4665,10 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place']]);
   eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
   eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
+  // A first day in a skipped hour: the stored day before it is no event, so no line names it.
+  const anchored = planView({ ...pottery, hash: 'p4', days: [{ key: null, newKey: '2027-02-14T10:30:00Z', kind: 'skipped', outcome: 'anchor', words: '' }],
+    notes: [{ kind: 'gap', words: 'No 02:30 on 14 Mar in Los Angeles: that one is at 03:30' }] }, ctx({ title: 'Night shift' }));
+  eq('series dialog: an anchor day has no skipped line; the gap note says the time', [anchored.skipped, anchored.notes], ['', ['No 02:30 on 14 Mar in Los Angeles: that one is at 03:30']]);
 
   // As the server sends a plan: every option of every group carries its
   // next dates and its bound, the ones not preselected how they differ, and
@@ -4973,6 +4977,17 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   await confirmSeriesChange();
   await tick();
   eq('editor save, previewed: Confirm saves with the choice and closes the editor', [sent[1].plan, st.seriesChange, closed], [{ hash: 'n1', choices: { ownTitle: 'keep' } }, null, 2]);
+  // From an edited day with its own title: the heading and the toast name the series.
+  sent.length = 0;
+  plan = { hash: 'm1', direct: false, groups: [], refusals: [] };
+  const edited = { ...occ, instanceId: '52@2', title: 'Sample rehearsal', isException: true, seriesId: 51, seriesTitle: 'Sample choir', seriesKey: '2027-03-16T03:00:00Z' };
+  openSeriesChange({ kind: 'drag', occ: edited, body: { start: '2027-03-10T19:00:00-08:00', end: '2027-03-10T20:30:00-08:00' }, pending: { start: '2027-03-10T19:00:00-08:00', end: '2027-03-10T20:30:00-08:00' } });
+  await tick();
+  eq('from an edited day: the dialog is named for the series, not the day', st.seriesChange && st.seriesChange.title, 'Sample choir');
+  await confirmSeriesChange();
+  await tick();
+  const lastToast = st.toasts[st.toasts.length - 1];
+  eq('from an edited day: the toast names the series', [lastToast && lastToast.text, lastToast && lastToast.title], ['Moved all events', 'Sample choir']);
   globalThis.fetch = realFetch;
 }
 

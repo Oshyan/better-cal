@@ -1399,7 +1399,11 @@ final class Driver
         $this->check('P-days', $wantKeys === $gotKeys, 'the edited days are where the plan put them', ['plan' => $wantKeys, 'stored' => $gotKeys]);
         $time = self::timeOf($m1);
         if ($edit['kind'] === 'rule_all') {
-            $this->check('1-rule', Recurrence::pattern((string) $m1['rrule']) === Recurrence::pattern((string) $edit['rrule']), 'the sent rule is stored', ['sent' => $edit['rrule'], 'stored' => $m1['rrule']]);
+            // Compared by days, not text: the model writes a rule in its
+            // canonical form (a monthly day equal to the start's is bare).
+            $sameText = Recurrence::pattern((string) $m1['rrule']) === Recurrence::pattern((string) $edit['rrule']);
+            $daysOf = static fn(string $rrule): array => array_column(Oracle::raw(['rrule' => Recurrence::pattern($rrule)] + $m1), 'key');
+            $this->check('1-rule', $sameText || $daysOf((string) $m1['rrule']) === $daysOf((string) $edit['rrule']), 'the sent rule is stored (its days, from the stored start)', ['sent' => $edit['rrule'], 'stored' => $m1['rrule']]);
             $this->check('1-rule', RepeatParser::matches(RepeatParser::ruleParts((string) $m1['rrule']), $after['raw'][0]['local'] ?? Time::nowUtc()), 'the start is a day of the new rule', ['start' => $m1['start_utc'], 'rrule' => $m1['rrule']]);
         } else {
             $occ = $before['raw'][$edit['at']] ?? $before['raw'][0];

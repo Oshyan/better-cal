@@ -281,6 +281,47 @@ return static function (Db $db): void {
         checkEq('an occurrence key sent as a day\'s shown start (its own date) is still 422', '422 invalid_recurrence_instance', $code);
     });
 
+    scenario('a first day in a skipped hour: stored from the day before, the rows agree with the plan', function () use ($d, $u, $db, $rows, $home): void {
+        $la = 'America/Los_Angeles';
+        $night = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Night shift', 'start' => '2027-03-13T02:30:00-08:00', 'end' => '2027-03-13T03:30:00-08:00',
+            'allDay' => false, 'tzid' => $la, 'rrule' => 'FREQ=MONTHLY'])['eventId'];
+        $d->events->patch($u, $night, ['scope' => 'this', 'instanceStart' => '2027-06-13T02:30:00-07:00', 'title' => 'Night shift, inventory']);
+        $before = $rows($night);
+        $drag = ['scope' => 'all', 'instanceStart' => '2027-05-13T02:30:00-07:00', 'start' => '2027-05-14T02:30:00-07:00', 'end' => '2027-05-14T03:30:00-07:00'];
+        $plan = planned($d->events, $u, $night, $drag);
+        $master = $db->one('SELECT rrule, start_utc, exdates_json FROM events WHERE id = ?', [$night]);
+        checkEq('stored from 14 Feb at 02:30, that day skipped, the rule as before', ['FREQ=MONTHLY', '2027-02-14 10:30:00', ['2027-02-14 10:30:00']],
+            [$master['rrule'], $master['start_utc'], json_decode((string) $master['exdates_json'], true)]);
+        $window = $d->events->window($u, new \DateTimeImmutable('2027-02-01T00:00:00Z'), new \DateTimeImmutable('2027-09-01T00:00:00Z'), [$home], null, false);
+        $shown = array_values(array_map(static fn(array $o): string => (string) $o['start'], array_filter($window, static fn(array $o): bool => str_starts_with((string) $o['title'], 'Night shift'))));
+        $local = array_map(static fn(string $s): string => BetterCal\Support\Time::parseIso($s)->setTimezone(new DateTimeZone($la))->format('Y-m-d H:i'), $shown);
+        checkEq('the window shows 14 Mar at 03:30 (no 02:30 that day), then 02:30, the edited day once', [
+            '2027-03-14 03:30', '2027-04-14 02:30', '2027-05-14 02:30', '2027-06-14 02:30', '2027-07-14 02:30', '2027-08-14 02:30',
+        ], $local);
+        $next = array_map(static fn(array $n): string => BetterCal\Support\Time::parseIso((string) $n['start'])->setTimezone(new DateTimeZone($la))->format('Y-m-d H:i'), $plan['next']);
+        checkEq('the plan\'s next is what the rows show', array_slice($local, 2, 4), $next);
+        checkEq('the edited day is keyed on its 02:30 occurrence', '2027-06-14 09:30:00',
+            $db->scalar("SELECT recurrence_instance_utc FROM events WHERE recurrence_parent_id = ? AND title = 'Night shift, inventory'", [$night]));
+        $d->undo->undoLatest($u);
+        checkEq('undone: every row as before', $before, $rows($night));
+    });
+
+    scenario('edited days: the server\'s own routing flag can\'t be set by a client', function () use ($d, $u, $db, $weekly): void {
+        $choir = $weekly('Choir');
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-16T18:00:00+00:00', 'title' => 'Rehearsal']);
+        $rename = ['scope' => 'all', 'instanceStart' => '2027-03-16T18:00:00+00:00', 'title' => 'Chorus'];
+        $plain = $d->events->previewPatch($u, $choir, $rename);
+        $flagged = $d->events->previewPatch($u, $choir, $rename + ['_fromEditedDay' => true]);
+        $lines = static fn(array $plan): array => array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'words');
+        checkEq('a body sent to the master carrying _fromEditedDay gets the plan it gets without it: the day acted on keeps its own title', [true, $lines($plain)],
+            [str_contains(implode(' ', $lines($plain)), 'keeps its title'), $lines($flagged)]);
+        planned($d->events, $u, $choir, $rename + ['_fromEditedDay' => true]);
+        checkEq('committed with the flag: the day keeps its own title', ['Rehearsal', ['title']], [
+            $db->scalar('SELECT title FROM events WHERE recurrence_parent_id = ?', [$choir]),
+            json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$choir]), true),
+        ]);
+    });
+
     scenario('a rule the expander can\'t read: only its details change', function () use ($d, $u, $db, $home, $answer): void {
         $id = (int) $d->events->create($u, eventAt($home, 'Holiday dinner', '2027-04-22'))['eventId'];
         $db->run("UPDATE events SET rrule = 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L' WHERE id = ?", [$id]);

@@ -93,11 +93,13 @@ export const state = {
   // so memos can key off it cheaply.
   occ: new Map(),
   occVersion: 0,
-  loadedRanges: [], // [{start, end}] ms epochs, merged
-  staleRanges: [], // held but maybe out of date since a change: fetched again when next shown (freshRanges)
+  // [{start, end, gen}] ms epochs: each stretch held and the generation it
+  // was asked for at (dataGeneration); fresh when that's the current one
+  // (docs/design/loading-model.md).
+  loadedRanges: [],
   // Event window loading as the view needs to show it: null (nothing to say),
-  // {kind:'loading'} on a cold load, {kind:'failed', offline, retryAt} when a
-  // window request failed and a retry is scheduled, or {kind:'limited',
+  // {kind:'loading'} on a cold load, {kind:'failed', offline} when the view's
+  // window failed and is owed a reload (reloads.js), or {kind:'limited',
   // message} when the requested range exceeded a server work budget and must
   // be narrowed rather than retried unchanged (api.js).
   windowStatus: null,
@@ -286,26 +288,65 @@ export function invalidateRecords(eventId = null) {
 const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
 const OCCURRENCE_CACHE_MAX = 25000;
 
-// When each occurrence was last changed here (a drag, a resize, a Maybe, a
-// delete, an inserted copy): a window answer asked for before then is older
-// than it, and must neither put the old version back nor bring a deleted
-// one back to life.
-const editedAt = new Map();
-export function noteEdited(instanceId) { editedAt.set(instanceId, Date.now()); }
-export function editedSince(instanceId, t) { return (editedAt.get(instanceId) || 0) > t; }
+// The generation (docs/design/loading-model.md): this tab's name for the
+// newest state of the user's events it knows the server has. A request is
+// asked at the generation current then; what it brings is fresh only while
+// that's still the current one. Moved by a save's refresh (api.js
+// refreshWindow) and by the change check seeing the events part move
+// (changecheck.js); everything held then stays held but is asked for again
+// when next needed.
+let generation = 0;
+export const dataGeneration = () => generation;
+export function newGeneration() { generation++; }
 
-// asked: when the request for this answer went out. An occurrence changed
-// here since then (or still waiting on its save) keeps its own copy: a
-// refresh already on its way when you dropped an event put the old time
-// back until the next one arrived (#183).
-export function mergeWindow(startISO, endISO, events, asked = null) {
+// Local changes not yet in a fetched answer (a drag, a resize, a Maybe, a
+// delete): instanceId -> {until, start, end}, where the occurrence sits (or
+// sat, for a removal). until is PENDING while its save is on its way, then
+// the generation an answer must be asked at to carry it (localSaved). An
+// answer asked earlier leaves the local copy, or its absence, alone: it
+// would put the old version back, or bring a deleted one back to life (#183).
+const PENDING = Infinity;
+const local = new Map();
+function markLocal(instanceId, occ) {
+  local.set(instanceId, { until: PENDING, start: occ.start, end: occ.end, allDay: occ.allDay });
+  recordGen++; // a record asked before this edit may hold what it replaced
+}
+
+/** These local changes' saves landed: an answer asked from the next generation carries them. */
+export function localSaved(instanceIds) {
+  for (const id of instanceIds) {
+    const m = local.get(id);
+    if (m && m.until === PENDING) m.until = generation + 1;
+  }
+}
+
+// Overlap as the server judges it, by instants (Events.php window): an
+// all-day date is stored and sent as UTC midnight (0.9.16), so its "+00:00"
+// start and end are exactly the instants the server compares. Anything
+// wider (by local days, say) drops events the answer never carried, for any
+// window not on local midnights (#184).
+function overlaps(occ, s, e) {
+  const t = new Date(occ.start).getTime();
+  const end = occ.end ? new Date(occ.end).getTime() : occ.allDay ? t + 86400000 : t;
+  return t < e && end > s;
+}
+
+/**
+ * Merge a window answer asked at generation `gen`. Dropped, returning
+ * false, when any of its stretch is held at a newer generation: it's older
+ * than what's there. Otherwise everything held overlapping the stretch is
+ * replaced by the answer (or gone, deleted elsewhere), except local changes
+ * it can't carry, and the stretch is held at `gen`.
+ */
+export function mergeWindow(startISO, endISO, events, gen = generation) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
-  const recent = (id) => asked != null && (editedAt.get(id) || 0) > asked;
-  const mine = (id, occ) => !!occ && (occ._optimistic || recent(id));
-  // Drop cached occurrences whose start falls in the window, then reinsert,
-  // carrying fetched record fields over from the previous copy (invalidate
-  // first when the refresh follows an edit of that event, see actions.js).
+  if (state.loadedRanges.some((r) => r.gen > gen && r.start < e && r.end > s)) return false;
+  // A local change this answer carries ends here; one it can't stays.
+  for (const [id, m] of local) if (m.until <= gen && overlaps(m, s, e)) local.delete(id);
+  // Drop cached occurrences overlapping the window, then reinsert, carrying
+  // fetched record fields over from the previous copy (invalidate first
+  // when the refresh follows an edit of that event, see actions.js).
   // An event opened from outside the window (Activity, a notification, a
   // trip) can be on a hidden calendar, which the window never returns:
   // dropping it here left its open panel blank. It stays while it is open.
@@ -313,24 +354,14 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
   const kept = open && state.occ.get(open)?._held && !events.some((ev) => ev.instanceId === open) ? open : null;
   const prior = new Map();
   for (const [id, occ] of state.occ) {
-    const t = new Date(occ.start).getTime();
-    if (id === kept) continue;
-    // The answer holds everything overlapping the window, so whatever
-    // overlaps it here is replaced (or gone, deleted elsewhere). Overlap is
-    // judged as the server judges it, by instants (Events.php window): an
-    // all-day date is stored and sent as UTC midnight (0.9.16), so its
-    // "+00:00" start and end are exactly the instants the server compares.
-    // Anything wider (by local days, say) drops events the answer never
-    // carried, for any window not on local midnights (#184).
-    const end = occ.end ? new Date(occ.end).getTime() : occ.allDay ? t + 86400000 : t;
-    const inside = t < e && end > s;
-    if (inside && !mine(id, occ)) {
+    if (id === kept || local.has(id)) continue;
+    if (overlaps(occ, s, e)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);
     }
   }
   for (const ev of events) {
-    if (recent(ev.instanceId) || mine(ev.instanceId, state.occ.get(ev.instanceId))) continue;
+    if (local.has(ev.instanceId)) continue;
     const p = prior.get(ev.instanceId);
     if (p) {
       const merged = { ...ev, full: true };
@@ -341,30 +372,39 @@ export function mergeWindow(startISO, endISO, events, asked = null) {
       state.occ.set(ev.instanceId, ev);
     }
   }
-  state.loadedRanges = mergeRanges([...state.loadedRanges, { start: s, end: e }]);
-  state.staleRanges = state.staleRanges.flatMap((r) => missingRanges(r.start, r.end, [{ start: s, end: e }]));
+  holdRange(s, e, gen);
   set({ occVersion: state.occVersion + 1 });
+  return true;
+}
+
+// [s, e) is now held at gen, in place of whatever covered it before.
+function holdRange(s, e, gen) {
+  const out = [];
+  for (const r of state.loadedRanges) {
+    for (const piece of missingRanges(r.start, r.end, [{ start: s, end: e }])) out.push({ ...piece, gen: r.gen });
+  }
+  out.push({ start: s, end: e, gen });
+  state.loadedRanges = mergeRanges(out);
 }
 
 // The view cache used to grow for the lifetime of the tab as someone scrolled
 // through time. Every top-level render then mapped and sorted that complete
 // history. Once the hard ceiling is crossed, keep the just-completed window
-// (plus in-progress optimistic edits) and make older dates fetchable again.
-// The server admits fewer rows than this for one window, so normal navigation
-// retains its nearby cache and never reaches the fallback trimming loop.
+// (plus local changes not yet in an answer) and make older dates fetchable
+// again. The server admits fewer rows than this for one window, so normal
+// navigation retains its nearby cache and never reaches the fallback
+// trimming loop. What stays marked loaded is what was held of the window.
 export function pruneOccurrenceCache(startISO, endISO, {
   max = OCCURRENCE_CACHE_MAX,
   activeWindow = null,
-  markLoaded = true,
 } = {}) {
   if (activeWindow && (activeWindow.start !== startISO || activeWindow.end !== endISO)) return 'stale';
   if (state.occ.size <= max) return false;
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   let active = 0;
-  let optimistic = 0;
-  for (const occ of state.occ.values()) {
-    if (occ._optimistic) { optimistic++; continue; }
+  for (const [id, occ] of state.occ) {
+    if (local.has(id)) { active++; continue; }
     const a = new Date(occ.start).getTime();
     const b = new Date(occ.end).getTime();
     if (a < e && b > s) active++;
@@ -372,59 +412,40 @@ export function pruneOccurrenceCache(startISO, endISO, {
   // Never silently evict part of a range and then call that range complete.
   // This is defensive against a stale/newer server with a looser response
   // cap; current servers admit far fewer than this in one client window.
-  if (active + optimistic > max) {
-    for (const [id, occ] of state.occ) if (!occ._optimistic) state.occ.delete(id);
+  if (active > max) {
+    for (const id of [...state.occ.keys()]) if (!local.has(id)) state.occ.delete(id);
     state.loadedRanges = [];
-    state.staleRanges = [];
     set({ occVersion: state.occVersion + 1 });
     return 'limited';
   }
   for (const [id, occ] of state.occ) {
-    if (occ._optimistic) continue;
+    if (local.has(id)) continue;
     const a = new Date(occ.start).getTime();
     const b = new Date(occ.end).getTime();
     if (!(a < e && b > s)) state.occ.delete(id);
   }
-  state.loadedRanges = markLoaded
-    ? [{ start: s, end: e }]
-    : state.loadedRanges
-      .map((range) => ({ start: Math.max(s, range.start), end: Math.min(e, range.end) }))
-      .filter((range) => range.end > range.start);
+  state.loadedRanges = state.loadedRanges
+    .map((range) => ({ start: Math.max(s, range.start), end: Math.min(e, range.end), gen: range.gen }))
+    .filter((range) => range.end > range.start);
   set({ occVersion: state.occVersion + 1 });
   return 'pruned';
 }
 
-/**
- * After a change, only the refreshed stretch is current: everything held
- * outside it may be the old version of what changed (an edited series, an
- * event moved into a month seen earlier), and going back there showed it
- * until a reload (#183). It's marked stale, so the view fetches it again
- * when it next shows it and the fresh answer replaces it. It stays held
- * meanwhile, so nothing on screen blanks and the split view's list keeps
- * its reach.
- */
-export function markStaleOutside(startISO, endISO) {
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  state.staleRanges = mergeRanges(state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, [{ start: s, end: e }])));
+/** The stretch held around this instant, however recently each part of it was fetched; null when it isn't held. */
+export function heldStretch(t) {
+  const sorted = [...state.loadedRanges].sort((a, b) => a.start - b.start);
+  let cur = null;
+  for (const r of sorted) {
+    if (cur && r.start <= cur.end) cur.end = Math.max(cur.end, r.end);
+    else if (cur && cur.start <= t && cur.end > t) break;
+    else cur = { start: r.start, end: r.end };
+  }
+  return cur && cur.start <= t && cur.end > t ? cur : null;
 }
 
-/** A stretch whose refresh failed: still shown, fetched again when next asked for. */
-export function markStale(startISO, endISO) {
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  if (e > s) state.staleRanges = mergeRanges([...state.staleRanges, { start: s, end: e }]);
-}
-
-/** What's held and current: the loaded ranges less the stale ones. Fetching asks for the rest. */
+/** What's held and current: the loaded stretches asked for at this generation. Fetching asks for the rest. */
 export function freshRanges() {
-  return state.loadedRanges.flatMap((r) => missingRanges(r.start, r.end, state.staleRanges));
-}
-
-export function rangeCovered(startISO, endISO) {
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  return state.loadedRanges.some((r) => r.start <= s && r.end >= e);
+  return state.loadedRanges.filter((r) => r.gen === generation).map((r) => ({ start: r.start, end: r.end }));
 }
 
 /**
@@ -454,12 +475,13 @@ export function missingRanges(s, e, have) {
   return gaps;
 }
 
+// Loaded stretches touching or overlapping at the same generation become one.
 function mergeRanges(ranges) {
   const sorted = [...ranges].sort((a, b) => a.start - b.start);
   const out = [];
   for (const r of sorted) {
     const last = out[out.length - 1];
-    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    if (last && r.start <= last.end && r.gen === last.gen) last.end = Math.max(last.end, r.end);
     else out.push({ ...r });
   }
   return out;
@@ -476,34 +498,50 @@ export function insertOccurrence(occ) {
   // filter) is "held", shown just while its panel is open (App.js).
   const cur = state.occ.get(occ.instanceId);
   state.occ.set(occ.instanceId, cur && !cur._held ? { ...cur, ...occ } : { ...occ, _held: true });
-  editedAt.set(occ.instanceId, Date.now());
   set({ occVersion: state.occVersion + 1 });
 }
 
 // edit: false for what isn't a change (an event's full record arriving,
 // map coordinates found): those must not hold the occurrence against the
 // next refresh (#184: hovering an event froze it until the next change).
+// An edit is a local change until its save lands (localSaved) and an answer
+// carries it, or it fails and restoreOccurrence puts back what was there.
 export function patchOccurrence(instanceId, patch, { edit = true } = {}) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;
   const before = { ...occ };
-  state.occ.set(instanceId, { ...occ, ...patch });
-  if (edit) editedAt.set(instanceId, Date.now());
+  const next = { ...occ, ...patch };
+  state.occ.set(instanceId, next);
+  if (edit) markLocal(instanceId, next);
   set({ occVersion: state.occVersion + 1 });
   return before;
 }
 
+// A save that failed: what was there goes back. It's held against answers
+// until one asked after the next change: an older answer could carry an
+// earlier edit's save that hasn't landed either.
 export function restoreOccurrence(instanceId, before) {
   if (before) state.occ.set(instanceId, before);
   else state.occ.delete(instanceId);
-  editedAt.set(instanceId, Date.now());
+  if (before) local.set(instanceId, { until: generation + 1, start: before.start, end: before.end, allDay: before.allDay });
+  else local.delete(instanceId);
   set({ occVersion: state.occVersion + 1 });
+}
+
+/** One occurrence taken off here, before its save: a local change until an answer carries it. */
+export function removeOccurrence(instanceId) {
+  const occ = state.occ.get(instanceId);
+  if (!occ) return null;
+  state.occ.delete(instanceId);
+  markLocal(instanceId, occ);
+  set({ occVersion: state.occVersion + 1 });
+  return occ;
 }
 
 export function removeOccurrencesOfEvent(eventId) {
   const removed = [];
   for (const [id, occ] of state.occ) {
-    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); editedAt.set(id, Date.now()); }
+    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); markLocal(id, occ); }
   }
   set({ occVersion: state.occVersion + 1 });
   return removed;

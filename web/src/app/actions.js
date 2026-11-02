@@ -1,8 +1,8 @@
 // Mutations with optimistic apply + rollback, and view/navigation actions.
 
 import {
-  state, set, toast, patchOccurrence, restoreOccurrence,
-  removeOccurrencesOfEvent, mergeWindow, invalidateRecords, noteEdited,
+  state, set, toast, patchOccurrence, restoreOccurrence, localSaved,
+  removeOccurrence, removeOccurrencesOfEvent, invalidateRecords,
 } from './store.js';
 import { api, entriesOf, refreshWindow, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
 import { adoptSettings } from './settings.js';
@@ -401,13 +401,13 @@ function maybePromptTripExit(occ, newStart, newEnd) {
 export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
   if (!occ) return false;
-  const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
+  const before = patchOccurrence(instanceId, { start: newStart, end: newEnd });
   try {
     const saved = await api('/events/' + occ.eventId, {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
-    patchOccurrence(instanceId, { _optimistic: false });
+    localSaved([instanceId]);
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Moved at Google' : 'Moved') + seriesWords(occ, scope || 'this', 'this');
     toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
@@ -424,13 +424,13 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
 export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
   if (!occ) return false;
-  const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
+  const before = patchOccurrence(instanceId, { start: newStart, end: newEnd });
   try {
     const saved = await api('/events/' + occ.eventId, {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
-    patchOccurrence(instanceId, { _optimistic: false });
+    localSaved([instanceId]);
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Resized at Google' : 'Resized') + seriesWords(occ, scope || 'this', 'this');
     toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
@@ -564,22 +564,17 @@ export async function updateEvent(occ, fields, scope, words = null) {
 
 export async function deleteEvent(occ, scope) {
   const removed = occ.recurring && (scope || 'this') === 'this'
-    ? [state.occ.get(occ.instanceId)].filter(Boolean)
+    ? [removeOccurrence(occ.instanceId)].filter(Boolean)
     : removeOccurrencesOfEvent(occ.eventId);
-  if (occ.recurring && (scope || 'this') === 'this') {
-    state.occ.delete(occ.instanceId);
-    noteEdited(occ.instanceId);
-    set({ occVersion: state.occVersion + 1 });
-  }
   set({ popover: null, editor: null });
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
     const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body });
+    localSaved(removed.map((r) => r.instanceId));
     toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
-    for (const r of removed) state.occ.set(r.instanceId, r);
-    set({ occVersion: state.occVersion + 1 });
+    for (const r of removed) restoreOccurrence(r.instanceId, r);
     toast('Delete failed: ' + e.message, { error: true });
   }
 }
@@ -667,6 +662,7 @@ export async function setRelationship(occ, relationship, scope) {
     const body = { relationship };
     if (occ.recurring) { body.scope = scope || (mine ? 'all' : 'all'); body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
+    localSaved([occ.instanceId]);
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
     toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
@@ -705,6 +701,7 @@ export async function setAttendance(occ, attendance, scope) {
     const body = { attendance };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
+    localSaved([occ.instanceId]);
     toast((ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res) });
     // Hidden events leave the window payload on the next fetch, and a series
     // answer changes more than this one occurrence; refresh so the cache
@@ -831,12 +828,12 @@ export async function deleteTripOnly(occ) {
   set({ popover: null });
   try {
     const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
+    localSaved(removed.map((r) => r.instanceId));
     toast('Trip removed, its events kept', { title: itemName(occ), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
   } catch (e) {
-    for (const r of removed) state.occ.set(r.instanceId, r);
-    set({ occVersion: state.occVersion + 1 });
+    for (const r of removed) restoreOccurrence(r.instanceId, r);
     toast('Delete failed: ' + e.message, { error: true });
   }
 }
@@ -853,10 +850,10 @@ export async function deleteTripAndMembers(occ, members) {
         method: 'DELETE',
         body: m.recurring ? { scope: 'all' } : {},
       })));
-      removeOccurrencesOfEvent(m.eventId);
+      localSaved(removeOccurrencesOfEvent(m.eventId).map((r) => r.instanceId));
     }
     entries.push(...entriesOf(await api('/events/' + occ.eventId, { method: 'DELETE', body: {} })));
-    removeOccurrencesOfEvent(occ.eventId);
+    localSaved(removeOccurrencesOfEvent(occ.eventId).map((r) => r.instanceId));
     toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undo: entries });
     bumpTripLinks();
     refreshWindow();
@@ -1477,6 +1474,7 @@ export async function rsvpEvent(occ, answer, retryUncertain = false) {
     const reply = via === 'google' ? null
       : { partstat: result.myPartstat, sent: result.sent, reason: result.reason, message: result.message };
     patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat, reply } });
+    localSaved([occ.instanceId]);
     invalidateRecords(occ.eventId);
     if (via !== 'google') refreshWindow(); // Accept makes it Planned, Maybe a Maybe
     loadReviewCount(); // an answered invitation leaves the Review queue

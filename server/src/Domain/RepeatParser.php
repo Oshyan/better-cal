@@ -295,6 +295,10 @@ final class RepeatParser
         $byday = isset($rule['BYDAY']) ? explode(',', $rule['BYDAY']) : [];
         $dom = (int) $day->format('j');
         $last = (int) $day->format('t');
+        // A yearly rule's months ("3", "3,9"): a day in another month is none of its.
+        if (isset($rule['BYMONTH']) && !in_array((int) $day->format('n'), array_map('intval', explode(',', $rule['BYMONTH'])), true)) {
+            return false;
+        }
         if (isset($rule['BYMONTHDAY'])) {
             // One day or a list ("1,15"); a negative one counts from the end.
             foreach (explode(',', $rule['BYMONTHDAY']) as $want) {

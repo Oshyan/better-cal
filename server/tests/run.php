@@ -2447,6 +2447,179 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $override($gym)['recurrence_instance_utc'] ?? null,
             $shown('Gym fee', '2027-04-30'), $shown('Gym fee', '2027-03-31'), $shown('Gym fee', '2027-05-31'),
         ]);
+        // Exceptions move exactly as their occurrences move. A drag the rule
+        // cannot follow (the last day of the month, a list of days) only
+        // snaps the start to the next listed day: the series' days are what
+        // they were, so its skipped and edited days stay on theirs, taking
+        // only a new time. Mapped by the months the drop crossed, the edited
+        // 31 Mar became a 30 Apr edit (a skipped day, back) and the skipped
+        // 30 Apr a skipped 31 May (a day never touched, gone).
+        $series = static fn(int $id): array => [
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$id]),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$id]),
+            array_map(static fn(array $r): string => $r['recurrence_instance_utc'] . ' = ' . $r['start_utc'] . ' ' . $r['title'], $adb->all('SELECT recurrence_instance_utc, start_utc, title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY recurrence_instance_utc', [$id])),
+            json_decode((string) $adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]), true) ?? [],
+        ];
+        $onDays = static function (string $title, string $from, string $to) use ($adb): array {
+            $seen = [];
+            foreach ($adb->all('SELECT * FROM events WHERE title LIKE ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$title . '%']) as $row) {
+                $overrides = $adb->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $row['id']]);
+                foreach ((new Recurrence())->expand($row, $overrides, Time::fromDb($from . ' 00:00:00'), Time::fromDb($to . ' 23:59:59')) as $occ) {
+                    $seen[] = Time::toDb($occ['start']) . ' ' . (string) $occ['row']['title'];
+                }
+            }
+            sort($seen);
+            return $seen;
+        };
+        $monthEndRent = (int) $eventsA->create(1, ['title' => 'Rent due', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=-1', 'start' => '2027-01-31T18:00:00+00:00', 'end' => '2027-01-31T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $monthEndRent, ['scope' => 'this', 'instanceStart' => '2027-03-31T18:00:00+00:00', 'title' => 'Rent due, March']);
+        $eventsA->deleteEvent(1, $monthEndRent, 'this', '2027-04-30T18:00:00+00:00');
+        $eventsA->patch(1, $monthEndRent, ['scope' => 'all', 'instanceStart' => '2027-01-31T18:00:00+00:00', 'start' => '2027-02-01T18:00:00+00:00', 'end' => '2027-02-01T19:00:00+00:00']);
+        checkEq('the last day of the month dragged from 31 Jan to 1 Feb opens on 28 Feb and keeps its edited 31 Mar and skipped 30 Apr', [
+            ['FREQ=MONTHLY;BYMONTHDAY=-1', '2027-02-28 18:00:00', ['2027-03-31 18:00:00 = 2027-03-31 18:00:00 Rent due, March'], ['2027-04-30 18:00:00']],
+            ['2027-02-28 18:00:00 Rent due', '2027-03-31 18:00:00 Rent due, March', '2027-05-31 18:00:00 Rent due'],
+        ], [$series($monthEndRent), $onDays('Rent due', '2027-01-01', '2027-06-15')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to 31 Jan with the edit and the skip where they were', [
+            ['FREQ=MONTHLY;BYMONTHDAY=-1', '2027-01-31 18:00:00', ['2027-03-31 18:00:00 = 2027-03-31 18:00:00 Rent due, March'], ['2027-04-30 18:00:00']],
+            ['2027-01-31 18:00:00 Rent due', '2027-02-28 18:00:00 Rent due', '2027-03-31 18:00:00 Rent due, March', '2027-05-31 18:00:00 Rent due'],
+        ], [$series($monthEndRent), $onDays('Rent due', '2027-01-01', '2027-06-15')]);
+        $eventsA->patch(1, $monthEndRent, ['scope' => 'all', 'instanceStart' => '2027-01-31T18:00:00+00:00', 'start' => '2027-02-01T20:00:00+00:00', 'end' => '2027-02-01T21:00:00+00:00']);
+        checkEq('dragged to 1 Feb at 20:00, the edit and the skip keep their days at the new time', [
+            'FREQ=MONTHLY;BYMONTHDAY=-1', '2027-02-28 20:00:00', ['2027-03-31 20:00:00 = 2027-03-31 20:00:00 Rent due, March'], ['2027-04-30 20:00:00'],
+        ], $series($monthEndRent));
+        $undoA->undoLatest(1);
+        // A list of days dragged a day: the start snaps to the next listed
+        // day, which may itself be the edited one; nothing moves to the day
+        // after it. The edited 15 Jan showed on 16 Jan beside the plain 15th.
+        $allowance = (int) $eventsA->create(1, ['title' => 'Allowance', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start' => '2027-01-01T18:00:00+00:00', 'end' => '2027-01-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $allowance, ['scope' => 'this', 'instanceStart' => '2027-01-15T18:00:00+00:00', 'title' => 'Allowance, mid January']);
+        $eventsA->deleteEvent(1, $allowance, 'this', '2027-02-15T18:00:00+00:00');
+        $eventsA->patch(1, $allowance, ['scope' => 'all', 'instanceStart' => '2027-01-01T18:00:00+00:00', 'start' => '2027-01-02T18:00:00+00:00', 'end' => '2027-01-02T19:00:00+00:00']);
+        checkEq('the 1st and 15th dragged from 1 Jan to 2 Jan opens on the edited 15 Jan and keeps the skipped 15 Feb', [
+            ['FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-01-15 18:00:00', ['2027-01-15 18:00:00 = 2027-01-15 18:00:00 Allowance, mid January'], ['2027-02-15 18:00:00']],
+            ['2027-01-15 18:00:00 Allowance, mid January', '2027-02-01 18:00:00 Allowance', '2027-03-01 18:00:00 Allowance'],
+        ], [$series($allowance), $onDays('Allowance', '2027-01-01', '2027-03-01')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to 1 Jan', ['FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-01-01 18:00:00', ['2027-01-15 18:00:00 = 2027-01-15 18:00:00 Allowance, mid January'], ['2027-02-15 18:00:00']], $series($allowance));
+        $stipend = (int) $eventsA->create(1, ['title' => 'Stipend', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start' => '2027-01-01T18:00:00+00:00', 'end' => '2027-01-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $stipend, ['scope' => 'this', 'instanceStart' => '2027-03-01T18:00:00+00:00', 'title' => 'Stipend, March']);
+        $eventsA->patch(1, $stipend, ['scope' => 'all', 'instanceStart' => '2027-01-15T18:00:00+00:00', 'start' => '2027-02-16T18:00:00+00:00', 'end' => '2027-02-16T19:00:00+00:00']);
+        checkEq('its 15 Jan dragged to 16 Feb opens on 15 Feb and keeps the edited 1 Mar', [
+            ['FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-02-15 18:00:00', ['2027-03-01 18:00:00 = 2027-03-01 18:00:00 Stipend, March'], []],
+            ['2027-02-15 18:00:00 Stipend', '2027-03-01 18:00:00 Stipend, March', '2027-03-15 18:00:00 Stipend', '2027-04-01 18:00:00 Stipend'],
+        ], [$series($stipend), $onDays('Stipend', '2027-01-01', '2027-04-01')]);
+        // A bounded series' end moves with its days when the rule followed
+        // the drag too. The end stayed at 28 May while the days became the
+        // 1st, so the series lost its fourth day (and an edited fourth day
+        // outlived the series). Same for a weekly rule moved to another
+        // weekday (0.9.15), backwards into a shorter month, an end written
+        // at the last day's start, and a date series' end.
+        $closing = (int) $eventsA->create(1, ['title' => 'Closing', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=28;UNTIL=20270528T235959Z', 'start' => '2027-02-28T18:00:00+00:00', 'end' => '2027-02-28T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $closing, ['scope' => 'this', 'instanceStart' => '2027-05-28T18:00:00+00:00', 'title' => 'Closing, May']);
+        $eventsA->patch(1, $closing, ['scope' => 'all', 'instanceStart' => '2027-02-28T18:00:00+00:00', 'start' => '2027-03-01T18:00:00+00:00', 'end' => '2027-03-01T19:00:00+00:00']);
+        checkEq('every 28th until 28 May dragged from 28 Feb to 1 Mar runs on the 1st until 1 Jun, its edited 28 May now the 1 Jun', [
+            ['FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601T180000Z', '2027-03-01 18:00:00', ['2027-06-01 18:00:00 = 2027-06-01 18:00:00 Closing, May'], []],
+            ['2027-03-01 18:00:00 Closing', '2027-04-01 18:00:00 Closing', '2027-05-01 18:00:00 Closing', '2027-06-01 18:00:00 Closing, May'],
+        ], [$series($closing), $onDays('Closing', '2027-01-01', '2027-12-31')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to every 28th until 28 May', [
+            ['FREQ=MONTHLY;BYMONTHDAY=28;UNTIL=20270528T235959Z', '2027-02-28 18:00:00', ['2027-05-28 18:00:00 = 2027-05-28 18:00:00 Closing, May'], []],
+            ['2027-02-28 18:00:00 Closing', '2027-03-28 18:00:00 Closing', '2027-04-28 18:00:00 Closing', '2027-05-28 18:00:00 Closing, May'],
+        ], [$series($closing), $onDays('Closing', '2027-01-01', '2027-12-31')]);
+        $standup = (int) $eventsA->create(1, ['title' => 'Standup', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270125T235959Z', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $standup, ['scope' => 'all', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'start' => '2027-01-05T18:00:00+00:00', 'end' => '2027-01-05T19:00:00+00:00']);
+        checkEq('every Monday until 25 Jan dragged to Tuesday runs on Tuesdays until 26 Jan', [
+            'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270126T180000Z',
+            ['2027-01-05 18:00:00 Standup', '2027-01-12 18:00:00 Standup', '2027-01-19 18:00:00 Standup', '2027-01-26 18:00:00 Standup'],
+        ], [$series($standup)[0], $onDays('Standup', '2027-01-01', '2027-12-31')]);
+        $dues = (int) $eventsA->create(1, ['title' => 'Dues', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601T235959Z', 'start' => '2027-03-01T18:00:00+00:00', 'end' => '2027-03-01T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $dues, ['scope' => 'all', 'instanceStart' => '2027-03-01T18:00:00+00:00', 'start' => '2027-02-28T18:00:00+00:00', 'end' => '2027-02-28T19:00:00+00:00']);
+        checkEq('every 1st until 1 Jun dragged back to 28 Feb runs on the 28th until 28 May', [
+            'FREQ=MONTHLY;BYMONTHDAY=28;UNTIL=20270528T180000Z',
+            ['2027-02-28 18:00:00 Dues', '2027-03-28 18:00:00 Dues', '2027-04-28 18:00:00 Dues', '2027-05-28 18:00:00 Dues'],
+        ], [$series($dues)[0], $onDays('Dues', '2027-01-01', '2027-12-31')]);
+        $tally = (int) $eventsA->create(1, ['title' => 'Tally', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=28;UNTIL=20270528T180000Z', 'start' => '2027-02-28T18:00:00+00:00', 'end' => '2027-02-28T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $tally, ['scope' => 'all', 'instanceStart' => '2027-02-28T18:00:00+00:00', 'start' => '2027-03-01T18:00:00+00:00', 'end' => '2027-03-01T19:00:00+00:00']);
+        checkEq('an end written at the last day\'s start moves to the new last day\'s start', ['FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601T180000Z', 4], [$series($tally)[0], count($onDays('Tally', '2027-01-01', '2027-12-31'))]);
+        $gardenDay = (int) $eventsA->create(1, ['title' => 'Garden day', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=28;UNTIL=20270528', 'start' => '2027-02-28T00:00:00+00:00', 'end' => '2027-03-01T00:00:00+00:00', 'allDay' => true] + $placeBase)['eventId'];
+        $eventsA->patch(1, $gardenDay, ['scope' => 'all', 'instanceStart' => '2027-02-28T00:00:00+00:00', 'start' => '2027-03-01T00:00:00+00:00', 'end' => '2027-03-02T00:00:00+00:00']);
+        checkEq('a date series\' end follows its days too', ['FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-03-01 00:00:00', 4], [$series($gardenDay)[0], $series($gardenDay)[1], count($onDays('Garden day', '2027-01-01', '2027-12-31'))]);
+        $rota = (int) $eventsA->create(1, ['title' => 'Rota', 'rrule' => 'FREQ=WEEKLY;UNTIL=20270125T235959Z', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $rota, ['scope' => 'all', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'start' => '2027-01-05T18:00:00+00:00', 'end' => '2027-01-05T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY;UNTIL=20270119T235959Z']);
+        checkEq('an end sent with the edit is taken as given', ['FREQ=WEEKLY;UNTIL=20270119T235959Z', '2027-01-05 18:00:00'], [$series($rota)[0], $series($rota)[1]]);
+        // An nth weekday follows the drag the way a weekly day does: the
+        // second Tuesday dragged to the Wednesday is the second Wednesday,
+        // and its edited and skipped days move to theirs. Left as the second
+        // Tuesday, the start was pushed to February's and January's day was
+        // gone without the dragged day having moved.
+        $board = (int) $eventsA->create(1, ['title' => 'Board meeting', 'rrule' => 'FREQ=MONTHLY;BYDAY=2TU', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $board, ['scope' => 'this', 'instanceStart' => '2027-04-13T18:00:00+00:00', 'title' => 'Board meeting, April']);
+        $eventsA->deleteEvent(1, $board, 'this', '2027-05-11T18:00:00+00:00');
+        $eventsA->patch(1, $board, ['scope' => 'all', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-13T18:00:00+00:00', 'end' => '2027-01-13T19:00:00+00:00']);
+        checkEq('the second Tuesday dragged a day later is the second Wednesday, from 13 Jan, its edited 13 Apr the 14 Apr and its skipped 11 May the 12 May', [
+            ['FREQ=MONTHLY;BYDAY=2WE', '2027-01-13 18:00:00', ['2027-04-14 18:00:00 = 2027-04-14 18:00:00 Board meeting, April'], ['2027-05-12 18:00:00']],
+            ['2027-01-13 18:00:00 Board meeting', '2027-02-10 18:00:00 Board meeting', '2027-03-10 18:00:00 Board meeting', '2027-04-14 18:00:00 Board meeting, April', '2027-06-09 18:00:00 Board meeting'],
+        ], [$series($board), $onDays('Board meeting', '2027-01-01', '2027-06-30')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to the second Tuesday from 12 Jan with the edit on 13 Apr and the skip on 11 May', [
+            'FREQ=MONTHLY;BYDAY=2TU', '2027-01-12 18:00:00', ['2027-04-13 18:00:00 = 2027-04-13 18:00:00 Board meeting, April'], ['2027-05-11 18:00:00'],
+        ], $series($board));
+        $eventsA->patch(1, $board, ['scope' => 'all', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
+        checkEq('dragged a week later it is the third Tuesday', ['FREQ=MONTHLY;BYDAY=3TU', '2027-01-19 18:00:00', ['2027-04-20 18:00:00 = 2027-04-20 18:00:00 Board meeting, April'], ['2027-05-18 18:00:00']], $series($board));
+        $undoA->undoLatest(1);
+        $eventsA->patch(1, $board, ['scope' => 'all', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-02-09T18:00:00+00:00', 'end' => '2027-02-09T19:00:00+00:00']);
+        checkEq('dragged to February\'s second Tuesday it keeps its rule and opens there, the edit and the skip a month on', ['FREQ=MONTHLY;BYDAY=2TU', '2027-02-09 18:00:00', ['2027-05-11 18:00:00 = 2027-05-11 18:00:00 Board meeting, April'], ['2027-06-08 18:00:00']], $series($board));
+        $payday = (int) $eventsA->create(1, ['title' => 'Payday', 'rrule' => 'FREQ=MONTHLY;BYDAY=-1FR', 'start' => '2027-01-29T18:00:00+00:00', 'end' => '2027-01-29T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $payday, ['scope' => 'all', 'instanceStart' => '2027-01-29T18:00:00+00:00', 'start' => '2027-01-30T18:00:00+00:00', 'end' => '2027-01-30T19:00:00+00:00']);
+        checkEq('the last Friday dragged to the Saturday is the last Saturday', ['FREQ=MONTHLY;BYDAY=-1SA', '2027-01-30 18:00:00', ['2027-01-30 18:00:00 Payday', '2027-02-27 18:00:00 Payday', '2027-03-27 18:00:00 Payday']], [$series($payday)[0], $series($payday)[1], $onDays('Payday', '2027-01-01', '2027-03-31')]);
+        $review = (int) $eventsA->create(1, ['title' => 'Review', 'rrule' => 'FREQ=MONTHLY;BYDAY=TU;BYSETPOS=2', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $review, ['scope' => 'all', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-13T18:00:00+00:00', 'end' => '2027-01-13T19:00:00+00:00']);
+        checkEq('the same written as a set position', ['FREQ=MONTHLY;BYDAY=WE;BYSETPOS=2', '2027-01-13 18:00:00'], [$series($review)[0], $series($review)[1]]);
+        // A yearly series on a month and day follows the drag as a monthly
+        // one does, across a month too, and its exceptions go to the new
+        // day of their years. The rule used to stay, so only the first year
+        // moved and the rest kept the old day.
+        $anniversary = (int) $eventsA->create(1, ['title' => 'Anniversary', 'rrule' => 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', 'start' => '2027-03-15T18:00:00+00:00', 'end' => '2027-03-15T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $anniversary, ['scope' => 'this', 'instanceStart' => '2028-03-15T18:00:00+00:00', 'title' => 'Anniversary, tenth']);
+        $eventsA->deleteEvent(1, $anniversary, 'this', '2029-03-15T18:00:00+00:00');
+        $eventsA->patch(1, $anniversary, ['scope' => 'all', 'instanceStart' => '2027-03-15T18:00:00+00:00', 'start' => '2027-03-16T18:00:00+00:00', 'end' => '2027-03-16T19:00:00+00:00']);
+        checkEq('every 15 Mar dragged to 16 Mar is every 16 Mar, its edited 2028 and skipped 2029 on the 16th', [
+            ['FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=16', '2027-03-16 18:00:00', ['2028-03-16 18:00:00 = 2028-03-16 18:00:00 Anniversary, tenth'], ['2029-03-16 18:00:00']],
+            ['2027-03-16 18:00:00 Anniversary', '2028-03-16 18:00:00 Anniversary, tenth', '2030-03-16 18:00:00 Anniversary'],
+        ], [$series($anniversary), $onDays('Anniversary', '2027-01-01', '2030-12-31')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to every 15 Mar', [
+            'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', '2027-03-15 18:00:00', ['2028-03-15 18:00:00 = 2028-03-15 18:00:00 Anniversary, tenth'], ['2029-03-15 18:00:00'],
+        ], $series($anniversary));
+        $eventsA->patch(1, $anniversary, ['scope' => 'all', 'instanceStart' => '2027-03-15T18:00:00+00:00', 'start' => '2027-04-01T18:00:00+00:00', 'end' => '2027-04-01T19:00:00+00:00']);
+        checkEq('dragged to 1 Apr it is every 1 Apr', [
+            ['FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=1', '2027-04-01 18:00:00', ['2028-04-01 18:00:00 = 2028-04-01 18:00:00 Anniversary, tenth'], ['2029-04-01 18:00:00']],
+            ['2027-04-01 18:00:00 Anniversary', '2028-04-01 18:00:00 Anniversary, tenth', '2030-04-01 18:00:00 Anniversary'],
+        ], [$series($anniversary), $onDays('Anniversary', '2027-01-01', '2030-12-31')]);
+        $undoA->undoLatest(1);
+        $eventsA->patch(1, $anniversary, ['scope' => 'all', 'instanceStart' => '2027-03-15T18:00:00+00:00', 'start' => '2028-03-15T18:00:00+00:00', 'end' => '2028-03-15T19:00:00+00:00']);
+        checkEq('dragged a year on it keeps its day and opens in 2028, the edit and the skip a year on', ['FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', '2028-03-15 18:00:00', ['2029-03-15 18:00:00 = 2029-03-15 18:00:00 Anniversary, tenth'], ['2030-03-15 18:00:00']], $series($anniversary));
+        // "This and following" dragged a day follows the day too, from that
+        // day on. With the rule left as it was, the new series opened on
+        // the next listed day and the dragged day was gone from both.
+        $lesson = (int) $eventsA->create(1, ['title' => 'Lesson', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $lesson, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
+        checkEq('every Monday from 18 Jan on dragged to the Tuesday is every Tuesday from 19 Jan', [
+            '2027-01-04 18:00:00 Lesson', '2027-01-11 18:00:00 Lesson', '2027-01-19 18:00:00 Lesson', '2027-01-26 18:00:00 Lesson', '2027-02-02 18:00:00 Lesson',
+        ], $onDays('Lesson', '2027-01-01', '2027-02-05'));
+        $undoA->undoLatest(1);
+        checkEq('and undoes to Mondays', ['2027-01-04 18:00:00 Lesson', '2027-01-11 18:00:00 Lesson', '2027-01-18 18:00:00 Lesson', '2027-01-25 18:00:00 Lesson', '2027-02-01 18:00:00 Lesson'], $onDays('Lesson', '2027-01-01', '2027-02-05'));
+        $council = (int) $eventsA->create(1, ['title' => 'Council', 'rrule' => 'FREQ=MONTHLY;BYDAY=2TU', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $council, ['scope' => 'following', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-03-10T18:00:00+00:00', 'end' => '2027-03-10T19:00:00+00:00']);
+        checkEq('the second Tuesday from 9 Mar on dragged to the Wednesday is the second Wednesday from 10 Mar', [
+            '2027-01-12 18:00:00 Council', '2027-02-09 18:00:00 Council', '2027-03-10 18:00:00 Council', '2027-04-14 18:00:00 Council',
+        ], $onDays('Council', '2027-01-01', '2027-04-30'));
+        $jubilee = (int) $eventsA->create(1, ['title' => 'Jubilee', 'rrule' => 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', 'start' => '2027-03-15T18:00:00+00:00', 'end' => '2027-03-15T19:00:00+00:00'] + $placeBase)['eventId'];
+        $eventsA->patch(1, $jubilee, ['scope' => 'following', 'instanceStart' => '2028-03-15T18:00:00+00:00', 'start' => '2028-03-16T18:00:00+00:00', 'end' => '2028-03-16T19:00:00+00:00']);
+        checkEq('every 15 Mar from 2028 on dragged to the 16th is every 16 Mar from 2028', [
+            '2027-03-15 18:00:00 Jubilee', '2028-03-16 18:00:00 Jubilee', '2029-03-16 18:00:00 Jubilee',
+        ], $onDays('Jubilee', '2027-01-01', '2029-12-31'));
     }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
@@ -4524,10 +4697,27 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=31', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-11-01')));
     checkEq('month day shift: a move to the same day of another month keeps the day', 'FREQ=MONTHLY;BYMONTHDAY=15',
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=15', new DateTimeImmutable('2026-10-15'), new DateTimeImmutable('2026-11-15')));
-    checkEq('month day shift: the last day, an nth weekday and a plain monthly rule stay', ['FREQ=MONTHLY;BYMONTHDAY=-1', 'FREQ=MONTHLY;BYDAY=1MO', 'FREQ=MONTHLY'], [
+    checkEq('month day shift: the last day, a list of days and a plain monthly rule stay', ['FREQ=MONTHLY;BYMONTHDAY=-1', 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'FREQ=MONTHLY'], [
         Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=-1', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-10-30')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=1,15', new DateTimeImmutable('2026-10-01'), new DateTimeImmutable('2026-10-02')),
         Recurrence::shiftBymonthday('FREQ=MONTHLY', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+    ]);
+    // An nth weekday follows the day landed on, counted the way it was (from the start or the end of the month); a yearly month and day too.
+    checkEq('month day shift: the first Monday moved a day is the first Tuesday, the last Friday moved back the last Thursday, a week on the second Monday', ['FREQ=MONTHLY;BYDAY=1TU', 'FREQ=MONTHLY;BYDAY=-1TH', 'FREQ=MONTHLY;BYDAY=2MO', 'FREQ=MONTHLY;BYDAY=TU;BYSETPOS=1'], [
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=-1FR', new DateTimeImmutable('2026-10-30'), new DateTimeImmutable('2026-10-29')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-12')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+    ]);
+    checkEq('month day shift: the same place in another month, two weekdays and a weekday list stay', ['FREQ=MONTHLY;BYDAY=1MO', 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'], [
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-11-02')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO,3MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
+        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', new DateTimeImmutable('2026-10-30'), new DateTimeImmutable('2026-10-29')),
+    ]);
+    checkEq('month day shift: a yearly month and day follow the day landed on, across a month too; a year on they stay', ['FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=16', 'FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=1', 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15'], [
+        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2027-03-16')),
+        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2027-04-01')),
+        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2028-03-15')),
     ]);
     $fShift = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('seriesKeyShift');
     $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-05 17:00:00', 'end_utc' => '2026-10-05 18:00:00'] + $fMon);
@@ -4548,6 +4738,10 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occur
     checkEq('align: a Thursday 9:00 start of a Mon/Wed/Fri series moves to Friday 9:00', ['start_utc' => '2026-10-09 16:00:00', 'end_utc' => '2026-10-09 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
     // Monthly rules too (#193): the 20th with "every 15th" waits for the next 15th, at 9:00 across the clock change.
     checkEq('align: a monthly on the 15th started on the 20th moves to the next 15th', ['start_utc' => '2026-11-15 17:00:00', 'end_utc' => '2026-11-15 18:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
+    checkEq('align: a yearly on 15 March started on 20 October waits for the next 15 March; one with no month is left alone', [['start_utc' => '2027-03-15 16:00:00', 'end_utc' => '2027-03-15 17:00:00'], []], [
+        $fAlign->invoke(null, ['rrule' => 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon),
+        $fAlign->invoke(null, ['rrule' => 'FREQ=YEARLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon),
+    ]);
     checkEq('align: first and third Monday started on a Thursday moves to the next listed Monday', ['start_utc' => '2026-10-19 16:00:00', 'end_utc' => '2026-10-19 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
     checkEq('align: last weekday started mid-month moves to the month\'s last weekday', ['start_utc' => '2026-10-30 16:00:00', 'end_utc' => '2026-10-30 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
     checkEq('align: a monthly start already on its day stays', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=20', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));

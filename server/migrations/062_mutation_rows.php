@@ -30,10 +30,16 @@ return static function (Db $db): string {
                 seq INT UNSIGNED NOT NULL,
                 side VARCHAR(6) NOT NULL,
                 table_name VARCHAR(40) NOT NULL,
-                rows_json MEDIUMTEXT NOT NULL,
+                rows_json LONGTEXT NOT NULL,
                 PRIMARY KEY (mutation_id, seq),
                 CONSTRAINT fk_mutation_rows_mutation FOREIGN KEY (mutation_id) REFERENCES mutations(id) ON DELETE CASCADE
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+              ) ENGINE=InnoDB');
+    } elseif (!$sqlite && strtolower((string) $db->scalar(
+        "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mutation_rows' AND COLUMN_NAME = 'rows_json'"
+    )) === 'mediumtext') {
+        // As a development build first made it: as large as the snapshots
+        // (before_json), so a larger packet size never meets a smaller column.
+        $db->run('ALTER TABLE mutation_rows MODIFY rows_json LONGTEXT NOT NULL');
     }
-    return 'A calendar of any size can be deleted and undone: its events are kept for undo in pieces.';
+    return 'Very large calendars can be deleted and undone: their events are kept for undo in pieces.';
 };

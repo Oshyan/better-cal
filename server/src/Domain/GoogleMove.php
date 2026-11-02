@@ -318,17 +318,7 @@ final class GoogleMove
                     'last_poll_error' => null,
                 ], 'id = ?', [$calendarId]);
                 $this->db->run("UPDATE events SET source = 'feed' WHERE calendar_id = ?", [$calendarId]);
-                // Earlier changes to it stay in Activity but can no longer be
-                // undone: undoing one now would change the row here and never
-                // Google, which would then overwrite it on the next poll.
-                $this->db->run(
-                    "UPDATE mutations SET before_json = NULL, after_json = NULL
-                     WHERE id IN (SELECT mutation_id FROM mutation_calendar_refs WHERE calendar_id = ?)
-                        OR (entity = 'event' AND entity_id IN (SELECT id FROM events WHERE calendar_id = ?))
-                        OR (entity = 'calendar' AND entity_id = ?)",
-                    [$calendarId, $calendarId, $calendarId]
-                );
-                Undo::dropUnusedPieces($this->db);
+                self::endUndoOf($this->db, $calendarId);
             });
             $count = (int) $this->db->scalar('SELECT done_count FROM calendar_moves WHERE id = ?', [$moveId]);
             $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,
@@ -351,6 +341,25 @@ final class GoogleMove
             );
             return self::RESULT_DONE;
         }
+    }
+
+    /**
+     * Earlier changes to a calendar moved to Google stay in Activity but can
+     * no longer be undone: undoing one now would change the row here and
+     * never Google, which would then overwrite it on the next poll. The rows
+     * those entries kept in pieces go with them; other entries' pieces,
+     * whatever account they're in, are left to the daily prune
+     * (Activity::prune), so the move locks only its own. In the move's
+     * cutover transaction.
+     */
+    public static function endUndoOf(Db $db, int $calendarId): void
+    {
+        $ofCalendar = "id IN (SELECT mutation_id FROM mutation_calendar_refs WHERE calendar_id = ?)
+                OR (entity = 'event' AND entity_id IN (SELECT id FROM events WHERE calendar_id = ?))
+                OR (entity = 'calendar' AND entity_id = ?)";
+        $params = [$calendarId, $calendarId, $calendarId];
+        $db->run("UPDATE mutations SET before_json = NULL, after_json = NULL WHERE $ofCalendar", $params);
+        $db->run("DELETE FROM mutation_rows WHERE mutation_id IN (SELECT id FROM mutations WHERE $ofCalendar)", $params);
     }
 
     // ---- internals ----------------------------------------------------------

@@ -8638,9 +8638,10 @@ require __DIR__ . '/plugins.php';
         (1, datetime('now', '-100 days'), '{}', NULL),
         (2, datetime('now', '-10 days'), NULL, '{}'),
         (3, datetime('now', '-1 hour'), '{}', '{}')");
-    // Rows two of them keep apart (a large calendar deleted): the older
-    // entry's go with its snapshots, the recent one's stay.
-    $adb->run("INSERT INTO mutation_rows (mutation_id, seq, side, table_name, rows_json) VALUES (2, 1, 'after', 'events', '[]'), (3, 1, 'before', 'events', '[]'), (3, 2, 'before', 'event_tags', '[]')");
+    // Rows three of them keep apart (a large calendar deleted): the older
+    // entries' go with their snapshots or with the entry (SQLite here runs
+    // without foreign keys, so no cascade does it), the recent one's stay.
+    $adb->run("INSERT INTO mutation_rows (mutation_id, seq, side, table_name, rows_json) VALUES (1, 1, 'before', 'events', '[]'), (2, 1, 'after', 'events', '[]'), (3, 1, 'before', 'events', '[]'), (3, 2, 'before', 'event_tags', '[]')");
     // A plugin's calendars: one still here (7), one deleted ten days ago (8)
     // and one an hour ago (9), each delete holding the calendar as it was.
     $adb->run('INSERT INTO calendars (id) VALUES (7)');

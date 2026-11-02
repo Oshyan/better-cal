@@ -189,4 +189,39 @@ return static function (Db $suiteDb): void {
                 $count('SELECT COUNT(*) FROM mutation_rows WHERE mutation_id = ?', [$entry]),
                 $count("SELECT COUNT(*) FROM mutation_touches WHERE mutation_id = ? AND row_key = ? AND col = '*'", [$entry, 'events:' . $event])]);
     });
+
+    // One event whose notes are 6,000,000 bytes of emoji: the journal keeps
+    // them as themselves, so its piece is about their own size and under the
+    // packet size. Written as \u escapes it was three times that, and the
+    // delete failed.
+    scenario('large calendar: one event with 6 MB of emoji notes deletes and undoes', function () use ($db, $d, $u): void {
+        $wide = (int) $d->calendars->create($u, ['name' => 'Wide sample'])['id'];
+        $event = (int) $d->events->create($u, eventAt($wide, 'Wide sample event'))['eventId'];
+        $db->run('UPDATE events SET description = ? WHERE id = ?', [str_repeat("\u{1F389}", 1500000), $event]);
+        $was = md5(serialize($db->one('SELECT * FROM events WHERE id = ?', [$event])));
+        $started = microtime(true);
+        $d->calendars->delete($u, $wide);
+        $deleteSeconds = microtime(true) - $started;
+        $entry = lastEntry($db, $u);
+        $piece = (int) $db->scalar('SELECT MAX(LENGTH(rows_json)) FROM mutation_rows WHERE mutation_id = ?', [$entry]);
+        check('large calendar: the wide event is kept in a piece of about its own size', $piece > 6000000 && $piece < 6100000, "$piece bytes");
+        $started = microtime(true);
+        $d->undo->undoById($u, $entry);
+        $undoSeconds = microtime(true) - $started;
+        checkEq('large calendar: undone, the wide event is back as it was', $was, md5(serialize($db->one('SELECT * FROM events WHERE id = ?', [$event]))));
+        if (getenv('BC_TEST_VERBOSE') === '1') {
+            printf("large calendar: 6 MB of emoji notes, piece %d bytes, delete %.2f s, undo %.2f s\n", $piece, $deleteSeconds, $undoSeconds);
+        }
+    });
+
+    // The suite's schema as this found it: the account goes, and with it the
+    // calendar's events and every entry and piece of its journal, so a later
+    // test reading whole tables doesn't read 25,000 events (run twice, the
+    // suite ran out of memory there).
+    $db->run('DELETE FROM users WHERE id = ?', [$u]);
+    checkEq('large calendar: cleared away after, with its journal', [0, 0, 0], [
+        $count('SELECT COUNT(*) FROM events WHERE calendar_id = ?', [$big]),
+        $count('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u]),
+        $count('SELECT COUNT(*) FROM mutation_rows r LEFT JOIN mutations m ON m.id = r.mutation_id WHERE m.id IS NULL'),
+    ]);
 };

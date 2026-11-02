@@ -300,6 +300,8 @@ final class QuickAdd
      * - Past start with no explicit date in the text ("cocktails at 4pm"
      *   scheduled for two days ago): take the fallback's times, which always
      *   roll forward when no date was written.
+     * - Several days the text named ("Aug 3-7 9am-5pm") and a model answer
+     *   covering less of them: take the fallback's times (#198).
      * - Companion clause stripped from the title ("Cocktails with Alex"
      *   -> "Cocktails"): the product rule is title = text minus
      *   date/time/location phrases only, so restore the fallback title.
@@ -375,6 +377,25 @@ final class QuickAdd
             $merged['start'] = $fallback['start'];
             $merged['end'] = $fallback['end'];
             $merged['allDay'] = $fallback['allDay'];
+        }
+
+        // A range the text named ("Aug 3-7 9am-5pm", "Mon-Fri 9am-5pm"):
+        // a model answer covering less of it, one day of the five, does not
+        // undo it (#198).
+        try {
+            $fbStart = new \DateTimeImmutable((string) $fallback['start']);
+            $fbEnd = new \DateTimeImmutable((string) $fallback['end']);
+            $fbLength = $fbEnd->getTimestamp() - $fbStart->getTimestamp();
+            $llmLength = (new \DateTimeImmutable((string) $merged['end']))->getTimestamp()
+                - (new \DateTimeImmutable((string) $merged['start']))->getTimestamp();
+            if (($fallback['dateFound'] ?? false) && $fbEnd->modify('-1 second')->format('Y-m-d') > $fbStart->format('Y-m-d')
+                && $llmLength < $fbLength) {
+                $merged['start'] = $fallback['start'];
+                $merged['end'] = $fallback['end'];
+                $merged['allDay'] = $fallback['allDay'];
+            }
+        } catch (\Exception) {
+            // Times already guarded above.
         }
 
         $fbTitle = (string) ($fallback['title'] ?? '');

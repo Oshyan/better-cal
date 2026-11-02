@@ -434,7 +434,7 @@ final class RepeatParser
     }
 
     /** A clock time or time of day anywhere in $work ("9am", "9:30", "noon", "in the morning"). */
-    private static function hasTime(string $work): bool
+    public static function hasTime(string $work): bool
     {
         return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|\b(?:noon|midnight|tonight)\b|\bat\s+\d{1,2}\b|\b(?:in\s+the|this)\s+(?:morning|afternoon|evening)\b/i', $work) === 1;
     }

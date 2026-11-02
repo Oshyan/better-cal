@@ -13563,6 +13563,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         BetterCal\Http\Controllers\ExportController::attachment('Café plans.ics'));
 }
 
+require __DIR__ . '/series-model.php';
 require __DIR__ . '/files-security.php';
 require __DIR__ . '/credentials-security.php';
 require __DIR__ . '/mail-security.php';

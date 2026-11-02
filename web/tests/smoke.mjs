@@ -4609,6 +4609,59 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     ["After the new end: 'Recital at Sample Hall' 31 Oct", ['Keep it as an event of its own', 'Delete it']]);
   eq('series dialog: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { bound: 'count', outside: 'delete' });
 
+  // The examples after the fourth review (6258688): labels, order and the
+  // preselection are the plan's. "Cello lesson", 31 Oct dragged to 1 Nov:
+  // keep the end comes first.
+  const cello = {
+    hash: 'k1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
+    bound: { words: 'Changes 6 events to 10, ends 1 Nov' },
+    groups: [{ id: 'bound', label: 'Bound', selected: 'end', options: [
+      { id: 'end', label: 'Keep the end', words: 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct' },
+      { id: 'count', label: 'Keep 6 events + this one on its own', next: firsts, words: 'and 1 Nov separately', bound: { words: '6 in the series + 1 separate' } },
+    ] }],
+  };
+  const c = planView(cello, ctx({ title: 'Cello lesson' }));
+  eq('series dialog: a count that would split off the dragged day, keep the end first and preselected', c.readings[0].options.map((o) => [o.label, o.selected, o.dates, o.note]), [
+    ['Keep the end', true, '', 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct'],
+    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'and 1 Nov separately; 6 in the series + 1 separate'],
+  ]);
+  eq('series dialog: the bound line for it', c.bound, 'Changes 6 events to 10, ends 1 Nov');
+  eq('series dialog: Enter takes the plan\'s preselection', commitPlan(cello, {}).choices, { bound: 'end' });
+
+  // "Pottery", Mondays moved to Fridays: an edge gain left out by default,
+  // its rows with their bound lines and no dates of their own.
+  const potteryGroup = (bounds) => ({ id: 'edge', label: 'First week', selected: 'without', options: [
+    { id: 'without', label: "Don't add Fri 8 Jan", bound: { words: bounds[0] } },
+    { id: 'add', label: 'Add Fri 8 Jan', bound: { words: bounds[1] } },
+  ] });
+  const pottery = {
+    hash: 'p2', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', after: 'FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', wordsBefore: 'Weekly on Monday and Wednesday at 18:00', words: 'Weekly on Wednesday and Friday at 18:00' },
+    bound: { words: '5 events, ends 22 Jan (was 20 Jan)' },
+    groups: [potteryGroup(['5 events, ends 22 Jan (was 20 Jan)', "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"])],
+    days: [{ key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' }],
+  };
+  const pv = planView(pottery, ctx({ title: 'Pottery' }));
+  eq('series dialog: an edge gain left out, preselected, with each choice\'s bound', [pv.readings[0].showLabel && pv.readings[0].label, pv.readings[0].options.map((o) => [o.label, o.selected, o.note])], ['First week', [
+    ["Don't add Fri 8 Jan", true, '5 events, ends 22 Jan (was 20 Jan)'],
+    ['Add Fri 8 Jan', false, "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"],
+  ]]);
+  eq('series dialog: the generated skip is listed with the skipped days', pv.skipped, 'Fri 8 Jan skipped, so the series starts as before');
+  // Case 7, a day already skipped: the count's line names it.
+  const skippedBefore = {
+    ...pottery, hash: 'p3',
+    bound: { words: '5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)' },
+    groups: [potteryGroup(['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place'])],
+    days: [
+      { key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' },
+      { key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'stays', words: '13 Jan stays skipped' },
+    ],
+  };
+  const sb = planView(skippedBefore, ctx({ title: 'Pottery' }));
+  eq('series dialog: a count with an earlier skip says so', [sb.bound, sb.readings[0].options.map((o) => o.note)], ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)',
+    ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place']]);
+  eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
+  eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
+
   // Google, until 1.5.2: the rule-changing drag refused, the time change noted.
   const googleWords = 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.';
   const gRefused = planView({ hash: 'e1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE' }, refusals: [{ code: 'google_rule', words: googleWords }] }, ctx());

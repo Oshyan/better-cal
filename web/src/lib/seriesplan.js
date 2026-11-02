@@ -158,10 +158,15 @@ export function planView(plan, ctx = {}) {
       };
     }),
   });
+  // The option labels and the preselection are the plan's, in its order.
+  // A group whose options carry dates or a consequence is drawn as rows
+  // ("Don't add Fri 8 Jan   5 events, ends 22 Jan"); bare labels go inline.
+  const noted = (o) => (Array.isArray(o.next) && o.next.length) || wordsOf(o.words || o.consequence) || wordsOf(o.differs) || wordsOf(o.bound);
   for (const g of plan.groups || []) {
-    const dated = (g.options || []).some((o) => Array.isArray(o.next) && o.next.length);
+    const dated = (g.options || []).some(noted);
     if (dated) {
       const group = inline(g);
+      group.dated = (g.options || []).some((o) => Array.isArray(o.next) && o.next.length);
       group.options = group.options.map((o, i) => {
         const src = g.options[i];
         const notes = [wordsOf(src.words || src.consequence), wordsOf(src.differs), wordsOf(src.bound)].filter(Boolean);
@@ -183,7 +188,10 @@ export function planView(plan, ctx = {}) {
     const g = groupOf(d.key);
     view.edited.push({ key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null });
   }
-  view.skipped = days.filter((x) => x.kind === 'skipped').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join('; ');
+  view.skipped = days.filter((x) => x.kind === 'skipped').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
+  // A group's name leads its rows when there's more than one, or when its
+  // rows aren't readings of the rule ("First week", "Bound").
+  for (const g of view.readings) g.showLabel = !!g.label && (view.readings.length > 1 || !g.dated);
   view.ownership = wordsOf(plan.ownership);
   view.gains = upperFirst((plan.gains || []).map(wordsOf).filter(Boolean).join('; '));
   view.losses = upperFirst((plan.losses || []).map(wordsOf).filter(Boolean).join('; '));

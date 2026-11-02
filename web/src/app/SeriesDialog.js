@@ -149,7 +149,7 @@ function PlanLines({ view, shownEdited, moreEdited, onMore, working }) {
       : (view.rule || view.bound) && html`<div class="bc-sd-rule"><span>${view.rule}</span>${view.bound && html`<span class="bc-sd-bound">${view.bound}</span>`}</div>`}
     ${view.start && html`<div class="bc-sd-sub">${view.start}</div>`}
     ${view.readings.map((g) => html`<div key=${g.id} class="bc-sd-readings" role="radiogroup" aria-label=${g.label || 'Readings'}>
-      ${view.readings.length > 1 && g.label && html`<div class="bc-sd-lab">${g.label}</div>`}
+      ${g.showLabel && html`<div class="bc-sd-lab">${g.label}</div>`}
       ${g.options.map((o) => html`<label key=${o.id} class=${'bc-sd-reading' + (o.disabled ? ' is-disabled' : '')}>
         <input type="radio" name=${'sd-' + g.id} checked=${o.selected} disabled=${o.disabled}
           onChange=${() => pickSeriesOption(g.id, o.id)} />

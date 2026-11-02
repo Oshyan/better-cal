@@ -1528,12 +1528,21 @@ final class Events
      * day, zone and length. Applied as given, the opened occurrence became
      * the series' first, and every earlier one vanished (0.9.15). API calls
      * with no instanceStart still set the series' own start, as before.
+     *
+     * $followed comes back as the series' rule the way the drag moves it
+     * (shiftByday, shiftBymonthday), unchanged when the days did not move,
+     * null when the edit was not made from an occurrence. Read off the
+     * dragged occurrence rather than the series' start: the second Tuesday
+     * dragged two days on is the third Thursday in a month where the start
+     * plus two days is the second.
      */
-    private function rebaseSeriesEdit(array $master, array $in): array
+    private function rebaseSeriesEdit(array $master, array $in, ?string &$followed = null): array
     {
+        $followed = null;
         if (empty($master['rrule']) || !empty($master['recurrence_parent_id']) || !isset($in['start']) || empty($in['instanceStart'])) {
             return $in;
         }
+        $followed = (string) $master['rrule'];
         $instUtc = Time::fromDb($this->requireInstance($in, $master));
         $occ = ['start_utc' => Time::toDb($instUtc), 'end_utc' => Time::toDb($instUtc->add(new \DateInterval('PT' . Recurrence::durationSeconds($master) . 'S')))] + $master;
         $occFields = $this->columnPatch($occ, array_intersect_key($in, array_flip(['start', 'end', 'allDay', 'tzid'])));
@@ -1556,10 +1565,13 @@ final class Events
         // series opened on a day off its own pattern), unless the same edit
         // chose the days itself.
         $rule = (string) ($in['rrule'] ?? $master['rrule']);
-        if ($days !== 0 && Recurrence::pattern($rule) === Recurrence::pattern((string) $master['rrule'])) {
-            $shifted = Recurrence::shiftBymonthday(Recurrence::shiftByday($rule, $days), $occWas, $occNow);
-            if ($shifted !== $rule) {
-                $in['rrule'] = $shifted;
+        if ($days !== 0) {
+            $followed = Recurrence::shiftBymonthday(Recurrence::shiftByday($followed, $days), $occWas, $occNow);
+            if (Recurrence::pattern($rule) === Recurrence::pattern((string) $master['rrule'])) {
+                $shifted = Recurrence::shiftBymonthday(Recurrence::shiftByday($rule, $days), $occWas, $occNow);
+                if ($shifted !== $rule) {
+                    $in['rrule'] = $shifted;
+                }
             }
         }
         if ($allDay) {
@@ -1574,11 +1586,12 @@ final class Events
     }
 
     /**
-     * A weekly or monthly series starting on a day its rule doesn't name
-     * (BYDAY, BYMONTHDAY, BYSETPOS) moves to the first day it does, keeping
-     * its time (start and end columns, or []). The iterator takes the start
-     * as a real occurrence, so left where it was the series would open with
-     * a day off its pattern (#193).
+     * A weekly, monthly or yearly series starting on a day its rule doesn't
+     * name (BYDAY, BYMONTHDAY, BYSETPOS, within BYMONTH for a yearly one)
+     * moves to the first day it does, keeping its time (start and end
+     * columns, or []). The iterator takes the start as a real occurrence, so
+     * left where it was the series would open with a day off its pattern
+     * (#193).
      */
     private static function alignedStart(array $row): array
     {
@@ -1586,7 +1599,9 @@ final class Events
             return [];
         }
         $rule = RepeatParser::ruleParts((string) $row['rrule']);
-        if (!in_array($rule['FREQ'] ?? '', ['WEEKLY', 'MONTHLY'], true) || (empty($rule['BYDAY']) && empty($rule['BYMONTHDAY']))) {
+        $freq = $rule['FREQ'] ?? '';
+        if ((empty($rule['BYDAY']) && empty($rule['BYMONTHDAY']))
+            || !(in_array($freq, ['WEEKLY', 'MONTHLY'], true) || ($freq === 'YEARLY' && !empty($rule['BYMONTH'])))) {
             return [];
         }
         $tz = Time::zone((string) $row['tzid']);
@@ -1639,13 +1654,20 @@ final class Events
      * rebaseSeriesEdit). Counted in days, the edited 30 Apr landed on 2 May
      * beside the series' own 1 May, and a skipped 30 Apr came back. A key
      * that is no occurrence of the old rule, or whose month has none under
-     * the new rule, moves by the days as before. $aligned is the series as
-     * it will be stored (alignedStart), so the new rule is read from a start
+     * the new rule, moves by the days as before. $after is the series as it
+     * will be stored (alignedStart), so the new rule is read from a start
      * on its own pattern.
+     *
+     * With $sameDays the series' days are what they were: the rule could
+     * not follow the drag (a list of days, the last day of the month) and
+     * the start only snapped to its next listed day. The keys keep their
+     * days and take the new time, zone and all-day flag. Counted from the
+     * day the user dropped on, every exception moved a month while the
+     * series stayed: a skipped day came back and an untouched one vanished.
      *
      * @return null|callable(string): string  old instance key => new one
      */
-    private static function seriesKeyShift(array $before, array $after, ?array $aligned = null): ?callable
+    private static function seriesKeyShift(array $before, array $after, bool $sameDays = false): ?callable
     {
         $oldTz = Time::zone((string) $before['tzid']);
         $newTz = Time::zone((string) $after['tzid']);
@@ -1653,18 +1675,19 @@ final class Events
         $newAllDay = (int) $after['all_day'] === 1;
         $was = Time::fromDb((string) $before['start_utc'])->setTimezone($oldTz);
         $now = Time::fromDb((string) $after['start_utc'])->setTimezone($newTz);
-        if ($was->format('Y-m-d H:i:s') === $now->format('Y-m-d H:i:s') && $oldTz->getName() === $newTz->getName() && $oldAllDay === $newAllDay) {
+        $days = $sameDays ? 0 : self::dayDelta($was, $now);
+        $time = $newAllDay ? '00:00:00' : $now->format('H:i:s');
+        if ($days === 0 && $time === ($oldAllDay ? '00:00:00' : $was->format('H:i:s')) && $oldTz->getName() === $newTz->getName() && $oldAllDay === $newAllDay) {
             return null;
         }
-        $days = self::dayDelta($was, $now);
-        $time = $newAllDay ? '00:00:00' : $now->format('H:i:s');
         $byDays = static function (string $key) use ($oldTz, $newTz, $days, $time): string {
             $date = (new \DateTimeImmutable(Time::fromDb($key)->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
                 ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
             return Time::toDb((new \DateTimeImmutable($date . ' ' . $time, $newTz))->setTimezone(Time::utc()));
         };
         $freq = RepeatParser::ruleParts((string) ($after['rrule'] ?? ''))['FREQ'] ?? '';
-        if (!in_array($freq, ['MONTHLY', 'YEARLY'], true)
+        if ($days === 0 // the same days, at another time or in another zone
+            || !in_array($freq, ['MONTHLY', 'YEARLY'], true)
             || $freq !== (RepeatParser::ruleParts((string) ($before['rrule'] ?? ''))['FREQ'] ?? '')
             || !class_exists(\Sabre\VObject\Component\VCalendar::class)) {
             return $byDays;
@@ -1676,7 +1699,7 @@ final class Events
         // The rules without their bounds: a key near the series' end must
         // still find its occurrence in a month the old UNTIL did not reach.
         $oldRule = ['rrule' => Recurrence::pattern((string) $before['rrule'])] + $before;
-        $newRule = ['rrule' => Recurrence::pattern((string) $after['rrule'])] + ($aligned ?? $after);
+        $newRule = ['rrule' => Recurrence::pattern((string) $after['rrule'])] + $after;
         return static function (string $key) use ($byDays, $oldTz, $newTz, $unit, $periods, $oldRule, $newRule): string {
             $local = Time::fromDb($key)->setTimezone($oldTz);
             $n = array_search($key, self::occurrencesIn($oldRule, $local, $unit, $oldTz), true);
@@ -1705,11 +1728,52 @@ final class Events
         );
     }
 
+    /**
+     * The rule of a series whose days moved, its UNTIL moved the same way:
+     * the last day the series fell on goes where its occurrence goes (the
+     * key shift), at the series' new time, so the end still takes that day
+     * in. The editor writes a timed end at 23:59:59 of its last day, which
+     * is no occurrence; moved by the days alone, "every 28th until 28 May"
+     * dragged to the 1st ended on 29 May and lost its 1 Jun. A date series'
+     * end is a date in its zone (Recurrence::setUntil) and stays one. A
+     * rule without an UNTIL, or one no occurrence precedes, comes back as
+     * it is.
+     */
+    private static function movedUntil(array $before, array $after, callable $shift): string
+    {
+        $rrule = (string) $after['rrule'];
+        if (preg_match('/UNTIL=(\d{8})(T\d{6}Z)?/', $rrule, $m) !== 1) {
+            return $rrule;
+        }
+        $timed = ($m[2] ?? '') !== '';
+        $until = $timed
+            ? \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $m[1] . $m[2], Time::utc())
+            : \DateTimeImmutable::createFromFormat('Ymd H:i:s', $m[1] . ' 23:59:59', Time::zone((string) $before['tzid']));
+        if ($until === false) {
+            return $rrule;
+        }
+        $until = $until->setTimezone(Time::utc());
+        // The series' last day, skipped or not (a skip moves on its own).
+        $last = Time::toDb($until);
+        try {
+            $occurrences = Recurrence::sabreExpand(['exdates_json' => null] + $before, Time::fromDb((string) $before['start_utc']), $until->modify('+1 second'));
+            if ($occurrences !== []) {
+                $last = Time::toDb(end($occurrences)['start']);
+            }
+        } catch (\Throwable) {
+        }
+        $moved = Time::fromDb($shift($last));
+        $value = $timed ? $moved->format('Ymd\THis\Z') : $moved->setTimezone(Time::zone((string) $after['tzid']))->format('Ymd');
+        return str_replace($m[0], 'UNTIL=' . $value, $rrule);
+    }
+
     private function patchAll(int $userId, array $event, array $in): void
     {
         $id = (int) $event['id'];
         $beforeLinks = $this->labels->eventLinkRows($id);
-        $in = $this->rebaseSeriesEdit($event, $in);
+        // The editor's own rule, as against one the drag rewrote below.
+        $ownRule = array_key_exists('rrule', $in);
+        $in = $this->rebaseSeriesEdit($event, $in, $followed);
         $fields = $this->columnPatch($event, $in);
         $isSeries = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
         $shift = null;
@@ -1718,15 +1782,19 @@ final class Events
             $from = Time::fromDb((string) $event['start_utc'])->setTimezone(Time::zone((string) $event['tzid']));
             $to = Time::fromDb((string) $after['start_utc'])->setTimezone(Time::zone((string) $after['tzid']));
             $moved = self::dayDelta($from, $to);
-            $followed = Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $event['rrule'], $moved), $from, $to);
+            // An API call with no occurrence moves the series' own start.
+            $followed ??= Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $event['rrule'], $moved), $from, $to);
             if (Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern($followed)) {
                 // A move the rule could not follow (a list of month days) lands
                 // the start on its next listed day; a rename or a new time
                 // leaves an off-pattern start where it was.
                 $aligned = $moved !== 0 ? self::alignedStart($after) : [];
-                // Same days, moved together: skipped and edited days follow.
-                $shift = self::seriesKeyShift($event, $after, array_merge($after, $aligned));
+                // Snapped to the next listed day of the same rule, the series
+                // falls on the days it did: its skipped and edited days stay
+                // on theirs. Otherwise the days moved together and they follow.
+                $sameDays = $aligned !== [] && Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern((string) $event['rrule']);
                 $fields = array_merge($fields, $aligned);
+                $shift = self::seriesKeyShift($event, array_merge($event, $fields), $sameDays);
             } else {
                 // The days themselves changed: the series starts on its first
                 // listed day, and old keys no longer name places in it.
@@ -1736,16 +1804,13 @@ final class Events
         if ($shift !== null) {
             $exdates = array_map($shift, $this->decodeExdates($event));
             $fields['exdates_json'] = $exdates === [] ? null : json_encode($exdates);
-            // A timed UNTIL moves with the series; a rule sent with the edit
-            // (the editor's own end date) is taken as given.
+            // A bounded series' end moves as its days do; a rule sent with
+            // the edit (the editor's own end date) is taken as given.
             $rrule = (string) ($fields['rrule'] ?? $event['rrule']);
-            if (!array_key_exists('rrule', $in) && preg_match('/UNTIL=(\d{8}T\d{6}Z)/', $rrule, $m) === 1) {
-                $until = \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $m[1], Time::utc());
-                if ($until !== false) {
-                    // Its day moved like an occurrence, at the series' new
-                    // time: still inclusive of the last occurrence.
-                    $moved = Time::fromDb($shift(Time::toDb($until)));
-                    $fields['rrule'] = str_replace('UNTIL=' . $m[1], 'UNTIL=' . $moved->format('Ymd\THis\Z'), $rrule);
+            if (!$ownRule) {
+                $ended = self::movedUntil($event, array_merge($event, $fields), $shift);
+                if ($ended !== $rrule) {
+                    $fields['rrule'] = $ended;
                 }
             }
         }
@@ -2041,6 +2106,18 @@ final class Events
         $newMaster = array_merge($newMaster, $this->columnPatch($newMaster, $in));
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
             $newMaster['rrule'] = (string) $in['rrule'];
+        } elseif (isset($in['start'])) {
+            // Dragged from this day on, the rest of the series follows the
+            // day the way a whole-series drag does (rebaseSeriesEdit): every
+            // Monday from this one dragged to the Tuesday is every Tuesday
+            // from it. With the rule left as it was, the start snapped to the
+            // next listed day and the dragged day was gone.
+            $was = $instStart->setTimezone(Time::zone((string) $master['tzid']));
+            $now = Time::fromDb((string) $newMaster['start_utc'])->setTimezone(Time::zone((string) $newMaster['tzid']));
+            $days = self::dayDelta($was, $now);
+            if ($days !== 0) {
+                $newMaster['rrule'] = Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $newMaster['rrule'], $days), $was, $now);
+            }
         }
         // New days chosen for the rest of the series, or a new start date:
         // it starts on the first listed day. A rename alone leaves a start

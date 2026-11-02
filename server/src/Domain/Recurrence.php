@@ -468,27 +468,54 @@ final class Recurrence
     }
 
     /**
-     * A monthly rule's single day of the month moved with its series: "every
-     * 15th" dragged from the 15th to the 16th is "every 16th", the way a
-     * weekly BYDAY follows a drag to another weekday (shiftByday). The day
-     * landed on is the day meant across a month boundary too: "every 31st"
-     * dragged from 31 Jan to 1 Feb is "every 1st". Bounded to one month,
-     * the rule stayed at 31 while the start moved a day, and the whole-series
-     * realignment (Events::patchAll) then pushed the start to the next 31st:
-     * the series lost its earlier day and the dragged one never moved. A
-     * list of days, a day counted from the end or an nth-weekday form is
-     * left as it is.
+     * A monthly or yearly rule's one day moved with its series, the way a
+     * weekly BYDAY follows a drag to another weekday (shiftByday): "every
+     * 15th" dragged from the 15th to the 16th is "every 16th", "the second
+     * Tuesday" dragged to the Wednesday "the second Wednesday" (the last
+     * Friday to the Saturday "the last Saturday"), "every 15 March" dragged
+     * to 16 March "every 16 March". The day landed on is the day meant
+     * across a month boundary too: "every 31st" dragged from 31 Jan to
+     * 1 Feb is "every 1st", "every 15 March" dragged to 1 April "every
+     * 1 April". Bounded to one month, the rule stayed at 31 while the start
+     * moved a day, and the whole-series realignment (Events::patchAll) then
+     * pushed the start to the next 31st: the series lost its earlier day and
+     * the dragged one never moved. A list of days or a day counted from the
+     * end of the month is left as it is; the start realigns instead.
      */
     public static function shiftBymonthday(string $rrule, \DateTimeImmutable $from, \DateTimeImmutable $to): string
     {
-        $parts = self::rruleParts($rrule);
-        if (($parts['FREQ'] ?? '') !== 'MONTHLY' || !isset($parts['BYMONTHDAY']) || isset($parts['BYDAY']) || isset($parts['BYSETPOS'])
-            || preg_match('/^(?:[12]?\d|3[01])$/', $parts['BYMONTHDAY']) !== 1 || (int) $parts['BYMONTHDAY'] < 1
-            || $from->format('j') === $to->format('j')) {
-            return $rrule;
+        if ($from->format('Y-m-d') === $to->format('Y-m-d')) {
+            return $rrule; // no day moved: a start off its pattern is left alone (#193, Q2)
         }
-        $parts['BYMONTHDAY'] = $to->format('j');
-        return self::joinParts($parts);
+        $parts = self::rruleParts($rrule);
+        $was = $parts;
+        $freq = $parts['FREQ'] ?? '';
+        $oneDay = static fn(string $v): bool => preg_match('/^(?:[1-9]|[12]\d|3[01])$/', $v) === 1;
+        $code = strtoupper(substr($to->format('D'), 0, 2));
+        if ($freq === 'MONTHLY' && isset($parts['BYMONTHDAY']) && !isset($parts['BYDAY']) && !isset($parts['BYSETPOS']) && $oneDay($parts['BYMONTHDAY'])) {
+            $parts['BYMONTHDAY'] = $to->format('j');
+        } elseif ($freq === 'YEARLY' && isset($parts['BYMONTH'], $parts['BYMONTHDAY']) && !isset($parts['BYDAY']) && !isset($parts['BYSETPOS'])
+            && preg_match('/^(?:[1-9]|1[0-2])$/', $parts['BYMONTH']) === 1 && $oneDay($parts['BYMONTHDAY'])) {
+            $parts['BYMONTH'] = $to->format('n');
+            $parts['BYMONTHDAY'] = $to->format('j');
+        } elseif ($freq === 'MONTHLY' && isset($parts['BYDAY']) && !isset($parts['BYMONTHDAY'])
+            && preg_match(isset($parts['BYSETPOS']) ? '/^(MO|TU|WE|TH|FR|SA|SU)$/' : '/^(-?[1-5])(MO|TU|WE|TH|FR|SA|SU)$/', $parts['BYDAY'], $m) === 1
+            && (!isset($parts['BYSETPOS']) || preg_match('/^-?[1-5]$/', $parts['BYSETPOS']) === 1)) {
+            // One weekday at one place in the month, as "2TU" or as
+            // "TU;BYSETPOS=2": the day landed on keeps the count's direction
+            // (from the start of the month, or from its end).
+            $n = (int) ($parts['BYSETPOS'] ?? $m[1]);
+            $nth = $n > 0
+                ? intdiv((int) $to->format('j') - 1, 7) + 1
+                : -(intdiv((int) $to->format('t') - (int) $to->format('j'), 7) + 1);
+            if (isset($parts['BYSETPOS'])) {
+                $parts['BYDAY'] = $code;
+                $parts['BYSETPOS'] = (string) $nth;
+            } else {
+                $parts['BYDAY'] = $nth . $code;
+            }
+        }
+        return $parts === $was ? $rrule : self::joinParts($parts);
     }
 
     /** The rule without its bounds (COUNT, UNTIL): what decides which days a series falls on. */

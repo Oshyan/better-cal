@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.4.6 (2026-11-01)
 
 - **Quick add reads more of what people type** ([#193](https://github.com/Oshyan/better-cal/issues/193)):
   - "every 1st and 3rd Monday", "first and third Monday of the month" and "every 1st and 15th" make one monthly repeat on all those days, and the repeat chip says so.

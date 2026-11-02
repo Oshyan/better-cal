@@ -11614,15 +11614,19 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         ]];
     };
     $sigFetches = 0;
-    // A 9.8.0 install listing only old-key, and GitHub's list of built releases, newest first. @return array{Updates,BetterCal\Infra\Db}
-    $stepUpdates = static function (array $built, string $installed = '9.8.0', ?BetterCal\Infra\Db $db = null) use ($oldKeys, &$sigFetches): array {
+    // A 9.8.0 install listing only old-key, and GitHub's list of built releases, newest first.
+    // $whileListing runs while the release list is being fetched: what another check does meanwhile. @return array{Updates,BetterCal\Infra\Db}
+    $stepUpdates = static function (array $built, string $installed = '9.8.0', ?BetterCal\Infra\Db $db = null, ?callable $whileListing = null) use ($oldKeys, &$sigFetches): array {
         if ($db === null) {
             $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
             (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
             (require dirname(__DIR__) . '/migrations/061_update_newest.php')($db);
         }
-        $fetch = static function (string $url) use ($built, &$sigFetches): array {
+        $fetch = static function (string $url) use ($built, &$sigFetches, $whileListing): array {
             if (str_contains($url, 'api.github.com')) {
+                if ($whileListing !== null) {
+                    $whileListing();
+                }
                 return ['status' => 200, 'body' => json_encode(array_column($built, 'release'))];
             }
             foreach ($built as $b) {
@@ -11786,18 +11790,45 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $currentCopyDb->run("INSERT INTO users VALUES (1, '{}')");
     $currentStatus = $currentCopy->status(1);
     checkEq('update: an install on the newest release is neither available nor blocked', [false, false, false], [$currentStatus['available'], $currentStatus['blocked'], $currentStatus['showBanner']]);
+    // A development build above every published release has nothing to
+    // update to and nothing it is blocked from: update.php says up to date,
+    // and the app's status must agree (review finding 7).
+    [$devBuild, $devBuildDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.9.5');
+    $devBuild->check(false);
+    $devBuildDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $devBuildDb->run("INSERT INTO users VALUES (1, '{}')");
+    $devStatus = $devBuild->status(1);
+    checkEq('update: a copy newer than every published release is neither available nor blocked', ['9.9.0', '9.9.2', false, false, false],
+        [$devStatus['latestVersion'], $devStatus['newestVersion'], $devStatus['available'], $devStatus['blocked'], $devStatus['showBanner']]);
 
     // Two checks that verify the same step may have seen different newest
     // releases; the one that finishes later must not move the notice back
-    // from the newer newest to an older one (review F6).
+    // from the newer newest to an older one (review F6). The slower check
+    // here started first: the faster one runs while it is still fetching
+    // the release list, and finishes before it.
     [$sawNewer, $sharedDb] = $stepUpdates([$stepRelease('9.9.3', 'new-key'), $stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
-    [$sawOlder] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.8.0', $sharedDb);
-    $sawNewer->check(false);
+    [$sawOlder] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.8.0', $sharedDb,
+        static function () use ($sawNewer): void { $sawNewer->check(false); });
     $late = $sawOlder->check(false);
     checkEq('update: a check that finishes after one that saw a newer release keeps the newer newest', ['9.9.0', '9.9.3', null, '9.9.3'],
         [$late['latest_version'], $late['newest_version'], $late['last_error'], $sharedDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1')]);
     $sawNewer->check(false);
     checkEq('update: and the newer newest is still recorded when it comes round again', '9.9.3', $sharedDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1'));
+    // But a release withdrawn from the list after a check saw it is not a
+    // race: the next check, started after the last one finished, reports
+    // the withdrawal, and the blocked notice clears (review finding 4).
+    [$sawWithdrawn, $withdrawnDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.9.0');
+    $sawWithdrawn->check(false);
+    $withdrawnDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $withdrawnDb->run("INSERT INTO users VALUES (1, '{}')");
+    checkEq('update: a newer release this copy can\'t verify blocks it while the release is listed', ['9.9.2', true, true],
+        [$sawWithdrawn->status(1)['newestVersion'], $sawWithdrawn->status(1)['blocked'], $sawWithdrawn->status(1)['showBanner']]);
+    [$afterWithdrawal] = $stepUpdates([$stepRelease('9.9.0', 'old-key')], '9.9.0', $withdrawnDb);
+    $afterWithdrawal->check(false);
+    $clearedStatus = $afterWithdrawal->status(1);
+    checkEq('update: once that release is withdrawn, the next check clears the newest and the blocked notice', ['9.9.0', '9.9.0', false, false, '9.9.0'],
+        [$clearedStatus['latestVersion'], $clearedStatus['newestVersion'], $clearedStatus['blocked'], $clearedStatus['showBanner'],
+            $withdrawnDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1')]);
 
     exec('rm -r ' . escapeshellarg($tmp));
 }
@@ -11829,7 +11860,19 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
 
     checkEq('release signature: the key file verifies', 'file-1', $verifies($file([$fileSig])));
     checkEq('release signature: the security key, touched and with its PIN, verifies', 'hw-1', $verifies($file([$fido(0x05, $statement)])));
-    checkEq('release signature: either one is enough', 'hw-1', $verifies($file([['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\0", 64))], $fido(0x05, $statement)])));
+    checkEq('release signature: either one is enough', 'hw-1', $verifies($file([['key' => 'file-9', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\0", 64))], $fido(0x05, $statement)])));
+    checkEq('release signature: with both kinds signing, the first listed one verifies', 'file-1', $verifies($file([$fileSig, $fido(0x05, $statement)])));
+    // A listed key whose signature fails is a broken file whatever else the
+    // set holds: the signing scripts only ever write a signature they just
+    // made with that key, so a failing one means the file or the key list
+    // changed after signing, and a verifying one beside it doesn't excuse it.
+    $brokenFileSig = ['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\0", 64))];
+    foreach (['failing listed key first' => [$brokenFileSig, $fido(0x05, $statement)], 'verifying listed key first' => [$fido(0x05, $statement), $brokenFileSig]] as $order => $sigs) {
+        $stopped = null;
+        try { $RS::verify($file($sigs), $keys); } catch (RuntimeException $e) { $stopped = $e; }
+        check("release signature: a listed key whose signature fails beside one that verifies is a broken file, $order",
+            $stopped !== null && !($stopped instanceof BetterCal\Support\UntrustedSignature) && str_contains($stopped->getMessage(), "doesn't verify"));
+    }
     checkEq('release signature: a security key not touched is refused', null, $verifies($file([$fido(0x04, $statement)])));
     checkEq('release signature: a security key without its PIN is refused', null, $verifies($file([$fido(0x01, $statement)])));
     checkEq('release signature: a signature over another statement is refused', null,

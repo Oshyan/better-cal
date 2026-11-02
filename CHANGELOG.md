@@ -22,7 +22,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Updating from a version before 1.3.0 works again** ([#194](https://github.com/Oshyan/better-cal/issues/194)): releases since 1.4.0 are signed with a key those versions don't list, so the updater stopped. It now installs the newest release your copy can verify, says why that is a step, and the next run brings you to the newest. The app's update notice and Settings, About say the same instead of failing the check, and an update that stops on a broken release names it.
 - **A release whose signature is broken stops the update and is named**, instead of being passed over for the release before it: only a signature from a key your copy doesn't list is stepped around; an empty or malformed signature file, or a listed key whose signature fails, shows as the last check's error with the release it concerns.
 - **A copy on the newest release it can verify is no longer called up to date** when newer releases are out that it can't verify: Settings, About, Check now and the notice say the update is by hand, with a link to the steps, and `update.php` says the same.
-- **The newest-release notice no longer slips back** when a slower check finishes after one that saw a newer release.
+- **The newest-release notice no longer slips back** when a slower check finishes after one that saw a newer release, and clears on the next check when that release is withdrawn.
 
 Operators: one database change (the update notice's newest-release column), applied automatically by `update.php` or the database update page. An install on a version before 1.3.0 updates in two runs of `update.php`; the first says so.
 

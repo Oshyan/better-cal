@@ -36,4 +36,18 @@ return static function (Db $db): void {
         checkEq('edit harness: 200 cases ran', 200, $runner->counts['cases']);
         check('edit harness: every failure is under a known root cause (tools/edit-harness/README.md)', $unknown === [], implode("\n  ", $unknown));
     });
+    // Two cases the app gets right that the oracle once failed, reading an
+    // observed window as the whole series: a skipped day just past the
+    // window of an unbounded daily series, and a leap-day yearly series
+    // whose COUNT runs past the window, split partway.
+    scenario('edit harness: days beyond the observed window', function () use ($db): void {
+        foreach ([41, 2769] as $case) {
+            $runner = new Runner($db, domains($db), 2);
+            $runner->run($case, null, null, $case);
+            checkEq("edit harness: seed 2 case $case ran and has no failing check", [1, []], [
+                $runner->counts['cases'],
+                array_map(static fn(array $f): string => Runner::signature($f) . ': ' . $f['what'], $runner->failures),
+            ]);
+        }
+    });
 };

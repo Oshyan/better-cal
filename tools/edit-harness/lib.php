@@ -159,6 +159,12 @@ final class Families
  * Recurrence::sabreExpand (the expander the app uses), with the bounds
  * read from the rule and no skipped dates applied: the raw days a rule
  * produces, which every exception must be attached to.
+ *
+ * A bounded series is expanded through its end (its COUNT, or its
+ * UNTIL), so its list is the whole series. An unbounded one is observed
+ * over a window from its start, and expansion() says how far: a check
+ * that needs a day beyond it looks there (isOccurrence), and two
+ * unbounded lists compare over the window both saw (common).
  */
 final class Oracle
 {
@@ -167,21 +173,86 @@ final class Oracle
     /** @return list<array{key:string,day:string,local:\DateTimeImmutable}> */
     public static function raw(array $row, ?int $limit = null): array
     {
+        return self::expansion($row, $limit)['occ'];
+    }
+
+    /**
+     * The raw occurrences and how far they are complete: 'through' is null
+     * when the list is the whole series, or the key before which it holds
+     * every occurrence (a window's end, or a cut at $limit or at the
+     * expander's cap).
+     *
+     * @return array{occ:list<array{key:string,day:string,local:\DateTimeImmutable}>,through:?string}
+     */
+    public static function expansion(array $row, ?int $limit = null): array
+    {
         $tz = Time::zone((string) $row['tzid']);
         $start = Time::fromDb((string) $row['start_utc']);
-        // Two years of a daily or weekly rule, eight of a monthly one, twenty-five of a yearly one (a COUNT of 16 fits each).
-        $unit = Families::unit(self::familyOf((string) $row['rrule']));
-        $days = $unit === null ? self::WINDOW_DAYS : ($unit === 'month' ? self::WINDOW_DAYS * 4 : 9150);
+        $parts = RepeatParser::ruleParts((string) $row['rrule']);
+        if (isset($parts['COUNT'])) {
+            // The iterator stops at the COUNT; the far end only bounds a rule that yields nothing.
+            $winEnd = $start->modify('+400 years');
+        } elseif (isset($parts['UNTIL'])) {
+            // A date UNTIL is a day in the series' zone; two days on cover it in any zone.
+            // An UNTIL before the start still has the start (the expander yields it).
+            $u = (string) $parts['UNTIL'];
+            $winEnd = max($start->modify('+2 days'), (strlen($u) === 8
+                ? new \DateTimeImmutable(substr($u, 0, 4) . '-' . substr($u, 4, 2) . '-' . substr($u, 6, 2), Time::utc())
+                : \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $u, Time::utc()))->modify('+2 days'));
+        } else {
+            // Two years of a daily or weekly rule, eight of a monthly one, twenty-five of a yearly one.
+            $unit = Families::unit(self::familyOf((string) $row['rrule']));
+            $days = $unit === null ? self::WINDOW_DAYS : ($unit === 'month' ? self::WINDOW_DAYS * 4 : 9150);
+            $winEnd = $start->modify('+' . $days . ' days');
+        }
+        $through = isset($parts['COUNT']) || isset($parts['UNTIL']) ? null : Time::toDb($winEnd);
         $master = ['exdates_json' => null, 'uid' => (string) ($row['uid'] ?? 'oracle')] + $row;
+        $found = Recurrence::sabreExpand($master, $start->modify('-1 day'), $winEnd);
+        if (count($found) > Recurrence::MAX_INSTANCES) {
+            $through = Time::toDb(end($found)['start']);
+            array_pop($found);
+        }
         $out = [];
-        foreach (Recurrence::sabreExpand($master, $start->modify('-1 day'), $start->modify('+' . $days . ' days')) as $occ) {
+        foreach ($found as $occ) {
             $local = $occ['start']->setTimezone((int) $row['all_day'] === 1 ? Time::utc() : $tz);
             $out[] = ['key' => Time::toDb($occ['start']), 'day' => $local->format('Y-m-d'), 'local' => $local];
             if ($limit !== null && count($out) >= $limit) {
+                // Complete through the last one taken.
+                $through = Time::toDb($occ['start']->modify('+1 second'));
                 break;
             }
         }
-        return $out;
+        return ['occ' => $out, 'through' => $through];
+    }
+
+    /** Whether $key is an occurrence of the row's rule, read in a window around it. */
+    public static function isOccurrence(array $row, string $key): bool
+    {
+        $at = Time::fromDb($key);
+        $master = ['exdates_json' => null, 'uid' => (string) ($row['uid'] ?? 'oracle')] + $row;
+        foreach (Recurrence::sabreExpand($master, $at->modify('-1 second'), $at->modify('+1 second')) as $occ) {
+            if (Time::toDb($occ['start']) === $key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Two key lists cut to the window both are complete over: the earlier
+     * of their 'through' keys (null for a whole series).
+     *
+     * @param list<string> $a @param list<string> $b
+     * @return array{0:list<string>,1:list<string>}
+     */
+    public static function common(array $a, ?string $throughA, array $b, ?string $throughB): array
+    {
+        $through = $throughA === null ? $throughB : ($throughB === null ? $throughA : min($throughA, $throughB));
+        if ($through === null) {
+            return [$a, $b];
+        }
+        $before = static fn(array $keys): array => array_values(array_filter($keys, static fn(string $k): bool => $k < $through));
+        return [$before($a), $before($b)];
     }
 
     /** The family name of a stored rule (for rows the harness did not generate). */
@@ -295,14 +366,21 @@ final class Oracle
         // A yearly nth weekday keeps a start off its pattern (the app leaves it); the others start on the rule's day.
         $startFrom = $family === 'yearly_nth' ? $startDay : RepeatParser::firstOn($parts, new \DateTimeImmutable($startDay, Time::utc()))->format('Y-m-d');
         $row = ['start_utc' => $startFrom . ' 12:00:00', 'end_utc' => $startFrom . ' 13:00:00', 'tzid' => 'UTC', 'all_day' => 0, 'rrule' => $pattern];
-        $expanded = array_column(self::raw($row), 'day');
+        // A bounded expectation is expanded through its end, not over a window.
         if ($count !== null) {
-            $expanded = array_slice($expanded, 0, $count);
+            $row['rrule'] = $pattern . ';COUNT=' . $count;
+            $expanded = array_column(self::raw($row), 'day');
         } elseif ($hasUntil) {
             // The series ends in the period its last day was in, moved with the start.
             $shift = self::periods($oldDays[0], $startFrom, $unit);
-            $lastPeriod = self::periodOf(self::shiftPeriod(end($oldDays), $shift, $unit), $unit);
+            $lastStart = self::shiftPeriod(end($oldDays), $shift, $unit);
+            $lastPeriod = self::periodOf($lastStart, $unit);
+            $periodEnd = (new \DateTimeImmutable($lastStart, Time::utc()))->modify('+1 ' . $unit)->modify('-1 second');
+            $row['rrule'] = $pattern . ';UNTIL=' . $periodEnd->format('Ymd\THis\Z');
+            $expanded = array_column(self::raw($row), 'day');
             $expanded = array_values(array_filter($expanded, static fn(string $d): bool => self::periodOf($d, $unit) <= $lastPeriod));
+        } else {
+            $expanded = array_column(self::raw($row), 'day');
         }
         return ['days' => $expanded, 'rule' => $rule, 'dropped' => 0];
     }
@@ -843,20 +921,25 @@ final class Driver
     private function model(int $id, int $firstId): array
     {
         $master = $this->row($id);
+        // 'through': how far 'raw' holds every occurrence (null: the whole series).
+        $seen = $master['rrule'] !== null && $master['deleted_at'] === null ? Oracle::expansion($master) : ['occ' => [], 'through' => null];
         $m = [
             'master' => $master,
             'overrides' => $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY recurrence_instance_utc', [$id]),
             'exdates' => Recurrence::decodeExdates($master['exdates_json'] ?? null),
-            'raw' => $master['rrule'] !== null && $master['deleted_at'] === null ? Oracle::raw($master) : [],
+            'raw' => $seen['occ'],
+            'through' => $seen['through'],
             'new' => null,
         ];
         $new = $this->db->one('SELECT * FROM events WHERE user_id = ? AND id >= ? AND id <> ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$this->userId, $firstId, $id]);
         if ($new !== null) {
+            $seenNew = Oracle::expansion($new);
             $m['new'] = [
                 'master' => $new,
                 'overrides' => $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY recurrence_instance_utc', [(int) $new['id']]),
                 'exdates' => Recurrence::decodeExdates($new['exdates_json'] ?? null),
-                'raw' => Oracle::raw($new),
+                'raw' => $seenNew['occ'],
+                'through' => $seenNew['through'],
             ];
         }
         return $m;
@@ -1344,16 +1427,20 @@ final class Driver
                 continue;
             }
             $keys = array_fill_keys(array_column($part['raw'], 'key'), true);
+            // A day the observed list does not reach is looked for where it is.
+            $through = $part['through'] ?? null;
+            $master = $part['master'];
+            $member = static fn(string $k): bool => isset($keys[$k]) || ($through !== null && $k >= $through && Oracle::isOccurrence($master, $k));
             // A key past a bounded series' last day is its own kind of detachment.
             $last = $part['raw'] === [] ? '' : end($part['raw'])['key'];
             $pastEnd = static fn(string $k): bool => $last !== '' && $k > $last && self::bounded((string) $part['master']['rrule']);
             foreach ($part['exdates'] as $ex) {
-                $this->check($inv . '-skip' . ($pastEnd($ex) ? '-past-end' : ''), isset($keys[$ex]), 'a skipped day is no day of the rule' . ($pastEnd($ex) ? ' (it is past the series end)' : ''), ['exdate' => $ex, 'rrule' => $part['master']['rrule'], 'start' => $part['master']['start_utc'], 'near' => self::near($part['raw'], $ex)]);
+                $this->check($inv . '-skip' . ($pastEnd($ex) ? '-past-end' : ''), $member($ex),'a skipped day is no day of the rule' . ($pastEnd($ex) ? ' (it is past the series end)' : ''), ['exdate' => $ex, 'rrule' => $part['master']['rrule'], 'start' => $part['master']['start_utc'], 'near' => self::near($part['raw'], $ex)]);
             }
             $seen = [];
             foreach ($part['overrides'] as $ov) {
                 $k = (string) $ov['recurrence_instance_utc'];
-                $this->check($inv . '-edited' . ($pastEnd($k) ? '-past-end' : ''), isset($keys[$k]), 'an edited day is keyed on no day of the rule (it shows beside the series)' . ($pastEnd($k) ? ' (it is past the series end)' : ''), ['key' => $k, 'title' => $ov['title'], 'rrule' => $part['master']['rrule'], 'start' => $part['master']['start_utc'], 'near' => self::near($part['raw'], $k)]);
+                $this->check($inv . '-edited' . ($pastEnd($k) ? '-past-end' : ''), $member($k), 'an edited day is keyed on no day of the rule (it shows beside the series)' . ($pastEnd($k) ? ' (it is past the series end)' : ''), ['key' => $k, 'title' => $ov['title'], 'rrule' => $part['master']['rrule'], 'start' => $part['master']['start_utc'], 'near' => self::near($part['raw'], $k)]);
                 $this->check($inv . '-twice', !isset($seen[$k]), 'two edited rows for one day', ['key' => $k]);
                 $seen[$k] = true;
             }
@@ -1446,13 +1533,8 @@ final class Driver
         $pn = RepeatParser::ruleParts((string) $n['rrule']);
         $bounded = self::bounded($restRule);
         if ($edit['kind'] === 'rename_following' || $edit['kind'] === 'attend_following') {
-            $want = array_column($rest, 'key');
-            $got = array_column($new['raw'], 'key');
-            if (!$bounded) {
-                $cut = min(count($want), count($got));
-                $want = array_slice($want, 0, $cut);
-                $got = array_slice($got, 0, $cut);
-            }
+            // The whole of a bounded series; an unbounded one over the window both lists saw.
+            [$want, $got] = Oracle::common(array_column($rest, 'key'), $before['through'], array_column($new['raw'], 'key'), $new['through']);
             $this->check('5-new', $want === $got, 'the new series has exactly the days from the split on', self::firstDiff(array_column($rest, 'key'), array_column($new['raw'], 'key')) + ['rule' => $n['rrule']]);
         } else {
             $this->same1($family, $expected, $newDays, $days, $bounded, ['rest rule' => $restRule, 'new rule' => $n['rrule'], 'expected rule' => $expected['rule'], 'split' => $split, 'new start' => $n['start_utc'], 'landed' => $landed]);
@@ -1603,13 +1685,9 @@ final class Driver
         // same days, or not. The rule strings may differ harmlessly (an UNTIL
         // rewritten at the new time of day), so the days decide.
         $google = array_merge($m0, array_intersect_key($fields, array_flip(['start_utc', 'end_utc', 'tzid', 'all_day', 'rrule'])));
-        $googleDays = array_column(Oracle::raw($google), 'key');
-        $localDays = array_column(Oracle::raw($stored), 'key');
-        if (!self::bounded((string) $stored['rrule'])) {
-            $n = min(count($googleDays), count($localDays));
-            $googleDays = array_slice($googleDays, 0, $n);
-            $localDays = array_slice($localDays, 0, $n);
-        }
+        $googleSeen = Oracle::expansion($google);
+        $localSeen = Oracle::expansion($stored);
+        [$googleDays, $localDays] = Oracle::common(array_column($googleSeen['occ'], 'key'), $googleSeen['through'], array_column($localSeen['occ'], 'key'), $localSeen['through']);
         $this->check('8-google', $googleDays === $localDays, 'the series the Google path would send has the days the local one stored', self::firstDiff($googleDays, $localDays) + ['google rule' => $google['rrule'], 'google start' => $google['start_utc'], 'local rule' => $stored['rrule'], 'local start' => $stored['start_utc']]);
     }
 }

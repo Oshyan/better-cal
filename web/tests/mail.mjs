@@ -39,10 +39,24 @@ const ReviewCard = runInNewContext(reviewBlock + '\nReviewCard', {
   html, Icon: () => null, useState: (value) => [value, () => {}],
   usePasswordStepUp: () => ({ prompt: null }),
 });
-for (const [isInvitation, label] of [[true, 'New emailed invitation'], [false, 'New emailed event']]) {
-  const card = ReviewCard({ item: { kind: 'invite_new', status: 'open', detail: { isInvitation }, actions: [] } });
+// A day of a series held before the series (a cancellation or a change) is
+// named as that day, and says there is nothing to accept until the series
+// is added; the other kinds say nothing of the sort.
+const waitingLine = 'Nothing to accept until the series is added.';
+for (const [detail, label] of [
+  [{ isInvitation: true }, 'New emailed invitation'],
+  [{ isInvitation: false }, 'New emailed event'],
+  [{ isInvitation: false, method: 'CANCEL', occurrence: '2026-12-19T01:00:00Z' }, 'Cancelled day of an emailed series'],
+  [{ isInvitation: true, method: 'REQUEST', occurrence: '2026-12-26T01:00:00Z' }, 'Changed day of an emailed series'],
+]) {
+  const card = ReviewCard({ item: { kind: 'invite_new', status: 'open', detail, actions: [] } });
   const badge = walk(card).find((node) => node?.strings?.some((part) => part.includes('class="bc-review-kind" title=')));
   const titleIndex = badge.strings.findIndex((part) => part.includes('class="bc-review-kind" title='));
   assert.equal(badge.values[titleIndex], label);
+  assert.equal(walk(card).some((node) => node?.strings?.some((part) => part.includes(waitingLine))), !!detail.occurrence, label + ': waiting line');
+}
+{
+  const decided = ReviewCard({ item: { kind: 'invite_new', status: 'dismissed', detail: { method: 'CANCEL', occurrence: '2026-12-19T01:00:00Z' }, actions: [] } });
+  assert.ok(!walk(decided).some((node) => node?.strings?.some((part) => part.includes(waitingLine))), 'a decided day no longer says it waits');
 }
 console.log('Mail Review label regression tests passed');

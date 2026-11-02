@@ -852,16 +852,19 @@ final class MailIngest
                 return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
             }
             // Before its series is on the calendar (#192): the series may be
-            // waiting in Review itself. Made an event of its own it would
+            // waiting in Review itself, or still on its way (the organizer's
+            // software picks the order). Made an event of its own it would
             // later pass for the whole series, so it waits as a change to
             // that one day, and becomes one once the series is added
             // (ReviewQueue::reconcilePending). A cancelled day waits the
-            // same way while its series waits (sent with it, or after it),
-            // and becomes a cancellation of that day; it used to be dropped,
-            // and the day came back with the series. Cancelling a day of a
-            // series that is neither there nor waiting changes nothing.
-            if ($cancel && !$this->review->seriesWaiting($userId, $uid)) {
-                return ['skipped', null, 'no series on the calendar or waiting in Review for this day'];
+            // same way, whether its series waits or arrives later, and
+            // becomes a cancellation of that day; it used to be dropped
+            // unless the series was already waiting, and the day came back
+            // with the series. Only a day of a series the owner has turned
+            // away (dismissed in Review, or deleted) is nothing to decide,
+            // and the log says which.
+            if ($cancel && !$this->review->seriesWaiting($userId, $uid) && ($refused = $this->review->seriesRefused($userId, $uid)) !== null) {
+                return ['skipped', null, $refused];
             }
             $result = $this->createNew(
                 $userId, $msg, $uid,

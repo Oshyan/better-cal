@@ -232,9 +232,9 @@ final class ReviewQueue
 
     /**
      * Is a first version of this series itself waiting in Review, not only
-     * a changed day of it? A cancelled day arriving before its series is
-     * kept only while this holds (MailIngest::applyImipEvent): with nothing
-     * to cancel a day of, there is nothing to decide.
+     * a changed day of it? A cancelled day of it that arrives meanwhile
+     * waits with it (MailIngest::applyImipEvent), whatever the owner decided
+     * about an earlier version.
      */
     public function seriesWaiting(int $userId, string $uid): bool
     {
@@ -245,6 +245,33 @@ final class ReviewQueue
             if (!isset(self::payload($open)['occurrence'])) return true;
         }
         return false;
+    }
+
+    /**
+     * Why a day of a series that is neither on the calendar nor waiting is
+     * nothing to decide, or null when nothing is known of the series yet,
+     * so a cancelled day arriving before it waits for it
+     * (MailIngest::applyImipEvent). The owner dismissed its invitation in
+     * Review, or deleted the series: a cancelled day of either would wait
+     * for a series that is not coming back, and the day isn't shown anyway.
+     * A dismissal is read first: a series added, then taken back by undo
+     * and dismissed, was dismissed, not deleted.
+     */
+    public function seriesRefused(int $userId, string $uid): ?string
+    {
+        foreach ($this->db->all(
+            "SELECT payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'dismissed'",
+            [$userId, self::KIND_INVITE_NEW, mb_substr($uid, 0, 255)]
+        ) as $closed) {
+            if (!isset(self::payload($closed)['occurrence'])) return 'the series was dismissed in Review';
+        }
+        if ($this->db->scalar(
+            'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NOT NULL AND recurrence_parent_id IS NULL LIMIT 1',
+            [$userId, $uid]
+        ) !== null) {
+            return 'the series was deleted from the calendar';
+        }
+        return null;
     }
 
     /**

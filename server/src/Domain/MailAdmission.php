@@ -328,9 +328,14 @@ final class MailAdmission
         ]);
     }
 
+    /**
+     * One bucket per mailbox, not per spelling (MailPolicy::mailbox): a
+     * sender writing its domain in Unicode in one message and punycode in
+     * the next shares one daily quota instead of doubling it.
+     */
     private static function senderKey(string $from): string
     {
-        $from = strtolower(trim($from));
+        $from = MailPolicy::mailbox($from);
         return hash('sha256', $from === '' ? '(missing)' : $from);
     }
 

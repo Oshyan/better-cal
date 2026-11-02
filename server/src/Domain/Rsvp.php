@@ -98,7 +98,7 @@ final class Rsvp
             return null;
         }
         $mine = array_values(array_unique(array_values($profiles)));
-        if (in_array(strtolower($organizer), $mine, true)) {
+        if (in_array(MailPolicy::mailbox($organizer), array_map([MailPolicy::class, 'mailbox'], $mine), true)) {
             return ['code' => 'own_invitation', 'text' => 'This invitation was sent from ' . strtolower($organizer) . ', one of this server\'s own addresses, so there is nobody to answer.'];
         }
         return ['code' => 'address_mismatch', 'text' => 'Replies would come from ' . implode(' or ', $mine) . ', which isn\'t one of the invited addresses, so the organizer\'s calendar would ignore them.'];
@@ -132,19 +132,23 @@ final class Rsvp
      * coming, and the invited guest would stay "awaiting" (seen when the
      * owner invited the Better-Cal mailbox from the address replies go out
      * from). Without a guest list, the first account that isn't the
-     * organizer stands in.
+     * organizer stands in. Addresses are compared as mailboxes
+     * (MailPolicy::mailbox), so a domain spelled in Unicode on one side and
+     * punycode on the other is one address; the account's address is
+     * returned as it was set up.
      *
      * @return array{address:string,profile:string}|null
      */
     public static function replyRoute(array $invite, array $cfg): ?array
     {
-        $organizer = strtolower(trim((string) ($invite['organizer']['email'] ?? '')));
+        $organizer = MailPolicy::mailbox($invite['organizer']['email'] ?? '');
         $invited = array_values(array_filter(array_map(
-            static fn($a): string => strtolower(trim((string) ($a['email'] ?? ''))),
+            static fn($a): string => MailPolicy::mailbox($a['email'] ?? ''),
             (array) ($invite['attendees'] ?? [])
         )));
         foreach (self::profiles($cfg) as $profile => $address) {
-            if ($address !== $organizer && ($invited === [] || in_array($address, $invited, true))) {
+            $mailbox = MailPolicy::mailbox($address);
+            if ($mailbox !== $organizer && ($invited === [] || in_array($mailbox, $invited, true))) {
                 return ['address' => $address, 'profile' => $profile];
             }
         }

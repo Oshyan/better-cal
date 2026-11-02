@@ -145,4 +145,41 @@ return static function (Db $db): void {
         checkEq("review: a newer version held after an add ($how): the add is stale, the event stays", ['stale_undo', 1],
             [refusal(fn() => $dz->undo->undoById($z, $entries[0])), $live($event)]);
     }
+
+    // A day of a series that isn't on the calendar yet, held before its
+    // series (a cancellation, or a change): the Review page names it as that
+    // day and offers only Dismiss, since accepting it has nothing to apply
+    // until the series is added. Once it is, the item is a change to that
+    // occurrence and offers its action.
+    $q = freshUser($db);
+    $dq = domains($db);
+    $rq = new ReviewQueue($db, $dq->events);
+    $controller = new \BetterCal\Http\Controllers\ReviewController($rq, new \BetterCal\Domain\Proposals($db, $dq->events, new \BetterCal\Domain\Trips($db, $dq->undo)), $dq->calendars);
+    $listed = static function () use ($controller, $q): array {
+        $req = new \BetterCal\Http\Request('GET', '/review');
+        $req->user = ['id' => $q];
+        $req->authMethod = 'session';
+        $out = [];
+        foreach (json_decode($controller->index($req)->body, true)['items'] as $item) {
+            $out[$item['key']] = $item;
+        }
+        return $out;
+    };
+    $weekly = ['rrule' => 'FREQ=WEEKLY'] + $fields;
+    $cancelledDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['title' => 'Sample reading group'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
+    $changedDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['start' => '2026-12-26T02:00:00+00:00', 'end' => '2026-12-26T04:00:00+00:00'] + $fields, $invite, 'host@example.test', 'imip', 'approved', '2026-12-26 01:00:00');
+    $cards = $listed();
+    checkEq('review page: a cancelled day held before its series is a cancellation of that day with only Dismiss to decide', ['invite_new', 'CANCEL', '2026-12-19T01:00:00+00:00', ['Dismiss']], [
+        $cards["invite_new:$cancelledDay"]['kind'] ?? null, $cards["invite_new:$cancelledDay"]['detail']['method'] ?? null,
+        $cards["invite_new:$cancelledDay"]['detail']['occurrence'] ?? null, array_column($cards["invite_new:$cancelledDay"]['actions'] ?? [], 'label'),
+    ]);
+    checkEq('review page: a changed day held before its series offers only Dismiss too', ['REQUEST', '2026-12-26T01:00:00+00:00', ['Dismiss']], [
+        $cards["invite_new:$changedDay"]['detail']['method'] ?? null, $cards["invite_new:$changedDay"]['detail']['occurrence'] ?? null,
+        array_column($cards["invite_new:$changedDay"]['actions'] ?? [], 'label'),
+    ]);
+    $rq->accept($q, $rq->holdNewInvitation($q, 'reading-group@example.test', $weekly, ['sequence' => 1] + $invite, 'host@example.test'));
+    $cards = $listed();
+    checkEq('review page: once the series is added, the held days are changes to their occurrences, with their actions', [['Skip that occurrence', 'Dismiss'], ['Accept change', 'Dismiss']], [
+        array_column($cards["invite_change:$cancelledDay"]['actions'] ?? [], 'label'), array_column($cards["invite_change:$changedDay"]['actions'] ?? [], 'label'),
+    ]);
 };

@@ -1879,10 +1879,49 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $earlyPayload['occurrence'] ?? null, $earlyPayload['fields']['tzid'] ?? null,
         str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$earlyItem]), 'not on your calendar yet'),
     ]);
-    // Only a changed day of this series waits, not the series: a cancelled
-    // day of a series nothing knows is nothing to keep, and the log says so.
-    checkEq('occurrence before its series: cancelling a day of a series that isn\'t there or waiting changes nothing, and says why', ['skipped', null, 'no series on the calendar or waiting in Review for this day'],
-        $applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL'] + $earlyInvite] + $earlyOcc, 'UTC', ['messageId' => 'early-cancel@example.test'] + $earlyMsg));
+    // A cancelled day arriving before its series, in a message of its own
+    // (the organizer's software picks the order): held the same way as a
+    // changed day, and a cancellation of that day once the series is added.
+    // It used to be dropped unless the series was already waiting.
+    $earlyCancelOcc = ['uid' => 'early-cancel-uid', 'invite' => ['method' => 'CANCEL'] + $earlyInvite] + $earlyOcc;
+    $earlyCancel = $applyA->invoke($mailA, 1, 'CANCEL', $earlyCancelOcc, 'UTC', ['messageId' => 'early-cancel@example.test'] + $earlyMsg);
+    $earlyCancelItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_new' AND source_key = 'early-cancel-uid' AND status = 'open'");
+    $earlyCancelPayload = json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$earlyCancelItem]), true);
+    $earlyCancelSummary = (string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$earlyCancelItem]);
+    checkEq('cancelled day before its series: held as a cancellation of that one day, and no event is made', ['held', null, 0, '2026-11-16 18:00:00', 'CANCEL', true], [
+        $earlyCancel[0], $earlyCancel[1], (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE uid = 'early-cancel-uid'"),
+        $earlyCancelPayload['occurrence'] ?? null, $earlyCancelPayload['method'] ?? null,
+        str_contains($earlyCancelSummary, 'cancelled one occurrence') && str_contains($earlyCancelSummary, 'not on your calendar yet'),
+    ]);
+    $earlySeries = ['title' => 'Planning call', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
+    $earlyCancelSeriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'early-cancel-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test'))['eventId'];
+    $earlyCancelRow = $adb->one('SELECT * FROM review_items WHERE id = ?', [$earlyCancelItem]);
+    checkEq('cancelled day before its series: adding the series makes it a cancellation of that occurrence', ['invite_change', 'open', $earlyCancelSeriesId, 'CANCEL', true], [
+        $earlyCancelRow['kind'], $earlyCancelRow['status'], (int) $earlyCancelRow['event_id'], json_decode((string) $earlyCancelRow['payload_json'], true)['method'] ?? null,
+        str_contains((string) $earlyCancelRow['summary'], 'cancelled the Mon 16 Nov 2026 occurrence of the series you added') && str_contains((string) $earlyCancelRow['summary'], 'Accepting skips just that one'),
+    ]);
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $queueA->accept(1, $earlyCancelItem);
+        checkEq('cancelled day before its series: accepting it skips that day and leaves the rest', [['2026-11-16 18:00:00'], 'FREQ=WEEKLY', 'accepted'], [
+            BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$earlyCancelSeriesId])),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$earlyCancelSeriesId]), $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$earlyCancelItem]),
+        ]);
+    }
+    // A day of a series the owner has already turned away is nothing to
+    // decide: dismissed in Review, or deleted from the calendar, and the log
+    // says which. Sent again after a dismissal, the series waits once more,
+    // and a cancelled day of it waits with it.
+    $dismissedSeriesItem = $queueA->holdNewInvitation(1, 'dismissed-series-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test');
+    $queueA->dismiss(1, $dismissedSeriesItem);
+    checkEq('cancelled day of a dismissed series: skipped, saying the series was dismissed', ['skipped', null, 'the series was dismissed in Review'],
+        $applyA->invoke($mailA, 1, 'CANCEL', ['uid' => 'dismissed-series-uid'] + $earlyCancelOcc, 'UTC', ['messageId' => 'dismissed-cancel@example.test'] + $earlyMsg));
+    $deletedSeriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'deleted-series-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test'))['eventId'];
+    $eventsA->deleteEvent(1, $deletedSeriesId, null, null);
+    checkEq('cancelled day of a deleted series: skipped, saying the series was deleted', ['skipped', null, 'the series was deleted from the calendar'],
+        $applyA->invoke($mailA, 1, 'CANCEL', ['uid' => 'deleted-series-uid'] + $earlyCancelOcc, 'UTC', ['messageId' => 'deleted-cancel@example.test'] + $earlyMsg));
+    $queueA->holdNewInvitation(1, 'dismissed-series-uid', ['title' => 'Planning call (new agenda)'] + $earlySeries, ['sequence' => 2] + $earlyInvite, 'organizer@example.test');
+    checkEq('cancelled day of a dismissed series sent again: waits with it', 'held',
+        $applyA->invoke($mailA, 1, 'CANCEL', ['uid' => 'dismissed-series-uid'] + $earlyCancelOcc, 'UTC', ['messageId' => 'dismissed-cancel-again@example.test'] + $earlyMsg)[0]);
     try {
         $queueA->accept(1, $earlyItem);
         check('occurrence before its series: accepting it adds nothing', false);
@@ -1895,7 +1934,6 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     // The series is added from Review: the held day is now a change to that
     // occurrence of it, judged by its own sequence (0, below the series' 1),
     // listing only what moved, with no "Repeats" row.
-    $earlySeries = ['title' => 'Planning call', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
     $earlySeriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'early-uid', $earlySeries, ['sequence' => 1] + $earlyInvite, 'organizer@example.test'))['eventId'];
     $earlyRow = $adb->one('SELECT * FROM review_items WHERE id = ?', [$earlyItem]);
     $earlyPayload = json_decode((string) $earlyRow['payload_json'], true);
@@ -2052,7 +2090,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $orphanCancel = $runTiersA->invoke($mailA, 1, ['messageId' => "$cancelledUid-after@example.test", 'subject' => 'Cancelled: Reading group', 'from' => 'organizer@example.test',
             'icsParts' => ["BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:$cancelledUid\r\nSEQUENCE:1\r\nDTSTAMP:20300102T120000Z\r\nRECURRENCE-ID:20300121T180000Z\r\nDTSTART:20300121T180000Z\r\nDTEND:20300121T190000Z\r\nSUMMARY:Reading group\r\nORGANIZER:mailto:organizer@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"],
             'html' => null, 'text' => null], 'UTC');
-        checkEq('cancelled day of a dismissed series: skipped, with the reason', ['skipped', 0], [$orphanCancel['outcome'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid])]);
+        checkEq('cancelled day of a dismissed series: skipped, with the reason', ['skipped', 'the series was dismissed in Review', 0], [$orphanCancel['outcome'], $orphanCancel['error'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid])]);
         $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettingsA]);
 
         // The organizer's domain spelled two ways (Unicode in one calendar's
@@ -2757,6 +2795,21 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     check('rsvp: a self-sent invitation to the mailbox can be answered', BetterCal\Domain\Rsvp::blocker($selfInvite, $rsvpCfg) === null);
     $ownOnly = ['organizer' => ['email' => 'owner@example.com'], 'attendees' => [['email' => 'owner@example.com'], ['email' => 'bob@example.net']]] + $request;
     checkEq('rsvp: an invitation sent from one of our addresses, with none of the others invited, has nobody to answer', 'own_invitation', BetterCal\Domain\Rsvp::blocker($ownOnly, $rsvpCfg)['code']);
+    if (function_exists('idn_to_ascii')) {
+        // One mailbox however its domain is spelled (MailPolicy::mailbox):
+        // our account spelled in punycode is still the organizer written in
+        // Unicode, so it never answers its own invitation, and an invitation
+        // from one of our addresses in the other spelling has nobody to
+        // answer. The account's address stays as it was set up.
+        $idnCfg = ['smtp' => ['host' => 'smtp.example.com', 'from' => 'calendar@example.com'], 'rsvp_smtp' => ['host' => 'smtp.example.com', 'from' => 'owner@xn--bcher-kva.example']];
+        $idnInvite = ['organizer' => ['email' => 'owner@bücher.example'], 'attendees' => [['email' => 'calendar@example.com'], ['email' => 'owner@xn--bcher-kva.example']]] + $request;
+        checkEq('rsvp route: never as the organizer, whichever way its domain is spelled', ['address' => 'calendar@example.com', 'profile' => 'smtp'], BetterCal\Domain\Rsvp::replyRoute($idnInvite, $idnCfg));
+        $idnOwnCfg = ['smtp' => ['host' => 'smtp.example.com', 'from' => 'Calendar@bücher.example'], 'rsvp_smtp' => ['host' => '']];
+        checkEq('rsvp: an invitation from one of our addresses in the other spelling has nobody to answer', 'own_invitation',
+            BetterCal\Domain\Rsvp::blocker(['organizer' => ['email' => 'calendar@xn--bcher-kva.example'], 'attendees' => []] + $request, $idnOwnCfg)['code']);
+        checkEq('rsvp route: the account keeps the spelling it was set up with', 'calendar@bücher.example',
+            BetterCal\Domain\Rsvp::replyRoute(['attendees' => []] + $request, $idnOwnCfg)['address']);
+    }
     checkEq('rsvp route: with no guest list, the first account that is not the organizer', 'rsvp', BetterCal\Domain\Rsvp::replyRoute(['attendees' => []] + $request, $rsvpCfg)['profile']);
     checkEq('rsvp route: with no guest list and the RSVP address organizing, the main account', 'smtp', BetterCal\Domain\Rsvp::replyRoute(['attendees' => [], 'organizer' => ['email' => 'owner@example.com']] + $request, $rsvpCfg)['profile']);
     $booking = BetterCal\Domain\Rsvp::describe(['method' => 'llm', 'organizer' => ['email' => 'me@fwd.example'], 'myPartstat' => 'NEEDS-ACTION'], $rsvpCfg);
@@ -8594,6 +8647,13 @@ require __DIR__ . '/plugins.php';
     $senderOne = $admission->createEvent(1, 'sender-1', 'same@example.test', static fn(): int => 10, $quotaNow);
     $senderTwo = $admission->createEvent(1, 'sender-2', 'same@example.test', static fn(): int => 11, $quotaNow);
     checkEq('mail event quota: one claimed sender has a secondary daily brake', [true, false, 'event_sender_day'], [$senderOne['allowed'], $senderTwo['allowed'], $senderTwo['code']]);
+    if (function_exists('idn_to_ascii')) {
+        // The sender's bucket is the mailbox, not its spelling: Unicode and
+        // punycode forms of one domain share the daily brake.
+        $spelledOne = $admission->createEvent(1, 'spelling-1', 'Alex@bücher.example', static fn(): int => 12, $quotaNow);
+        $spelledTwo = $admission->createEvent(1, 'spelling-2', 'alex@xn--bcher-kva.example', static fn(): int => 13, $quotaNow);
+        checkEq('mail event quota: one sender spelled in Unicode and in punycode shares one daily brake', [true, false, 'event_sender_day'], [$spelledOne['allowed'], $spelledTwo['allowed'], $spelledTwo['code']]);
+    }
     Limits::configure(['MAIL_LLM_PER_HOUR' => 10, 'MAIL_LLM_PER_DAY' => 10, 'MAIL_LLM_PER_SENDER_DAY' => 1]);
     $senderLlmOne = $admission->reserveLlm(2, 'sender-llm-1', 'same@example.test', $quotaNow);
     $senderLlmTwo = $admission->reserveLlm(2, 'sender-llm-2', 'same@example.test', $quotaNow);

@@ -130,9 +130,15 @@ final class ReviewController
                     ...($isNew && $occurrence === null && $this->rsvp !== null && $replyable
                         ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
                         : []),
-                    self::action('accept', $isNew && $occurrence === null ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
-                        ? "/review/invitations/{$c['id']}/accept"
-                        : "/review/invite-changes/{$c['id']}/accept"),
+                    // A day held before its series (#192) has nothing to
+                    // accept until the series is on the calendar; it waits
+                    // for that (ReviewQueue::reconcilePending), so the one
+                    // decision here is to dismiss it.
+                    ...($isNew && $occurrence !== null ? [] : [
+                        self::action('accept', $isNew ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
+                            ? "/review/invitations/{$c['id']}/accept"
+                            : "/review/invite-changes/{$c['id']}/accept"),
+                    ]),
                     ...$approve,
                     self::action('dismiss', 'Dismiss', $isNew
                         ? "/review/invitations/{$c['id']}/dismiss"

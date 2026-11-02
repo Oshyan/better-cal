@@ -72,7 +72,11 @@ function ReviewCard({ item, onChanged }) {
   const stepUp = usePasswordStepUp();
   const [busy, setBusy] = useState(false);
   const d = item.detail || {};
-  const kindLabel = item.kind === 'invite_new' && !d.isInvitation ? 'New emailed event' : KIND_LABEL[item.kind];
+  // A day held before its series is on the calendar is named as that day,
+  // not as a new event: nothing is added when it is decided.
+  const waitsForSeries = item.kind === 'invite_new' && !!d.occurrence;
+  const kindLabel = waitsForSeries ? (d.method === 'CANCEL' ? 'Cancelled day of an emailed series' : 'Changed day of an emailed series')
+    : item.kind === 'invite_new' && !d.isInvitation ? 'New emailed event' : KIND_LABEL[item.kind];
 
   const run = async (action) => {
     setBusy(true);
@@ -166,6 +170,7 @@ function ReviewCard({ item, onChanged }) {
       >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}</span>`}
     </div>
     ${item.kind === 'invite_new' && item.actions.some((a) => a.name.startsWith('approve_')) && html`<p class="bc-muted">Always add also adds this event, without sending a reply.</p>`}
+    ${waitsForSeries && item.status === 'open' && html`<p class="bc-muted">Nothing to accept until the series is added.</p>`}
     ${item.kind === 'mail_error' && html`<p>${d.reason || 'The email could not be decoded.'} This notice stays until you dismiss it.</p>`}
     ${item.kind === 'invite_change' && d.diff && d.diff.length > 0 && html`<${DiffRows} diff=${d.diff} />`}
   </div>`;

@@ -28,6 +28,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 Operators: one database change (the update notice's newest-release column), applied automatically by `update.php` or the database update page. An install on a version before 1.3.0 updates in two runs of `update.php`; the first says so.
 
+Maintainers: `tools/edit-harness` generates thousands of repeating series with edited and skipped days, edits them every way the app can, and checks what every occurrence should do; a seeded slice runs with the database tests. Its first run names thirteen remaining causes in series editing (README there), all present in 1.4.5, to be taken on as one rewrite rather than one at a time.
+
 ## 1.4.5 (2026-11-01)
 
 - **Moving a repeating event to another calendar from the editor moves the series** ([#186](https://github.com/Oshyan/better-cal/issues/186)): Apply to switches to all events and lights up, so you can still pick just this one. It used to split that one date off the series.

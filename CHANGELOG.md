@@ -6,7 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
-- Quick add reads a date range followed by times ([#198](https://github.com/Oshyan/better-cal/issues/198)): "Conference Aug 3-7 9am-5pm" is one event from the first morning to the last evening, and "Aug 3-7 9am" or "Aug 3-7 10pm-6am" repeats each day of the range.
+- Quick add reads a date range followed by a time range ([#198](https://github.com/Oshyan/better-cal/issues/198)): "Conference Aug 3-7 9am-5pm" is one event from the first morning to the last evening, and "Shift Aug 3-7 10pm-6am" repeats each night of the range. The model's answer no longer overrides a range you typed, and noon or midnight can end a time range ("9am-noon").
 
 ## 1.4.6 (2026-11-01)
 

@@ -483,15 +483,22 @@ $repeatCases = [
     ['Mon-Fri 10pm-6am shift', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Shift Mon-Fri 22:00-06:00', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Shift Thu-Sat 11pm-7am', 'Shift', '2026-07-30T23:00', 'FREQ=WEEKLY;BYDAY=TH,FR,SA'],
-    // A date range does the same, each day from the first date to the last;
-    // with a daytime range it is one stretch (#198)
+    // A date range with a time range that crosses midnight does the same,
+    // each night from the first date to the last; with a daytime range it is
+    // one stretch, with one time an all-day range (#198)
     ['Shift Aug 3-7 10pm-6am', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
     ['Shift Aug 3 to 7 10pm to 6am', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
     ['Shift Aug 3 to Aug 7 22:00-06:00', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
     ['Shift Dec 30 to Jan 2 10pm-6am', 'Shift', '2026-12-30T22:00', 'FREQ=DAILY;UNTIL=20270103T075959Z'],
-    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T09:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
-    ['Standup Aug 3 to Aug 7 at 9am', 'Standup', '2026-08-03T09:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Shift from Aug 3 to Aug 7 10pm-6am', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Shift Aug 3-7 6pm-midnight', 'Shift', '2026-08-03T18:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Night shift weekdays Aug 3-14 10pm-6am', 'Night shift', '2026-08-03T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;UNTIL=20260815T065959Z'],
+    ['Party this weekend 10pm-2am', 'Party', '2026-08-01T00:00', null],
+    ['Shift starting this weekend 10pm-6am', 'Shift', '2026-08-01T00:00', null],
+    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T00:00', null],
     ['Conference Aug 3-7 9am-5pm', 'Conference', '2026-08-03T09:00', null],
+    // A series over a range keeps its time of day
+    ['Choir every Thursday evening Sep 3 to Dec 17', 'Choir', '2026-09-03T18:00', 'FREQ=WEEKLY;BYDAY=TH;UNTIL=20261218T075959Z'],
     ['Lisbon trip Aug 3-7', 'Lisbon trip', '2026-08-03T00:00', null],
     ['Open house Sat-Sun 10am-4pm', 'Open house', '2026-08-01T10:00', null],
     // Weekly
@@ -663,11 +670,45 @@ $phraseCases = [
     ['Conference Aug 3-7 9am-5pm ET', 'Conference', '2026-08-03T06:00', '2026-08-07T14:00', null],
     ['Retreat Dec 30 to Jan 2 9am-5pm', 'Retreat', '2026-12-30T09:00', '2027-01-02T17:00', null],
     ['Shift Aug 3-7 10pm-6am', 'Shift', '2026-08-03T22:00', '2026-08-04T06:00', null],
-    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T09:00', '2026-08-03T10:00', null],
-    ['Standup Aug 3-7 9am for 30 min', 'Standup', '2026-08-03T09:00', '2026-08-03T09:30', null],
+    ['Shift Aug 3-7 9pm to midnight', 'Shift', '2026-08-03T21:00', '2026-08-04T00:00', null],
+    ['Conference Aug 3-7 from 9am to 5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Workshop Mon-Fri from 9am to 5pm', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference 3-7 Aug 9am-5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Workshop 3-7 Aug 9 am to 5 pm', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Class 3-7 Aug 7-9pm', 'Class', '2026-08-03T19:00', '2026-08-07T21:00', null],
+    ['Workshop Aug 3-7 from 9:00 to 17:00', 'Workshop', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    // Noon and midnight at either end of a time range, over several days or one
+    ['Camp Aug 3-7 9am-noon', 'Camp', '2026-08-03T09:00', '2026-08-07T12:00', null],
+    ['Camp Aug 3-7 noon-5pm', 'Camp', '2026-08-03T12:00', '2026-08-07T17:00', null],
+    ['Camp Mon-Fri 9am-noon', 'Camp', '2026-08-03T09:00', '2026-08-07T12:00', null],
+    ['Class Friday 9am-noon', 'Class', '2026-07-31T09:00', '2026-07-31T12:00', null],
+    ['Lunch Friday noon-1pm', 'Lunch', '2026-07-31T12:00', '2026-07-31T13:00', null],
+    ['Party Saturday 6pm-midnight', 'Party', '2026-08-01T18:00', '2026-08-02T00:00', null],
+    ['Party Saturday 9pm to midnight', 'Party', '2026-08-01T21:00', '2026-08-02T00:00', null],
+    ['Block party Saturday noon to midnight', 'Block party', '2026-08-01T12:00', '2026-08-02T00:00', null],
+    // One time with a date range: the range, all day ("Hotel ... check-in 3pm"
+    // is a stay with a note in it, not a daily 3pm)
+    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Hotel Aug 9-12 check-in 3pm', 'Hotel check-in', '2026-08-09T00:00', '2026-08-13T00:00', null],
+    ['Lisbon trip Aug 3-10 flight at 9am', 'Lisbon trip flight', '2026-08-03T00:00', '2026-08-11T00:00', null],
+    ['Standup Aug 3-7 at noon', 'Standup', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Retreat Aug 3-7 in the morning', 'Retreat', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Hike this weekend 10am', 'Hike', '2026-08-01T00:00', '2026-08-03T00:00', null],
+    ['Conference all week next week 9am', 'Conference', '2026-08-03T00:00', '2026-08-10T00:00', null],
+    // "all day" wins over times, a range of them too; "night" is a word
+    ['Camp Aug 3-7 9am all day', 'Camp', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Camp Aug 3-7 9am-5pm all day', 'Camp', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Movie night Aug 3-7', 'Movie night', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    // A word after the range, and the range written day first
+    ['Trip Aug 3-7 Amsterdam', 'Trip Amsterdam', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Trip 3-7 Aug', 'Trip', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Trip 30 Dec to 2 Jan', 'Trip', '2026-12-30T00:00', '2027-01-03T00:00', null],
+    ['Room 3-7 Aug 3', 'Room 3-7', '2026-08-03T00:00', '2026-08-04T00:00', null],
     // A time on its own still reads as a time, not the end of a range
     ['Dinner Aug 3 7-9pm', 'Dinner', '2026-08-03T19:00', '2026-08-03T21:00', null],
     ['Party Aug 3 - 7pm', 'Party', '2026-08-03T19:00', '2026-08-03T20:00', null],
+    ['Party Aug 3 - 6-8pm', 'Party', '2026-08-03T18:00', '2026-08-03T20:00', null],
+    ['Party Aug 3 - 6 to 8pm', 'Party', '2026-08-03T18:00', '2026-08-03T20:00', null],
     // A two-letter zone before one of the parser's own words (#193)
     ['Call 3pm ET with Sam', 'Call with Sam', '2026-07-30T12:00', '2026-07-30T13:00', null],
     ['Call 3pm ET at the office', 'Call at the office', '2026-07-30T12:00', '2026-07-30T13:00', null],
@@ -4234,7 +4275,7 @@ checkEq('qam half-read: a dangling ordinal, with or without its joiner', [true, 
 // A range the parser read from the text stands over a model answer with one
 // day of it (#198); one with the whole range is the model's.
 $fbRange = static fn(array $over = []) => $mkFb($over + [
-    'title' => 'Conference', 'personNames' => [], 'dateFound' => true, 'complete' => true,
+    'title' => 'Conference', 'personNames' => [], 'dateFound' => true, 'complete' => true, 'rangeFound' => true,
     'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-07T17:00:00-07:00',
 ]);
 $m = QuickAdd::mergeLlm($mkLlm(['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00']), $fbRange(), $mergeNow);
@@ -4250,6 +4291,61 @@ checkEq('qam a model time on a parsed single day is still the model\'s', ['2026-
 $m = QuickAdd::mergeLlm($mkLlm(['title' => 'Shift', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-04T06:00:00-07:00', 'rrule' => null]),
     $fbRange(['title' => 'Shift', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-04T06:00:00-07:00', 'rrule' => 'FREQ=DAILY;UNTIL=20260808T065959Z']), $mergeNow);
 checkEq('qam a model answer with one night keeps the parsed nightly repeat', ['FREQ=DAILY;UNTIL=20260808T065959Z', '2026-08-03T22:00:00-07:00', '2026-08-04T06:00:00-07:00'], [$m['rrule'], $m['start'], $m['end']]);
+// The same against real parses (#198 review): what the merge makes of the
+// parser's reading and a model answer for the same text.
+$mergeOf = static fn(string $text, array $model): array => QuickAdd::mergeLlm($mkLlm($model), $p($text), $now);
+$times = static fn(array $m): array => [$m['start'], $m['end'], $m['allDay'], $m['rrule']];
+$stretch = ['2026-08-03T09:00:00-07:00', '2026-08-07T17:00:00-07:00', false, null];
+$daily = ['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00', 'rrule' => 'FREQ=DAILY;UNTIL=20260808T065959Z'];
+$weekly = ['title' => 'Workshop', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;COUNT=5'];
+// A model's daily or weekly 9 to 5 does not repeat the parsed stretch, in
+// Always mode and in Smart mode when the parse is unsure
+check('qam Always mode asks the model for a parsed stretch', QuickAdd::useLlm('always', $p('Conference Aug 3-7 9am-5pm')));
+checkEq('qam a model daily rule does not repeat the parsed date-range stretch', $stretch, $times($mergeOf('Conference Aug 3-7 9am-5pm', $daily)));
+checkEq('qam a model weekly rule does not repeat the parsed day-range stretch', $stretch, $times($mergeOf('Workshop Mon-Fri 9am-5pm', $weekly)));
+check('qam Smart mode asks the model when the stretch parse is unsure',
+    QuickAdd::useLlm('smart', $p('Orientation for first years Aug 3-7 9am-5pm')) && QuickAdd::useLlm('smart', $p('Orientation for first years Mon-Fri 9am-5pm')));
+checkEq('qam Smart mode: a model daily rule does not repeat the stretch', $stretch, $times($mergeOf('Orientation for first years Aug 3-7 9am-5pm', $daily)));
+checkEq('qam Smart mode: a model weekly rule does not repeat the stretch', $stretch, $times($mergeOf('Orientation for first years Mon-Fri 9am-5pm', $weekly)));
+checkEq('qam a model daily all-day day does not repeat the parsed all-day range', ['2026-08-03T00:00:00-07:00', '2026-08-08T00:00:00-07:00', true, null],
+    $times($mergeOf('Lisbon trip Aug 3-7', ['title' => 'Lisbon trip', 'start' => '2026-08-03T00:00:00-07:00', 'end' => '2026-08-04T00:00:00-07:00', 'allDay' => true, 'rrule' => 'FREQ=DAILY;COUNT=5'])));
+checkEq('qam a model stretch with its own daily rule loses the rule', $stretch,
+    $times($mergeOf('Conference Aug 3-7 9am-5pm', ['end' => '2026-08-07T17:00:00-07:00'] + $daily)));
+$m = $mergeOf('Lake trip every summer', ['title' => 'Lake trip', 'start' => '2027-07-05T00:00:00-07:00', 'end' => '2027-07-12T00:00:00-07:00', 'allDay' => true, 'rrule' => 'FREQ=YEARLY']);
+checkEq('qam a model week with its own rule, no typed range, is the model\'s', ['2027-07-05T00:00:00-07:00', 'FREQ=YEARLY'], [$m['start'], $m['rrule']]);
+checkEq('qam a model nightly rule inside a parsed all-day range is the model\'s', ['2026-08-03T22:00:00-07:00', '2026-08-04T06:00:00-07:00', false, 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    $times($mergeOf('Night shifts Aug 3-7', ['title' => 'Night shifts', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-04T06:00:00-07:00', 'rrule' => 'FREQ=DAILY;UNTIL=20260808T065959Z'])));
+// The parser's nightly rule keeps its own night: a model answer of one
+// stretch, timed or all day, never repeats whole
+$night = ['2026-08-03T22:00:00-07:00', '2026-08-04T06:00:00-07:00', false, 'FREQ=DAILY;UNTIL=20260808T065959Z'];
+checkEq('qam the parsed nightly rule keeps its night over a model stretch', $night,
+    $times($mergeOf('Shift Aug 3-7 10pm-6am', ['title' => 'Shift', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-08T06:00:00-07:00'])));
+checkEq('qam the parsed nightly rule keeps its night over a model all-day range', $night,
+    $times($mergeOf('Shift Aug 3-7 10pm-6am', ['title' => 'Shift', 'start' => '2026-08-03T00:00:00-07:00', 'end' => '2026-08-08T00:00:00-07:00', 'allDay' => true])));
+// Counted in days: model times on the days of an all-day parse are the
+// model's, as are times on the same days as a parsed stretch
+checkEq('qam model times on a parsed weekend are the model\'s', ['2026-08-01T10:00:00-07:00', '2026-08-01T11:00:00-07:00', false, null],
+    $times($mergeOf('Hike this weekend 10am', ['title' => 'Hike', 'start' => '2026-08-01T10:00:00-07:00', 'end' => '2026-08-01T11:00:00-07:00'])));
+checkEq('qam model times on a parsed week are the model\'s', ['2026-08-03T09:00:00-07:00', '2026-08-03T10:00:00-07:00', false, null],
+    $times($mergeOf('Conference all week next week 9am', ['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T10:00:00-07:00'])));
+checkEq('qam a model stretch over a parsed all-day range ("9 to 5") is the model\'s', $stretch,
+    $times($mergeOf('Workshop Aug 3-7 9 to 5', ['title' => 'Workshop', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-07T17:00:00-07:00'])));
+checkEq('qam a model stretch over a parsed all-day range ("9a-5p") is the model\'s', $stretch,
+    $times($mergeOf('Conference Aug 3-7 9a-5p', ['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-07T17:00:00-07:00'])));
+checkEq('qam a model stretch on the same days as the parsed one is the model\'s', ['2026-08-03T09:00:00-07:00', '2026-08-07T12:00:00-07:00', false, null],
+    $times($mergeOf('Conference Aug 3-7 9am-5pm', ['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-07T12:00:00-07:00'])));
+checkEq('qam model times off the days of a parsed all-day range do not replace it', ['2026-08-03T00:00:00-07:00', '2026-08-08T00:00:00-07:00', true, null],
+    $times($mergeOf('Lisbon trip Aug 3-7', ['title' => 'Lisbon trip', 'start' => '2026-08-13T09:00:00-07:00', 'end' => '2026-08-13T10:00:00-07:00'])));
+checkEq('qam a model answer with one day keeps the parsed day-and-time stretch', ['2026-07-31T17:00:00-07:00', '2026-08-02T14:00:00-07:00', false, null],
+    $times($mergeOf('Camping Fri 5pm to Sun 2pm', ['title' => 'Camping', 'start' => '2026-07-31T17:00:00-07:00', 'end' => '2026-07-31T18:00:00-07:00'])));
+checkEq('qam a model weekly rule does not repeat a parsed overnight stretch', ['2026-07-31T18:00:00-07:00', '2026-08-01T11:00:00-07:00', false, null],
+    $times($mergeOf('Sleepover Fri 6pm to Sat 11am', ['title' => 'Sleepover', 'start' => '2026-07-31T18:00:00-07:00', 'end' => '2026-07-31T19:00:00-07:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=FR'])));
+// Only a range the text named: a length is the model's to read
+checkEq('qam a model reading of a typed length stands', '2026-08-04T17:00:00-07:00',
+    $mergeOf('Hackathon Aug 3 9am for 2 days', ['title' => 'Hackathon', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-04T17:00:00-07:00'])['end']);
+// Only a range the text named: one event past midnight keeps the model's end
+checkEq('qam one event past midnight keeps the model\'s shorter answer', '2026-08-04T00:15:00-07:00',
+    $mergeOf('Late show Aug 3 11:30pm', ['title' => 'Late show', 'start' => '2026-08-03T23:30:00-07:00', 'end' => '2026-08-04T00:15:00-07:00'])['end']);
 checkEq('qam an alert read from the text survives the model draft (#33)', [30],
     QuickAdd::mergeLlm($mkLlm(), $mkFb(['reminders' => [30]]), $mergeNow)['reminders']);
 checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));

@@ -99,7 +99,7 @@ The Google connector is described in [google-calendar.md](google-calendar.md). C
 ## Events
 
 - `GET /events?start=ISO&end=ISO&calendars=1,2&q=&includeHidden=0` → `{events:[occurrence], capped?:[eventId]}`. `start`/`end` are ISO 8601 with offset.
-  - A window longer than two years is 400; ask for longer spans in pieces. A repeating series expands to at most 1,000 occurrences per request; one with more in the window shows its first 1,000 and its master event id is listed in `capped`, which is present only then ([limits.md](limits.md)).
+  - A window longer than two years is 400; ask for longer spans in pieces. A repeating series expands to at most 1,000 occurrences per request; one with more in the window shows its first 1,000 and its master event id is listed in `capped`, which is present only then ([limits.md](limits.md)). A series is listed only when the answer includes at least one of its own occurrences (not an edited date): one a filter hides entirely isn't listed. The answer is then complete up to the earliest of the listed series' last occurrences returned; ask again from there for the rest.
   - `q` matches title, description and location as a substring, and tag names; a `q` equal to or starting with `#` (`#work`) matches tags only.
   - `includeHidden=1` also returns what normal responses omit: `attendance:"hidden"` events and occurrences an enabled `hide` filter would drop. Reminders fire regardless of filters, so the notification handler uses this to find the occurrence a notification points at.
 - `GET /events/:id/occurrence` → `{occurrence}`: one event's full record (used by Activity's jump-to-event).

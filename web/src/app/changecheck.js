@@ -62,7 +62,7 @@ async function check() {
   // without an event (their own part), and unanswered invitations or
   // decisions made elsewhere ride on the events part.
   if (reviewMoved) owe('review');
-  if (statusMoved) owe('calendars', 'status');
+  if (statusMoved) owe('calendars', 'status', 'plugins');
   if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
   // The app icon's number (#170), when something it counts may have moved.
   refreshBadge({ changed: moved || reviewMoved });

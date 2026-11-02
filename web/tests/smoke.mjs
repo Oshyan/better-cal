@@ -2372,6 +2372,364 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = realFetch;
 }
 
+// --- Loading the calendar's events: the review of one fetch path (#190) ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow, refreshWindow, ensureRangeLoaded, afterUndo } = await import('../src/app/api.js');
+  const { isOwed, runOwed } = await import('../src/app/reloads.js');
+  const { checkChanges } = await import('../src/app/changecheck.js');
+  const { moveEvent } = await import('../src/app/actions.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const down = () => json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const at = (y, m, d, h = 0) => isoAt(new Date(y, m - 1, d, h));
+  const fresh = (a, b) => missingRanges(Date.parse(a), Date.parse(b), freshRanges()).length === 0;
+  const reset = () => { put({ loadedRanges: [], windowStatus: null, visibleDays: null, popover: null }); st.occ.clear(); };
+  const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+  const path = (url) => new URL(String(url), 'http://app.test');
+  const inRange = (u, o) => Date.parse(o.start) < Date.parse(u.searchParams.get('end')) && Date.parse(o.end) > Date.parse(u.searchParams.get('start'));
+  const lists = (p) => {
+    if (p === '/calendars') return json({ calendars: st.calendars, folders: st.folders, tags: st.tags });
+    if (p === '/people') return json({ people: st.people });
+    if (p === '/views') return json({ views: st.savedViews });
+    if (p === '/review/count') return json({ count: st.reviewCount });
+    return json({});
+  };
+
+  // 1. Past the cache's ceiling, a window the view moved on from used to be
+  // pruned away after every request and asked for again without end. It
+  // now stops once it isn't the view's, and only the view's load prunes.
+  reset();
+  const crowd = [];
+  for (let i = 0; i < 24990; i++) {
+    const t = Date.UTC(2031, 0, 2) + i * 60000;
+    crowd.push({ instanceId: 'c' + i, eventId: 700000 + i, calendarId: 1, title: 'Sample crowd', start: isoAt(new Date(t)), end: isoAt(new Date(t + 30000)), allDay: false });
+  }
+  let olderAsks = 0;
+  let asksAll = 0;
+  const olderGate = gate();
+  globalThis.fetch = async (url) => {
+    const u = path(url);
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c-sample' });
+    asksAll++;
+    if (asksAll > 40) return down(); // a loop with no end stops here, and fails the checks below
+    if (Date.parse(u.searchParams.get('start')) < Date.parse(at(2031, 1, 1))) {
+      olderAsks++;
+      if (olderAsks === 1) await olderGate.p;
+      return json({ events: Array.from({ length: 20 }, (_, i) => ({ instanceId: 'o' + i, eventId: 710000 + i, calendarId: 1, title: 'Sample older', start: at(2030, 6, 2 + i, 9), end: at(2030, 6, 2 + i, 10), allDay: false })) });
+    }
+    return json({ events: crowd });
+  };
+  const older = loadWindow(at(2030, 6, 1), at(2030, 7, 1));
+  await tick();
+  await loadWindow(at(2031, 1, 1), at(2031, 2, 1));
+  olderGate.open();
+  await older;
+  await tick();
+  eq('cache ceiling: a window the view moved on from stops asking', [olderAsks, asksAll], [1, 2]);
+  eq("cache ceiling: and the view's window stays fresh", [fresh(at(2031, 1, 1), at(2031, 2, 1)), st.windowStatus], [true, null]);
+  crowd.length = 0;
+
+  // 2. Shown but not fresh: days on screen held from before a save or a
+  // change elsewhere stay drawn while they're asked for again, with no
+  // "Loading"; only days never loaded say it.
+  reset();
+  const server = { cursor: 'n1', hold: null, events: 0 };
+  globalThis.fetch = async (url) => {
+    const u = path(url);
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/changes/cursor') return json({ cursor: server.cursor, review: 'r1', status: 's1' });
+    if (p === '/events') { server.events++; if (server.hold) await server.hold; return json({ events: [] }); }
+    return lists(p);
+  };
+  put({ visibleDays: { start: '2032-03-08', end: '2032-03-21' } });
+  await loadWindow(at(2032, 3, 1), at(2032, 4, 1));
+  await checkChanges(); // the baseline
+  let g = gate();
+  server.hold = g.p;
+  server.cursor = 'n2'; // this tab's save
+  let asked = server.events;
+  const saving = refreshWindow();
+  await tick();
+  const duringSave = [st.windowStatus, server.events > asked];
+  server.hold = null;
+  g.open();
+  await saving;
+  eq("shown but not fresh: a save's refresh says nothing over days already showing", [...duringSave, st.windowStatus], [null, true, null]);
+  g = gate();
+  server.hold = g.p;
+  server.cursor = 'n3'; // a change from another device
+  asked = server.events;
+  const checking = checkChanges();
+  await tick();
+  const duringCheck = [st.windowStatus, server.events > asked];
+  server.hold = null;
+  g.open();
+  await checking;
+  eq('shown but not fresh: nor does a change from elsewhere', [...duringCheck, st.windowStatus, fresh(at(2032, 3, 1), at(2032, 4, 1))], [null, true, null, true]);
+  put({ visibleDays: { start: '2032-03-25', end: '2032-04-07' } });
+  newGeneration(); // March held, not fresh; April never loaded
+  g = gate();
+  server.hold = g.p;
+  const jump = loadWindow(at(2032, 3, 15), at(2032, 4, 15));
+  await tick();
+  const duringJump = st.windowStatus && st.windowStatus.kind;
+  server.hold = null;
+  g.open();
+  await jump;
+  eq('shown but not fresh: days on screen never loaded still say Loading', [duringJump, st.windowStatus], ['loading', null]);
+
+  // 3 and 4. Saves to one event in flight together (the server's instanceId
+  // carries the start, as the real one's does).
+  const srv = { at: null, title: 'Sample review', version: 1, patches: [] };
+  const one = (start) => ({ instanceId: '7@' + Date.parse(start), eventId: 7, calendarId: 1, title: srv.title, start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false });
+  globalThis.fetch = async (url, o = {}) => {
+    const u = path(url);
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/changes/cursor') return json({ cursor: 'm' + srv.version });
+    if (p === '/events/7' && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      const turn = gate();
+      srv.patches.push(turn);
+      if (!(await turn.p)) return down();
+      srv.at = body.start;
+      srv.version++;
+      return json({ ok: true });
+    }
+    if (p === '/events') return json({ events: inRange(u, one(srv.at)) ? [one(srv.at)] : [] });
+    return lists(p);
+  };
+  const nov = (d) => at(2031, 11, d, 10);
+  const toNov = (d) => ({ newStart: nov(d), newEnd: at(2031, 11, d, 11) });
+  const shown = () => [...st.occ.values()].filter((x) => x.eventId === 7).map((x) => x.start);
+  const begin = async () => {
+    reset();
+    srv.at = nov(3);
+    srv.title = 'Sample review';
+    srv.patches.length = 0;
+    await loadWindow(at(2031, 11, 1), at(2031, 12, 1));
+    return [...st.occ.values()].find((x) => x.eventId === 7).instanceId;
+  };
+  const twoMoves = async (id) => {
+    const a = moveEvent({ instanceId: id, ...toNov(4) });
+    await tick();
+    const b = moveEvent({ instanceId: id, ...toNov(6) });
+    await tick();
+    return [a, b];
+  };
+  const answerNow = () => mergeWindow(at(2031, 11, 1), at(2031, 12, 1), [one(srv.at)], dataGeneration());
+
+  // 3. Moved to the 4th, then the 6th, both landing: the first's refresh,
+  // asked before the second reached the server, no longer puts it back on
+  // the 4th (it jumped the 6th, the 4th, the 6th).
+  let id = await begin();
+  let [a, b] = await twoMoves(id);
+  srv.patches[0].open(true);
+  await a;
+  await tick();
+  const afterFirst = shown();
+  srv.patches[1].open(true);
+  await b;
+  await tick();
+  eq("two saves: the first landing leaves the second's copy on screen", afterFirst, [nov(6)]);
+  eq("two saves: and the second's refresh shows it, once", [shown(), [...st.occ.keys()].filter((k) => k.startsWith('7@'))], [[nov(6)], ['7@' + Date.parse(nov(6))]]);
+
+  // 4. Both failing: back where the server has it, and the next answer
+  // replaces it (it held the first failed position against every answer).
+  id = await begin();
+  [a, b] = await twoMoves(id);
+  srv.patches[0].open(false);
+  await a;
+  const oneFailed = shown();
+  srv.patches[1].open(false);
+  await b;
+  const bothFailed = shown();
+  srv.title = 'Sample review, renamed elsewhere';
+  answerNow();
+  eq('failed saves: the later copy stays while it is on its way, then the server copy', [oneFailed, bothFailed], [[nov(6)], [nov(3)]]);
+  eq('failed saves: and the next answer replaces it', [...st.occ.values()].filter((x) => x.eventId === 7).map((x) => [x.start, x.title]), [[nov(3), 'Sample review, renamed elsewhere']]);
+  // Failing the other way round: the earlier save's copy, then the server's.
+  id = await begin();
+  [a, b] = await twoMoves(id);
+  srv.patches[1].open(false);
+  await b;
+  const laterFailed = shown();
+  srv.patches[0].open(false);
+  await a;
+  eq('failed saves: in either order', [laterFailed, shown()], [[nov(4)], [nov(3)]]);
+  answerNow();
+  // The first landing and the second failing: the first one's copy, held
+  // until an answer carries it.
+  id = await begin();
+  [a, b] = await twoMoves(id);
+  srv.patches[0].open(true);
+  await a;
+  await tick();
+  srv.patches[1].open(false);
+  await b;
+  const landedThenFailed = shown();
+  srv.title = 'Sample review, carried';
+  answerNow();
+  eq('failed saves: after one that landed, its copy shows, until an answer carries it', [landedThenFailed, st.occ.get('7@' + Date.parse(nov(4))) && st.occ.get('7@' + Date.parse(nov(4))).title, shown()], [[nov(4)], 'Sample review, carried', [nov(4)]]);
+
+  // 5. The drop rule is by occurrence: an older answer for January doesn't
+  // overwrite an event running into a February held from a newer one, nor
+  // bring back one deleted elsewhere.
+  reset();
+  const span = (title) => ({ instanceId: 'sp1', eventId: 81, calendarId: 1, title, start: '2033-01-31T20:00:00Z', end: '2033-02-03T08:00:00Z', allDay: false });
+  const jan = ['2033-01-01T00:00:00Z', '2033-02-01T00:00:00Z'];
+  const feb = ['2033-02-01T00:00:00Z', '2033-03-01T00:00:00Z'];
+  let olderGen = dataGeneration();
+  newGeneration();
+  mergeWindow(...feb, [span('Now')], dataGeneration());
+  const janOnly = { instanceId: 'j1', eventId: 82, calendarId: 1, title: 'Sample January', start: '2033-01-10T09:00:00Z', end: '2033-01-10T10:00:00Z', allDay: false };
+  const mergedJan = mergeWindow(...jan, [span('Before'), janOnly], olderGen);
+  eq('by occurrence: an older answer keeps its own days, not the newer copy of one running on', [mergedJan, st.occ.get('sp1').title, st.occ.has('j1'), fresh(...feb)], [true, 'Now', true, true]);
+  reset();
+  olderGen = dataGeneration();
+  newGeneration();
+  mergeWindow(...feb, [], dataGeneration()); // deleted elsewhere
+  mergeWindow(...jan, [span('Before')], olderGen);
+  eq('by occurrence: nor brings back one deleted elsewhere', [st.occ.has('sp1'), fresh(...feb)], [false, true]);
+
+  // 6. A capped series the answer shows none of (hidden by a filter on an
+  // older server, or only edited dates) doesn't stop the follow-up for
+  // the one shown, and says nothing about it.
+  reset();
+  const HOUR = 3600000;
+  const first = Date.UTC(2037, 0, 1);
+  let asks6 = 0;
+  globalThis.fetch = async (url) => {
+    const u = path(url);
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c-sample' });
+    asks6++;
+    const s = Date.parse(u.searchParams.get('start'));
+    const e = Date.parse(u.searchParams.get('end'));
+    const out = [];
+    if (s < Date.UTC(2037, 3, 1) && e > Date.UTC(2037, 2, 10)) out.push({ instanceId: '9603@x', eventId: 9603, calendarId: 1, title: 'Sample edited date', start: isoAt(new Date(Date.UTC(2037, 2, 10, 9))), end: isoAt(new Date(Date.UTC(2037, 2, 10, 10))), allDay: false, recurring: true, isException: true });
+    for (let k = Math.max(0, Math.ceil((s - HOUR / 2 - first) / HOUR)); first + k * HOUR < e; k++) {
+      const t = first + k * HOUR;
+      if (t + HOUR / 2 <= s) continue;
+      if (out.length === 1000) return json({ events: out, capped: [601, 602, 603] });
+      out.push({ instanceId: '601:' + k, eventId: 601, calendarId: 1, title: 'Sample hourly', start: isoAt(new Date(t)), end: isoAt(new Date(t + HOUR / 2)), allDay: false, recurring: true });
+    }
+    return json({ events: out, capped: [602, 603] });
+  };
+  const toastsBefore = st.toasts.length;
+  await loadWindow(at(2037, 3, 1), at(2037, 6, 1));
+  const hours6 = Math.round((Date.parse(at(2037, 6, 1)) - Date.parse(at(2037, 3, 1))) / HOUR);
+  const held6 = [...st.occ.values()].filter((o) => o.eventId === 601 && Date.parse(o.start) >= Date.parse(at(2037, 3, 1)) && Date.parse(o.start) < Date.parse(at(2037, 6, 1))).length;
+  eq('capped: a series shown with none of its own rows does not stop the others', [held6, asks6, fresh(at(2037, 3, 1), at(2037, 6, 1))], [hours6, Math.ceil(hours6 / 1000), true]);
+  eq('capped: and nothing is said about it', st.toasts.slice(toastsBefore).filter((t) => t.text.includes('repeats more often')).length, 0);
+  // Too dense even for twelve requests, loaded cold: the toast names it
+  // from the answer.
+  reset();
+  const minute = 60000;
+  const first2 = Date.UTC(2038, 6, 1);
+  let asks6b = 0;
+  globalThis.fetch = async (url) => {
+    const u = path(url);
+    asks6b++;
+    const s = Date.parse(u.searchParams.get('start'));
+    const e = Date.parse(u.searchParams.get('end'));
+    const out = [];
+    for (let k = Math.max(0, Math.ceil((s - first2) / minute)); first2 + k * minute < e; k++) {
+      if (out.length === 1000) return json({ events: out, capped: [604] });
+      out.push({ instanceId: '604:' + k, eventId: 604, calendarId: 1, title: 'Sample every minute', start: isoAt(new Date(first2 + k * minute)), end: isoAt(new Date(first2 + k * minute + 30000)), allDay: false, recurring: true });
+    }
+    return json({ events: out });
+  };
+  const toastsBefore2 = st.toasts.length;
+  await loadWindow(at(2038, 7, 1), at(2038, 8, 1));
+  eq('capped: one too dense is asked for twelve times and named from the answer', [asks6b, st.toasts.slice(toastsBefore2).filter((t) => t.text.includes('"Sample every minute"')).length], [12, 1]);
+
+  // 7. A single event moved: an answer asked before its save landed, from
+  // after the server moved it, names it by its new start. It replaces
+  // nothing until an answer carries the save, then replaces the local copy.
+  reset();
+  const single = (id, start) => ({ instanceId: id, eventId: 5, calendarId: 1, title: 'Sample single', start, end: isoAt(new Date(Date.parse(start) + 3600000)), allDay: false });
+  st.occ.set('5@old', single('5@old', '2034-11-03T10:00:00Z'));
+  const beforeMove = patchOccurrence('5@old', { start: '2034-11-04T10:00:00Z', end: '2034-11-04T11:00:00Z' });
+  const nov34 = ['2034-11-01T00:00:00Z', '2034-12-01T00:00:00Z'];
+  mergeWindow(...nov34, [single('5@new', '2034-11-04T10:00:00Z')], dataGeneration());
+  const interleaved = [...st.occ.keys()];
+  localSaved([beforeMove]);
+  newGeneration();
+  mergeWindow(...nov34, [single('5@new', '2034-11-04T10:00:00Z')], dataGeneration());
+  eq('moved single event: shown once while the save is on its way, then as the answer names it', [interleaved, [...st.occ.keys()]], [['5@old'], ['5@new']]);
+
+  // 8. A failing health read stays owed and is asked again, but plugins and
+  // their bands are fetched once for the move that owed them.
+  reset();
+  const srv8 = { status: 's1', health: 0, plugins: 0 };
+  globalThis.fetch = async (url) => {
+    const p = path(url).pathname.replace('/api/v1', '');
+    if (p === '/changes/cursor') return json({ cursor: 'n3', review: 'r1', status: srv8.status });
+    if (p === '/system/health') { srv8.health++; return down(); }
+    if (p === '/plugins') { srv8.plugins++; return json({ plugins: [] }); }
+    if (p === '/events') return json({ events: [] });
+    return lists(p);
+  };
+  await checkChanges(); // the baseline
+  const was8 = { health: srv8.health, plugins: srv8.plugins, seq: st.pluginSeq };
+  srv8.status = 's2';
+  await checkChanges();
+  for (let i = 0; i < 3; i++) await checkChanges();
+  eq('status: a failing health read stays owed and is asked at each check', [isOwed('status'), srv8.health - was8.health], [true, 4]);
+  eq('status: plugins and their bands are fetched once for the move', [srv8.plugins - was8.plugins, st.pluginSeq - was8.seq, isOwed('plugins')], [1, 1, false]);
+
+  // 9. Two loads at once: a month the second asked for while the first was
+  // on an earlier one isn't asked for again by the first.
+  reset();
+  const asks9 = new Map();
+  const holds9 = new Map();
+  globalThis.fetch = async (url) => {
+    const u = path(url);
+    const s = Date.parse(u.searchParams.get('start'));
+    asks9.set(s, (asks9.get(s) || 0) + 1);
+    if (holds9.has(s)) await holds9.get(s).p;
+    return json({ events: [] });
+  };
+  mergeWindow(at(2039, 2, 1), at(2039, 3, 1), [], dataGeneration()); // February held and fresh
+  const janGate = gate();
+  const marGate = gate();
+  holds9.set(Date.parse(at(2039, 1, 1)), janGate);
+  holds9.set(Date.parse(at(2039, 3, 1)), marGate);
+  const loadA = ensureRangeLoaded(at(2039, 1, 1), at(2039, 4, 1));
+  await tick();
+  const loadB = ensureRangeLoaded(at(2039, 3, 1), at(2039, 4, 1));
+  await tick();
+  janGate.open();
+  await tick();
+  marGate.open();
+  await Promise.all([loadA, loadB]);
+  eq('in flight: a month another load asked for meanwhile is asked for once', [asks9.get(Date.parse(at(2039, 1, 1))), asks9.get(Date.parse(at(2039, 3, 1))), fresh(at(2039, 1, 1), at(2039, 4, 1))], [1, 1, true]);
+
+  // 10. An undo's settings are owed like the rest: not adopted while the
+  // Settings page is open, and asked for once it's left.
+  reset();
+  let settingsAsks = 0;
+  globalThis.fetch = async (url) => {
+    const p = path(url).pathname.replace('/api/v1', '');
+    if (p === '/settings') { settingsAsks++; return json({ settings: { ...st.settings } }); }
+    if (p === '/changes/cursor') return json({ cursor: 'n3', review: 'r1', status: 's2' });
+    if (p === '/events') return json({ events: [] });
+    return lists(p);
+  };
+  const routeWas = st.route;
+  put({ route: 'settings' });
+  await afterUndo();
+  await tick();
+  const onPage = [settingsAsks, isOwed('settings')];
+  put({ route: routeWas });
+  await runOwed();
+  eq("undo: settings are owed while the Settings page is open, then asked for", [...onPage, settingsAsks, isOwed('settings')], [0, true, 1, false]);
+
+  reset();
+  globalThis.fetch = realFetch;
+}
+
 // --- Drags: only the pointer that started one moves or drops it (#185) ---
 {
   const hadWindow = 'window' in globalThis;

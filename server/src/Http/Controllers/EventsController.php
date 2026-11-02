@@ -54,8 +54,10 @@ final class EventsController
             filter_var($req->q('includeHidden', '0'), FILTER_VALIDATE_BOOL)
         );
         // A series with more occurrences in this window than the per-series
-        // cap is named, so a client can say so instead of showing fewer (#23).
-        $capped = $this->events->cappedSeries();
+        // cap is named, so a client can say so instead of showing fewer (#23),
+        // but only one this answer shows: one hidden by a filter, named with
+        // no rows, stopped the client's follow-up for every other.
+        $capped = $this->events->cappedSeries($occurrences);
         return Response::json(['events' => $occurrences] + ($capped !== [] ? ['capped' => $capped] : []));
     }
 

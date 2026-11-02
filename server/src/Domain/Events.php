@@ -977,10 +977,37 @@ final class Events
 
     // ---- CRUD ---------------------------------------------------------
 
-    /** Series whose occurrences were cut short at Recurrence::MAX_INSTANCES in this request (#23). */
-    public function cappedSeries(): array
+    /**
+     * Series whose occurrences were cut short at Recurrence::MAX_INSTANCES in
+     * this request (#23), when the answer shows any of them: $occurrences is
+     * what window() returned. A series every occurrence of which a filter
+     * hid (or every one an edited date) shows nothing that is cut short, and
+     * a client finishes an answer that names capped series at the last
+     * occurrence of each it returned.
+     */
+    public function cappedSeries(?array $occurrences = null): array
     {
-        return $this->recurrence->capped();
+        $capped = $this->recurrence->capped();
+        return $occurrences === null ? $capped : self::cappedShown($capped, $occurrences);
+    }
+
+    /**
+     * The capped series ids with at least one of their own occurrences (not an
+     * edited date, which is a row of its own) among the served occurrences.
+     *
+     * @param list<int> $capped
+     * @param list<array> $occurrences serialized, as window() returns them
+     * @return list<int>
+     */
+    public static function cappedShown(array $capped, array $occurrences): array
+    {
+        $shown = [];
+        foreach ($occurrences as $occ) {
+            if (empty($occ['isException'])) {
+                $shown[(int) ($occ['eventId'] ?? 0)] = true;
+            }
+        }
+        return array_values(array_filter($capped, static fn(int $id): bool => isset($shown[$id])));
     }
 
     public function get(int $userId, int $id): array

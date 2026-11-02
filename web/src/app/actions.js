@@ -407,7 +407,7 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
-    localSaved([instanceId]);
+    localSaved([before]);
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Moved at Google' : 'Moved') + seriesWords(occ, scope || 'this', 'this');
     toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
@@ -430,7 +430,7 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
       method: 'PATCH',
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
-    localSaved([instanceId]);
+    localSaved([before]);
     const viaPlugin = pluginBacked(occ);
     const verb = (viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Resized at Google' : 'Resized') + seriesWords(occ, scope || 'this', 'this');
     toast(said(verb, timeChange(before, { start: newStart, end: newEnd, allDay: before.allDay })), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
@@ -570,7 +570,7 @@ export async function deleteEvent(occ, scope) {
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
     const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body });
-    localSaved(removed.map((r) => r.instanceId));
+    localSaved(removed);
     toast((googleBacked(occ) ? 'Deleted at Google' : 'Deleted') + seriesWords(occ, scope || 'this', 'this'), { title: itemName(occ), undo: entriesOf(saved), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
@@ -662,7 +662,7 @@ export async function setRelationship(occ, relationship, scope) {
     const body = { relationship };
     if (occ.recurring) { body.scope = scope || (mine ? 'all' : 'all'); body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
-    localSaved([occ.instanceId]);
+    localSaved([before]);
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
     toast((relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : '')) + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
@@ -701,7 +701,7 @@ export async function setAttendance(occ, attendance, scope) {
     const body = { attendance };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     const res = await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
-    localSaved([occ.instanceId]);
+    localSaved([before]);
     toast((ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(res) });
     // Hidden events leave the window payload on the next fetch, and a series
     // answer changes more than this one occurrence; refresh so the cache
@@ -828,7 +828,7 @@ export async function deleteTripOnly(occ) {
   set({ popover: null });
   try {
     const saved = await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
-    localSaved(removed.map((r) => r.instanceId));
+    localSaved(removed);
     toast('Trip removed, its events kept', { title: itemName(occ), undo: entriesOf(saved) });
     bumpTripLinks();
     refreshWindow();
@@ -850,10 +850,10 @@ export async function deleteTripAndMembers(occ, members) {
         method: 'DELETE',
         body: m.recurring ? { scope: 'all' } : {},
       })));
-      localSaved(removeOccurrencesOfEvent(m.eventId).map((r) => r.instanceId));
+      localSaved(removeOccurrencesOfEvent(m.eventId));
     }
     entries.push(...entriesOf(await api('/events/' + occ.eventId, { method: 'DELETE', body: {} })));
-    localSaved(removeOccurrencesOfEvent(occ.eventId).map((r) => r.instanceId));
+    localSaved(removeOccurrencesOfEvent(occ.eventId));
     toast('Deleted, with its ' + members.length + (members.length === 1 ? ' event' : ' events'), { title: itemName(occ), undo: entries });
     bumpTripLinks();
     refreshWindow();
@@ -1473,8 +1473,7 @@ export async function rsvpEvent(occ, answer, retryUncertain = false) {
     const via = occ.invite && occ.invite.via;
     const reply = via === 'google' ? null
       : { partstat: result.myPartstat, sent: result.sent, reason: result.reason, message: result.message };
-    patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat, reply } });
-    localSaved([occ.instanceId]);
+    localSaved([patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat, reply } })]);
     invalidateRecords(occ.eventId);
     if (via !== 'google') refreshWindow(); // Accept makes it Planned, Maybe a Maybe
     loadReviewCount(); // an answered invitation leaves the Review queue

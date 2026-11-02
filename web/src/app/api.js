@@ -339,14 +339,16 @@ const MAX_SPAN_MS = 700 * 864e5;
 // A series with more occurrences in one window than the server will expand
 // (1,000; an hourly series, say) is named in the response instead of quietly
 // coming back short (#23). Said once per series per page.
+// Only for a series this answer shows (one hidden by a filter shows
+// nothing, so nothing of it is missing), named from the answer itself.
 const cappedSeen = new Set();
-function noteCapped(ids) {
+function noteCapped(ids, events) {
   for (const id of ids) {
     if (cappedSeen.has(id)) continue;
+    const shown = events.find((o) => o.eventId === id && !o.isException);
+    if (!shown) continue;
     cappedSeen.add(id);
-    let title = '';
-    for (const o of state.occ.values()) if (o.eventId === id) { title = o.title; break; }
-    toast(`"${title || 'A repeating event'}" repeats more often than one view can show; some of its occurrences here aren't displayed.`, { duration: 10000 });
+    toast(`"${shown.title || 'A repeating event'}" repeats more often than one view can show; some of its occurrences here aren't displayed.`, { duration: 10000 });
   }
 }
 
@@ -357,7 +359,10 @@ const CAPPED_REQUESTS = 12;
 // The server expands each series in order and stops at its first 1,000, so
 // an answer naming capped series is complete up to the earliest of their
 // last occurrences returned. An edited date (isException) can sit anywhere,
-// so it isn't counted. null when there's nothing to go on.
+// so it isn't counted. A capped series with none of its own occurrences in
+// the answer (all hidden by a filter, or every one an edited date) shows
+// nothing that could be cut short, so it doesn't stop the others' follow
+// up. null when there's nothing to go on.
 function completeUntil(events, capped) {
   let cut = null;
   for (const id of capped) {
@@ -367,7 +372,7 @@ function completeUntil(events, capped) {
       const t = ms(o.start);
       if (last === null || t > last) last = t;
     }
-    if (last === null) return null;
+    if (last === null) continue;
     if (cut === null || last < cut) cut = last;
   }
   return cut;
@@ -401,7 +406,7 @@ async function fetchRange(s, e) {
         a = cut;
         continue;
       }
-      if (capped.length) noteCapped(capped);
+      if (capped.length) noteCapped(capped, events);
       mergeWindow(iso(a), iso(e), events, gen);
       break;
     }
@@ -441,18 +446,40 @@ function monthGaps(gaps, have) {
   return out;
 }
 
+// What's held and fresh, with what's on its way at this generation.
+const haveNow = () => {
+  const gen = dataGeneration();
+  return [...freshRanges(), ...inFlight.filter((r) => r.gen === gen)];
+};
+
+// One stretch, in one request; a widened one the server refuses as too
+// many rows is asked for as just the days needed (parts).
+async function fetchStretch(g, parts) {
+  const widened = !(parts.length === 1 && parts[0].start === g.start && parts[0].end === g.end);
+  try {
+    await fetchRange(g.start, g.end);
+  } catch (err) {
+    if (!err || err.code !== 'event_window_too_large' || !widened) throw err;
+    for (const p of parts) await fetchRange(p.start, p.end);
+  }
+}
+
 /**
  * Make [s, e) fresh: the one way events are fetched. What's missing (not
  * fresh, not on its way at this generation) is asked for in whole months,
  * one request at a time so a fragmented cache can't burst; a month the
  * server refuses as too many rows is asked for as just the days needed.
- * Requests on their way that it counted on are waited for, then it looks
- * again and fetches whatever they didn't bring, until nothing is missing.
- * A failed request ends it with the failure. onGaps: told what's missing
- * the first time anything is; afterGap: after each gap lands.
+ * Just before each request it looks again at what's on its way, so a gap
+ * another load asked for meanwhile isn't asked for twice. Requests on their
+ * way that it counted on are waited for, then it looks again and fetches
+ * whatever they didn't bring, until nothing is missing. A failed request
+ * ends it with the failure. onGaps: told what's missing the first time
+ * anything is; afterGap: after each gap lands; wanted: asked before each
+ * pass and each request, and false ends it (the view moved on).
  */
-async function ensure(s, e, { onGaps = null, afterGap = null } = {}) {
+async function ensure(s, e, { onGaps = null, afterGap = null, wanted = null } = {}) {
   for (;;) {
+    if (wanted && !wanted()) return;
     const gen = dataGeneration();
     const coming = inFlight.filter((r) => r.gen === gen && r.start < e && r.end > s);
     const have = [...freshRanges(), ...coming];
@@ -461,14 +488,14 @@ async function ensure(s, e, { onGaps = null, afterGap = null } = {}) {
     const gaps = monthGaps(narrow, have);
     if (onGaps && gaps.length) { onGaps(gaps); onGaps = null; }
     for (const gap of gaps) {
-      const parts = narrow.filter((n) => n.start < gap.end && n.end > gap.start)
-        .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
-      const widened = !(parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end);
-      try {
-        await fetchRange(gap.start, gap.end);
-      } catch (err) {
-        if (!err || err.code !== 'event_window_too_large' || !widened) throw err;
-        for (const p of parts) await fetchRange(p.start, p.end);
+      if (wanted && !wanted()) return;
+      const left = missingRanges(gap.start, gap.end, haveNow());
+      if (left.length === 0) continue; // asked for meanwhile: the next pass waits on it
+      const pieces = left.length === 1 && left[0].start === gap.start && left[0].end === gap.end ? [gap] : left;
+      for (const piece of pieces) {
+        const parts = narrow.filter((n) => n.start < piece.end && n.end > piece.start)
+          .map((n) => ({ start: Math.max(n.start, piece.start), end: Math.min(n.end, piece.end) }));
+        await fetchStretch(piece, parts.length ? parts : [piece]);
       }
       if (afterGap) afterGap();
     }
@@ -476,15 +503,19 @@ async function ensure(s, e, { onGaps = null, afterGap = null } = {}) {
   }
 }
 
-// Whether any day on screen (as the view last reported) is in these gaps.
-function gapsOnScreen(gaps) {
+// Whether any day on screen (as the view last reported) is in these gaps
+// and not held at all. A day held from an older generation is shown but not
+// fresh: drawn as it was, and asked for again quietly, so a save or a
+// change elsewhere doesn't say "Loading" over days already showing.
+function unheldOnScreen(gaps) {
   const d = state.visibleDays;
   if (!d || !d.start || !d.end) return false;
   const s = dateOfDayKey(d.start).getTime();
   const end = dateOfDayKey(d.end);
   end.setDate(end.getDate() + 1);
   const e = end.getTime();
-  return gaps.some((g) => g.start < e && g.end > s);
+  return gaps.some((g) => g.start < e && g.end > s
+    && missingRanges(Math.max(g.start, s), Math.min(g.end, e), state.loadedRanges).length > 0);
 }
 
 // The view's "Loading" or failure note goes once its window is all held and
@@ -528,13 +559,19 @@ export async function loadWindow(startISO, endISO) {
   if (!(e > s) || e - s > MAX_SPAN_MS) return limited('This date range is too wide to load safely. Narrow it and try again.');
   // Only a cold load says "Loading": later windows arrive while the calendar
   // already shows something, and a pill flickering on every scroll is noise.
-  // And whenever days on screen are among what's missing: after a jump they
-  // looked empty until they arrived (#184). Scrolling ahead asks quietly.
+  // And whenever days on screen aren't held at all: after a jump they
+  // looked empty until they arrived (#184). Scrolling ahead, and days on
+  // screen held from before a change, are asked for quietly.
   const cold = state.loadedRanges.length === 0 && !state.windowStatus;
   try {
+    // Once the view has moved on, this window's loop ends and the cache is
+    // bounded only by the view's own load: pruned to the newer window, an
+    // older one found its stretch gone after every request and asked again
+    // without end.
     await ensure(s, e, {
-      onGaps: (gaps) => { if (cold || gapsOnScreen(gaps)) set({ windowStatus: { kind: 'loading' } }); },
-      afterGap: () => boundCache(startISO, endISO),
+      onGaps: (gaps) => { if (cold || unheldOnScreen(gaps)) set({ windowStatus: { kind: 'loading' } }); },
+      afterGap: () => { if (isView()) boundCache(startISO, endISO); },
+      wanted: isView,
     });
   } catch (err) {
     // The view moved on: its own load says how that went.
@@ -655,11 +692,18 @@ defineReload('settings', async () => {
   if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
   return true;
 });
-// Background state: system health, plugins and their bands, updates.
+// Background state: system health and updates. Owed on its own, so a
+// failing health read is asked again without plugins and their bands.
 defineReload('status', async () => {
-  const [health, , updates] = await Promise.all([loadSystemHealth(), loadPlugins(), loadUpdates()]);
-  set({ pluginSeq: state.pluginSeq + 1 });
+  const [health, updates] = await Promise.all([loadSystemHealth(), loadUpdates()]);
   return health !== null && updates !== null;
+});
+// Plugins and their bands: refetched once per move of the status part, when
+// the list lands; a failed read stays owed and refetches no band.
+defineReload('plugins', async () => {
+  await pluginsList();
+  set({ pluginSeq: state.pluginSeq + 1 });
+  return true;
 });
 
 // A plugin's ranges in a stretch. The server sends each plugin's earliest
@@ -744,10 +788,9 @@ export function afterUndo() {
   // fetched on their own.
   set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, tripLinksSeq: state.tripLinksSeq + 1, undoSeq: (state.undoSeq || 0) + 1 });
   // Owed until they land, like the change check's (reloads.js).
-  const lists = ['review', 'calendars', 'people', 'views'];
+  const lists = ['review', 'calendars', 'people', 'views', 'settings'];
   owe(...lists);
   for (const name of lists) reload(name);
-  api('/settings').then((d) => adoptSettings(d.settings)).catch(() => {});
   return refreshWindow();
 }
 

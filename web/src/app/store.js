@@ -300,23 +300,77 @@ export const dataGeneration = () => generation;
 export function newGeneration() { generation++; }
 
 // Local changes not yet in a fetched answer (a drag, a resize, a Maybe, a
-// delete): instanceId -> {until, start, end}, where the occurrence sits (or
-// sat, for a removal). until is PENDING while its save is on its way, then
-// the generation an answer must be asked at to carry it (localSaved). An
-// answer asked earlier leaves the local copy, or its absence, alone: it
-// would put the old version back, or bring a deleted one back to life (#183).
+// delete), one mark per occurrence: {saves, known, until, landedUntil,
+// instanceId, start, end, allDay}. saves are this occurrence's saves in the
+// order made, each {before, copy, landed}: what it replaced and what it
+// showed (null for a removal). known is what was held before the first of
+// them. start and end are where the occurrence sits now (or sat, for a
+// removal). until is PENDING while any save is on its way, then the
+// generation an answer must be asked at to carry the last one that landed
+// (localSaved). An answer asked earlier leaves the local copy, or its
+// absence, alone: it would put the old version back, or bring a deleted one
+// back to life (#183).
+//
+// Keyed by the event for a single event or an edited day of a series: its
+// instanceId carries its start, which a move changes, so an answer carrying
+// the move names it differently and was drawn beside the local copy. A
+// series' own occurrence keeps its instanceId (series and day).
 const PENDING = Infinity;
 const local = new Map();
-function markLocal(instanceId, occ) {
-  local.set(instanceId, { until: PENDING, start: occ.start, end: occ.end, allDay: occ.allDay });
+export function localKey(occ) {
+  return (!occ.recurring || occ.isException) && occ.eventId != null ? 'e:' + occ.eventId : 'i:' + occ.instanceId;
+}
+function place(m, occ) {
+  m.instanceId = occ.instanceId;
+  m.start = occ.start;
+  m.end = occ.end;
+  m.allDay = occ.allDay;
+}
+function markLocal(before, copy) {
+  const key = localKey(before);
+  let m = local.get(key);
+  if (!m) {
+    m = { saves: [], known: before, until: PENDING, landedUntil: 0 };
+    local.set(key, m);
+  }
+  m.saves.push({ before, copy, landed: false });
+  m.until = PENDING;
+  place(m, copy || before);
   recordGen++; // a record asked before this edit may hold what it replaced
 }
 
-/** These local changes' saves landed: an answer asked from the next generation carries them. */
-export function localSaved(instanceIds) {
-  for (const id of instanceIds) {
-    const m = local.get(id);
-    if (m && m.until === PENDING) m.until = generation + 1;
+// The mark and save an item names: what patchOccurrence or a removal
+// returned for that save, or else (an instanceId, or another copy) the
+// oldest save still on its way, or for a failure the newest.
+function findSave(item, newest = false) {
+  let m = null;
+  if (typeof item === 'object') {
+    m = local.get(localKey(item));
+    const own = m && m.saves.find((x) => x.before === item);
+    if (own) return [m, own];
+  } else {
+    for (const x of local.values()) if (x.instanceId === item || x.saves.some((v) => v.before.instanceId === item)) { m = x; break; }
+  }
+  if (!m) return null;
+  const pending = m.saves.filter((x) => !x.landed);
+  const save = newest ? pending[pending.length - 1] : pending[0];
+  return save ? [m, save] : null;
+}
+
+/**
+ * These local changes' saves landed: an answer asked from the next
+ * generation carries them, once no later save of the same occurrence is
+ * still on its way. Each item is what patchOccurrence or a removal returned
+ * for the save (or its instanceId).
+ */
+export function localSaved(items) {
+  for (const item of items) {
+    const found = item && findSave(item);
+    if (!found) continue;
+    const [m, save] = found;
+    save.landed = true;
+    m.landedUntil = generation + 1;
+    if (!m.saves.some((x) => !x.landed)) m.until = m.landedUntil;
   }
 }
 
@@ -336,14 +390,21 @@ function overlaps(occ, s, e) {
  * false, when any of its stretch is held at a newer generation: it's older
  * than what's there. Otherwise everything held overlapping the stretch is
  * replaced by the answer (or gone, deleted elsewhere), except local changes
- * it can't carry, and the stretch is held at `gen`.
+ * it can't carry and occurrences running into a stretch held from a newer
+ * answer, and the stretch is held at `gen`.
  */
 export function mergeWindow(startISO, endISO, events, gen = generation) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   if (state.loadedRanges.some((r) => r.gen > gen && r.start < e && r.end > s)) return false;
+  // By occurrence, too: an event running from this stretch into one held
+  // from a newer answer is as that answer had it, there or gone (deleted
+  // elsewhere). This older answer neither replaces nor removes it, and
+  // doesn't bring back its own copy.
+  const newer = state.loadedRanges.filter((r) => r.gen > gen);
+  const newerHas = (occ) => newer.some((r) => overlaps(occ, r.start, r.end));
   // A local change this answer carries ends here; one it can't stays.
-  for (const [id, m] of local) if (m.until <= gen && overlaps(m, s, e)) local.delete(id);
+  for (const [key, m] of local) if (m.until <= gen && overlaps(m, s, e)) local.delete(key);
   // Drop cached occurrences overlapping the window, then reinsert, carrying
   // fetched record fields over from the previous copy (invalidate first
   // when the refresh follows an edit of that event, see actions.js).
@@ -354,14 +415,14 @@ export function mergeWindow(startISO, endISO, events, gen = generation) {
   const kept = open && state.occ.get(open)?._held && !events.some((ev) => ev.instanceId === open) ? open : null;
   const prior = new Map();
   for (const [id, occ] of state.occ) {
-    if (id === kept || local.has(id)) continue;
-    if (overlaps(occ, s, e)) {
+    if (id === kept || local.has(localKey(occ))) continue;
+    if (overlaps(occ, s, e) && !newerHas(occ)) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);
     }
   }
   for (const ev of events) {
-    if (local.has(ev.instanceId)) continue;
+    if (local.has(localKey(ev)) || newerHas(ev)) continue;
     const p = prior.get(ev.instanceId);
     if (p) {
       const merged = { ...ev, full: true };
@@ -403,8 +464,8 @@ export function pruneOccurrenceCache(startISO, endISO, {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   let active = 0;
-  for (const [id, occ] of state.occ) {
-    if (local.has(id)) { active++; continue; }
+  for (const occ of state.occ.values()) {
+    if (local.has(localKey(occ))) { active++; continue; }
     const a = new Date(occ.start).getTime();
     const b = new Date(occ.end).getTime();
     if (a < e && b > s) active++;
@@ -413,13 +474,13 @@ export function pruneOccurrenceCache(startISO, endISO, {
   // This is defensive against a stale/newer server with a looser response
   // cap; current servers admit far fewer than this in one client window.
   if (active > max) {
-    for (const id of [...state.occ.keys()]) if (!local.has(id)) state.occ.delete(id);
+    for (const [id, occ] of [...state.occ]) if (!local.has(localKey(occ))) state.occ.delete(id);
     state.loadedRanges = [];
     set({ occVersion: state.occVersion + 1 });
     return 'limited';
   }
   for (const [id, occ] of state.occ) {
-    if (local.has(id)) continue;
+    if (local.has(localKey(occ))) continue;
     const a = new Date(occ.start).getTime();
     const b = new Date(occ.end).getTime();
     if (!(a < e && b > s)) state.occ.delete(id);
@@ -506,25 +567,49 @@ export function insertOccurrence(occ) {
 // next refresh (#184: hovering an event froze it until the next change).
 // An edit is a local change until its save lands (localSaved) and an answer
 // carries it, or it fails and restoreOccurrence puts back what was there.
+// Returns what it replaced: the save's own name for localSaved and
+// restoreOccurrence.
 export function patchOccurrence(instanceId, patch, { edit = true } = {}) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;
   const before = { ...occ };
   const next = { ...occ, ...patch };
   state.occ.set(instanceId, next);
-  if (edit) markLocal(instanceId, next);
+  if (edit) markLocal(before, next);
   set({ occVersion: state.occVersion + 1 });
   return before;
 }
 
-// A save that failed: what was there goes back. It's held against answers
-// until one asked after the next change: an older answer could carry an
-// earlier edit's save that hasn't landed either.
+/**
+ * A save that failed (before: what patchOccurrence or the removal returned
+ * for it). The occurrence shows what the saves still standing showed: a
+ * later one's copy, one that landed, or else what was held before any of
+ * them. With none of them landed, that's the server's own copy, not a
+ * local change, so the next answer may replace it; one that landed holds
+ * until an answer carries it.
+ */
 export function restoreOccurrence(instanceId, before) {
-  if (before) state.occ.set(instanceId, before);
-  else state.occ.delete(instanceId);
-  if (before) local.set(instanceId, { until: generation + 1, start: before.start, end: before.end, allDay: before.allDay });
-  else local.delete(instanceId);
+  const found = before ? findSave(before, true) : null;
+  if (!found) {
+    if (before) state.occ.set(instanceId, before);
+    else state.occ.delete(instanceId);
+    set({ occVersion: state.occVersion + 1 });
+    return;
+  }
+  const [m, save] = found;
+  const newest = m.saves[m.saves.length - 1] === save;
+  m.saves.splice(m.saves.indexOf(save), 1);
+  if (newest) {
+    const last = m.saves[m.saves.length - 1];
+    const shown = last ? last.copy : m.known;
+    if (shown) state.occ.set(save.before.instanceId, shown);
+    else state.occ.delete(save.before.instanceId);
+    place(m, shown || save.before);
+  }
+  if (!m.saves.some((x) => !x.landed)) {
+    if (m.saves.length) m.until = m.landedUntil;
+    else local.delete(localKey(save.before));
+  }
   set({ occVersion: state.occVersion + 1 });
 }
 
@@ -533,7 +618,7 @@ export function removeOccurrence(instanceId) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;
   state.occ.delete(instanceId);
-  markLocal(instanceId, occ);
+  markLocal(occ, null);
   set({ occVersion: state.occVersion + 1 });
   return occ;
 }
@@ -541,7 +626,7 @@ export function removeOccurrence(instanceId) {
 export function removeOccurrencesOfEvent(eventId) {
   const removed = [];
   for (const [id, occ] of state.occ) {
-    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); markLocal(id, occ); }
+    if (occ.eventId === eventId) { removed.push(occ); state.occ.delete(id); markLocal(occ, null); }
   }
   set({ occVersion: state.occVersion + 1 });
   return removed;

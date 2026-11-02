@@ -1153,7 +1153,8 @@ final class ReviewQueue
         if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
             $patch['scope'] = 'all';
         }
-        $this->events->patch($userId, $eventId, $patch, $authority);
+        // The organizer's update, accepted here, takes its plan's preselected options.
+        $this->events->withPreselectedPlan(fn() => $this->events->patch($userId, $eventId, $patch, $authority));
         MailIngest::storeInvite($this->db, $eventId, $incoming === [] ? null : $incoming, true);
         $this->close((int) $row['id'], 'accepted');
         // The owner's choice (#132): an accepted cancellation removes the

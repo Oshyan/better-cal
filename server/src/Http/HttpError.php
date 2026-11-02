@@ -10,6 +10,8 @@ class HttpError extends \RuntimeException
         public readonly string $errorCode,
         string $message,
         public readonly int $status,
+        /** More of the answer, alongside code and message in `error` (a series plan, say). */
+        public readonly array $extra = [],
     ) {
         parent::__construct($message);
     }

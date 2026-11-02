@@ -63,6 +63,14 @@ final class EventsController
 
     public function create(Request $req): Response
     {
+        if (($req->body['preview'] ?? false) === true) {
+            // A new series' creation plan: its words, start and first dates. Nothing is written.
+            try {
+                return Response::json(['plan' => $this->events->previewCreate((int) $req->user['id'], $req->body)]);
+            } catch (\InvalidArgumentException $e) {
+                throw HttpError::badRequest($e->getMessage());
+            }
+        }
         try {
             $occurrence = $this->events->create((int) $req->user['id'], $req->body, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
@@ -97,6 +105,14 @@ final class EventsController
 
     public function patch(Request $req, array $params): Response
     {
+        if (($req->body['preview'] ?? false) === true) {
+            // A whole-series change's plan (series-model.md, The API): nothing written.
+            try {
+                return Response::json(['plan' => $this->events->previewPatch((int) $req->user['id'], (int) $params['id'], $req->body)]);
+            } catch (\InvalidArgumentException $e) {
+                throw HttpError::badRequest($e->getMessage());
+            }
+        }
         try {
             $this->events->patch((int) $req->user['id'], (int) $params['id'], $req->body, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
@@ -107,6 +123,10 @@ final class EventsController
 
     public function delete(Request $req, array $params): Response
     {
+        if (($req->body['preview'] ?? false) === true || filter_var($req->q('preview', '0'), FILTER_VALIDATE_BOOL)) {
+            // Deletes keep today's path until 1.5.1; a preview is never applied.
+            throw HttpError::badRequest('Deletes have no preview yet', 'preview_unavailable');
+        }
         try {
             $this->events->deleteEvent(
                 (int) $req->user['id'],
@@ -133,6 +153,9 @@ final class EventsController
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */
     public function relationship(Request $req, array $params): Response
     {
+        if (($req->body['preview'] ?? false) === true) {
+            throw HttpError::badRequest('Answers have no preview yet', 'preview_unavailable');
+        }
         $scope = $req->str('scope');
         if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
             throw HttpError::badRequest('scope must be this|following|all');
@@ -150,6 +173,9 @@ final class EventsController
 
     public function attendance(Request $req, array $params): Response
     {
+        if (($req->body['preview'] ?? false) === true) {
+            throw HttpError::badRequest('Answers have no preview yet', 'preview_unavailable');
+        }
         $scope = $req->str('scope');
         if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
             throw HttpError::badRequest('scope must be this|following|all');

@@ -34,9 +34,9 @@ final class Response
         );
     }
 
-    public static function error(string $code, string $message, int $status): self
+    public static function error(string $code, string $message, int $status, array $extra = []): self
     {
-        return self::json(['error' => ['code' => $code, 'message' => $message]], $status);
+        return self::json(['error' => ['code' => $code, 'message' => $message] + $extra], $status);
     }
 
     public static function text(string $body, string $contentType = 'text/plain; charset=utf-8', int $status = 200, array $headers = []): self

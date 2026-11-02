@@ -96,6 +96,7 @@ final class CalendarImport
             $importedIds = [];
             $alreadyThere = 0;
             $masterIdByUid = [];
+            $importedMasters = [];
             $seen = [];
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
@@ -115,7 +116,19 @@ final class CalendarImport
                         continue;
                     }
                 }
-                $id = $this->db->insert('events', [
+                $own = [];
+                if ($ev['recurrence_instance_utc'] !== null && isset($importedMasters[(string) $ev['uid']]) && \BetterCal\Domain\Series\OwnFields::hasColumn($this->db)) {
+                    // Never seen before: its own fields by equality with its master.
+                    $own = ['override_fields' => \BetterCal\Domain\Series\OwnFields::encode(\BetterCal\Domain\Series\OwnFields::infer(
+                        ['recurrence_instance_utc' => $ev['recurrence_instance_utc'], 'title' => $ev['title'], 'location' => $ev['location'], 'url' => $ev['url'], 'status' => $ev['status'],
+                         'start_utc' => $ev['start_utc'], 'end_utc' => $ev['end_utc'], 'all_day' => $ev['all_day'], 'tzid' => $ev['tzid']],
+                        $importedMasters[(string) $ev['uid']]))];
+                }
+                if ($ev['recurrence_instance_utc'] === null) {
+                    $importedMasters[(string) $ev['uid']] = ['title' => $ev['title'], 'location' => $ev['location'], 'url' => $ev['url'], 'status' => $ev['status'],
+                        'start_utc' => $ev['start_utc'], 'end_utc' => $ev['end_utc'], 'all_day' => $ev['all_day'], 'tzid' => $ev['tzid']];
+                }
+                $id = $this->db->insert('events', $own + [
                     'user_id' => $userId,
                     'calendar_id' => $calendarId,
                     'created_via' => 'import',

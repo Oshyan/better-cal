@@ -6,13 +6,18 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Every change to all events of a series says what it will do first** ([series edits](docs/series-edits.md)): the rule before and after in words, the next dates, the end, and what happens to each edited and skipped day. Where a change can mean more than one thing, the readings are choices with their own dates: "Move every Wednesday to Thursday" or "Shift the whole weekly pattern", "On the 30th, or the last day in shorter months" or "skipping months without one", "Keep 6 events" or "Keep the end". Nothing is lost or added without the plan naming it, and a series that changed since you looked asks again.
+- **Edited days keep what you set and take the series' other fields:** rename a series and a day you renamed keeps its name (with "Give it the new title too" when you want it); move the series to 20:00 and a day you only moved to Thursday goes to 20:00 too. An edited day's own fields show in the editor, each with "Use series value".
+- **Month ends, lists and counts follow a drag:** a drop on the 29th to 31st offers the month-end readings, the last day dragged to the second-last stays counted from the end, a list moves one day or its whole pattern, and a day the new rule gains in a first or last week is left out unless you add it. A series with a count keeps its count or its end, as you choose, and the day you dragged stays where you put it.
+- **New series start on a day of their rule**, for every kind of repeat, and the editor and quick add say when the start moved.
+
 - **Very large calendars can be deleted and undone** ([#191](https://github.com/Oshyan/better-cal/issues/191)): one with tens of thousands of events failed with "Delete failed" (before 1.4.5 it was deleted with nothing in Activity to undo). Its events are now kept for undo in pieces, so the delete goes through and Undo brings back the calendar, its events with their tags, people and trip links, and its place as the default calendar.
 - Quick add reads a date range followed by a time range ([#198](https://github.com/Oshyan/better-cal/issues/198)): "Conference Aug 3-7 9am-5pm" is one event from the first morning to the last evening, and "Shift Aug 3-7 10pm-6am" repeats each night of the range. The model's answer no longer overrides a range you typed, and noon or midnight can end a time range ("9am-noon").
 - **A very frequent repeating event stays whole after a save** ([#190](https://github.com/Oshyan/better-cal/issues/190)): an hourly series, say, was cut short by any change, leaving its later days empty. Changes that arrive while events are loading now cost one more fetch rather than several, and a load that fails is tried again with the next check for changes (within 30 seconds, or at once with Retry now). An event dragged again before its first move saved no longer jumps back for a moment, and one whose saves fail goes back to where it was.
 - An emailed cancellation that is older than an invitation waiting in Review no longer closes it (since 1.4.6, a delayed cancellation could close a newer invitation); only one at least as new as the invitation closes it.
 - **Update checks:** a malformed signature entry stops the check and names the release even when it names a key your copy doesn't list, instead of being stepped around as a key change. A slow check no longer brings back the notice for a release withdrawn while it ran.
 
-Operators: one database change (the journal's side table for large entries), applied automatically by `update.php` or the database update page.
+Operators: two database changes (the journal's side table for large entries; migration 063, each edited day's own fields, filled once from what differs from its series), applied automatically by `update.php` or the database update page.
 
 ## 1.4.6 (2026-11-01)
 

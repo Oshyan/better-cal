@@ -374,6 +374,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 $seenInstances[$instance] = true;
                 $cols['recurrence_parent_id'] = $masterId;
                 $current = $existingByInstance[$instance] ?? null;
+                if (\BetterCal\Domain\Series\OwnFields::hasColumn($this->db)) {
+                    // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere).
+                    $cols['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode(
+                        \BetterCal\Domain\Series\OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols));
+                }
                 if ($current !== null) {
                     $this->db->update('events', $cols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [(int) $current['id']]);
                 } else {

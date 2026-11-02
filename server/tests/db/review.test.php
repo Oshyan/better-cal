@@ -230,7 +230,7 @@ return static function (Db $db): void {
         ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the series you added has no such day, so there is nothing to skip.'],
         ['invite_change', 'open'],
     ], [array_values($item($neverDay)), array_slice(array_values($item($wasDay)), 0, 2)]);
-    $dh->events->patch($h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);
+    planned($dh->events, $h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);
     $refused = null;
     try {
         $rh->accept($h, $wasDay);

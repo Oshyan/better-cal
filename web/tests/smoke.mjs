@@ -76,6 +76,7 @@ import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
 import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from '../src/app/commanddefs.js';
 import { normalizeShareParams } from '../src/app/handoff.js';
 import { api as requestApi, fetchMe as fetchApiMe, login as apiLogin, logout as apiLogout } from '../src/app/api.js';
+import { updateStatusText, checkResultText, bannerText, INSTALL_UPDATING_URL } from '../src/lib/updatetext.js';
 
 let passed = 0;
 let failed = 0;
@@ -3919,6 +3920,32 @@ console.log('--- overnight events (#183) ---');
   assert('overnight: not a trip', !isOvernight(ev(at(6, 22), at(7, 1), { isContainer: true })));
   assert('overnight: not one running on into the next afternoon', !isOvernight(ev(at(6, 22), at(7, 21))));
   assert('overnight: landing by noon is', isOvernight(ev(at(6, 23), at(7, 12))));
+}
+
+console.log('--- update notices (#194) ---');
+{
+  const checkedAt = '2026-11-01T09:00:00.000-07:00';
+  const base = { currentVersion: '1.5.0', checkedAt, lastError: null, securityRequired: false, priority: 'routine', releaseUrl: 'https://example.test/r' };
+  const current = { ...base, latestVersion: '1.5.0', newestVersion: '1.5.0', available: false, blocked: false, showBanner: false };
+  const step = { ...base, currentVersion: '1.4.0', latestVersion: '1.5.0', newestVersion: '2.0.0', available: true, blocked: false, showBanner: true };
+  const plain = { ...base, currentVersion: '1.4.0', latestVersion: '1.5.0', newestVersion: '1.5.0', available: true, blocked: false, showBanner: true };
+  const blocked = { ...base, latestVersion: '1.5.0', newestVersion: '2.0.0', available: false, blocked: true, showBanner: true };
+  assert('updates: a current install is up to date', /^Up to date \(checked /.test(updateStatusText(current)));
+  eq('updates: a plain update is available', updateStatusText(plain), 'Version 1.5.0 is available');
+  eq('updates: a step says what needs it', updateStatusText(step), 'Version 1.5.0 is available; releases up to 2.0.0 need it first');
+  const blockedText = "Better-Cal 2.0.0 is out, but this copy can't verify it: it's signed with a key this copy doesn't list. Update by hand (Updating in docs/install.md).";
+  eq('updates: a blocked copy is not called up to date', updateStatusText(blocked), blockedText);
+  eq('updates: Check now says the same', checkResultText(blocked), blockedText);
+  eq('updates: Check now on a current install', checkResultText(current), 'Better-Cal is up to date');
+  eq('updates: Check now on a step', checkResultText(step), 'Better-Cal 1.5.0 is available; releases up to 2.0.0 need it first');
+  eq('updates: the banner shows the blocked notice once', bannerText(blocked), blockedText);
+  eq('updates: the banner says nothing once dismissed', bannerText({ ...blocked, showBanner: false }), null);
+  eq('updates: the banner says nothing on a current install', bannerText(current), null);
+  eq('updates: the banner names a step', bannerText(step), 'Better-Cal 1.5.0 is available; releases up to 2.0.0 need it first.');
+  eq('updates: the banner names a required security update first', bannerText({ ...blocked, securityRequired: true, minimumSecureVersion: '1.5.1' }),
+    'A Better-Cal security update is required. Update to 1.5.1 or newer.');
+  eq('updates: not checked yet', updateStatusText({ ...current, checkedAt: null }), 'Not checked yet');
+  assert('updates: the by-hand link goes to the Updating section', /docs\/install\.md#updating$/.test(INSTALL_UPDATING_URL));
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

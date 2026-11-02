@@ -139,10 +139,18 @@ final class Updates
         $floor = is_string($state['minimum_secure_version'] ?? null) ? $state['minimum_secure_version'] : null;
         $available = $latest !== null && version_compare($latest, $current, '>');
         $securityRequired = $floor !== null && version_compare($current, $floor, '<');
-        $dismissed = $latest !== null && ($notice['dismissed_version'] ?? null) === $latest;
-        $show = $preference !== 'off'
-            && ($securityRequired || ($preference === 'all' && $available && !$dismissed));
         $newest = is_string($state['newest_version'] ?? null) ? $state['newest_version'] : null;
+        // Newer releases are out, but the newest this copy verifies is the
+        // one it runs (or older): the updater can't take it further, and
+        // saying "up to date" would be the opposite of the truth. Updating
+        // by hand is the way on; bin/update.php says the same (manualKeys).
+        $blocked = !$available && $latest !== null && $newest !== null && version_compare($newest, $latest, '>');
+        // A dismissal is per release named: the verified one, or for a
+        // blocked copy the newest, so a newer one shows again.
+        $named = $blocked ? $newest : $latest;
+        $dismissed = $named !== null && ($notice['dismissed_version'] ?? null) === $named;
+        $show = $preference !== 'off'
+            && ($securityRequired || ($preference === 'all' && ($available || $blocked) && !$dismissed));
         return [
             'currentVersion' => $current,
             'latestVersion' => $latest,
@@ -150,6 +158,7 @@ final class Updates
             // this copy's keys can't verify it yet and latestVersion is the
             // step that brings them (#194).
             'newestVersion' => $newest ?? $latest,
+            'blocked' => $blocked,
             'priority' => $state['priority'] ?? null,
             'minimumSecureVersion' => $floor,
             'releaseUrl' => $state['release_url'] ?? null,
@@ -171,6 +180,10 @@ final class Updates
         $status = $this->status($userId);
         if ($status['securityRequired']) {
             throw HttpError::badRequest('A required security update cannot be dismissed. Update Better-Cal or turn update notices off in Settings.');
+        }
+        if ($status['blocked'] && is_string($status['newestVersion'])) {
+            $this->saveNotice($userId, ['dismissed_version' => $status['newestVersion']]);
+            return;
         }
         if (!is_string($status['latestVersion']) || !$status['available']) return;
         $this->saveNotice($userId, ['dismissed_version' => $status['latestVersion']]);
@@ -349,10 +362,21 @@ final class Updates
             || preg_match('/^sha256:([0-9a-f]{64})$/D', (string) ($sigs[0]['digest'] ?? ''), $sm) !== 1) {
             throw new \RuntimeException("Release $version has no signature (" . \BetterCal\Support\ReleaseSignature::ASSET . ')');
         }
-        $signed = \BetterCal\Support\ReleaseSignature::verify(
-            $this->fetchSignature(['url' => $url, 'sha256' => $sm[1], 'size' => (int) ($sigs[0]['size'] ?? 0)]),
-            $this->signingKeys ?? \BetterCal\Support\ReleaseSignature::trustedKeys(),
-        );
+        // Only a whole signature set from keys this copy doesn't list is a key
+        // it lacks (UntrustedSignature, walked past by newestVerified). A
+        // listed key whose signature fails, an empty set, a malformed entry
+        // or a file that doesn't match GitHub's digest is a broken release:
+        // the stop names it, since the walk may have passed newer ones.
+        try {
+            $signed = \BetterCal\Support\ReleaseSignature::verify(
+                $this->fetchSignature(['url' => $url, 'sha256' => $sm[1], 'size' => (int) ($sigs[0]['size'] ?? 0)]),
+                $this->signingKeys ?? \BetterCal\Support\ReleaseSignature::trustedKeys(),
+            );
+        } catch (UntrustedSignature $e) {
+            throw $e;
+        } catch (\RuntimeException $e) {
+            throw new \RuntimeException("Release $version has a broken signature: " . lcfirst($e->getMessage()), 0, $e);
+        }
         if ($signed['version'] !== $version || !hash_equals($signed['manifest'], $manifestSha256)) {
             throw new \RuntimeException("Release $version's signature is for a different release");
         }
@@ -551,6 +575,17 @@ final class Updates
                 && !empty($state['manifest_digest'])
                 && !hash_equals((string) $current['manifest_digest'], (string) $state['manifest_digest'])) {
                 throw new \RuntimeException('Immutable release metadata changed for an accepted version');
+            }
+            // Two checks verifying the same release may have seen different
+            // newest published ones (a release came out between them). The
+            // one finishing later must not move the newest-release notice
+            // back; the newest only goes up while the verified one stands.
+            // (A release withdrawn after publication isn't handled: the
+            // notice keeps naming it until the verified one moves on.)
+            $storedNewest = (string) ($current['newest_version'] ?? '');
+            if ($incomingVersion === $storedVersion && $storedNewest !== ''
+                && version_compare((string) ($state['newest_version'] ?? ''), $storedNewest, '<')) {
+                $state['newest_version'] = $storedNewest;
             }
             $state['revision'] = (int) ($current['revision'] ?? 0) + 1;
             $this->db->update('app_update_state', $state, 'id = 1', []);

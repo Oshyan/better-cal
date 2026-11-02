@@ -64,6 +64,13 @@ final class ReleaseSignature
      * the key that verified; throws unless the statement is well-formed and
      * at least one signature on it verifies with a trusted key.
      *
+     * The failure is UntrustedSignature only when the file is whole, every
+     * signature entry is well-formed, and none names a key in $keys: the
+     * one failure with an innocent cause (a key this copy doesn't list yet).
+     * An empty set, a malformed entry or a listed key whose signature fails
+     * is a broken file and throws a plain RuntimeException, whatever else
+     * the set holds.
+     *
      * @param list<array{id:string,type:string,publicKey:string,rpId?:string}> $keys
      * @return array{version:string,commit:string,zip:string,manifest:string,key:string}
      */
@@ -80,19 +87,35 @@ final class ReleaseSignature
             throw new \RuntimeException('The release signature file is malformed');
         }
         $fields = self::parseStatement($data['statement']);
+        if ($data['signatures'] === []) {
+            throw new \RuntimeException('The release signature file lists no signatures');
+        }
+        foreach ($data['signatures'] as $sig) {
+            // Enough shape to be a signature by some key, whichever kind:
+            // a later release may sign with a kind this copy doesn't know.
+            if (!is_array($sig) || !is_string($sig['key'] ?? null) || $sig['key'] === '' || !is_string($sig['type'] ?? null)
+                || !is_string($sig['sig'] ?? null) || base64_decode($sig['sig'], true) === false) {
+                throw new \RuntimeException('The release signature file has a malformed signature entry');
+            }
+        }
         $byId = [];
         foreach ($keys as $key) {
             $byId[$key['id']] = $key;
         }
+        $namesListed = false;
         foreach ($data['signatures'] as $sig) {
-            if (!is_array($sig) || !is_string($sig['key'] ?? null) || !isset($byId[$sig['key']])) {
+            if (!isset($byId[$sig['key']])) {
                 continue;
             }
+            $namesListed = true;
             if (self::check($byId[$sig['key']], $sig, $data['statement'])) {
                 return $fields + ['key' => $sig['key']];
             }
         }
-        throw new UntrustedSignature('No signature on this release verifies with a key this copy of Better-Cal trusts');
+        if ($namesListed) {
+            throw new \RuntimeException('The signature from a key this copy of Better-Cal lists doesn\'t verify');
+        }
+        throw new UntrustedSignature('No signature on this release is from a key this copy of Better-Cal lists');
     }
 
     private static function check(array $key, array $sig, string $statement): bool

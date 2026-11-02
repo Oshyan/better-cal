@@ -459,6 +459,17 @@ return static function (Db $db): void {
             . "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         Settings::put($db, $u, ['mailApprovedSenders' => []]);
         $journaled('an emailed invitation from a sender not approved: held', fn() => $mail->ingestMessage($u, $message('m1@example.test', 'host@example.test', ['icsParts' => [$imip('mail-1@example.test', 'REQUEST', 0, 'Sample dinner', '20261219')]]), 'UTC'), true, false);
+        // A repeating invitation with one day already cancelled, from that
+        // sender: both wait (log-only holds); adding the series makes the
+        // day a cancellation of it, inside the add's one entry.
+        $seriesWithCancelledDay = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\n"
+            . "BEGIN:VEVENT\r\nUID:mail-series@example.test\r\nDTSTAMP:20261101T000000Z\r\nRECURRENCE-ID:20270112T180000Z\r\nDTSTART:20270112T180000Z\r\nDTEND:20270112T190000Z\r\nSUMMARY:Sample reading group\r\nSTATUS:CANCELLED\r\nSEQUENCE:0\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nEND:VEVENT\r\n"
+            . "BEGIN:VEVENT\r\nUID:mail-series@example.test\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20270105T180000Z\r\nDTEND:20270105T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nSUMMARY:Sample reading group\r\nSEQUENCE:0\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\n"
+            . "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $journaled('an emailed series with a day already cancelled, from a sender not approved: both held', fn() => $mail->ingestMessage($u, $message('m1b@example.test', 'host@example.test', ['icsParts' => [$seriesWithCancelledDay]]), 'UTC'), true, false);
+        $heldSeries = (int) $db->scalar("SELECT MIN(id) FROM review_items WHERE user_id = ? AND source_key = 'mail-series@example.test' AND status = 'open'", [$u]);
+        $journaled('the series added from Review, its cancelled day becoming a cancellation of that occurrence', fn() => $review->accept($u, $heldSeries));
+        check('completeness: the cancelled day waits as a cancellation of the added series', (int) $db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND source_key = 'mail-series@example.test' AND kind = 'invite_change' AND status = 'open'", [$u]) === 1);
         Settings::put($db, $u, ['mailApprovedSenders' => ['host@example.test']]);
         $journaled('an emailed invitation from an approved sender: added', fn() => $mail->ingestMessage($u, $message('m2@example.test', 'host@example.test', ['icsParts' => [$imip('mail-2@example.test', 'REQUEST', 0, 'Sample lunch', '20261220')]]), 'UTC'));
         $journaled('an emailed change to an event you have: held', fn() => $mail->ingestMessage($u, $message('m3@example.test', 'host@example.test', ['icsParts' => [$imip('mail-2@example.test', 'REQUEST', 1, 'Sample lunch, moved', '20261221')]]), 'UTC'), true, false);

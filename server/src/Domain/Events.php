@@ -1831,6 +1831,12 @@ final class Events
             }
             if ($shift !== null) {
                 $after = array_merge($event, $fields);
+                // Edited days moved by the distance between them land on
+                // each other's old keys (unique per calendar and uid), so
+                // re-keyed one by one the first meets the next before it
+                // has moved. They all leave their keys first, then take
+                // the new ones.
+                self::parkInstanceKeys($this->db, array_map(static fn(array $ov): int => (int) $ov['id'], $overridesBefore));
                 foreach ($overridesBefore as $ov) {
                     $this->db->update('events', self::movedOverride($ov, $shift((string) $ov['recurrence_instance_utc']), $event, $after), 'id = ?', [(int) $ov['id']]);
                 }
@@ -1855,6 +1861,22 @@ final class Events
             ['events' => array_merge([$after], array_values(array_filter($overridesAfter)))] + $this->labels->eventLinkRows($id)
         );
         ChangeLog::recordUpdate($this->db, $event, $after);
+    }
+
+    /**
+     * Take edited rows off their occurrence keys for the moment (NULL, which
+     * the unique key on calendar, uid and occurrence never matches; every
+     * edited row has a key, so nothing else reads as parked), before they
+     * are given their new ones in the same transaction.
+     *
+     * @param list<int> $ids
+     */
+    public static function parkInstanceKeys(Db $db, array $ids): void
+    {
+        foreach (array_chunk($ids, 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            $db->run("UPDATE events SET recurrence_instance_utc = NULL WHERE id IN $in AND recurrence_parent_id IS NOT NULL", $params);
+        }
     }
 
     /**

@@ -946,6 +946,12 @@ final class Undo
                     }
                 }
             }
+            // Edited days it moved onto each other's old days, put back one
+            // at a time, would meet on the unique key (calendar, uid,
+            // occurrence) while the other still holds it: each one whose key
+            // goes back leaves its key first and takes its own as restored.
+            $parked = self::rekeyedEvents($before['events'] ?? [], $afterByKey['events'] ?? []);
+            Events::parkInstanceKeys($this->db, array_keys($parked));
             foreach (self::TABLE_ORDER as $table) {
                 foreach ($before[$table] ?? [] as $row) {
                     $kept = $afterByKey[$table][self::keyOf($table, $row)] ?? null;
@@ -954,6 +960,9 @@ final class Undo
                         $changed = self::changedColumns($row, $kept);
                         if ($changed === []) {
                             continue;
+                        }
+                        if ($table === 'events' && isset($parked[(int) $row['id']]) && !in_array('recurrence_instance_utc', $changed, true)) {
+                            $changed[] = 'recurrence_instance_utc';
                         }
                         foreach (self::TOGETHER[$table] ?? [] as $group) {
                             if (array_intersect($changed, $group) !== []) {
@@ -1052,6 +1061,33 @@ final class Undo
             }
         }
         return false;
+    }
+
+    /**
+     * The edited rows (an occurrence key before) that this change kept and
+     * gave another calendar, uid or occurrence: what an undo puts back on
+     * a key another row may hold until it is put back too. Pure.
+     *
+     * @param list<array> $before
+     * @param array<string,array> $afterByKey
+     * @return array<int,true> by id
+     */
+    private static function rekeyedEvents(array $before, array $afterByKey): array
+    {
+        $out = [];
+        foreach ($before as $row) {
+            $kept = $afterByKey[self::keyOf('events', $row)] ?? null;
+            if ($kept === null || ($row['recurrence_instance_utc'] ?? null) === null) {
+                continue;
+            }
+            foreach (['calendar_id', 'uid', 'recurrence_instance_utc'] as $col) {
+                if (!self::same($row[$col] ?? null, $kept[$col] ?? null)) {
+                    $out[(int) $row['id']] = true;
+                    break;
+                }
+            }
+        }
+        return $out;
     }
 
     private static function tables(?string $json): array

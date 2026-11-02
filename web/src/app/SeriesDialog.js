@@ -10,7 +10,7 @@
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '../../vendor/index.js';
 import { useStore } from './store.js';
-import { planView, planDate } from '../lib/seriesplan.js';
+import { planView, planDate, cardPlace } from '../lib/seriesplan.js';
 import { fmtTime, parseISO } from '../lib/dates.js';
 import { PHONE_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -20,6 +20,22 @@ import {
 } from './serieschange.js';
 
 const CARD_W = 520;
+
+// The box the pending block is drawn in, every piece of it on screen
+// (a block can show in more than one place), or null when it isn't drawn.
+function pendingBox(instanceId) {
+  if (typeof document === 'undefined' || instanceId == null) return null;
+  const sel = '.is-series-pending[data-instance="' + String(instanceId).replace(/["\\]/g, '\\$&') + '"]';
+  let box = null;
+  for (const n of document.querySelectorAll(sel)) {
+    const r = n.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    box = box
+      ? { left: Math.min(box.left, r.left), top: Math.min(box.top, r.top), right: Math.max(box.right, r.right), bottom: Math.max(box.bottom, r.bottom) }
+      : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  }
+  return box;
+}
 
 /** host: 'calendar' draws drags and resizes, 'editor' an editor save. */
 export function SeriesDialog({ host = 'calendar' }) {
@@ -36,27 +52,29 @@ function SeriesCard({ sc }) {
   const actionRef = useRef(null);
   const [allEdited, setAllEdited] = useState(false);
   const phone = typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches;
-  // Dates name their year when it isn't the year of the day acted on.
-  const actedOn = (sc.body && sc.body.start) || sc.occ.start;
+  // Dates name their year when it isn't this one, as the server's words
+  // do, so a plan reads one way.
   const view = planView(sc.plan, {
     kind: sc.kind, title: sc.title, scope: sc.scope, choices: sc.choices,
     tz: sc.tz, fields: sc.fields, changed: sc.changed,
-    refYear: Number(String(actedOn).slice(0, 4)) || new Date().getFullYear(),
+    refYear: new Date().getFullYear(),
   });
   const following = sc.scope === 'following';
   const busy = sc.status === 'loading' || sc.status === 'refreshing' || sc.status === 'committing';
   const canConfirm = following || (!busy && view.canConfirm);
 
-  // Kept on screen by its real size: below the drop point, or above it
-  // when there's no room below.
+  // Placed by its real size, clear of the dragged block: below it, or
+  // above or beside it when there's no room below (cardPlace).
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el || phone || sc.kind === 'editor' || !sc.at) return;
     const r = el.getBoundingClientRect();
-    if (r.bottom > window.innerHeight - 8) {
-      const above = sc.at.y - 12 - r.height;
-      el.style.top = Math.max(8, above >= 8 ? above : window.innerHeight - 8 - r.height) + 'px';
-    }
+    const place = cardPlace({
+      w: r.width, h: r.height, view: { w: window.innerWidth, h: window.innerHeight },
+      at: sc.at, block: pendingBox(sc.occ.instanceId),
+    });
+    el.style.left = place.left + 'px';
+    el.style.top = place.top + 'px';
   });
 
   // Keys: Enter confirms (a button keeps its own Enter), Esc cancels.
@@ -157,7 +175,7 @@ function PlanLines({ view, shownEdited, moreEdited, onMore, working }) {
           <span class="bc-sd-reading-label">${o.label}</span>
           ${o.disabled
             ? html`<span class="bc-sd-reason">${o.reason}</span>`
-            : html`${o.dates && html`<span class="bc-sd-dates">${o.dates}</span>`}${o.note && html`<span class="bc-sd-conseq">${o.note}</span>`}`}
+            : html`${o.dates && html`<span class="bc-sd-dates">${o.dates}</span>`}${o.note && html`<span class="bc-sd-conseq">${o.note}</span>`}${o.words && html`<span class="bc-sd-words">${o.words}</span>`}`}
         </span>
       </label>`)}
     </div>`)}

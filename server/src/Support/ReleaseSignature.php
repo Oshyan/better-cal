@@ -66,7 +66,8 @@ final class ReleaseSignature
      * from a trusted key verifies.
      *
      * The failure is UntrustedSignature only when the file is whole, every
-     * signature entry is well-formed, and none names a key in $keys: the
+     * signature entry is well-formed for a kind this copy knows (wellFormed),
+     * and none names a key in $keys: the
      * one failure with an innocent cause (a key this copy doesn't list yet).
      * An empty set, a malformed entry or a listed key whose signature fails
      * is a broken file and throws a plain RuntimeException, whatever else
@@ -92,10 +93,13 @@ final class ReleaseSignature
             throw new \RuntimeException('The release signature file lists no signatures');
         }
         foreach ($data['signatures'] as $sig) {
-            // Enough shape to be a signature by some key, whichever kind:
-            // a later release may sign with a kind this copy doesn't know.
-            if (!is_array($sig) || !is_string($sig['key'] ?? null) || $sig['key'] === '' || !is_string($sig['type'] ?? null)
-                || !is_string($sig['sig'] ?? null) || base64_decode($sig['sig'], true) === false) {
+            // The whole shape of its kind, whoever's key it names: what makes
+            // an entry a signature at all doesn't depend on the key, so one
+            // from a key this copy doesn't list is held to it too. Only then
+            // is an unknown key a key this copy lacks rather than a broken
+            // file. A kind this copy doesn't know is malformed, not unknown:
+            // the only kinds are the ones the signing scripts write.
+            if (!self::wellFormed($sig)) {
                 throw new \RuntimeException('The release signature file has a malformed signature entry');
             }
         }
@@ -121,6 +125,32 @@ final class ReleaseSignature
             return $fields + ['key' => $verifiedBy];
         }
         throw new UntrustedSignature('No signature on this release is from a key this copy of Better-Cal lists');
+    }
+
+    /**
+     * An entry as the signing scripts write it: "ed25519" (scripts/release-sign.php)
+     * is a key id and a 64-byte signature; "fido2" (scripts/release-sign-fido.py)
+     * adds the 37 bytes of authenticator data it signed (rpIdHash, flags,
+     * signCount: no extensions are asked for).
+     */
+    private static function wellFormed(mixed $sig): bool
+    {
+        if (!is_array($sig) || !is_string($sig['key'] ?? null) || $sig['key'] === '' || !is_string($sig['sig'] ?? null)) {
+            return false;
+        }
+        $signature = base64_decode($sig['sig'], true);
+        if (!is_string($signature) || strlen($signature) !== SODIUM_CRYPTO_SIGN_BYTES) {
+            return false;
+        }
+        $type = $sig['type'] ?? null;
+        if ($type === 'ed25519') {
+            return true;
+        }
+        if ($type === 'fido2') {
+            $auth = is_string($sig['authData'] ?? null) ? base64_decode($sig['authData'], true) : false;
+            return is_string($auth) && strlen($auth) === 37;
+        }
+        return false;
     }
 
     private static function check(array $key, array $sig, string $statement): bool

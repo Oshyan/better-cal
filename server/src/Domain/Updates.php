@@ -597,18 +597,20 @@ final class Updates
                 && !hash_equals((string) $current['manifest_digest'], (string) $state['manifest_digest'])) {
                 throw new \RuntimeException('Immutable release metadata changed for an accepted version');
             }
-            // Two checks verifying the same release may have seen different
-            // newest published ones (a release came out between them). The
-            // one finishing later must not move the newest-release notice
-            // back, so a lower newest is kept out only when another check
-            // saved since this one began (the row's revision moved). A
-            // check that began after the last save and sees a lower newest
-            // is reporting a release withdrawn from the list, and writes it.
+            // The newest published release is what the list held when a
+            // check read it, and it moves either way: a release comes out,
+            // or one is withdrawn. So it is ordered by when checks ran, not
+            // by version: a check writes the newest it saw only when no
+            // other check saved since this one began (the row's revision is
+            // the one it started from). Otherwise the stored one stands,
+            // higher or lower, since it may come from a list read after
+            // this check's; the next check brings it up to date. It never
+            // names less than the verified version saved with it. (The
+            // verified version and the security floor are guarded above,
+            // and only ever go up.)
             $storedNewest = (string) ($current['newest_version'] ?? '');
-            if ($incomingVersion === $storedVersion && $storedNewest !== ''
-                && (int) ($current['revision'] ?? 0) !== $startingRevision
-                && version_compare((string) ($state['newest_version'] ?? ''), $storedNewest, '<')) {
-                $state['newest_version'] = $storedNewest;
+            if ($storedNewest !== '' && (int) ($current['revision'] ?? 0) !== $startingRevision) {
+                $state['newest_version'] = version_compare($storedNewest, $incomingVersion, '<') ? $incomingVersion : $storedNewest;
             }
             $state['revision'] = (int) ($current['revision'] ?? 0) + 1;
             $this->db->update('app_update_state', $state, 'id = 1', []);

@@ -4645,6 +4645,15 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('creation line: without the server\'s words, a plain one', creationLine({ ...created, start: '2027-03-02T09:00:00-08:00' }, { typedStart: '2027-02-27', refYear: 2027 }).moved,
     'Starts Tue 2 Mar, its first day on or after the date you typed');
   eq('creation line: none without a plan', creationLine(null), null);
+  const { parsedSeries } = await import('../src/lib/seriesplan.js');
+  const draft = { title: 'Sample book club', start: '2027-01-30T19:00:00-08:00', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1;COUNT=6', series: created };
+  const range = { start: '2027-01-30T19:00:00-08:00', end: '2027-01-30T21:00:00-08:00' };
+  eq('quick add: the parse\'s own plan while the repeat and date are the parse\'s', parsedSeries(draft, draft.rrule, range), created);
+  eq('quick add: and its words under the chips', creationLine(parsedSeries(draft, draft.rrule, range), { typedStart: range.start, refYear: 2027 }).line,
+    'Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar · 6 events');
+  eq('quick add: a repeat picked from the menu asks for a new plan', parsedSeries(draft, 'FREQ=MONTHLY;BYMONTHDAY=30', range), null);
+  eq('quick add: so does a new date', parsedSeries(draft, draft.rrule, { ...range, start: '2027-02-01T19:00:00-08:00' }), null);
+  eq('quick add: no plan in the parse, none to show', parsedSeries({ ...draft, series: undefined }, draft.rrule, range), null);
 }
 
 console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) ---');

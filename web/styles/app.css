@@ -1124,7 +1124,7 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-body { position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 2px 10px 6px; min-height: 0; flex: 1 1 auto; }
 .bc-sd-plan { display: grid; gap: 3px; }
 .bc-sd-plan.is-stale { opacity: 0.55; }
-.bc-sd-rule { display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
+.bc-sd-rule { display: flex; gap: 0 12px; justify-content: space-between; flex-wrap: wrap; }
 .bc-sd-bound { color: var(--fg-muted); white-space: nowrap; }
 .bc-sd-line { display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: baseline; }
 .bc-sd-lab { color: var(--fg-muted); }
@@ -1133,8 +1133,9 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-changed { color: var(--warn-strong); }
 .bc-sd-refused { color: var(--fg); }
 .bc-sd-readings { display: grid; gap: 1px; margin: 2px 0; }
-.bc-sd-reading { display: flex; align-items: baseline; gap: 6px 10px; flex-wrap: wrap; padding: 1px 0; cursor: pointer; }
-.bc-sd-reading input { margin: 0; align-self: center; }
+.bc-sd-reading { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; align-items: baseline; padding: 1px 0; cursor: pointer; }
+.bc-sd-reading input { margin: 0; align-self: start; margin-top: 2px; }
+.bc-sd-reading-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; }
 .bc-sd-reading-label { font-weight: 500; }
 .bc-sd-dates { font-variant-numeric: tabular-nums; }
 .bc-sd-conseq, .bc-sd-reason { color: var(--fg-muted); }
@@ -1147,8 +1148,8 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); }
 .bc-sd-actions .bc-btn { padding: 3px 12px; }
 .bc-sd-status { color: var(--fg-muted); margin-right: auto; }
-.bc-sd.is-sheet .bc-sd-reading { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; padding: 3px 0; }
-.bc-sd.is-sheet .bc-sd-reading > :not(input):not(.bc-sd-reading-label) { grid-column: 2; }
+.bc-sd.is-sheet .bc-sd-reading { gap: 0 8px; padding: 4px 0; }
+.bc-sd.is-sheet .bc-sd-reading-text { display: grid; }
 .bc-sd.is-sheet .bc-sd-line { grid-template-columns: 64px 1fr; }
 .bc-sd.is-sheet .bc-sd-actions { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 .bc-sd.is-sheet .bc-sd-actions .bc-btn { min-height: 40px; padding: 6px 16px; }
@@ -1750,6 +1751,8 @@ body.bc-dragging * { cursor: grabbing !important; }
   .bc-msuggest-item { border: 1px solid var(--border); border-radius: 14px; padding: 5px 10px; background: var(--bg-inset); }
 }
 .bc-quickadd-preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+/* A series' rule in words with its first dates, under the chips. */
+.bc-quickadd-series { margin-top: 4px; font-size: 12px; color: var(--fg-muted); }
 .bc-qchip {
   display: inline-flex; align-items: center; gap: 5px;
   background: var(--bg-inset); border: 1px solid var(--border);

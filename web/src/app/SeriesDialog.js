@@ -36,9 +36,12 @@ function SeriesCard({ sc }) {
   const actionRef = useRef(null);
   const [allEdited, setAllEdited] = useState(false);
   const phone = typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches;
+  // Dates name their year when it isn't the year of the day acted on.
+  const actedOn = (sc.body && sc.body.start) || sc.occ.start;
   const view = planView(sc.plan, {
     kind: sc.kind, title: sc.title, scope: sc.scope, choices: sc.choices,
     tz: sc.tz, fields: sc.fields, changed: sc.changed,
+    refYear: Number(String(actedOn).slice(0, 4)) || new Date().getFullYear(),
   });
   const following = sc.scope === 'following';
   const busy = sc.status === 'loading' || sc.status === 'refreshing' || sc.status === 'committing';
@@ -96,7 +99,7 @@ function SeriesCard({ sc }) {
   const moreEdited = view.edited.length - shownEdited.length;
   // On a phone the sheet may cover the drop point: it says where the day went.
   const thisDay = phone && sc.kind !== 'editor' && sc.body && sc.body.start
-    ? 'This day: ' + planDate(sc.body.start) + (sc.occ.allDay ? '' : ' at ' + fmtTime(parseISO(sc.body.start)))
+    ? 'This day: ' + planDate(sc.body.start, { refYear: new Date().getFullYear() }) + (sc.occ.allDay ? '' : ' at ' + fmtTime(parseISO(sc.body.start)))
     : '';
 
   return html`<div class=${cls} ref=${rootRef} style=${style} role="dialog" aria-label=${view.heading} tabIndex="-1">
@@ -150,10 +153,12 @@ function PlanLines({ view, shownEdited, moreEdited, onMore, working }) {
       ${g.options.map((o) => html`<label key=${o.id} class=${'bc-sd-reading' + (o.disabled ? ' is-disabled' : '')}>
         <input type="radio" name=${'sd-' + g.id} checked=${o.selected} disabled=${o.disabled}
           onChange=${() => pickSeriesOption(g.id, o.id)} />
-        <span class="bc-sd-reading-label">${o.label}</span>
-        ${o.disabled
-          ? html`<span class="bc-sd-reason">${o.reason}</span>`
-          : html`${o.dates && html`<span class="bc-sd-dates">${o.dates}</span>`}${o.note && html`<span class="bc-sd-conseq">${o.note}</span>`}`}
+        <span class="bc-sd-reading-text">
+          <span class="bc-sd-reading-label">${o.label}</span>
+          ${o.disabled
+            ? html`<span class="bc-sd-reason">${o.reason}</span>`
+            : html`${o.dates && html`<span class="bc-sd-dates">${o.dates}</span>`}${o.note && html`<span class="bc-sd-conseq">${o.note}</span>`}`}
+        </span>
       </label>`)}
     </div>`)}
     ${view.next && html`<div class="bc-sd-line"><span class="bc-sd-lab">Next</span><span>${view.next}</span></div>`}

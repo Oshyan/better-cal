@@ -211,6 +211,17 @@ export function commitPlan(plan, choices = {}) {
 }
 
 /**
+ * Quick add's parse carries its series' creation plan (`draft.series`);
+ * it's the one to show only while the repeat and start are still the
+ * parse's. Otherwise null, and the card asks for a new one.
+ */
+export function parsedSeries(draft, rule, range) {
+  if (!draft || !draft.series || !rule || !range) return null;
+  const sameStart = draft.start && Date.parse(draft.start) === Date.parse(range.start);
+  return draft.rrule === rule && sameStart ? draft.series : null;
+}
+
+/**
  * The creation line under quick add's chips and the editor's Repeat row:
  * "Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar
  * · 6 events", and when the start moved to the rule's first day, its own

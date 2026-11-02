@@ -37,6 +37,7 @@ import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { buildRange } from '../lib/quickrange.js';
+import { creationLine, parsedSeries } from '../lib/seriesplan.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
@@ -203,6 +204,32 @@ export function QuickAdd() {
   // `/`, `#` and `@` offer calendars, tags and people as you type (#169).
   // onInput is declared below; a pick sets the text the way typing does.
   const markers = useMarkerSuggest(inputRef, text, (v) => onInput({ target: { value: v } }));
+
+  // A series' line under the chips: the rule in words, its first dates and
+  // its end (docs/design/series-model.md, Creating a Series). The parse's
+  // own creation plan while the repeat and date are the parse's; a picked
+  // repeat or a new date asks for one, a newer answer replacing an older.
+  const [seriesPlan, setSeriesPlan] = useState(null); // {key, plan}
+  const seriesReq = useRef(0);
+  const seriesRule = open && !(draft && draft.intent === 'availability') ? effectiveRrule(form) : '';
+  const seriesRange = seriesRule ? buildRange(form, draft, touchedRef.current.has('dateKey')) : null;
+  const seriesKey = seriesRule && seriesRange ? [seriesRule, seriesRange.start, seriesRange.end, form.allDay, form.calendarId].join('|') : '';
+  useEffect(() => {
+    const my = ++seriesReq.current;
+    if (!seriesKey) { setSeriesPlan(null); return; }
+    const parsed = parsedSeries(draft, seriesRule, seriesRange);
+    if (parsed) { setSeriesPlan({ key: seriesKey, plan: parsed }); return; }
+    setSeriesPlan(null);
+    api('/events', { method: 'POST', body: {
+      preview: true, start: seriesRange.start, end: seriesRange.end, allDay: form.allDay, rrule: seriesRule,
+      calendarId: form.calendarId != null ? Number(form.calendarId) : undefined, tzid: localTz(),
+    } }).then((res) => {
+      if (my === seriesReq.current) setSeriesPlan({ key: seriesKey, plan: res && res.plan });
+    }).catch(() => { if (my === seriesReq.current) setSeriesPlan(null); });
+  }, [seriesKey]); // eslint-disable-line
+  const series = seriesPlan && seriesPlan.key === seriesKey
+    ? creationLine(seriesPlan.plan, { typedStart: seriesRange && seriesRange.start })
+    : null;
 
   if (!open) return null;
 
@@ -526,6 +553,8 @@ export function QuickAdd() {
         ${draft && draft.pageNote && html`<span class="bc-qchip bc-qchip-fallback" title="Read from the text instead">${draft.pageNote}</span>`}
         ${draft && draft.modelLimit && html`<span class="bc-qchip bc-qchip-fallback" title=${draft.modelLimit.message || 'AI parsing is temporarily paused'}>AI paused</span>`}
       </div>`}
+      ${series && series.line && html`<div class="bc-quickadd-series" role="status">${series.line}</div>`}
+      ${series && series.moved && html`<div class="bc-quickadd-series">${series.moved}</div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">
         <div class=${'bc-qa-field bc-qa-date' + flashCls('dateKey')}>
           <span class="bc-qa-label">Date</span>

@@ -47,7 +47,7 @@ return static function (Db $db): void {
     };
     $drag = static function (int $id, string $scope, string $from, string $to) use ($d, $u): ?string {
         try {
-            $d->events->patch($u, $id, ['scope' => $scope, 'instanceStart' => $from . 'T18:00:00+00:00', 'start' => $to . 'T18:00:00+00:00', 'end' => $to . 'T19:00:00+00:00']);
+            planned($d->events, $u, $id, ['scope' => $scope, 'instanceStart' => $from . 'T18:00:00+00:00', 'start' => $to . 'T18:00:00+00:00', 'end' => $to . 'T19:00:00+00:00']);
             return null;
         } catch (\Throwable $e) {
             return get_class($e) . ': ' . $e->getMessage();

@@ -425,7 +425,7 @@ function bc_handle_api(Request $request, array $cfg): void
         }
         $response->send();
     } catch (HttpError $e) {
-        Response::error($e->errorCode, $e->getMessage(), $e->status)->send();
+        Response::error($e->errorCode, $e->getMessage(), $e->status, $e->extra)->send();
     } catch (\PDOException $e) {
         error_log('db error: ' . $e->getMessage());
         Response::error('db_error', 'Database error', 500)->send();

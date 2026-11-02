@@ -78,6 +78,34 @@ function deadlockCount(Db $db): ?int
 }
 
 /** The error code $fn refuses with, or null when it goes through. */
+/**
+ * A whole-series edit as the client makes it (series-model.md, The API):
+ * preview, then commit the plan with every group named, the preselected
+ * option unless $choices says otherwise. Anything else is patched as it is.
+ */
+function planned(BetterCal\Domain\Events $events, int $userId, int $id, array $in, array $choices = []): array
+{
+    try {
+        $plan = $events->previewPatch($userId, $id, $in + ['plan' => ['choices' => $choices]]);
+    } catch (BetterCal\Http\HttpError $e) {
+        if ($e->errorCode !== 'preview_unavailable') {
+            throw $e;
+        }
+        $events->patch($userId, $id, $in);
+        return [];
+    }
+    $sel = $choices;
+    foreach ($plan['groups'] as $g) {
+        $sel[$g['id']] ??= $g['selected'];
+    }
+    $plan = $events->previewPatch($userId, $id, $in + ['plan' => ['choices' => $sel]]);
+    foreach ($plan['groups'] as $g) {
+        $sel[$g['id']] ??= $g['selected'];
+    }
+    $events->patch($userId, $id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $sel]]);
+    return $plan;
+}
+
 function refusal(callable $fn): ?string
 {
     try {

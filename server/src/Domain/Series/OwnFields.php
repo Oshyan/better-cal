@@ -29,6 +29,22 @@ final class OwnFields
         'icon' => ['icon'],
     ];
 
+    /** @var \WeakMap<\BetterCal\Infra\Db,bool>|null */
+    private static ?\WeakMap $column = null;
+
+    /** Whether events has override_fields (a database before migration 063 doesn't). */
+    public static function hasColumn(\BetterCal\Infra\Db $db): bool
+    {
+        self::$column ??= new \WeakMap();
+        if (!isset(self::$column[$db])) {
+            $sqlite = $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
+            self::$column[$db] = $sqlite
+                ? in_array('override_fields', array_column($db->all('PRAGMA table_info(`events`)'), 'name'), true)
+                : (int) $db->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'events' AND COLUMN_NAME = 'override_fields'") > 0;
+        }
+        return self::$column[$db];
+    }
+
     /** The field a column belongs to, or null. */
     public static function fieldOf(string $column): ?string
     {

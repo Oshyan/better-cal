@@ -41,13 +41,53 @@ The [changelog](CHANGELOG.md) has the full list, fixes included.
 
 - The second round of the view review's fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)): overnight events, week view bar drags, an agenda that keeps loading, and smaller navigation and loading fixes
 
+## 1.4.3 (released 2026-10-30)
+
+- Calendar marks are discs in the calendar's color with its source inside, and the sidebar's width is remembered per screen
+- A second, independent review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)), and the last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings
+
+## 1.4.4 (released 2026-10-31)
+
+- Fixes from a release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185))
+
+## 1.4.5 (released 2026-11-01)
+
+- Folders in the sidebar, with their own order of calendars ([#187](https://github.com/Oshyan/better-cal/issues/187))
+- Moving a repeating event to another calendar from the editor moves the series ([#186](https://github.com/Oshyan/better-cal/issues/186)), and the default calendar is always set
+- Undo is more careful and covers more; removing a person or a Review subscription undoes from its toast instead of asking first
+- Fixes from two reviews of that work: plugin refreshes on time, emailed one-day changes that outlive a series accept, migrations that wait out the worker
+
+## 1.4.6 (released 2026-11-02)
+
+- Quick add reads lists of ordinals, day ranges with a time range, and two-letter time zones ([#193](https://github.com/Oshyan/better-cal/issues/193))
+- Emailed changes and cancellations of one day of a repeating invitation wait for their series in any order ([#192](https://github.com/Oshyan/better-cal/issues/192)), approved senders with non-ASCII domains ([#196](https://github.com/Oshyan/better-cal/issues/196)), plugin calendars that clean up after themselves ([#195](https://github.com/Oshyan/better-cal/issues/195))
+- Updating from a version before 1.3.0 works again, a broken release signature is named, and a newer release this copy can't verify is no longer called "up to date" ([#194](https://github.com/Oshyan/better-cal/issues/194))
+- Repeating events: a series dragged across a month keeps its edited and skipped days on the right occurrences, its end date moves with it, nth-weekday and yearly series follow a drag, and "this and following" keeps the dates edited on their own ([#188](https://github.com/Oshyan/better-cal/issues/188))
+- Three rounds of independent review of all of the above, and a new harness that generates thousands of repeating series and edits and checks what every occurrence should do ([tools/edit-harness](tools/edit-harness/README.md)). Its first run names twelve remaining causes in series editing, all older than this release. That is what 1.5 is for.
+
 ## 1.4.x (next)
 
-- The view review's remaining keyboard and cosmetic fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)), then a second, independent review of every view
+- Fixes and smaller things while 1.5 is built, each on its own
 
-## 1.5: Filters and your own layer
+## 1.5: One engine under the calendar
 
-Filters that say what they do and can do more, plus a note of your own on any event. Together they're the base for automations later.
+The fixes since 1.4.0 were made one reviewer's finding at a time, and each round's bugs came from the layer the round before had added. 1.5 replaces the layers with one rule per area, each with a test that measures it rather than a reviewer who happens to find a case. The heart of it is repeating events. Today a whole-series edit, "this and following", a delete, an attendance answer, a Google calendar and Undo each work out for themselves where every occurrence goes when a series moves, and they don't agree. 1.5 gives them one model, and the series harness that shipped with 1.4.6 decides when it's done: its first run named twelve remaining causes, and 1.5 ships when it names none.
+
+I'm keeping the higher bar rather than copying what other calendars do. Thunderbird and Nextcloud move a series' edited days by the same number of days as the series and leave the repeat rule alone; Better-Cal follows the drag for every kind of rule ("the second Tuesday" dragged to Wednesday becomes "the second Wednesday", an edited day lands on the occurrence it belongs to, the end date moves too). That is what the harness tests.
+
+- One model of how a series and its edited and skipped days move, used by every edit, by Google calendars and by Undo; the harness clean
+- "All events" from a date edited on its own changes the series ([#189](https://github.com/Oshyan/better-cal/issues/189)), and the editor sends only what changed, so a date change there behaves like a drag ([#199](https://github.com/Oshyan/better-cal/issues/199))
+- The other layers, one rule each: loading the calendar's events and what counts as fresh, the change check's retries, month view gliding, times when dragging, showing or hiding many calendars at once, plugin bands page by page ([#190](https://github.com/Oshyan/better-cal/issues/190))
+- Deleting a very large calendar keeps its undo ([#191](https://github.com/Oshyan/better-cal/issues/191))
+- Floating times, decided and built on the new model ([#167](https://github.com/Oshyan/better-cal/issues/167))
+- Undo for changes made on Google calendars, since Google series go through the same model ([#172](https://github.com/Oshyan/better-cal/issues/172))
+- The events window answers "unchanged" when nothing moved, which falls out of one idea of fresh ([#16](https://github.com/Oshyan/better-cal/issues/16))
+
+Each piece ships as its own release with an independent review before it, so nothing waits on everything.
+
+## 1.6: Filters, views and your own layer
+
+Filters that say what they do and can do more, a note of your own on any event, and the views you want where you want them. The filters and notes are the base for automations later.
 
 - Filters show what each kind matches, and gain organizer, people, calendar, link and time conditions ([#63](https://github.com/Oshyan/better-cal/issues/63))
 - Filters can dim or highlight context items, and highlight a whole day ([#72](https://github.com/Oshyan/better-cal/issues/72))
@@ -55,9 +95,6 @@ Filters that say what they do and can do more, plus a note of your own on any ev
 - Mark a calendar as day labels (holidays, birthdays, closures) ([#65](https://github.com/Oshyan/better-cal/issues/65))
 - Your own note on any event, separate from its description ([#64](https://github.com/Oshyan/better-cal/issues/64))
 - Edit a plugin's fields from Better-Cal, starting with Fibery's status (a Done button, then the full field), then priority, project and more ([#178](https://github.com/Oshyan/better-cal/issues/178))
-
-## 1.6: Views and navigation
-
 - Turn views on or off per device, and set their order ([#61](https://github.com/Oshyan/better-cal/issues/61))
 - Saved views in the view switcher, with their own shortcuts ([#99](https://github.com/Oshyan/better-cal/issues/99))
 - Quick add previews the draft on the calendar while you type ([#87](https://github.com/Oshyan/better-cal/issues/87))
@@ -74,8 +111,6 @@ Filters that say what they do and can do more, plus a note of your own on any ev
 
 ## 1.8: Connections and offline
 
-- Undo for changes made on Google calendars ([#172](https://github.com/Oshyan/better-cal/issues/172))
-- The events window answers "unchanged" when nothing moved ([#16](https://github.com/Oshyan/better-cal/issues/16))
 - Feed refreshes skip feeds that haven't changed ([#179](https://github.com/Oshyan/better-cal/issues/179))
 - What you've loaded stays readable offline ([#17](https://github.com/Oshyan/better-cal/issues/17))
 - Connect CalDAV calendars (iCloud, Fastmail, Nextcloud), then Microsoft ([#137](https://github.com/Oshyan/better-cal/issues/137))
@@ -111,6 +146,7 @@ Whatever 2.0 turns out to be about, it's also a good point to make the worker do
 These need an answer before anyone builds them.
 
 - The item taxonomy, and with it native tasks ([#38](https://github.com/Oshyan/better-cal/issues/38), [#50](https://github.com/Oshyan/better-cal/issues/50))
+- The series model for 1.5: for each kind of repeat rule and each kind of edit, what happens to the rule, the start, the end, and every edited or skipped day. Written down as a table before the code, with the harness's cases as its examples
 - Floating times: events that keep their clock time in any time zone, and how that works on Google calendars ([#167](https://github.com/Oshyan/better-cal/issues/167))
 - A custom date-range view: how it draws, steps and saves ([#13](https://github.com/Oshyan/better-cal/issues/13))
 - What "disabled" means for a calendar, as opposed to hidden ([#28](https://github.com/Oshyan/better-cal/issues/28))

@@ -174,7 +174,7 @@ A member crossing another, and the start: "Swim", Monday and Wednesday at 07:00,
 
 The start is the earliest image: Wed 6 Jan stays where it was, Mon 4 Jan goes to Thu 7 Jan. Probed: `BYDAY=WE,TH;COUNT=6` from Wed 6 Jan gives 6, 7, 13, 14, 20 and 21 Jan, each old occurrence's image; from Thu 7 Jan, the old start's image, it would lose 6 Jan and run on to 27 Jan.
 
-A gain at the edge: the same Swim from Wed 6 Jan with no end (no Monday in its first week), Mon 11 Jan dragged to Fri 15 Jan, "Move every Monday to Friday": Wednesday and Friday from Wed 6 Jan, and the plan says "adds Fri 8 Jan" (probed: 6, 8, 13, 15 Jan).
+A gain at the edge: the same Swim from Wed 6 Jan with no end (no Monday in its first week), Mon 11 Jan dragged to Fri 15 Jan, "Move every Monday to Friday": Wednesday and Friday from Wed 6 Jan, and the plan offers "Add Fri 8 Jan" (preselected; probed: 6, 8, 13, 15 Jan) or "Start on Wed 6 Jan without it" (6, 13, 15 Jan, the series keeping its count).
 
 Every other week: "Lab", every other Monday and Wednesday from Mon 4 Jan. Mon 1 Mar dragged to Sun 28 Feb, "Move every Monday to Sunday": the rule becomes `INTERVAL=2;BYDAY=SU,WE;WKST=SU` from Sun 3 Jan, so each Sunday shares a week with its Wednesday (probed: 3, 6, 17, 20 Jan). Without WKST=SU the Wednesdays would land in the off weeks (probed: 3, 13, 17, 27 Jan).
 

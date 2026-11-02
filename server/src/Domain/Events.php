@@ -548,6 +548,28 @@ final class Events
 
 
     /** The master's rrule for an override row (null when the parent is gone). */
+    /** @var array<int,array{title:?string,allDay:bool}> an edited day's series, by id, for its serialization */
+    private array $parentSeries = [];
+
+    private function parentSeriesRow(int $parentId): array
+    {
+        if (!array_key_exists($parentId, $this->parentSeries)) {
+            $row = $this->db->one('SELECT title, all_day FROM events WHERE id = ?', [$parentId]);
+            $this->parentSeries[$parentId] = ['title' => $row === null ? null : (string) $row['title'], 'allDay' => $row !== null && (int) $row['all_day'] === 1];
+        }
+        return $this->parentSeries[$parentId];
+    }
+
+    private function parentTitle(int $parentId): ?string
+    {
+        return $this->parentSeriesRow($parentId)['title'];
+    }
+
+    private function parentAllDay(int $parentId): bool
+    {
+        return $this->parentSeriesRow($parentId)['allDay'];
+    }
+
     private function parentRrule(int $parentId): ?string
     {
         if (!array_key_exists($parentId, $this->parentRrules)) {
@@ -1258,6 +1280,7 @@ final class Events
 
     public function patch(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
+        $this->parentSeries = [];
         if (!empty($in['preview'])) {
             // A preview is answered by previewPatch and never applied.
             throw HttpError::badRequest('preview is answered without applying the change; send it to the preview path', 'preview_unavailable');
@@ -1360,6 +1383,19 @@ final class Events
     private function patchLocked(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
+        if (!empty($event['recurrence_parent_id']) && array_key_exists('useSeries', $in)) {
+            // "Use series value" sent to the edited day's own row: that row
+            // (the master with the day's key works too, in patchThis).
+            if (!is_array($in['useSeries']) || array_diff_key($in, array_flip(['scope', 'instanceStart', 'useSeries'])) !== [] || (string) ($in['scope'] ?? 'this') !== 'this') {
+                throw HttpError::badRequest('useSeries is a list of field names, sent on its own with scope this');
+            }
+            $master = $this->get($userId, (int) $event['recurrence_parent_id']);
+            if ($event['source'] === 'feed') {
+                throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+            }
+            $this->useSeriesValues($userId, $master, $event, $in['useSeries']);
+            return;
+        }
         if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
             unset($in['calendarId']);
         }
@@ -1401,8 +1437,11 @@ final class Events
             $scope = 'all';
         }
 
+        if ($isRecurringMaster && $scope === 'following') {
+            self::refuseUnreadableSplit($event);
+        }
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
-            $in['rrule'] = Recurrence::validateRrule((string) $in['rrule']);
+            $in['rrule'] = self::validatedSeriesRule($event, (string) $in['rrule'], $isRecurringMaster && $scope === 'all');
         }
         if (isset($in['calendarId'])) {
             $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $in['calendarId'], $userId]);
@@ -1473,6 +1512,15 @@ final class Events
             }
             // 'following': patchFollowing splits and the new series takes the
             // calendar; 'all': patchAll moves the series and its exceptions.
+        }
+
+        // An edit with all events made from an edited day's own row is the
+        // series' edit, with that day as the day acted on (Changing the
+        // Series from an Edited Day): preview and commit alike.
+        if (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all' && !isset($in['calendarId'])) {
+            [$master, $masterIn] = $this->editFromEditedDay($userId, $event, $in);
+            $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority);
+            return;
         }
 
         if ($google !== null) {
@@ -2231,6 +2279,9 @@ final class Events
         } else {
             $scope = 'all';
         }
+        if ($isRecurring && $scope === 'following') {
+            self::refuseUnreadableSplit($event);
+        }
 
         if ($google !== null) {
             match ($scope) {
@@ -2697,6 +2748,17 @@ final class Events
             'isException' => !empty($row['recurrence_parent_id']) ? true : null,
             // An edited day's own fields (migration 063), in OwnFields::FIELDS order.
             'ownFields' => !empty($row['recurrence_parent_id']) ? Series\OwnFields::decode($row['override_fields'] ?? null) : null,
+            // Its series, for the editor's "Edited day of <title>" and for
+            // "Use series value" sent to the master by the day's key:
+            // seriesKey is the key (RECURRENCE-ID) as an instant in UTC, or
+            // for an all-day series its date.
+            'seriesId' => !empty($row['recurrence_parent_id']) ? (int) $row['recurrence_parent_id'] : null,
+            'seriesTitle' => !empty($row['recurrence_parent_id']) ? $this->parentTitle((int) $row['recurrence_parent_id']) : null,
+            'seriesKey' => !empty($row['recurrence_parent_id']) && !empty($row['recurrence_instance_utc'])
+                ? ($this->parentAllDay((int) $row['recurrence_parent_id'])
+                    ? Time::fromDb((string) $row['recurrence_instance_utc'])->format('Y-m-d')
+                    : Time::fromDb((string) $row['recurrence_instance_utc'])->format('Y-m-d\TH:i:s\Z'))
+                : null,
             'rrule' => $rrule,
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],

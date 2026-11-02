@@ -302,7 +302,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Acceptance 2, add and keep the end: COUNT=6, 6 to 22 Jan', ['FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', ['2027-01-06', '2027-01-08', '2027-01-13', '2027-01-15', '2027-01-20', '2027-01-22']],
         [$p['writes']['master']['rrule'] ?? null, smShows($pottery, $p['writes'], '2027-02-28')]);
     $without = smPlan($pottery, [], smDrag($pottery, '2027-01-11 18:00', '2027-01-15 18:00'), ['edge' => 'without']);
-    check('Acceptance 2, without it: the bound line counts the skip apart', str_contains($without['plan']['bound']['words'], '5 scheduled occurrences, 1 skipped'), $without['plan']['bound']['words']);
+    checkEq('Acceptance 2, without it: the series keeps its five sessions, and the line says so (the generated skip is no event of it)', '5 events, ends 22 Jan (was 20 Jan)', $without['plan']['bound']['words']);
     $pottery13 = smSeries('Pottery', 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', '2027-01-06 18:00', 60, false, ['2027-01-13 18:00']);
     $p = smPlan($pottery13, [], smDrag($pottery13, '2027-01-11 18:00', '2027-01-15 18:00'), ['edge' => 'without', 'bound' => 'count']);
     checkEq('Pottery with 13 Jan already skipped, without 8 Jan: COUNT=6 skipping 8 and 13 Jan, four sessions (a skip the person made is not made up for)', [
@@ -549,6 +549,104 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         OwnFields::afterSync(smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Choir'], null, ['title']), smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Chorus']), $chorus),
         OwnFields::afterSync(null, smEdited($chorus, 7, '2027-04-27 19:00', [], '2027-04-27 19:30'), $chorus),
     ]);
+    // ---- 1.5.0 integration review ------------------------------------------
+    // P1-1: an unbounded series read to a horizon has no phantom gains past it.
+    $genSkips = static fn(array $p): array => array_values(array_map(static fn(array $d): string => substr((string) $d['newKey'], 0, 10),
+        array_filter($p['plan']['days'], static fn(array $d): bool => $d['outcome'] === 'generated')));
+    $swimW = smSeries('Swim W', 'FREQ=WEEKLY;BYDAY=MO,WE', '2027-01-04 07:00');
+    $p = smPlan($swimW, [smEdited($swimW, 2, '2027-01-06 07:00', ['title' => 'Swim test'], null, ['title'])], smDrag($swimW, '2027-01-11 07:00', '2027-01-18 07:00'));
+    checkEq('Prediction 22 (Swim from Mon 4 Jan, no end, Mon 11 Jan to Mon 18 Jan): two readings, no edge group, no skip written', [['member', 'pattern'], [], [], null],
+        [smOptions($p, 'reading'), smOptions($p, 'edge'), $genSkips($p), $p['writes']['master']['exdates_json'] ?? null]);
+    $swimWed = smSeries('Swim', 'FREQ=WEEKLY;BYDAY=MO,WE', '2027-01-06 07:00');
+    $p = smPlan($swimWed, [], smDrag($swimWed, '2027-01-11 07:00', '2027-01-15 07:00'));
+    checkEq('Swim from Wed 6 Jan, no end, Mondays to Fridays: the edge offers only Fri 8 Jan, labelled by its week', [["Don't add Fri 8 Jan", 'Add Fri 8 Jan'], 'First week', ['2027-01-08'],
+        'Fri 8 Jan skipped, so the series starts as before'], [
+        array_column(smGroup($p, 'edge')['options'] ?? [], 'label'), smGroup($p, 'edge')['label'] ?? null, $genSkips($p),
+        array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['outcome'] === 'generated'))[0]['words'] ?? null,
+    ]);
+    $weekdays = smSeries('Desk hours', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', '2027-01-01 09:00');
+    $p = smPlan($weekdays, [], smDrag($weekdays, '2027-03-08 09:00', '2027-03-22 09:00'));
+    checkEq('MO-FR from Fri 1 Jan, Mondays two weeks later: no skip past the start (only the two Mondays no session had, 4 and 11 Jan)', ['2027-01-04', '2027-01-11'], $genSkips($p));
+    $payday = smSeries('Payday', 'FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-01-01', 60, true);
+    $p = smPlan($payday, [], smDrag($payday, '2027-03-15', '2027-04-15'));
+    checkEq('Payday 1st and 15th, every 15th a month later: no skip on a real payday (only 15 Jan, the first month\'s gain)', [['2027-01-15'], json_encode([smAt('2027-01-15 00:00', 'UTC')])],
+        [$genSkips($p), $p['writes']['master']['exdates_json'] ?? null]);
+
+    // P2-3: the bound line under a generated skip (acceptance cases 2, 3 and 7).
+    $p = smPlan($pottery, [], smDrag($pottery, '2027-01-11 18:00', '2027-01-15 18:00'));
+    checkEq('Acceptance 2: "Don\'t add" reads 5 events, ends 22 Jan (was 20 Jan); "Add" says what has no place', [
+        '5 events, ends 22 Jan (was 20 Jan)', '5 events, ends 22 Jan (was 20 Jan)', '5 events, ends 20 Jan; Fri 22 Jan has no place',
+    ], [$p['plan']['bound']['words'], smGroup($p, 'edge')['options'][0]['bound']['words'] ?? null, smGroup($p, 'edge')['options'][1]['bound']['words'] ?? null]);
+    $relay = smSeries('Swim relay', 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=3', '2027-01-04 07:00');
+    $p = smPlan($relay, [smEdited($relay, 2, '2027-01-06 07:00', ['title' => 'Relay trial'], null, ['title'])], smDrag($relay, '2027-01-11 07:00', '2027-01-18 07:00'));
+    checkEq('Acceptance 3: "Don\'t add Wed 13 Jan" in the last week reads 3 events, ends 18 Jan (was 11 Jan)', ['Last week', '3 events, ends 18 Jan (was 11 Jan)', 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4'],
+        [smGroup($p, 'edge')['label'] ?? null, $p['plan']['bound']['words'], $p['writes']['master']['rrule'] ?? null]);
+    checkEq('Acceptance 3: the readings say what sets them apart', [
+        "the same 3 dates; starts Wed 6 Jan, 'Relay trial' stays on Wed 6 Jan", "the same 3 dates; starts Mon 11 Jan, 'Relay trial' moves to Wed 13 Jan",
+    ], array_column(smGroup($p, 'reading')['options'] ?? [], 'words'));
+    $p = smPlan($pottery13, [], smDrag($pottery13, '2027-01-11 18:00', '2027-01-15 18:00'));
+    checkEq('Acceptance 7: 5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan); with "Add", ends 20 Jan and 22 Jan has no place', [
+        '5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place',
+    ], [$p['plan']['bound']['words'], smGroup($p, 'edge')['options'][1]['bound']['words'] ?? null]);
+
+    // P2-4: on Google, the whole-plan refusal of a drag gives the Google reason.
+    $g = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-12 18:00'), [], ['google' => true]);
+    checkEq('Acceptance 5: every refusal of the Google drag, the plan\'s own included, says the Google reason', [['google'], [Model::REASONS['google']]],
+        [array_values(array_unique(array_column($g['plan']['refusals'], 'code'))), array_values(array_unique(array_column($g['plan']['refusals'], 'words')))]);
+
+    // P2-5: readings and zones say their consequence.
+    $book = smSeries('Book club', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-15 19:00');
+    $p = smPlan($book, [], smDrag($book, '2027-03-15 19:00', '2027-03-30 19:00'));
+    checkEq('Book club to the 30th: the clamped reading names February\'s days, the skipping one what it drops', [
+        'in February: 28 Feb, and 29 Feb 2028', 'none in February: drops 15 Feb\'s event, then every February',
+    ], array_column(smGroup($p, 'reading')['options'] ?? [], 'words'));
+    $p = smPlan($book, [], smDrag($book, '2027-03-15 19:00', '2027-03-31 19:00'));
+    checkEq('Book club to the 31st: the skipping 31st drops 5 months a year, first 15 Feb\'s', ['', 'drops 5 months a year, first 15 Feb\'s'], array_column(smGroup($p, 'reading')['options'] ?? [], 'words'));
+    $p = smPlan($book, [], smDrag($book, '2027-04-15 19:00', '2027-04-30 19:00'));
+    checkEq('Book club to 30 Apr: the last day says the 31st in longer months', 'the 31st in longer months', smGroup($p, 'reading')['options'][2]['words'] ?? null);
+    $swap = smSeries('Book swap', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3', '2027-03-15 19:00');
+    $p = smPlan($swap, [], smDrag($swap, '2027-03-15 19:00', '2027-03-30 19:00'));
+    checkEq('Book swap: the same 3 dates, apart if extended', ['the same 3 dates; if extended, 28 or 29 Feb', 'the same 3 dates; if extended, none in February'],
+        array_column(smGroup($p, 'reading')['options'] ?? [], 'words'));
+    $team = smSeries('Team call', 'FREQ=WEEKLY;BYDAY=MO', '2027-03-01 18:00');
+    $berlin = new DateTimeImmutable('2027-03-01 18:00', Time::zone('Europe/Berlin'));
+    $p = smPlan($team, [], ['acted' => smAt('2027-03-01 18:00'), 'landed' => ['start_utc' => Time::toDb($berlin), 'end_utc' => Time::toDb($berlin->modify('+1 hour')), 'all_day' => 0, 'tzid' => 'Europe/Berlin']]);
+    checkEq('Team call to Berlin: each zone option lists the occurrences whose clock in Los Angeles differs', [
+        'every Monday at 18:00 Berlin time; 09:00 in Los Angeles, 10:00 on 15 and 22 Mar and 1 Nov',
+        'every Tuesday at 03:00 Berlin time; 18:00 Monday in Los Angeles, 19:00 on 15 and 22 Mar and 1 Nov',
+    ], array_column(smGroup($p, 'zone')['options'] ?? [], 'words'));
+
+    // P2-6: bound options told apart by their dates; gains respect the chosen end.
+    $cello = smSeries('Cello lesson', 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', '2027-01-31 16:00');
+    $p = smPlan($cello, [], smDrag($cello, '2027-10-31 16:00', '2027-11-01 16:00'));
+    $nexts = array_map(static fn(array $o): array => array_map(static fn(string $s): string => substr($s, 0, 10), $o['next'] ?? []), smGroup($p, 'bound')['options'] ?? []);
+    checkEq('Cello lesson: keep the end and keep 6 show their ends, not the same 1 Nov', [['2027-09-01', '2027-10-01', '2027-11-01'], ['2027-05-01', '2027-06-01', '2027-07-01']], $nexts);
+    $six = smPlan($cello, [], smDrag($cello, '2027-10-31 16:00', '2027-11-01 16:00'), ['bound' => 'count']);
+    checkEq('Cello lesson, keep 6: no gain past its end (1 Oct is no gain of a series ending 1 Jul)', ['2027-03-01', '2027-05-01', '2027-07-01'], array_column($six['plan']['gains'], 'date'));
+
+    $p = smPlan($bounded, [smEdited($bounded, 2, '2027-02-23 19:00', ['title' => 'Rehearsal at Sample Hall'], null, ['title'])], ['acted' => smAt('2027-02-23 19:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=6']);
+    checkEq('Ends shortened from the edited day itself: the day acted on has no special place, it is outside like any other', [['keep', 'delete'], [2]],
+        [smOptions($p, 'outside'), array_keys($p['writes']['detach'])]);
+    // P3: words, zones.
+    checkEq('Lord Howe falls back half an hour: 01:45 on 4 Apr 2027 is the first one, in daylight time', '2027-04-03 14:45:00',
+        Time::toDb(BetterCal\Domain\Series\Calc::at(Cal::dn(2027, 4, 4), [1, 45, 0], 'Australia/Lord_Howe')));
+    checkEq('the clock follows the day, before a clause about other months', ['Monthly on the 31st at 16:00, skipping months without one', 'Monthly on the 30th at 19:00, or the last day in shorter months', 'Yearly on 29 February at 10:00, only in leap years'], [
+        $w('FREQ=MONTHLY;BYMONTHDAY=31', '2027-01-31', [16, 0, 0]), $w('FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', '2027-01-30', [19, 0, 0]), $w('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29', '2028-02-29', [10, 0, 0]),
+    ]);
+    $p = smPlan($choir, $choirRows, smDrag($choir, '2027-03-09 19:00', '2027-03-09 19:30'));
+    $byKey = array_column($p['plan']['days'], 'words', 'key');
+    checkEq('a time-only change says the time: Rehearsal moves to 19:30', "'Rehearsal' Tue 13 Apr moves to 19:30, keeps its title and place", $byKey['2027-04-14T02:00:00Z'] ?? null);
+    $rem = smSeries('Choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00') + [];
+    $rem['reminders_json'] = json_encode([['minutes' => 60]]);
+    $p = smPlan($rem, [], ['columns' => ['title' => 'Chorus', 'reminders_json' => json_encode([['minutes' => 30]])]]);
+    checkEq('field lines give the values before and after', ['Title: Choir, now Chorus', 'Reminder: 1 hour before, now 30 minutes'], array_column($p['plan']['fields'], 'words'));
+    $p = smPlan($choir, [smEdited($choir, 2, '2027-04-13 19:00', ['title' => 'Rehearsal'], '2027-04-16 19:00', ['date', 'title'])], ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,TH']);
+    checkEq('the ownership sentence names where the day shows', "One edited day becomes an event of its own: 'Rehearsal' on 16 Apr.", $p['plan']['ownership'] ?? null);
+    checkEq('day names stay capitalized in the summary', true, str_contains($p['plan']['summary'], 'weekly on Tuesday at 19:00, now weekly on Monday and Thursday'));
+    $created = BetterCal\Domain\Events::creationPlan(['rrule' => 'FREQ=WEEKLY;BYDAY=TU', 'start_utc' => smAt('2027-03-02 09:00'), 'end_utc' => smAt('2027-03-02 10:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'],
+        ['start_utc' => smAt('2027-02-26 09:00')], 'America/Los_Angeles');
+    checkEq('the creation line says "on or after"', true, str_contains((string) ($created['startWords'] ?? ''), 'the first Tuesday on or after the date you typed'));
+
 }
 
 if (!empty($GLOBALS['__standalone'])) {

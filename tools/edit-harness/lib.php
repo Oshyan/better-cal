@@ -440,6 +440,9 @@ final class Generator
         'drag_all' => 14, 'time_all' => 4, 'allday_all' => 4, 'zone_all' => 3, 'editor_drag_all' => 4, 'rule_all' => 3,
         'drag_following' => 12, 'rename_following' => 5, 'editor_drag_following' => 3,
         'delete_following' => 5, 'delete_this' => 5, 'attend_following' => 3,
+        // Whole-series field and bound edits as first edits too (own fields
+        // inherited on a primary rename, the Ends-changed path).
+        'rename_all' => 3, 'attend_all' => 2, 'bound_all' => 3,
     ];
 
     /** The series part of a case (no database needed). */
@@ -679,9 +682,13 @@ final class Generator
             $plan['days'] = 0;
             $plan['hours'] = 0;
             $plan['rrule'] = self::otherRule($r, $series['rrule']);
-        } elseif ($edit === 'rename_following' || $edit === 'delete_following' || $edit === 'delete_this' || $edit === 'attend_following') {
+        } elseif ($edit === 'rename_following' || $edit === 'delete_following' || $edit === 'delete_this' || $edit === 'attend_following' || $edit === 'rename_all' || $edit === 'attend_all') {
             $plan['days'] = 0;
             $plan['hours'] = 0;
+        } elseif ($edit === 'bound_all') {
+            $plan['days'] = 0;
+            $plan['hours'] = 0;
+            $plan['rrule'] = self::otherBound($r, $series['rrule'], $raw, $allDay);
         }
         $stack = null;
         if ($r->chance(0.4)) {
@@ -691,6 +698,29 @@ final class Generator
             }
         }
         return ['exceptions' => $exceptions, 'edit' => $plan, 'stack' => $stack];
+    }
+
+    /**
+     * The same pattern with another bound (the editor's Ends changed): a
+     * count a little shorter or longer, an end on one of its days, or none.
+     *
+     * @param list<array{key:string,day:string}> $raw
+     */
+    private static function otherBound(Rng $r, string $rrule, array $raw, bool $allDay): string
+    {
+        $pattern = Recurrence::pattern($rrule);
+        $parts = RepeatParser::ruleParts($rrule);
+        $n = count($raw);
+        $pick = $r->int(0, 2);
+        if ($pick === 0 && $n > 2) {
+            $at = $raw[$r->int(1, min($n - 1, 30))];
+            return $pattern . ';UNTIL=' . ($allDay ? str_replace('-', '', $at['day']) : Time::fromDb($at['key'])->format('Ymd\THis\Z'));
+        }
+        if ($pick === 1 && (isset($parts['COUNT']) || isset($parts['UNTIL']))) {
+            return $pattern;
+        }
+        $count = isset($parts['COUNT']) ? max(2, (int) $parts['COUNT'] + $r->pick([-3, -2, -1, 1, 2, 4])) : $r->int(3, 12);
+        return $pattern . ';COUNT=' . $count;
     }
 
     /** A rule with another pattern than $rrule (the editor's "repeat" changed), keeping its bound. */
@@ -1096,6 +1126,16 @@ final class Driver
             case 'rename_following':
                 $in += ['title' => 'Sample series, from here on', 'location' => 'Sample Annex'];
                 break;
+            case 'rename_all':
+                $in += ['title' => 'Sample series, renamed'];
+                break;
+            case 'bound_all':
+                // The editor sends the rule with its new end.
+                $in += ['rrule' => (string) $edit['rrule']];
+                break;
+            case 'attend_all':
+                $this->events->setAttendance($this->userId, $id, 'going', 'all', $inst);
+                return ['attendance' => 'going', 'scope' => 'all', 'instanceStart' => $inst];
             case 'delete_following':
                 $this->events->deleteEvent($this->userId, $id, 'following', $inst);
                 return ['delete' => 'following', 'instanceStart' => $inst];
@@ -1278,6 +1318,10 @@ final class Driver
     private function checkEdit(array $before, array $after, array $edit, array $payload): void
     {
         $kind = $edit['kind'];
+        if ($kind === 'attend_all') {
+            $this->checkAttendAll($before, $after);
+            return;
+        }
         if (isset($payload['delete'])) {
             $this->checkDelete($before, $after, $edit);
             return;
@@ -1393,6 +1437,41 @@ final class Driver
             $this->check('1-fields', (string) $m1[$col] === (string) $want, "$col is as it should be", ['column' => $col, 'expected' => $want, 'stored' => $m1[$col]]);
         }
         $this->check('5-none', $after['new'] === null, 'a whole-series edit makes no new series', ['new' => $after['new']['master']['id'] ?? null]);
+        if ($edit['kind'] === 'rename_all') {
+            // Invariant 4 for a rename: a day that inherits its title takes the new one; one that owns it keeps it unless given it.
+            $byId = [];
+            foreach ($after['overrides'] as $ov) {
+                $byId[(int) $ov['id']] = $ov;
+            }
+            foreach ($before['overrides'] as $ov0) {
+                $ov1 = $byId[(int) $ov0['id']] ?? null;
+                if ($ov1 === null) {
+                    continue;
+                }
+                $owns = in_array('title', json_decode((string) ($ov0['override_fields'] ?? '[]'), true) ?: [], true) && (($choices['ownTitle'] ?? 'keep') === 'keep');
+                $want = $owns ? (string) $ov0['title'] : (string) $payload['title'];
+                $this->check('4-fields', (string) $ov1['title'] === $want, $owns ? 'an edited day keeps its own title' : 'an edited day that inherits its title takes the new one', ['expected' => $want, 'stored' => $ov1['title']]);
+            }
+        }
+        if ($edit['kind'] === 'bound_all') {
+            $sent = RepeatParser::ruleParts((string) $edit['rrule']);
+            $stored = RepeatParser::ruleParts((string) $m1['rrule']);
+            $this->check('1-bound', Recurrence::pattern((string) $m1['rrule']) === Recurrence::pattern((string) $m0['rrule']) && ($sent['COUNT'] ?? null) === ($stored['COUNT'] ?? null) && isset($sent['UNTIL']) === isset($stored['UNTIL']),
+                'the pattern stays and the bound is the one sent', ['sent' => $edit['rrule'], 'stored' => $m1['rrule']]);
+        }
+    }
+
+    /** Attendance for all events: the series and every attached edited day answer, none owning its answer (until 1.5.1 gives that its choice). */
+    private function checkAttendAll(array $before, array $after): void
+    {
+        $this->check('4-fields', (string) $after['master']['attendance'] === 'going', 'the series answers', ['stored' => $after['master']['attendance']]);
+        foreach ($after['overrides'] as $ov) {
+            $own = json_decode((string) ($ov['override_fields'] ?? '[]'), true) ?: [];
+            $this->check('4-fields', (string) $ov['attendance'] === 'going' && !in_array('attendance', $own, true), 'every edited day takes the series\' answer', ['stored' => $ov['attendance'], 'own' => $own]);
+        }
+        $this->checkAttached('2', $after);
+        $this->check('5-none', $after['new'] === null, 'a whole-series answer makes no new series');
+        unset($before);
     }
 
     /** The dragged day shows on the day it was dropped on (series-model.md, The Day Acted On Comes First). */
@@ -1476,6 +1555,38 @@ final class Driver
             }
         }
         $generated = array_values(array_diff($after['exdates'], $wantSkips));
+        // A skip this change generated lies on a day the new rule produces
+        // that is no old occurrence's image (a gain at an edge left out), and
+        // no ordinary old occurrence's image is skipped (series-model.md,
+        // Gains at the edges; the 1.5.0 review's phantom edge gains).
+        $oldSkipped = array_flip($before['exdates']);
+        $images = [];
+        $ordinaryImages = [];
+        foreach ($before['raw'] as $o) {
+            $day = $o['key'] === $acted ? $landed : $image($o['day']);
+            if ($day === null) {
+                continue;
+            }
+            $key = Oracle::keyAt($day, $time, $newTz, $newAllDay);
+            $images[$key] = true;
+            if (!isset($oldSkipped[$o['key']])) {
+                $ordinaryImages[$key] = true;
+            }
+        }
+        $newKeys = array_flip(array_column($after['raw'], 'key'));
+        $oldThrough = $before['through'];
+        foreach ($generated as $g) {
+            $this->check('3-generated', isset($newKeys[$g]) || ($through !== null && $g >= $through), 'a generated skip is a day the new rule produces', ['skip' => $g]);
+            // Past the window the old series was read over, an image can't be ruled out.
+            if ($oldThrough === null || $g < $oldThrough) {
+                $this->check('3-generated', !isset($images[$g]), 'a generated skip is no old occurrence\'s image', ['skip' => $g, 'reading' => $reading]);
+            }
+        }
+        foreach ($after['exdates'] as $ex) {
+            if (isset($ordinaryImages[$ex]) && !in_array($ex, $wantSkips, true)) {
+                $this->check('3-generated', false, 'an ordinary old occurrence\'s image is not skipped', ['skip' => $ex, 'reading' => $reading]);
+            }
+        }
         sort($wantSkips);
         $kept = array_values(array_intersect($after['exdates'], $wantSkips));
         sort($kept);
@@ -1490,7 +1601,6 @@ final class Driver
             $this->check('3-edited', $wantKey === (string) $ov1['recurrence_instance_utc'], 'an edited day is keyed on its occurrence\'s image', ['was' => $ov0['recurrence_instance_utc'], 'expected' => $wantKey, 'stored' => $ov1['recurrence_instance_utc'], 'reading' => $reading]);
             $this->checkOwn($ov0, $ov1, $choices, (string) $ov0['recurrence_instance_utc'] === $acted ? $days : null);
         }
-        unset($generated);
     }
 
     /** Invariant 4: an edited day keeps what it owns; what it inherits follows the series. */
@@ -1945,10 +2055,20 @@ final class Runner
         }
     }
 
-    /** A failure's signature: invariant, family, edit kind. */
+    /**
+     * A failure's signature: invariant, family, edit kind. A "this and
+     * following" edit from the series' first day is the whole series on the
+     * model (patchAllPlanned), not 1.4.6 code, so it is marked "@first" and
+     * no 1.5.1 key hides it.
+     */
     public static function signature(array $failure): string
     {
-        return $failure['invariant'] . ' | ' . $failure['family'] . ' | ' . $failure['edit'];
+        $edit = (string) $failure['edit'];
+        $first = ($failure['from'] ?? null) === 'first' || (int) ($failure['spec']['edit']['at'] ?? -1) === 0;
+        if ($first && str_ends_with($edit, '_following')) {
+            $edit .= '@first';
+        }
+        return $failure['invariant'] . ' | ' . $failure['family'] . ' | ' . $edit;
     }
 
     /**

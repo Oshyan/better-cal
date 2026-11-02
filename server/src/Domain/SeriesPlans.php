@@ -63,6 +63,103 @@ trait SeriesPlans
     }
 
     /**
+     * A rule sent for a series: validated, except that a series whose
+     * stored rule the expander can't read (RSCALE, X- parts) takes the sent
+     * rule to the model as it is, which refuses anything but its details
+     * with its own words (422 series_refused, acceptance case 6) instead of
+     * a 400 about the rule's syntax.
+     */
+    private static function validatedSeriesRule(array $event, string $rrule, bool $wholeSeries): string
+    {
+        if ($wholeSeries && !empty($event['rrule']) && !Calc::sabreReads((string) $event['rrule'])) {
+            try {
+                return Recurrence::validateRrule($rrule);
+            } catch (\Throwable) {
+                return trim($rrule);
+            }
+        }
+        return Recurrence::validateRrule($rrule);
+    }
+
+    /** "This and following" and delete following on a rule the expander can't read: refused, saying so. */
+    private static function refuseUnreadableSplit(array $event): void
+    {
+        if (!empty($event['rrule']) && !Calc::sabreReads((string) $event['rrule'])) {
+            throw new HttpError('series_refused', Model::REASONS['unreadable'], 422, [
+                'plan' => Model::refusedPlan($event, 'unreadable', 'following'),
+            ]);
+        }
+    }
+
+    /**
+     * An edit with all events sent to an edited day's own row, as its
+     * master takes it (Changing the Series from an Edited Day): the day's
+     * key is the day acted on, and the change the person made to where the
+     * day shows (S to S') is the change of its occurrence (K to K + the same
+     * days, at its clock time moved by the same amount). The fields ride
+     * along; the day takes them (Own Fields: a scope-all edit from that day
+     * clears the fields it sets). Adoption ("this becomes the series' day")
+     * is #189's and not offered yet.
+     *
+     * @return array{0:array,1:array} the master and the edit for it
+     */
+    private function editFromEditedDay(int $userId, array $row, array $in): array
+    {
+        $master = $this->get($userId, (int) $row['recurrence_parent_id']);
+        $masterAllDay = (int) $master['all_day'] === 1;
+        $key = Time::fromDb((string) $row['recurrence_instance_utc']);
+        $out = array_diff_key($in, array_flip(['start', 'end', 'allDay', 'tzid', 'instanceStart', 'rrule']));
+        $out['scope'] = 'all';
+        // The day acted on is this row: it takes the change where it shows.
+        $out['_fromEditedDay'] = true;
+        $out['instanceStart'] = $masterAllDay ? $key->format('Y-m-d') : Time::iso($key);
+        if (array_key_exists('rrule', $in)) {
+            $out['rrule'] = $in['rrule'];
+        }
+        $timeKeys = array_intersect_key($in, array_flip(['start', 'end', 'allDay', 'tzid']));
+        if ($timeKeys === []) {
+            return [$master, $out];
+        }
+        // Where the day shows now, and where the edit puts it.
+        $f = $this->columnPatch($row, $timeKeys, null, true);
+        $rowTz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
+        $newAllDay = (int) ($f['all_day'] ?? $row['all_day']) === 1;
+        $newTz = $newAllDay ? 'UTC' : (string) ($f['tzid'] ?? $row['tzid']);
+        $shown = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($rowTz));
+        $sent = Time::fromDb((string) ($f['start_utc'] ?? $row['start_utc']))->setTimezone(Time::zone($newTz));
+        $sentEnd = Time::fromDb((string) ($f['end_utc'] ?? $row['end_utc']));
+        $seriesTz = Time::zone($masterAllDay ? 'UTC' : (string) $master['tzid']);
+        $days = Cal::dnOf($sent->setTimezone($seriesTz)) - Cal::dnOf($shown->setTimezone($seriesTz));
+        if ($newAllDay || (int) $row['all_day'] === 1) {
+            $days = Cal::dnOf($sent) - Cal::dnOf($shown);
+        }
+        $secs = static fn(\DateTimeImmutable $t): int => (int) $t->format('G') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s');
+        $clockShift = $newAllDay || (int) $row['all_day'] === 1 ? 0 : $secs($sent) - $secs($shown);
+        $length = max(0, $sentEnd->getTimestamp() - $sent->getTimestamp());
+        $keyLocal = $key->setTimezone($seriesTz);
+        if ($newAllDay) {
+            $day = Cal::date(Cal::dnOf($keyLocal) + $days);
+            $out['start'] = $day;
+            $out['end'] = Cal::date(Cal::dnOf($keyLocal) + $days + max(1, (int) round($length / 86400)));
+        } else {
+            $wallTz = isset($in['tzid']) ? Time::zone($newTz) : $seriesTz;
+            $clock = $masterAllDay ? $secs($sent) : $secs($keyLocal) + $clockShift;
+            $dayDn = Cal::dnOf($keyLocal) + $days + intdiv($clock - ($clock % 86400 + 86400) % 86400, 86400);
+            $clock = ($clock % 86400 + 86400) % 86400;
+            $at = new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($dayDn), intdiv($clock, 3600), intdiv($clock % 3600, 60), $clock % 60), $wallTz);
+            $out['start'] = Time::iso($at);
+            $out['end'] = Time::iso($at->modify('+' . $length . ' seconds'));
+        }
+        if (isset($in['allDay'])) {
+            $out['allDay'] = $in['allDay'];
+        }
+        if (isset($in['tzid'])) {
+            $out['tzid'] = $in['tzid'];
+        }
+        return [$master, $out];
+    }
+
+    /**
      * The plan for a whole-series edit, written nowhere (preview: true).
      * The edit is the PATCH body; plan.choices may name options.
      */
@@ -75,6 +172,9 @@ trait SeriesPlans
             $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
             $in = ['calendarId' => $in['calendarId'], 'scope' => 'all', 'instanceStart' => $instance] + (isset($in['plan']) ? ['plan' => $in['plan']] : []);
             $event = $this->get($userId, (int) $event['recurrence_parent_id']);
+        } elseif (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
+            // Any other edit with all events from an edited day's own row.
+            [$event, $in] = $this->editFromEditedDay($userId, $event, $in);
         }
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || (string) ($in['scope'] ?? '') !== 'all') {
             throw HttpError::badRequest('preview is for changes to all events of a repeating series', 'preview_unavailable');
@@ -86,7 +186,7 @@ trait SeriesPlans
         $choices = is_array($in['plan']['choices'] ?? null) ? $in['plan']['choices'] : [];
         unset($in['plan'], $in['preview']);
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
-            $in['rrule'] = Recurrence::validateRrule((string) $in['rrule']);
+            $in['rrule'] = self::validatedSeriesRule($event, (string) $in['rrule'], true);
         }
         [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, false, $google !== null);
         return Model::plan($master, $rows, $edit, $choices, $opts)['plan'];
@@ -138,7 +238,14 @@ trait SeriesPlans
             'bound' => ['words' => $bound],
         ];
         if ($askedDn !== $dn) {
-            $plan['startWords'] = 'Starts ' . Words::date($dn, $year) . ', the first day it repeats on after the date you typed';
+            // "Starts Tue 2 Mar, the first Tuesday on or after the date you typed" (Creating a Series).
+            $first = 'its first day';
+            if ($rule->kind === 'weekly' && count($rule->members) === 1 && $rule->interval === 1) {
+                $first = 'the first ' . Words::day((int) $rule->members[0]);
+            } elseif ($rule->kind === 'monthly' && count($rule->members) === 1 && $rule->members[0]['t'] === 'day' && (int) $rule->members[0]['n'] > 0) {
+                $first = 'the first ' . Words::ordinal((int) $rule->members[0]['n']);
+            }
+            $plan['startWords'] = 'Starts ' . Words::date($dn, $year) . ', ' . $first . ' on or after the date you typed';
         }
         return $plan;
     }
@@ -207,6 +314,9 @@ trait SeriesPlans
                 'all_day' => (int) ($f['all_day'] ?? $occ['all_day']),
                 'tzid' => (string) ($f['tzid'] ?? $occ['tzid']),
             ];
+        }
+        if (!empty($in['_fromEditedDay'])) {
+            $edit['fromEditedDay'] = true;
         }
         if (array_key_exists('rrule', $in)) {
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];

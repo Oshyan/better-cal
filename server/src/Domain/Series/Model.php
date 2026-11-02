@@ -185,6 +185,15 @@ final class Model
         }
     }
 
+    /** The plan of a refusal for a series as it is (a split of a rule the expander can't read). */
+    public static function refusedPlan(array $master, string $code, string $scope = 'all', array $opts = []): array
+    {
+        $model = new self($master, [], [], $opts);
+        $plan = $model->refused($code)['plan'];
+        $plan['scope'] = $scope;
+        return $plan;
+    }
+
     public static function plan(array $master, array $overrides, array $edit, array $choices = [], array $opts = []): array
     {
         $model = new self($master, $overrides, $edit, $opts);
@@ -196,15 +205,39 @@ final class Model
         $result = $this->compute($choices);
         $plan = $result['plan'];
         foreach ($plan['groups'] as $gi => $group) {
+            $alts = [];
             foreach ($group['options'] as $oi => $option) {
-                if (!empty($option['disabled'])) {
+                if (empty($option['disabled'])) {
+                    $alts[$oi] = $option['id'] === $group['selected'] ? $result : $this->compute([$group['id'] => $option['id']] + $result['selected']);
+                }
+            }
+            $consequence = in_array($group['id'], ['reading', 'zone'], true);
+            $nexts = [];
+            foreach ($alts as $oi => $alt) {
+                $nexts[$oi] = array_slice($alt['nextDates'], 0, 3);
+            }
+            // Options that agree on their next dates show where they part
+            // instead: their first dates after the day acted on that differ,
+            // or their ends (series-model.md, The Plan, line 3). Readings and
+            // zones say it in their words.
+            if (!$consequence && count($alts) > 1 && count(array_unique(array_map('json_encode', $nexts))) === 1) {
+                $nexts = $this->partingDates($alts) ?? $nexts;
+            }
+            foreach ($group['options'] as $oi => $option) {
+                if (!isset($alts[$oi])) {
+                    if ($consequence) {
+                        $plan['groups'][$gi]['options'][$oi]['words'] = '';
+                    }
                     continue;
                 }
-                $alt = $option['id'] === $group['selected'] ? $result : $this->compute([$group['id'] => $option['id']] + $result['selected']);
-                $plan['groups'][$gi]['options'][$oi]['next'] = array_slice($alt['nextDates'], 0, 3);
+                $alt = $alts[$oi];
+                $plan['groups'][$gi]['options'][$oi]['next'] = $nexts[$oi];
                 $plan['groups'][$gi]['options'][$oi]['bound'] = ['words' => $alt['plan']['bound']['words']];
                 if ($option['id'] !== $group['selected']) {
                     $plan['groups'][$gi]['options'][$oi]['differs'] = $this->differs($alt, $result);
+                }
+                if ($consequence) {
+                    $plan['groups'][$gi]['options'][$oi]['words'] = $group['id'] === 'zone' ? $this->zoneWords($alt) : $this->readingWords($alt, $alts);
                 }
             }
         }
@@ -232,6 +265,51 @@ final class Model
         ];
     }
 
+    /**
+     * For options with the same next dates: each one's first three dates
+     * after the day acted on where they part, or, when they agree from
+     * there on, the last three dates of each (its end). Null when even
+     * those agree.
+     *
+     * @param array<int,array> $alts
+     * @return array<int,list<string>>|null
+     */
+    private function partingDates(array $alts): ?array
+    {
+        $seqs = [];
+        foreach ($alts as $oi => $alt) {
+            $calc = $alt['meta']['calc'] ?? null;
+            if (!$calc instanceof Calc) {
+                return null;
+            }
+            [$bounded, $periods] = $alt['walk'];
+            $days = $bounded ?? $periods;
+            $seqs[$oi] = ['days' => $days, 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
+        }
+        $iso = fn(Calc $c, int $d): string => Time::iso($c->instant($d)->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $c->tz)));
+        $after = [];
+        foreach ($seqs as $oi => $s) {
+            $after[$oi] = array_values(array_filter($s['days'], static fn(int $d): bool => $d > $s['landed']));
+        }
+        $first = reset($after);
+        $len = max(array_map('count', $after));
+        for ($i = 0; $i < $len; $i++) {
+            $col = array_map(static fn(array $a): ?int => $a[$i] ?? null, $after);
+            if (count(array_unique(array_map('json_encode', $col))) > 1) {
+                $out = [];
+                foreach ($after as $oi => $a) {
+                    $out[$oi] = array_map(fn(int $d): string => $iso($seqs[$oi]['calc'], $d), array_slice($a, $i, 3));
+                }
+                return $out;
+            }
+        }
+        unset($first);
+        $ends = [];
+        foreach ($seqs as $oi => $s) {
+            $ends[$oi] = array_map(fn(int $d): string => $iso($s['calc'], $d), array_slice($s['days'], -3));
+        }
+        return count(array_unique(array_map('json_encode', $ends))) > 1 ? $ends : null;
+    }
     private function hash(array $selected): string
     {
         $rows = [];
@@ -258,6 +336,14 @@ final class Model
                     return ['dates' => [Cal::date($ab[$i])], 'words' => ($i >= 3 ? 'the same ' . $i . ' dates; ' : '') . 'parts on ' . Words::dayMonth(min($ab[$i], $bb[$i]), $this->thisYear)];
                 }
             }
+            if ($ab !== null && $bb !== null && $ab !== [] && $bb !== []) {
+                // One ends where the other goes on: say where each ends.
+                $last = $ab[count($ab) - 1];
+                $separate = !empty($alt['meta']['separate']) ? ', and ' . Words::dayMonth((int) $alt['meta']['landed'], $this->thisYear) . ' separately' : '';
+                return count($ab) < count($bb)
+                    ? ['dates' => [Cal::date($last)], 'words' => 'ends ' . Words::dayMonth($last, $this->thisYear) . $separate]
+                    : ['dates' => array_map([Cal::class, 'date'], array_slice($ab, count($bb), 3)), 'words' => 'on to ' . Words::dayMonth($last, $this->thisYear) . $separate];
+            }
             return ['dates' => [], 'words' => count($ab ?? []) > count($bb ?? []) ? 'more events' : 'fewer events'];
         }
         $same = $ab !== null ? 'the same ' . count($ab) . ' dates; if extended, ' : '';
@@ -268,6 +354,202 @@ final class Model
             }
         }
         return ['dates' => [], 'words' => 'the same dates; its edited and skipped days differ'];
+    }
+
+    /**
+     * A reading's consequence, beside its dates (The Plan, line 3): what it
+     * drops or adds that the others don't ("drops 5 months a year, first
+     * 15 Feb's", "in February: 28 Feb, and 29 Feb 2028"), and where its
+     * dates are the others' too, what else sets it apart (its start, its
+     * edited days).
+     *
+     * @param array<int,array> $alts every enabled reading's plan
+     */
+    private function readingWords(array $alt, array $alts): string
+    {
+        $meta = $alt['meta'] ?? null;
+        if ($meta === null) {
+            return '';
+        }
+        /** @var Rule $rule */
+        $rule = $meta['rule'];
+        $start = (int) $meta['start'];
+        $y = $this->thisYear;
+        $bounded = $alt['walk'][0];
+        $others = array_filter($alts, static fn(array $a): bool => $a !== $alt);
+        $sameSeries = $bounded !== null && $others !== [] && array_reduce($others, static fn(bool $c, array $a): bool => $c && $a['walk'][0] === $bounded, true);
+        $sameNext = $others !== [] && array_reduce($others, static fn(bool $c, array $a): bool => $c && array_slice($a['nextDates'], 0, 3) === array_slice($alt['nextDates'], 0, 3), true);
+        $monthEnd = $this->monthEndWords($rule, $meta, $alts, $sameSeries);
+        if ($monthEnd !== null) {
+            return $sameSeries ? 'the same ' . count($bounded) . ' dates; if extended, ' . $monthEnd : $monthEnd;
+        }
+        $parts = [];
+        $was = $start !== $this->old->startDn;
+        if ($sameNext) {
+            $parts[] = 'starts ' . Words::date($start, $y);
+        } elseif ($was) {
+            $parts[] = 'starts ' . Words::date($start, $y) . ' (was ' . Words::date($this->old->startDn, $y) . ')';
+        }
+        $calc = $meta['calc'];
+        $endsApart = $calc instanceof Calc && array_reduce($others, static fn(bool $c, array $a): bool => $c || !($a['meta']['calc'] ?? null) instanceof Calc || $a['meta']['calc']->last() !== $calc->last(), false);
+        if ($endsApart && $calc->bounded() && $this->old->bounded() && $calc->last() !== $this->old->last() && $calc->last() !== null) {
+            $parts[] = 'ends ' . Words::date((int) $calc->last(), $y);
+        }
+        // Edited days that land differently under the other readings.
+        $edited = [];
+        foreach ($alt['plan']['days'] as $d) {
+            if ($d['kind'] !== 'edited' || $d['newKey'] === null) {
+                continue;
+            }
+            $differs = false;
+            foreach ($others as $o) {
+                foreach ($o['plan']['days'] as $od) {
+                    if ($od['kind'] === 'edited' && $od['key'] === $d['key'] && $od['newKey'] !== $d['newKey']) {
+                        $differs = true;
+                    }
+                }
+            }
+            if ($differs && $calc instanceof Calc) {
+                $dn = $calc->dnOf(str_replace(['T', 'Z'], [' ', ''], (string) $d['newKey']));
+                $name = isset($d['title']) && $d['title'] !== '' ? "'" . $d['title'] . "'" : Words::date($this->old->dnOf(str_replace(['T', 'Z'], [' ', ''], (string) $d['key'])), $y);
+                $edited[] = $name . ($d['outcome'] === 'stays' ? ' stays on ' : ' moves to ') . Words::date($dn, $y);
+            }
+        }
+        $text = implode('; ', $parts);
+        if ($edited !== []) {
+            $text .= ($text === '' ? '' : ', ') . Words::andList($edited);
+        }
+        return $sameNext && $text !== '' ? 'the same 3 dates; ' . $text : $text;
+    }
+
+    /** The month-end readings' consequences (Month Ends in the examples), or null for another reading. */
+    private function monthEndWords(Rule $rule, array $meta, array $alts, bool $extended): ?string
+    {
+        $y = $this->thisYear;
+        $mem = $rule->members[0] ?? null;
+        if ($mem === null || count($rule->members) !== 1 || !in_array($rule->kind, ['monthly', 'yearly'], true)) {
+            return null;
+        }
+        $t = (string) $mem['t'];
+        $n = (int) $mem['n'];
+        $from = (int) $meta['start'];
+        $lost = (array) $meta['lost'];
+        sort($lost);
+        $firstLost = $lost !== [] ? Words::dayMonth((int) $lost[0], $y) . '\'s' : null;
+        if ($rule->kind === 'yearly') {
+            if ($t === 'day' && $n === 29 && $rule->months === [2]) {
+                return 'drops three years in four';
+            }
+            return null;
+        }
+        if ($t === 'clamp') {
+            if ($extended) {
+                return '28 or 29 Feb';
+            }
+            [$fy] = Cal::ymd($from);
+            $febs = [];
+            for ($yy = $fy; $yy < $fy + 9 && count($febs) < 2; $yy++) {
+                $d = $rule->evalMember($mem, $yy, 2);
+                $dn = $d === null ? null : Cal::dn($yy, 2, $d);
+                if ($dn !== null && $dn >= $from && ($febs === [] || Cal::ymd($febs[0])[2] !== $d)) {
+                    $febs[] = $dn;
+                }
+            }
+            return 'in February: ' . implode(', and ', array_map(static fn(int $dn): string => Words::dayMonth($dn, $y), $febs));
+        }
+        if ($t === 'day' && $n >= 29) {
+            $months = match ($n) {
+                29 => 'February in three years of four',
+                30 => 'every February',
+                default => '5 months a year',
+            };
+            if ($extended) {
+                return $n === 31 ? 'none in shorter months' : 'none in February' . ($n === 29 ? ' in three years of four' : '');
+            }
+            if ($rule->interval > 1) {
+                return $firstLost !== null ? 'drops some months\' events, first ' . $firstLost : 'drops the months without a ' . Words::ordinal($n);
+            }
+            if ($n === 31) {
+                return 'drops ' . $months . ($firstLost !== null ? ', first ' . $firstLost : '');
+            }
+            return $firstLost !== null ? 'none in February: drops ' . $firstLost . ' event, then ' . $months : 'drops ' . $months;
+        }
+        if ($t === 'day' && $n === -1) {
+            // The last day beside a reading on the 30th: it moves to the 31st in longer months.
+            foreach ($alts as $a) {
+                $m = $a['meta']['rule']->members[0] ?? null;
+                if ($m !== null && (int) $m['n'] === 30 && in_array($m['t'], ['day', 'clamp'], true)) {
+                    return 'the 31st in longer months';
+                }
+            }
+            return '';
+        }
+        return null;
+    }
+
+    /**
+     * A zone option's consequence (Zones, DST and All-Day Days): its clock in
+     * the new zone, and in the old one, with the dates whose clock there
+     * differs ("every Monday at 18:00 Berlin time; 09:00 in Los Angeles,
+     * 10:00 on 15 and 22 Mar and 1 Nov"), over the year from the day acted on.
+     */
+    private function zoneWords(array $alt): string
+    {
+        $calc = $alt['meta']['calc'] ?? null;
+        if (!$calc instanceof Calc) {
+            return '';
+        }
+        $rule = $alt['meta']['rule'];
+        $from = (int) $alt['meta']['landed'];
+        $clock = $calc->clock;
+        $every = $rule->kind === 'weekly' && $rule->interval === 1
+            ? 'every ' . Words::andList(array_map([Words::class, 'day'], Rule::sortedDays($rule->members, 0)))
+            : Words::lower(Words::rule($rule));
+        $head = sprintf('%s at %02d:%02d %s time', $every, $clock[0], $clock[1], self::zoneName($calc->tz));
+        $oldZone = Time::zone($this->tz0);
+        $byClock = [];
+        $sameDay = true;
+        foreach ($calc->occurrences($from + 366, 120) as $d) {
+            if ($d < $from) {
+                continue;
+            }
+            $local = $calc->instant($d)->setTimezone($oldZone);
+            $key = $local->format('H:i');
+            $byClock[$key][] = Cal::dnOf($local);
+            if (Cal::dnOf($local) !== $d) {
+                $sameDay = false;
+                $wd = Words::day(Cal::wd(Cal::dnOf($local)));
+            }
+        }
+        if ($byClock === []) {
+            return $head;
+        }
+        uasort($byClock, static fn(array $a, array $b): int => count($b) <=> count($a));
+        $base = (string) array_key_first($byClock);
+        $tail = $base . ($sameDay ? '' : ' ' . ($wd ?? '')) . ' in ' . self::zoneName($this->tz0);
+        $rest = [];
+        foreach ($byClock as $c => $dns) {
+            if ($c !== $base) {
+                $rest[] = $c . ' on ' . self::datesWords($dns);
+            }
+        }
+        return $head . '; ' . $tail . ($rest === [] ? '' : ', ' . implode(', ', $rest));
+    }
+
+    /** "15 and 22 Mar and 1 Nov": dates grouped by month. @param list<int> $dns */
+    private static function datesWords(array $dns): string
+    {
+        sort($dns);
+        $groups = [];
+        foreach ($dns as $dn) {
+            [$yy, $m, $d] = Cal::ymd($dn);
+            $groups[sprintf('%04d-%02d', $yy, $m)][] = $d;
+        }
+        $out = [];
+        foreach ($groups as $ym => $days) {
+            $out[] = Words::andList(array_map('strval', $days)) . ' ' . substr(Words::monthName((int) substr($ym, 5, 2)), 0, 3);
+        }
+        return count($out) > 4 ? implode(', ', array_slice($out, 0, 4)) . ' and ' . (count($out) - 4) . ' more months' : Words::andList($out);
     }
 
     // ---- one plan for one set of choices ----------------------------------
@@ -314,14 +596,16 @@ final class Model
         }
         $options = [];
         $default = null;
-        foreach ($readings as $r) {
+        foreach ($readings as $ri => $r) {
             $opt = ['id' => $r['id'], 'label' => $r['label']];
             // On Google until 1.5.2: only a reading that keeps the rule text
-            // as written (a list only as its whole-pattern shift).
+            // as written (a list only as its whole-pattern shift). Marked on
+            // the list itself, so a refusal of every reading gives this reason.
             if ($this->google && ($r['rule']->pattern() !== $this->r0->pattern() || $r['id'] === 'member') && ($this->kind === 'drag' || $delta !== 0)) {
                 $r['disabled'] = true;
                 $r['code'] = 'google';
                 $r['reason'] = self::REASONS['google'];
+                $readings[$ri] = $r;
             }
             if (!empty($r['disabled'])) {
                 $opt += ['disabled' => true, 'reason' => $r['reason']];
@@ -332,8 +616,14 @@ final class Model
             $options[] = $opt;
         }
         if ($default === null) {
-            $code = $readings[0]['code'] ?? 'dayset';
-            return $this->refused($code, $readings[0]['reason'] ?? null);
+            $why = $readings[0];
+            foreach ($readings as $r) {
+                if (($r['code'] ?? null) === 'google') {
+                    $why = $r;
+                    break;
+                }
+            }
+            return $this->refused($why['code'] ?? 'dayset', $why['reason'] ?? null);
         }
         $readings = $this->merged($readings, $delta, $clock1, $landedDn);
         $options = array_values(array_filter($options, static function (array $o) use ($readings): bool {
@@ -567,6 +857,29 @@ final class Model
         foreach ($oldOcc as $dn) {
             $images[$dn] = $image($dn, $this->r0->supported() ? $this->r0->memberOf($dn) : null);
         }
+        // An unbounded series is read to a horizon, so the new rule's days are
+        // only known to correspond to old ones up to there. Read on by the
+        // furthest an image moved (and a span more), so every old occurrence
+        // whose image falls before the horizon is among those read, and look
+        // for gains only up to the horizon: past it a day of the new rule may
+        // be the image of an old occurrence not read (Gains at the edges: an
+        // unbounded series has no last period).
+        $gainTo = PHP_INT_MAX;
+        if (!$newRule && !$this->old->bounded()) {
+            $readTo = max($horizon, $oldOcc === [] ? $horizon : (int) max($oldOcc));
+            $shift = 0;
+            foreach ($images as $dn => $img) {
+                if ($img !== null) {
+                    $shift = max($shift, abs($img - $dn));
+                }
+            }
+            $oldOcc = $this->old->occurrences($readTo + $shift + $span);
+            $images = [];
+            foreach ($oldOcc as $dn) {
+                $images[$dn] = $image($dn, $this->r0->supported() ? $this->r0->memberOf($dn) : null);
+            }
+            $gainTo = $readTo;
+        }
         if (!$newRule) {
             $images[$this->actedDn0] = $landedDn;
         }
@@ -588,7 +901,7 @@ final class Model
         $edgeGains = [];
         $gains = [];
         if (!$newRule && $imageSet !== []) {
-            $to = (int) $latest;
+            $to = min((int) $latest, $gainTo);
             $periodsWithImage = [];
             foreach ($imageSet as $d) {
                 $periodsWithImage[$r1p->periodOf($d)] = true;
@@ -605,14 +918,23 @@ final class Model
             }
         }
         $genSkips = [];
+        $edgeAt = [];
         if ($edgeGains !== [] && !$this->google) {
-            $second = array_values(array_unique($imageSet));
-            sort($second);
-            $atStart = $edgeGains[0] < ($second[1] ?? PHP_INT_MAX);
+            // An unbounded series has no last period: its gains are at the start.
+            $mid = $this->old->bounded() ? intdiv(min($imageSet) + (int) $latest, 2) : PHP_INT_MAX;
+            $edgeAt = [];
+            foreach ($edgeGains as $g) {
+                $edgeAt[$g] = $g <= $mid ? 'start' : 'end';
+            }
+            $noun = match ($r1p->kind) {
+                'daily' => 'day', 'monthly' => 'month', 'yearly' => 'year', default => 'week',
+            };
+            $sides = array_values(array_unique($edgeAt));
+            $edgeLabel = count($sides) > 1 ? 'First and last ' . $noun : ($sides[0] === 'start' ? 'First ' : 'Last ') . $noun;
             $gainWords = Words::andList(array_map(fn(int $d): string => Words::date($d, $this->thisYear), $edgeGains));
             // Leaving a gained day out keeps every old event's image with
             // nothing else lost, so it comes first (fourth review).
-            $edge = $this->pick('edge', $atStart ? 'First period' : 'Last period', [
+            $edge = $this->pick('edge', $edgeLabel, [
                 ['id' => 'without', 'label' => 'Don\'t add ' . $gainWords],
                 ['id' => 'add', 'label' => 'Add ' . $gainWords],
             ], 'without');
@@ -708,7 +1030,9 @@ final class Model
                 $nk = $calc1->key($g);
                 $newExdates[] = $nk;
                 $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated',
-                    'words' => Words::date($g, $this->thisYear) . ' skipped, so the series ' . ($g < (int) $latest ? 'starts as before' : 'ends as before')];
+                    'words' => Words::date($g, $this->thisYear) . (($edgeAt[$g] ?? 'start') === 'start' && $newStart === $this->old->startDn
+                        ? ' skipped, so the series starts as before'
+                        : ' skipped: no event of the series was on it')];
             }
         }
         $newExdates = array_values(array_unique($newExdates));
@@ -722,7 +1046,7 @@ final class Model
             foreach ($this->rows as $id => $row) {
                 $key = (string) $row['recurrence_instance_utc'];
                 $odn = $this->old->dnOf($key);
-                if (!$newRule && $key === $this->acted) {
+                if (!$newRule && $this->kind !== 'bound' && $key === $this->acted) {
                     $actedRowId = $id;
                     if (!$separate) {
                         $placeRows[$id] = $landedDn;
@@ -831,7 +1155,7 @@ final class Model
             $own = $this->ownOf($row);
             // The day acted on moves the way the series does: its own date by
             // the drag's days (where it shows, so it lands where dropped).
-            [$start, $end, $allDay, $tz] = $this->place($row, $own, (int) $img, $calc1, $clock1, $moveOwnDates || $id === $actedRowId);
+            [$start, $end, $allDay, $tz] = $this->place($row, $own, (int) $img, $calc1, $clock1, $moveOwnDates || $id === $actedRowId, $id === $actedRowId);
             $cols = [];
             $put = function (string $col, mixed $value) use (&$cols, $row): void {
                 if ((string) ($row[$col] ?? '') !== (string) ($value ?? '')) {
@@ -845,7 +1169,9 @@ final class Model
             $put('tzid', $tz);
             $ownAfter = $own;
             foreach ($this->changed as $field => $fcols) {
-                $inherits = !in_array($field, $own, true) || !empty($give[$field]);
+                // The day acted on takes the edit's fields: from that day, an
+                // edit for all events means the series' value (Own Fields).
+                $inherits = ($id === $actedRowId && !empty($this->edit['fromEditedDay'])) || !in_array($field, $own, true) || !empty($give[$field]);
                 if (!$inherits) {
                     continue;
                 }
@@ -879,7 +1205,10 @@ final class Model
             if (in_array('date', $own, true) && $wasShown !== $odn) {
                 $words = Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($wasShown, $this->thisYear) . ': ' . ($moveOwnDates ? 'moves to ' . Words::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))), $this->thisYear) : 'stays there');
             } else {
-                $words = $name . Words::date($odn, $this->thisYear) . ($moved ? ' moves to ' . Words::date((int) $img, $this->thisYear) : ' stays') . $keepsWords;
+                // A day that keeps its date and changes its time says the time.
+                $localStart = $start->setTimezone(Time::zone($allDay ? 'UTC' : $tz));
+                $to = Cal::dnOf($localStart) === $wasShown && !$allDay ? $localStart->format('H:i') : Words::date((int) $img, $this->thisYear);
+                $words = $name . Words::date($odn, $this->thisYear) . ($moved ? ' moves to ' . $to : ' stays') . $keepsWords;
             }
             $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $calc1->key((int) $img), 'kind' => 'edited',
                 'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays', 'words' => $words];
@@ -906,7 +1235,8 @@ final class Model
             } else {
                 $create[] = $placed;
             }
-            $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => $actedRowId !== null ? 'edited' : 'acted', 'outcome' => 'separate',
+            $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => $actedRowId !== null ? 'edited' : 'acted', 'outcome' => 'separate']
+                + ($actedRowId !== null ? ['title' => (string) $this->rows[$actedRowId]['title']] : []) + [
                 'words' => 'This one, ' . Words::date($landedDn, $this->thisYear) . ', becomes an event of its own'];
         }
 
@@ -916,14 +1246,27 @@ final class Model
         $walkCalc = $calc1;
         $walk = $this->walk($walkCalc, $genSkips);
         $boundKey = [$r1->count, $r1->until];
-        [$boundKind, $boundWords] = $this->boundWords($r1, $calc1, $oldOcc, $separate, $outside === 'keep' ? count($outsideRows) : 0);
-        if ($all1 !== null && $newExdates !== []) {
-            // Skipped days count toward COUNT (RFC 5545 3.8.5.3): the line says how many show.
-            $skippedIn = count(array_intersect(array_map(static fn(int $d): string => $calc1->key($d), $all1), $newExdates));
-            if ($skippedIn > 0) {
-                $boundWords .= '; ' . (count($all1) - $skippedIn) . ' scheduled occurrence' . (count($all1) - $skippedIn === 1 ? '' : 's') . ', ' . $skippedIn . ' skipped';
+        // Skipped days count toward COUNT (RFC 5545 3.8.5.3): the line counts
+        // the series' scheduled occurrences (a skip this change generates is
+        // no event of the series) and says how many of them were skipped.
+        $genKeys = array_flip(array_map(static fn(int $d): string => $calc1->key($d), $genSkips));
+        $personSkipped = 0;
+        if ($all1 !== null) {
+            $skipSet = array_flip($newExdates);
+            foreach ($all1 as $d) {
+                $k = $calc1->key($d);
+                if (isset($skipSet[$k]) && !isset($genKeys[$k])) {
+                    $personSkipped++;
+                }
             }
         }
+        $lossDays = [];
+        foreach ($images as $dn => $img) {
+            if (!$newRule && $img !== null && $dn !== $this->actedDn0 && !$calc1->isOccurrence($img)) {
+                $lossDays[] = $img;
+            }
+        }
+        [$boundKind, $boundWords] = $this->boundWords($r1, $calc1, $oldOcc, $separate, $outside === 'keep' ? count($outsideRows) : 0, count($genSkips), $personSkipped, $lossDays);
         $losses = [];
         foreach ($images as $dn => $img) {
             if ($img === null || !$calc1->isOccurrence($img)) {
@@ -932,7 +1275,9 @@ final class Model
                 }
             }
         }
-        $gainList = array_map(fn(int $d): array => ['date' => Cal::date($d), 'words' => 'Adds ' . Words::dayMonth($d, $this->thisYear)], array_values(array_diff(array_merge($gains, $genSkips === [] ? $edgeGains : []), [])));
+        // A gain past the new end is no gain (P2-6: "Keep 6 events" adds nothing after its sixth).
+        $gainList = array_map(fn(int $d): array => ['date' => Cal::date($d), 'words' => 'Adds ' . Words::dayMonth($d, $this->thisYear)],
+            array_values(array_filter(array_merge($gains, $genSkips === [] ? $edgeGains : []), $inside)));
         $next = $this->next($calc1, $newExdates, $placeRows, $overrideWrites, $landedDn, $separate);
         $nextDates = array_map(static fn(array $n): string => $n['start'], $next);
         if ($this->google) {
@@ -954,7 +1299,13 @@ final class Model
         $detachCount = count(array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited'));
         $ownership = null;
         if ($detachCount > 0) {
-            $names = array_values(array_map(fn(array $d): string => "'" . ($d['title'] ?? '') . "' on " . Words::dayMonth($this->old->dnOf(str_replace(['T', 'Z'], [' ', ''], (string) $d['key'])), $this->thisYear),
+            // Each named where it shows, as its day line names it.
+            $shownOf = [];
+            foreach ($this->rows as $row) {
+                $shownOf[(string) $row['recurrence_instance_utc']] = $this->shownDn($row);
+            }
+            $names = array_values(array_map(fn(array $d): string => "'" . ($d['title'] ?? '') . "' on "
+                . Words::dayMonth($d['key'] === $this->acted ? $landedDn : ($shownOf[(string) $d['key']] ?? $this->old->dnOf((string) $d['key'])), $this->thisYear),
                 array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited')));
             $summary .= ' ' . ($detachCount === 1 ? 'One edited day became an event of its own: ' : Words::count($detachCount) . ' edited days became events of their own: ') . Words::andList($names) . '.';
             // The dialog's sentence (series-model.md, The Plan, line 7).
@@ -1000,6 +1351,12 @@ final class Model
             'nextDates' => $nextDates,
             'walk' => $walk,
             'boundKey' => $boundKey,
+            // For the options' consequence words (optionWords).
+            'meta' => [
+                'reading' => (string) $reading['id'], 'rule' => $r1, 'calc' => $calc1, 'start' => $newStart, 'landed' => $landedDn,
+                'lost' => array_keys(array_filter($images, static fn($x): bool => $x === null)),
+                'separate' => $separate, 'clock' => $clock1,
+            ],
         ];
     }
 
@@ -1038,35 +1395,40 @@ final class Model
         return max(1, $a);
     }
 
-    /** @return array{0:string,1:string} the bound's kind and words */
-    private function boundWords(Rule $r1, Calc $calc1, array $oldOcc, bool $separate, int $kept): array
+    /**
+     * The bound's kind and words: "5 events, ends 22 Jan (was 20 Jan)",
+     * "Changes 6 events to 10, ends 1 Nov", "5 scheduled occurrences, 1
+     * skipped, ends 22 Jan (was 20 Jan)". A skip this change generates is no
+     * event of the series, so it isn't counted; a skip the person made is
+     * one of the scheduled occurrences (series-model.md, Bounds).
+     *
+     * @param list<int> $lossDays old events' images the new bound leaves out
+     * @return array{0:string,1:string}
+     */
+    private function boundWords(Rule $r1, Calc $calc1, array $oldOcc, bool $separate, int $kept, int $generated, int $personSkipped, array $lossDays): array
     {
         $extra = ($separate ? 1 : 0) + $kept;
-        $plus = $extra > 0 ? ' (' . $r1->count . ' in the series + ' . $extra . ' separate)' : '';
         if ($r1->count === null && $r1->until === null) {
             return ['none', $this->r0->count === null && $this->r0->until === null ? 'No end, as before' : 'No end'];
         }
         $last = $calc1->last();
         $was = $this->old->bounded() ? $this->old->last() : null;
-        $n = count($calc1->all());
+        $n = count($calc1->all()) - $generated;
         $ends = $last !== null ? 'ends ' . Words::dayMonth($last, $this->thisYear) : '';
         $wasWords = $was !== null && $last !== null && $was !== $last ? ' (was ' . Words::dayMonth($was, $this->thisYear) . ')' : '';
+        $scheduled = $n . ' scheduled occurrence' . ($n === 1 ? '' : 's') . ', ' . $personSkipped . ' skipped';
+        $lost = count($lossDays) === 1 ? '; ' . Words::date($lossDays[0], $this->thisYear) . ' has no place' : '';
         if ($r1->count !== null) {
-            $oldN = $this->r0->count ?? count($oldOcc);
-            $plus = $extra > 0 ? '; ' . $r1->count . ' in the series + ' . $extra . ' separate' : '';
-            if ($this->r0->count !== null && $oldN !== $r1->count) {
-                return ['count', 'Changes ' . Words::events($oldN) . ' to ' . $r1->count . ', ' . $ends . $plus];
+            $oldN = (int) ($this->r0->count ?? count($oldOcc));
+            $plus = $extra > 0 ? '; ' . $n . ' in the series + ' . $extra . ' separate' : '';
+            if ($this->r0->count !== null && $oldN !== $n) {
+                return ['count', 'Changes ' . Words::events($oldN) . ' to ' . $n . ', ' . $ends . ($personSkipped > 0 ? '; ' . $scheduled : '') . $plus];
             }
-            return ['count', Words::events($r1->count) . ', ' . $ends . $wasWords . $plus];
+            return ['count', ($personSkipped > 0 ? $scheduled : Words::events($n)) . ', ' . $ends . $wasWords . $lost . $plus];
         }
         $oldN = count($oldOcc);
-        $why = '';
-        if ($wasWords !== '' && $was !== null) {
-            $wasImage = null;
-            $why = '';
-        }
-        unset($wasImage);
-        return ['until', Words::upper($ends) . $wasWords . ($n !== $oldN && $this->r0->until !== null ? '; ' . Words::events($n) . ($oldN !== $n ? ' (was ' . $oldN . ')' : '') : '') . $why . ($extra > 0 ? '; ' . $extra . ' separate' : '')];
+        $counted = $n !== $oldN && $this->r0->until !== null ? '; ' . Words::events($n) . ' (was ' . $oldN . ')' : '';
+        return ['until', Words::upper($ends) . $wasWords . $counted . ($personSkipped > 0 ? '; ' . $scheduled : '') . $lost . ($extra > 0 ? '; ' . $extra . ' separate' : '')];
     }
 
     /** The next four events as they will show, from the day acted on. */
@@ -1148,6 +1510,7 @@ final class Model
         return str_replace('_', ' ', (string) end($parts));
     }
 
+    /** A changed field's line, before and after: "Title: Choir, now Chorus", "Reminder: 1 hour before, now 30 minutes". */
     private function fieldWords(string $field, array $cols): string
     {
         $name = Words::upper(self::OWN_WORDS[$field]);
@@ -1158,12 +1521,58 @@ final class Model
             return 'People changed';
         }
         $col = array_key_first($cols);
-        $was = (string) ($this->master[$col] ?? '');
-        $now = (string) ($cols[$col] ?? '');
-        if ($field === 'description' || $field === 'reminders') {
-            return $name . ' changed';
+        $was = $this->master[$col] ?? null;
+        $now = $cols[$col] ?? null;
+        if ($field === 'reminders') {
+            $a = self::reminderWords($was);
+            $b = self::reminderWords($now);
+            $one = count(\BetterCal\Domain\Reminders::decode($was) ?? [0]) <= 1 && count(\BetterCal\Domain\Reminders::decode($now) ?? [0]) <= 1;
+            if (str_ends_with($a, ' before') && str_ends_with($b, ' before')) {
+                $b = substr($b, 0, -7);
+            }
+            return ($one ? 'Reminder' : 'Reminders') . ': ' . $a . ', now ' . $b;
         }
-        return $name . ': ' . ($was === '' ? 'none' : $was) . ', now ' . ($now === '' ? 'none' : $now);
+        $short = static function (?string $v): string {
+            $v = trim(preg_replace('/\s+/', ' ', (string) $v) ?? '');
+            if ($v === '') {
+                return 'none';
+            }
+            return mb_strlen($v) > 40 ? rtrim(mb_substr($v, 0, 39)) . '…' : $v;
+        };
+        if ($field === 'status') {
+            $short = static fn(?string $v): string => (string) $v === 'tentative' ? 'maybe' : 'planned';
+        }
+        return $name . ': ' . $short($was === null ? null : (string) $was) . ', now ' . $short($now === null ? null : (string) $now);
+    }
+
+    /** "1 hour before", "30 minutes before and 1 day before at 18:00", "the default", "none". */
+    private static function reminderWords(mixed $json): string
+    {
+        $list = \BetterCal\Domain\Reminders::decode($json);
+        if ($list === null) {
+            return 'the default';
+        }
+        if ($list === []) {
+            return 'none';
+        }
+        $out = [];
+        foreach ($list as $r) {
+            if (is_array($r) && isset($r['daysBefore'], $r['time'])) {
+                $d = (int) $r['daysBefore'];
+                $out[] = ($d === 0 ? 'the same day' : ($d === 1 ? '1 day before' : $d . ' days before')) . ' at ' . (string) $r['time'];
+                continue;
+            }
+            $m = (int) (is_array($r) ? ($r['minutes'] ?? 0) : $r);
+            $unit = static fn(int $n, string $u): string => $n . ' ' . $u . ($n === 1 ? '' : 's') . ' before';
+            $out[] = match (true) {
+                $m === 0 => 'at the start',
+                $m % 10080 === 0 => $unit(intdiv($m, 10080), 'week'),
+                $m % 1440 === 0 => $unit(intdiv($m, 1440), 'day'),
+                $m % 60 === 0 => $unit(intdiv($m, 60), 'hour'),
+                default => $unit($m, 'minute'),
+            };
+        }
+        return Words::andList($out);
     }
 
     /** An edited row's own fields: as stored, or by equality when it has no list yet. @return list<string> */
@@ -1190,7 +1599,7 @@ final class Model
      *
      * @return array{0:\DateTimeImmutable,1:\DateTimeImmutable,2:bool,3:string}
      */
-    private function place(array $row, array $own, int $img, Calc $calc1, array $clock1, bool $moveOwnDates): array
+    private function place(array $row, array $own, int $img, Calc $calc1, array $clock1, bool $moveOwnDates, bool $acted = false): array
     {
         $rowAllDay = (int) $row['all_day'] === 1;
         $rowTz = $rowAllDay ? 'UTC' : (string) $row['tzid'];
@@ -1211,6 +1620,15 @@ final class Model
         if (in_array('time', $own, true) && !$rowAllDay) {
             $tz = (string) $row['tzid'];
             $clock = [(int) $shown->format('G'), (int) $shown->format('i'), (int) $shown->format('s')];
+            if ($acted && !empty($this->edit['fromEditedDay']) && !$this->allDay0 && !$this->allDay1) {
+                // The day acted on at its own time moves by the clock change
+                // too, so it shows where it was dropped.
+                $shift = ($clock1[0] - $this->clock0[0]) * 3600 + ($clock1[1] - $this->clock0[1]) * 60 + ($clock1[2] - $this->clock0[2]);
+                $sec = $clock[0] * 3600 + $clock[1] * 60 + $clock[2] + $shift;
+                $date += intdiv($sec - (($sec % 86400) + 86400) % 86400, 86400);
+                $sec = (($sec % 86400) + 86400) % 86400;
+                $clock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
+            }
         } else {
             $tz = $this->allDay1 ? (string) $row['tzid'] : $this->tz1;
             $clock = $this->allDay1 ? [(int) $shown->format('G'), (int) $shown->format('i'), (int) $shown->format('s')] : $clock1;

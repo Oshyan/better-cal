@@ -252,18 +252,23 @@ final class ReviewQueue
      * nothing to decide, or null when nothing is known of the series yet,
      * so a cancelled day arriving before it waits for it
      * (MailIngest::applyImipEvent). The owner dismissed its invitation in
-     * Review, or deleted the series: a cancelled day of either would wait
-     * for a series that is not coming back, and the day isn't shown anyway.
-     * A dismissal is read first: a series added, then taken back by undo
-     * and dismissed, was dismissed, not deleted.
+     * Review, the organizer cancelled it while it waited (cancelWaiting),
+     * or the owner deleted the series: a cancelled day of any of these
+     * would wait for a series that is not coming back, and the day isn't
+     * shown anyway. The latest closed invitation decides between the first
+     * two, and either is read before a deletion: a series added, then
+     * taken back by undo and dismissed, was dismissed, not deleted.
      */
     public function seriesRefused(int $userId, string $uid): ?string
     {
         foreach ($this->db->all(
-            "SELECT payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'dismissed'",
+            "SELECT status, payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status IN ('dismissed', 'gone') ORDER BY id DESC",
             [$userId, self::KIND_INVITE_NEW, mb_substr($uid, 0, 255)]
         ) as $closed) {
-            if (!isset(self::payload($closed)['occurrence'])) return 'the series was dismissed in Review';
+            $payload = self::payload($closed);
+            if (isset($payload['occurrence'])) continue;
+            if ((string) $closed['status'] === 'dismissed') return 'the series was dismissed in Review';
+            if (!empty($payload['organizerCancelled'])) return 'the organizer cancelled the series before it was added';
         }
         if ($this->db->scalar(
             'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NOT NULL AND recurrence_parent_id IS NULL LIMIT 1',
@@ -272,6 +277,100 @@ final class ReviewQueue
             return 'the series was deleted from the calendar';
         }
         return null;
+    }
+
+    /**
+     * The series with this UID was just put on the calendar without a
+     * Review decision (added automatically from an approved sender,
+     * MailIngest::createNew): the days of it held before it (#192) become
+     * changes to their occurrences, as accepting the series from Review
+     * makes them. Runs inside the add's write and its group, so the add's
+     * one entry carries the items as they were and are, and undoing it
+     * puts them back as they waited.
+     */
+    public function seriesAdded(int $userId, int $eventId, string $uid): void
+    {
+        $sourceKey = mb_substr($uid, 0, 255);
+        $rows = fn(): array => $this->db->all('SELECT * FROM review_items WHERE user_id = ? AND source_key = ? AND kind IN (?, ?) ORDER BY id',
+            [$userId, $sourceKey, self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE]);
+        $before = $rows();
+        if (array_filter($before, static fn(array $row): bool => (string) $row['status'] === 'open') === []) {
+            return;
+        }
+        $this->reconcilePending($userId, $eventId, $sourceKey);
+        (new Undo($this->db))->record($userId, 'review', (int) $before[0]['id'], 'update', ['review_items' => $before], ['review_items' => $rows()]);
+    }
+
+    /** Are days of this series held before it (#192) still waiting for it? */
+    public function daysHeldFor(int $userId, string $uid): bool
+    {
+        foreach ($this->db->all(
+            "SELECT payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
+            [$userId, self::KIND_INVITE_NEW, mb_substr($uid, 0, 255)]
+        ) as $open) {
+            if (isset(self::payload($open)['occurrence'])) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The organizer cancelled a whole series whose invitation is still
+     * waiting in Review (MailIngest::applyImipEvent): every open invitation
+     * to it from that organizer or sender closes, saying so, and once none
+     * waits the days held before it close with them. A cancellation from
+     * anyone else leaves the invitation waiting. Closing a held item
+     * changes no event, so the entry is a note, as a dismissal's is, that
+     * touches the items it closed. Returns how many invitations closed.
+     *
+     * @param array<string,mixed> $invite the cancellation's invite block
+     */
+    public function cancelWaiting(int $userId, string $uid, array $invite, string $fromAddr): int
+    {
+        $sourceKey = mb_substr($uid, 0, 255);
+        $claims = array_filter([MailPolicy::mailbox($invite['organizer']['email'] ?? null), MailPolicy::mailbox($fromAddr)]);
+        if ($claims === [] || !$this->seriesWaiting($userId, $uid)) {
+            return 0;
+        }
+        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $sourceKey, $claims): int {
+            $closed = [];
+            $title = '';
+            foreach ($this->db->all(
+                "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id",
+                [$userId, self::KIND_INVITE_NEW, $sourceKey]
+            ) as $open) {
+                $payload = self::payload($open);
+                if (isset($payload['occurrence'])) continue;
+                $theirs = array_filter([MailPolicy::mailbox($payload['invite']['organizer']['email'] ?? null), MailPolicy::mailbox($payload['from'] ?? null)]);
+                if (array_intersect($claims, $theirs) === []) continue;
+                $who = (string) ($payload['invite']['organizer']['name'] ?? '') ?: (string) ($payload['invite']['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
+                $payload['organizerCancelled'] = true;
+                $this->db->update('review_items', [
+                    'status' => 'gone', 'decided_at' => Time::nowDb(),
+                    'summary' => mb_substr(($who !== '' ? $who : 'The organizer') . ' cancelled this before you added it. Nothing was added.', 0, 1000),
+                    'payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+                ], 'id = ?', [(int) $open['id']]);
+                $closed[] = (int) $open['id'];
+                $title = (string) $open['title'];
+            }
+            if ($closed === []) {
+                return 0;
+            }
+            $invitations = count($closed);
+            if (!$this->seriesWaiting($userId, $uid)) {
+                foreach ($this->db->all(
+                    "SELECT id, payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
+                    [$userId, self::KIND_INVITE_NEW, $sourceKey]
+                ) as $day) {
+                    if (!isset(self::payload($day)['occurrence'])) continue;
+                    $this->close((int) $day['id'], 'superseded');
+                    $closed[] = (int) $day['id'];
+                }
+            }
+            (new Undo($this->db))->record($userId, 'review', $closed[0], 'update', null, null,
+                'Closed the emailed invitation to "' . mb_substr($title, 0, 200) . '" waiting in Review: the organizer cancelled it',
+                touches: array_map(static fn(int $id): array => [Undo::keyOf('review_items', ['id' => $id]), '*'], $closed));
+            return $invitations;
+        });
     }
 
     /**
@@ -533,12 +632,63 @@ final class ReviewQueue
     /** @return list<array<string,mixed>> newest first */
     public function listFor(int $userId, bool $openOnly = true, ?int $before = null): array
     {
-        $rows = $this->db->all(
+        $rows = fn(): array => $this->db->all(
             'SELECT * FROM review_items WHERE user_id = ?' . ($openOnly ? " AND status = 'open'" : " AND status <> 'superseded'")
                 . ($before !== null ? ' AND id < ?' : '') . ' ORDER BY id DESC LIMIT 200',
             $before !== null ? [$userId, $before] : [$userId]
         );
-        return array_map(self::serialize(...), $rows);
+        $listed = $rows();
+        if ($this->convertHeldDays($userId, $listed) > 0) {
+            $listed = $rows();
+        }
+        return array_map(self::serialize(...), $listed);
+    }
+
+    /**
+     * A day held before its series (#192) whose series is on the calendar
+     * by now, put there by a path that did not convert it, is never shown
+     * waiting for the series beside it: it becomes a change to that
+     * occurrence as the queue is read, with a note of it in Activity that
+     * stands on the series (an undo of the add would strand the day). The
+     * add and the Review accept convert as they go, so this finds nothing
+     * in the usual run. Returns how many items were converted.
+     *
+     * @param list<array<string,mixed>> $rows review_items rows
+     */
+    private function convertHeldDays(int $userId, array $rows): int
+    {
+        $uids = [];
+        foreach ($rows as $row) {
+            if ((string) $row['kind'] !== self::KIND_INVITE_NEW || (string) $row['status'] !== 'open') continue;
+            $payload = self::payload($row);
+            if (isset($payload['occurrence'])) $uids[(string) ($payload['uid'] ?? $row['source_key'])] = (string) $row['source_key'];
+        }
+        $converted = 0;
+        foreach ($uids as $uid => $sourceKey) {
+            $series = $this->db->scalar('SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL LIMIT 1', [$userId, (string) $uid]);
+            if ($series === null) continue;
+            $converted += (new Undo($this->db))->write($userId, function () use ($userId, $sourceKey, $series): int {
+                $held = [];
+                foreach ($this->db->all(
+                    "SELECT id, title, payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
+                    [$userId, self::KIND_INVITE_NEW, $sourceKey]
+                ) as $open) {
+                    if (isset(self::payload($open)['occurrence'])) $held[] = $open;
+                }
+                if ($held === []) return 0;
+                $this->reconcilePending($userId, (int) $series, $sourceKey);
+                (new Undo($this->db))->record($userId, 'review', (int) $held[0]['id'], 'update', null, null,
+                    '"' . mb_substr((string) $held[0]['title'], 0, 200) . '" is on your calendar now: ' . (count($held) === 1
+                        ? 'a day of it held in Review is a change to that occurrence'
+                        : 'the days of it held in Review are changes to their occurrences'),
+                    touches: array_merge(
+                        array_map(static fn(array $row): array => [Undo::keyOf('review_items', ['id' => (int) $row['id']]), '*'], $held),
+                        [[Undo::keyOf('events', ['id' => (int) $series]), '+']],
+                    ));
+                return count($held);
+            });
+        }
+        return $converted;
     }
 
     public function openCount(int $userId, ?string $kind = null): int

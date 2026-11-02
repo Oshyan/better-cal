@@ -882,7 +882,13 @@ final class MailIngest
         // accepts it. ReviewQueue::accept applies it then, through Events::patch.
         if ($method === 'CANCEL') {
             if ($existing === null) {
-                return ['skipped', null];
+                // Nothing on the calendar to cancel. The invitation may
+                // still be waiting in Review: the organizer's cancellation
+                // closes it there, with the days held before it, and the
+                // log says so (ReviewQueue::cancelWaiting).
+                return $this->review->cancelWaiting($userId, $uid, (array) ($ev['invite'] ?? []), $fromAddr) > 0
+                    ? ['skipped', null, 'the organizer cancelled it; the invitation waiting in Review was closed']
+                    : ['skipped', null];
             }
             $held = $this->review->holdInviteChange(
                 $userId,
@@ -1019,18 +1025,34 @@ final class MailIngest
             $admitted = $this->admission->createMailEvent(
                 $userId, self::messageKey($msg), $from,
                 function (string $mode) use ($userId, $uid, $fields, $invite): int {
-                    $request = ($invite['method'] ?? '') === 'REQUEST';
-                    $made = $this->events->create($userId,
-                        ($request ? ['status' => 'tentative'] : []) + $fields
-                        + ['calendarId' => $this->inviteCalendarId($userId), 'uid' => $uid]);
-                    $eventId = (int) $made['eventId'];
-                    if ($request) {
-                        $invite['myPartstat'] = 'NEEDS-ACTION';
-                        $invite['organizerTrust'] = 'mail-policy';
-                        $invite['admissionMode'] = $mode;
+                    $add = function () use ($userId, $uid, $fields, $invite, $mode): int {
+                        $request = ($invite['method'] ?? '') === 'REQUEST';
+                        $made = $this->events->create($userId,
+                            ($request ? ['status' => 'tentative'] : []) + $fields
+                            + ['calendarId' => $this->inviteCalendarId($userId), 'uid' => $uid]);
+                        $eventId = (int) $made['eventId'];
+                        if ($request) {
+                            $invite['myPartstat'] = 'NEEDS-ACTION';
+                            $invite['organizerTrust'] = 'mail-policy';
+                            $invite['admissionMode'] = $mode;
+                        }
+                        self::storeInvite($this->db, $eventId, $invite, false);
+                        return $eventId;
+                    };
+                    if (!$this->review->daysHeldFor($userId, $uid)) {
+                        return $add();
                     }
-                    self::storeInvite($this->db, $eventId, $invite, false);
-                    return $eventId;
+                    // Days of this series held before it (#192) become
+                    // changes to their occurrences with the add, as they
+                    // do when the series is added from Review, in the
+                    // add's one entry: undoing it puts them back as they
+                    // waited. Without this they waited for a series that
+                    // was on the calendar, with nothing to accept.
+                    return (new Undo($this->db))->group(function () use ($add, $userId, $uid): int {
+                        $eventId = $add();
+                        $this->review->seriesAdded($userId, $eventId, $uid);
+                        return $eventId;
+                    }, "Added event '" . mb_substr((string) ($fields['title'] ?? '(untitled)'), 0, 200) . "' from email, with a day of it held in Review now a change to it");
                 },
                 $hold,
             );

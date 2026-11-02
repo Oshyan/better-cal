@@ -38,6 +38,7 @@ import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { buildRange } from '../lib/quickrange.js';
 import { creationLine, parsedSeries } from '../lib/seriesplan.js';
+import { seriesPlans } from './serieschange.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
@@ -220,6 +221,8 @@ export function QuickAdd() {
     const parsed = parsedSeries(draft, seriesRule, seriesRange);
     if (parsed) { setSeriesPlan({ key: seriesKey, plan: parsed }); return; }
     setSeriesPlan(null);
+    // A server without series plans would take a preview for a create.
+    if (!seriesPlans()) return;
     api('/events', { method: 'POST', body: {
       preview: true, start: seriesRange.start, end: seriesRange.end, allDay: form.allDay, rrule: seriesRule,
       calendarId: form.calendarId != null ? Number(form.calendarId) : undefined, tzid: localTz(),

@@ -177,6 +177,7 @@ export async function loadConfig() {
     set({ config: {
       maptilerKey: (data && data.maptilerKey) || null,
       placeSearch: (data && data.placeSearch) || null,
+      seriesPlans: !!(data && data.seriesPlans === true),
     } });
   } catch (e) { /* non-critical */ }
 }

@@ -209,6 +209,40 @@ export function repeatPresets(d) {
   return out;
 }
 
+/**
+ * The editor's day-of-month forms (docs/design/series-model.md, Naming the
+ * Landed Day), each from the start `d`: 'clamp' "on day 30, or the last day
+ * in shorter months" (the clamped 29th or 30th), 'lastday' (a start on its
+ * month's last), 'fromend' "the second-last day" to "the seventh-last day".
+ * The RRULE part, or null for plain day N, which is written bare (a monthly
+ * rule on its start's day, skipping months without it) and for a form the
+ * start doesn't offer.
+ */
+export function monthDayRule(mode, d) {
+  const n = d.getDate();
+  const fromEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - n + 1;
+  if (mode === 'clamp' && (n === 29 || n === 30)) return 'BYMONTHDAY=' + Array.from({ length: n - 27 }, (_, i) => 28 + i).join(',') + ';BYSETPOS=-1';
+  if (mode === 'lastday' && fromEnd === 1) return 'BYMONTHDAY=-1';
+  if (mode === 'fromend' && LAST_ORDINAL[fromEnd]) return 'BYMONTHDAY=-' + fromEnd;
+  return null;
+}
+
+/** The editor's monthly choices for a start: [{value, label}], the weekday ones included. */
+export function monthlyOptions(d) {
+  const n = d.getDate();
+  const fromEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - n + 1;
+  const week = weekOfMonth(d);
+  const name = DAY_NAMES[DAY_CODES[d.getDay()]];
+  return [
+    { value: 'day', label: 'on day ' + n + (n >= 29 ? ', skipping months without one' : '') },
+    ...(n === 29 || n === 30 ? [{ value: 'clamp', label: 'on day ' + n + ', or the last day in shorter months' }] : []),
+    ...(fromEnd === 1 ? [{ value: 'lastday', label: 'on the last day' }] : []),
+    ...(LAST_ORDINAL[fromEnd] ? [{ value: 'fromend', label: 'on the ' + LAST_ORDINAL[fromEnd] + '-last day' }] : []),
+    ...(week.nth <= 4 ? [{ value: 'nth', label: `on the ${ORDINAL[week.nth]} ${name}` }] : []),
+    ...(week.last ? [{ value: 'last', label: 'on the last ' + name }] : []),
+  ];
+}
+
 // The preset a rule is (ignoring its end) for a day, or null.
 export function presetOf(rrule, d) {
   const base = ruleBase(rrule);

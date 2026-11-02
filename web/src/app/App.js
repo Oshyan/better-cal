@@ -49,6 +49,11 @@ import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
 import { ConfirmHost } from './ConfirmDialog.js';
 import { SeriesDialog } from './SeriesDialog.js';
+import { seriesPlans } from './serieschange.js';
+
+// "All events…" opens the series dialog; a server without series plans
+// takes the change at once, as before, so the chip says so.
+const seriesAllLabel = () => (seriesPlans() ? 'All events…' : 'All events');
 import { SystemBanner, WorkerBanner } from './system.js';
 import { UpdateBanner, OfflineBanner, AppReloadBanner } from './updates.js';
 import { Login } from './Login.js';
@@ -661,7 +666,7 @@ export function App() {
     // Option/Alt held at the drop: a copy there, the original stays.
     if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope), occ, false, 'All events…'); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope), occ, false, seriesAllLabel()); return; }
     moveEvent(p);
   }, [promptScopeAt]);
 
@@ -684,7 +689,7 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope), occ, false, 'All events…'); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope), occ, false, seriesAllLabel()); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
 
@@ -802,7 +807,7 @@ export function App() {
       jumpToDate(targetKey, instanceId); // return the view to where the event now is
     };
     // A series asks which occurrences, at the confirm chip, like a grid drop.
-    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ, false, 'All events…'); return; }
+    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ, false, seriesAllLabel()); return; }
     land(undefined);
   }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);

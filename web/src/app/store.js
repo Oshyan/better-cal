@@ -84,7 +84,9 @@ export const state = {
     monthRows: 'fixed',
   },
   // Public-safe server config (GET /config), fetched once at boot.
-  config: { maptilerKey: null, placeSearch: null },
+  // seriesPlans: the server answers `preview: true` with a series plan (1.5.0);
+  // until it says so, series changes take the path from before.
+  config: { maptilerKey: null, placeSearch: null, seriesPlans: false },
   // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
   // Mirrored server-side in settings under the folderVisibility key.
   folderVisibility: {},

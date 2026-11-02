@@ -17,7 +17,7 @@ import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
-import { openSeriesChange } from './serieschange.js';
+import { openSeriesChange, seriesPlans } from './serieschange.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -451,7 +451,8 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
 // act at once, as before.
 export function seriesDrop(kind, occ, p, scope) {
   const act = kind === 'resize' ? resizeEvent : moveEvent;
-  if (scope !== 'all') return act({ ...p, scope });
+  // A server without series plans takes the change at once, as before 1.5.0.
+  if (scope !== 'all' || !seriesPlans()) return act({ ...p, scope });
   openSeriesChange({
     kind, occ,
     body: { start: p.newStart, end: p.newEnd },
@@ -590,7 +591,7 @@ const OWN_FIELD_WORDS = {
 };
 export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
 export async function useSeriesValue(occ, names) {
-  if (!occ || !names || !names.length) return false;
+  if (!occ || !names || !names.length || !seriesPlans()) return false;
   try {
     const res = await api('/events/' + occ.eventId, { method: 'PATCH', body: { scope: 'this', instanceStart: occ.start, useSeries: names } });
     toast(names.length === 1 ? "Uses the series' " + ownFieldWords(names[0]) : "Uses the series' values", { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });

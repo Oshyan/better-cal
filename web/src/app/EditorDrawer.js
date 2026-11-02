@@ -20,6 +20,7 @@ import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
 import {
   DAY_CODES, ruleParts, ruleBase, joinRule, weekOfMonth, describeRepeat, repeatEnd, withRepeatEnd,
+  monthDayRule, monthlyOptions,
 } from '../lib/repeat.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
@@ -38,7 +39,7 @@ import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { editedWords, timeChange } from '../lib/changeline.js';
 import { changedFields, fieldLines } from '../lib/editfields.js';
-import { openSeriesChange, cancelSeriesChange } from './serieschange.js';
+import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschange.js';
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
 
@@ -77,6 +78,9 @@ function buildRrule(r, allDay = false, tz = null, start = null) {
     const { nth, last } = weekOfMonth(start);
     const n = (r.monthly === 'last' && last) || nth === 5 ? -1 : nth;
     parts.push('BYDAY=' + n + DAY_CODES[start.getDay()]);
+  } else if (r.freq === 'MONTHLY' && start) {
+    const day = monthDayRule(r.monthly, start);
+    if (day) parts.push(day);
   }
   return withRepeatEnd(parts.join(';'), end, allDay, tz);
 }
@@ -107,6 +111,9 @@ function parseRrule(rrule, tz = null, start = null) {
   r.interval = Number(p.INTERVAL) || 1;
   if (p.FREQ === 'WEEKLY' && p.BYDAY) r.byday = p.BYDAY.split(',');
   if (p.FREQ === 'MONTHLY' && p.BYDAY) r.monthly = /^-1/.test(p.BYDAY) ? 'last' : 'nth';
+  else if (p.FREQ === 'MONTHLY' && p.BYMONTHDAY) {
+    r.monthly = p.BYSETPOS === '-1' ? 'clamp' : p.BYMONTHDAY === '-1' ? 'lastday' : /^-[2-7]$/.test(p.BYMONTHDAY) ? 'fromend' : 'day';
+  }
   Object.assign(r, (({ kind, until, count }) => ({ ends: kind, until, count }))(repeatEnd(rrule, tz)));
   if (r.freq === 'none' || looseBase(buildRrule({ ...r, ends: 'never' }, false, null, start), start) !== looseBase(rrule, start)) {
     r.custom = rrule;
@@ -579,7 +586,7 @@ export function EditorDrawer() {
   const [repeatLine, setRepeatLine] = useState(null);
   const repeatReq = useRef(0);
   let repeatAsk = '';
-  if (editor && form && (form.rrule.custom || form.rrule.freq !== 'none')) {
+  if (editor && form && seriesPlans() && (form.rrule.custom || form.rrule.freq !== 'none')) {
     let opened = null;
     try { opened = JSON.parse(initialSnapRef.current); } catch { /* none yet */ }
     const touched = !opened || JSON.stringify(form.rrule) !== JSON.stringify(opened.rrule);
@@ -831,7 +838,7 @@ export function EditorDrawer() {
       // All events in a series: the plan first, in the dialog over the
       // footer (SeriesDialog.js), unless it says the change is direct.
       // "This and following" keeps its old path until 1.5.1.
-      if (occ.recurring && scope === 'all') {
+      if (occ.recurring && scope === 'all' && seriesPlans()) {
         const was = opened ? { ...formFields(opened), reminders: opened.reminders } : {};
         openSeriesChange({
           kind: 'editor', occ, body: fields, quiet: true,
@@ -857,19 +864,18 @@ export function EditorDrawer() {
   };
 
   const r = form.rrule;
-  // Monthly choices come from the start: "on day 24", "on the fourth
-  // Thursday", and "on the last Thursday" when it is the month's last.
+  // Monthly choices come from the start: "on day 24", "on day 30, or the
+  // last day in shorter months", "on the last day", "on the second-last
+  // day", "on the fourth Thursday", and "on the last Thursday" when it is
+  // the month's last (monthlyOptions).
   const repeatStart = fromInputValue(form.start);
   const startWeek = repeatStart && !isNaN(repeatStart) ? weekOfMonth(repeatStart) : null;
-  const startDayName = startWeek ? repeatStart.toLocaleDateString(undefined, { weekday: 'long' }) : '';
-  const monthlyChoices = startWeek ? [
-    { value: 'day', label: 'on day ' + repeatStart.getDate() },
-    ...(startWeek.nth <= 4 ? [{ value: 'nth', label: `on the ${['first', 'second', 'third', 'fourth'][startWeek.nth - 1]} ${startDayName}` }] : []),
-    ...(startWeek.last ? [{ value: 'last', label: 'on the last ' + startDayName }] : []),
-  ] : [];
-  // What buildRrule will write for this start (a fifth weekday is "last").
-  const monthlyMode = !startWeek || (r.monthly !== 'nth' && r.monthly !== 'last') ? 'day'
-    : (r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth';
+  const monthlyChoices = startWeek ? monthlyOptions(repeatStart) : [];
+  // What buildRrule will write for this start (a fifth weekday is "last";
+  // a form this start doesn't offer is day N).
+  const monthlyMode = !startWeek ? 'day'
+    : r.monthly === 'nth' || r.monthly === 'last' ? ((r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth')
+      : monthlyChoices.some((c) => c.value === r.monthly) ? r.monthly : 'day';
   const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
   const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);
 
@@ -958,7 +964,7 @@ export function EditorDrawer() {
   // with a way to give it back (Use series value: this day only, one Undo).
   // Its form would be stale after, so the editor closes; with changes
   // typed here, those come first.
-  const own = occ && occ.isException && Array.isArray(occ.ownFields) ? occ.ownFields : [];
+  const own = occ && occ.isException && Array.isArray(occ.ownFields) && seriesPlans() ? occ.ownFields : [];
   const giveBack = async (names) => {
     if (state.editorDirty) { toast('Save or discard the changes here first'); return; }
     if (await useSeriesValue(occ, names)) set({ editor: null, editorDirty: false });
@@ -1201,6 +1207,7 @@ export function EditorDrawer() {
           </div>`}
           ${repeatAsk && repeatLine && repeatLine.line && html`<div class="bc-ed-sub" role="status">${repeatLine.line}</div>`}
           ${repeatAsk && repeatLine && repeatLine.moved && html`<div class="bc-ed-sub">${repeatLine.moved}</div>`}
+          ${!seriesPlans() && !r.custom && r.freq !== 'none' && html`<div class="bc-ed-sub">${describeRepeat(buildRrule(r, form.allDay, null, repeatStart), { start: repeatStart, ends: false }) || ''}</div>`}
         </div>
 
         ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>

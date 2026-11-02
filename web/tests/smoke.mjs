@@ -4738,7 +4738,7 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
     tzid: 'America/Los_Angeles', start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00', allDay: false,
   };
   const reset = () => {
-    put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', provider: null, editable: true }], loadedRanges: [], visibleDays: null, popover: null, editor: null });
+    put({ config: { ...st.config, seriesPlans: true }, seriesChange: null, calendars: [{ id: 3, name: 'Sample', provider: null, editable: true }], loadedRanges: [], visibleDays: null, popover: null, editor: null });
     st.occ.clear();
     // A fresh occurrence each time: a landed save holds its own until an answer carries it.
     occ.instanceId = '41@' + ++n;
@@ -4893,7 +4893,7 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
     if (p === '/events') return json({ events: [] });
     return json({});
   };
-  put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  put({ config: { ...st.config, seriesPlans: true }, seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
   const occ = { instanceId: '52@1', eventId: 52, calendarId: 3, title: 'Sample choir', recurring: true, start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00' };
   let closed = 0;
   // Direct: a rename no edited day owns. Previewed, then committed at once, no dialog.
@@ -4914,6 +4914,76 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   await tick();
   eq('editor save, previewed: Confirm saves with the choice and closes the editor', [sent[1].plan, st.seriesChange, closed], [{ hash: 'n1', choices: { ownTitle: 'keep' } }, null, 2]);
   globalThis.fetch = realFetch;
+}
+
+console.log('--- series plans only where the server says so (/config seriesPlans) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { loadConfig } = await import('../src/app/api.js');
+  const { seriesDrop, useSeriesValue } = await import('../src/app/actions.js');
+  const { openSeriesChange, seriesPlans } = await import('../src/app/serieschange.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  let config = {};
+  const sent = [];
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p === '/config') return json(config);
+    if (p === '/events/63' && o.method === 'PATCH') { sent.push(JSON.parse(o.body)); return json({ ok: true }); }
+    if (p === '/changes/cursor') return json({ cursor: 'g1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  const occ = { instanceId: '63@1', eventId: 63, calendarId: 3, title: 'Sample swim', recurring: true, isException: true, ownFields: ['title'], start: '2027-01-11T07:00:00-08:00', end: '2027-01-11T08:00:00-08:00' };
+  const drop = { instanceId: occ.instanceId, newStart: '2027-01-15T07:00:00-08:00', newEnd: '2027-01-15T08:00:00-08:00', at: { x: 10, y: 10 } };
+  put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  st.occ.clear();
+  st.occ.set(occ.instanceId, { ...occ });
+
+  config = { maptilerKey: null };
+  await loadConfig();
+  eq('series gate: a server that doesn\'t say seriesPlans is taken as one without', seriesPlans(), false);
+  await seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  eq('series gate: off, All events goes straight to the PATCH, as before 1.5.0', [st.seriesChange, sent.length, sent[0] && sent[0].scope, sent[0] && sent[0].preview, sent[0] && sent[0].plan], [null, 1, 'all', undefined, undefined]);
+  eq('series gate: off, no dialog opens for an editor save either', openSeriesChange({ kind: 'editor', occ, body: { title: 'x' }, quiet: true }), null);
+  eq('series gate: off, Use series value sends nothing', [await useSeriesValue(occ, ['title']), sent.length], [false, 1]);
+
+  config = { seriesPlans: true };
+  await loadConfig();
+  eq('series gate: on when the server says so', seriesPlans(), true);
+  sent.length = 0;
+  await useSeriesValue(occ, ['title']);
+  eq('series gate: on, Use series value gives the field back on this day', sent[0], { scope: 'this', instanceStart: occ.start, useSeries: ['title'] });
+  put({ config: { ...st.config, seriesPlans: false }, seriesChange: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+console.log('--- the editor\'s monthly forms (1.5.0) ---');
+{
+  const { monthDayRule, monthlyOptions } = await import('../src/lib/repeat.js');
+  const opts = (d) => monthlyOptions(d).map((o) => o.value + ': ' + o.label);
+  eq('monthly forms: a 15th', opts(new Date(2027, 2, 15)), ['day: on day 15', 'nth: on the third Monday']);
+  eq('monthly forms: a 30th that is its month\'s second-last', opts(new Date(2027, 2, 30)), [
+    'day: on day 30, skipping months without one', 'clamp: on day 30, or the last day in shorter months',
+    'fromend: on the second-last day', 'last: on the last Tuesday']);
+  eq('monthly forms: a 30th that is its month\'s last', opts(new Date(2027, 3, 30)).map((o) => o.split(':')[0]), ['day', 'clamp', 'lastday', 'last']);
+  eq('monthly forms: the 25th of March, the seventh-last', opts(new Date(2027, 2, 25)).filter((o) => o.startsWith('fromend')), ['fromend: on the seventh-last day']);
+  eq('monthly forms: the 24th of March offers no from-the-end form', opts(new Date(2027, 2, 24)).filter((o) => o.startsWith('fromend')), []);
+  const rules = [
+    ['clamp', new Date(2027, 2, 30), 'BYMONTHDAY=28,29,30;BYSETPOS=-1', 'Monthly on the 30th, or the last day in shorter months'],
+    ['clamp', new Date(2027, 2, 29), 'BYMONTHDAY=28,29;BYSETPOS=-1', 'Monthly on the 29th, or the last day in shorter months'],
+    ['lastday', new Date(2027, 3, 30), 'BYMONTHDAY=-1', 'Monthly on the last day'],
+    ['fromend', new Date(2027, 2, 30), 'BYMONTHDAY=-2', 'Monthly on the second-last day'],
+    ['fromend', new Date(2027, 2, 25), 'BYMONTHDAY=-7', 'Monthly on the seventh-last day'],
+  ];
+  for (const [mode, d, part, words] of rules) {
+    eq('monthly forms: ' + mode + ' writes ' + part + ' and reads back in words', [monthDayRule(mode, d), describeRepeat('FREQ=MONTHLY;' + part)], [part, words]);
+  }
+  eq('monthly forms: day N is written bare, and a form the start lacks falls back to it', [monthDayRule('day', new Date(2027, 2, 30)), monthDayRule('clamp', new Date(2027, 2, 15)), monthDayRule('lastday', new Date(2027, 2, 30))], [null, null, null]);
+  eq('monthly forms: bare from a 30th reads as skipping', describeRepeat('FREQ=MONTHLY', { start: new Date(2027, 2, 30) }), 'Monthly on the 30th, skipping months without one');
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

@@ -19,6 +19,16 @@ let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
 const NO_UNDO = "Can't be undone";
 const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
 
+/**
+ * Whether the server works out series plans (/config `seriesPlans: true`).
+ * Every `preview: true` request waits for it: a server without it would
+ * take the preview for the change itself. Without it, every path is the
+ * one from before 1.5.0.
+ */
+export function seriesPlans() {
+  return !!(state.config && state.config.seriesPlans === true);
+}
+
 // The plan an error answer carries, wherever the envelope puts it.
 export function planOfError(e) {
   const d = e && e.data;
@@ -55,7 +65,7 @@ function requestBody(sc, extra) {
  * direct (the editor: a rename no edited day owns saves at once).
  */
 export function openSeriesChange({ kind, occ, body, at = null, pending = null, apply = null, onDone = null, fields = [], quiet = false }) {
-  if (!occ) return null;
+  if (!occ || !seriesPlans()) return null;
   const id = ++dialogs;
   const before = pending ? patchOccurrence(occ.instanceId, { start: pending.start, end: pending.end, seriesPending: true }) : null;
   set({

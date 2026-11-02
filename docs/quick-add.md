@@ -44,7 +44,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Time ranges and lengths:** 7-9pm, 11am-1pm, 10pm to 6am, for 2 hours, for 90 min.
 - **Zones:** EST, PT, GMT, UTC, CET and others, after a time. Two-letter ones only in capitals, and not before an ordinary word ("3pm CT scan"); "3pm ET with Sam" is fine.
 - **All day:** "all day", or any date with no time.
-- **Several days:** Aug 3-7, Dec 30 to Jan 2, Mon-Fri, 3 weeks long, week-long, a length at the end ("Lisbon trip 2 weeks"), Fri 5pm to Sun 2pm, Mon-Fri 9am-5pm (one stretch, Monday morning to Friday evening, when the end time is later in the day than the start).
+- **Several days:** Aug 3-7, Dec 30 to Jan 2, Mon-Fri, 3 weeks long, week-long, a length at the end ("Lisbon trip 2 weeks"), Fri 5pm to Sun 2pm, Mon-Fri 9am-5pm (one stretch, Monday morning to Friday evening, when the end time is later in the day than the start). A date range with times reads the same way: "Conference Aug 3-7 9am-5pm" is one stretch, while "Aug 3-7 9am" and "Aug 3-7 10pm-6am" repeat each day from the 3rd to the 7th.
 - **Repeats:** daily, weekdays, weekends, every Tuesday, Mondays and Thursdays, every other week, every 3 days, monthly, yearly, first Monday of the month, every 1st and 3rd Monday, every 1st and 15th, last day of the month, every Jan 27. A day range with one time repeats ("Standup Mon-Fri 9am"), so does one with a time range that crosses midnight ("Shift Mon-Fri 10pm-6am", each night to the next morning), and so does "daily" with a range.
 - **Repeat start and end:** starting Nov 3, until Dec 15, for 6 weeks, 10 times.
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.

@@ -105,11 +105,14 @@ final class FallbackParser
         [$work, $stretch] = $repeat === null ? self::timedStretch($work, $now) : [$work, null];
         [$work, $startOn, $startRangeEnd] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null];
         $beforeDate = $work;
-        [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now, !$ownDays);
+        $read = self::extractDate($work, $now, !$ownDays);
+        [$work, $date, $dateFound, $rangeEnd] = $read;
+        $datedRange = $read[4] ?? false;
         if ($startOn !== null) {
             $date = $startOn;
             $dateFound = true;
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
+            $datedRange = $startRangeEnd !== null || $datedRange;
         }
         // "Party on Saturday": the "on" goes with the date, but only when it
         // stood right before it, one space apart, in the text as written
@@ -126,6 +129,7 @@ final class FallbackParser
                 $work = substr($work, 0, $i - 3) . substr($work, $i);
             }
         }
+        $clockTime = RepeatParser::hasTime($work);
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
         // "Workshop Mon-Fri 9am-5pm": several days with a daytime range is
         // one stretch, the first day at the start time to the last at the
@@ -143,6 +147,15 @@ final class FallbackParser
         if ($stretch !== null) {
             [$date, $startTime] = [$stretch[0], [(int) $stretch[0]->format('G'), (int) $stretch[0]->format('i')]];
             [$dateFound, $timeFound, $endTime, $rangeEnd] = [true, true, null, null];
+        }
+        // "Standup Aug 3-7 9am", "Shift Aug 3-7 10pm-6am": a range written
+        // as dates with one time, or with a range that crosses midnight,
+        // repeats each day from the first date to the last, as a day range
+        // does (#198), on the same clock times ("Movie night Aug 3-7" stays
+        // all-day). "this weekend" and "all week" keep their reading.
+        if ($repeat === null && $datedRange && $rangeEnd !== null && $timeFound && $clockTime && !$allDayKeyword) {
+            $repeat = ['work' => $work, 'rule' => ['FREQ' => 'DAILY'], 'startOn' => $date, 'until' => $rangeEnd, 'count' => null, 'span' => null, 'time' => null];
+            $rangeEnd = null;
         }
         // A length in days or longer ("3 weeks long", "for 90 days",
         // "week-long", #33): a multi-day event from its start.
@@ -314,8 +327,9 @@ final class FallbackParser
     }
 
     /**
-     * @return array{0:string,1:\DateTimeImmutable,2:bool,3:?\DateTimeImmutable}
-     *         [remaining text, start date, found?, inclusive range end date]
+     * @return array{0:string,1:\DateTimeImmutable,2:bool,3:?\DateTimeImmutable,4?:bool}
+     *         [remaining text, start date, found?, inclusive range end date,
+     *         whether the range was written as dates ("Aug 3-7")]
      */
     private static function extractDate(string $work, \DateTimeImmutable $now, bool $weekdays = true): array
     {
@@ -325,10 +339,11 @@ final class FallbackParser
         $sep = '\s*(?:-|–|—|\b(?:to|through|until)\b)\s*';
 
         // Date range: "June 1-12", "Aug 3 to Aug 7", "Dec 30 to Jan 2, 2026".
-        // Lookahead keeps "June 1 to 5pm" (a time tail) out of the range path.
+        // Lookahead keeps "June 1 to 5pm" (a time tail) out of the range path;
+        // a time after a space is the range's own ("Aug 3-7 9am-5pm", #198).
         if (preg_match(
             '/\b(' . $monthAlt . ')\.?\s+(\d{1,2})(?:st|nd|rd|th)?' . $sep
-            . '(?:(' . $monthAlt . ')\.?\s+)?(\d{1,2})(?:st|nd|rd|th)?(?!\s*(?:am|pm|[:\d]))(?:,?\s*(\d{4}))?\b/i',
+            . '(?:(' . $monthAlt . ')\.?\s+)?(\d{1,2})(?:st|nd|rd|th)?(?!\s*(?:am|pm)|[:\d])(?:,?\s*(\d{4}))?\b/i',
             $work,
             $m
         )) {
@@ -344,7 +359,7 @@ final class FallbackParser
                         $start = $start->modify('+1 year');
                         $end = $end->modify('+1 year');
                     }
-                    return [self::cut($work, $m[0]), $start, true, $end];
+                    return [self::cut($work, $m[0]), $start, true, $end, true];
                 }
             }
         }

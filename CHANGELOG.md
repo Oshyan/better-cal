@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- Quick add reads a date range followed by times ([#198](https://github.com/Oshyan/better-cal/issues/198)): "Conference Aug 3-7 9am-5pm" is one event from the first morning to the last evening, and "Aug 3-7 9am" or "Aug 3-7 10pm-6am" repeats each day of the range.
+
 ## 1.4.6 (2026-11-01)
 
 - **Quick add reads more of what people type** ([#193](https://github.com/Oshyan/better-cal/issues/193)):

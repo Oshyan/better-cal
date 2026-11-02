@@ -45,7 +45,8 @@ $goldenExtra = [
     'Mon-Fri', 'Monday through Friday', 'Fri-Mon', 'Mon to Fri at 9am', 'Mon-Fri next week', 'Fri 5pm to Sun 2pm',
     'Thu 10pm to Fri 6am', 'Aug 3 9am to Aug 5 noon', 'daily Mon-Fri', 'Mon-Fri 9am', 'Mon–Fri', 'Mon—Fri 9am',
     'Aug 3–7', 'Fri 5pm – Sun 2pm', 'Mon-Fri 9am-5pm', 'Monday through Friday 9am to 5pm', 'Mon-Fri 10pm-6am',
-    'Mon-Fri 10pm to 6am', 'Sat-Sun 10am-4pm',
+    'Mon-Fri 10pm to 6am', 'Sat-Sun 10am-4pm', 'Aug 3-7 9am-5pm', 'Aug 3 to 7 9am-5pm', 'Aug 3 to Aug 7 9am-5pm',
+    'Aug 3-7 10pm-6am', 'Aug 3-7 9am', 'Dec 30 to Jan 2 9am-5pm',
 ];
 $goldenInputs = [];
 foreach ($goldenTitles as $title) {

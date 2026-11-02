@@ -483,6 +483,16 @@ $repeatCases = [
     ['Mon-Fri 10pm-6am shift', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Shift Mon-Fri 22:00-06:00', 'Shift', '2026-07-30T22:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Shift Thu-Sat 11pm-7am', 'Shift', '2026-07-30T23:00', 'FREQ=WEEKLY;BYDAY=TH,FR,SA'],
+    // A date range does the same, each day from the first date to the last;
+    // with a daytime range it is one stretch (#198)
+    ['Shift Aug 3-7 10pm-6am', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Shift Aug 3 to 7 10pm to 6am', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Shift Aug 3 to Aug 7 22:00-06:00', 'Shift', '2026-08-03T22:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Shift Dec 30 to Jan 2 10pm-6am', 'Shift', '2026-12-30T22:00', 'FREQ=DAILY;UNTIL=20270103T075959Z'],
+    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T09:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Standup Aug 3 to Aug 7 at 9am', 'Standup', '2026-08-03T09:00', 'FREQ=DAILY;UNTIL=20260808T065959Z'],
+    ['Conference Aug 3-7 9am-5pm', 'Conference', '2026-08-03T09:00', null],
+    ['Lisbon trip Aug 3-7', 'Lisbon trip', '2026-08-03T00:00', null],
     ['Open house Sat-Sun 10am-4pm', 'Open house', '2026-08-01T10:00', null],
     // Weekly
     ['Piano every Tuesday 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
@@ -643,6 +653,21 @@ $phraseCases = [
     // One that crosses midnight repeats; each night ends the next morning
     ['Shift Mon-Fri 10pm-6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
     ['Shift Mon-Fri 10pm to 6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
+    // A date range then a time range reads the same way, the dates first (#198)
+    ['Conference Aug 3-7 9am-5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3 to 7 9am-5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3 to Aug 7 9am-5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3–7 9am to 5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3rd-7th 9am-5pm', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3-7 9:00-17:00', 'Conference', '2026-08-03T09:00', '2026-08-07T17:00', null],
+    ['Conference Aug 3-7 9am-5pm ET', 'Conference', '2026-08-03T06:00', '2026-08-07T14:00', null],
+    ['Retreat Dec 30 to Jan 2 9am-5pm', 'Retreat', '2026-12-30T09:00', '2027-01-02T17:00', null],
+    ['Shift Aug 3-7 10pm-6am', 'Shift', '2026-08-03T22:00', '2026-08-04T06:00', null],
+    ['Standup Aug 3-7 9am', 'Standup', '2026-08-03T09:00', '2026-08-03T10:00', null],
+    ['Standup Aug 3-7 9am for 30 min', 'Standup', '2026-08-03T09:00', '2026-08-03T09:30', null],
+    // A time on its own still reads as a time, not the end of a range
+    ['Dinner Aug 3 7-9pm', 'Dinner', '2026-08-03T19:00', '2026-08-03T21:00', null],
+    ['Party Aug 3 - 7pm', 'Party', '2026-08-03T19:00', '2026-08-03T20:00', null],
     // A two-letter zone before one of the parser's own words (#193)
     ['Call 3pm ET with Sam', 'Call with Sam', '2026-07-30T12:00', '2026-07-30T13:00', null],
     ['Call 3pm ET at the office', 'Call at the office', '2026-07-30T12:00', '2026-07-30T13:00', null],
@@ -4206,6 +4231,25 @@ checkEq('qam half-read: a dangling ordinal, with or without its joiner', [true, 
     QuickAdd::halfReadRule('Last call with Alex', 'Last call with Alex'),
     QuickAdd::halfReadRule('21st birthday planning', '21st Birthday Planning'),
 ]);
+// A range the parser read from the text stands over a model answer with one
+// day of it (#198); one with the whole range is the model's.
+$fbRange = static fn(array $over = []) => $mkFb($over + [
+    'title' => 'Conference', 'personNames' => [], 'dateFound' => true, 'complete' => true,
+    'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-07T17:00:00-07:00',
+]);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Conference', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00']), $fbRange(), $mergeNow);
+checkEq('qam a model answer with one day keeps the parsed stretch', ['2026-08-03T09:00:00-07:00', '2026-08-07T17:00:00-07:00', false], [$m['start'], $m['end'], $m['allDay']]);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Conference', 'start' => '2026-08-03T00:00:00-07:00', 'end' => '2026-08-04T00:00:00-07:00', 'allDay' => true]),
+    $fbRange(['start' => '2026-08-03T00:00:00-07:00', 'end' => '2026-08-08T00:00:00-07:00', 'allDay' => true]), $mergeNow);
+checkEq('qam a model answer with one day keeps the parsed all-day range', ['2026-08-03T00:00:00-07:00', '2026-08-08T00:00:00-07:00', true], [$m['start'], $m['end'], $m['allDay']]);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Conference', 'start' => '2026-08-03T08:30:00-07:00', 'end' => '2026-08-07T17:00:00-07:00']), $fbRange(), $mergeNow);
+checkEq('qam a model answer covering the whole range is kept', '2026-08-03T08:30:00-07:00', $m['start']);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails', 'start' => '2026-08-04T16:00:00-07:00', 'end' => '2026-08-04T17:30:00-07:00']),
+    $mkFb(['title' => 'Cocktails', 'dateFound' => true, 'start' => '2026-08-04T00:00:00-07:00', 'end' => '2026-08-05T00:00:00-07:00', 'allDay' => true]), $mergeNow);
+checkEq('qam a model time on a parsed single day is still the model\'s', ['2026-08-04T16:00:00-07:00', false], [$m['start'], $m['allDay']]);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Shift', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-04T06:00:00-07:00', 'rrule' => null]),
+    $fbRange(['title' => 'Shift', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-04T06:00:00-07:00', 'rrule' => 'FREQ=DAILY;UNTIL=20260808T065959Z']), $mergeNow);
+checkEq('qam a model answer with one night keeps the parsed nightly repeat', ['FREQ=DAILY;UNTIL=20260808T065959Z', '2026-08-03T22:00:00-07:00', '2026-08-04T06:00:00-07:00'], [$m['rrule'], $m['start'], $m['end']]);
 checkEq('qam an alert read from the text survives the model draft (#33)', [30],
     QuickAdd::mergeLlm($mkLlm(), $mkFb(['reminders' => [30]]), $mergeNow)['reminders']);
 checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));

@@ -2658,6 +2658,24 @@ console.log('--- chronological ordering across timezone offsets ---');
   newGeneration();
   mergeWindow(...nov34, [single('5@new', '2034-11-04T10:00:00Z')], dataGeneration());
   eq('moved single event: shown once while the save is on its way, then as the answer names it', [interleaved, [...st.occ.keys()]], [['5@old'], ['5@new']]);
+  // The save's refresh missed where it sits now (the view moved on), then
+  // another device moves it into the window: an answer carrying the save
+  // names it, wherever, and its copy stands in place of the local one.
+  reset();
+  const single77 = (id, start) => ({ ...single(id, start), eventId: 77 });
+  const oct35 = ['2035-10-01T00:00:00Z', '2035-11-01T00:00:00Z'];
+  st.occ.set('77@a', single77('77@a', '2035-10-30T10:00:00Z'));
+  const before77 = patchOccurrence('77@a', { start: '2035-11-02T10:00:00Z', end: '2035-11-02T11:00:00Z' });
+  mergeWindow(...oct35, [single77('77@b', '2035-10-20T10:00:00Z')], dataGeneration());
+  const whilePending = [...st.occ.values()].map((o) => o.start);
+  localSaved([before77]);
+  mergeWindow(...oct35, [single77('77@b', '2035-10-20T10:00:00Z')], dataGeneration());
+  const askedBefore = [...st.occ.values()].map((o) => o.start);
+  newGeneration(); // the save's refresh, asking October only
+  mergeWindow(...oct35, [], dataGeneration());
+  newGeneration(); // the change check: moved elsewhere
+  mergeWindow(...oct35, [single77('77@b', '2035-10-20T10:00:00Z')], dataGeneration());
+  eq('moved single event: an answer carrying the save names it outside the local place, and its copy stands alone', [whilePending, askedBefore, [...st.occ.values()].map((o) => o.start)], [['2035-11-02T10:00:00Z'], ['2035-11-02T10:00:00Z'], ['2035-10-20T10:00:00Z']]);
 
   // 8. A failing health read stays owed and is asked again, but plugins and
   // their bands are fetched once for the move that owed them.

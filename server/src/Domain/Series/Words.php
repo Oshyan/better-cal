@@ -134,7 +134,7 @@ final class Words
                 }
                 return $every('week', 'Weekly') . ' on ' . self::andList(array_map(static fn(int $d): string => self::DAYS[$d], $days)) . $at;
             case 'monthly':
-                return $every('month', 'Monthly') . ' on ' . self::monthMembers($r) . $at;
+                return self::clockBeforeClause($every('month', 'Monthly') . ' on ' . self::monthMembers($r), $at);
             case 'yearly':
                 $mem = $r->members[0];
                 $months = self::andList(array_map(static fn(int $m): string => self::MONTHS[$m - 1], $r->months));
@@ -143,7 +143,7 @@ final class Words
                     if ((int) $mem['n'] === 29 && $r->months === [2]) {
                         $words .= ', only in leap years';
                     }
-                    return $words . $at;
+                    return self::clockBeforeClause($words, $at);
                 }
                 return $every('year', 'Yearly') . ' on ' . self::member($mem) . ' of ' . $months . $at;
         }
@@ -151,6 +151,19 @@ final class Words
             return 'Repeats in a form Better-Cal can\'t read';
         }
         return 'Repeats (' . $r->pattern() . ')' . $at;
+    }
+
+    /**
+     * The clock right after the day, before a clause about other months:
+     * "Monthly on the 31st at 16:00, skipping months without one".
+     */
+    private static function clockBeforeClause(string $words, string $at): string
+    {
+        if ($at === '' || preg_match('/, (skipping|or the last|only in)/', $words, $m, PREG_OFFSET_CAPTURE) !== 1) {
+            return $words . $at;
+        }
+        $comma = (int) $m[0][1];
+        return substr($words, 0, $comma) . $at . substr($words, $comma);
     }
 
     public static function lower(string $s): string

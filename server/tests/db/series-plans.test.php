@@ -193,4 +193,129 @@ return static function (Db $db): void {
             $db->one("SELECT start_utc, end_utc, title FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$s]),
         ]);
     });
+    scenario('own fields: imported edited days compare every field, in both import orders', function () use ($d, $u, $db, $home, $answer): void {
+        $importer = new BetterCal\Domain\CalendarImport($db, $d->calendars);
+        $vevent = static fn(string $uid, string $start, string $summary, ?string $rid = null, string $more = '', bool $rule = false): string => "BEGIN:VEVENT\r\nUID:$uid\r\nDTSTAMP:20261101T000000Z\r\n"
+            . ($rid !== null ? "RECURRENCE-ID:$rid\r\n" : '') . "DTSTART:$start\r\nDTEND:" . substr($start, 0, 9) . "190000Z\r\nSUMMARY:$summary\r\n"
+            . ($rule ? "RRULE:FREQ=WEEKLY;BYDAY=TU\r\n" : '') . $more . "END:VEVENT\r\n";
+        $file = static fn(string ...$events): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\n" . implode('', $events) . "END:VCALENDAR\r\n";
+        // The override first in the file, its master after it; it differs only in its notes.
+        $ics = $file(
+            $vevent('choir-import@example.test', '20270309T180000Z', 'Choir I', '20270309T180000Z', "DESCRIPTION:Only this day: bring the folder\r\n"),
+            $vevent('choir-import@example.test', '20270105T180000Z', 'Choir I', null, "DESCRIPTION:Weekly practice\r\n", true),
+        );
+        $cal = (int) $importer->importIcs($u, $ics, 'Imported choir')['calendarId'];
+        $master = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL', [$cal]);
+        checkEq('import: an edited day differing only in its notes owns its notes', ['description'],
+            json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$master]), true));
+        [$code, $plan] = $answer(fn() => $d->events->patch($u, $master, ['scope' => 'all', 'description' => 'New series notes']));
+        checkEq('a series notes change then asks about that day (not direct), and writes nothing', ['409 series_plan_required', ['ownDescription'], 'Only this day: bring the folder'], [
+            $code, array_column($plan['groups'] ?? [], 'id'), $db->scalar('SELECT description FROM events WHERE recurrence_parent_id = ?', [$master]),
+        ]);
+        // Into a calendar that already holds the master: the override alone comes in.
+        $importer->importIcs($u, $file($vevent('band-import@example.test', '20270105T180000Z', 'Band', null, '', true)), 'ignored', null, $home);
+        $importer->importIcs($u, $file(
+            $vevent('band-import@example.test', '20270105T180000Z', 'Band', null, '', true),
+            $vevent('band-import@example.test', '20270112T180000Z', 'Band, sectionals', '20270112T180000Z', "LOCATION:Sample Hall\r\n"),
+        ), 'ignored', null, $home);
+        checkEq('import into a calendar holding the master: the edited day gets its list by equality, never null', ['title', 'location'],
+            json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE calendar_id = ? AND uid = 'band-import@example.test' AND recurrence_parent_id IS NOT NULL", [$home]), true));
+    });
+
+    scenario('own fields: a CalDAV client\'s PUT', function () use ($d, $u, $db, $home): void {
+        $token = (new BetterCal\Domain\ApiTokens($db))->create($u, 'Sample phone');
+        $dav = new BetterCal\Dav\CalendarBackend($db, $d->undo, fn() => BetterCal\Domain\RequestAuthority::credential($u, (int) $token['id'], null));
+        $object = static fn(string $series, string $day, string $place = 'Sample Hall'): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\n"
+            . "BEGIN:VEVENT\r\nUID:dav-series@example.test\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20270105T180000Z\r\nDTEND:20270105T190000Z\r\nSUMMARY:$series\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nEND:VEVENT\r\n"
+            . "BEGIN:VEVENT\r\nUID:dav-series@example.test\r\nDTSTAMP:20261101T000000Z\r\nRECURRENCE-ID:20270112T180000Z\r\nDTSTART:20270112T180000Z\r\nDTEND:20270112T190000Z\r\nSUMMARY:$day\r\nLOCATION:$place\r\nEND:VEVENT\r\n"
+            . "END:VCALENDAR\r\n";
+        $own = static fn() => json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE calendar_id = ? AND uid = 'dav-series@example.test' AND recurrence_parent_id IS NOT NULL", [$home]), true);
+        $dav->createCalendarObject($home, 'dav-series@example.test.ics', $object('Choir', 'Rehearsal'));
+        checkEq('PUT: a new edited day, by equality (its title and place differ)', ['title', 'location'], $own());
+        $dav->updateCalendarObject($home, 'dav-series@example.test.ics', $object('Rehearsal', 'Rehearsal'));
+        checkEq('PUT: echoed unchanged after the series took the same title, it keeps its own title', ['title', 'location'], $own());
+        $dav->updateCalendarObject($home, 'dav-series@example.test.ics', $object('Choir', 'Choir'));
+        checkEq('PUT: its title changed there to the series\' is inherited', ['location'], $own());
+        $dav->updateCalendarObject($home, 'dav-series@example.test.ics', $object('Choir', 'Choir', 'Sample Annex'));
+        checkEq('PUT: its place changed there to another the master doesn\'t have stays its own', ['location'], $own());
+    });
+
+    scenario('edited days: all events from the day\'s own row, and its series on the occurrence', function () use ($d, $u, $db, $weekly, $answer): void {
+        $choir = $weekly('Choir');
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-16T18:00:00+00:00', 'title' => 'Rehearsal', 'location' => 'Sample Hall']);
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-23T18:00:00+00:00', 'start' => '2027-03-25T18:00:00+00:00', 'end' => '2027-03-25T19:00:00+00:00']);
+        $rehearsal = (int) $db->scalar("SELECT id FROM events WHERE recurrence_parent_id = ? AND title = 'Rehearsal'", [$choir]);
+        $moved = (int) $db->scalar("SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-03-23 18:00:00'", [$choir]);
+        $occ = $d->events->serializeSingle($db->one('SELECT * FROM events WHERE id = ?', [$rehearsal]));
+        checkEq('an edited day\'s occurrence names its series: seriesId, seriesTitle, seriesKey', [$choir, 'Choir', '2027-03-16T18:00:00Z'],
+            [$occ['seriesId'] ?? null, $occ['seriesTitle'] ?? null, $occ['seriesKey'] ?? null]);
+        // A drag of the edited day with all events: the series' drag, from its key.
+        $drag = ['scope' => 'all', 'start' => '2027-03-17T18:00:00+00:00', 'end' => '2027-03-17T19:00:00+00:00'];
+        $plan = $d->events->previewPatch($u, $rehearsal, $drag);
+        checkEq('preview from the edited day\'s own row: weekly on Wednesday, the day acted on is Rehearsal\'s', ['FREQ=WEEKLY;BYDAY=WE', '2027-03-17'],
+            [$plan['rule']['after'], substr((string) ($plan['next'][0]['start'] ?? ''), 0, 10)]);
+        planned($d->events, $u, $rehearsal, $drag);
+        checkEq('committed: Wednesdays, Rehearsal keyed and shown on Wed 17 Mar with its own title, the moved day still on its own Thursday', [
+            'FREQ=WEEKLY;BYDAY=WE', ['2027-03-17 18:00:00', '2027-03-17 18:00:00', 'Rehearsal'], '2027-03-25 18:00:00',
+        ], [
+            $db->scalar('SELECT rrule FROM events WHERE id = ?', [$choir]),
+            array_values($db->one('SELECT recurrence_instance_utc, start_utc, title FROM events WHERE id = ?', [$rehearsal])),
+            $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$moved]),
+        ]);
+        // The day on its own date dragged on a day: the series moves a day, it lands where dropped.
+        $editor = ['scope' => 'all', 'start' => '2027-03-26T18:00:00+00:00', 'end' => '2027-03-26T19:00:00+00:00'];
+        planned($d->events, $u, $moved, $editor);
+        checkEq('the moved day dragged a day with all events: Thursdays, and it shows on Fri 26 Mar', ['FREQ=WEEKLY;BYDAY=TH', '2027-03-26 18:00:00'],
+            [$db->scalar('SELECT rrule FROM events WHERE id = ?', [$choir]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$moved])]);
+        // "Use series value" sent to the day's own row, and to the master by its key.
+        $d->events->patch($u, $rehearsal, ['scope' => 'this', 'useSeries' => ['title']]);
+        checkEq('useSeries on the edited day\'s own row: its title is the series\' and no longer its own', ['Choir', ['location']], [
+            $db->scalar('SELECT title FROM events WHERE id = ?', [$rehearsal]), json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$rehearsal]), true),
+        ]);
+        $occ = $d->events->serializeSingle($db->one('SELECT * FROM events WHERE id = ?', [$rehearsal]));
+        $d->events->patch($u, (int) $occ['seriesId'], ['scope' => 'this', 'instanceStart' => $occ['seriesKey'], 'useSeries' => ['location']]);
+        checkEq('useSeries to the master with seriesKey: the last own field goes, and the row with it', 0, (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$rehearsal]));
+        $d->undo->undoLatest($u);
+        checkEq('undone: the row is back with its place its own', ['location'], json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$rehearsal]), true));
+        [$code] = $answer(fn() => $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-26T18:00:00+00:00', 'useSeries' => ['date']]));
+        checkEq('an occurrence key sent as a day\'s shown start (its own date) is still 422', '422 invalid_recurrence_instance', $code);
+    });
+
+    scenario('a rule the expander can\'t read: only its details change', function () use ($d, $u, $db, $home, $answer): void {
+        $id = (int) $d->events->create($u, eventAt($home, 'Holiday dinner', '2027-04-22'))['eventId'];
+        $db->run("UPDATE events SET rrule = 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L' WHERE id = ?", [$id]);
+        $before = $db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $why = BetterCal\Domain\Series\Model::REASONS['unreadable'];
+        $said = static function (callable $fn): array {
+            try {
+                $fn();
+                return [null, null];
+            } catch (BetterCal\Http\HttpError $e) {
+                return [$e->status . ' ' . $e->errorCode, $e->getMessage()];
+            }
+        };
+        checkEq('ends after 3: 422 series_refused with the design\'s words', ['422 series_refused', $why],
+            $said(fn() => planned($d->events, $u, $id, ['scope' => 'all', 'rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3'])));
+        checkEq('renamed with this and following: refused the same way', ['422 series_refused', $why],
+            $said(fn() => $d->events->patch($u, $id, ['scope' => 'following', 'instanceStart' => '2027-04-22T18:00:00+00:00', 'title' => 'Holiday supper'])));
+        checkEq('delete following: refused the same way', ['422 series_refused', $why],
+            $said(fn() => $d->events->deleteEvent($u, $id, 'following', '2027-04-22T18:00:00+00:00')));
+        checkEq('nothing was written', $before, $db->one('SELECT * FROM events WHERE id = ?', [$id]));
+        $d->events->patch($u, $id, ['scope' => 'all', 'title' => 'Holiday supper', 'rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L']);
+        checkEq('renamed for all events, the rule sent back as it is: applied, direct', ['Holiday supper', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L'],
+            array_values($db->one('SELECT title, rrule FROM events WHERE id = ?', [$id])));
+        unset($answer);
+    });
+
+    scenario('migration 063 keeps updated_at, so no CalDAV ETag changes', function () use ($d, $u, $db, $weekly): void {
+        $s = $weekly('Choir');
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Rehearsal']);
+        $db->run("UPDATE events SET override_fields = NULL, updated_at = '2026-10-01 12:00:00' WHERE recurrence_parent_id = ?", [$s]);
+        $migration = require dirname(__DIR__, 2) . '/migrations/063_override_fields.php';
+        $migration($db);
+        checkEq('the list filled, updated_at as it was', [['title'], '2026-10-01 12:00:00'], [
+            json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$s]), true),
+            $db->scalar('SELECT updated_at FROM events WHERE recurrence_parent_id = ?', [$s]),
+        ]);
+    });
 };

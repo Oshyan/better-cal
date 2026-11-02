@@ -81,8 +81,10 @@ return static function (Db $db): string {
                         $people ? ($peopleSets[$id] ?? []) : null, $people ? ($peopleSets[$mid] ?? []) : null,
                     );
                 }
-                // The list only: updated_at stays, so nothing reads as changed.
-                $db->run('UPDATE events SET override_fields = ? WHERE id = ? AND override_fields IS NULL', [OwnFields::encode($own), (int) $row['id']]);
+                // The list only: updated_at stays, so nothing reads as changed
+                // (MariaDB's ON UPDATE CURRENT_TIMESTAMP fires unless the
+                // column is assigned, and a CalDAV ETag would change with it).
+                $db->run('UPDATE events SET override_fields = ?, updated_at = updated_at WHERE id = ? AND override_fields IS NULL', [OwnFields::encode($own), (int) $row['id']]);
                 $filled++;
             }
         });

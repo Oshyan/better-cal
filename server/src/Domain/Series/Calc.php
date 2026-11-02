@@ -61,10 +61,15 @@ final class Calc
         $zone = Time::zone($tz);
         $at = new \DateTimeImmutable($wall, $zone);
         // A clock time that happens twice is the first, in daylight time, as
-        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second.
-        $earlier = (new \DateTimeImmutable('@' . ($at->getTimestamp() - 3600)))->setTimezone($zone);
-        if ($earlier->format('Y-m-d H:i:s') === $wall) {
-            $at = $earlier;
+        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second. The
+        // repeated span is the zone's own fall-back: an hour mostly, half an
+        // hour on Lord Howe Island, two hours where a zone once fell back so.
+        foreach ([7200, 3600, 1800] as $back) {
+            $earlier = (new \DateTimeImmutable('@' . ($at->getTimestamp() - $back)))->setTimezone($zone);
+            if ($earlier->format('Y-m-d H:i:s') === $wall) {
+                $at = $earlier;
+                break;
+            }
         }
         return $at->setTimezone(Time::utc());
     }

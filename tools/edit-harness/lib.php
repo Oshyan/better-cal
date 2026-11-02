@@ -1623,7 +1623,6 @@ final class Known
 {
     /** @var list<array{0:string,1:string}> regex over "invariant | family | edit" => root cause */
     public const ROOT_CAUSES = [
-        ['/^(api-crash|6-undo-crash|6-stack-crash) \|/', 'key-collision'],
         ['/^(1|5|7)-phantom \|/', 'until-first-phantom'],
         ['/^(2-skip-past-end|2-edited-past-end) \| .* \| allday_all$/', 'until-type'],
         ['/^(2-skip-past-end|2-edited-past-end|5-skips|5-edited|3-skips|3-edited) \| weekly_list \| (drag_all|drag_following)$/', 'biweekly-list'],

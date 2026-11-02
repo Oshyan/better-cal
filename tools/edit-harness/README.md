@@ -40,7 +40,6 @@ The summary ends with `Clean: no signature outside the known root causes.` when 
 
 Found by the first run (3,000 cases, seed 1, 2026-11-01; the full report is in the project's review notes). Each line is the key in `Known::ROOT_CAUSES`.
 
-- **key-collision**: a whole-series drag by the distance between two edited days (a weekly series with two consecutive edited days dragged a week) fails with a duplicate-key error, since the edited rows are re-keyed one at a time; Undo restores rows one at a time and can fail the same way. Defect.
 - **until-first-phantom**: the expander (sabre/vobject 4.6.1) yields a monthly rule's UNTIL as an occurrence when it falls on the first of a month at the series' time (a date for an all-day series), which a split of an all-day monthly series at an occurrence on the 2nd writes, and a moved UNTIL can land on. Defect (a library quirk the app has to guard).
 - **stale-skips**: after a "this and following" split or delete, the old series keeps the skipped days from the split on, now past its end. Harmless to expansion; a defect in what the row says.
 - **keep-snap**: a rule that cannot follow a drag (a list of days, the last day of the month, a list of months) keeps its days but moves its start by the drag and snaps it forward, so a forward drag loses the earlier days and the exceptions on them; from a day on, the dragged day itself. The suite asserts the snap. Reported as a defect to decide on.

@@ -141,8 +141,10 @@ export async function confirmSeriesChange() {
     const res = await api('/events/' + sc.occ.eventId, { method: 'PATCH', body: requestBody(sc, { plan: commitPlan(plan, sc.choices) }) });
     if (!current(id)) return false;
     if (sc.before) {
-      localSaved([sc.before]);
-      patchOccurrence(sc.occ.instanceId, { seriesPending: false }, { edit: false });
+      // Drawn solid, and held so until an answer carries the change: the
+      // solid copy is a save of its own, so nothing puts the pending one back.
+      const solid = patchOccurrence(sc.occ.instanceId, { seriesPending: false });
+      localSaved([sc.before, solid]);
     }
     set({ seriesChange: null });
     const verb = sc.kind === 'drag' ? 'Moved all events'

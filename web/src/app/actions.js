@@ -17,6 +17,7 @@ import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
+import { openSeriesChange } from './serieschange.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -442,6 +443,23 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
     toast('Resize failed: ' + e.message, { error: true });
     return false;
   }
+}
+
+// A drop on a series occurrence with its scope picked (App.js): "All events"
+// waits for the series dialog (SeriesDialog.js), its block drawn pending
+// where it was dropped; "This event" and, until 1.5.1, "This and following"
+// act at once, as before.
+export function seriesDrop(kind, occ, p, scope) {
+  const act = kind === 'resize' ? resizeEvent : moveEvent;
+  if (scope !== 'all') return act({ ...p, scope });
+  openSeriesChange({
+    kind, occ,
+    body: { start: p.newStart, end: p.newEnd },
+    at: p.at ? { x: p.at.x, y: p.at.y } : null,
+    pending: { start: p.newStart, end: p.newEnd },
+    apply: (s) => act({ ...p, scope: s }),
+  });
+  return null;
 }
 
 // The calendar a new event lands on when nothing else says otherwise: the

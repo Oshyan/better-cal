@@ -4647,5 +4647,150 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('creation line: none without a plan', creationLine(null), null);
 }
 
+console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { seriesDrop } = await import('../src/app/actions.js');
+  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, setSeriesScope } = await import('../src/app/serieschange.js');
+  const { planView } = await import('../src/lib/seriesplan.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const sent = [];
+  let answer = null; // (body) => Response for PATCH /events/41
+  globalThis.fetch = async (url, o = {}) => {
+    const u = new URL(String(url), 'http://app.test');
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/events/41' && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      sent.push(body);
+      return answer(body);
+    }
+    if (p === '/changes/cursor') return json({ cursor: 's1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  let n = 0;
+  const occ = {
+    instanceId: '41@0', eventId: 41, calendarId: 3, title: 'Sample choir', recurring: true, rrule: 'FREQ=WEEKLY;BYDAY=TU',
+    tzid: 'America/Los_Angeles', start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00', allDay: false,
+  };
+  const reset = () => {
+    put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', provider: null, editable: true }], loadedRanges: [], visibleDays: null, popover: null, editor: null });
+    st.occ.clear();
+    // A fresh occurrence each time: a landed save holds its own until an answer carries it.
+    occ.instanceId = '41@' + ++n;
+    drop.instanceId = occ.instanceId;
+    st.occ.set(occ.instanceId, { ...occ });
+    sent.length = 0;
+  };
+  const drop = { instanceId: occ.instanceId, newStart: '2027-03-10T19:00:00-08:00', newEnd: '2027-03-10T20:30:00-08:00', at: { x: 300, y: 200 } };
+  const groupPlan = (hash, selected = 'member') => ({
+    hash, direct: false,
+    rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', after: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', wordsBefore: 'Weekly on Monday, Wednesday and Friday at 07:00', words: 'Weekly on Monday, Thursday and Friday at 07:00' },
+    groups: [{ id: 'rule', selected, options: [
+      { id: 'member', label: 'Move every Wednesday to Thursday', next: ['2027-03-11T07:00:00-08:00'] },
+      { id: 'pattern', label: 'Shift the whole weekly pattern', next: ['2027-03-11T07:00:00-08:00'] },
+    ] }],
+    days: [], refusals: [], notes: [],
+  });
+
+  // 1. All events: the dialog opens at once, the block pending where dropped,
+  // and the preview is the drag's fields with preview: true.
+  reset();
+  let gate;
+  answer = (body) => (body.preview ? new Promise((r) => { gate = () => r(json({ plan: groupPlan('h1') })); }) : json({ ok: true }));
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  const shown = () => st.occ.get(occ.instanceId);
+  eq('series drag: the block waits where it was dropped, drawn pending', [shown().start, shown().seriesPending], [drop.newStart, true]);
+  eq('series drag: the dialog is up, working out the plan, confirm off', [st.seriesChange && st.seriesChange.status, planView(st.seriesChange.plan, {}).canConfirm], ['loading', false]);
+  eq('series drag: the preview asks with the drag\'s fields', sent[0], { start: drop.newStart, end: drop.newEnd, scope: 'all', instanceStart: occ.start, preview: true });
+  eq('series drag: confirm before the plan sends nothing', [await confirmSeriesChange(), sent.length], [false, 1]);
+  gate();
+  await tick();
+  eq('series drag: the plan arrives and the dialog is ready', [st.seriesChange.status, st.seriesChange.plan.hash], ['ready', 'h1']);
+
+  // 2. Picking another reading asks again with the choice.
+  answer = (body) => json({ plan: groupPlan('h2', body.plan && body.plan.choices.rule) });
+  pickSeriesOption('rule', 'pattern');
+  eq('series drag: a pick asks for the plan again, confirm off meanwhile', st.seriesChange.status, 'refreshing');
+  await tick();
+  eq('series drag: the new preview carries the pick', sent[1].plan, { choices: { rule: 'pattern' } });
+  eq('series drag: and the plan follows it', [st.seriesChange.plan.hash, st.seriesChange.status], ['h2', 'ready']);
+
+  // 3. The series changed meanwhile: 409 with the new plan, asked again.
+  answer = (body) => (body.plan && body.plan.hash === 'h2'
+    ? json({ error: { code: 'series_plan_changed', message: 'The series changed', plan: groupPlan('h3', 'pattern') } }, 409)
+    : json({ ok: true }));
+  await confirmSeriesChange();
+  eq('series drag: the commit names the hash and every group', sent[2].plan, { hash: 'h2', choices: { rule: 'pattern' } });
+  eq('series drag: a stale hash brings the new plan and asks again', [st.seriesChange && st.seriesChange.plan.hash, st.seriesChange && st.seriesChange.changed, shown().seriesPending], ['h3', true, true]);
+  eq('series drag: the dialog says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, true);
+  const toastsBefore = st.toasts.length;
+  await confirmSeriesChange();
+  await tick();
+  eq('series drag: the commit with the new hash lands', [sent[3].plan.hash, st.seriesChange], ['h3', null]);
+  eq('series drag: the block is drawn solid where it was dropped', [shown().start, !!shown().seriesPending], [drop.newStart, false]);
+  eq('series drag: the toast stays short', st.toasts.slice(toastsBefore).map((t) => [t.title, t.text]), [['Sample choir', 'Moved all events']]);
+  answer = () => json({ plan: groupPlan('h9') });
+  seriesDrop('drag', shown(), { ...drop, newStart: '2027-03-11T19:00:00-08:00', newEnd: '2027-03-11T20:30:00-08:00' }, 'all');
+  await tick();
+  cancelSeriesChange();
+  eq('series drag: a second drag cancelled before the refresh goes back to the landed one, solid', [shown().start, !!shown().seriesPending], [drop.newStart, false]);
+
+  // 4. Cancel puts the block back and sends nothing more.
+  reset();
+  answer = () => json({ plan: groupPlan('h4') });
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  cancelSeriesChange();
+  eq('series drag: cancel puts the block back, nothing written', [shown().start, !!shown().seriesPending, st.seriesChange, sent.length], [occ.start, false, null, 1]);
+
+  // 5. Refused: the reasons, no confirm, nothing written.
+  reset();
+  const refusal = 'This repeat came from another app and counts weeks of the year, so its days can\'t follow a drag. Move only this one, or open the series to choose its days.';
+  answer = () => json({ error: { code: 'series_refused', message: 'Refused', plan: { hash: 'r1', refusals: [{ code: 'byweekno', words: refusal }] } } }, 422);
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  const refusedView = planView(st.seriesChange.plan, {});
+  eq('series drag: a refusal shows its reason, with no confirm', [refusedView.refused, refusedView.canConfirm], [refusal, false]);
+  eq('series drag: and confirm sends nothing', [await confirmSeriesChange(), sent.length], [false, 1]);
+
+  // 6. "Only this one" from the dialog: the old path with scope this.
+  answer = (body) => json({ ok: true, scope: body.scope });
+  onlyThisOne();
+  await tick();
+  eq('series drag: only this one moves the one day', [st.seriesChange, sent[1].scope, sent[1].plan, sent[1].preview, shown().start], [null, 'this', undefined, undefined, drop.newStart]);
+
+  // 7. Any other error: the block goes back with the error toast.
+  reset();
+  answer = () => json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+  const before7 = st.toasts.length;
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  eq('series drag: a failed preview puts the block back and says why', [st.seriesChange, shown().start, st.toasts.slice(before7).map((t) => t.text)], [null, occ.start, ['Move failed: Down for a moment']]);
+
+  // 8. "This event" acts at once, as before, with no dialog; resize the same way.
+  reset();
+  answer = () => json({ ok: true });
+  await seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'this');
+  eq('series drag: this event moves at once', [st.seriesChange, sent.length, sent[0].scope, sent[0].preview], [null, 1, 'this', undefined]);
+  reset();
+  answer = (body) => (body.preview ? json({ plan: { ...groupPlan('z1'), groups: [] } }) : json({ ok: true }));
+  seriesDrop('resize', st.occ.get(occ.instanceId), { ...drop, newStart: occ.start }, 'all');
+  await tick();
+  eq('series resize: through the dialog too, named for what it does', [st.seriesChange.kind, planView(st.seriesChange.plan, { kind: 'resize' }).action, sent[0].preview], ['resize', 'Change all events', true]);
+  // "This and following" in the dialog keeps its old path until 1.5.1, on Confirm.
+  setSeriesScope('following');
+  await confirmSeriesChange();
+  await tick();
+  eq('series resize: this and following from the switch goes the old way', [st.seriesChange, sent[1].scope, sent[1].plan], [null, 'following', undefined]);
+
+  put({ seriesChange: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

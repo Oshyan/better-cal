@@ -1,6 +1,6 @@
 # Series Model Examples
 
-The worked examples for [series-model.md](series-model.md): what the confirmation dialog says for each kind of change, the full grid of family by edit, the harness's open causes and the reviewers' cases resolved under the revised model, and the prediction cases. Every series, title, place and person here is invented. Dates are 2027 unless they say otherwise; times are Los Angeles time unless they say otherwise. Sabre's answers were probed for the forms they name.
+The worked examples for [series-model.md](series-model.md): what the confirmation dialog says for each kind of change, the full grid of family by edit, the harness's open causes and the reviewers' cases resolved under the revised model, the acceptance cases from the third review, and the prediction cases. Every series, title, place and person here is invented. Dates are 2027 unless they say otherwise; times are Los Angeles time unless they say otherwise. Sabre's answers were probed for the forms they name.
 
 In the dialog lines below, `(•)` is the preselected reading and `( )` another; the preselections are open decision 1's recommendations.
 
@@ -154,6 +154,16 @@ With "Keep 6 events", the old 31 Jul, 31 Aug and 31 Oct have no place in the ser
 
 An UNTIL series in the same drag keeps the end by default (UNTIL the latest image) and offers "Keep 6 events" second.
 
+Dragged from its last day instead: the recital, 31 Oct, dragged to 1 Nov. Every 1st from 1 Feb again, but six of them end on 1 Jul, which would leave the recital out of the place it was just put. So that reading keeps it separately (The Day Acted On Comes First):
+
+```
+(•) Keep 6 events + this one on its own   1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul, and the recital on 1 Nov
+                                          6 in the series + 1 separate
+( ) Keep the end                          Changes 6 events to 10, 1 Feb to 1 Nov; the recital on 1 Nov in the series
+```
+
+Written with the first: `BYMONTHDAY=1;COUNT=6` from 1 Feb (probed: 1 Feb to 1 Jul), and the recital as an event of its own on Mon 1 Nov at 16:00, its title and place kept. The old 31 Jul and 31 Aug, with no edits, have no place, and the line says so when opened. There is no "Delete it" for the recital: it's the day the person moved.
+
 ## Lists
 
 "Gym", weekly on Monday, Wednesday and Friday at 07:00 from Mon 4 Jan. Wed 10 Mar dragged to Thu 11 Mar:
@@ -174,7 +184,16 @@ A member crossing another, and the start: "Swim", Monday and Wednesday at 07:00,
 
 The start is the earliest image: Wed 6 Jan stays where it was, Mon 4 Jan goes to Thu 7 Jan. Probed: `BYDAY=WE,TH;COUNT=6` from Wed 6 Jan gives 6, 7, 13, 14, 20 and 21 Jan, each old occurrence's image; from Thu 7 Jan, the old start's image, it would lose 6 Jan and run on to 27 Jan.
 
-A gain at the edge: the same Swim from Wed 6 Jan with no end (no Monday in its first week), Mon 11 Jan dragged to Fri 15 Jan, "Move every Monday to Friday": Wednesday and Friday from Wed 6 Jan, and the plan offers "Add Fri 8 Jan" (preselected; probed: 6, 8, 13, 15 Jan) or "Start on Wed 6 Jan without it" (6, 13, 15 Jan, the series keeping its count).
+A gain at the edge: the same Swim from Wed 6 Jan with no end (no Monday in its first week), Mon 11 Jan dragged to Fri 15 Jan, "Move every Monday to Friday": Wednesday and Friday from Wed 6 Jan, and the plan offers "Add Fri 8 Jan" (preselected; probed: 6, 8, 13, 15 Jan) or "Start on Wed 6 Jan without it" (6, 13, 15 Jan: it doesn't add an occurrence in the first week). Without it, the plan writes an EXDATE on Fri 8 Jan, listed with the skipped days ("Fri 8 Jan skipped, so the series starts as before"; probed). With a COUNT the two choices also change the bound, worked out together: the Pottery case in [Acceptance Cases](#acceptance-cases-from-the-third-review).
+
+Whole weeks: "Swim", Monday and Wednesday at 07:00 from Mon 4 Jan, no end, its Wed 6 Jan "Swim test" (own title). Mon 11 Jan dragged to Mon 18 Jan, "All events". No weekday changes, but the two readings are different series:
+
+```
+(•) Move every Monday a week later   Mon 18 Jan · Wed 20 Jan · Mon 25 Jan   the same 3 dates; starts Wed 6 Jan, 'Swim test' stays on Wed 6 Jan
+( ) Shift the whole pattern a week   Mon 18 Jan · Wed 20 Jan · Mon 25 Jan   the same 3 dates; starts Mon 11 Jan, 'Swim test' moves to Wed 13 Jan
+```
+
+Both keep `BYDAY=MO,WE`. The first starts on Wed 6 Jan, each Monday's events and edits a week on, so only Mon 4 Jan leaves the calendar; the second starts on Mon 11 Jan, every event and edit a week on (probed: 6, 11, 13, 18 Jan and 11, 13, 18, 20 Jan). Every other week, "Move every Monday a week later" is written with `WKST=TU`, so each Wednesday shares a period with the Monday after it (probed: 6, 11, 20, 25 Jan). Every third week, Mondays dragged two weeks: "Move every Monday two weeks later" is disabled ("its Mondays would fall in weeks this skips"), since no week start puts Wed 6 Jan and Mon 18 Jan in one week (probed with all seven: each gives Mon 11 Jan or Mon 25 Jan instead), and the whole-pattern shift is the only reading. A monthly list works the same by whole months: the 1st and 15th, its 15 Mar dragged to 15 Apr, offers "Move every 15th a month later" and "Shift the whole pattern a month".
 
 Every other week: "Lab", every other Monday and Wednesday from Mon 4 Jan. Mon 1 Mar dragged to Sun 28 Feb, "Move every Monday to Sunday": the rule becomes `INTERVAL=2;BYDAY=SU,WE;WKST=SU` from Sun 3 Jan, so each Sunday shares a week with its Wednesday (probed: 3, 6, 17, 20 Jan). Without WKST=SU the Wednesdays would land in the off weeks (probed: 3, 13, 17, 27 Jan).
 
@@ -197,7 +216,7 @@ Edited   'Payday, bonus' Thu 15 Apr stays on 15 Apr
 
 Each 1st goes to the 20th of its month and each 15th stays (probed: `BYMONTHDAY=15,20` from 15 Jan gives 15 Jan, 20 Jan, 15 Feb, 20 Feb; from 20 Jan, the old start's image, it would lose 15 Jan). By sorted position the edited 15th, the old second member, would have gone to the new second, the 20th.
 
-"Book group", monthly on the first and third Monday (`1MO,3MO`). The third Monday, 15 Mar, dragged to Tue 16 Mar: "Move every third Monday to the third Tuesday" (`1MO,3TU`, probed) or "Shift the whole monthly pattern: the first and third Tuesday".
+"Book group", monthly on the first and third Monday (`1MO,3MO`). The third Monday, 15 Mar, dragged to Tue 16 Mar: "Move every third Monday to the third Tuesday" (`1MO,3TU`, probed) or "Shift the whole monthly pattern: the first and third Tuesday". The result, two weekdays in one nth list, is still the nth-list row, so the next drag of a first Monday is offered as the first drag was (Acceptance Cases).
 
 ## From an Edited Day
 
@@ -318,6 +337,10 @@ A split past the cap: "Stretch", daily from 1 Jan 2027, 1,500 events (to 8 Feb 2
 - `FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;BYHOUR=9;WKST=SU`, its parts composed: moved to 10:00, accepted, `BYHOUR=10` written (the fixed hour allows it, the week number doesn't object); dragged a day, refused, "This repeat counts weeks of the year, so its days can't follow a drag" (the week number refuses, and a refusal wins). A new length or a new end: accepted, WKST kept.
 - `FREQ=DAILY;BYHOUR=9,17`: made all-day, refused, "This repeat happens twice a day (09:00 and 17:00), so it can't be made all-day" (probed: two occurrences on 1 Mar). Dragged a day or given another zone, refused with the reason below. Renamed for all events or given an end: accepted.
 - `FREQ=DAILY;BYHOUR=2,3;BYMINUTE=30` in Los Angeles: on 14 Mar sabre yields one occurrence, 03:30 PDT, where 13 and 15 Mar have two (probed), because the 02:30 moves forward onto the 03:30. A drag or zone change: "This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can't be moved or given another zone as a series. Move one event, or change its other details." `FREQ=HOURLY` steps by elapsed time and has no collision (probed: 01:30 PST, then 03:30 PDT), but refuses the same edits.
+- `FREQ=MONTHLY;BYDAY=4MO,-1MO` from another app: its fourth and last Monday are one day in a month with four Mondays (probed: 22 Feb 2027 once, 22 and 29 Mar both), so it's outside the nth-list row and a drag that moves days is refused ("Its fourth and last Monday are the same day in some months, so its days can't follow a drag"). `1MO,3TU,-1FR`, which no month can merge, is the nth-list row with every edit.
+- `RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L` from another app: sabre refuses it ("Not supported: RSCALE", probed; an X- part gets the same answer). Renamed for all events: accepted, and `direct` for an agent. Ends changed, "this and following" or delete following: refused, "This repeat came from another app in a form Better-Cal can't read, so only its details can change here." Delete all: accepted.
+- On a Google calendar until 1.5.2, the reason for anything unavailable reads: "On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events."
+- Several times a day, the refusal reads: "This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can't be moved or given another zone as a series. Move one event, or change its other details."
 
 ## Zones
 
@@ -359,7 +382,7 @@ Move only this one, or change its time or details for all events.
                                                               Only this one    Cancel
 ```
 
-The same series moved from 19:00 to 19:30 for all events is a plain edit Google applies itself: "Weekly on Tuesday, now at 19:30 · Edited days are left to Google, and this can't be undone."
+The same series moved from 19:00 to 19:30 for all events keeps the rule text, so it's offered: "Weekly on Tuesday, now at 19:30 · Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone." The plan lists no outcome for 'Rehearsal' on 13 Apr: whether Google moves it to 19:30, keeps it at 19:00 or drops it is what the 1.5.2 probe finds out.
 
 From 1.5.2, half done: "Choir" on a Google calendar, "This and following" from Tue 9 Mar dragged to Wed 10 Mar. The pending row records the plan, its steps, and the complete state of "Rehearsal" on 13 Apr before anything that could remove it at Google. The steps: insert the new series (Wednesdays from 10 Mar, with an id the app chose), end the old one (UNTIL 2 Mar), move "Rehearsal" from 13 Apr to the new series' 14 Apr. Google refuses the second. The app reads Google back, stores what's there, and Review shows:
 
@@ -398,11 +421,11 @@ Every family by every edit, in short words: "follows" is the drag table's rule, 
 | Yearly month list | follows †, refused across the year | same days, own kept | own kept † | two readings † | follows † | split † | split † | as edit † | new rule † | skip | split † |
 | Other capabilities | by its parts † | by its parts | by its parts † | clock: same days; moment: by its parts † | by its parts † | split † | split † | as edit † | new rule † | skip | split † |
 
-A split works for every family, other capabilities included: a rule restarted at one of its own occurrences gives the same days from there on. Probed with the 1st and 3rd weekday, every other Sat and Sun, every two months on the 10th and 20th, March and September's second Tuesday, and the last weekend day, each restarted mid-period.
+A split works for every family, other capabilities included, except a rule the expander can't read, which takes field changes only: a rule restarted at one of its own occurrences gives the same days from there on. Probed with the 1st and 3rd weekday, every other Sat and Sun, every two months on the 10th and 20th, March and September's second Tuesday, and the last weekend day, each restarted mid-period.
 
 ## The Harness's Causes, Resolved
 
-The harness's twelve open causes, each by the cell that settles it:
+The harness's twelve open causes, each by the cell that settles it. Run at 976f49a (3,000 cases, seed 1), its 2,011 failing checks fall under them as: stale-skips 639, keep-snap 378, google-parity 342, editor-rule 249, rule-change-orphans 139, biweekly-list 133, plain-rule 59, count-span-or-month-multiple 36, yearly-nth-start 22, until-type 10, until-first-phantom 4.
 
 - **Cause 2, plain-rule.** `FREQ=MONTHLY` from 30 Jan, 30 Apr dragged to 1 May: the monthly bare row, read as day 30; the landed 1st is one reading, every 1st, k = 1. Start 1 Feb, days 1 Feb, 1 Mar, 1 Apr, 1 May, and the plan says it adds every 1 Mar (February had no 30th to move there); today every 31st from 31 Jan.
 - **Cause 3, keep-snap.** `BYMONTHDAY=1,15` from 1 Dec, 15 Dec dragged to 16 Dec: "Move every 15th to the 16th" (the 1st and 16th) or "Shift the whole monthly pattern" (the 2nd and 16th), nothing lost either way. `BYMONTHDAY=-2` dragged from 30 Aug to 5 Sep: the 26th-last day is past the seventh-last, so one reading, every 5th, k = 1. `BYMONTH=3,9` dragged from 15 Mar to 16 Apr: every 16 April and October.
@@ -410,7 +433,7 @@ The harness's twelve open causes, each by the cell that settles it:
 - **Cause 5, editor-rule.** `FREQ=WEEKLY;BYDAY=MO;COUNT=4`, a following save from 11 Jan to 12 Jan with the same rule sent: the unchanged-rule row ignores it, so the old part is 4 Jan, the new part Tuesdays from 12 Jan with COUNT=3.
 - **Cause 6, stale-skips.** `FREQ=DAILY;COUNT=10` with 5 Mar skipped, renamed from 3 Mar: the old part's skips are only those before 3 Mar.
 - **Cause 7, yearly-nth-start.** `BYMONTH=11;BYDAY=3SU;COUNT=15` from 15 Nov 2026, 19 Nov 2028 dragged to 17 Dec: the yearly nth row, k = 0, start 20 Dec 2026 (the earliest image, the old start's), fifteen third Sundays of December, the 2034 and 2040 skips on theirs.
-- **Cause 8, google-parity.** Until 1.5.2 a Google series is offered only the edits Google applies itself, so no rule-rewriting plan is sent to Google; from 1.5.2 the read-back confirms Google holds the plan, so a bounded daily series dragged a month keeps its last day there too.
+- **Cause 8, google-parity.** Until 1.5.2 a Google series is offered only edits that keep the rule text, with no outcome claimed for its edited days, so no rule-rewriting plan is sent to Google; from 1.5.2 the read-back confirms Google holds the plan, so a bounded daily series dragged a month keeps its last day there too.
 - **Cause 9, rule-change-orphans.** Every 19th changed to Tuesdays and Thursdays in the editor: the edited 19 Jun 2028 (a Monday) becomes an event of its own on that day, named in the plan, or is deleted if the person picks that.
 - **Cause 10, count-span.** `BYMONTHDAY=31;COUNT=6` from 31 Jan with 31 Oct edited, 31 Mar dragged to 1 Apr: every 1st, k = 1, start 1 Feb. Keep 6 events (preselected): ends 1 Jul, and the edited 31 Oct, outside, becomes an event of its own, "6 in the series + 1 separate". Keep the end: COUNT=10, the edit on 1 Nov (A Count, above).
 - **Cause 11, month-multiple.** `BYMONTHDAY=1;COUNT=11` from 1 Aug with 1 Aug moved to 31 Jul, 1 Feb dragged to 1 Mar: k = 1, start 1 Sep, the moved day keyed on 1 Sep and still showing on its own 31 Jul ("Keep 31 Jul"; with "Move to 31 Aug", there). `BYDAY=4SU;UNTIL=20270725`, 23 May dragged to 27 Jun: k = 1, every fourth Sunday from 28 Mar to 22 Aug, six occurrences as before.
@@ -430,6 +453,89 @@ The harness's twelve open causes, each by the cell that settles it:
 - **Probes for the first draft.** A day moved earlier than the split but keyed after it goes with the following part, and the plan says so. A rename with "All events" left an edited day that only moved its time called by the old name; with own fields its title is inherited, and it takes the new one.
 - **Second design review.** Member identity: the Payday 1st moved to the 20th and the Swim Mondays moved to Thursdays (Lists). Boundaries with no image: the Tutoring end and start (Bounds). Readings with today's dates in common: Book swap (Month Ends). Adoption across a boundary, and the date apart from the time: Sunday run, Book club, Choir (From an Edited Day). Ownership across a sync: the table in Own Fields. Composed capabilities and two times colliding on one moment (Capabilities). Google until 1.5.2, and its recovery (Google). The corrections it found: "6 in the series + 1 separate", 29 Feb 2028 for the clamped 30th, and the months a "every 31st" moved to the 1st gains (1 Mar, 1 May, 1 Jul, 1 Oct, 1 Dec).
 - **The display cap.** A moved UNTIL and a split's COUNT read from an expansion capped at 1,001 occurrences: Water plants and Stretch (Bounds).
+- **Third design review.** A kept count dropping the day just dragged: the recital (A Count) and Cello lesson. The exact form of an edge gain left out, its count and later life: Swim and Pottery. One member moved whole weeks: Swim (Lists) and Swim relay. A rule the model wrote refused at the next edit: Book group (Lists) and Reading circle. Google wording: Choir on Google and Practice. Rules the expander can't read: Capabilities and Holiday dinner. Cello lesson, Pottery, Swim relay, Reading circle, Practice and Holiday dinner are the [Acceptance Cases](#acceptance-cases-from-the-third-review).
+
+## Acceptance Cases from the Third Review
+
+Six independent cases, one per point of the third review, each a pure model test (and a harness case where the harness can generate it). Every series is new here; dates are 2027 and times Los Angeles time. Each lists what the plan must offer, what each choice writes, and what must never happen.
+
+### 1. The Destination Stays
+
+"Cello lesson", monthly on the 31st at 16:00, 6 events from 31 Jan (31 Jan, 31 Mar, 31 May, 31 Jul, 31 Aug, 31 Oct; probed), no exceptions. 31 Oct dragged to 1 Nov, "All events". One rule reading, every 1st from 1 Feb (k = 1); the bound group:
+
+```
+(•) Keep 6 events + this one on its own   1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul, and 1 Nov separately
+                                          6 in the series + 1 separate
+( ) Keep the end                          Changes 6 events to 10, 1 Feb to 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct
+```
+
+| Choice | Written | Shows |
+|---|---|---|
+| Keep 6 + this one | `BYMONTHDAY=1;COUNT=6` from 1 Feb, and an event of its own on Mon 1 Nov at 16:00 with the series' fields | 1 Feb to 1 Jul (probed), and 1 Nov |
+| Keep the end | `BYMONTHDAY=1;COUNT=10` from 1 Feb | 1 Feb to 1 Nov (probed) |
+
+Never: a plain "Keep 6 events" ending on 1 Jul with nothing on 1 Nov, or a "Delete it" for the dragged day. Undo of either puts back the 31st series and removes anything created.
+
+### 2. An Edge Gain Left Out
+
+"Pottery", Monday and Wednesday at 18:00, 5 events from Wed 6 Jan (6, 11, 13, 18 and 20 Jan; probed). Mon 11 Jan dragged to Fri 15 Jan, "All events", "Move every Monday to Friday". Images: 6, 13, 15, 20 and 22 Jan; the new rule `BYDAY=WE,FR` from Wed 6 Jan also gives Fri 8 Jan, a gain in the first week. Edge and bound are worked out together:
+
+```
+First week  (•) Add Fri 8 Jan     ( ) Start on Wed 6 Jan without it
+Bound       (•) Keep 5 events: 6 Jan to 20 Jan; Fri 22 Jan, the last Monday's, has no place
+            ( ) Keep the end: changes 5 events to 6, ends Fri 22 Jan
+```
+
+| Choices | Written | Shows (probed) |
+|---|---|---|
+| Add, keep 5 | `BYDAY=WE,FR;COUNT=5` | 6, 8, 13, 15, 20 Jan |
+| Add, keep the end | `BYDAY=WE,FR;COUNT=6` | 6, 8, 13, 15, 20, 22 Jan |
+| Without it (the bound group merges: both are this plan) | `BYDAY=WE,FR;COUNT=6`, EXDATE Fri 8 Jan | 6, 13, 15, 20, 22 Jan, "5 events, ends 22 Jan (was 20 Jan)" |
+
+Never: `COUNT=5` with the EXDATE, which shows only four (6, 13, 15 and 20 Jan; probed). Afterwards, from the "without it" series, every Friday dragged to Thursday: the skip is mapped by its member to Thu 7 Jan (`BYDAY=WE,TH;COUNT=6`, EXDATE 7 Jan, showing 6, 13, 14, 20, 21 Jan; probed). Undo of that puts back the Friday series with its skip on 8 Jan; Undo of the first drag puts back Monday and Wednesday, `COUNT=5`, with no EXDATE.
+
+### 3. One Member, Whole Weeks
+
+"Swim relay", Monday and Wednesday at 07:00, 3 events from Mon 4 Jan (4, 6 and 11 Jan; probed), its Wed 6 Jan "Relay trial" (own title). Mon 11 Jan dragged to Mon 18 Jan, "All events". Two readings, never merged on their weekdays:
+
+| Choices | Written | Shows (probed) | Relay trial |
+|---|---|---|---|
+| Move every Monday a week later, add Wed 13 Jan (the last week's gain), keep 3 + this one | `BYDAY=MO,WE;COUNT=3` from Wed 6 Jan, and an event of its own on Mon 18 Jan | 6, 11, 13 Jan, and 18 Jan | Stays on Wed 6 Jan |
+| The same, keep the end | `COUNT=4` from Wed 6 Jan | 6, 11, 13, 18 Jan | Stays |
+| The same, end on Mon 18 Jan without Wed 13 Jan (one bound) | `COUNT=4` from Wed 6 Jan, EXDATE 13 Jan | 6, 11, 18 Jan | Stays |
+| Shift the whole pattern a week later | `BYDAY=MO,WE;COUNT=3` from Mon 11 Jan | 11, 13, 18 Jan | Moves to Wed 13 Jan |
+
+The first row is the destination rule at work: three events from Wed 6 Jan end on 13 Jan, so the kept count keeps Mon 18 Jan separately. Also tested: every third week, Mondays dragged two weeks, the member reading disabled with its reason (no week start holds Wed 6 Jan and Mon 18 Jan; probed with all seven).
+
+### 4. Still Supported After Saving
+
+"Reading circle", monthly on the first and third Monday at 19:00 from Mon 4 Jan (`BYDAY=1MO,3MO`; 4 Jan, 18 Jan, 1 Feb, 15 Feb; probed). The sequence test:
+
+1. Mon 15 Mar dragged to Tue 16 Mar, "All events", "Move every third Monday to the third Tuesday": `BYDAY=1MO,3TU` from Mon 4 Jan (probed: 4 Jan, 19 Jan, 1 Feb, 16 Feb). Commit.
+2. Reload the series from its stored row. Its capability is the nth-list row's, every edit allowed.
+3. Mon 5 Apr dragged to Wed 7 Apr, "All events": offered as the first drag was, "Move every first Monday to the first Wednesday" (`BYDAY=1WE,3TU` from Wed 6 Jan; probed: 6 Jan, 19 Jan, 3 Feb, 16 Feb) and "Shift the whole monthly pattern" (`BYDAY=1WE,3WE`).
+
+Never: "This repeat came from another app", or any edit available before step 1 refused after it. The same test runs for every row and reading of the drag table.
+
+### 5. Google Before the Probe
+
+"Practice", weekly on Thursday at 18:00 on a Google calendar from Thu 7 Jan, its Thu 4 Mar moved to Fri 5 Mar (own date). Moved to 18:30 for all events: offered, the plan's note reading "Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone." Ends changed to 20 May: offered, with the same note. Thu 11 Mar dragged to Fri 12 Mar with "All events": unavailable, with the Google reason.
+
+Never: a line saying what happens to Fri 5 Mar (moves, stays, keeps 18:00) in either plan, or a promise in the Activity entry; what Google did is read back by the next sync.
+
+### 6. A Rule the Expander Can't Read
+
+"Holiday dinner", imported with `RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L` (sabre: "Not supported: RSCALE"; probed). Opened in the editor:
+
+| Edit | Answer |
+|---|---|
+| Renamed "Holiday supper", all events | Applied; `direct` for an agent |
+| Ends after 3 events | Refused, 422: "This repeat came from another app in a form Better-Cal can't read, so only its details can change here." |
+| Renamed with "This and following" | Refused, the same reason |
+| Delete following | Refused, the same reason |
+| Delete all | Applied, through the dialog |
+
+Never: a split or a new bound worked out from an expansion that failed.
 
 ## Prediction Cases
 
@@ -458,3 +564,5 @@ The cases for the prediction exercise (Acceptance in the design). For each: show
 | 19 | Choir, weekly on Tuesday, its Tue 23 Mar moved to Fri 26 Mar | Tue 9 Mar dragged to Wed 10 Mar, All events | Weekly on Wednesday. (•) Keep Fri 26 Mar ( ) Move to Sat 27 Mar | To be run |
 | 20 | Payday, the 1st and 15th, its 15 Apr 'Payday, bonus' | 1 Mar dragged to 20 Mar, All events | Move every 1st to the 20th: the 15th and 20th, starts 15 Jan. 'Payday, bonus' stays on 15 Apr. Shifting the whole pattern is disabled: the 15th would move past the end of its month | To be run |
 | 21 | Sunday run, weekly on Sunday, its Sun 7 Mar moved to Mon 8 Mar | Mon 8 Mar dragged to Tue 9 Mar, All events | (•) Tuesday becomes its day: every event 2 days later, from Tue 5 Jan ( ) Weekly on Monday, this one on Tue 9 Mar | To be run |
+| 22 | Swim, Monday and Wednesday from Mon 4 Jan, its Wed 6 Jan 'Swim test' | Mon 11 Jan dragged to Mon 18 Jan, All events | (•) Move every Monday a week later: starts Wed 6 Jan, 'Swim test' stays ( ) Shift the whole pattern a week: starts Mon 11 Jan, 'Swim test' moves to Wed 13 Jan | To be run |
+| 23 | Cello lesson, monthly on the 31st, 6 events | 31 Oct dragged to 1 Nov, All events | (•) Keep 6 events + this one on its own: 1 Feb to 1 Jul, and 1 Nov separately ( ) Changes 6 events to 10, ends 1 Nov | To be run |

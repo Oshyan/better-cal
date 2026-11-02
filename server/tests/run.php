@@ -2811,11 +2811,53 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             0,
             ['2027-01-04 18:00:00 Choir', '2027-01-11 18:00:00 Choir', '2027-01-18 18:00:00 Choir, concert prep', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir'],
         ], [$series($choir), (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$newChoir]), $onDays('Choir', '2027-01-01', '2027-02-12')]);
+        // The day acted on takes the edit, its own earlier edit or not: a
+        // person with 18 Jan open who renames it "from this day on" means
+        // that day too. The later edited days keep their own names.
         $eventsA->patch(1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
-        checkEq('renamed from 18 Jan on, the edited days keep their own names and days', [
-            '2027-01-04 18:00:00 Choir', '2027-01-11 18:00:00 Choir', '2027-01-18 18:00:00 Choir, concert prep', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir, spring term',
+        checkEq('renamed from 18 Jan on, that day takes the name and the later edited day keeps its own', [
+            '2027-01-04 18:00:00 Choir', '2027-01-11 18:00:00 Choir', '2027-01-18 18:00:00 Choir, spring term', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir, spring term',
         ], $onDays('Choir', '2027-01-01', '2027-02-12'));
         $undoA->undoLatest(1);
+        checkEq('and undoes to the names the days had', [
+            '2027-01-04 18:00:00 Choir', '2027-01-11 18:00:00 Choir', '2027-01-18 18:00:00 Choir, concert prep', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir',
+        ], $onDays('Choir', '2027-01-01', '2027-02-12'));
+        // The day's own time and place stay when the edit doesn't name them.
+        $splitDay = static fn(): array => $adb->one('SELECT title, start_utc, location FROM events WHERE recurrence_instance_utc = ? AND deleted_at IS NULL', ['2027-01-18 18:00:00']) ?? [];
+        $eventsA->patch(1, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-18T09:00:00+00:00', 'end' => '2027-01-18T10:00:00+00:00', 'location' => 'Sample Hall']);
+        $eventsA->patch(1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
+        checkEq('renamed from a day moved to its own time and place, that day keeps both and takes the name', [
+            ['title' => 'Choir, spring term', 'start_utc' => '2027-01-18 09:00:00', 'location' => 'Sample Hall'],
+            ['2027-01-11 18:00:00 Choir', '2027-01-18 09:00:00 Choir, spring term', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir, spring term'],
+        ], [$splitDay(), $onDays('Choir', '2027-01-10', '2027-02-12')]);
+        $undoA->undoLatest(1);
+        checkEq('and undoes to its own name at its own time and place', [
+            ['title' => 'Choir, concert prep', 'start_utc' => '2027-01-18 09:00:00', 'location' => 'Sample Hall'],
+            ['2027-01-11 18:00:00 Choir', '2027-01-18 09:00:00 Choir, concert prep', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir'],
+        ], [$splitDay(), $onDays('Choir', '2027-01-10', '2027-02-12')]);
+        $undoA->undoLatest(1);
+        // An answer from a day on splits the series and answers the new one:
+        // one change, one entry, and its undo puts the series back whole.
+        $entriesBefore = (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = 1');
+        $eventsA->setAttendance(1, $choir, 'going', 'following', '2027-01-18T18:00:00+00:00');
+        $newChoir = (int) $adb->scalar('SELECT id FROM events WHERE title = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL AND id <> ?', ['Choir', $choir]);
+        checkEq('going from 18 Jan on: one entry that says so, the series split there and the new one answered with its edited days', [
+            1, "Marked 'Choir' going from Jan 18 on", 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270118T175959Z', ['going', 'going', 'going'], 'none',
+        ], [
+            (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = 1') - $entriesBefore,
+            $adb->scalar('SELECT summary FROM mutations WHERE user_id = 1 ORDER BY id DESC LIMIT 1'),
+            $series($choir)[0],
+            array_column($adb->all('SELECT attendance FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$newChoir, $newChoir]), 'attendance'),
+            $adb->scalar('SELECT attendance FROM events WHERE id = ?', [$choir]),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('and its undo puts the series back whole, unanswered', [
+            ['FREQ=WEEKLY;BYDAY=MO', '2027-01-04 18:00:00', ['2027-01-18 18:00:00 = 2027-01-18 18:00:00 Choir, concert prep', '2027-01-25 18:00:00 = 2027-01-25 09:00:00 Choir, last'], ['2027-02-01 18:00:00']],
+            0, ['none', 'none', 'none'],
+        ], [
+            $series($choir), (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$newChoir]),
+            array_column($adb->all('SELECT attendance FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$choir, $choir]), 'attendance'),
+        ]);
         $committee = (int) $eventsA->create(1, ['title' => 'Committee', 'rrule' => 'FREQ=MONTHLY;BYDAY=2TU', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
         $eventsA->patch(1, $committee, ['scope' => 'this', 'instanceStart' => '2027-04-13T18:00:00+00:00', 'title' => 'Committee, April']);
         $eventsA->deleteEvent(1, $committee, 'this', '2027-05-11T18:00:00+00:00');
@@ -4678,7 +4720,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
         "CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, synctoken INTEGER NOT NULL DEFAULT 0, last_poll_status TEXT NOT NULL DEFAULT 'never', last_poll_error TEXT)",
         'CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER)',
         'CREATE TABLE availability (id INTEGER PRIMARY KEY, person_id INTEGER)',
-        "CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'open')",
+        "CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT NOT NULL DEFAULT 'invite_new', event_id INTEGER, status TEXT NOT NULL DEFAULT 'open')",
         "CREATE TABLE plugin_proposals (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'open')",
         'CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT)',
         "CREATE TABLE system_health (subject TEXT PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'ok', first_failed_at TEXT, last_ok_at TEXT)",
@@ -4714,6 +4756,12 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $review = $cc->review(1);
     $ccdb->run("INSERT INTO review_items (user_id) VALUES (1)");
     check('change cursor review: a held invitation moves only the review part', $cc->review(1) !== $review && $cc->events(1) === $first['cursor']);
+    // A day held before its series becomes a change to an occurrence as
+    // Review is read (ReviewQueue::convertHeldDays): the open count and the
+    // newest id stay, so the part has to see the kind change.
+    $review = $cc->review(1);
+    $ccdb->run("UPDATE review_items SET kind = 'invite_change', event_id = 7 WHERE user_id = 1");
+    check('change cursor review: a held day becoming a change to its occurrence moves the review part', $cc->review(1) !== $review);
     $events = $cc->events(1);
     BetterCal\Dav\ChangeLog::touchAccount($ccdb, 1);
     check('change cursor: background work that changes what shows moves the events part', $cc->events(1) !== $events);

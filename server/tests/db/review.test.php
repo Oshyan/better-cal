@@ -201,8 +201,41 @@ return static function (Db $db): void {
     ]);
     $waitingListed = static fn(array $cards): array => array_values(array_filter($cards, static fn(array $c): bool => $c['kind'] === 'invite_new' && !empty($c['detail']['occurrence'])));
     $staleDay = $rq->holdNewInvitation($q, $autoUid, ['title' => 'Sample reading group'], ['method' => 'CANCEL', 'sequence' => 2] + $invite, 'host@example.test', 'imip', 'approved', '2030-01-21 18:00:00');
+    $cursor = new \BetterCal\Domain\ChangeCursor($db);
+    $cursorBefore = $cursor->review($q);
     $cards = $listed();
     checkEq('review page: a day held before a series that is on the calendar by now is listed as a cancellation of that occurrence, never as waiting', [['Skip that occurrence', 'Dismiss'], []], [
         array_column($cards["invite_change:$staleDay"]['actions'] ?? [], 'label'), $waitingListed($cards),
     ]);
+    // Another open tab holds the waiting card: the change cursor's review
+    // part moves on the conversion, so it refetches, and stays put after.
+    $cursorAfter = $cursor->review($q);
+    $listed();
+    checkEq('review page: converting a held day as the page is read moves the change cursor once', [true, true], [$cursorAfter !== $cursorBefore, $cursor->review($q) === $cursorAfter]);
+
+    // A held day the series never had (its RECURRENCE-ID names no occurrence
+    // of the rule the organizer sent) closes when the series is added, saying
+    // so, instead of becoming a change whose accept blames a move. A day that
+    // was an occurrence when it converted, and isn't once the owner moved the
+    // series, still closes on accept with that reason.
+    $h = freshUser($db);
+    $dh = domains($db);
+    $rh = new ReviewQueue($db, $dh->events);
+    $fourWeeks = ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $fields; // 12, 19, 26 Dec and 2 Jan
+    $neverDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2027-01-16 01:00:00');
+    $wasDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
+    $choir = (int) $rh->accept($h, $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'] + $fourWeeks, ['sequence' => 1] + $invite, 'host@example.test'))['eventId'];
+    $item = static fn(int $id): array => $db->one('SELECT kind, status, summary FROM review_items WHERE id = ?', [$id]) ?? [];
+    checkEq('review: a held day the series never had closes as the series is added, saying the series has no such day; one it has becomes a change to it', [
+        ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the series you added has no such day, so there is nothing to skip.'],
+        ['invite_change', 'open'],
+    ], [array_values($item($neverDay)), array_slice(array_values($item($wasDay)), 0, 2)]);
+    $dh->events->patch($h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);
+    $refused = null;
+    try {
+        $rh->accept($h, $wasDay);
+    } catch (\BetterCal\Http\HttpError $e) {
+        $refused = [$e->errorCode, str_contains($e->getMessage(), 'moved or changed since this email arrived')];
+    }
+    checkEq('review: a converted day the owner moved the series away from closes on accept, saying the series was moved', [['review_stale', true], 'superseded'], [$refused, $item($wasDay)['status'] ?? null]);
 };

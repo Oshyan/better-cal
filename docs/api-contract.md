@@ -205,7 +205,7 @@ A trip is a normal event with `isContainer: true` that groups other events. Atta
 
 - `GET /changes/cursor` → `{cursor, review, status, app}`, three opaque strings and the version of the web app now installed (null where it can't be read). Poll it (about every 30 s while visible, immediately on focus or coming online) and refetch only what the part that moved covers. The web app compares `app` with its own and looks for the new version when they differ.
   - `cursor` moves when the user's events change (from the API, CalDAV, feed polls, mail, RSVP, plugin syncs, or background work such as filter verdicts and duplicate links) or availability spans or people are added or removed. Editing a span or renaming a person doesn't move it. Refetch the window, people and availability.
-  - `review` moves when Review items, plugin proposals or possible duplicates are added or decided. Reload `/review/count` (also on a `cursor` move).
+  - `review` moves when Review items, plugin proposals or possible duplicates are added or decided, and when a day held before its series becomes a change to it. Reload `/review/count` (also on a `cursor` move).
   - `status` moves on background state changes: a job, device or feed starting or stopping failing, a Google account needing reconnecting, a plugin enabled, disabled or failing, new plugin ranges or warnings, a newer release found or a notice dismissed. Reload `/calendars`, `/system/health`, `/plugins` and plugin ranges, and `/updates`.
 
 ## Geocode

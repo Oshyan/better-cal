@@ -12470,6 +12470,13 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         'a signature entry with a number for a key' => [['key' => 7, 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\x11", 64))]],
         'a signature entry without a signature' => [['key' => 'new-key', 'type' => 'ed25519']],
         'a signature entry that is not base64' => [['key' => 'new-key', 'type' => 'ed25519', 'sig' => '***']],
+        // Shapes no signing script writes are broken whoever's key they
+        // name, not a key this copy lacks (review R3).
+        'an unlisted key with an empty ed25519 signature' => [['key' => 'new-key', 'type' => 'ed25519', 'sig' => '']],
+        'an unlisted key with a one-byte ed25519 signature' => [['key' => 'new-key', 'type' => 'ed25519', 'sig' => base64_encode("\x11")]],
+        'an unlisted key with a fido2 entry missing its authenticator data' => [['key' => 'hw-2', 'type' => 'fido2', 'sig' => base64_encode(str_repeat("\x22", 64))]],
+        'an unlisted key with an empty signature type' => [['key' => 'new-key', 'type' => '', 'sig' => base64_encode(str_repeat("\x11", 64))]],
+        'an unlisted key with a signature type no signing script writes' => [['key' => 'new-key', 'type' => 'rsa', 'sig' => base64_encode(str_repeat("\x11", 64))]],
         'no signature asset at all' => null,
     ];
     foreach ($brokenSets as $how => $signatures) {
@@ -12483,7 +12490,8 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         try { $damaged->check(false); } catch (RuntimeException $e) { $threw = str_contains($e->getMessage(), 'Release 9.9.2'); }
         $damagedRow = $damagedDb->one('SELECT latest_version, newest_version, last_error FROM app_update_state WHERE id = 1');
         check("update: $how records no release and keeps the stop as the last error",
-            $threw && $damagedRow['latest_version'] === null && $damagedRow['newest_version'] === null && str_contains((string) $damagedRow['last_error'], 'Release 9.9.2'));
+            $threw && $damagedRow['latest_version'] === null && $damagedRow['newest_version'] === null && str_contains((string) $damagedRow['last_error'], 'Release 9.9.2')
+            && ($signatures === null || str_contains((string) $damagedRow['last_error'], 'broken signature')));
     }
     // A whole set from keys this copy doesn't list, of either kind, is still walked past.
     $strangerAuth = hash('sha256', 'release-signing.better-cal', true) . chr(0x05) . pack('N', 1);
@@ -12493,6 +12501,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     ]), $stepRelease('9.9.0', 'old-key')]);
     $found = $unlisted->newestRelease();
     checkEq('update: a whole signature set from keys this copy doesn\'t list is walked past, as before', ['9.9.0', '9.9.2'], [$found['version'], $found['newest']]);
+    $unlistedRow = $unlisted->check(false);
+    checkEq('update: and the check records that step with no error', ['9.9.0', '9.9.2', null],
+        [$unlistedRow['latest_version'], $unlistedRow['newest_version'], $unlistedRow['last_error']]);
     // And a damaged release behind the walked-past ones stops the check and is named.
     [$damagedBehind] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepReleaseWith('9.9.1', []), $stepRelease('9.9.0', 'old-key')]);
     $stopped = null;
@@ -12587,6 +12598,63 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     checkEq('update: once that release is withdrawn, the next check clears the newest and the blocked notice', ['9.9.0', '9.9.0', false, false, '9.9.0'],
         [$clearedStatus['latestVersion'], $clearedStatus['newestVersion'], $clearedStatus['blocked'], $clearedStatus['showBanner'],
             $withdrawnDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1')]);
+    // Overlapping checks are ordered by when they ran, not by the version
+    // they saw: the one finishing later keeps what the other saved since it
+    // began, higher or lower, and the next check brings it up to date
+    // (review R4). The inner check runs while the outer one is fetching
+    // the release list, so it finishes first.
+    $r4Users = static function (BetterCal\Infra\Db $db): void {
+        $db->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+        $db->run("INSERT INTO users VALUES (1, '{}')");
+    };
+    $r4Listed = [$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')];
+    $r4Withdrawn = [$stepRelease('9.9.0', 'old-key')];
+    $r4Seen = static fn(Updates $u, BetterCal\Infra\Db $db): array => [$u->status(1)['newestVersion'], $u->status(1)['blocked'], $u->status(1)['showBanner'],
+        $u->status(1)['lastError'], $db->scalar('SELECT newest_version FROM app_update_state WHERE id = 1')];
+    // A check that saw the release withdrawn finishes first; one that began
+    // before it, with the list still naming the release, finishes last.
+    [$r4Before, $r4Db] = $stepUpdates($r4Listed, '9.9.0');
+    $r4Before->check(false);
+    $r4Users($r4Db);
+    [$r4Clears] = $stepUpdates($r4Withdrawn, '9.9.0', $r4Db);
+    [$r4Stale] = $stepUpdates($r4Listed, '9.9.0', $r4Db, static function () use ($r4Clears): void { $r4Clears->check(false); });
+    $r4Stale->check(false);
+    checkEq('update: a check that began before a release was withdrawn does not bring its blocked notice back',
+        ['9.9.0', false, false, null, '9.9.0'], $r4Seen($r4Stale, $r4Db));
+    // The other way round: the check that still saw the release finishes
+    // first, and the one that saw the withdrawal, though it finishes later,
+    // keeps that until the next check, which clears the notice.
+    [$r4Before2, $r4Db2] = $stepUpdates($r4Listed, '9.9.0');
+    $r4Before2->check(false);
+    $r4Users($r4Db2);
+    [$r4StillListed] = $stepUpdates($r4Listed, '9.9.0', $r4Db2);
+    [$r4LateClear] = $stepUpdates($r4Withdrawn, '9.9.0', $r4Db2, static function () use ($r4StillListed): void { $r4StillListed->check(false); });
+    $r4LateClear->check(false);
+    checkEq('update: a withdrawal seen by a check that overlapped another waits for the next check',
+        ['9.9.2', true, true, null, '9.9.2'], $r4Seen($r4LateClear, $r4Db2));
+    [$r4Next] = $stepUpdates($r4Withdrawn, '9.9.0', $r4Db2);
+    $r4Next->check(false);
+    checkEq('update: and the next check clears the blocked notice', ['9.9.0', false, false, null, '9.9.0'], $r4Seen($r4Next, $r4Db2));
+    // Publication, the other way round from the race above: the check that
+    // saw the newer release finishes last, keeps the older newest the other
+    // saved meanwhile, and the next check records the newer one.
+    $r4Newer = [$stepRelease('9.9.3', 'new-key'), $stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')];
+    $r4Older = [$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')];
+    [$r4SawOlder, $r4Db3] = $stepUpdates($r4Older);
+    [$r4SawNewer] = $stepUpdates($r4Newer, '9.8.0', $r4Db3, static function () use ($r4SawOlder): void { $r4SawOlder->check(false); });
+    $r4Late = $r4SawNewer->check(false);
+    checkEq('update: a publication seen by a check that overlapped another waits for the next check', ['9.9.0', '9.9.2', null],
+        [$r4Late['latest_version'], $r4Late['newest_version'], $r4Late['last_error']]);
+    [$r4NextNewer] = $stepUpdates($r4Newer, '9.8.0', $r4Db3);
+    checkEq('update: and the next check records the newer release', '9.9.3', $r4NextNewer->check(false)['newest_version']);
+    // Whatever another check saved meanwhile, the newest named is never
+    // below the verified version this check saves.
+    [$r4Plain, $r4Db4] = $stepUpdates([$stepRelease('9.9.0', 'old-key')]);
+    [$r4Verified] = $stepUpdates([$stepRelease('9.9.1', 'old-key'), $stepRelease('9.9.0', 'old-key')], '9.8.0', $r4Db4,
+        static function () use ($r4Plain): void { $r4Plain->check(false); });
+    $r4Up = $r4Verified->check(false);
+    checkEq('update: a check that verifies a newer release than the one saved meanwhile names it as the newest too', ['9.9.1', '9.9.1'],
+        [$r4Up['latest_version'], $r4Up['newest_version']]);
 
     exec('rm -r ' . escapeshellarg($tmp));
 }
@@ -12638,6 +12706,38 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $stranger = sodium_crypto_sign_keypair();
     checkEq('release signature: a key this copy does not trust is refused', null,
         $verifies($file([['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(sodium_crypto_sign_detached($statement, sodium_crypto_sign_secretkey($stranger)))]])));
+    // Each kind's shape is checked whoever's key an entry names: an entry
+    // from a key this copy doesn't list is a key it lacks only when it is
+    // one the signing scripts could have written, and anything else is a
+    // malformed file, even beside a signature that verifies (review R3).
+    $sig64 = base64_encode(str_repeat("\x33", 64));
+    $auth37 = base64_encode(hash('sha256', $rpId, true) . chr(0x05) . pack('N', 7));
+    $failure = static function (array $sigs) use ($RS, $keys, $file): ?RuntimeException {
+        try { $RS::verify($file($sigs), $keys); } catch (RuntimeException $e) { return $e; }
+        return null;
+    };
+    $malformedShapes = [
+        'an empty ed25519 signature' => ['key' => 'file-9', 'type' => 'ed25519', 'sig' => ''],
+        'a one-byte ed25519 signature' => ['key' => 'file-9', 'type' => 'ed25519', 'sig' => base64_encode("\x33")],
+        'a fido2 entry without authenticator data' => ['key' => 'hw-9', 'type' => 'fido2', 'sig' => $sig64],
+        'an empty type' => ['key' => 'file-9', 'type' => '', 'sig' => $sig64],
+        'a type no signing script writes' => ['key' => 'file-9', 'type' => 'rsa', 'sig' => $sig64],
+        'fido2 authenticator data of the wrong length' => ['key' => 'hw-9', 'type' => 'fido2', 'authData' => base64_encode(str_repeat("\0", 36)), 'sig' => $sig64],
+        'fido2 authenticator data that is not base64' => ['key' => 'hw-9', 'type' => 'fido2', 'authData' => '***', 'sig' => $sig64],
+        'a short fido2 signature' => ['key' => 'hw-9', 'type' => 'fido2', 'authData' => $auth37, 'sig' => base64_encode(str_repeat("\x33", 63))],
+    ];
+    foreach ($malformedShapes as $how => $entry) {
+        foreach (['alone' => [$entry], 'beside a listed key that verifies' => [$fileSig, $entry]] as $where => $sigs) {
+            $stopped = $failure($sigs);
+            check("release signature: an unlisted key's entry with $how is a malformed file, $where",
+                $stopped !== null && !($stopped instanceof BetterCal\Support\UntrustedSignature) && str_contains($stopped->getMessage(), 'malformed signature entry'));
+        }
+    }
+    foreach (['an ed25519 entry' => ['key' => 'file-9', 'type' => 'ed25519', 'sig' => $sig64],
+        'a fido2 entry' => ['key' => 'hw-9', 'type' => 'fido2', 'authData' => $auth37, 'sig' => $sig64]] as $how => $entry) {
+        check("release signature: a well-formed $how from a key this copy doesn't list is a key it lacks",
+            $failure([$entry]) instanceof BetterCal\Support\UntrustedSignature);
+    }
     $threw = false;
     try { $RS::verify($file([$fileSig]), []); } catch (RuntimeException) { $threw = true; }
     check('release signature: no trusted keys means nothing verifies', $threw);

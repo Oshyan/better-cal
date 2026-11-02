@@ -4682,6 +4682,13 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('series dialog: an editor save names its fields, the rule as before', [save.heading, save.fields.map((x) => x.label + ' ' + x.words), save.rule, save.action], [
     'Save for all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Save for all events']);
   eq('series dialog: the own title\'s choice', save.choices.map((c) => c.label), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
+  // As the server writes them: {field, words} with the label in the words.
+  eq('series dialog: the server\'s field lines put their label in its column', planView({ hash: 'f2', fields: [{ field: 'title', words: 'Title: Choir, now Chorus' }, { field: 'reminders', words: 'Reminder: 1 hour before, now 30 minutes' }] }, ctx({ kind: 'editor' })).fields,
+    [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
+  eq('series dialog: the dragged day has a line only when it doesn\'t just move', planView({ hash: 'a2', days: [
+    { key: '2027-03-10T03:00:00Z', kind: 'acted', outcome: 'moves', words: 'Tue 9 Mar moves to Wed 10 Mar' },
+    { key: '2027-11-01T23:00:00Z', kind: 'acted', outcome: 'separate', words: 'Mon 1 Nov stays as an event of its own' },
+  ] }, ctx()).edited.map((d) => d.words), ['Mon 1 Nov stays as an event of its own']);
   eq('series dialog: a start moved for another reason says why', planView({ hash: 'g', start: { at: '2027-01-15', words: 'Starts Fri 15 Jan, the first 15th (was 1 Jan)' } }, ctx()).start, 'Starts Fri 15 Jan, the first 15th (was 1 Jan)');
   eq('series dialog: gains and losses named', [planView({ hash: 'h', gains: [{ words: 'adds every February, which had no 30th' }] }, ctx()).gains], ['Adds every February, which had no 30th']);
   eq('series dialog: a series that changed meanwhile says so', planView(choir, ctx({ changed: true })).changed, true);

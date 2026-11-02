@@ -137,7 +137,14 @@ export function planView(plan, ctx = {}) {
   if (!plan) return view;
   const weekday = datesWithWeekday(plan);
   const fmt = (iso, wd = weekday) => planDate(iso, { weekday: wd, tz: ctx.tz || null, refYear: ctx.refYear });
-  view.fields = (plan.fields || ctx.fields || []).map((f) => ({ label: f.label || upperFirst(f.field || ''), words: wordsOf(f) }));
+  // The server's field lines read "Title: Choir, now Chorus"; the label
+  // goes in its column.
+  view.fields = (plan.fields || ctx.fields || []).map((f) => {
+    const words = wordsOf(f);
+    if (f.label) return { label: f.label, words };
+    const m = /^([^:]{1,24}):\s+(.*)$/.exec(words);
+    return m ? { label: m[1], words: m[2] } : { label: upperFirst(f.field || ''), words };
+  });
   view.refused = planRefusal(plan);
   view.rule = ruleLine(plan.rule);
   view.bound = wordsOf(plan.bound);
@@ -184,7 +191,9 @@ export function planView(plan, ctx = {}) {
     return n && n.words ? at + ' (' + n.words + ')' : at;
   }).filter(Boolean).join(' · ');
   const groupOf = (key) => (plan.groups || []).find((g) => g.day === key);
-  for (const d of days.filter((x) => x.kind !== 'skipped')) {
+  // The day acted on is in the Next line where it landed; it gets a line of
+  // its own only when it doesn't simply move there (kept on its own, say).
+  for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
     const g = groupOf(d.key);
     view.edited.push({ key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null });
   }
@@ -207,7 +216,7 @@ function dayWords(d, fmt) {
   const title = d.title ? "'" + d.title + "' " : '';
   if (d.outcome === 'moves' && d.newKey) return title + at + ' moves to ' + fmt(d.newKey);
   if (d.outcome === 'stays') return title + at + ' stays';
-  if (d.outcome === 'own') return title + at + ' becomes an event of its own';
+  if (d.outcome === 'own' || d.outcome === 'separate') return title + at + ' becomes an event of its own';
   if (d.outcome === 'deleted') return title + at + ' is deleted';
   if (d.outcome === 'dropped') return title + at + ' is forgotten';
   return title + at;

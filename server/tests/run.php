@@ -4626,6 +4626,14 @@ checkEq('recur capped at MAX_INSTANCES', Recurrence::MAX_INSTANCES, count($occs)
 check('recur cap covers two years of a daily series', Recurrence::MAX_INSTANCES >= 2 * 366);
 checkEq('recur capped series is reported', [(int) $capMaster['id']], $capRec->capped());
 check('recur a series under the cap is not reported', (new Recurrence($floodExpander))->capped() === []);
+// A capped series is named only when the answer shows its own occurrences:
+// one a filter hid entirely, or shown only by edited dates, is left out.
+$servedSample = [
+    ['eventId' => 501, 'isException' => null],
+    ['eventId' => 503, 'isException' => true],
+];
+checkEq('capped: only series the answer shows are named', [501], \BetterCal\Domain\Events::cappedShown([501, 502, 503], $servedSample));
+checkEq('capped: nothing served names nothing', [], \BetterCal\Domain\Events::cappedShown([501], []));
 if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
     $hourly = ['id' => 77, 'uid' => 'hourly', 'all_day' => 0, 'tzid' => 'UTC', 'start_utc' => '2026-01-01 00:00:00', 'end_utc' => '2026-01-01 00:30:00', 'rrule' => 'FREQ=HOURLY', 'exdates_json' => null];
     $hRec = new Recurrence();

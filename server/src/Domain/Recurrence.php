@@ -481,6 +481,12 @@ final class Recurrence
      * pushed the start to the next 31st: the series lost its earlier day and
      * the dragged one never moved. A list of days or a day counted from the
      * end of the month is left as it is; the start realigns instead.
+     *
+     * An nth weekday ("2TU", "TU;BYSETPOS=2", monthly or yearly within one
+     * month) takes the place of the day landed on, counted the way it was.
+     * The 29th to 31st are the fifth of their weekday, which most months
+     * lack, so a fifth is written as the last (-1), the way the editor
+     * writes it, and a fifth from the end as the first.
      */
     public static function shiftBymonthday(string $rrule, \DateTimeImmutable $from, \DateTimeImmutable $to): string
     {
@@ -498,16 +504,26 @@ final class Recurrence
             && preg_match('/^(?:[1-9]|1[0-2])$/', $parts['BYMONTH']) === 1 && $oneDay($parts['BYMONTHDAY'])) {
             $parts['BYMONTH'] = $to->format('n');
             $parts['BYMONTHDAY'] = $to->format('j');
-        } elseif ($freq === 'MONTHLY' && isset($parts['BYDAY']) && !isset($parts['BYMONTHDAY'])
+        } elseif (in_array($freq, ['MONTHLY', 'YEARLY'], true) && isset($parts['BYDAY']) && !isset($parts['BYMONTHDAY'])
+            && ($freq === 'MONTHLY' || (isset($parts['BYMONTH']) && preg_match('/^(?:[1-9]|1[0-2])$/', $parts['BYMONTH']) === 1))
             && preg_match(isset($parts['BYSETPOS']) ? '/^(MO|TU|WE|TH|FR|SA|SU)$/' : '/^(-?[1-5])(MO|TU|WE|TH|FR|SA|SU)$/', $parts['BYDAY'], $m) === 1
             && (!isset($parts['BYSETPOS']) || preg_match('/^-?[1-5]$/', $parts['BYSETPOS']) === 1)) {
             // One weekday at one place in the month, as "2TU" or as
-            // "TU;BYSETPOS=2": the day landed on keeps the count's direction
-            // (from the start of the month, or from its end).
+            // "TU;BYSETPOS=2" (a yearly one within its one month): the day
+            // landed on keeps the count's direction (from the start of the
+            // month, or from its end), and a yearly rule takes its month.
             $n = (int) ($parts['BYSETPOS'] ?? $m[1]);
             $nth = $n > 0
                 ? intdiv((int) $to->format('j') - 1, 7) + 1
                 : -(intdiv((int) $to->format('t') - (int) $to->format('j'), 7) + 1);
+            if ($nth === 5) {
+                $nth = -1;
+            } elseif ($nth === -5) {
+                $nth = 1;
+            }
+            if ($freq === 'YEARLY') {
+                $parts['BYMONTH'] = $to->format('n');
+            }
             if (isset($parts['BYSETPOS'])) {
                 $parts['BYDAY'] = $code;
                 $parts['BYSETPOS'] = (string) $nth;

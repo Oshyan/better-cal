@@ -53,7 +53,7 @@ final class FallbackParser
      * `reminders` is minutes before the start the text asked to be alerted
      * ("alert 30 minutes", "remind me ... to"), or null (#33).
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool,rangeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -63,6 +63,16 @@ final class FallbackParser
         // "tonight" carries both a date and a vague time; normalize it so the
         // two extractors each pick up their half.
         $work = preg_replace('/\btonight\b/i', ' today evening ', $work) ?? $work;
+        // "9am-noon", "noon-5pm", "6pm to midnight": noon and midnight at
+        // either end of a time range read as 12pm and 12am, so every reader
+        // of time ranges takes them like any other clock time (#198).
+        $clock = '\d{1,2}(?::\d{2})?\s*(?:am|pm)?';
+        $joint = '\s*(?:-|–|—|\bto\b|\buntil\b)\s*';
+        $twelve = static fn(string $word): string => strtolower($word) === 'noon' ? '12pm' : '12am';
+        $work = preg_replace_callback('/\b(noon|midnight)\b(?=' . $joint . '(?:' . $clock . '|noon\b|midnight\b))/iu',
+            static fn(array $m): string => $twelve($m[1]), $work) ?? $work;
+        $work = preg_replace_callback('/\b(' . $clock . $joint . ')(noon|midnight)\b/iu',
+            static fn(array $m): string => $m[1] . $twelve($m[2]), $work) ?? $work;
         $confidence = 0.3;
 
         // Explicit "all day" / "all-day" keyword forces an all-day event.
@@ -103,7 +113,7 @@ final class FallbackParser
         // with a repeat they are its bounds (RepeatParser).
         // "Fri 5pm to Sun 2pm": one timed stretch over several days.
         [$work, $stretch] = $repeat === null ? self::timedStretch($work, $now) : [$work, null];
-        [$work, $startOn, $startRangeEnd] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null];
+        [$work, $startOn, $startRangeEnd, $startDated] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null, false];
         $beforeDate = $work;
         $read = self::extractDate($work, $now, !$ownDays);
         [$work, $date, $dateFound, $rangeEnd] = $read;
@@ -112,8 +122,11 @@ final class FallbackParser
             $date = $startOn;
             $dateFound = true;
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
-            $datedRange = $startRangeEnd !== null || $datedRange;
+            $datedRange = $startRangeEnd !== null ? $startDated : $datedRange;
         }
+        // Several days the text named: QuickAdd keeps them over a model
+        // answer with fewer (#198).
+        $rangeFound = $rangeEnd !== null || $stretch !== null;
         // "Party on Saturday": the "on" goes with the date, but only when it
         // stood right before it, one space apart, in the text as written
         // ("Log on for 30 min tomorrow" keeps its "on": the gap there is the
@@ -129,8 +142,14 @@ final class FallbackParser
                 $work = substr($work, 0, $i - 3) . substr($work, $i);
             }
         }
-        $clockTime = RepeatParser::hasTime($work);
-        [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
+        // With several days and no clock time, a time-of-day word is part of
+        // the title ("Movie night Aug 3-7"): the range is all day anyway.
+        [$work, $startTime, $endTime, $timeFound, $timeZone] = $rangeEnd !== null && !RepeatParser::hasTime($work)
+            ? [$work, null, null, false, null]
+            : self::extractTime($work);
+        if ($allDayKeyword) {
+            [$timeFound, $endTime] = [false, null]; // "all day" wins over a time range too
+        }
         // "Workshop Mon-Fri 9am-5pm": several days with a daytime range is
         // one stretch, the first day at the start time to the last at the
         // end time (a typed zone counts for both ends). A range that ends at
@@ -148,12 +167,12 @@ final class FallbackParser
             [$date, $startTime] = [$stretch[0], [(int) $stretch[0]->format('G'), (int) $stretch[0]->format('i')]];
             [$dateFound, $timeFound, $endTime, $rangeEnd] = [true, true, null, null];
         }
-        // "Standup Aug 3-7 9am", "Shift Aug 3-7 10pm-6am": a range written
-        // as dates with one time, or with a range that crosses midnight,
-        // repeats each day from the first date to the last, as a day range
-        // does (#198), on the same clock times ("Movie night Aug 3-7" stays
-        // all-day). "this weekend" and "all week" keep their reading.
-        if ($repeat === null && $datedRange && $rangeEnd !== null && $timeFound && $clockTime && !$allDayKeyword) {
+        // "Shift Aug 3-7 10pm-6am": a range written as dates with a time
+        // range that crosses midnight repeats each night from the first date
+        // to the last (#198). With one time ("Hotel Aug 9-12 check-in 3pm")
+        // the range stays all day, and "this weekend" and "all week" keep
+        // their reading.
+        if ($repeat === null && $datedRange && $endTime !== null) {
             $repeat = ['work' => $work, 'rule' => ['FREQ' => 'DAILY'], 'startOn' => $date, 'until' => $rangeEnd, 'count' => null, 'span' => null, 'time' => null];
             $rangeEnd = null;
         }
@@ -323,6 +342,9 @@ final class FallbackParser
             // Whether the text named a time ("all day" or a date range wins
             // over a stray one); QuickAdd reports both as the draft's `when`.
             'timeFound' => $timeFound,
+            // Whether the text named several days ("Aug 3-7", "Mon-Fri
+            // 9am-5pm"), for the same merge-guard (#198).
+            'rangeFound' => $rangeFound,
         ];
     }
 
@@ -339,14 +361,23 @@ final class FallbackParser
         $sep = '\s*(?:-|–|—|\b(?:to|through|until)\b)\s*';
 
         // Date range: "June 1-12", "Aug 3 to Aug 7", "Dec 30 to Jan 2, 2026".
-        // Lookahead keeps "June 1 to 5pm" (a time tail) out of the range path;
-        // a time after a space is the range's own ("Aug 3-7 9am-5pm", #198).
+        // Lookahead keeps "June 1 to 5pm" and "Aug 3 - 6-8pm" (a time tail)
+        // out of the range path; a time after a space is the range's own
+        // ("Aug 3-7 9am-5pm", #198), and so is a word ("Aug 3-7 Amsterdam").
+        // Day first too, as a single date can be ("3-7 Aug", "30 Dec to 2
+        // Jan"), but not before a day number ("Room 3-7 Aug 3").
+        $notTime = '(?!\s*(?:am|pm)\b|[:\d]|\s*(?:-|–|—|\bto\b|\buntil\b)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)';
         if (preg_match(
             '/\b(' . $monthAlt . ')\.?\s+(\d{1,2})(?:st|nd|rd|th)?' . $sep
-            . '(?:(' . $monthAlt . ')\.?\s+)?(\d{1,2})(?:st|nd|rd|th)?(?!\s*(?:am|pm)|[:\d])(?:,?\s*(\d{4}))?\b/i',
+            . '(?:(' . $monthAlt . ')\.?\s+)?(\d{1,2})(?:st|nd|rd|th)?' . $notTime . '(?:,?\s*(\d{4}))?\b/i',
             $work,
             $m
-        )) {
+        ) || (preg_match(
+            '/\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+(' . $monthAlt . ')\.?)?' . $sep
+            . '(\d{1,2})(?:st|nd|rd|th)?\s+(' . $monthAlt . ')\b\.?(?:,?\s*(\d{4})\b)?(?!\s*\d{1,2}(?:st|nd|rd|th)?\b(?!\s*(?:am|pm)\b|[:\-–—]))/iu',
+            $work,
+            $d
+        ) && ($m = [$d[0], ($d[2] ?? '') !== '' ? $d[2] : $d[4], $d[1], ($d[2] ?? '') !== '' ? $d[4] : '', $d[3], $d[5] ?? '']) !== [])) {
             $m1 = self::MONTHS[strtolower(substr($m[1], 0, 3))] ?? null;
             $m2 = ($m[3] ?? '') !== '' ? (self::MONTHS[strtolower(substr($m[3], 0, 3))] ?? null) : $m1;
             $year = ($m[5] ?? '') !== '' ? (int) $m[5] : null;
@@ -601,7 +632,7 @@ final class FallbackParser
      * up to six leading words that extractDate reads in full. `length` counts
      * from the start of $text.
      *
-     * @return null|array{date:\DateTimeImmutable,length:int,rangeEnd:?\DateTimeImmutable}
+     * @return null|array{date:\DateTimeImmutable,length:int,rangeEnd:?\DateTimeImmutable,dated:bool}
      */
     public static function leadingDate(string $text, \DateTimeImmutable $now): ?array
     {
@@ -609,9 +640,10 @@ final class FallbackParser
         $best = null;
         foreach (array_slice($words[0], 0, 6) as [$word, $at]) {
             $length = $at + strlen($word);
-            [$rest, $date, $found, $rangeEnd] = self::extractDate(' ' . substr($text, 0, $length) . ' ', $now);
+            $read = self::extractDate(' ' . substr($text, 0, $length) . ' ', $now);
+            [$rest, $date, $found, $rangeEnd] = $read;
             if ($found && trim($rest, " \t,.") === '') {
-                $best = ['date' => $date, 'length' => $length, 'rangeEnd' => $rangeEnd];
+                $best = ['date' => $date, 'length' => $length, 'rangeEnd' => $rangeEnd, 'dated' => $read[4] ?? false];
             }
         }
         return $best;
@@ -633,8 +665,8 @@ final class FallbackParser
         $ours = '(?:with|at|on|for|until|till|today|tomorrow|tonight|next|this|every|starting)\b|w\/';
         $zoneAlt = '(?:\s*\b(' . implode('|', $long) . '|(?-i:' . implode('|', $short) . ')(?!\s+(?!' . $ours . ')[a-z]))\b)?';
         $zone = static fn(array $m, int $i): ?string => isset($m[$i]) && $m[$i] !== '' ? (self::ZONE_ABBR[strtoupper($m[$i])] ?? null) : null;
-        // Range with meridiem: "7-9pm", "7pm-9pm", "7:30pm to 9pm"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
+        // Range with meridiem: "7-9pm", "7pm-9pm", "7:30pm to 9pm", "from 9am to 5pm"
+        if (preg_match('/\b(?:(?:at|from)\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
             $mer2 = strtolower($m[6]);
             $mer1 = strtolower($m[3] ?? '') ?: $mer2;
             $start = self::to24((int) $m[1], (int) ($m[2] ?: 0), $mer1);
@@ -647,7 +679,7 @@ final class FallbackParser
             return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 7)];
         }
         // 24h range: "19:00-21:30"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
+        if (preg_match('/\b(?:(?:at|from)\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
             return [self::cut($work, $m[0]), [(int) $m[1], (int) $m[2]], [(int) $m[3], (int) $m[4]], true, $zone($m, 5)];
         }
         // Single time with meridiem: "7pm", "7:30 pm", "at 2pm"
@@ -769,10 +801,11 @@ final class FallbackParser
 
     /**
      * "starting Aug 12", "from Jan 21 to May 23", "beginning Monday" for a
-     * single event: [remaining text, start date, inclusive end date]. Not
-     * the "from" of "3 days from now", which extractDate reads.
+     * single event: [remaining text, start date, inclusive end date, whether
+     * that range was written as dates]. Not the "from" of "3 days from
+     * now", which extractDate reads.
      *
-     * @return array{0:string,1:?\DateTimeImmutable,2:?\DateTimeImmutable}
+     * @return array{0:string,1:?\DateTimeImmutable,2:?\DateTimeImmutable,3:bool}
      */
     private static function startPhrase(string $work, \DateTimeImmutable $now): array
     {
@@ -806,9 +839,9 @@ final class FallbackParser
                     $len += strlen($t[0]) + $second['length'];
                 }
             }
-            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end];
+            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end, $first['dated']];
         }
-        return [$work, null, null];
+        return [$work, null, null, false];
     }
 
     /**

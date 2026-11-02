@@ -245,7 +245,7 @@ final class QuickAdd
         // fills in a start either way. An editor opened on a chosen day or
         // range keeps it unless the text says otherwise.
         $draft['when'] = ['date' => (bool) ($fallback['dateFound'] ?? false), 'time' => (bool) ($fallback['timeFound'] ?? false)];
-        unset($draft['complete'], $draft['dateFound'], $draft['timeFound']); // parser-internal, not part of the draft contract
+        unset($draft['complete'], $draft['dateFound'], $draft['timeFound'], $draft['rangeFound']); // parser-internal, not part of the draft contract
         if ($modelLimit !== null) {
             $draft['modelLimit'] = $modelLimit;
         }
@@ -301,7 +301,9 @@ final class QuickAdd
      *   scheduled for two days ago): take the fallback's times, which always
      *   roll forward when no date was written.
      * - Several days the text named ("Aug 3-7 9am-5pm") and a model answer
-     *   covering less of them: take the fallback's times (#198).
+     *   on fewer of them: take the fallback's times and its rule, or none
+     *   (#198). Model times on the days of an all-day parse stay the
+     *   model's ("this weekend 10am"): it read a time the parser did not.
      * - Companion clause stripped from the title ("Cocktails with Alex"
      *   -> "Cocktails"): the product rule is title = text minus
      *   date/time/location phrases only, so restore the fallback title.
@@ -311,7 +313,10 @@ final class QuickAdd
      *   its title shows it read only part of the phrase (halfReadRule,
      *   #193); either way the start moves to the rule's first day, keeping
      *   the model's time and length, so the series never opens with an
-     *   extra day.
+     *   extra day. A model answer on more days than one occurrence of the
+     *   fallback's rule takes the fallback's times; a model rule on a
+     *   stretch longer than a day over a range the text named is dropped
+     *   (#198).
      *
      * @param array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>} $llm
      */
@@ -380,19 +385,22 @@ final class QuickAdd
         }
 
         // A range the text named ("Aug 3-7 9am-5pm", "Mon-Fri 9am-5pm"):
-        // a model answer covering less of it, one day of the five, does not
-        // undo it (#198).
+        // a model answer on fewer of its days, one of the five, does not
+        // undo it (#198). Counted in days, so an all-day parse is not
+        // "longer" than the model's times on the same days; and model times
+        // inside an all-day parse are the model's ("Hike this weekend 10am").
+        $fbDays = null;
+        $rangeKept = false;
         try {
-            $fbStart = new \DateTimeImmutable((string) $fallback['start']);
-            $fbEnd = new \DateTimeImmutable((string) $fallback['end']);
-            $fbLength = $fbEnd->getTimestamp() - $fbStart->getTimestamp();
-            $llmLength = (new \DateTimeImmutable((string) $merged['end']))->getTimestamp()
-                - (new \DateTimeImmutable((string) $merged['start']))->getTimestamp();
-            if (($fallback['dateFound'] ?? false) && $fbEnd->modify('-1 second')->format('Y-m-d') > $fbStart->format('Y-m-d')
-                && $llmLength < $fbLength) {
+            $fbDays = self::days((string) $fallback['start'], (string) $fallback['end'], $now->getTimezone());
+            $llmDays = self::days((string) $merged['start'], (string) $merged['end'], $now->getTimezone());
+            $timesInside = ($fallback['allDay'] ?? false) && !($merged['allDay'] ?? false)
+                && $llmDays[0] >= $fbDays[0] && $llmDays[1] <= $fbDays[1];
+            if (($fallback['rangeFound'] ?? false) && $llmDays[2] < $fbDays[2] && !$timesInside) {
                 $merged['start'] = $fallback['start'];
                 $merged['end'] = $fallback['end'];
                 $merged['allDay'] = $fallback['allDay'];
+                $rangeKept = true;
             }
         } catch (\Exception) {
             // Times already guarded above.
@@ -426,7 +434,35 @@ final class QuickAdd
         }
 
         $llmRule = ($llm['rrule'] ?? null) ?: null;
-        $merged['rrule'] = self::halfReadRule($fbTitle, $llmTitle) && $llmRule !== null ? $llmRule : (($fallback['rrule'] ?? null) ?: $llmRule);
+        $fbRule = ($fallback['rrule'] ?? null) ?: null;
+        try {
+            // Several days the text named as one event, which the model
+            // made one stretch and also repeated: the stretch stands, alone
+            // (#198).
+            if (($fallback['rangeFound'] ?? false)
+                && (new \DateTimeImmutable((string) $merged['end']))->getTimestamp() - (new \DateTimeImmutable((string) $merged['start']))->getTimestamp() > 86400) {
+                $llmRule = null;
+            }
+        } catch (\Exception) {
+            // Times already guarded above.
+        }
+        // The fallback's days kept above bring its rule, or none: one stretch
+        // never repeats on the model's rule (#198).
+        $modelRule = !$rangeKept && ($fbRule === null || (self::halfReadRule($fbTitle, $llmTitle) && $llmRule !== null));
+        $merged['rrule'] = $modelRule ? $llmRule : $fbRule;
+        try {
+            // The fallback's rule with its own occurrence: a model answer on
+            // more days ("Shift Aug 3-7 10pm-6am" read as one stretch) would
+            // repeat whole (#198).
+            if (!$modelRule && $fbDays !== null
+                && self::days((string) $merged['start'], (string) $merged['end'], $now->getTimezone())[2] > $fbDays[2]) {
+                $merged['start'] = $fallback['start'];
+                $merged['end'] = $fallback['end'];
+                $merged['allDay'] = $fallback['allDay'];
+            }
+        } catch (\Exception) {
+            // Times already guarded above.
+        }
         $merged['reminders'] = $fallback['reminders'] ?? null; // read from the text, never the model's
         if ($merged['rrule'] !== null) {
             try {
@@ -445,6 +481,19 @@ final class QuickAdd
         }
 
         return $merged;
+    }
+
+    /**
+     * The first and last date an event is on, on $tz's clock (its end is
+     * exclusive), and how many days that is.
+     *
+     * @return array{0:\DateTimeImmutable,1:\DateTimeImmutable,2:int}
+     */
+    private static function days(string $start, string $end, \DateTimeZone $tz): array
+    {
+        $first = (new \DateTimeImmutable($start))->setTimezone($tz)->setTime(0, 0);
+        $last = max($first, (new \DateTimeImmutable($end))->setTimezone($tz)->modify('-1 second')->setTime(0, 0));
+        return [$first, $last, (int) $first->diff($last)->days + 1];
     }
 
     /**

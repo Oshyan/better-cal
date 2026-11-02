@@ -590,18 +590,52 @@ const OWN_FIELD_WORDS = {
   attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
 };
 export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
+// The request goes to the series with the day's key (seriesId, seriesKey:
+// the series' own date and time for that day, not where the day now
+// shows); a server that doesn't send them takes the edited day's own id.
+// What it did is read back, not assumed: the day's record says which
+// fields are still its own, and a day left with none is an occurrence
+// again, its row gone. The toast names only what went back.
 export async function useSeriesValue(occ, names) {
   if (!occ || !names || !names.length || !seriesPlans()) return false;
+  const viaSeries = occ.seriesId != null && !!occ.seriesKey;
+  let res;
   try {
-    const res = await api('/events/' + occ.eventId, { method: 'PATCH', body: { scope: 'this', instanceStart: occ.start, useSeries: names } });
-    toast(names.length === 1 ? "Uses the series' " + ownFieldWords(names[0]) : "Uses the series' values", { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
-    invalidateRecords(occ.eventId);
-    await refreshWindow();
-    return true;
+    res = await api('/events/' + (viaSeries ? occ.seriesId : occ.eventId), {
+      method: 'PATCH',
+      body: { scope: 'this', instanceStart: viaSeries ? occ.seriesKey : occ.start, useSeries: names },
+    });
   } catch (e) {
     toast('Update failed: ' + e.message, { error: true });
     return false;
   }
+  let after = null;
+  let gone = false;
+  try {
+    const d = await api('/events/' + occ.eventId + '/occurrence');
+    after = (d && d.occurrence) || null;
+  } catch (e) {
+    if (e.status === 404) gone = true;
+    else { toast("Couldn't check the change: " + e.message, { error: true }); }
+  }
+  invalidateRecords(occ.eventId);
+  if (occ.seriesId != null) invalidateRecords(occ.seriesId);
+  const stillOwn = gone ? [] : after && Array.isArray(after.ownFields) ? after.ownFields : null;
+  const given = stillOwn ? names.filter((n) => !stillOwn.includes(n)) : [];
+  if (after) {
+    const { instanceId: _i, eventId: _e, ...fields } = after;
+    patchOccurrence(occ.instanceId, fields, { edit: false });
+  }
+  await refreshWindow();
+  if (!given.length) {
+    if (gone || after) {
+      toast('Nothing changed: this day still has its own ' + listWords(names.map(ownFieldWords)), { title: itemName(occ), error: true });
+    }
+    return false;
+  }
+  const title = (after && after.title) || occ.seriesTitle || itemName(occ);
+  toast(given.length === 1 ? "Uses the series' " + ownFieldWords(given[0]) : "Uses the series' " + listWords(given.map(ownFieldWords)), { title, undo: entriesOf(res), note: NO_UNDO });
+  return true;
 }
 
 export async function deleteEvent(occ, scope) {

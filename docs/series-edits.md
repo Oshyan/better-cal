@@ -11,14 +11,14 @@ Changing every event in a series moves days you can't see, so Better-Cal shows w
 ## What the Card Says
 
 - **The rule, before and after:** "Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00", with the end beside it ("No end, as before", "6 events, ends 1 Jul").
-- **Readings,** when a change can mean more than one thing: dragging Wednesday's class to Thursday in a Monday, Wednesday and Friday series can move every Wednesday, or shift the whole pattern a day. Each choice shows its own next dates. The first one is what Enter does.
-- **The next dates** as they'll show, with edited days marked.
-- **Edited and skipped days:** whether each moves with its event, stays, becomes an event of its own or is deleted, with a choice where it's yours to make.
+- **Readings,** when a change can mean more than one thing: dragging Wednesday's class to Thursday in a Monday, Wednesday and Friday series can move every Wednesday, or shift the whole pattern a day. Each choice shows its own next dates and end, and under it what it drops or adds; a choice of time zone says which events change their clock. The first one is what Enter does. A choice between keeping the count and keeping the end works the same way.
+- **The next dates** as they'll show, with edited days marked. Dates name their year only when it isn't this one.
+- **Edited and skipped days:** whether each moves with its event, stays, becomes an event of its own or is deleted. A choice about one day sits on that day's line; the rest (a gain at the start, own titles for a rename) sit on their own line below.
 - **Refusals:** a change the series can't take says why, with **Only this one** to change just the day you dragged. A reading that can't apply is shown greyed out with its reason.
 
 **Confirm** stays off until the plan has arrived. **Cancel** or Esc puts everything back, and a press outside the card does the same. The switch at the top changes between **This and following** and **All events**. If the series changed meanwhile (another tab, a sync), the card shows the new plan and asks again.
 
-On a phone the card is a sheet at the bottom of the screen and scrolls inside.
+On a desktop the card opens beside the drop point, below the dragged block or above or beside it when there's no room, so the block stays in sight. On a phone the card is a sheet at the bottom of the screen and scrolls inside.
 
 ## Creating a Series
 
@@ -26,7 +26,7 @@ Quick add and the editor's Repeat row show the rule in words with its first date
 
 ## Edited Days
 
-A day you changed on its own keeps what you changed (its date, title, place and so on) when the series changes later. The editor lists those fields under the title for that day ("Its own: date, title"). Click one to give it back to the series, or **Use series values** for all of them; that changes only this day and can be undone.
+A day you changed on its own keeps what you changed (its date, title, place and so on) when the series changes later. The editor lists those fields under the title for that day ("Edited day of Choir (weekly on Tuesday). Its own: date, title"). Click one to give it back to the series, or **Use series values** for all of them; that changes only this day and can be undone. The toast names the fields that went back; if the server didn't change the day, it says so instead. A day with nothing left of its own is an ordinary event of the series again.
 
 ## Google Calendars
 

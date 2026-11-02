@@ -62,6 +62,10 @@ export function datesWithWeekday(plan) {
 
 const startOf = (n) => (typeof n === 'string' ? n : n && n.start);
 
+// The groups that are choices about days, not readings of the rule: drawn
+// inline, never as dated rows, though the server gives their options dates.
+const PLAIN_GROUP = /^(movedDays|outside|own[A-Z].*)$/;
+
 // What each action is called, on the heading and its button.
 const ACTIONS = {
   drag: { all: 'Move all events', following: 'Move this and following' },
@@ -166,30 +170,36 @@ export function planView(plan, ctx = {}) {
     }),
   });
   // The option labels and the preselection are the plan's, in its order.
-  // A group whose options carry dates or a consequence is drawn as rows
-  // ("Don't add Fri 8 Jan   5 events, ends 22 Jan"); bare labels go inline.
-  const noted = (o) => (Array.isArray(o.next) && o.next.length) || wordsOf(o.words || o.consequence) || wordsOf(o.differs) || wordsOf(o.bound);
+  // A group for one day sits on that day's line, whatever its options
+  // carry (the server gives every option its dates and bound). The other
+  // choices that aren't readings (a day moved on its own, days outside the
+  // new series, own values for a changed field) sit inline on a line of
+  // their own. The rest, a group whose options carry dates or words, is
+  // drawn as rows: "Don't add Fri 8 Jan   5 events, ends 22 Jan", each
+  // row's words (what it drops or adds, the clocks a zone moves) under
+  // its label.
+  const noted = (o) => (Array.isArray(o.next) && o.next.length) || wordsOf(o.words) || wordsOf(o.differs) || wordsOf(o.bound);
+  const dateList = (list) => (list || []).map((n) => {
+    const at = fmt(startOf(n));
+    return at && n && typeof n === 'object' && n.words ? at + ' (' + n.words + ')' : at;
+  }).filter(Boolean).join(' · ');
   for (const g of plan.groups || []) {
-    const dated = (g.options || []).some(noted);
-    if (dated) {
+    if (g.day != null && days.some((d) => d.key === g.day)) continue; // drawn on its day's line
+    if (!PLAIN_GROUP.test(g.id || '') && (g.options || []).some(noted)) {
       const group = inline(g);
       group.dated = (g.options || []).some((o) => Array.isArray(o.next) && o.next.length);
       group.options = group.options.map((o, i) => {
         const src = g.options[i];
-        const notes = [wordsOf(src.words || src.consequence), wordsOf(src.differs), wordsOf(src.bound)].filter(Boolean);
-        return { ...o, dates: (src.next || []).map((n) => fmt(startOf(n))).filter(Boolean).join(' · '), note: [...new Set(notes)].join('; ') };
+        const words = wordsOf(src.words);
+        const notes = [wordsOf(src.differs), wordsOf(src.bound)].filter((x) => x && x !== words);
+        return { ...o, words, dates: dateList(src.next), note: [...new Set(notes)].join('; ') };
       });
       view.readings.push(group);
-    } else if (g.day != null && days.some((d) => d.key === g.day)) {
-      continue; // drawn on its day's line
     } else {
       view.choices.push(inline(g));
     }
   }
-  view.next = (plan.next || []).map((n) => {
-    const at = fmt(startOf(n));
-    return n && n.words ? at + ' (' + n.words + ')' : at;
-  }).filter(Boolean).join(' · ');
+  view.next = dateList(plan.next);
   const groupOf = (key) => (plan.groups || []).find((g) => g.day === key);
   // The day acted on is in the Next line where it landed; it gets a line of
   // its own only when it doesn't simply move there (kept on its own, say).
@@ -263,4 +273,31 @@ export function creationLine(plan, { typedStart = null, tz = null, refYear } = {
     }
   }
   return { line, moved };
+}
+
+/**
+ * Where the desktop card goes after a drag, so the dragged block stays in
+ * sight: below the block, else above it, else beside it (right, then
+ * left), each kept on screen; when none is clear of the block, the one
+ * that covers least of it. w, h: the card's size. view: {w, h}. at: the
+ * drop point. block: the pending block's box {left, top, right, bottom},
+ * null when it isn't drawn (the drop point stands in). Returns {left, top}.
+ */
+export function cardPlace({ w, h, view, at, block = null, margin = 8, gap = 12 }) {
+  const b = block || { left: at.x, right: at.x, top: at.y, bottom: at.y };
+  const x = (v) => Math.max(margin, Math.min(v, view.w - w - margin));
+  const y = (v) => Math.max(margin, Math.min(v, view.h - h - margin));
+  const wanted = [
+    { left: at.x, top: b.bottom + gap },
+    { left: at.x, top: b.top - gap - h },
+    { left: b.right + gap, top: b.top },
+    { left: b.left - gap - w, top: b.top },
+  ];
+  const covered = (c) => {
+    const dx = Math.min(c.left + w, b.right) - Math.max(c.left, b.left);
+    const dy = Math.min(c.top + h, b.bottom) - Math.max(c.top, b.top);
+    return dx > 0 && dy > 0 ? dx * dy : 0;
+  };
+  const places = wanted.map((c) => ({ left: x(c.left), top: y(c.top) }));
+  return places.find((c) => covered(c) === 0) || places.reduce((a, c) => (covered(c) < covered(a) ? c : a));
 }

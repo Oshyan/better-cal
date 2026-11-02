@@ -627,7 +627,10 @@ export async function ensureDayLoaded(dayKey) {
 // are the master's, so only the detail-only fields are merged, never the
 // occurrence's own identity or times. A window refresh replaces the cached
 // occurrence with the list shape again, which is why `full` lives on it.
-const DETAIL_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'createdAt', 'updatedAt', 'tzid', 'uid', 'url', 'location', 'locationLat', 'locationLng', 'invite', 'styleJson'];
+// An edited day's series fields (its own list, the series' title, id and
+// the day's key) are merged too, wherever the server sends them.
+const DETAIL_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'createdAt', 'updatedAt', 'tzid', 'uid', 'url', 'location', 'locationLat', 'locationLng', 'invite', 'styleJson',
+  'ownFields', 'seriesTitle', 'seriesId', 'seriesKey'];
 const detailInFlight = new Map(); // instanceId -> Promise, so a popover then editor open shares one fetch
 
 export function ensureFullOccurrence(instanceId) {

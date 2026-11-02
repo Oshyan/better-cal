@@ -4584,7 +4584,7 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
       { id: 'leap', label: 'On 29 February, only in leap years', next: ['2028-02-29', '2032-02-29', '2036-02-29'], words: 'drops three years in four' },
     ] }],
   };
-  eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.note ? '   ' + o.note : '')),
+  eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.words ? '   ' + o.words : '')),
     ['29 Feb 2028 · 28 Feb 2029 · 28 Feb 2030', '29 Feb 2028 · 29 Feb 2032 · 29 Feb 2036   drops three years in four']);
 
   // A count: "Piano lesson with Alex Example", the bound as a reading group.
@@ -4612,18 +4612,22 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   // The examples after the fourth review (6258688): labels, order and the
   // preselection are the plan's. "Cello lesson", 31 Oct dragged to 1 Nov:
   // keep the end comes first.
+  // As the server sends a bound group: every option with its dates and
+  // its own bound, the end shown from each option's bound words, every
+  // date sent shown (a date the server names, "separately", with it).
   const cello = {
     hash: 'k1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
     bound: { words: 'Changes 6 events to 10, ends 1 Nov' },
     groups: [{ id: 'bound', label: 'Bound', selected: 'end', options: [
-      { id: 'end', label: 'Keep the end', words: 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct' },
-      { id: 'count', label: 'Keep 6 events + this one on its own', next: firsts, words: 'and 1 Nov separately', bound: { words: '6 in the series + 1 separate' } },
+      { id: 'end', label: 'Keep the end', next: [firsts[0], firsts[1], firsts[2], '2027-11-01T16:00:00-07:00'], bound: { words: 'Changes 6 events to 10, ends 1 Nov' } },
+      { id: 'count', label: 'Keep 6 events + this one on its own', next: [...firsts, { start: '2027-11-01T16:00:00-07:00', words: 'separately' }], bound: { words: '6 in the series + 1 separate' },
+        differs: { words: 'parts on 1 Aug' } },
     ] }],
   };
   const c = planView(cello, ctx({ title: 'Cello lesson' }));
   eq('series dialog: a count that would split off the dragged day, keep the end first and preselected', c.readings[0].options.map((o) => [o.label, o.selected, o.dates, o.note]), [
-    ['Keep the end', true, '', 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct'],
-    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'and 1 Nov separately; 6 in the series + 1 separate'],
+    ['Keep the end', true, '1 Feb · 1 Mar · 1 Apr · 1 Nov', 'Changes 6 events to 10, ends 1 Nov'],
+    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul · 1 Nov (separately)', 'parts on 1 Aug; 6 in the series + 1 separate'],
   ]);
   eq('series dialog: the bound line for it', c.bound, 'Changes 6 events to 10, ends 1 Nov');
   eq('series dialog: Enter takes the plan\'s preselection', commitPlan(cello, {}).choices, { bound: 'end' });
@@ -4662,6 +4666,41 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
   eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
 
+  // As the server sends a plan: every option of every group carries its
+  // next dates and its bound, the ones not preselected how they differ, and
+  // the reading and zone options their words. A group for one day is drawn
+  // on that day's line only, never again as reading rows.
+  const served = (o, sel) => ({ ...o, next: ['2027-03-10T19:00:00-08:00', '2027-03-17T19:00:00-07:00', '2027-03-24T19:00:00-07:00'], bound: { words: 'No end, as before' },
+    ...(o.id === sel ? {} : { differs: { dates: [], words: 'the same dates; its edited and skipped days differ' } }) });
+  const fromServer = {
+    ...choir, hash: 's1',
+    groups: [
+      { id: 'reading', label: 'How it repeats', selected: 'member', options: [
+        { id: 'member', label: 'Move every Tuesday to Wednesday', words: 'keeps every week' },
+        { id: 'moment', label: 'Keep each moment', words: 'Sun 14 Mar and Sun 7 Nov keep their instants, at 20:00' },
+      ].map((o) => served(o, 'member')) },
+      { id: 'movedDays', label: 'Days moved on their own', day: '2027-03-24T02:00:00Z', selected: 'keep', options: [
+        { id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' },
+      ].map((o) => served(o, 'keep')) },
+      { id: 'ownTitle', label: '1 edited day keeps its own title', selected: 'keep', options: [
+        { id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' },
+      ].map((o) => served(o, 'keep')) },
+    ],
+  };
+  const fs = planView(fromServer, ctx());
+  eq('series dialog, server plan: one reading group, its rows with their words under the label', fs.readings.map((g) => [g.id, g.options.map((o) => [o.label, o.words])]), [
+    ['reading', [['Move every Tuesday to Wednesday', 'keeps every week'], ['Keep each moment', 'Sun 14 Mar and Sun 7 Nov keep their instants, at 20:00']]],
+  ]);
+  eq('series dialog, server plan: the day moved on its own is on its day\'s line only', [fs.edited[1].words, fs.edited[1].choice && fs.edited[1].choice.options.map((o) => o.label), fs.choices.some((g) => g.id === 'movedDays')],
+    ['Tue 23 Mar, moved to Fri 26 Mar: stays there', ['Keep Fri 26 Mar', 'Move to Sat 27 Mar'], false]);
+  eq('series dialog, server plan: an own-values choice stays inline though its options carry dates', fs.choices.map((g) => [g.id, g.options.map((o) => o.label)]),
+    [['ownTitle', ['Keep its own title', 'Give it the new title too']]]);
+  const radioSets = [...fs.readings, ...fs.choices, ...fs.edited.map((d) => d.choice).filter(Boolean)].map((g) => g.id);
+  eq('series dialog, server plan: every group is drawn once, so no two radio sets share a name', radioSets.length, new Set(radioSets).size);
+  eq('series dialog, server plan: a consequence field is never read', planView({ hash: 'q', groups: [{ id: 'reading', selected: 'a', options: [{ id: 'a', label: 'A', consequence: 'old words', next: ['2027-03-10'] }] }] }, ctx()).readings[0].options[0].words, '');
+  const outside = planView({ ...piano, groups: piano.groups.map((g) => (g.id === 'outside' ? { ...g, options: g.options.map((o) => served(o, 'own')) } : g)) }, ctx({ title: 'Piano lesson with Alex Example' }));
+  eq('series dialog, server plan: the day after the end keeps its choice on its line, not as rows', [outside.readings.map((g) => g.id), outside.edited[0].choice && outside.edited[0].choice.id], [['bound'], 'outside']);
+
   // Google, until 1.5.2: the rule-changing drag refused, the time change noted.
   const googleWords = 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.';
   const gRefused = planView({ hash: 'e1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE' }, refusals: [{ code: 'google_rule', words: googleWords }] }, ctx());
@@ -4696,6 +4735,20 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('series dialog: a rule line from the server is used as it is', ruleLine({ line: 'Monthly on the 1st and 15th, now on the 15th and 20th' }), 'Monthly on the 1st and 15th, now on the 15th and 20th');
   eq('plan dates: weekday, month, and the year only when it isn\'t this one', [planDate('2027-03-10T19:00:00-08:00', { refYear: 2027 }), planDate('2028-02-29', { weekday: false, refYear: 2027 }), planDate('2027-04-14T02:00:00Z', { tz: LA, refYear: 2027 })],
     ['Wed 10 Mar', '29 Feb 2028', 'Tue 13 Apr']);
+
+  // The desktop card after a drag keeps the dragged block in sight.
+  const { cardPlace } = await import('../src/lib/seriesplan.js');
+  const screen = { w: 1280, h: 800 };
+  const overlaps = (c, w, h, b) => c.left < b.right && c.left + w > b.left && c.top < b.bottom && c.top + h > b.top;
+  const high = { left: 600, top: 100, right: 760, bottom: 180 };
+  eq('series card: below the block when there is room', cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 140 }, block: high }), { left: 640, top: 192 });
+  const low = { left: 600, top: 650, right: 760, bottom: 760 };
+  const lowAt = cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 700 }, block: low });
+  eq('series card: near the bottom it opens above, clear of the block', [lowAt.top + 300 <= low.top, overlaps(lowAt, 520, 300, low)], [true, false]);
+  const tall = { left: 300, top: 120, right: 460, bottom: 700 };
+  const tallAt = cardPlace({ w: 520, h: 420, view: screen, at: { x: 380, y: 600 }, block: tall });
+  eq('series card: a block too tall for above or below gets the card beside it', [tallAt.left, overlaps(tallAt, 520, 420, tall)], [472, false]);
+  eq('series card: without the block drawn, the drop point stands in', cardPlace({ w: 520, h: 300, view: screen, at: { x: 100, y: 100 } }), { left: 100, top: 112 });
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
@@ -4964,6 +5017,61 @@ console.log('--- series plans only where the server says so (/config seriesPlans
   await useSeriesValue(occ, ['title']);
   eq('series gate: on, Use series value gives the field back on this day', sent[0], { scope: 'this', instanceStart: occ.start, useSeries: ['title'] });
   put({ config: { ...st.config, seriesPlans: false }, seriesChange: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+console.log('--- Use series value: aimed at the series with the day\'s key, its answer applied (1.5.0) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { useSeriesValue } = await import('../src/app/actions.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const sent = [];
+  let record = null; // what GET /events/71/occurrence answers; null is a 404
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (o.method === 'PATCH') { sent.push([p, JSON.parse(o.body)]); return json({ ok: true }); }
+    if (p === '/events/71/occurrence') return record ? json({ occurrence: record }) : json({ error: { code: 'not_found', message: 'Event not found' } }, 404);
+    if (p === '/changes/cursor') return json({ cursor: 'u1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  put({ config: { ...st.config, seriesPlans: true }, seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  // An edited day with its own date and time: the series has it on Tue 16 Mar
+  // at 19:00 (its key), it shows on Thu 18 Mar at 18:00.
+  const day = {
+    instanceId: '71@1', eventId: 71, calendarId: 3, title: 'Rehearsal', recurring: true, isException: true,
+    ownFields: ['date', 'time', 'title'], seriesId: 70, seriesKey: '2027-03-17T03:00:00Z', seriesTitle: 'Sample choir',
+    start: '2027-03-18T18:00:00-07:00', end: '2027-03-18T19:30:00-07:00', tzid: 'America/Los_Angeles',
+  };
+  const fresh = () => { st.occ.clear(); st.occ.set(day.instanceId, { ...day }); sent.length = 0; return st.toasts.length; };
+  const toastsSince = (n) => st.toasts.slice(n).map((t) => t.text);
+
+  let t0 = fresh();
+  record = { ...day, title: 'Sample choir', ownFields: ['date', 'time'] };
+  const ok = await useSeriesValue(st.occ.get(day.instanceId), ['title']);
+  eq('use series value: sent to the series with the day\'s key, not where it shows', sent, [['/events/70', { scope: 'this', instanceStart: '2027-03-17T03:00:00Z', useSeries: ['title'] }]]);
+  eq('use series value: the answer read back is applied to the day', [ok, st.occ.get(day.instanceId) && st.occ.get(day.instanceId).title, st.occ.get(day.instanceId) && st.occ.get(day.instanceId).ownFields], [true, 'Sample choir', ['date', 'time']]);
+  eq('use series value: the toast names what went back', toastsSince(t0), ["Uses the series' title"]);
+
+  t0 = fresh();
+  record = { ...day };
+  eq('use series value: a server that changed nothing is not reported as done', [await useSeriesValue(st.occ.get(day.instanceId), ['title']), toastsSince(t0)],
+    [false, ['Nothing changed: this day still has its own title']]);
+
+  t0 = fresh();
+  record = null;
+  eq('use series value: the last own fields given back, the day is an occurrence again', [await useSeriesValue(st.occ.get(day.instanceId), ['date', 'time', 'title']), toastsSince(t0)],
+    [true, ["Uses the series' date, time and title"]]);
+
+  t0 = fresh();
+  record = { ...day, ownFields: ['date', 'time'] };
+  const older = { ...day, seriesId: undefined, seriesKey: undefined };
+  await useSeriesValue(older, ['title']);
+  eq('use series value: without the series\' id and key, the day\'s own id and start', sent, [['/events/71', { scope: 'this', instanceStart: day.start, useSeries: ['title'] }]]);
+
+  put({ config: { ...st.config, seriesPlans: false } });
   st.occ.clear();
   globalThis.fetch = realFetch;
 }

@@ -1138,7 +1138,8 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-reading-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; }
 .bc-sd-reading-label { font-weight: 500; }
 .bc-sd-dates { font-variant-numeric: tabular-nums; }
-.bc-sd-conseq, .bc-sd-reason { color: var(--fg-muted); }
+.bc-sd-conseq, .bc-sd-reason, .bc-sd-words { color: var(--fg-muted); }
+.bc-sd-words { flex: 1 0 100%; }
 .bc-sd-reading.is-disabled, .bc-sd-opt.is-disabled { cursor: default; }
 .bc-sd-reading.is-disabled .bc-sd-reading-label, .bc-sd-opt.is-disabled span { color: var(--fg-muted); }
 .bc-sd-choice { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }

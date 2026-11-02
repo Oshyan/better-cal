@@ -102,7 +102,7 @@ final class Updates
                 ['state' => $state, 'newest' => $newest] = $this->newestVerified($candidates, $previous);
                 $state['newest_version'] = $newest;
             }
-            $stored = $this->saveAcceptedState($state);
+            $stored = $this->saveAcceptedState($state, $startingRevision);
             if ($notify) $this->notifySecurityFloor($stored);
         } catch (\Throwable $e) {
             $message = mb_substr($e->getMessage(), 0, 1000);
@@ -144,7 +144,11 @@ final class Updates
         // one it runs (or older): the updater can't take it further, and
         // saying "up to date" would be the opposite of the truth. Updating
         // by hand is the way on; bin/update.php says the same (manualKeys).
-        $blocked = !$available && $latest !== null && $newest !== null && version_compare($newest, $latest, '>');
+        // A copy above every published release (a development build) is
+        // not blocked either: there is nothing newer to be kept from, and
+        // bin/update.php says up to date for it.
+        $blocked = !$available && $latest !== null && $newest !== null
+            && version_compare($newest, $latest, '>') && version_compare($newest, $current, '>');
         // A dismissal is per release named: the verified one, or for a
         // blocked copy the newest, so a newer one shows again.
         $named = $blocked ? $newest : $latest;
@@ -552,10 +556,13 @@ final class Updates
         return $this->db->one('SELECT * FROM app_update_state WHERE id = 1') ?? ['id' => 1];
     }
 
-    /** Persist only monotonic release state under the database row lock. */
-    private function saveAcceptedState(array $state): array
+    /**
+     * Persist only monotonic release state under the database row lock.
+     * $startingRevision is the row's revision when this check began.
+     */
+    private function saveAcceptedState(array $state, int $startingRevision): array
     {
-        return $this->db->tx(function () use ($state): array {
+        return $this->db->tx(function () use ($state, $startingRevision): array {
             $lock = $this->db->forUpdate();
             $current = $this->db->one('SELECT * FROM app_update_state WHERE id = 1' . $lock) ?? ['id' => 1, 'revision' => 0];
             $incomingVersion = (string) ($state['latest_version'] ?? '');
@@ -579,11 +586,13 @@ final class Updates
             // Two checks verifying the same release may have seen different
             // newest published ones (a release came out between them). The
             // one finishing later must not move the newest-release notice
-            // back; the newest only goes up while the verified one stands.
-            // (A release withdrawn after publication isn't handled: the
-            // notice keeps naming it until the verified one moves on.)
+            // back, so a lower newest is kept out only when another check
+            // saved since this one began (the row's revision moved). A
+            // check that began after the last save and sees a lower newest
+            // is reporting a release withdrawn from the list, and writes it.
             $storedNewest = (string) ($current['newest_version'] ?? '');
             if ($incomingVersion === $storedVersion && $storedNewest !== ''
+                && (int) ($current['revision'] ?? 0) !== $startingRevision
                 && version_compare((string) ($state['newest_version'] ?? ''), $storedNewest, '<')) {
                 $state['newest_version'] = $storedNewest;
             }

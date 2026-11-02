@@ -61,8 +61,9 @@ final class ReleaseSignature
 
     /**
      * Check a signature file. Returns the statement's fields and the id of
-     * the key that verified; throws unless the statement is well-formed and
-     * at least one signature on it verifies with a trusted key.
+     * the first key that verified; throws unless the statement is well-formed,
+     * at least one signature on it is from a trusted key, and every signature
+     * from a trusted key verifies.
      *
      * The failure is UntrustedSignature only when the file is whole, every
      * signature entry is well-formed, and none names a key in $keys: the
@@ -102,18 +103,22 @@ final class ReleaseSignature
         foreach ($keys as $key) {
             $byId[$key['id']] = $key;
         }
-        $namesListed = false;
+        // Every listed key's signature must verify, not just one: the
+        // signing scripts only ever write a signature they just made with
+        // that key, so a failing one means the file or the key list changed
+        // after signing, and a verifying signature beside it doesn't excuse it.
+        $verifiedBy = null;
         foreach ($data['signatures'] as $sig) {
             if (!isset($byId[$sig['key']])) {
                 continue;
             }
-            $namesListed = true;
-            if (self::check($byId[$sig['key']], $sig, $data['statement'])) {
-                return $fields + ['key' => $sig['key']];
+            if (!self::check($byId[$sig['key']], $sig, $data['statement'])) {
+                throw new \RuntimeException('The signature from a key this copy of Better-Cal lists doesn\'t verify');
             }
+            $verifiedBy ??= $sig['key'];
         }
-        if ($namesListed) {
-            throw new \RuntimeException('The signature from a key this copy of Better-Cal lists doesn\'t verify');
+        if ($verifiedBy !== null) {
+            return $fields + ['key' => $verifiedBy];
         }
         throw new UntrustedSignature('No signature on this release is from a key this copy of Better-Cal lists');
     }

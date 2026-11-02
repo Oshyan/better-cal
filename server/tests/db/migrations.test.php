@@ -134,4 +134,14 @@ return static function (Db $db): void {
         (int) $db->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'app_update_state' AND COLUMN_NAME = 'newest_version'"),
         str_contains($newestSaid, 'step towards'),
     ]);
+    // 062: pieces as large as the snapshots; where a development build made
+    // the column smaller, run again it is widened, and again changes nothing.
+    $rowsType = static fn(): array => array_values($db->one("SELECT DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mutation_rows' AND COLUMN_NAME = 'rows_json'") ?? []);
+    $fresh = $rowsType();
+    $db->run('ALTER TABLE mutation_rows MODIFY rows_json MEDIUMTEXT NOT NULL');
+    $migration('062_mutation_rows.php')($db);
+    $widened = $rowsType();
+    $migration('062_mutation_rows.php')($db);
+    checkEq('migration 062: rows_json is LONGTEXT, a MEDIUMTEXT one from a development build is widened, and run again nothing changes',
+        [['longtext', 'NO'], ['longtext', 'NO'], ['longtext', 'NO']], [$fresh, $widened, $rowsType()]);
 };

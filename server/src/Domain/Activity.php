@@ -131,7 +131,10 @@ final class Activity
         )->rowCount();
         // And the rows a large entry kept in pieces, with them.
         Undo::dropUnusedPieces($this->db);
-        $deleted = $this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
+        // An entry deleted takes its pieces too, said here rather than left
+        // to the foreign key's cascade (SQLite applies it only when asked).
+        $this->db->run('DELETE FROM mutation_rows WHERE mutation_id IN (SELECT id FROM mutations WHERE created_at < ?)', [$logCut]);
+        $deleted =$this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
         $forgotten = Plugins::forgetGoneCalendars($this->db);
         return ['snapshotsCleared' => $cleared, 'deleted' => $deleted, 'pluginRowsForgotten' => $forgotten];
     }

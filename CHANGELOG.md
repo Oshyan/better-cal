@@ -7,7 +7,9 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 ## Unreleased
 
 - Quick add reads a date range followed by times ([#198](https://github.com/Oshyan/better-cal/issues/198)): "Conference Aug 3-7 9am-5pm" is one event from the first morning to the last evening, and "Aug 3-7 9am" or "Aug 3-7 10pm-6am" repeats each day of the range.
-- **Very large calendars can be deleted and undone** ([#191](https://github.com/Oshyan/better-cal/issues/191)): one with tens of thousands of events failed with "Delete failed" (before 1.4.5 it was deleted with nothing in Activity to undo). Its events are now kept for undo in pieces, so the delete goes through and Undo brings everything back.
+- **Very large calendars can be deleted and undone** ([#191](https://github.com/Oshyan/better-cal/issues/191)): one with tens of thousands of events failed with "Delete failed" (before 1.4.5 it was deleted with nothing in Activity to undo). Its events are now kept for undo in pieces, so the delete goes through and Undo brings back the calendar, its events with their tags, people and trip links, and its place as the default calendar.
+
+Operators: one database change (the journal's side table for large entries), applied automatically by `update.php` or the database update page.
 
 ## 1.4.6 (2026-11-01)
 

@@ -68,8 +68,22 @@ final class Undo
     /** The most rows' text one piece holds, far under the smallest packet size a database is likely to allow. */
     private const PIECE_BYTES = 512 * 1024;
 
-    /** An entry's snapshots longer than this keep their PIECE_TABLES rows made or removed in pieces (a test sets it lower). */
+    /**
+     * An entry's snapshots longer than this keep their PIECE_TABLES rows
+     * made or removed in pieces.
+     *
+     * @internal A test seam: only the database suite sets it (lower, to put
+     * an entry's rows in pieces), and puts it back. App code never writes it.
+     */
     public static int $inlineBytes = 1024 * 1024;
+
+    /**
+     * How the journal writes its JSON: characters as themselves, not as \u
+     * escapes, so a row of emoji or CJK text is about its own size in the
+     * journal rather than three to six times it, and a large one still fits
+     * in one statement. Entries written escaped, before, read back the same.
+     */
+    private const JSON_FLAGS = JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
 
     /**
      * A calendar's columns that are Better-Cal's own, never its source's:
@@ -233,7 +247,7 @@ final class Undo
             'source' => ActivityContext::get(),
             'run_id' => ActivityContext::runId(),
             'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables, Settings::homeTzid($this->db, $userId)), 0, 300),
-            'details_json' => $details === null ? null : json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE),
+            'details_json' => $details === null ? null : json_encode($details, self::JSON_FLAGS),
         ]);
         ActivityContext::noteEntry($mutationId);
         // Before the refs: a Google calendar's entry has its snapshots
@@ -259,10 +273,12 @@ final class Undo
      */
     public function recordRemoved(int $mutationId, array $tables): void
     {
-        if ($mutationId <= 0) {
-            // Inside group(), whose entry is written when it ends.
-            self::misuse('Undo::recordRemoved without an entry to add to');
-            return;
+        self::assertEntry($mutationId, 'recordRemoved');
+        foreach (array_keys($tables) as $table) {
+            if (!in_array($table, self::PIECE_TABLES, true)) {
+                // Kept in a piece, they would never be put back.
+                throw new \LogicException("Undo::recordRemoved can't keep $table rows, only " . implode(', ', self::PIECE_TABLES));
+            }
         }
         $this->recordTouches($mutationId, self::touchesOf($tables, null));
         if ($this->recordCalendarRefs($mutationId, $tables, null)
@@ -279,6 +295,7 @@ final class Undo
      */
     public function recordRemovedEvents(int $mutationId, string $where, array $params): void
     {
+        self::assertEntry($mutationId, 'recordRemovedEvents');
         $after = 0;
         $links = [];
         do {
@@ -308,18 +325,32 @@ final class Undo
      */
     public function noteSettings(int $mutationId, array $settings): void
     {
-        if ($mutationId <= 0 || $settings === []) {
+        if ($settings === []) {
             return;
         }
+        self::assertEntry($mutationId, 'noteSettings');
         $details = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$mutationId]), true);
         $details = is_array($details) ? $details : [];
         $details['settings'] = array_merge((array) ($details['settings'] ?? []), $settings);
-        $this->db->update('mutations', ['details_json' => json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE)], 'id = ?', [$mutationId]);
+        $this->db->update('mutations', ['details_json' => json_encode($details, self::JSON_FLAGS)], 'id = ?', [$mutationId]);
+    }
+
+    /**
+     * An entry to add to, from record(). Inside group() there is none yet
+     * (it's written when the group ends; record() returns 0 there): going
+     * on would remove rows the entry never holds, and an undo would bring
+     * back an empty calendar. So the change fails instead.
+     */
+    private static function assertEntry(int $mutationId, string $what): void
+    {
+        if ($mutationId <= 0) {
+            throw new \LogicException("Undo::$what without an entry to add to (inside Undo::group?)");
+        }
     }
 
     private static function encodeTables(?array $tables): ?string
     {
-        return $tables === null ? null : (string) json_encode(['tables' => $tables], JSON_INVALID_UTF8_SUBSTITUTE);
+        return $tables === null ? null : (string) json_encode(['tables' => $tables], self::JSON_FLAGS);
     }
 
     /**
@@ -389,7 +420,7 @@ final class Undo
                 [$buffer, $bytes] = [[], 0];
             };
             foreach ($rows as $row) {
-                $json = json_encode($row, JSON_INVALID_UTF8_SUBSTITUTE);
+                $json = json_encode($row, self::JSON_FLAGS);
                 if ($json === false) {
                     // Failing the change beats an entry that can't put it back.
                     throw new \RuntimeException("undo: a $table row can't be kept for undo: " . json_last_error_msg());

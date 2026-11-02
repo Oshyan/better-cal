@@ -471,4 +471,117 @@ return static function (Db $db): void {
         });
         check("undo: the account's row is held for the whole of a change", $heldDuring === true, var_export($heldDuring, true));
     });
+
+    // A calendar deleted inside group(): there is no entry yet to add its
+    // events to, so the delete fails instead of keeping an entry that would
+    // bring back an empty calendar.
+    scenario('undo: a calendar deleted inside a group fails, and changes nothing', function () use ($db, $count): void {
+        $r = freshUser($db);
+        $dr = domains($db);
+        $cal = (int) $dr->calendars->create($r, ['name' => 'Grouped sample'])['id'];
+        $dr->events->create($r, eventAt($cal, 'Grouped sample event'));
+        $entries = $count('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$r]);
+        $refused = null;
+        try {
+            $dr->undo->group(fn() => $dr->calendars->delete($r, $cal), 'Grouped delete');
+        } catch (\LogicException $e) {
+            $refused = $e->getMessage();
+        }
+        check('undo: a calendar deleted inside a group fails', $refused !== null && str_contains($refused, 'without an entry to add to'), (string) $refused);
+        checkEq('undo: and the calendar, its event and the journal are as they were', [1, 1, $entries], [
+            $count('SELECT COUNT(*) FROM calendars WHERE id = ?', [$cal]),
+            $count('SELECT COUNT(*) FROM events WHERE calendar_id = ?', [$cal]),
+            $count('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$r]),
+        ]);
+        $fails = static function (callable $fn): ?string {
+            try {
+                $fn();
+            } catch (\LogicException $e) {
+                return $e->getMessage();
+            }
+            return null;
+        };
+        $entry = lastEntry($db, $r);
+        checkEq("undo: settings noted with no entry fail too, nothing to note is fine, and removed rows of a table undo doesn't put back from pieces are refused", [true, null, true], [
+            str_contains((string) $fails(fn() => $dr->undo->noteSettings(0, ['defaultCalendarId' => [$cal, null]])), 'without an entry to add to'),
+            $fails(fn() => $dr->undo->noteSettings(0, [])),
+            str_contains((string) $fails(fn() => $dr->undo->recordRemoved($entry, ['calendars' => [['id' => $cal]]])), "can't keep calendars rows"),
+        ]);
+    });
+
+    // The journal keeps text as itself (no \u escapes), and an entry written
+    // escaped by an earlier version still undoes the same, kept inline or in
+    // pieces.
+    scenario('undo: the journal keeps text as itself, and entries written escaped still undo', function () use ($db, $count): void {
+        $r = freshUser($db);
+        $dr = domains($db);
+        $cal = (int) $dr->calendars->create($r, ['name' => "Caf\u{E9} \u{65E5}\u{672C} \u{1F389}"])['id'];
+        $event = (int) $dr->events->create($r, eventAt($cal, "Caf\u{E9} \u{4F1A}\u{8B70} \u{1F389} a/b", '2026-12-08', ['description' => "Notes \u{2713} https://example.test/a/b"]))['eventId'];
+        $row = static fn(): array => [$db->one('SELECT * FROM events WHERE id = ?', [$event]), $db->scalar('SELECT name FROM calendars WHERE id = ?', [$cal])];
+        $was = $row();
+        $escape = static fn(string $json): string => (string) json_encode(json_decode($json, true), JSON_INVALID_UTF8_SUBSTITUTE);
+
+        $dr->events->deleteEvent($r, $event, null, null);
+        $entry = lastEntry($db, $r);
+        $stored = (string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry]);
+        check('undo: an entry keeps its text as itself', str_contains($stored, "\u{4F1A}\u{8B70} \u{1F389} a/b") && str_contains($stored, 'https://example.test/a/b') && !str_contains($stored, '\\u'), $stored);
+        $dr->undo->undoById($r, $entry);
+        checkEq('undo: undone, the event is back as it was', $was, $row());
+
+        $dr->events->deleteEvent($r, $event, null, null);
+        $entry = lastEntry($db, $r);
+        $db->run('UPDATE mutations SET before_json = ? WHERE id = ?', [$escape((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry])), $entry]);
+        check('undo: (an entry written escaped, as before)', str_contains((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry]), '\\ud83c\\udf89'));
+        $dr->undo->undoById($r, $entry);
+        checkEq('undo: an entry written escaped undoes the same', $was, $row());
+
+        // Its calendar deleted: the event in a piece, the calendar in the entry.
+        $dr->calendars->delete($r, $cal);
+        $entry = lastEntry($db, $r);
+        $piece = (string) $db->scalar("SELECT rows_json FROM mutation_rows WHERE mutation_id = ? AND table_name = 'events'", [$entry]);
+        check('undo: a piece keeps its text as itself', str_contains($piece, "\u{4F1A}\u{8B70} \u{1F389} a/b") && !str_contains($piece, '\\u'), $piece);
+        $db->run("UPDATE mutation_rows SET rows_json = ? WHERE mutation_id = ? AND table_name = 'events'", [$escape($piece), $entry]);
+        $db->run('UPDATE mutations SET before_json = ? WHERE id = ?', [$escape((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry])), $entry]);
+        $dr->undo->undoById($r, $entry);
+        checkEq('undo: a calendar delete whose entry and piece were written escaped undoes the same', $was, $row());
+        checkEq('undo: (each step its own entry, all undone)', 0, $count('SELECT COUNT(*) FROM mutations WHERE user_id = ? AND undone = 0 AND op = ?', [$r, 'delete']));
+    });
+
+    // A calendar moved to Google: its entries can no longer be undone, and
+    // the rows they kept in pieces go with them. Other entries' pieces, of
+    // this account or another, are left; the daily prune sweeps those whose
+    // entry can no longer be undone.
+    scenario("undo: a calendar moved to Google drops its own entries' pieces, not another account's", function () use ($db, $count): void {
+        $a = freshUser($db);
+        $b = freshUser($db);
+        $dr = domains($db);
+        $moved = (int) $dr->calendars->create($a, ['name' => 'Moving sample'])['id'];
+        $kept = (int) $dr->calendars->create($a, ['name' => 'Staying sample'])['id'];
+        $theirs = (int) $dr->calendars->create($b, ['name' => 'Another account sample'])['id'];
+        // Each event's entry with its row in a piece, as a large one keeps it.
+        $inline = \BetterCal\Domain\Undo::$inlineBytes;
+        \BetterCal\Domain\Undo::$inlineBytes = 0;
+        try {
+            $dr->events->create($a, eventAt($moved, 'Moving sample event'));
+            $onMoved = lastEntry($db, $a);
+            $dr->events->create($a, eventAt($kept, 'Staying sample event'));
+            $onKept = lastEntry($db, $a);
+            $dr->events->create($b, eventAt($theirs, 'Another account event'));
+            $onTheirs = lastEntry($db, $b);
+        } finally {
+            \BetterCal\Domain\Undo::$inlineBytes = $inline;
+        }
+        // The other account's entry past its undo window, its pieces not yet
+        // swept (as between the prune's two steps).
+        $db->run('UPDATE mutations SET before_json = NULL, after_json = NULL WHERE id = ?', [$onTheirs]);
+        $pieces = static fn(int $entry): int => $count('SELECT COUNT(*) FROM mutation_rows WHERE mutation_id = ?', [$entry]);
+        checkEq('undo: (each entry has its row in a piece)', [1, 1, 1], [$pieces($onMoved), $pieces($onKept), $pieces($onTheirs)]);
+        $db->tx(static fn() => \BetterCal\Domain\GoogleMove::endUndoOf($db, $moved));
+        checkEq("undo: the move clears its calendar's entries and their pieces, and leaves the others' pieces", [1, 0, 1, 1], [
+            $count('SELECT COUNT(*) FROM mutations WHERE id = ? AND before_json IS NULL AND after_json IS NULL', [$onMoved]),
+            $pieces($onMoved), $pieces($onKept), $pieces($onTheirs),
+        ]);
+        \BetterCal\Domain\Undo::dropUnusedPieces($db);
+        checkEq("undo: the prune's sweep then takes the other account's, and the entry still undoable keeps its own", [0, 1], [$pieces($onTheirs), $pieces($onKept)]);
+    });
 };

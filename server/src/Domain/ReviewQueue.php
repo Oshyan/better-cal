@@ -342,21 +342,27 @@ final class ReviewQueue
      * waiting in Review (MailIngest::applyImipEvent): every open invitation
      * to it from that organizer or sender closes, saying so, and once none
      * waits the days held before it close with them. A cancellation from
-     * anyone else leaves the invitation waiting. Closing a held item
+     * anyone else leaves the invitation waiting, and so does one older than
+     * it: a SEQUENCE below the invitation's, the rule MailIngest::imipMayMutate
+     * applies to an event on the calendar (an equal number still cancels a
+     * live one, and a cancellation without one is 0). Closing a held item
      * changes no event, so the entry is a note, as a dismissal's is, that
-     * touches the items it closed. Returns how many invitations closed.
+     * touches the items it closed. Returns the reason for the log, or null
+     * when no invitation from them waits.
      *
      * @param array<string,mixed> $invite the cancellation's invite block
      */
-    public function cancelWaiting(int $userId, string $uid, array $invite, string $fromAddr): int
+    public function cancelWaiting(int $userId, string $uid, array $invite, string $fromAddr): ?string
     {
         $sourceKey = mb_substr($uid, 0, 255);
         $claims = array_filter([MailPolicy::mailbox($invite['organizer']['email'] ?? null), MailPolicy::mailbox($fromAddr)]);
+        $sequence = (int) ($invite['sequence'] ?? 0);
         if ($claims === [] || !$this->seriesWaiting($userId, $uid)) {
-            return 0;
+            return null;
         }
-        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $sourceKey, $claims): int {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $sourceKey, $claims, $sequence): ?string {
             $closed = [];
+            $newer = false;
             $title = '';
             foreach ($this->db->all(
                 "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id",
@@ -366,6 +372,10 @@ final class ReviewQueue
                 if (isset($payload['occurrence'])) continue;
                 $theirs = array_filter([MailPolicy::mailbox($payload['invite']['organizer']['email'] ?? null), MailPolicy::mailbox($payload['from'] ?? null)]);
                 if (array_intersect($claims, $theirs) === []) continue;
+                if ($sequence < (int) ($payload['sequence'] ?? $payload['invite']['sequence'] ?? 0)) {
+                    $newer = true;
+                    continue;
+                }
                 $who = (string) ($payload['invite']['organizer']['name'] ?? '') ?: (string) ($payload['invite']['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
                 $payload['organizerCancelled'] = true;
                 $this->db->update('review_items', [
@@ -377,9 +387,8 @@ final class ReviewQueue
                 $title = (string) $open['title'];
             }
             if ($closed === []) {
-                return 0;
+                return $newer ? 'an older cancellation than the invitation waiting' : null;
             }
-            $invitations = count($closed);
             if (!$this->seriesWaiting($userId, $uid)) {
                 foreach ($this->db->all(
                     "SELECT id, payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
@@ -393,7 +402,7 @@ final class ReviewQueue
             (new Undo($this->db))->record($userId, 'review', $closed[0], 'update', null, null,
                 'Closed the emailed invitation to "' . mb_substr($title, 0, 200) . '" waiting in Review: the organizer cancelled it',
                 touches: array_map(static fn(int $id): array => [Undo::keyOf('review_items', ['id' => $id]), '*'], $closed));
-            return $invitations;
+            return 'the organizer cancelled it; the invitation waiting in Review was closed';
         });
     }
 

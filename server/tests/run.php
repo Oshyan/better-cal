@@ -2294,6 +2294,64 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         checkEq('whole-series cancellation while the invitation waits: invited again, the series waits anew and a cancelled day waits with it', ['held', 'held', 2], [
             $invitedAgain['outcome'], $dayAgain['outcome'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$waitingUid]),
         ]);
+
+        // A cancellation closes the waiting invitation only when it is not
+        // older than it: a SEQUENCE below the invitation's (none counts as
+        // 0) is out of date, as it is for an event on the calendar, and
+        // leaves the invitation and its held days as they wait.
+        $seqCancel = static fn(string $uid, ?int $sequence): string =>
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:$uid\r\n" . ($sequence !== null ? "SEQUENCE:$sequence\r\n" : '') . "DTSTAMP:20300103T120000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Reading group\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        // One sender's daily mail allowance is spent by the cases above.
+        $adb->run('DELETE FROM mail_admissions');
+        $openFor = static fn(string $uid): array => array_map(static fn(array $r): string => (string) $r['status'], $adb->all('SELECT status FROM review_items WHERE source_key = ? ORDER BY id', [$uid]));
+        foreach (['older' => [5, 2, false], 'equal' => [5, 5, true], 'newer' => [5, 6, true], 'without a sequence, older' => [5, null, false], 'without a sequence, equal' => [0, null, true]] as $what => [$heldSeq, $cancelSeq, $closes]) {
+            $uid = 'sequenced-cancel-' . str_replace([' ', ','], ['-', ''], $what);
+            $runTiersA->invoke($mailA, 1, $autoMsg("$uid-series", $autoSeries($uid, $heldSeq)), 'UTC');
+            $runTiersA->invoke($mailA, 1, $autoMsg("$uid-day", $autoDay($uid, true)), 'UTC');
+            $heldBefore = $adb->all('SELECT id, status, summary, payload_json FROM review_items WHERE source_key = ? ORDER BY id', [$uid]);
+            $sinceSeq = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+            $seqResult = $runTiersA->invoke($mailA, 1, $autoMsg("$uid-cancel", $seqCancel($uid, $cancelSeq)), 'UTC');
+            $heldAfter = $adb->all('SELECT id, status, summary, payload_json FROM review_items WHERE source_key = ? ORDER BY id', [$uid]);
+            $label = "whole-series cancellation $what than the waiting invitation";
+            if ($closes) {
+                checkEq("$label: closes it and the day held with it, as the organizer's cancellation", ['skipped', 'the organizer cancelled it; the invitation waiting in Review was closed', ['gone', 'superseded'], true, 1], [
+                    $seqResult['outcome'], $seqResult['error'], $openFor($uid), !empty(json_decode((string) $heldAfter[0]['payload_json'], true)['organizerCancelled']),
+                    (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$sinceSeq]),
+                ]);
+            } else {
+                checkEq("$label: skipped as out of date, the invitation and its held day wait untouched, and nothing is journaled", ['skipped', 'an older cancellation than the invitation waiting', ['open', 'open'], true, 0], [
+                    $seqResult['outcome'], $seqResult['error'], $openFor($uid), $heldBefore === $heldAfter,
+                    (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE id > ?', [$sinceSeq]),
+                ]);
+                $acceptedSeq = $queueA->accept(1, (int) $heldAfter[0]['id']);
+                checkEq("$label: the invitation can still be added from Review, and its held day becomes a change to it", [true, 'accepted', 'invite_change', 'open'], [
+                    (int) ($acceptedSeq['eventId'] ?? 0) > 0, $adb->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $heldAfter[0]['id']]),
+                    $adb->scalar('SELECT kind FROM review_items WHERE id = ?', [(int) $heldAfter[1]['id']]), $adb->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $heldAfter[1]['id']]),
+                ]);
+            }
+        }
+        // Two versions from the organizer wait: a cancellation between them
+        // closes the older one only, and the held day keeps waiting with the
+        // newer one.
+        $splitUid = 'sequenced-cancel-between';
+        $adb->run('DELETE FROM mail_admissions');
+        $runTiersA->invoke($mailA, 1, $autoMsg("$splitUid-series-3", $autoSeries($splitUid, 3)), 'UTC');
+        $runTiersA->invoke($mailA, 1, $autoMsg("$splitUid-series-7", $autoSeries($splitUid, 7)), 'UTC');
+        $runTiersA->invoke($mailA, 1, $autoMsg("$splitUid-day", $autoDay($splitUid, true)), 'UTC');
+        $splitResult = $runTiersA->invoke($mailA, 1, $autoMsg("$splitUid-cancel", $seqCancel($splitUid, 5)), 'UTC');
+        checkEq('whole-series cancellation between two waiting versions: closes the older, the newer and the held day keep waiting', ['skipped', 'the organizer cancelled it; the invitation waiting in Review was closed', ['gone', 'open', 'open']], [
+            $splitResult['outcome'], $splitResult['error'], $openFor($splitUid),
+        ]);
+        // Delivered out of order: a cancellation for a series nothing knows
+        // yet is skipped as before, and the invitation arriving after it
+        // waits in Review.
+        $reorderUid = 'sequenced-cancel-first';
+        $earlyCancel = $runTiersA->invoke($mailA, 1, $autoMsg("$reorderUid-cancel", $seqCancel($reorderUid, 6)), 'UTC');
+        $lateInvite = $runTiersA->invoke($mailA, 1, $autoMsg("$reorderUid-series", $autoSeries($reorderUid, 5)), 'UTC');
+        checkEq('whole-series cancellation before its invitation: skipped, and the invitation arriving after waits in Review', ['skipped', null, 'held', ['open'], 0], [
+            $earlyCancel['outcome'], $earlyCancel['error'], $lateInvite['outcome'], $openFor($reorderUid),
+            (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ?', [$reorderUid]),
+        ]);
         $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettingsB]);
     }
 

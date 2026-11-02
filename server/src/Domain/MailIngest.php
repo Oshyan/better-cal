@@ -884,11 +884,11 @@ final class MailIngest
             if ($existing === null) {
                 // Nothing on the calendar to cancel. The invitation may
                 // still be waiting in Review: the organizer's cancellation
-                // closes it there, with the days held before it, and the
-                // log says so (ReviewQueue::cancelWaiting).
-                return $this->review->cancelWaiting($userId, $uid, (array) ($ev['invite'] ?? []), $fromAddr) > 0
-                    ? ['skipped', null, 'the organizer cancelled it; the invitation waiting in Review was closed']
-                    : ['skipped', null];
+                // closes it there, with the days held before it, unless it
+                // is older than the invitation, and the log says which
+                // (ReviewQueue::cancelWaiting).
+                $closedWhy = $this->review->cancelWaiting($userId, $uid, (array) ($ev['invite'] ?? []), $fromAddr);
+                return $closedWhy !== null ? ['skipped', null, $closedWhy] : ['skipped', null];
             }
             $held = $this->review->holdInviteChange(
                 $userId,

@@ -647,6 +647,103 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ['start_utc' => smAt('2027-02-26 09:00')], 'America/Los_Angeles');
     checkEq('the creation line says "on or after"', true, str_contains((string) ($created['startWords'] ?? ''), 'the first Tuesday on or after the date you typed'));
 
+    // Keys by arithmetic agree with the expander for every other week on
+    // Sunday and Wednesday from a Sunday week start, through southern spring
+    // gaps (sabre carries the gap's clock across the week it skips).
+    $mismatch = [];
+    foreach (['Australia/Sydney', 'Australia/Adelaide', 'America/Santiago', 'America/Los_Angeles', 'Pacific/Auckland'] as $tz) {
+        foreach (['FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,WE;WKST=SU', 'FREQ=WEEKLY;INTERVAL=3;BYDAY=SU,SA;WKST=SU', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH'] as $rr) {
+            foreach (['2026-08-02', '2026-08-05', '2026-08-09', '2026-08-12', '2026-08-16'] as $day) {
+                foreach (['00:30', '02:30', '09:00'] as $clk) {
+                    $start = new DateTimeImmutable("$day $clk", Time::zone($tz));
+                    $dn = Cal::dnOf($start);
+                    [$h, $mi] = array_map('intval', explode(':', $clk));
+                    $calc = new BetterCal\Domain\Series\Calc(Rule::parse($rr, $dn), $dn, $tz, false, [$h, $mi, 0], 3600);
+                    $row = ['rrule' => $rr, 'start_utc' => Time::toDb($start), 'end_utc' => Time::toDb($start->modify('+1 hour')), 'tzid' => $tz, 'all_day' => 0, 'uid' => 'sm'];
+                    $sabre = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($row, $start->modify('-1 day'), $start->modify('+500 days')));
+                    $mine = array_map(static fn(int $d): string => $calc->key($d), $calc->occurrences($dn + 499));
+                    if (array_diff($sabre, $mine) !== [] || array_diff($mine, $sabre) !== []) {
+                        $mismatch[] = "$tz $rr $day $clk";
+                    }
+                }
+            }
+        }
+    }
+    checkEq('every other week from a Sunday week start keys as the expander does after a spring gap, in both directions (Sydney, Adelaide, Santiago)', [], $mismatch);
+
+    // N3, N5, own time: the lines say where a day goes and what it takes.
+    $moved = [smEdited($choir, 3, '2027-03-23 19:00', [], '2027-03-26 19:00', ['date'])];
+    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-24 19:00', ['fromEditedDay' => true]));
+    checkEq('from an edited day with its own date, dragged a day: its line says where it goes', 'Tue 23 Mar, moved to Fri 26 Mar: moves to Sat 27 Mar',
+        array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
+    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-23 20:00', ['fromEditedDay' => true]));
+    checkEq('and a clock-only drag of it says the new time', 'Tue 23 Mar, moved to Fri 26 Mar: moves to 20:00',
+        array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
+    $named = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal'], null, ['title'])];
+    $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F'], 'fromEditedDay' => true]);
+    checkEq('an editor save from an edited day: its line says it takes the new title', "'Rehearsal' Tue 16 Mar stays, takes 'Choir F'",
+        array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null);
+    $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
+    checkEq('"Give it the new title too" says so on its line', "'Rehearsal' Tue 16 Mar stays, takes 'Chorus'",
+        array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null);
+    checkEq('Open studio made timed: the visit\'s line says the time it keeps, as the examples give it', "'Sample Hall visit' Sat 13 Mar stays, keeps its title and own time at 09:00",
+        array_column($timed['plan']['days'], 'words', 'key')['2027-03-13T00:00:00Z'] ?? null);
+
+    // N1: a first day in a skipped hour. Night shift, monthly on the 13th at
+    // 02:30, dragged a day: the series' first day is 14 Mar 2027, when 02:30
+    // doesn't exist in Los Angeles. Stored from 14 Feb, skipped, so the
+    // expander keeps 02:30 (it takes every day's clock from the start).
+    $stored = static function (array $master, array $writes): array {
+        $m = array_merge($master, $writes['master']);
+        $m['exdates_json'] = $writes['exdates'] === [] ? null : json_encode($writes['exdates']);
+        return $m;
+    };
+    $shown = static function (array $m, int $n = 4): array {
+        $skip = array_flip(BetterCal\Domain\Recurrence::decodeExdates($m['exdates_json'] ?? null));
+        $out = [];
+        foreach (BetterCal\Domain\Recurrence::sabreExpand($m, Time::fromDb($m['start_utc'])->modify('-1 day'), Time::fromDb($m['start_utc'])->modify('+3 years')) as $o) {
+            if (!isset($skip[Time::toDb($o['start'])])) {
+                $out[] = Time::iso($o['start']->setTimezone(Time::zone((string) $m['tzid'])));
+            }
+        }
+        return array_slice($out, 0, $n);
+    };
+    $night = smSeries('Night shift', 'FREQ=MONTHLY', '2027-03-13 02:30');
+    $nightRows = [smEdited($night, 2, '2027-06-13 02:30', ['title' => 'Night shift, inventory'], null, ['title'])];
+    $p = smPlan($night, $nightRows, smDrag($night, '2027-05-13 02:30', '2027-05-14 02:30'));
+    $m1 = $stored($night, $p['writes']);
+    checkEq('Night shift: stored from 14 Feb at 02:30, that day skipped, the rule bare as before', ['2027-02-14 10:30:00', [smAt('2027-02-14 02:30')], 'FREQ=MONTHLY'],
+        [$m1['start_utc'], $p['writes']['exdates'], $m1['rrule']]);
+    checkEq('Night shift: the plan\'s next from 14 May and the stored series agree (later days at 02:30)',
+        array_column($p['plan']['next'], 'start'), array_slice($shown($m1, 8), 2, 4));
+    checkEq('Night shift: the gap day shows at 03:30 as the expander resolves it, then 02:30', ['2027-03-14T03:30:00-07:00', '2027-04-14T02:30:00-07:00'], array_slice($shown($m1), 0, 2));
+    checkEq('Night shift: the edited day is keyed on its 02:30 occurrence, and the words name the first shown day', [smAt('2027-06-14 02:30'), true, false],
+        [$p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, str_contains($p['plan']['summary'], 'from 14 Mar'), str_contains(json_encode($p['plan']), '14 Feb')]);
+    checkEq('Night shift: the stored day is in the plan\'s days as an anchor, with no words', [['anchor', '']], array_values(array_map(static fn(array $d): array => [$d['outcome'], $d['words']],
+        array_filter($p['plan']['days'], static fn(array $d): bool => $d['outcome'] === 'anchor'))));
+    // Edited again: the anchor is read as the stored day, not an event: a rename is direct and keeps it.
+    $p2 = smPlan($m1, [], ['columns' => ['title' => 'Late shift']]);
+    checkEq('the stored series renamed: direct, start and skips unwritten', [true, false, false], [$p2['plan']['direct'], isset($p2['writes']['master']['start_utc']), isset($p2['writes']['master']['exdates_json'])]);
+    // Dragged on a day: 15 Mar has 02:30, so the series starts there and the anchor goes.
+    $p3 = smPlan($m1, [], smDrag($m1, '2027-05-14 02:30', '2027-05-15 02:30'));
+    checkEq('then dragged a day later: from 15 Mar at 02:30, no skip left, nothing named before it', ['2027-03-15 09:30:00', null, false],
+        [$p3['writes']['master']['start_utc'] ?? null, $p3['writes']['master']['exdates_json'] ?? null, str_contains(json_encode($p3['plan']), 'Feb')]);
+    // A kept count counts the stored day: six shown, COUNT=7.
+    $counted = smSeries('Night shift', 'FREQ=MONTHLY;COUNT=6', '2027-03-13 02:30');
+    $p = smPlan($counted, [], smDrag($counted, '2027-05-13 02:30', '2027-05-14 02:30'));
+    $m1 = $stored($counted, $p['writes']);
+    checkEq('with a COUNT: stored COUNT=7 from 14 Feb, six events shown from 14 Mar to 14 Aug, the bound line as six', ['FREQ=MONTHLY;COUNT=7', 6, '2027-08-14', true],
+        [$m1['rrule'], count($shown($m1, 20)), substr((string) ($shown($m1, 20)[5] ?? ''), 0, 10), str_starts_with($p['plan']['bound']['words'], '6 events')]);
+    $p2 = smPlan($m1, [], ['rrule' => 'FREQ=MONTHLY;COUNT=7', 'columns' => ['title' => 'Late shift']]);
+    checkEq('the editor sending the stored COUNT back is no bound change', [true, false], [$p2['plan']['direct'], isset($p2['writes']['master']['rrule'])]);
+    // Auckland, harness seed 4 case 723's shape: weekly, a start on 27 Sep 2026 at 02:15.
+    $nz = smSeries('Early swim', 'FREQ=WEEKLY;BYDAY=SA', '2026-09-26 02:15', 60, false, [], 'Pacific/Auckland');
+    $p = smPlan($nz, [], smDrag($nz, '2026-10-03 02:15', '2026-10-04 02:15'));
+    $m1 = $stored($nz, $p['writes']);
+    checkEq('Auckland: Saturdays to Sundays from 27 Sep, stored from 20 Sep at 02:15, skipped; 27 Sep at 03:15, then 02:15', [
+        'FREQ=WEEKLY;BYDAY=SU', '2026-09-20', ['2026-09-27T03:15:00+13:00', '2026-10-04T02:15:00+13:00'],
+    ], [$m1['rrule'], Time::fromDb($m1['start_utc'])->setTimezone(Time::zone('Pacific/Auckland'))->format('Y-m-d'), array_slice($shown($m1), 0, 2)]);
+
 }
 
 if (!empty($GLOBALS['__standalone'])) {

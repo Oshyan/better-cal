@@ -207,7 +207,9 @@ export function planView(plan, ctx = {}) {
     const g = groupOf(d.key);
     view.edited.push({ key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null });
   }
-  view.skipped = days.filter((x) => x.kind === 'skipped').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
+  // An anchor is the stored day before a first day in a skipped hour: no
+  // event of the series, so it has no line (the gap note says the time).
+  view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
   // A group's name leads its rows when there's more than one, or when its
   // rows aren't readings of the rule ("First week", "Bound").
   for (const g of view.readings) g.showLabel = !!g.label && (view.readings.length > 1 || !g.dated);

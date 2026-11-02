@@ -71,7 +71,9 @@ export function openSeriesChange({ kind, occ, body, at = null, pending = null, a
   set({
     seriesChange: {
       id, kind, occ, body, at, before, apply, onDone, fields,
-      title: occ.title || 'Untitled event',
+      // The series' name, also when the change is made from an edited day
+      // with a title of its own (its occurrence names its series).
+      title: occ.seriesTitle || occ.title || 'Untitled event',
       tz: occ.tzid || null,
       google: google(occ),
       scope: 'all',

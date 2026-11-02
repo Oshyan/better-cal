@@ -76,6 +76,8 @@ final class Model
     /** @var array<string,array<string,mixed>> content field => columns it sets */
     private array $changed = [];
     private bool $readable;
+    /** The stored start is a skipped day before a start in a skipped hour (Zones, DST and All-Day Days). */
+    private bool $anchored = false;
     /** @var array<int,array<string,mixed>> */
     private array $rows = [];
 
@@ -112,8 +114,24 @@ final class Model
             $this->exdates = [];
         }
         sort($this->exdates);
+        // A series stored from the period before a start in a skipped hour
+        // (Zones, DST and All-Day Days): that skipped day holds the clock
+        // and isn't one of its days. The series is read from its first
+        // shown day, its COUNT without that day.
+        if (!$this->allDay0 && $this->readable && $this->r0->supported() && in_array((string) $master['start_utc'], $this->exdates, true)) {
+            $two = $this->old->occurrences(PHP_INT_MAX, 2);
+            if (count($two) === 2 && self::inGap($two[1], $this->clock0, $this->tz0)) {
+                $this->anchored = true;
+                $this->exdates = array_values(array_diff($this->exdates, [(string) $master['start_utc']]));
+                if ($this->r0->count !== null) {
+                    $this->r0 = $this->r0->withBound($this->r0->count - 1, null);
+                }
+                $startDn = $two[1];
+                $this->old = new Calc($this->r0, $startDn, $this->tz0, $this->allDay0, $this->clock0, $this->len0);
+            }
+        }
 
-        $this->acted = (string) ($edit['acted'] ?? $master['start_utc']);
+        $this->acted = (string) ($edit['acted'] ?? $this->old->key($this->old->startDn));
         $this->actedDn0 = $this->old->dnOf($this->acted);
         $landed = $edit['landed'] ?? null;
         $this->tz1 = $this->tz0;
@@ -158,7 +176,7 @@ final class Model
                 $this->kind = 'norule';
             } else {
                 $rebased = $startDn + ($this->landedDn - $this->actedDn0);
-                $parsed = Rule::parse((string) $sent, $startDn);
+                $parsed = $this->withoutAnchor(Rule::parse((string) $sent, $startDn));
                 if ($this->readable && $parsed->comparable() === $this->r0->comparable()) {
                     if (!$this->sameBound($parsed)) {
                         $this->sentRule = $parsed;
@@ -167,7 +185,7 @@ final class Model
                 } elseif (!$this->readable && strtoupper(trim((string) $sent)) === strtoupper(trim((string) $master['rrule']))) {
                     // The unreadable rule sent back as it is.
                 } else {
-                    $this->sentRule = Rule::parse((string) $sent, $rebased);
+                    $this->sentRule = $this->withoutAnchor(Rule::parse((string) $sent, $rebased));
                     $this->kind = 'newrule';
                 }
             }
@@ -974,7 +992,7 @@ final class Model
                     break;
                 }
             }
-            $untilAt = fn(int $d): string => $this->allDay1 ? str_replace('-', '', Cal::date($d)) : Calc::at($d, $clock1, $this->tz1)->format('Ymd\THis\Z');
+            $untilAt = fn(int $d): string => $this->allDay1 ? str_replace('-', '', Cal::date($d)) : $calcP->instant($d)->format('Ymd\THis\Z');
             if ($rawN === $endCount) {
                 $r1 = $this->r0->count !== null ? $r1p->withBound($rawN, null) : $r1p->withBound(null, $untilAt((int) $latest));
             } else {
@@ -1105,10 +1123,24 @@ final class Model
             ], 'keep') === 'give';
         }
 
+        // A first day in a skipped hour: stored from the day before it,
+        // skipped, so the start keeps the clock (Zones, DST and All-Day Days).
+        $stored = $r1;
+        $start1 = $calc1->instant($newStart);
+        if (!$this->allDay1 && !$this->google && $this->kind !== 'norule' && self::inGap($newStart, $clock1, $this->tz1)) {
+            $anchor = $this->anchorFor($r1, $newStart, $clock1);
+            if ($anchor !== null) {
+                $stored = $r1->count !== null ? $r1->withBound($r1->count + 1, null) : $r1;
+                $start1 = Calc::at($anchor, $clock1, $this->tz1);
+                $newExdates[] = Time::toDb($start1);
+                sort($newExdates);
+                $days[] = ['key' => null, 'newKey' => Time::toDb($start1), 'kind' => 'skipped', 'outcome' => 'anchor', 'words' => ''];
+            }
+        }
+
         // The writes.
         $masterCols = [];
-        $newRruleText = $this->kind === 'norule' ? null : $r1->text();
-        $start1 = $calc1->instant($newStart);
+        $newRruleText = $this->kind === 'norule' ? null : $stored->text();
         $end1 = $this->endFrom($start1, $this->allDay1, $this->len1, $this->tz1);
         $set = function (string $col, mixed $value) use (&$masterCols): void {
             if ((string) ($this->master[$col] ?? '') !== (string) ($value ?? '') || ($value === null) !== ($this->master[$col] === null)) {
@@ -1200,10 +1232,35 @@ final class Model
             $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'];
             $name = in_array('title', $own, true) ? "'" . (string) $row['title'] . "' " : '';
             $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance'], $ownAfter));
-            $keepsWords = $keeps === [] ? '' : ', keeps its ' . Words::andList(array_map(static fn(string $f): string => self::OWN_WORDS[$f], $keeps));
+            $keepWords = array_map(static fn(string $f): string => self::OWN_WORDS[$f], $keeps);
+            // A timed day at its own time while the series' time changes says
+            // the time it keeps ("keeps its own time at 09:00", the examples' all-day case).
+            $seriesTime = $this->clock1 !== $this->clock0 || $this->allDay1 !== $this->allDay0 || Time::normalizeTzid($this->tz1) !== Time::normalizeTzid($this->tz0);
+            if ($seriesTime && !$allDay && (int) $row['all_day'] === 0 && array_intersect(['time', 'allDay'], $own) !== []) {
+                $rowLocal = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone((string) $row['tzid']));
+                $newLocal = $start->setTimezone(Time::zone($tz));
+                if ($rowLocal->format('H:i') === $newLocal->format('H:i')) {
+                    $keepWords[] = 'own time at ' . $newLocal->format('H:i');
+                }
+            }
+            $keepsWords = $keepWords === [] ? '' : ', keeps its ' . Words::andList($keepWords);
             $wasShown = $this->shownDn($row);
+            // A field it owned that it takes now (from its own row, or "Give it the new title too").
+            $taken = array_values(array_intersect(array_keys($this->changed), array_diff($own, $ownAfter)));
+            if (in_array('title', $taken, true)) {
+                $keepsWords .= ", takes '" . (string) ($this->changed['title']['title'] ?? '') . "'";
+                $taken = array_values(array_diff($taken, ['title']));
+            }
+            if ($taken !== []) {
+                $keepsWords .= ', takes the new ' . Words::andList(array_map(static fn(string $f): string => self::OWN_WORDS[$f], $taken));
+            }
             if (in_array('date', $own, true) && $wasShown !== $odn) {
-                $words = Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($wasShown, $this->thisYear) . ': ' . ($moveOwnDates ? 'moves to ' . Words::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))), $this->thisYear) : 'stays there');
+                // Where it shows after: another day, the same day at another time, or unchanged.
+                $localStart = $start->setTimezone(Time::zone($allDay ? 'UTC' : $tz));
+                $newShown = Cal::dnOf($localStart);
+                $clockMoved = !$allDay && Time::toDb($start) !== (string) $row['start_utc'];
+                $where = $newShown !== $wasShown ? 'moves to ' . Words::date($newShown, $this->thisYear) : ($clockMoved ? 'moves to ' . $localStart->format('H:i') : 'stays there');
+                $words = $name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($wasShown, $this->thisYear) . ': ' . $where . $keepsWords;
             } else {
                 // A day that keeps its date and changes its time says the time.
                 $localStart = $start->setTimezone(Time::zone($allDay ? 'UTC' : $tz));
@@ -1648,6 +1705,50 @@ final class Model
             return $start->setTimezone(Time::utc())->modify('+' . $days . ' days');
         }
         return $start->modify('+' . max(0, $len) . ' seconds');
+    }
+
+    /** Whether a clock time doesn't exist on a local day (a spring-forward gap). */
+    private static function inGap(int $dn, array $clock, string $tz): bool
+    {
+        return Calc::at($dn, $clock, $tz)->setTimezone(Time::zone($tz))->format('H:i:s') !== sprintf('%02d:%02d:%02d', ...$clock);
+    }
+
+    /** A COUNT sent for an anchored series counts the stored day too, as the stored rule does. */
+    private function withoutAnchor(Rule $rule): Rule
+    {
+        return $this->anchored && $rule->count !== null && $rule->count > 1 ? $rule->withBound($rule->count - 1, null) : $rule;
+    }
+
+    /**
+     * Where a series whose first day falls in a skipped hour is stored
+     * (Zones, DST and All-Day Days): its latest day before that one, of the
+     * same rule and phase, on which the clock exists, so the stored start
+     * keeps the series' clock (the storage holds an instant and a zone, and
+     * the expander takes every day's clock from the start). Null when there
+     * is no such day or the rule from it gives other days.
+     */
+    private function anchorFor(Rule $r1, int $newStart, array $clock): ?int
+    {
+        if (!$r1->supported()) {
+            return null;
+        }
+        $want = (new Calc($r1, $newStart, $this->tz1, false, $clock, $this->len1))->occurrences(PHP_INT_MAX, 40);
+        $p = $r1->periodOf($newStart);
+        for ($i = 0; $i < 60; $i++) {
+            foreach (array_reverse($r1->periodDays($p)) as [$d]) {
+                if ($d >= $newStart) {
+                    continue;
+                }
+                if (self::inGap($d, $clock, $this->tz1)) {
+                    return null;
+                }
+                $stored = $r1->count !== null ? $r1->withBound($r1->count + 1, null) : $r1;
+                $got = (new Calc($stored, $d, $this->tz1, false, $clock, $this->len1))->occurrences(PHP_INT_MAX, 41);
+                return array_slice($got, 1) === $want ? $d : null;
+            }
+            $p = $r1->periodPlus($p, -$r1->interval);
+        }
+        return null;
     }
 
     private function sameBound(Rule $sent): bool

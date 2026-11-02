@@ -35,6 +35,26 @@ trait SeriesPlans
      */
     private bool $preselected = false;
 
+    /**
+     * Set only while the server routes an edit with all events from an
+     * edited day's own row to its master (editFromEditedDay): the day at
+     * instanceStart is the day acted on and takes the edit's fields. Never
+     * read from a request body, so a client can't set it on the master.
+     */
+    private bool $fromEditedDay = false;
+
+    /** Run $fn as the master's edit routed from an edited day's own row. */
+    private function asFromEditedDay(callable $fn): mixed
+    {
+        $was = $this->fromEditedDay;
+        $this->fromEditedDay = true;
+        try {
+            return $fn();
+        } finally {
+            $this->fromEditedDay = $was;
+        }
+    }
+
     /** Run $fn with whole-series edits taking their preselected options. */
     public function withPreselectedPlan(callable $fn): mixed
     {
@@ -110,8 +130,6 @@ trait SeriesPlans
         $key = Time::fromDb((string) $row['recurrence_instance_utc']);
         $out = array_diff_key($in, array_flip(['start', 'end', 'allDay', 'tzid', 'instanceStart', 'rrule']));
         $out['scope'] = 'all';
-        // The day acted on is this row: it takes the change where it shows.
-        $out['_fromEditedDay'] = true;
         $out['instanceStart'] = $masterAllDay ? $key->format('Y-m-d') : Time::iso($key);
         if (array_key_exists('rrule', $in)) {
             $out['rrule'] = $in['rrule'];
@@ -175,6 +193,8 @@ trait SeriesPlans
         } elseif (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
             // Any other edit with all events from an edited day's own row.
             [$event, $in] = $this->editFromEditedDay($userId, $event, $in);
+            // The day acted on is that row: it takes the change where it shows.
+            return $this->asFromEditedDay(fn(): array => $this->previewPatch($userId, (int) $event['id'], $in));
         }
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || (string) ($in['scope'] ?? '') !== 'all') {
             throw HttpError::badRequest('preview is for changes to all events of a repeating series', 'preview_unavailable');
@@ -315,7 +335,7 @@ trait SeriesPlans
                 'tzid' => (string) ($f['tzid'] ?? $occ['tzid']),
             ];
         }
-        if (!empty($in['_fromEditedDay'])) {
+        if ($this->fromEditedDay) {
             $edit['fromEditedDay'] = true;
         }
         if (array_key_exists('rrule', $in)) {

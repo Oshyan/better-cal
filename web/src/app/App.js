@@ -3,10 +3,11 @@
 import { CalDot, setPluginDecoLookup } from '../ui/icons.js';
 import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
-import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
+import { useStore, set, state, calendarMeta, shallowEq, heldStretch } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { adoptSettings } from './settings.js';
-import { loadWindow, ensureRangeLoaded, api, refreshWindow, ownChangeCursor, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews, fetchPluginRanges, serialReloads, calendarsOwed } from './api.js';
+import { loadWindow, ensureRangeLoaded, api, fetchPluginRanges } from './api.js';
+import { checkChanges } from './changecheck.js';
+import { runOwed } from './reloads.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -65,8 +66,8 @@ import { installDrawerSwipe } from '../ui/drawerswipe.js';
 import { SplitView } from '../ui/SplitView.js';
 import { stepBack, afterHistorySettles } from './historysteps.js';
 import { primeKeyboard } from '../lib/ioskeyboard.js';
-import { noticeServerVersion, lookForUpdate } from './appversion.js';
-import { refreshBadge, badgeSettingChanged, clearBadge } from './badge.js';
+import { lookForUpdate } from './appversion.js';
+import { badgeSettingChanged, clearBadge } from './badge.js';
 import { reloadIfReady } from './drafts.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -230,113 +231,34 @@ export function App() {
     return () => clearInterval(t);
   }, []);
 
-  // Auto-refresh: the server changes underneath us (mail ingest, feed polls,
-  // CalDAV edits from other devices, agent API). Poll the cheap change
-  // cursor every 30s while visible, and immediately on focus / visibility /
-  // network return; when it moves, silently refetch the window plus
-  // people/availability. Own mutations also move the cursor — the redundant
-  // refresh merges harmlessly.
+  // The change check (changecheck.js): every 30s while visible, and at once
+  // on focus, visibility and network return. What moved, and whatever an
+  // earlier check or load still owes, is reloaded then.
   useEffect(() => {
-    let cursor = null;
-    let review = null;
-    let status = null;
     let stopped = false;
-    let inFlight = false;
-    // A window refresh that failed: tried again on each check until it lands,
-    // without repeating the rest of the change's reloads (#184).
-    let windowOwed = false;
-    let restOwed = false;
-    // A reload that failed (people, saved views, settings) is owed until it
-    // lands (#185): serialReloads. The calendar list: calendarsOwed.
-    const { owed, part } = serialReloads(() => stopped);
-    const check = async () => {
-      if (stopped || inFlight || document.visibilityState !== 'visible') return;
+    const check = () => {
+      if (stopped || document.visibilityState !== 'visible') return;
       // Nothing changes under a drag: the next check, after the drop, picks
       // up whatever moved meanwhile.
       if (document.body.classList.contains('bc-dragging')) return;
-      inFlight = true;
-      try {
-        const d = await api('/changes/cursor');
-        // A different version installed on the server: look for it now.
-        if (d) noticeServerVersion(d.app);
-        if (!stopped && d && d.cursor) {
-          // Each part reloads only what it covers, merged into what's on
-          // screen: no reload, no lost place, nothing taken out of your hands.
-          const moved = cursor !== null && d.cursor !== cursor;
-          const reviewMoved = review !== null && d.review !== review;
-          const statusMoved = status !== null && d.status !== status;
-          // The events window, when the cursor is where this tab's own last
-          // save left it, was refetched by that save after it read the
-          // cursor, so it holds every change up to here; the rest still
-          // reloads, as other changes may have come in before the save.
-          if (moved && d.cursor !== ownChangeCursor()) windowOwed = true;
-          // When it fails the connection is likely failing the rest too:
-          // they're redone, once, with the refresh that lands.
-          let again = false;
-          if (windowOwed) {
-            const ok = await refreshWindow({ own: false });
-            again = ok && restOwed;
-            restOwed = !ok && (restOwed || moved);
-            windowOwed = !ok;
-          }
-          const reload = moved || again;
-          const due = (name) => reload || owed.has(name);
-          if (reload) {
-            invalidateRecords(); // something changed somewhere; fetched records may be stale
-            set({ availSeq: state.availSeq + 1 });
-          }
-          if (due('people')) part('people', loadPeople);
-          if (due('views')) part('views', loadSavedViews);
-          // Settings changed on another device, unless this tab is
-          // editing them right now.
-          if (due('settings') && state.route !== 'settings') {
-            part('settings', () => api('/settings').then((r) => {
-              const next = r && r.settings;
-              // Most moves aren't settings; adopting identical ones would
-              // only redraw everything that reads them.
-              if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
-            }));
-          }
-          // Owed a reload after a write whose own one didn't land
-          // (writeCalendars): asked again until one does.
-          if (reload || statusMoved || calendarsOwed()) loadCalendars().catch(() => {});
-          // The Review badge: held mail, proposals and possible duplicates
-          // arrive without an event (their own part), and unanswered
-          // invitations or decisions made elsewhere ride on the events part.
-          if (reload || reviewMoved) loadReviewCount();
-          if (statusMoved) {
-            loadSystemHealth();
-            loadPlugins();
-            loadUpdates();
-            set({ pluginSeq: state.pluginSeq + 1 });
-          }
-          if (reload || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
-          // The app icon's number (#170), when something it counts may have moved.
-          refreshBadge({ changed: reload || reviewMoved });
-          cursor = d.cursor;
-          review = d.review ?? null;
-          status = d.status ?? null;
-        }
-      } catch { /* transient network problems just delay freshness */ }
-      inFlight = false;
+      checkChanges();
     };
     const timer = setInterval(check, 30000);
-    const onWake = () => { if (document.visibilityState === 'visible') check(); };
     // Something here knows the server just changed (a plugin run it started
     // has finished) or the calendar is back on screen: look now rather than
     // at the next 30-second check.
-    window.addEventListener('bc-check-changes', onWake);
-    window.addEventListener('focus', onWake);
-    window.addEventListener('online', onWake);
-    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('bc-check-changes', check);
+    window.addEventListener('focus', check);
+    window.addEventListener('online', check);
+    document.addEventListener('visibilitychange', check);
     check(); // establish the baseline cursor
     return () => {
       stopped = true;
       clearInterval(timer);
-      window.removeEventListener('bc-check-changes', onWake);
-      window.removeEventListener('focus', onWake);
-      window.removeEventListener('online', onWake);
-      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('bc-check-changes', check);
+      window.removeEventListener('focus', check);
+      window.removeEventListener('online', check);
+      document.removeEventListener('visibilitychange', check);
     };
   }, []);
 
@@ -1128,9 +1050,8 @@ export function App() {
     // The stretch holding the top of the list once it has landed, else the
     // day you're on: after a jump it waits for that day's stretch rather
     // than listing the one you left.
-    const holding = (ms) => state.loadedRanges.find((r) => r.start <= ms && r.end > ms) || null;
-    const held = (s.agendaTop && holding(dateOfDayKey(s.agendaTop).getTime()))
-      || holding(dateOfDayKey(s.anchor).getTime());
+    const held = (s.agendaTop && heldStretch(dateOfDayKey(s.agendaTop).getTime()))
+      || heldStretch(dateOfDayKey(s.anchor).getTime());
     const inHeld = (o) => held && parseISO(o.end).getTime() > held.start && parseISO(o.start).getTime() < held.end;
     // People's away times and plugin bands too, as every other view has them (#183).
     let agendaOccs = (s.agendaShowPast
@@ -1216,7 +1137,7 @@ export function App() {
       : ws.kind === 'limited'
         ? html`<span>${ws.message}</span>`
         : html`<span>${ws.offline ? 'Offline, and these dates are not saved on this device.' : 'Could not load events.'} Retrying…</span>
-        <button type="button" class="bc-link-btn" onClick=${retryWindowsNow}>Retry now</button>`}
+        <button type="button" class="bc-link-btn" onClick=${() => runOwed()}>Retry now</button>`}
   </div>`;
 
   // The desktop event panel (EventPopover): the calendar makes room for it,

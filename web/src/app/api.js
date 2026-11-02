@@ -1,8 +1,9 @@
 // API client: JSON fetch wrapper with CSRF header, error envelope handling,
-// 401 -> login, and monotonic request ids for window loads and search so
-// out-of-order responses never render.
+// 401 -> login, and generations for window loads (docs/design/loading-model.md)
+// and request ids for search, so out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, markStaleOutside, markStale, freshRanges, recordGeneration, editedSince } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, freshRanges, recordGeneration, dataGeneration, newGeneration } from './store.js';
+import { defineReload, owe, landed, reload, reloadGeneration } from './reloads.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
@@ -190,11 +191,10 @@ export async function loadConfig() {
 //   asked for and none began before it answered: one asked for between
 //   writes held an older list, and landing late put it back on screen;
 // - once the last write is done, however it went, the list is owed a
-//   reload until one lands (calendarsOwed: the change check asks again);
+//   reload until one lands (reloads.js: the change check asks again);
 // - and of two reloads, an older answer never replaces a newer one.
 let calendarEdits = 0;
 let calendarsUnsaved = 0;
-let calendarsDirty = false;
 let calendarLoads = 0;
 let calendarsShown = 0;
 let calendarTurn = Promise.resolve();
@@ -212,15 +212,15 @@ export function writeCalendars({ key = null, show = null, send, revert = null })
   }).finally(() => {
     if (key && latestByKey.get(key) === edit) latestByKey.delete(key);
     calendarsUnsaved--;
-    calendarsDirty = true;
-    if (calendarsUnsaved === 0) loadCalendars().catch(() => {});
+    owe('calendars');
+    if (calendarsUnsaved === 0) reload('calendars');
   });
 }
-export function calendarsOwed() {
-  return calendarsDirty;
-}
 
+// Resolves true when this answer is the list shown; one that couldn't be
+// (a write unsaved) leaves the list owed a reload, as does a failure.
 export async function loadCalendars() {
+  const began = reloadGeneration();
   const asked = calendarEdits;
   const clean = calendarsUnsaved === 0;
   const load = ++calendarLoads;
@@ -228,20 +228,20 @@ export async function loadCalendars() {
   try {
     data = await api('/calendars');
   } catch (e) {
-    calendarsDirty = true;
+    owe('calendars');
     throw e;
   }
-  if (load > calendarsShown) {
-    if (clean && asked === calendarEdits && calendarsUnsaved === 0) {
-      set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
-      calendarsShown = load;
-      calendarsDirty = false;
-    } else {
-      calendarsDirty = true;
-    }
+  if (load <= calendarsShown) return false;
+  if (!(clean && asked === calendarEdits && calendarsUnsaved === 0)) {
+    owe('calendars');
+    return false;
   }
-  return data;
+  set({ calendars: data.calendars || [], folders: data.folders || [], tags: data.tags || [] });
+  calendarsShown = load;
+  landed('calendars', began);
+  return true;
 }
+defineReload('calendars', loadCalendars);
 
 // --- people ----------------------------------------------------------------
 
@@ -311,37 +311,24 @@ export const loadSavedViews = newestOnly(() => api('/views'), (data) => set({ sa
 
 // --- events window loading -------------------------------------------------
 
-let windowReqId = 0;
-// When the latest refresh asked (fetchRange marks older answers stale), and
-// the change cursor just after this tab's own last change (the poll skips it).
-let lastRefreshAsked = 0;
-// The newest window refresh: one it takes over from answers with its result.
-let latestRefresh = null;
+// One way to fetch, one idea of fresh, one retry: docs/design/loading-model.md.
+
+// The change cursor just after this tab's own last change, read by a
+// refresh that then landed: the change check needn't fetch the window again
+// for it (#184: every edit cost two full refreshes).
 let ownCursor = null;
 export function ownChangeCursor() { return ownCursor; }
+// The view's window: what a save, the change check and a retry make fresh.
 let lastWindow = null;
-// Ranges currently in flight. loadedRanges only knows about ranges that have
-// already LANDED, so in-flight spans are fed to missingRanges alongside them —
-// otherwise a view settling its scroll fires near-identical queries back to
-// back and pays for both (measured: 800ms + 879ms racing on a cold load).
+// Requests on their way, {start, end, gen, done}. One asked at the current
+// generation counts as coming: a view settling its scroll fired
+// near-identical queries back to back and paid for both (measured: 800ms +
+// 879ms racing on a cold load).
 const inFlight = [];
 
-// A wider request makes a narrower one in flight pointless: its response is
-// discarded by the windowReqId check anyway, so letting it run just costs a
-// second multi-month query racing the one we actually want. A virtualized
-// view settling its scroll does exactly this on every cold load (measured:
-// Jun-Oct followed ~immediately by Jun-Nov, both ~900ms server-side).
-function abortSubsumed(s, e) {
-  for (const r of inFlight) {
-    if (s <= r.start && e >= r.end && r.ctrl) r.ctrl.abort();
-  }
-}
-
 const iso = (ms) => toISOWithOffset(new Date(ms));
+const ms = (isoText) => new Date(isoText).getTime();
 
-// Fetch one contiguous gap. Kept separate from loadWindow so the caller can
-// issue several concurrently without any of them cancelling the others — they
-// cover disjoint spans, so none is stale with respect to the rest.
 // The server answers at most about two years per query (Events.php
 // MAX_WINDOW_SECONDS) and cuts a longer one short without saying so. The
 // whole asked-for span was then marked loaded, so the rest was never fetched
@@ -363,163 +350,76 @@ function noteCapped(ids) {
   }
 }
 
-// widened: asked for in whole months around the days needed. Capped, it
-// isn't complete: marked stale before anything waiting on it looks, so a
-// failed or pending follow-up for the days needed leaves them to be asked
-// for again (#185).
-async function fetchRange(s, e, { widened = false } = {}) {
+// How many requests one stretch may take to bring a capped series whole:
+// an hourly series is a request a month or so.
+const CAPPED_REQUESTS = 12;
+
+// The server expands each series in order and stops at its first 1,000, so
+// an answer naming capped series is complete up to the earliest of their
+// last occurrences returned. An edited date (isException) can sit anywhere,
+// so it isn't counted. null when there's nothing to go on.
+function completeUntil(events, capped) {
+  let cut = null;
+  for (const id of capped) {
+    let last = null;
+    for (const o of events) {
+      if (o.eventId !== id || o.isException) continue;
+      const t = ms(o.start);
+      if (last === null || t > last) last = t;
+    }
+    if (last === null) return null;
+    if (cut === null || last < cut) cut = last;
+  }
+  return cut;
+}
+
+// One stretch, asked for at the generation now. An answer that cut a series
+// short is held up to where it's complete, and the rest asked for next, so
+// a very frequent series comes whole (after a save's refresh it was cut
+// short with nothing left to fetch the missing days). Only one too dense
+// for that is kept as answered, and says so. A failure throws, and leaves
+// what it didn't bring as it was.
+async function fetchRange(s, e) {
   if (e - s > MAX_SPAN_MS) {
     throw new ApiError('event_window_too_large', 'This date range is too wide to load safely. Narrow it and try again.', 422);
   }
-  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const entry = { start: s, end: e, ctrl };
+  const gen = dataGeneration();
+  const entry = { start: s, end: e, gen };
   entry.done = new Promise((r) => { entry.settle = r; });
   inFlight.push(entry);
-  const startISO = iso(s);
-  const endISO = iso(e);
-  const asked = Date.now();
+  let ok = false;
   try {
-    const data = await api('/events?' + new URLSearchParams({ start: startISO, end: endISO }), {
-      signal: ctrl ? ctrl.signal : undefined,
-    });
-    mergeWindow(startISO, endISO, data.events || [], asked);
-    // Asked before the latest refresh, it may hold what that refresh just
-    // replaced (a change made elsewhere): marked stale, and the view asks
-    // for it again (#184).
-    if (asked < lastRefreshAsked) {
-      markStale(startISO, endISO);
-      if (lastWindow) { const w = lastWindow; queueMicrotask(() => loadWindow(w.start, w.end)); }
+    let a = s;
+    for (let n = 1; ; n++) {
+      const data = await api('/events?' + new URLSearchParams({ start: iso(a), end: iso(e) }));
+      const events = data.events || [];
+      const capped = Array.isArray(data.capped) ? data.capped : [];
+      const cut = capped.length && n < CAPPED_REQUESTS ? completeUntil(events, capped) : null;
+      if (cut !== null && cut > a) {
+        // What the next request brings again isn't held from this one.
+        mergeWindow(iso(a), iso(cut), events.filter((o) => ms(o.start) < cut || ms(o.end) <= cut), gen);
+        a = cut;
+        continue;
+      }
+      if (capped.length) noteCapped(capped);
+      mergeWindow(iso(a), iso(e), events, gen);
+      break;
     }
-    const capped = Array.isArray(data.capped) ? data.capped : [];
-    if (capped.length) noteCapped(capped);
-    if (capped.length && widened) markStale(startISO, endISO);
-    // Whatever asked for it (a trip's stretch, a day, an older view), it
-    // may have been what the view's "Loading" waited on.
-    settleViewNote();
-    return capped;
-  } catch (err) {
-    if (!err || err.code !== 'aborted') throw err;
+    ok = true;
   } finally {
-    const i = inFlight.indexOf(entry);
-    if (i >= 0) inFlight.splice(i, 1);
-    entry.settle();
+    inFlight.splice(inFlight.indexOf(entry), 1);
+    entry.settle(ok);
   }
-}
-
-// A window request that fails (offline, a server error) used to reject with
-// nobody listening: the dates were never marked loaded, but nothing asked for
-// them again until the view scrolled, so a calendar opened on a bad
-// connection sat empty with no word about why (#48). Now a failure is shown
-// (windowStatus, shown as a small note over the view by App.js) and retried on a growing
-// delay, and at once when the device comes back online.
-const RETRY_DELAYS = [2000, 5000, 15000, 30000, 60000];
-let retryTimer = null;
-let retryStep = 0;
-const failedWindows = new Map(); // "start|end" -> {start, end} (ISO), retried together
-
-function windowFailed(startISO, endISO, err) {
-  if (err && err.code === 'event_window_too_large') {
-    failedWindows.delete(startISO + '|' + endISO);
-    if (failedWindows.size === 0 && retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-    if (lastWindow && (lastWindow.start !== startISO || lastWindow.end !== endISO)) return;
-    set({
-      windowStatus: {
-        kind: 'limited',
-        message: err.message || 'This date range contains too many events or repeating occurrences. Narrow the visible dates or calendars.',
-      },
-    });
-    return;
-  }
-  failedWindows.set(startISO + '|' + endISO, { start: startISO, end: endISO });
-  // Scrolling while offline asks for window after window; the newest few are
-  // enough to retry (a retry that lands covers the view the person is on).
-  while (failedWindows.size > 4) failedWindows.delete(failedWindows.keys().next().value);
-  const delay = RETRY_DELAYS[Math.min(retryStep, RETRY_DELAYS.length - 1)];
-  retryStep++;
-  if (retryTimer) clearTimeout(retryTimer);
-  retryTimer = setTimeout(retryWindowsNow, delay);
-  set({ windowStatus: { kind: 'failed', offline: !!(err && err.code === 'offline'), retryAt: Date.now() + delay } });
-}
-
-// The view's "Loading" or failure note goes once its window is all held
-// and fresh, whichever request brought the last of it.
-function settleViewNote() {
-  const note = state.windowStatus && state.windowStatus.kind;
-  if (failedWindows.size > 0 || (note !== 'failed' && note !== 'loading') || !lastWindow) return;
-  const ls = new Date(lastWindow.start).getTime();
-  const le = new Date(lastWindow.end).getTime();
-  if (!freshRanges().some((r) => r.start <= ls && r.end >= le)) return;
-  retryStep = 0;
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  set({ windowStatus: null });
-}
-
-function windowLoaded(startISO, endISO) {
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  const current = !!lastWindow && lastWindow.start === startISO && lastWindow.end === endISO;
-  if (current && freshRanges().some((r) => r.start <= s && r.end >= e)) {
-    const pruned = pruneOccurrenceCache(startISO, endISO, { activeWindow: lastWindow });
-    if (pruned === 'limited') {
-      failedWindows.delete(startISO + '|' + endISO);
-      set({
-        windowStatus: {
-          kind: 'limited',
-          message: 'This date range contains too many events to retain safely. Narrow the visible dates or calendars.',
-        },
-      });
-      return;
-    }
-  }
-  failedWindows.delete(startISO + '|' + endISO);
-  // An older request may land after the person has navigated elsewhere. It
-  // can satisfy its own cache gap, but must not clear or replace the current
-  // view's loading/error state, unless that's an old note while the view on
-  // screen is loaded: a failure that stayed up over held data, or "Loading"
-  // for days the view found on their way here (#184).
-  if (!current) { settleViewNote(); return; }
-  if (failedWindows.size > 0) return;
-  retryStep = 0;
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  if (state.windowStatus) set({ windowStatus: null });
-}
-
-function boundCacheAfterMerge(requestStart, requestEnd) {
-  if (!lastWindow) return;
-  const result = pruneOccurrenceCache(lastWindow.start, lastWindow.end, {
-    activeWindow: lastWindow,
-    markLoaded: false,
-  });
-  const current = lastWindow.start === requestStart && lastWindow.end === requestEnd;
-  if (current && result === 'limited') {
-    throw new ApiError(
-      'event_window_too_large',
-      'This date range contains too many events to retain safely. Narrow the visible dates or calendars.',
-      422,
-    );
-  }
-}
-
-// Try every failed window again now (the Retry button, coming back online).
-export function retryWindowsNow() {
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  const again = [...failedWindows.values()];
-  failedWindows.clear();
-  // A window the view has moved on from is fetched without becoming the
-  // view's window again: it took over what saves and the change poll
-  // refresh, leaving the dates on screen out of date (#184).
-  for (const w of again) {
-    const isView = !!lastWindow && lastWindow.start === w.start && lastWindow.end === w.end;
-    loadWindow(w.start, w.end, { asView: isView });
-  }
-}
-
-if (typeof window !== 'undefined' && window.addEventListener) {
-  window.addEventListener('online', () => { if (failedWindows.size > 0) retryWindowsNow(); });
+  // Whatever asked for it (a trip's stretch, a day, an older view), it may
+  // have been what the view's note waited on.
+  settleView();
 }
 
 // Gaps widened to whole local months, less what's held or on its way,
-// merged, and cut to the server's widest window.
+// merged, and cut to the server's widest window. Scrolling uncovered one day
+// (week view) or one week (month view) at a time, and each request costs the
+// server about the same whatever its width, so a year of scrolling sent
+// dozens (#184). A month's request covers the next weeks.
 function monthGaps(gaps, have) {
   const wide = [];
   for (const g of gaps) {
@@ -541,6 +441,41 @@ function monthGaps(gaps, have) {
   return out;
 }
 
+/**
+ * Make [s, e) fresh: the one way events are fetched. What's missing (not
+ * fresh, not on its way at this generation) is asked for in whole months,
+ * one request at a time so a fragmented cache can't burst; a month the
+ * server refuses as too many rows is asked for as just the days needed.
+ * Requests on their way that it counted on are waited for, then it looks
+ * again and fetches whatever they didn't bring, until nothing is missing.
+ * A failed request ends it with the failure. onGaps: told what's missing
+ * the first time anything is; afterGap: after each gap lands.
+ */
+async function ensure(s, e, { onGaps = null, afterGap = null } = {}) {
+  for (;;) {
+    const gen = dataGeneration();
+    const coming = inFlight.filter((r) => r.gen === gen && r.start < e && r.end > s);
+    const have = [...freshRanges(), ...coming];
+    const narrow = missingRanges(s, e, have);
+    if (narrow.length === 0 && coming.length === 0) return;
+    const gaps = monthGaps(narrow, have);
+    if (onGaps && gaps.length) { onGaps(gaps); onGaps = null; }
+    for (const gap of gaps) {
+      const parts = narrow.filter((n) => n.start < gap.end && n.end > gap.start)
+        .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
+      const widened = !(parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end);
+      try {
+        await fetchRange(gap.start, gap.end);
+      } catch (err) {
+        if (!err || err.code !== 'event_window_too_large' || !widened) throw err;
+        for (const p of parts) await fetchRange(p.start, p.end);
+      }
+      if (afterGap) afterGap();
+    }
+    await Promise.all(coming.map((r) => r.done));
+  }
+}
+
 // Whether any day on screen (as the view last reported) is in these gaps.
 function gapsOnScreen(gaps) {
   const d = state.visibleDays;
@@ -552,127 +487,81 @@ function gapsOnScreen(gaps) {
   return gaps.some((g) => g.start < e && g.end > s);
 }
 
-export async function loadWindow(startISO, endISO, { force = false, asView = true } = {}) {
-  if (asView) lastWindow = { start: startISO, end: endISO };
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  if (!(e > s) || e - s > MAX_SPAN_MS) {
-    windowFailed(startISO, endISO, new ApiError(
-      'event_window_too_large',
-      'This date range is too wide to load safely. Narrow it and try again.',
-      422,
-    ));
-    return;
-  }
-  // Only a cold load says "Loading": later windows arrive while the calendar
-  // already shows something, and a pill flickering on every scroll is noise.
-  const cold = state.loadedRanges.length === 0 && !state.windowStatus;
-  if (force) {
-    abortSubsumed(s, e);
-    windowReqId++;
-    if (cold) set({ windowStatus: { kind: 'loading' } });
-    try {
-      await fetchRange(s, e);
-      boundCacheAfterMerge(startISO, endISO);
-      windowLoaded(startISO, endISO);
-    } catch (err) {
-      windowFailed(startISO, endISO, err);
-    }
-    return;
-  }
-  // Ask only for what is not already held or on its way. Scrolling requests a
-  // whole window re-centred on the viewport, so each demand overlaps the last
-  // by most of its width; sending the overlap again meant a fling queued a
-  // dozen multi-thousand-occurrence responses, and merging them starved the
-  // frame loop badly enough that requestAnimationFrame stopped firing (#14).
-  // The gap is normally a single month.
-  const have = [
-    ...freshRanges(),
-    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
-  ];
-  // Each gap is asked for in whole local months: scrolling uncovered one
-  // day (week view) or one week (month view) at a time, and each request
-  // costs the server about the same whatever its width, so a year of
-  // scrolling sent dozens (#184). A month's request covers the next weeks.
-  const narrow = missingRanges(s, e, have);
-  const gaps = monthGaps(narrow, have);
-  // Some of it still on its way: wait for it, then ask again for whatever
-  // it didn't bring (a request that failed, or a month the server refused
-  // and that only the other window's days were fetched from). "Loading"
-  // stays meanwhile; it went before the days arrived, or stayed for good
-  // (#184), or went once the view's other months landed (#185).
-  const awaitComing = async () => {
-    const coming = inFlight.filter((r) => r.start < e && r.end > s);
-    if (coming.length === 0) return false;
-    await Promise.all(coming.map((r) => r.done));
-    if (!(asView && (!lastWindow || lastWindow.start !== startISO || lastWindow.end !== endISO))) await loadWindow(startISO, endISO, { asView });
-    return true; // the view moved on, or asked again
-  };
-  // The days needed within a gap.
-  const neededIn = (gap) => narrow.filter((n) => n.start < gap.end && n.end > gap.start)
-    .map((n) => ({ start: Math.max(n.start, gap.start), end: Math.min(n.end, gap.end) }));
-  const onlyNeeded = (gap, parts) => parts.length === 1 && parts[0].start === gap.start && parts[0].end === gap.end;
-  if (gaps.length === 0) {
-    if (await awaitComing()) return;
-    // Nothing missing: already held (perhaps by a later, wider window).
-    // Either way this window no longer counts as failed.
-    windowLoaded(startISO, endISO);
-    return;
-  }
-  // "Loading" on a cold start, and whenever days on screen are among what's
-  // missing: after a jump they looked empty until they arrived (#184).
-  // Scrolling ahead of the screen asks quietly.
-  if (cold || (asView && gapsOnScreen(gaps))) set({ windowStatus: { kind: 'loading' } });
-  // A fragmented cache can contain many holes. Read them sequentially so one
-  // view request cannot create an unbounded burst of simultaneous responses.
-  try {
-    for (const gap of gaps) {
-      const parts = neededIn(gap);
-      const widened = !onlyNeeded(gap, parts);
-      let capped = [];
-      try {
-        capped = (await fetchRange(gap.start, gap.end, { widened })) || [];
-      } catch (err) {
-        // Widened to whole months, a gap can hold more than the server will
-        // expand at once (a dense stretch): ask for just the days needed.
-        if (!err || err.code !== 'event_window_too_large') throw err;
-        if (!widened) throw err;
-        for (const p of parts) await fetchRange(p.start, p.end);
-      }
-      // A series too frequent for the whole months (the server expands up to
-      // 1,000 of one series a request) may fit the days needed, as it did
-      // before requests were widened: an hourly one came back cut off before
-      // the days on screen. The months came back stale (fetchRange); ask for
-      // just those days, and leave the rest to be asked for when shown.
-      if (capped.length && widened) {
-        for (const p of parts) await fetchRange(p.start, p.end);
-      }
-      boundCacheAfterMerge(startISO, endISO);
-    }
-    if (await awaitComing()) return;
-    windowLoaded(startISO, endISO);
-  } catch (err) {
-    windowFailed(startISO, endISO, err);
+// The view's "Loading" or failure note goes once its window is all held and
+// fresh, whichever request brought the last of it.
+function settleView() {
+  const note = state.windowStatus && state.windowStatus.kind;
+  if ((note !== 'failed' && note !== 'loading') || !lastWindow) return;
+  if (missingRanges(ms(lastWindow.start), ms(lastWindow.end), freshRanges()).length) return;
+  set({ windowStatus: null });
+}
+
+const LIMITED_CACHE = 'This date range contains too many events to retain safely. Narrow the visible dates or calendars.';
+
+// Past the cache's ceiling mid-load: the view's window, held whole or not
+// at all (pruneOccurrenceCache).
+function boundCache(startISO, endISO) {
+  if (!lastWindow) return;
+  const result = pruneOccurrenceCache(lastWindow.start, lastWindow.end, { activeWindow: lastWindow });
+  if (result === 'limited' && lastWindow.start === startISO && lastWindow.end === endISO) {
+    throw new ApiError('event_window_too_large', LIMITED_CACHE, 422);
   }
 }
 
-// A stretch for something other than the view (a trip's "Add events", an
-// event opened from a notification): fetch what isn't held or on its way,
-// leaving lastWindow alone. Through loadWindow it became "the view's window",
-// and every refresh after it (a save, undo, the change poll) refetched that
-// stretch instead of what's on screen (#183).
-export async function ensureRangeLoaded(startISO, endISO) {
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  if (!(e > s)) return;
-  const gaps = missingRanges(s, e, [
-    ...freshRanges(),
-    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
-  ]);
-  // In pieces under the server's cap, as a refresh does.
-  for (const gap of gaps) {
-    for (let a = gap.start; a < gap.end; a += MAX_SPAN_MS) await fetchRange(a, Math.min(gap.end, a + MAX_SPAN_MS));
+/**
+ * The view's window: made fresh, with a note while days on screen are on
+ * their way. Resolves true once it's all fresh. A failure leaves it owed a
+ * reload (reloads.js), retried with the change check's others, and says so;
+ * a window the server can never answer says so instead, and isn't retried.
+ */
+export async function loadWindow(startISO, endISO) {
+  lastWindow = { start: startISO, end: endISO };
+  const began = reloadGeneration();
+  const isView = () => !!lastWindow && lastWindow.start === startISO && lastWindow.end === endISO;
+  const limited = (message) => {
+    landed('window', began);
+    set({ windowStatus: { kind: 'limited', message } });
+    return false;
+  };
+  const s = ms(startISO);
+  const e = ms(endISO);
+  if (!(e > s) || e - s > MAX_SPAN_MS) return limited('This date range is too wide to load safely. Narrow it and try again.');
+  // Only a cold load says "Loading": later windows arrive while the calendar
+  // already shows something, and a pill flickering on every scroll is noise.
+  // And whenever days on screen are among what's missing: after a jump they
+  // looked empty until they arrived (#184). Scrolling ahead asks quietly.
+  const cold = state.loadedRanges.length === 0 && !state.windowStatus;
+  try {
+    await ensure(s, e, {
+      onGaps: (gaps) => { if (cold || gapsOnScreen(gaps)) set({ windowStatus: { kind: 'loading' } }); },
+      afterGap: () => boundCache(startISO, endISO),
+    });
+  } catch (err) {
+    // The view moved on: its own load says how that went.
+    if (!isView()) return false;
+    if (err && err.code === 'event_window_too_large') return limited(err.message || LIMITED_CACHE);
+    owe('window');
+    set({ windowStatus: { kind: 'failed', offline: !!(err && err.code === 'offline') } });
+    return false;
   }
+  if (!isView()) { settleView(); return true; }
+  landed('window', began);
+  if (state.windowStatus) set({ windowStatus: null });
+  return true;
+}
+
+// The owed reload of the view's window: whatever of it isn't fresh.
+defineReload('window', () => (lastWindow ? loadWindow(lastWindow.start, lastWindow.end) : true));
+
+// A stretch for something other than the view (a trip's "Add events", an
+// event opened from a notification, the agenda's next stretch): fetched
+// the same way, leaving lastWindow alone. As the view's window it became
+// what every refresh after it (a save, undo, the change poll) refetched,
+// instead of what's on screen (#183). Rejects when a request fails.
+export async function ensureRangeLoaded(startISO, endISO) {
+  const s = ms(startISO);
+  const e = ms(endISO);
+  if (e > s) await ensure(s, e);
 }
 
 // One day, complete: an open event steps through its day's events, but it
@@ -682,15 +571,10 @@ export async function ensureRangeLoaded(startISO, endISO) {
 // way; the open event redraws when it lands. lastWindow is the view's, so
 // this leaves it alone.
 export async function ensureDayLoaded(dayKey) {
-  const s = dateOfDayKey(dayKey).getTime();
   const next = dateOfDayKey(dayKey);
   next.setDate(next.getDate() + 1);
-  const gaps = missingRanges(s, next.getTime(), [
-    ...freshRanges(),
-    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
-  ]);
   try {
-    for (const gap of gaps) await fetchRange(gap.start, gap.end);
+    await ensure(dateOfDayKey(dayKey).getTime(), next.getTime());
   } catch { /* offline: the day steps through what is held, as before */ }
 }
 
@@ -711,14 +595,13 @@ export function ensureFullOccurrence(instanceId) {
   if (occ.full && !occ.stale) return Promise.resolve(occ);
   if (detailInFlight.has(instanceId)) return detailInFlight.get(instanceId);
   const gen = recordGeneration();
-  const asked = Date.now();
   const p = api('/events/' + occ.eventId + '/occurrence')
     .then((d) => {
       // Asked before records were marked out of date (a change made
       // elsewhere) or before an edit here, it may hold what they replaced:
       // marked current, it stayed that way until the next change (#185).
       // Ask again.
-      if (gen !== recordGeneration() || editedSince(instanceId, asked)) {
+      if (gen !== recordGeneration()) {
         if (detailInFlight.get(instanceId) === p) detailInFlight.delete(instanceId);
         return ensureFullOccurrence(instanceId);
       }
@@ -738,84 +621,46 @@ export function ensureFullOccurrence(instanceId) {
   return p;
 }
 
-// Refetch the most recently requested window (after mutations/undo).
-// Resolves false when part of it failed (a server error, a deploy): that
-// part is marked stale, and the change poll keeps its place to try again
-// (#184: a failed refresh was never retried).
-// own (the default): a refresh after a change made here. The change cursor
-// is read first: when the change poll next sees that same cursor, the window
-// already holds everything up to it and needn't be fetched again (#184:
-// every edit cost two full refreshes). The poll passes own: false.
-export async function refreshWindow({ own = true } = {}) {
+// After a change made here (a save, an undo): everything held may be the
+// old version of what changed (an edited series, an event moved into a
+// month seen earlier), so the generation moves and the view's window is
+// fetched again. The rest stays held and is fetched again when next shown
+// (#183). The change cursor is read first: when the change check next sees
+// that same cursor, the window already holds everything up to it (#184).
+// Resolves false when the window didn't land; it's then owed, and the
+// change check tries again (#184: a failed refresh was never retried).
+export async function refreshWindow() {
+  ownCursor = null;
   let cursor = null;
-  if (own) {
-    ownCursor = null;
-    try { const d = await api('/changes/cursor'); if (d && d.cursor) cursor = d.cursor; } catch { /* the poll refreshes as before */ }
-  }
-  if (!lastWindow) { ownCursor = cursor; return true; }
-  lastRefreshAsked = Date.now();
-  const refreshStart = lastWindow.start;
-  const refreshEnd = lastWindow.end;
-  // Everything outside this stretch is no longer known to be current.
-  markStaleOutside(refreshStart, refreshEnd);
-  windowReqId++;
-  const id = windowReqId;
-  let settle;
-  const done = new Promise((r) => { settle = r; });
-  latestRefresh = done;
-  // In pieces under the server's cap, like any other window (fetchRange).
-  const s = new Date(refreshStart).getTime();
-  const e = new Date(refreshEnd).getTime();
-  let ok = true;
-  for (let a = s; a < e; a += MAX_SPAN_MS) {
-    const b = Math.min(e, a + MAX_SPAN_MS);
-    const params = new URLSearchParams({ start: iso(a), end: iso(b) });
-    const asked = Date.now();
-    try {
-      const data = await api('/events?' + params.toString());
-      if (id !== windowReqId) {
-        // A newer refresh took over: this answer is dropped, so whether the
-        // window is current is that refresh's to say. Answering true here
-        // let the change poll forget a refresh that then failed (#185).
-        const replaced = await latestRefresh;
-        settle(replaced);
-        return replaced;
-      }
-      mergeWindow(iso(a), iso(b), data.events || [], asked);
-      boundCacheAfterMerge(refreshStart, refreshEnd);
-    } catch (err) {
-      ok = false;
-      markStale(iso(a), iso(b));
-      if (err && err.code === 'event_window_too_large') windowFailed(refreshStart, refreshEnd, err);
-    }
-  }
-  // Only a refresh that landed covers the cursor it read.
-  if (own && ok && id === windowReqId) ownCursor = cursor;
-  settle(ok);
+  try { const d = await api('/changes/cursor'); if (d && d.cursor) cursor = d.cursor; } catch { /* the check refreshes as before */ }
+  newGeneration();
+  owe('window');
+  const ok = await reload('window');
+  if (ok) ownCursor = cursor;
   return ok;
 }
 
-// The change poll's other reloads (people, saved views, settings; the
-// calendar list keeps its own, calendarsOwed). One that failed is owed until one lands: the cursor moved on
-// and it was forgotten (#185). One at a time each: asked again while one is
-// on its way, it runs again once that lands. An older one landing after a
-// newer one failed cleared what was owed, and could put back what the newer
-// one replaced.
-export function serialReloads(stopped = () => false) {
-  const owed = new Set();
-  const running = new Map(); // name -> asked again meanwhile
-  const part = (name, load) => {
-    if (running.has(name)) { running.set(name, true); return; }
-    running.set(name, false);
-    owed.delete(name);
-    load().catch(() => { owed.add(name); }).finally(() => {
-      const again = running.get(name);
-      running.delete(name);
-      if (again && !stopped()) part(name, load);
-    });
-  };
-  return { owed, part };
-}
+// The change check's other reloads (reloads.js). A failed one, or one that
+// didn't apply, stays owed until one lands (#185).
+defineReload('people', loadPeople);
+defineReload('views', loadSavedViews);
+defineReload('review', () => reviewCount().then(() => true));
+// Settings changed on another device: not while this tab is editing them,
+// owed until it leaves the page. Most moves aren't settings; adopting
+// identical ones would only redraw everything that reads them.
+defineReload('settings', async () => {
+  if (state.route === 'settings') return false;
+  const r = await api('/settings');
+  const next = r && r.settings;
+  if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
+  return true;
+});
+// Background state: system health, plugins and their bands, updates.
+defineReload('status', async () => {
+  const [health, , updates] = await Promise.all([loadSystemHealth(), loadPlugins(), loadUpdates()]);
+  set({ pluginSeq: state.pluginSeq + 1 });
+  return health !== null && updates !== null;
+});
 
 // A plugin's ranges in a stretch. The server sends each plugin's earliest
 // ranges up to a cap and says when it stopped short (several tide stations
@@ -898,10 +743,10 @@ export function afterUndo() {
   // lists pages keep of their own (Review, Filters, feeds: undoSeq) are
   // fetched on their own.
   set({ availSeq: state.availSeq + 1, pluginSeq: state.pluginSeq + 1, tripLinksSeq: state.tripLinksSeq + 1, undoSeq: (state.undoSeq || 0) + 1 });
-  loadReviewCount().catch(() => {});
-  loadCalendars().catch(() => {});
-  loadPeople().catch(() => {});
-  loadSavedViews().catch(() => {});
+  // Owed until they land, like the change check's (reloads.js).
+  const lists = ['review', 'calendars', 'people', 'views'];
+  owe(...lists);
+  for (const name of lists) reload(name);
   api('/settings').then((d) => adoptSettings(d.settings)).catch(() => {});
   return refreshWindow();
 }

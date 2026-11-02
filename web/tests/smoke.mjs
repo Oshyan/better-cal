@@ -43,7 +43,7 @@ import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
 import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, markStaleOutside, freshRanges, patchOccurrence, removeOccurrencesOfEvent } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence, freshRanges, patchOccurrence, restoreOccurrence, removeOccurrencesOfEvent, localSaved, dataGeneration, newGeneration } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -1597,22 +1597,24 @@ console.log('--- chronological ordering across timezone offsets ---');
 
 // A long-lived tab must not retain every date it has ever visited. Trimming
 // keeps the complete active window, including a multi-day event that began
-// before it, and never discards an optimistic edit in progress.
+// before it, and never discards a local edit not yet in an answer.
 {
   storeState.occ.clear();
-  storeState.loadedRanges = [{ start: 0, end: Date.UTC(2030, 0, 1) }];
+  storeState.loadedRanges = [{ start: 0, end: Date.UTC(2030, 0, 1), gen: 0 }];
   const add = (id, start, end, extra = {}) => storeState.occ.set(id, { instanceId: id, start, end, ...extra });
   add('old-a', '2025-01-01T10:00:00Z', '2025-01-01T11:00:00Z');
   add('old-b', '2025-02-01T10:00:00Z', '2025-02-01T11:00:00Z');
   add('inside', '2026-04-10T10:00:00Z', '2026-04-10T11:00:00Z');
   add('spanning', '2026-03-30T10:00:00Z', '2026-04-02T11:00:00Z');
-  add('draft', '2025-03-01T10:00:00Z', '2025-03-01T11:00:00Z', { _optimistic: true });
+  add('draft', '2025-03-01T10:00:00Z', '2025-03-01T11:00:00Z');
+  patchOccurrence('draft', { title: 'Moved here' });
   assert('window cache: crossing the cap prunes retained history',
     pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 3 }));
-  eq('window cache: the active window, overlapping span, and optimistic draft remain',
+  eq('window cache: the active window, overlapping span, and local edit remain',
     [...storeState.occ.keys()].sort(), ['draft', 'inside', 'spanning']);
   eq('window cache: only the complete active range remains marked loaded',
-    storeState.loadedRanges, [{ start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z') }]);
+    storeState.loadedRanges, [{ start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z'), gen: 0 }]);
+  restoreOccurrence('draft', null);
   storeState.occ.clear();
   storeState.loadedRanges = [];
 
@@ -1620,15 +1622,15 @@ console.log('--- chronological ordering across timezone offsets ---');
   add('history-d', '2025-02-01T10:00:00Z', '2025-02-01T11:00:00Z');
   add('partial', '2026-04-05T10:00:00Z', '2026-04-05T11:00:00Z');
   storeState.loadedRanges = [
-    { start: Date.parse('2026-03-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z') },
-    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-06-01T00:00:00Z') },
+    { start: Date.parse('2026-03-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z'), gen: 0 },
+    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-06-01T00:00:00Z'), gen: 0 },
   ];
   eq('window cache: intermediate pruning preserves only ranges actually loaded so far',
-    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 2, markLoaded: false }),
+    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 2 }),
     'pruned');
   eq('window cache: intermediate pruning never marks the unfinished full window loaded', storeState.loadedRanges, [
-    { start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z') },
-    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z') },
+    { start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z'), gen: 0 },
+    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z'), gen: 0 },
   ]);
   storeState.occ.clear();
   storeState.loadedRanges = [];
@@ -1908,7 +1910,8 @@ console.log('--- chronological ordering across timezone offsets ---');
 // --- Event windows: a failed load is shown and retried, not left blank (#48) ---
 {
   const realFetch = globalThis.fetch;
-  const { loadWindow, retryWindowsNow } = await import('../src/app/api.js');
+  const { loadWindow } = await import('../src/app/api.js');
+  const { runOwed, isOwed } = await import('../src/app/reloads.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   let mode = 'offline';
   let calls = 0;
@@ -1928,12 +1931,13 @@ console.log('--- chronological ordering across timezone offsets ---');
   let threw = false;
   try { await loadWindow(a, b); } catch { threw = true; }
   assert('window: a failed load no longer rejects into nowhere', !threw);
-  eq('window: the failure is shown, as offline, with a retry scheduled', [st.windowStatus && st.windowStatus.kind, st.windowStatus && st.windowStatus.offline, st.windowStatus && st.windowStatus.retryAt > Date.now()], ['failed', true, true]);
+  eq('window: the failure is shown, as offline, and the window is owed a reload', [st.windowStatus && st.windowStatus.kind, st.windowStatus && st.windowStatus.offline, isOwed('window')], ['failed', true, true]);
+  eq('window: and the dates it failed for are not loaded', st.loadedRanges, []);
   const before = calls;
   mode = 'online';
-  retryWindowsNow();
-  await new Promise((r) => setTimeout(r, 20));
+  await runOwed(); // Retry now, or the next change check
   assert('window: Retry now asks again', calls > before);
+  assert('window: and nothing is owed once it lands', !isOwed('window'));
   eq('window: once it loads, the note goes away', st.windowStatus, null);
   assert('window: and the dates count as loaded', st.loadedRanges.length > 0);
   // A range that fails, then turns out to be covered by a wider window that
@@ -1943,8 +1947,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   await loadWindow('2027-01-01T00:00:00-08:00', '2027-01-15T00:00:00-08:00');
   mode = 'online';
   await loadWindow('2026-12-01T00:00:00-08:00', '2027-02-01T00:00:00-08:00');
-  retryWindowsNow();
-  await new Promise((r) => setTimeout(r, 20));
+  await runOwed();
   eq('window: a failed range covered later by a wider load clears the note', st.windowStatus, null);
   put({ loadedRanges: [], windowStatus: null });
   mode = 'online';
@@ -1959,8 +1962,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     [st.windowStatus && st.windowStatus.kind, st.windowStatus && st.windowStatus.message, st.windowStatus && st.windowStatus.retryAt],
     ['limited', 'Narrow this date range.', undefined]);
   const limitedCalls = calls;
-  retryWindowsNow();
-  await new Promise((r) => setTimeout(r, 20));
+  await runOwed();
   eq('window: Retry now does not repeat an unchanged over-budget request', calls, limitedCalls);
   mode = 'online';
   const beforeWide = calls;
@@ -1996,7 +1998,7 @@ console.log('--- chronological ordering across timezone offsets ---');
 
   // A dense month: widened to the whole month, the request is refused, so
   // just the days needed are asked for, and they load.
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
   dense = true;
   asked.length = 0;
   await loadWindow(at(2029, 5, 10), at(2029, 5, 13));
@@ -2006,7 +2008,7 @@ console.log('--- chronological ordering across timezone offsets ---');
 
   // "Loading" stays while days on screen are still on their way, even when
   // the view asks again for a window those requests already cover.
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2029-08-10', end: '2029-08-16' } });
+  put({ loadedRanges: [], windowStatus: null, visibleDays: { start: '2029-08-10', end: '2029-08-16' } });
   let release;
   held = new Promise((r) => { release = r; });
   const first = loadWindow(at(2029, 8, 3), at(2029, 8, 24));
@@ -2023,7 +2025,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   // The month in flight is refused (too dense) and only the first window's
   // days are fetched in its place: the view that waited on it asks for its
   // own days, and the note goes once they land.
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2029-05-14', end: '2029-05-20' } });
+  put({ loadedRanges: [], windowStatus: null, visibleDays: { start: '2029-05-14', end: '2029-05-20' } });
   dense = true;
   held = new Promise((r) => { release = r; });
   const jump = loadWindow(at(2029, 5, 10), at(2029, 5, 13));
@@ -2052,10 +2054,10 @@ console.log('--- chronological ordering across timezone offsets ---');
 // --- Event windows and records: the second release review (#185) ---
 {
   const realFetch = globalThis.fetch;
-  const { loadWindow, refreshWindow, ensureFullOccurrence, fetchPluginRanges, serialReloads } = await import('../src/app/api.js');
+  const { loadWindow, refreshWindow, ensureFullOccurrence, fetchPluginRanges } = await import('../src/app/api.js');
+  const { defineReload, owe, reload, isOwed, runOwed } = await import('../src/app/reloads.js');
   const { state: st, set: put, invalidateRecords } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-  const DAY = 86400000;
   const at = (y, m, d, h = 0) => isoAt(new Date(y, m - 1, d, h));
   const tick = () => new Promise((r) => setTimeout(r, 0));
   const ev = (id, startISO, endISO) => ({ instanceId: 'r' + id, eventId: id, calendarId: 1, title: 'Sample ' + id, start: startISO, end: endISO, allDay: false });
@@ -2063,66 +2065,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = async (url) => handler(new URL(String(url), 'http://app.test'));
   const range = (u) => [Date.parse(u.searchParams.get('start')), Date.parse(u.searchParams.get('end'))];
 
-  // A series that fits the days asked for but not the whole months around
-  // them (an hourly one): the widened answer comes back capped, before the
-  // days on screen. They're asked for on their own, and what the months
-  // held beyond them isn't counted as loaded.
-  const target = Date.parse(at(2029, 6, 15, 10));
-  handler = async (u) => {
-    const [s, e] = range(u);
-    if (e - s > 40 * DAY) return json({ events: [], capped: [77] });
-    return json({ events: s <= target && target < e ? [ev(77, at(2029, 6, 15, 10), at(2029, 6, 15, 11))] : [] });
-  };
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
-  st.occ.clear();
-  await loadWindow(at(2029, 5, 19), at(2029, 6, 23));
-  assert('capped: a series cut off over whole months still shows on the days asked for', st.occ.has('r77'));
-  assert('capped: the rest of those months is asked for again when shown', !st.loadedRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))) || st.staleRanges.some((r) => r.start <= Date.parse(at(2029, 6, 26)) && r.end >= Date.parse(at(2029, 6, 28))));
-
-  // The days asked for failing after a capped answer stay to be asked for:
-  // the months counted as loaded, so a retry asked for nothing (#185).
-  const target2 = Date.parse(at(2032, 6, 15, 10));
-  let failDays = true;
-  let calls2 = 0;
-  handler = async (u) => {
-    calls2++;
-    const [s, e] = range(u);
-    if (e - s > 40 * DAY) return json({ events: [], capped: [78] });
-    if (failDays) return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
-    return json({ events: s <= target2 && target2 < e ? [ev(78, at(2032, 6, 15, 10), at(2032, 6, 15, 11))] : [] });
-  };
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
-  st.occ.clear();
-  await loadWindow(at(2032, 5, 19), at(2032, 6, 23));
-  failDays = false;
-  await loadWindow(at(2032, 5, 19), at(2032, 6, 23)); // as Retry does
-  eq('capped: the days asked for, failed once, are asked for again', [st.occ.has('r78'), calls2 > 2, st.windowStatus], [true, true, null]);
-
-  // A window waiting on a capped answer fetches its own days: they counted
-  // as loaded, then went stale with nothing asking again (#185).
-  const target3 = Date.parse(at(2033, 6, 26, 10));
-  let releaseWide;
-  const heldWide = new Promise((r) => { releaseWide = r; });
-  let releaseDays;
-  const heldDays = new Promise((r) => { releaseDays = r; });
-  handler = async (u) => {
-    const [s, e] = range(u);
-    if (e - s > 40 * DAY) { await heldWide; return json({ events: [], capped: [79] }); }
-    if (s < Date.parse(at(2033, 6, 20))) { await heldDays; return json({ events: [] }); }
-    return json({ events: s <= target3 && target3 < e ? [ev(79, at(2033, 6, 26, 10), at(2033, 6, 26, 11))] : [] });
-  };
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
-  st.occ.clear();
-  const wa = loadWindow(at(2033, 5, 19), at(2033, 6, 23), { asView: false });
-  await tick();
-  const wb = loadWindow(at(2033, 6, 25), at(2033, 6, 28));
-  await tick();
-  releaseWide();
-  for (let i = 0; i < 10; i++) await tick();
-  releaseDays();
-  await wa;
-  await wb;
-  assert('capped: a window waiting on a capped answer fetches its own days', st.occ.has('r79'));
+  // Capped series: see "Loading the calendar's events" (#190), whose pretend
+  // server answers as the real one does, with the first 1,000.
 
   // "Loading" stays while part of the view's days are in an older request
   // still on its way, even after the view's other months land.
@@ -2134,7 +2078,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     if (h) await h.promise;
     return json({ events: [] });
   };
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: { start: '2030-05-28', end: '2030-06-05' } });
+  put({ loadedRanges: [], windowStatus: null, visibleDays: { start: '2030-05-28', end: '2030-06-05' } });
   const releaseMay = hold(2030, 5);
   const older = loadWindow(at(2030, 5, 10), at(2030, 5, 13)); // May on its way
   await tick();
@@ -2146,9 +2090,10 @@ console.log('--- chronological ordering across timezone offsets ---');
   await view;
   eq('loading: and goes once May lands', st.windowStatus, null);
 
-  // A refresh taken over by a newer one that then fails doesn't answer
-  // true: the change poll must keep the refresh it owes.
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  // A refresh asked for while another is on its way shares the one run
+  // after it; when that fails, neither answers true, and the window stays
+  // owed for the change check (#185).
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
   handler = async () => json({ events: [] });
   await loadWindow(at(2031, 3, 1), at(2031, 3, 8));
   let releaseA;
@@ -2160,11 +2105,15 @@ console.log('--- chronological ordering across timezone offsets ---');
     if (n === 1) { await heldA; return json({ events: [] }); }
     return json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
   };
-  const a = refreshWindow({ own: false });
+  const a = refreshWindow();
   await tick();
-  const b = await refreshWindow({ own: true });
+  const b = refreshWindow();
+  await tick();
   releaseA();
-  eq('refresh: one taken over answers with what the newer one found', [b, await a], [false, false]);
+  eq('refresh: one taken over answers with what the newer one found', [await b, await a, isOwed('window')], [false, false, true]);
+  handler = async () => json({ events: [] });
+  await runOwed();
+  assert('refresh: and the next check that reaches the server fills it', !isOwed('window') && st.windowStatus === null);
 
   // A record asked for before a change elsewhere marked records out of date
   // isn't taken as current: it's asked for again.
@@ -2221,22 +2170,204 @@ console.log('--- chronological ordering across timezone offsets ---');
   const moved = await fetchPluginRanges('2031-05-01T00:00:00Z', '2031-05-20T00:00:00Z');
   eq('bands: a range moved by a refresh between pages still comes, at its new time', [moved.tides.ranges.map((r) => r.key).sort(), moved.tides.ranges.find((r) => r.key === 'k6').start, moved.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], '2031-05-02T00:00:00+00:00', false]);
 
-  // The change poll's other reloads: one at a time each, and an older one
-  // landing doesn't clear a newer one that failed (#185).
-  const { owed, part } = serialReloads();
+  // The change check's reloads: one at a time each, owed again meanwhile
+  // it runs once more, and one that failed stays owed (#185).
   const loads = [];
-  const load = () => new Promise((resolve, reject) => loads.push({ resolve, reject }));
-  part('people', load);
-  part('people', load);
+  defineReload('sample-list', () => new Promise((resolve, reject) => loads.push({ resolve, reject })));
+  owe('sample-list');
+  reload('sample-list');
+  owe('sample-list');
+  reload('sample-list');
+  await tick();
   eq('reloads: one at a time', loads.length, 1);
-  loads[0].resolve();
+  loads[0].resolve(true);
   for (let i = 0; i < 5; i++) await tick();
-  eq('reloads: asked again meanwhile, it runs again once the first lands', loads.length, 2);
+  eq('reloads: owed again meanwhile, it runs once more after the first lands', loads.length, 2);
   loads[1].reject(new Error('Down for a moment'));
   for (let i = 0; i < 5; i++) await tick();
-  assert('reloads: a newer one that failed stays owed', owed.has('people'));
+  assert('reloads: a newer one that failed stays owed', isOwed('sample-list'));
+  const retried = runOwed();
+  await tick();
+  loads[2].resolve(true);
+  await retried;
+  eq('reloads: retried with the others, one that lands settles it', [loads.length, isOwed('sample-list')], [3, false]);
 
-  put({ loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+// --- Loading the calendar's events: one fetch path (#190) ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow, refreshWindow, ensureRangeLoaded } = await import('../src/app/api.js');
+  const { runOwed, isOwed } = await import('../src/app/reloads.js');
+  const { checkChanges } = await import('../src/app/changecheck.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const down = () => json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+  const tick = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const HOUR = 3600000;
+  const at = (y, m, d) => isoAt(new Date(y, m - 1, d));
+  const fresh = (a, b) => missingRanges(Date.parse(a), Date.parse(b), freshRanges()).length === 0;
+  // A pretend server with an hourly series (half an hour each), expanding
+  // at most 1,000 of it a request and naming it in capped past that.
+  const first = Date.UTC(2035, 0, 1);
+  const hourly = (u) => {
+    const s = Date.parse(u.searchParams.get('start'));
+    const e = Date.parse(u.searchParams.get('end'));
+    const out = [];
+    let k = Math.max(0, Math.ceil((s - HOUR / 2 - first) / HOUR));
+    for (; first + k * HOUR < e; k++) {
+      const a = first + k * HOUR;
+      if (a + HOUR / 2 <= s) continue;
+      if (out.length === 1000) return json({ events: out, capped: [501] });
+      out.push({ instanceId: '501:' + k, eventId: 501, calendarId: 1, title: 'Sample hourly', start: isoAt(new Date(a)), end: isoAt(new Date(a + HOUR / 2)), allDay: false, recurring: true });
+    }
+    return json({ events: out });
+  };
+  let requests = 0;
+  let failRequest = 0; // that request fails, counting from 1
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c-sample' });
+    requests++;
+    if (requests === failRequest) return down();
+    return hourly(u);
+  };
+  const inView = () => [...st.occ.values()].filter((o) => o.eventId === 501
+    && Date.parse(o.start) >= Date.parse(at(2035, 3, 1)) && Date.parse(o.start) < Date.parse(at(2035, 7, 1))).length;
+  const hours = Math.round((Date.parse(at(2035, 7, 1)) - Date.parse(at(2035, 3, 1))) / HOUR);
+
+  // The released bug: scrolled into view a month at a time, every hour is
+  // held; a save's refresh asked for the whole window at once, took the
+  // first 1,000 as the lot, and left nothing to fetch the rest.
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  for (let m = 3; m < 7; m++) await loadWindow(at(2035, m, 1), at(2035, m + 1, 1));
+  await loadWindow(at(2035, 3, 1), at(2035, 7, 1));
+  eq('hourly series: every occurrence in the window is held', inView(), hours);
+  await refreshWindow();
+  eq('hourly series: and still every one after a save', inView(), hours);
+
+  // A cold load of the whole window: every hour too, a request per 1,000,
+  // and nothing said about occurrences not shown.
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  requests = 0;
+  await loadWindow(at(2035, 3, 1), at(2035, 7, 1));
+  eq('hourly series: a cold load holds every occurrence', [inView(), requests, st.windowStatus], [hours, Math.ceil(hours / 1000), null]);
+  assert('hourly series: with no word of occurrences left out', !st.toasts.some((t) => t.text.includes('Sample hourly')));
+
+  // A request after the first fails: only what landed counts as loaded, the
+  // window is owed, and the retry fills the rest.
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  requests = 0;
+  failRequest = 2;
+  await loadWindow(at(2035, 3, 1), at(2035, 7, 1));
+  const heldMs = st.loadedRanges.reduce((n, r) => n + (r.end - r.start), 0);
+  eq('a failed fetch: the note says so and the window is owed', [st.windowStatus && st.windowStatus.kind, isOwed('window')], ['failed', true]);
+  assert('a failed fetch: only what landed counts as loaded', heldMs > 0 && heldMs < Date.parse(at(2035, 7, 1)) - Date.parse(at(2035, 3, 1)) && !fresh(at(2035, 3, 1), at(2035, 7, 1)));
+  failRequest = 0;
+  await runOwed();
+  eq('a failed fetch: the next retry fills the rest', [inView(), st.windowStatus, isOwed('window')], [hours, null, false]);
+
+  // Three generations overlapping (a change elsewhere, then another, each
+  // asking again while the one before is on its way): answers land out of
+  // order, and an older one landing after a newer one is ignored.
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  const holds = [];
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url), 'http://app.test');
+    if (u.pathname.endsWith('/changes/cursor')) return json({ cursor: 'c-sample' });
+    const version = holds.length + 1;
+    // The three asked for are held; one more (there should be none) isn't.
+    if (version <= 3) await new Promise((r) => holds.push(r));
+    else holds.push(() => {});
+    return json({ events: [{ instanceId: 'v1', eventId: 601, calendarId: 1, title: 'Version ' + version, start: isoAt(new Date(2036, 1, 10, 9)), end: isoAt(new Date(2036, 1, 10, 10)), allDay: false }] });
+  };
+  const viewLoad = loadWindow(at(2036, 2, 1), at(2036, 3, 1));
+  await tick();
+  newGeneration();
+  const second = ensureRangeLoaded(at(2036, 2, 1), at(2036, 3, 1));
+  await tick();
+  newGeneration();
+  const third = ensureRangeLoaded(at(2036, 2, 1), at(2036, 3, 1));
+  await tick();
+  eq('generations: each asks once', holds.length, 3);
+  holds[1]();
+  await tick();
+  eq('generations: the second lands first and shows', st.occ.get('v1').title, 'Version 2');
+  holds[2]();
+  await tick();
+  eq('generations: the newest replaces it', st.occ.get('v1').title, 'Version 3');
+  holds[0]();
+  await Promise.all([viewLoad, second, third]);
+  eq('generations: the oldest, landing last, is ignored, and nothing is asked again', [st.occ.get('v1').title, holds.length, fresh(at(2036, 2, 1), at(2036, 3, 1)), st.windowStatus], ['Version 3', 3, true, null]);
+
+  // The change check: a pretend server whose cursor moves.
+  const server = { cursor: 'k1', hold: null, failEvents: false, failCalendars: false, events: 0, calendars: 0 };
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url), 'http://app.test');
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/changes/cursor') return json({ cursor: server.cursor, review: 'r1', status: 's1' });
+    if (p === '/events') {
+      server.events++;
+      if (server.hold) await server.hold;
+      return server.failEvents ? down() : json({ events: [] });
+    }
+    if (p === '/calendars') {
+      server.calendars++;
+      return server.failCalendars ? down() : json({ calendars: st.calendars, folders: st.folders, tags: st.tags });
+    }
+    if (p === '/people') return json({ people: st.people });
+    if (p === '/views') return json({ views: st.savedViews });
+    if (p === '/review/count') return json({ count: st.reviewCount });
+    return json({});
+  };
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  await loadWindow(at(2036, 5, 1), at(2036, 5, 8));
+  await checkChanges(); // the baseline
+
+  // The cursor moves twice more while the window's reload is on its way:
+  // it isn't asked for twice at once, and exactly one further reload
+  // follows, at the newest generation.
+  server.events = 0;
+  let release;
+  server.hold = new Promise((r) => { release = r; });
+  server.cursor = 'k2';
+  const c1 = checkChanges();
+  await tick();
+  eq('check: a moved cursor reloads the window', server.events, 1);
+  server.cursor = 'k3';
+  const c2 = checkChanges();
+  await tick();
+  server.cursor = 'k4';
+  const c3 = checkChanges();
+  await tick();
+  eq('check: moves seen while it is on its way ask nothing more yet', server.events, 1);
+  server.hold = null;
+  release();
+  await Promise.all([c1, c2, c3]);
+  eq('check: then exactly one further reload', [server.events, isOwed('window'), fresh(at(2036, 5, 1), at(2036, 5, 8))], [2, false, true]);
+
+  // The window and the calendar list both fail: both stay owed, and the
+  // next check that reaches the server reloads them together.
+  server.failEvents = true;
+  server.failCalendars = true;
+  server.cursor = 'k5';
+  await checkChanges();
+  eq('check: a failed window and calendar list are both owed', [isOwed('window'), isOwed('calendars'), st.windowStatus && st.windowStatus.kind], [true, true, 'failed']);
+  server.failEvents = false;
+  server.failCalendars = false;
+  const was = [server.events, server.calendars];
+  await checkChanges(); // nothing moved
+  eq('check: the next check reloads them together', [server.events - was[0], server.calendars - was[1], isOwed('window'), isOwed('calendars'), st.windowStatus], [1, 1, false, false, null]);
+
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
   st.occ.clear();
   globalThis.fetch = realFetch;
 }
@@ -2351,7 +2482,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     return json({});
   };
   const savedCals = st.calendars;
-  put({ calendars: [{ id: 7, name: 'Sample', role: 'mine' }], loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  put({ calendars: [{ id: 7, name: 'Sample', role: 'mine' }], loadedRanges: [], windowStatus: null, visibleDays: null });
   await loadWindow(isoAt(new Date(2034, 2, 1)), isoAt(new Date(2034, 2, 8)));
   const before = windows;
   await updateCalendar(st.calendars[0], { role: 'context' });
@@ -2362,7 +2493,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   eq("calendar role: other settings don't reload them", windows, asked);
   globalThis.fetch = realFetch;
-  put({ calendars: savedCals, loadedRanges: [], staleRanges: [], windowStatus: null, visibleDays: null });
+  put({ calendars: savedCals, loadedRanges: [], windowStatus: null, visibleDays: null });
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
@@ -2507,7 +2638,9 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { href: 'http://app.test/' } };
   const realFetch = globalThis.fetch;
   const { fileCalendar, placeCalendarInList, setFolderSort, updateCalendar, toggleCalendarVisible } = await import('../src/app/actions.js');
-  const { loadCalendars, calendarsOwed, undoEntries } = await import('../src/app/api.js');
+  const { loadCalendars, undoEntries } = await import('../src/app/api.js');
+  const { isOwed } = await import('../src/app/reloads.js');
+  const calendarsOwed = () => isOwed('calendars');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -3755,22 +3888,25 @@ console.log('--- view review fixes (#183) ---');
   eq('here: one day on screen', hereKeyOf('2026-11-04', { start: '2026-12-25', end: '2026-12-25' }), '2026-12-25');
   eq('here: on the way to the anchor, the anchor', hereKeyOf('2026-11-04', { start: '2026-10-11', end: '2026-10-17' }, false), '2026-11-04');
 
-  // After a change only the refreshed stretch is fresh; the rest stays held
+  // After a change only what's fetched since is fresh; the rest stays held
   // (nothing blanks) but is fetched again when next shown.
   const ms = (iso) => Date.parse(iso);
   const r = (a, b) => ({ start: ms(a + 'T00:00:00Z'), end: ms(b + 'T00:00:00Z') });
   storeState.occ.clear();
-  storeState.loadedRanges = [r('2026-08-01', '2026-09-01'), r('2026-10-01', '2026-12-01')];
-  storeState.staleRanges = [];
-  markStaleOutside('2026-10-15T00:00:00Z', '2026-11-15T00:00:00Z');
-  eq('stale: everything held stays held', storeState.loadedRanges, [r('2026-08-01', '2026-09-01'), r('2026-10-01', '2026-12-01')]);
+  storeState.loadedRanges = [];
+  mergeWindow('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z', []);
+  mergeWindow('2026-10-01T00:00:00Z', '2026-12-01T00:00:00Z', []);
+  newGeneration();
+  mergeWindow('2026-10-15T00:00:00Z', '2026-11-15T00:00:00Z', []);
+  eq('stale: everything held stays held', storeState.loadedRanges.map(({ start, end }) => ({ start, end })),
+    [r('2026-08-01', '2026-09-01'), r('2026-10-01', '2026-10-15'), r('2026-10-15', '2026-11-15'), r('2026-11-15', '2026-12-01')]);
   eq('stale: only the refreshed stretch is fresh', freshRanges(), [r('2026-10-15', '2026-11-15')]);
   eq('stale: missing for a fetch is the stale part', missingRanges(ms('2026-08-15T00:00:00Z'), ms('2026-11-01T00:00:00Z'), freshRanges()),
     [r('2026-08-15', '2026-10-15')]);
   mergeWindow('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z', []);
   eq('stale: fetching a stretch again makes it fresh', freshRanges(), [r('2026-08-01', '2026-09-01'), r('2026-10-15', '2026-11-15')]);
+  eq('stale: an answer asked before the change, landing after, is dropped', mergeWindow('2026-10-01T00:00:00Z', '2026-12-01T00:00:00Z', [], dataGeneration() - 1), false);
   storeState.loadedRanges = [];
-  storeState.staleRanges = [];
 
   // A group keeps what its members share: grouped holidays stay day labels.
   const hol = (title) => ({ ...mkOcc(1, title, '2026-11-26'), relationship: 'context', status: 'confirmed' });
@@ -3784,7 +3920,6 @@ console.log('--- window merges (#183) ---');
 {
   storeState.occ.clear();
   storeState.loadedRanges = [];
-  storeState.staleRanges = [];
   const occ = (id, start, end, extra = {}) => ({ instanceId: id, eventId: 1, calendarId: 1, title: id, allDay: false, start, end, ...extra });
   // A timed event that began before the window and runs into it, deleted elsewhere.
   storeState.occ.set('long', occ('long', '2026-10-31T20:00:00Z', '2026-11-01T10:00:00Z'));
@@ -3847,31 +3982,50 @@ console.log('--- window merges (#183) ---');
   mergeWindow('2026-11-09T00:00:00Z', '2026-11-10T00:00:00Z', []);
   assert('merge: one inside it goes when the answer lacks it', !storeState.occ.has('pin'));
 
-  // A drop while an older answer is on its way: the moved copy stays.
+  // A drop while an older answer is on its way: the moved copy stays until
+  // an answer asked after its save landed carries it, and only one whose
+  // stretch covers it ends the mark (#190).
   storeState.occ.clear();
+  storeState.loadedRanges = [];
+  const nov = ['2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z'];
   storeState.occ.set('m', occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z'));
-  const asked = Date.now() - 1000;
-  patchOccurrence('m', { start: '2026-11-04T10:00:00Z', end: '2026-11-04T11:00:00Z', _optimistic: true });
-  patchOccurrence('m', { _optimistic: false });
-  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z')], asked);
-  eq('merge: an answer asked before the drop keeps the moved copy', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
-  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('m', '2026-11-04T10:00:00Z', '2026-11-04T11:00:00Z', { title: 'fresh' })], Date.now() + 1);
-  eq('merge: an answer asked after it replaces it', storeState.occ.get('m').title, 'fresh');
+  const asked = dataGeneration();
+  patchOccurrence('m', { start: '2026-11-04T10:00:00Z', end: '2026-11-04T11:00:00Z' });
+  mergeWindow(...nov, [occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z')], asked);
+  eq('merge: an answer asked while the save is on its way keeps the moved copy', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
+  localSaved(['m']);
+  mergeWindow(...nov, [occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z')], asked);
+  eq('merge: so does one asked before the save landed', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
+  newGeneration(); // the save's refresh
+  mergeWindow('2026-12-01T00:00:00Z', '2027-01-01T00:00:00Z', [], dataGeneration());
+  mergeWindow(...nov, [occ('m', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z')], asked);
+  eq('merge: a newer answer that does not cover it leaves the mark', storeState.occ.get('m').start, '2026-11-04T10:00:00Z');
+  mergeWindow(...nov, [occ('m', '2026-11-04T10:00:00Z', '2026-11-04T11:00:00Z', { title: 'fresh' })], dataGeneration());
+  eq('merge: the newer answer that covers it replaces it', storeState.occ.get('m').title, 'fresh');
+  mergeWindow(...nov, [occ('m', '2026-11-04T10:00:00Z', '2026-11-04T11:00:00Z', { title: 'fresher' })], dataGeneration());
+  eq('merge: and the mark is gone, so the next answer does too', storeState.occ.get('m').title, 'fresher');
   // A delete while an older answer is on its way: it stays deleted.
   storeState.occ.set('d', occ('d', '2026-11-05T10:00:00Z', '2026-11-05T11:00:00Z', { eventId: 9 }));
-  const asked2 = Date.now() - 1000;
+  const asked2 = dataGeneration();
   removeOccurrencesOfEvent(9);
-  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('d', '2026-11-05T10:00:00Z', '2026-11-05T11:00:00Z', { eventId: 9 })], asked2);
+  mergeWindow(...nov, [occ('d', '2026-11-05T10:00:00Z', '2026-11-05T11:00:00Z', { eventId: 9 })], asked2);
   assert('merge: an answer asked before a delete does not bring it back', !storeState.occ.has('d'));
   // A Maybe (any local patch) while an older answer is on its way: it stays.
   storeState.occ.set('r', occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' }));
-  const asked3 = Date.now() - 1000;
+  const asked3 = dataGeneration();
   patchOccurrence('r', { relationship: 'maybe' });
-  mergeWindow('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z', [occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' })], asked3);
+  mergeWindow(...nov, [occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' })], asked3);
   eq('merge: an answer asked before a Maybe keeps it', storeState.occ.get('r').relationship, 'maybe');
+  // A save that failed puts back what was there; an answer from before the
+  // next change can't put an older version over it.
+  restoreOccurrence('r', occ('r', '2026-11-06T10:00:00Z', '2026-11-06T11:00:00Z', { relationship: 'available' }));
+  eq('merge: a failed save puts back what was there', storeState.occ.get('r').relationship, 'available');
+  localSaved(['d']);
+  newGeneration();
+  mergeWindow(...nov, [], dataGeneration());
+  assert('merge: once their saves land, an answer carrying them ends the marks', !storeState.occ.has('d') && !storeState.occ.has('r'));
   storeState.occ.clear();
   storeState.loadedRanges = [];
-  storeState.staleRanges = [];
 }
 
 console.log('--- bar resize (#183) ---');

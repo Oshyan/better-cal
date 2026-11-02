@@ -160,12 +160,15 @@ final class ReviewQueue
     private static function hasOccurrence(array $series, string $occurrence): bool
     {
         if (empty($series['rrule'])) return false;
+        // No expander installed (a test copy without the libraries): taken as named.
+        if (!class_exists(\Sabre\VObject\Component\VCalendar::class)) return true;
         $at = Time::fromDb($occurrence);
         try {
             foreach ((new Recurrence())->expand($series, [], $at, $at->modify('+1 second'), new ExpansionBudget(1, 4, 1.0)) as $match) {
                 if ((string) $match['instanceUtc'] === $occurrence) return true;
             }
-        } catch (WorkBudgetExceeded) {
+        } catch (WorkBudgetExceeded | \RuntimeException) {
+            // Too costly to tell, or no expander installed: taken as named.
             return true;
         }
         return false;

@@ -1358,12 +1358,14 @@ check('imip mailto: prefix normalizes', $may($bound, ['organizer' => ['email' =>
 // approved-sender list already treats them as one (MailPolicy::address); the
 // organizer check must too, or the organizer's own update is refused.
 $boundIdn = ['organizer' => ['email' => 'host@bücher.example'], 'sequence' => 1, 'organizerTrust' => 'owner'];
-check('imip organizer: the punycode spelling of a Unicode organizer is the same mailbox',
-    $may($boundIdn, ['organizer' => ['email' => 'host@xn--bcher-kva.example'], 'sequence' => 2], 'host@xn--bcher-kva.example')[0]);
-check('imip organizer: the Unicode spelling of a punycode organizer is the same mailbox',
-    $may(['organizer' => ['email' => 'host@xn--bcher-kva.example']] + $boundIdn, ['organizer' => ['email' => 'Host@BÜCHER.example'], 'sequence' => 2], '')[0]);
-check('imip organizer: the sender alone in the other spelling is enough',
-    $may($boundIdn, ['organizer' => ['email' => 'relay@lists.example'], 'sequence' => 2], 'Alex Example <host@xn--bcher-kva.example>')[0]);
+if (function_exists('idn_to_ascii')) { // the two spellings meet only with intl
+    check('imip organizer: the punycode spelling of a Unicode organizer is the same mailbox',
+        $may($boundIdn, ['organizer' => ['email' => 'host@xn--bcher-kva.example'], 'sequence' => 2], 'host@xn--bcher-kva.example')[0]);
+    check('imip organizer: the Unicode spelling of a punycode organizer is the same mailbox',
+        $may(['organizer' => ['email' => 'host@xn--bcher-kva.example']] + $boundIdn, ['organizer' => ['email' => 'Host@BÜCHER.example'], 'sequence' => 2], '')[0]);
+    check('imip organizer: the sender alone in the other spelling is enough',
+        $may($boundIdn, ['organizer' => ['email' => 'relay@lists.example'], 'sequence' => 2], 'Alex Example <host@xn--bcher-kva.example>')[0]);
+}
 checkEq('imip organizer: another mailbox at the same internationalized domain is still a mismatch', 'organizer mismatch',
     $may($boundIdn, ['organizer' => ['email' => 'other@xn--bcher-kva.example'], 'sequence' => 2], 'other@bücher.example')[1]);
 checkEq('imip organizer: a near-identical punycode label is another domain, not the organizer', 'organizer mismatch',
@@ -2103,6 +2105,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // The organizer's domain spelled two ways (Unicode in one calendar's
         // mail, punycode in another's): the same mailbox, so the organizer's
         // own update is held for Review, not refused as someone else's.
+        if (function_exists('idn_to_ascii')) { // approving the Unicode spelling needs intl
         BetterCal\Domain\MailPolicy::approve($adb, 1, 'host@bücher.example', 'address');
         $idnInvite = static fn(string $uid, int $sequence, string $organizer, string $title): string =>
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:$sequence\r\nDTSTAMP:20301201T120000Z\r\nDTSTART:20301203T180000Z\r\nDTEND:20301203T190000Z\r\nSUMMARY:$title\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
@@ -2122,6 +2125,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $idnOther = $runTiersA->invoke($mailA, 1, ['messageId' => "$uid-3@example.test", 'subject' => 'Updated: Book club', 'from' => 'other@xn--bcher-kva.example',
                 'icsParts' => [$idnInvite($uid, 3, 'other@bücher.example', 'Book club, taken over')], 'html' => null, 'text' => null], 'UTC');
             checkEq("organizer in two spellings, $order: another mailbox at that domain is still refused", ['refused', 'organizer mismatch'], [$idnOther['outcome'], $idnOther['error']]);
+        }
         }
     }
 

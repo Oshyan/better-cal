@@ -403,8 +403,17 @@ export function mergeWindow(startISO, endISO, events, gen = generation) {
   // doesn't bring back its own copy.
   const newer = state.loadedRanges.filter((r) => r.gen > gen);
   const newerHas = (occ) => newer.some((r) => overlaps(occ, r.start, r.end));
-  // A local change this answer carries ends here; one it can't stays.
-  for (const [key, m] of local) if (m.until <= gen && overlaps(m, s, e)) local.delete(key);
+  // A local change this answer carries ends here; one it can't stays. It
+  // carries it where it covers the local place, or names the event
+  // anywhere (moved since, elsewhere): then its copy stands, not the local one.
+  const named = new Set(events.map(localKey));
+  for (const [key, m] of local) {
+    if (m.until > gen) continue;
+    if (named.has(key)) {
+      if (!overlaps(m, s, e)) state.occ.delete(m.instanceId);
+      local.delete(key);
+    } else if (overlaps(m, s, e)) local.delete(key);
+  }
   // Drop cached occurrences overlapping the window, then reinsert, carrying
   // fetched record fields over from the previous copy (invalidate first
   // when the refresh follows an edit of that event, see actions.js).

@@ -16,10 +16,13 @@ const BASE = '/api/v1';
 let authEpoch = 0;
 
 export class ApiError extends Error {
-  constructor(code, message, status) {
+  constructor(code, message, status, data = null) {
     super(message || code);
     this.code = code;
     this.status = status;
+    // The whole answer, for an error that carries more than its words (a
+    // series plan with series_plan_changed or series_refused).
+    this.data = data;
   }
 }
 
@@ -74,7 +77,7 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
     // files were uploaded: the app shows that instead of failing piecemeal.
     if (err.code === 'database_update_required') set({ serverState: 'database_update' });
     else if (err.code === 'maintenance') set({ serverState: 'maintenance' });
-    throw new ApiError(err.code || 'error', err.message || res.statusText, res.status);
+    throw new ApiError(err.code || 'error', err.message || res.statusText, res.status, data);
   }
   if (state.serverState) set({ serverState: null });
   if (res.headers.get('X-BetterCal-Offline') === '1' && requestEpoch === authEpoch) set({ offlineReadOnly: true });
@@ -174,6 +177,7 @@ export async function loadConfig() {
     set({ config: {
       maptilerKey: (data && data.maptilerKey) || null,
       placeSearch: (data && data.placeSearch) || null,
+      seriesPlans: !!(data && data.seriesPlans === true),
     } });
   } catch (e) { /* non-critical */ }
 }

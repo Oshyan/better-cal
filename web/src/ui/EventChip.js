@@ -86,6 +86,8 @@ function stateClasses(occ, dimmed, nowMs) {
   if (occ.isGroup) c += ' is-group';
   if (occ.isContainer) c += ' is-trip';
   if (occ.dimmed) c += ' is-filter-dimmed';
+  // Dropped and waiting for the series dialog's confirm (SeriesDialog.js).
+  if (occ.seriesPending) c += ' is-series-pending';
   // Time-relative state (from the global minute tick): ended events dim,
   // currently running events carry the gold ring.
   if (nowMs) {

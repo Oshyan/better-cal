@@ -17,6 +17,7 @@ import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
+import { openSeriesChange, seriesPlans } from './serieschange.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -444,6 +445,24 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   }
 }
 
+// A drop on a series occurrence with its scope picked (App.js): "All events"
+// waits for the series dialog (SeriesDialog.js), its block drawn pending
+// where it was dropped; "This event" and, until 1.5.1, "This and following"
+// act at once, as before.
+export function seriesDrop(kind, occ, p, scope) {
+  const act = kind === 'resize' ? resizeEvent : moveEvent;
+  // A server without series plans takes the change at once, as before 1.5.0.
+  if (scope !== 'all' || !seriesPlans()) return act({ ...p, scope });
+  openSeriesChange({
+    kind, occ,
+    body: { start: p.newStart, end: p.newEnd },
+    at: p.at ? { x: p.at.x, y: p.at.y } : null,
+    pending: { start: p.newStart, end: p.newEnd },
+    apply: (s) => act({ ...p, scope: s }),
+  });
+  return null;
+}
+
 // The calendar a new event lands on when nothing else says otherwise: the
 // default the server resolves and sends with the settings
 // (Settings::resolved). Only when the list is newer than the settings (it
@@ -558,6 +577,29 @@ export async function updateEvent(occ, fields, scope, words = null) {
       ? "This trip still has events attached. Remove the trip's events first"
       : 'Update failed: ' + e.message;
     toast(msg, { error: true });
+    return false;
+  }
+}
+
+// "Use series value" on an edited day of a series (docs/design/series-model.md,
+// Own Fields): the day gives these fields back to the series and takes its
+// values. A change to this day only: no dialog, one Undo.
+const OWN_FIELD_WORDS = {
+  date: 'date', time: 'time', length: 'length', allDay: 'all-day', title: 'title', location: 'place',
+  description: 'description', url: 'link', reminders: 'reminders', status: 'planned or maybe',
+  attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
+};
+export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
+export async function useSeriesValue(occ, names) {
+  if (!occ || !names || !names.length || !seriesPlans()) return false;
+  try {
+    const res = await api('/events/' + occ.eventId, { method: 'PATCH', body: { scope: 'this', instanceStart: occ.start, useSeries: names } });
+    toast(names.length === 1 ? "Uses the series' " + ownFieldWords(names[0]) : "Uses the series' values", { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
+    invalidateRecords(occ.eventId);
+    await refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Update failed: ' + e.message, { error: true });
     return false;
   }
 }

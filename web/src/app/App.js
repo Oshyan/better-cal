@@ -10,7 +10,7 @@ import { checkChanges } from './changecheck.js';
 import { runOwed } from './reloads.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
-  moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
+  moveEvent, resizeEvent, seriesDrop, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
   resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows, hereKey } from './actions.js';
@@ -48,6 +48,12 @@ import { MoveDialog } from './MoveToGoogle.js';
 import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
 import { ConfirmHost } from './ConfirmDialog.js';
+import { SeriesDialog } from './SeriesDialog.js';
+import { seriesPlans } from './serieschange.js';
+
+// "All events…" opens the series dialog; a server without series plans
+// takes the change at once, as before, so the chip says so.
+const seriesAllLabel = () => (seriesPlans() ? 'All events…' : 'All events');
 import { SystemBanner, WorkerBanner } from './system.js';
 import { UpdateBanner, OfflineBanner, AppReloadBanner } from './updates.js';
 import { Login } from './Login.js';
@@ -627,14 +633,16 @@ export function App() {
   // means, at the drop point. The editor keeps its own scope select.
   // A date edited on its own moves to another calendar on its own or with
   // all events, not with the following ones (#188): onlyThisOrAll.
-  const promptScopeAt = useCallback((at, cb, occ, onlyThisOrAll = false) => {
+  // "All events…" on a drag or resize opens the series dialog (SeriesDialog.js),
+  // hence its ellipsis; "This + following" keeps its old path until 1.5.1.
+  const promptScopeAt = useCallback((at, cb, occ, onlyThisOrAll = false, allLabel = 'All events') => {
     set({
       dropChoice: {
         x: at.x, y: at.y, title: occ && googleBacked(occ) ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
         options: [
           { label: 'This event', value: 'this' },
           ...(onlyThisOrAll ? [] : [{ label: 'This + following', value: 'following' }]),
-          { label: 'All events', value: 'all' },
+          { label: allLabel, value: 'all' },
           { label: 'Cancel', value: null },
         ],
         cb: (v) => { if (v) cb(v); },
@@ -658,7 +666,7 @@ export function App() {
     // Option/Alt held at the drop: a copy there, the original stays.
     if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => moveEvent({ ...p, scope }), occ); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope), occ, false, seriesAllLabel()); return; }
     moveEvent(p);
   }, [promptScopeAt]);
 
@@ -681,7 +689,7 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => resizeEvent({ ...p, scope }), occ); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope), occ, false, seriesAllLabel()); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
 
@@ -794,11 +802,12 @@ export function App() {
     exitReschedule();
     const occ = state.occ.get(instanceId);
     const land = (scope) => {
-      moveEvent({ instanceId, newStart, newEnd, scope });
+      if (scope === 'all' && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope);
+      else moveEvent({ instanceId, newStart, newEnd, scope });
       jumpToDate(targetKey, instanceId); // return the view to where the event now is
     };
     // A series asks which occurrences, at the confirm chip, like a grid drop.
-    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ); return; }
+    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ, false, seriesAllLabel()); return; }
     land(undefined);
   }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);
@@ -1181,10 +1190,10 @@ export function App() {
       onExit=${exitReschedule}
     />`}
     <${BottomBar} />
+    <${SeriesDialog} />
     <${AppBanners} /><${Toasts} /><${ConfirmHost} />
   </div>`;
 }
-
 // A tiny decision chip pinned at a drop point (trip move: with or without its
 // events). Escape or any outside press dismisses without acting.
 function DropChoiceChip({ choice }) {

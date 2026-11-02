@@ -4096,15 +4096,15 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: weekdays', said('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'), 'Every weekday');
   eq('repeat: weekends', said('FREQ=WEEKLY;BYDAY=SA,SU'), 'Every weekend');
   eq('repeat: every other week', said('FREQ=WEEKLY;INTERVAL=2;BYDAY=SA'), 'Every 2 weeks on Saturday');
-  eq('repeat: monthly on a day', said('FREQ=MONTHLY;BYMONTHDAY=15'), 'Monthly on day 15');
-  eq('repeat: monthly takes the start day', said('FREQ=MONTHLY', { start: tue }), 'Monthly on day 4');
+  eq('repeat: monthly on a day', said('FREQ=MONTHLY;BYMONTHDAY=15'), 'Monthly on the 15th');
+  eq('repeat: monthly takes the start day', said('FREQ=MONTHLY', { start: tue }), 'Monthly on the 4th');
   eq('repeat: first Monday', said('FREQ=MONTHLY;BYDAY=1MO'), 'Monthly on the first Monday');
   eq('repeat: last Friday', said('FREQ=MONTHLY;BYDAY=-1FR'), 'Monthly on the last Friday');
   eq('repeat: last day', said('FREQ=MONTHLY;BYMONTHDAY=-1'), 'Monthly on the last day');
   eq('repeat: last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), 'Monthly on the last weekday');
   eq('repeat: first and third Monday', said('FREQ=MONTHLY;BYDAY=1MO,3MO'), 'Monthly on the first and third Monday');
   eq('repeat: nth days that differ', said('FREQ=MONTHLY;BYDAY=1MO,-1FR'), 'Monthly on the first Monday and last Friday');
-  eq('repeat: two days of the month', said('FREQ=MONTHLY;BYMONTHDAY=1,15'), 'Monthly on day 1 and 15');
+  eq('repeat: two days of the month', said('FREQ=MONTHLY;BYMONTHDAY=1,15'), 'Monthly on the 1st and 15th');
   eq('repeat: first and last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1'), 'Monthly on the first and last weekday');
   eq('repeat: a last day in a list cannot be said', said('FREQ=MONTHLY;BYMONTHDAY=1,-1'), null);
   eq('repeat: quarterly', said('FREQ=MONTHLY;INTERVAL=3'), 'Every 3 months');
@@ -4112,7 +4112,26 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: count', said('FREQ=WEEKLY;BYDAY=SU;COUNT=10'), 'Weekly on Sunday, 10 times');
   assert('repeat: until', /^Weekly on Tuesday, until /.test(said('FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215')));
   eq('repeat: ends left out on request', said('FREQ=WEEKLY;BYDAY=TU;COUNT=3', { ends: false }), 'Weekly on Tuesday');
-  eq('repeat: a rule it cannot say', said('FREQ=YEARLY;BYMONTH=3;BYDAY=2SU'), null);
+  eq('repeat: a rule it cannot say', said('FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO'), null);
+  // The series sentences (docs/design/series-model-examples.md), 1.5.0.
+  eq('repeat: the 30th, or the last day', said('FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1'), 'Monthly on the 30th, or the last day in shorter months');
+  eq('repeat: the clamped 29th', said('FREQ=MONTHLY;BYMONTHDAY=28,29;BYSETPOS=-1'), 'Monthly on the 29th, or the last day in shorter months');
+  eq('repeat: the clamped form, short', said('FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', { short: true }), 'Monthly on the 30th, or the last day');
+  eq('repeat: a clamp it does not know', said('FREQ=MONTHLY;BYMONTHDAY=27,30;BYSETPOS=-1'), null);
+  eq('repeat: every 31st skips months', said('FREQ=MONTHLY;BYMONTHDAY=31'), 'Monthly on the 31st, skipping months without one');
+  eq('repeat: a bare rule from the 30th', said('FREQ=MONTHLY', { start: new Date(2027, 0, 30) }), 'Monthly on the 30th, skipping months without one');
+  eq('repeat: the second-last day', said('FREQ=MONTHLY;BYMONTHDAY=-2'), 'Monthly on the second-last day');
+  eq('repeat: the seventh-last day', said('FREQ=MONTHLY;BYMONTHDAY=-7'), 'Monthly on the seventh-last day');
+  eq('repeat: past the seventh-last, no words', said('FREQ=MONTHLY;BYMONTHDAY=-8'), null);
+  eq('repeat: ordinals', [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 31].map((n) => said('FREQ=MONTHLY;BYMONTHDAY=' + n).replace('Monthly on the ', '').replace(', skipping months without one', '')),
+    ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '23rd', '31st']);
+  eq('repeat: yearly nth weekday of a month', said('FREQ=YEARLY;BYMONTH=3;BYDAY=2SU'), 'Yearly on the second Sunday of March');
+  eq('repeat: yearly on 29 February', said('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29'), 'Yearly on 29 February, only in leap years');
+  eq('repeat: yearly on the last day of February', said('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1'), 'Yearly on the last day of February');
+  eq('repeat: yearly on two months', said('FREQ=YEARLY;BYMONTH=3,9;BYDAY=2TU'), 'Yearly on the second Tuesday of March and September');
+  assert('repeat: yearly on a month and day', /^Yearly on (Mar 15|15 Mar)$/.test(said('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15')));
+  eq('repeat: BYMONTH outside a yearly rule is not said', said('FREQ=WEEKLY;BYMONTH=3;BYDAY=MO'), null);
+  eq('presets: day 30 says it skips', repeatPresets(new Date(2027, 2, 30)).find((p) => p.key === 'monthly-day').label, 'Monthly on the 30th, skipping months without one');
   eq('repeat: hourly is not ours', describable('FREQ=HOURLY'), false);
   eq('repeat: the sentence', repeatSentence('FREQ=WEEKLY;BYDAY=MO'), 'Repeats weekly on Monday');
   eq('repeat: the sentence falls back', repeatSentence('FREQ=YEARLY;BYWEEKNO=20'), 'Repeats');
@@ -4476,6 +4495,502 @@ console.log('--- update notices (#194) ---');
     'A Better-Cal security update is required. Update to 1.5.1 or newer.');
   eq('updates: not checked yet', updateStatusText({ ...current, checkedAt: null }), 'Not checked yet');
   assert('updates: the by-hand link goes to the Updating section', /docs\/install\.md#updating$/.test(INSTALL_UPDATING_URL));
+}
+
+console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---');
+{
+  const { planView, planDate, commitPlan, creationLine, ruleLine } = await import('../src/lib/seriesplan.js');
+  const LA = 'America/Los_Angeles';
+  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', tz: LA, refYear: 2027, ...extra });
+  // "A Plan as JSON" in docs/design/series-model-examples.md, as written there.
+  const choir = {
+    hash: '9f2c41d07a', scope: 'all', direct: false,
+    rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Wednesday at 19:00' },
+    start: '2027-01-06T19:00:00-08:00',
+    bound: { kind: 'none', words: 'No end, as before' },
+    next: [{ start: '2027-03-10T19:00:00-08:00', kind: 'acted' }, { start: '2027-03-17T19:00:00-07:00', kind: 'occurrence' },
+      { start: '2027-03-26T19:00:00-07:00', kind: 'edited', words: 'its own date' }, { start: '2027-04-07T19:00:00-07:00', kind: 'occurrence' }],
+    groups: [{ id: 'movedDays', label: 'Days moved on their own', selected: 'keep', options: [{ id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' }] }],
+    days: [
+      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', words: "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place" },
+      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', outcome: 'stays', words: 'Tue 23 Mar, moved to Fri 26 Mar: stays there' },
+      { key: '2027-03-31T02:00:00Z', newKey: '2027-04-01T02:00:00Z', kind: 'skipped', outcome: 'moves' },
+    ],
+    losses: [], gains: [], refusals: [], notes: [],
+    summary: 'Moved Choir (all events): weekly on Tuesday, now Wednesday, from 6 Jan.',
+  };
+  const v = planView(choir, ctx());
+  eq('series dialog: the heading names the action and the series', v.heading, 'Move all events · Choir');
+  eq('series dialog: the rule before and after on one line', v.rule, 'Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00');
+  eq('series dialog: the bound beside it', v.bound, 'No end, as before');
+  eq('series dialog: the next four, the edited day marked', v.next, 'Wed 10 Mar · Wed 17 Mar · Fri 26 Mar (its own date) · Wed 7 Apr');
+  eq('series dialog: edited days in the plan\'s words', v.edited.map((d) => d.words),
+    ["'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place", 'Tue 23 Mar, moved to Fri 26 Mar: stays there']);
+  eq('series dialog: a skipped day without words reads by its key, in the series\' zone', v.skipped, '30 Mar moves to 31 Mar');
+  eq('series dialog: a choice that isn\'t a reading sits on a line of its own', v.choices.map((g) => [g.label, g.options.map((o) => [o.label, o.selected])]),
+    [['Days moved on their own', [['Keep Fri 26 Mar', true], ['Move to Sat 27 Mar', false]]]]);
+  eq('series dialog: no readings, nothing refused, and it can be confirmed', [v.readings.length, v.refused, v.canConfirm, v.action], [0, null, true, 'Move all events']);
+  eq('series dialog: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
+  eq('series dialog: a pick goes into the commit', commitPlan(choir, { movedDays: 'move' }).choices, { movedDays: 'move' });
+  eq('series dialog: a pick that is no option is the plan\'s', commitPlan(choir, { movedDays: 'nowhere' }).choices, { movedDays: 'keep' });
+  const onDay = planView({ ...choir, groups: [{ ...choir.groups[0], day: '2027-03-24T02:00:00Z' }] }, ctx());
+  eq('series dialog: a choice for one day sits on that day\'s line', [onDay.choices.length, onDay.edited[1].choice && onDay.edited[1].choice.options.map((o) => o.label)],
+    [0, ['Keep Fri 26 Mar', 'Move to Sat 27 Mar']]);
+  const waiting = planView(null, ctx());
+  eq('series dialog: before the plan, only what the client knows, and no confirm', [waiting.heading, waiting.loading, waiting.canConfirm], ['Move all events · Choir', true, false]);
+  eq('series dialog: a plan without a hash can\'t be confirmed', planView({ ...choir, hash: '' }, ctx()).canConfirm, false);
+
+  // Lists: "Gym", Wed 10 Mar dragged to Thu 11 Mar, then to Fri 12 Mar.
+  const gymNext = (days) => days.map((d) => '2027-03-' + d + 'T07:00:00-0' + (Number(d) >= 14 ? '7' : '8') + ':00');
+  const gym = {
+    hash: 'a1', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', after: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', wordsBefore: 'Weekly on Monday, Wednesday and Friday at 07:00', words: 'Weekly on Monday, Thursday and Friday at 07:00' },
+    bound: { words: 'No end, as before' },
+    groups: [{ id: 'rule', label: 'How the rule reads', selected: 'member', options: [
+      { id: 'member', label: 'Move every Wednesday to Thursday: Monday, Thursday and Friday', next: gymNext(['11', '12', '15']) },
+      { id: 'pattern', label: 'Shift the whole weekly pattern: Tuesday, Thursday and Saturday', next: gymNext(['11', '13', '16']) },
+    ] }],
+    days: [], refusals: [],
+  };
+  const g = planView(gym, ctx({ title: 'Gym' }));
+  eq('series dialog: list readings, preselected first, each with its dates', g.readings[0].options.map((o) => [o.label, o.dates, o.selected]), [
+    ['Move every Wednesday to Thursday: Monday, Thursday and Friday', 'Thu 11 Mar · Fri 12 Mar · Mon 15 Mar', true],
+    ['Shift the whole weekly pattern: Tuesday, Thursday and Saturday', 'Thu 11 Mar · Sat 13 Mar · Tue 16 Mar', false],
+  ]);
+  const toFri = {
+    ...gym,
+    groups: [{ ...gym.groups[0], selected: 'pattern', options: [{ id: 'member', label: 'Move every Wednesday to Friday', next: [] }, { id: 'pattern', label: 'Shift the whole weekly pattern: Wednesday, Friday and Sunday', next: gymNext(['12', '14', '17']) }] }],
+    refusals: [{ group: 'rule', option: 'member', words: 'Friday is already one of its days' }],
+  };
+  const f = planView(toFri, ctx({ title: 'Gym' }));
+  eq('series dialog: a refused reading is a disabled row with its reason, the rest stands', [f.readings[0].options[0].disabled, f.readings[0].options[0].reason, f.refused, f.canConfirm], [true, 'Friday is already one of its days', null, true]);
+  eq('series dialog: a refused reading can\'t be picked into the commit', commitPlan(toFri, { rule: 'member' }).choices, { rule: 'pattern' });
+
+  // Month ends, monthly dates read without the weekday: "Book club".
+  const bookClub = {
+    hash: 'b1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=15', after: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', wordsBefore: 'Monthly on the 15th at 19:00', words: 'Monthly on the 30th, or the last day in shorter months at 19:00' },
+    groups: [{ id: 'monthEnd', label: 'Which 30th', selected: 'clamped', options: [
+      { id: 'clamped', label: 'On the 30th, or the last day in shorter months', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: 'in February: 28 Feb, and 29 Feb 2028' } },
+      { id: 'skip', label: 'On the 30th, skipping months without one', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: "none in February: drops 15 Feb's event, then every February" } },
+    ] }],
+  };
+  eq('series dialog: month-end readings as the examples write them', planView(bookClub, ctx({ title: 'Book club' })).readings[0].options.map((o) => o.label + '   ' + o.dates + '   ' + o.note), [
+    'On the 30th, or the last day in shorter months   30 Mar · 30 Apr · 30 May   in February: 28 Feb, and 29 Feb 2028',
+    "On the 30th, skipping months without one   30 Mar · 30 Apr · 30 May   none in February: drops 15 Feb's event, then every February",
+  ]);
+  const leap = {
+    hash: 'c1', rule: { after: 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' },
+    groups: [{ id: 'feb29', selected: 'last', options: [
+      { id: 'last', label: 'On the last day of February', next: ['2028-02-29', '2029-02-28', '2030-02-28'] },
+      { id: 'leap', label: 'On 29 February, only in leap years', next: ['2028-02-29', '2032-02-29', '2036-02-29'], words: 'drops three years in four' },
+    ] }],
+  };
+  eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.note ? '   ' + o.note : '')),
+    ['29 Feb 2028 · 28 Feb 2029 · 28 Feb 2030', '29 Feb 2028 · 29 Feb 2032 · 29 Feb 2036   drops three years in four']);
+
+  // A count: "Piano lesson with Alex Example", the bound as a reading group.
+  const firsts = ['02', '03', '04', '05', '06', '07'].map((m) => '2027-' + m + '-01T16:00:00-0' + (m === '02' ? '8' : '7') + ':00');
+  const piano = {
+    hash: 'd1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
+    bound: { words: '6 in the series + 1 separate' },
+    groups: [
+      { id: 'bound', label: 'Bound', selected: 'count', options: [
+        { id: 'count', label: 'Keep 6 events', next: firsts, bound: { words: 'ends 1 Jul (was 31 Oct)' } },
+        { id: 'end', label: 'Keep the end', next: firsts.slice(0, 3), words: 'Changes 6 events to 10, 1 Feb to 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct; the recital moves with its event to 1 Nov' },
+      ] },
+      { id: 'outside', label: 'After the new end', day: '2027-11-01T00:00:00Z', selected: 'own', options: [{ id: 'own', label: 'Keep it as an event of its own' }, { id: 'delete', label: 'Delete it' }] },
+    ],
+    days: [{ key: '2027-11-01T00:00:00Z', kind: 'edited', outcome: 'outside', words: "After the new end: 'Recital at Sample Hall' 31 Oct" }],
+  };
+  const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
+  eq('series dialog: a count, the rule and its total', [p.rule, p.bound], ['Monthly on the 31st at 16:00, now monthly on the 1st', '6 in the series + 1 separate']);
+  eq('series dialog: keep 6 events with its dates and end', [p.readings[0].options[0].dates, p.readings[0].options[0].note],
+    ['1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'ends 1 Jul (was 31 Oct)']);
+  eq('series dialog: the day after the end carries its own choice', [p.edited[0].words, p.edited[0].choice.options.map((o) => o.label)],
+    ["After the new end: 'Recital at Sample Hall' 31 Oct", ['Keep it as an event of its own', 'Delete it']]);
+  eq('series dialog: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { bound: 'count', outside: 'delete' });
+
+  // The examples after the fourth review (6258688): labels, order and the
+  // preselection are the plan's. "Cello lesson", 31 Oct dragged to 1 Nov:
+  // keep the end comes first.
+  const cello = {
+    hash: 'k1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
+    bound: { words: 'Changes 6 events to 10, ends 1 Nov' },
+    groups: [{ id: 'bound', label: 'Bound', selected: 'end', options: [
+      { id: 'end', label: 'Keep the end', words: 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct' },
+      { id: 'count', label: 'Keep 6 events + this one on its own', next: firsts, words: 'and 1 Nov separately', bound: { words: '6 in the series + 1 separate' } },
+    ] }],
+  };
+  const c = planView(cello, ctx({ title: 'Cello lesson' }));
+  eq('series dialog: a count that would split off the dragged day, keep the end first and preselected', c.readings[0].options.map((o) => [o.label, o.selected, o.dates, o.note]), [
+    ['Keep the end', true, '', 'Changes 6 events to 10, ends 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct'],
+    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'and 1 Nov separately; 6 in the series + 1 separate'],
+  ]);
+  eq('series dialog: the bound line for it', c.bound, 'Changes 6 events to 10, ends 1 Nov');
+  eq('series dialog: Enter takes the plan\'s preselection', commitPlan(cello, {}).choices, { bound: 'end' });
+
+  // "Pottery", Mondays moved to Fridays: an edge gain left out by default,
+  // its rows with their bound lines and no dates of their own.
+  const potteryGroup = (bounds) => ({ id: 'edge', label: 'First week', selected: 'without', options: [
+    { id: 'without', label: "Don't add Fri 8 Jan", bound: { words: bounds[0] } },
+    { id: 'add', label: 'Add Fri 8 Jan', bound: { words: bounds[1] } },
+  ] });
+  const pottery = {
+    hash: 'p2', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', after: 'FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', wordsBefore: 'Weekly on Monday and Wednesday at 18:00', words: 'Weekly on Wednesday and Friday at 18:00' },
+    bound: { words: '5 events, ends 22 Jan (was 20 Jan)' },
+    groups: [potteryGroup(['5 events, ends 22 Jan (was 20 Jan)', "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"])],
+    days: [{ key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' }],
+  };
+  const pv = planView(pottery, ctx({ title: 'Pottery' }));
+  eq('series dialog: an edge gain left out, preselected, with each choice\'s bound', [pv.readings[0].showLabel && pv.readings[0].label, pv.readings[0].options.map((o) => [o.label, o.selected, o.note])], ['First week', [
+    ["Don't add Fri 8 Jan", true, '5 events, ends 22 Jan (was 20 Jan)'],
+    ['Add Fri 8 Jan', false, "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"],
+  ]]);
+  eq('series dialog: the generated skip is listed with the skipped days', pv.skipped, 'Fri 8 Jan skipped, so the series starts as before');
+  // Case 7, a day already skipped: the count's line names it.
+  const skippedBefore = {
+    ...pottery, hash: 'p3',
+    bound: { words: '5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)' },
+    groups: [potteryGroup(['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place'])],
+    days: [
+      { key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' },
+      { key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'stays', words: '13 Jan stays skipped' },
+    ],
+  };
+  const sb = planView(skippedBefore, ctx({ title: 'Pottery' }));
+  eq('series dialog: a count with an earlier skip says so', [sb.bound, sb.readings[0].options.map((o) => o.note)], ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)',
+    ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place']]);
+  eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
+  eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
+
+  // Google, until 1.5.2: the rule-changing drag refused, the time change noted.
+  const googleWords = 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.';
+  const gRefused = planView({ hash: 'e1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE' }, refusals: [{ code: 'google_rule', words: googleWords }] }, ctx());
+  eq('series dialog: a refused change shows its reason in place of the rule, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm], [googleWords, false]);
+  const gTime = planView({
+    hash: 'e2', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', line: 'Weekly on Tuesday, now at 19:30', words: 'Weekly on Tuesday at 19:30' },
+    notes: [{ kind: 'google', words: "Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone." }],
+  }, ctx({ kind: 'resize' }));
+  eq('series dialog: what is still possible on Google, with its notice', [gTime.heading, gTime.rule, gTime.notes, gTime.edited, gTime.canConfirm],
+    ['Change all events · Choir', 'Weekly on Tuesday, now at 19:30', ["Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone."], [], true]);
+
+  // An editor save: the rule as before, the fields changed, an own title.
+  const save = planView({
+    hash: 'f1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Tuesday at 19:00' },
+    bound: { words: 'No end, as before' },
+    groups: [{ id: 'ownTitle', label: "'Rehearsal' Tue 13 Apr keeps its own title", selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }],
+  }, ctx({ kind: 'editor', fields: [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }] }));
+  eq('series dialog: an editor save names its fields, the rule as before', [save.heading, save.fields.map((x) => x.label + ' ' + x.words), save.rule, save.action], [
+    'Save for all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Save for all events']);
+  eq('series dialog: the own title\'s choice', save.choices.map((c) => c.label), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
+  // As the server writes them: {field, words} with the label in the words.
+  eq('series dialog: the server\'s field lines put their label in its column', planView({ hash: 'f2', fields: [{ field: 'title', words: 'Title: Choir, now Chorus' }, { field: 'reminders', words: 'Reminder: 1 hour before, now 30 minutes' }] }, ctx({ kind: 'editor' })).fields,
+    [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
+  eq('series dialog: the dragged day has a line only when it doesn\'t just move', planView({ hash: 'a2', days: [
+    { key: '2027-03-10T03:00:00Z', kind: 'acted', outcome: 'moves', words: 'Tue 9 Mar moves to Wed 10 Mar' },
+    { key: '2027-11-01T23:00:00Z', kind: 'acted', outcome: 'separate', words: 'Mon 1 Nov stays as an event of its own' },
+  ] }, ctx()).edited.map((d) => d.words), ['Mon 1 Nov stays as an event of its own']);
+  eq('series dialog: a start moved for another reason says why', planView({ hash: 'g', start: { at: '2027-01-15', words: 'Starts Fri 15 Jan, the first 15th (was 1 Jan)' } }, ctx()).start, 'Starts Fri 15 Jan, the first 15th (was 1 Jan)');
+  eq('series dialog: gains and losses named', [planView({ hash: 'h', gains: [{ words: 'adds every February, which had no 30th' }] }, ctx()).gains], ['Adds every February, which had no 30th']);
+  eq('series dialog: a series that changed meanwhile says so', planView(choir, ctx({ changed: true })).changed, true);
+  eq('series dialog: the following scope names its own action', planView(null, ctx({ scope: 'following' })).action, 'Move this and following');
+  eq('series dialog: a rule line from the server is used as it is', ruleLine({ line: 'Monthly on the 1st and 15th, now on the 15th and 20th' }), 'Monthly on the 1st and 15th, now on the 15th and 20th');
+  eq('plan dates: weekday, month, and the year only when it isn\'t this one', [planDate('2027-03-10T19:00:00-08:00', { refYear: 2027 }), planDate('2028-02-29', { weekday: false, refYear: 2027 }), planDate('2027-04-14T02:00:00Z', { tz: LA, refYear: 2027 })],
+    ['Wed 10 Mar', '29 Feb 2028', 'Tue 13 Apr']);
+
+  // Creating a series: quick add's line and the editor's Repeat row.
+  const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
+  eq('creation line: the rule, the first three dates, the bound', creationLine(created, { typedStart: '2027-01-30', refYear: 2027 }), { line: 'Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar · 6 events', moved: '' });
+  eq('creation line: a start moved to the rule\'s first day says so', creationLine({ ...created, start: '2027-03-02T09:00:00-08:00', startWords: 'Starts Tue 2 Mar, the first Tuesday on or after the date you typed' }, { typedStart: '2027-02-27', refYear: 2027 }).moved,
+    'Starts Tue 2 Mar, the first Tuesday on or after the date you typed');
+  eq('creation line: without the server\'s words, a plain one', creationLine({ ...created, start: '2027-03-02T09:00:00-08:00' }, { typedStart: '2027-02-27', refYear: 2027 }).moved,
+    'Starts Tue 2 Mar, its first day on or after the date you typed');
+  eq('creation line: none without a plan', creationLine(null), null);
+  const { parsedSeries } = await import('../src/lib/seriesplan.js');
+  const draft = { title: 'Sample book club', start: '2027-01-30T19:00:00-08:00', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1;COUNT=6', series: created };
+  const range = { start: '2027-01-30T19:00:00-08:00', end: '2027-01-30T21:00:00-08:00' };
+  eq('quick add: the parse\'s own plan while the repeat and date are the parse\'s', parsedSeries(draft, draft.rrule, range), created);
+  eq('quick add: and its words under the chips', creationLine(parsedSeries(draft, draft.rrule, range), { typedStart: range.start, refYear: 2027 }).line,
+    'Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar · 6 events');
+  eq('quick add: a repeat picked from the menu asks for a new plan', parsedSeries(draft, 'FREQ=MONTHLY;BYMONTHDAY=30', range), null);
+  eq('quick add: so does a new date', parsedSeries(draft, draft.rrule, { ...range, start: '2027-02-01T19:00:00-08:00' }), null);
+  eq('quick add: no plan in the parse, none to show', parsedSeries({ ...draft, series: undefined }, draft.rrule, range), null);
+}
+
+console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { seriesDrop } = await import('../src/app/actions.js');
+  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, setSeriesScope } = await import('../src/app/serieschange.js');
+  const { planView } = await import('../src/lib/seriesplan.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const sent = [];
+  let answer = null; // (body) => Response for PATCH /events/41
+  globalThis.fetch = async (url, o = {}) => {
+    const u = new URL(String(url), 'http://app.test');
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/events/41' && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      sent.push(body);
+      return answer(body);
+    }
+    if (p === '/changes/cursor') return json({ cursor: 's1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  let n = 0;
+  const occ = {
+    instanceId: '41@0', eventId: 41, calendarId: 3, title: 'Sample choir', recurring: true, rrule: 'FREQ=WEEKLY;BYDAY=TU',
+    tzid: 'America/Los_Angeles', start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00', allDay: false,
+  };
+  const reset = () => {
+    put({ config: { ...st.config, seriesPlans: true }, seriesChange: null, calendars: [{ id: 3, name: 'Sample', provider: null, editable: true }], loadedRanges: [], visibleDays: null, popover: null, editor: null });
+    st.occ.clear();
+    // A fresh occurrence each time: a landed save holds its own until an answer carries it.
+    occ.instanceId = '41@' + ++n;
+    drop.instanceId = occ.instanceId;
+    st.occ.set(occ.instanceId, { ...occ });
+    sent.length = 0;
+  };
+  const drop = { instanceId: occ.instanceId, newStart: '2027-03-10T19:00:00-08:00', newEnd: '2027-03-10T20:30:00-08:00', at: { x: 300, y: 200 } };
+  const groupPlan = (hash, selected = 'member') => ({
+    hash, direct: false,
+    rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', after: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', wordsBefore: 'Weekly on Monday, Wednesday and Friday at 07:00', words: 'Weekly on Monday, Thursday and Friday at 07:00' },
+    groups: [{ id: 'rule', selected, options: [
+      { id: 'member', label: 'Move every Wednesday to Thursday', next: ['2027-03-11T07:00:00-08:00'] },
+      { id: 'pattern', label: 'Shift the whole weekly pattern', next: ['2027-03-11T07:00:00-08:00'] },
+    ] }],
+    days: [], refusals: [], notes: [],
+  });
+
+  // 1. All events: the dialog opens at once, the block pending where dropped,
+  // and the preview is the drag's fields with preview: true.
+  reset();
+  let gate;
+  answer = (body) => (body.preview ? new Promise((r) => { gate = () => r(json({ plan: groupPlan('h1') })); }) : json({ ok: true }));
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  const shown = () => st.occ.get(occ.instanceId);
+  eq('series drag: the block waits where it was dropped, drawn pending', [shown().start, shown().seriesPending], [drop.newStart, true]);
+  eq('series drag: the dialog is up, working out the plan, confirm off', [st.seriesChange && st.seriesChange.status, planView(st.seriesChange.plan, {}).canConfirm], ['loading', false]);
+  eq('series drag: the preview asks with the drag\'s fields', sent[0], { start: drop.newStart, end: drop.newEnd, scope: 'all', instanceStart: occ.start, preview: true });
+  eq('series drag: confirm before the plan sends nothing', [await confirmSeriesChange(), sent.length], [false, 1]);
+  gate();
+  await tick();
+  eq('series drag: the plan arrives and the dialog is ready', [st.seriesChange.status, st.seriesChange.plan.hash], ['ready', 'h1']);
+
+  // 2. Picking another reading asks again with the choice.
+  answer = (body) => json({ plan: groupPlan('h2', body.plan && body.plan.choices.rule) });
+  pickSeriesOption('rule', 'pattern');
+  eq('series drag: a pick asks for the plan again, confirm off meanwhile', st.seriesChange.status, 'refreshing');
+  await tick();
+  eq('series drag: the new preview carries the pick', sent[1].plan, { choices: { rule: 'pattern' } });
+  eq('series drag: and the plan follows it', [st.seriesChange.plan.hash, st.seriesChange.status], ['h2', 'ready']);
+
+  // 3. The series changed meanwhile: 409 with the new plan, asked again.
+  answer = (body) => (body.plan && body.plan.hash === 'h2'
+    ? json({ error: { code: 'series_plan_changed', message: 'The series changed', plan: groupPlan('h3', 'pattern') } }, 409)
+    : json({ ok: true }));
+  await confirmSeriesChange();
+  eq('series drag: the commit names the hash and every group', sent[2].plan, { hash: 'h2', choices: { rule: 'pattern' } });
+  eq('series drag: a stale hash brings the new plan and asks again', [st.seriesChange && st.seriesChange.plan.hash, st.seriesChange && st.seriesChange.changed, shown().seriesPending], ['h3', true, true]);
+  eq('series drag: the dialog says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, true);
+  const toastsBefore = st.toasts.length;
+  await confirmSeriesChange();
+  await tick();
+  eq('series drag: the commit with the new hash lands', [sent[3].plan.hash, st.seriesChange], ['h3', null]);
+  eq('series drag: the block is drawn solid where it was dropped', [shown().start, !!shown().seriesPending], [drop.newStart, false]);
+  eq('series drag: the toast stays short', st.toasts.slice(toastsBefore).map((t) => [t.title, t.text]), [['Sample choir', 'Moved all events']]);
+  answer = () => json({ plan: groupPlan('h9') });
+  seriesDrop('drag', shown(), { ...drop, newStart: '2027-03-11T19:00:00-08:00', newEnd: '2027-03-11T20:30:00-08:00' }, 'all');
+  await tick();
+  cancelSeriesChange();
+  eq('series drag: a second drag cancelled before the refresh goes back to the landed one, solid', [shown().start, !!shown().seriesPending], [drop.newStart, false]);
+
+  // 4. Cancel puts the block back and sends nothing more.
+  reset();
+  answer = () => json({ plan: groupPlan('h4') });
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  cancelSeriesChange();
+  eq('series drag: cancel puts the block back, nothing written', [shown().start, !!shown().seriesPending, st.seriesChange, sent.length], [occ.start, false, null, 1]);
+
+  // 5. Refused: the reasons, no confirm, nothing written.
+  reset();
+  const refusal = 'This repeat came from another app and counts weeks of the year, so its days can\'t follow a drag. Move only this one, or open the series to choose its days.';
+  answer = () => json({ error: { code: 'series_refused', message: 'Refused', plan: { hash: 'r1', refusals: [{ code: 'byweekno', words: refusal }] } } }, 422);
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  const refusedView = planView(st.seriesChange.plan, {});
+  eq('series drag: a refusal shows its reason, with no confirm', [refusedView.refused, refusedView.canConfirm], [refusal, false]);
+  eq('series drag: and confirm sends nothing', [await confirmSeriesChange(), sent.length], [false, 1]);
+
+  // 6. "Only this one" from the dialog: the old path with scope this.
+  answer = (body) => json({ ok: true, scope: body.scope });
+  onlyThisOne();
+  await tick();
+  eq('series drag: only this one moves the one day', [st.seriesChange, sent[1].scope, sent[1].plan, sent[1].preview, shown().start], [null, 'this', undefined, undefined, drop.newStart]);
+
+  // 7. Any other error: the block goes back with the error toast.
+  reset();
+  answer = () => json({ error: { code: 'server', message: 'Down for a moment' } }, 500);
+  const before7 = st.toasts.length;
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  eq('series drag: a failed preview puts the block back and says why', [st.seriesChange, shown().start, st.toasts.slice(before7).map((t) => t.text)], [null, occ.start, ['Move failed: Down for a moment']]);
+
+  // 8. "This event" acts at once, as before, with no dialog; resize the same way.
+  reset();
+  answer = () => json({ ok: true });
+  await seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'this');
+  eq('series drag: this event moves at once', [st.seriesChange, sent.length, sent[0].scope, sent[0].preview], [null, 1, 'this', undefined]);
+  reset();
+  answer = (body) => (body.preview ? json({ plan: { ...groupPlan('z1'), groups: [] } }) : json({ ok: true }));
+  seriesDrop('resize', st.occ.get(occ.instanceId), { ...drop, newStart: occ.start }, 'all');
+  await tick();
+  eq('series resize: through the dialog too, named for what it does', [st.seriesChange.kind, planView(st.seriesChange.plan, { kind: 'resize' }).action, sent[0].preview], ['resize', 'Change all events', true]);
+  // "This and following" in the dialog keeps its old path until 1.5.1, on Confirm.
+  setSeriesScope('following');
+  await confirmSeriesChange();
+  await tick();
+  eq('series resize: this and following from the switch goes the old way', [st.seriesChange, sent[1].scope, sent[1].plan], [null, 'following', undefined]);
+
+  put({ seriesChange: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+console.log('--- the editor\'s save: only what changed (#199), all events through the plan (1.5.0) ---');
+{
+  const { changedFields, fieldLines } = await import('../src/lib/editfields.js');
+  const was = {
+    title: 'Sample choir', calendarId: 3, start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00', allDay: false,
+    location: 'Sample Hall', locationLat: 1, locationLng: 2, url: null, description: null, tagNames: ['music'], personIds: [5],
+    rrule: 'FREQ=WEEKLY;BYDAY=TU',
+  };
+  eq('editor payload: a rename sends the title alone, no rule', changedFields({ ...was, title: 'Sample chorus' }, was), { title: 'Sample chorus' });
+  eq('editor payload: a rule built differently but untouched is not sent', changedFields({ ...was, rrule: 'FREQ=WEEKLY;INTERVAL=1;BYDAY=TU' }, was), {});
+  eq('editor payload: the repeat controls touched send the rule', changedFields({ ...was, rrule: 'FREQ=WEEKLY;BYDAY=WE' }, was, { rruleTouched: true }), { rrule: 'FREQ=WEEKLY;BYDAY=WE' });
+  eq('editor payload: a new end time sends the whole time', changedFields({ ...was, end: '2027-03-09T21:00:00-08:00' }, was),
+    { end: '2027-03-09T21:00:00-08:00', start: was.start, allDay: false });
+  eq('editor payload: a zone picked sends the time with it', Object.keys(changedFields({ ...was, tzid: 'Europe/Berlin' }, was)), ['tzid', 'start', 'end', 'allDay']);
+  eq('editor payload: a new place sends its coordinates too', changedFields({ ...was, location: 'Sample Annex', locationLat: null, locationLng: null }, was),
+    { location: 'Sample Annex', locationLat: null, locationLng: null });
+  eq('editor payload: tags by value, not by reference', changedFields({ ...was, tagNames: ['music'] }, was), {});
+  eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }, {
+    reminderWords: (l) => l.map((m) => (m === 60 ? '1 hour before' : m + ' minutes')).join(', '),
+  }), [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
+
+  const realFetch = globalThis.fetch;
+  const { openSeriesChange, confirmSeriesChange } = await import('../src/app/serieschange.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const sent = [];
+  let plan = null;
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p === '/events/52' && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      sent.push(body);
+      return body.preview ? json({ plan }) : json({ ok: true });
+    }
+    if (p === '/changes/cursor') return json({ cursor: 'e1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  put({ config: { ...st.config, seriesPlans: true }, seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  const occ = { instanceId: '52@1', eventId: 52, calendarId: 3, title: 'Sample choir', recurring: true, start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00' };
+  let closed = 0;
+  // Direct: a rename no edited day owns. Previewed, then committed at once, no dialog.
+  plan = { hash: 'd1', direct: true, groups: [], refusals: [] };
+  openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+  eq('editor save: while the plan is asked for, the dialog stays hidden', [st.seriesChange && st.seriesChange.hidden], [true]);
+  await tick();
+  eq('editor save, direct: previewed with only the title, then committed with its hash', sent.map((b) => [b.title, b.rrule, b.preview, b.plan]),
+    [['Sample chorus', undefined, true, undefined], ['Sample chorus', undefined, undefined, { hash: 'd1', choices: {} }]]);
+  eq('editor save, direct: no dialog, and the editor closes', [st.seriesChange, closed], [null, 1]);
+  // Not direct: an edited day owns its title, so the dialog opens over the footer.
+  sent.length = 0;
+  plan = { hash: 'n1', direct: false, groups: [{ id: 'ownTitle', selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }], refusals: [] };
+  openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+  await tick();
+  eq('editor save, previewed: the dialog opens with the plan, nothing written', [st.seriesChange && st.seriesChange.hidden, st.seriesChange && st.seriesChange.status, sent.length, closed], [false, 'ready', 1, 1]);
+  await confirmSeriesChange();
+  await tick();
+  eq('editor save, previewed: Confirm saves with the choice and closes the editor', [sent[1].plan, st.seriesChange, closed], [{ hash: 'n1', choices: { ownTitle: 'keep' } }, null, 2]);
+  globalThis.fetch = realFetch;
+}
+
+console.log('--- series plans only where the server says so (/config seriesPlans) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { loadConfig } = await import('../src/app/api.js');
+  const { seriesDrop, useSeriesValue } = await import('../src/app/actions.js');
+  const { openSeriesChange, seriesPlans } = await import('../src/app/serieschange.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  let config = {};
+  const sent = [];
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p === '/config') return json(config);
+    if (p === '/events/63' && o.method === 'PATCH') { sent.push(JSON.parse(o.body)); return json({ ok: true }); }
+    if (p === '/changes/cursor') return json({ cursor: 'g1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  const occ = { instanceId: '63@1', eventId: 63, calendarId: 3, title: 'Sample swim', recurring: true, isException: true, ownFields: ['title'], start: '2027-01-11T07:00:00-08:00', end: '2027-01-11T08:00:00-08:00' };
+  const drop = { instanceId: occ.instanceId, newStart: '2027-01-15T07:00:00-08:00', newEnd: '2027-01-15T08:00:00-08:00', at: { x: 10, y: 10 } };
+  put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  st.occ.clear();
+  st.occ.set(occ.instanceId, { ...occ });
+
+  config = { maptilerKey: null };
+  await loadConfig();
+  eq('series gate: a server that doesn\'t say seriesPlans is taken as one without', seriesPlans(), false);
+  await seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
+  await tick();
+  eq('series gate: off, All events goes straight to the PATCH, as before 1.5.0', [st.seriesChange, sent.length, sent[0] && sent[0].scope, sent[0] && sent[0].preview, sent[0] && sent[0].plan], [null, 1, 'all', undefined, undefined]);
+  eq('series gate: off, no dialog opens for an editor save either', openSeriesChange({ kind: 'editor', occ, body: { title: 'x' }, quiet: true }), null);
+  eq('series gate: off, Use series value sends nothing', [await useSeriesValue(occ, ['title']), sent.length], [false, 1]);
+
+  config = { seriesPlans: true };
+  await loadConfig();
+  eq('series gate: on when the server says so', seriesPlans(), true);
+  sent.length = 0;
+  await useSeriesValue(occ, ['title']);
+  eq('series gate: on, Use series value gives the field back on this day', sent[0], { scope: 'this', instanceStart: occ.start, useSeries: ['title'] });
+  put({ config: { ...st.config, seriesPlans: false }, seriesChange: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
+console.log('--- the editor\'s monthly forms (1.5.0) ---');
+{
+  const { monthDayRule, monthlyOptions } = await import('../src/lib/repeat.js');
+  const opts = (d) => monthlyOptions(d).map((o) => o.value + ': ' + o.label);
+  eq('monthly forms: a 15th', opts(new Date(2027, 2, 15)), ['day: on day 15', 'nth: on the third Monday']);
+  eq('monthly forms: a 30th that is its month\'s second-last', opts(new Date(2027, 2, 30)), [
+    'day: on day 30, skipping months without one', 'clamp: on day 30, or the last day in shorter months',
+    'fromend: on the second-last day', 'last: on the last Tuesday']);
+  eq('monthly forms: a 30th that is its month\'s last', opts(new Date(2027, 3, 30)).map((o) => o.split(':')[0]), ['day', 'clamp', 'lastday', 'last']);
+  eq('monthly forms: the 25th of March, the seventh-last', opts(new Date(2027, 2, 25)).filter((o) => o.startsWith('fromend')), ['fromend: on the seventh-last day']);
+  eq('monthly forms: the 24th of March offers no from-the-end form', opts(new Date(2027, 2, 24)).filter((o) => o.startsWith('fromend')), []);
+  const rules = [
+    ['clamp', new Date(2027, 2, 30), 'BYMONTHDAY=28,29,30;BYSETPOS=-1', 'Monthly on the 30th, or the last day in shorter months'],
+    ['clamp', new Date(2027, 2, 29), 'BYMONTHDAY=28,29;BYSETPOS=-1', 'Monthly on the 29th, or the last day in shorter months'],
+    ['lastday', new Date(2027, 3, 30), 'BYMONTHDAY=-1', 'Monthly on the last day'],
+    ['fromend', new Date(2027, 2, 30), 'BYMONTHDAY=-2', 'Monthly on the second-last day'],
+    ['fromend', new Date(2027, 2, 25), 'BYMONTHDAY=-7', 'Monthly on the seventh-last day'],
+  ];
+  for (const [mode, d, part, words] of rules) {
+    eq('monthly forms: ' + mode + ' writes ' + part + ' and reads back in words', [monthDayRule(mode, d), describeRepeat('FREQ=MONTHLY;' + part)], [part, words]);
+  }
+  eq('monthly forms: day N is written bare, and a form the start lacks falls back to it', [monthDayRule('day', new Date(2027, 2, 30)), monthDayRule('clamp', new Date(2027, 2, 15)), monthDayRule('lastday', new Date(2027, 2, 30))], [null, null, null]);
+  eq('monthly forms: bare from a 30th reads as skipping', describeRepeat('FREQ=MONTHLY', { start: new Date(2027, 2, 30) }), 'Monthly on the 30th, skipping months without one');
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

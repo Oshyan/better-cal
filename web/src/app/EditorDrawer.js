@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect, useRef, useMemo } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar, editorReturn } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar, editorReturn, useSeriesValue, ownFieldWords } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
@@ -20,6 +20,7 @@ import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
 import {
   DAY_CODES, ruleParts, ruleBase, joinRule, weekOfMonth, describeRepeat, repeatEnd, withRepeatEnd,
+  monthDayRule, monthlyOptions,
 } from '../lib/repeat.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
@@ -36,7 +37,11 @@ import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
-import { editedWords } from '../lib/changeline.js';
+import { editedWords, timeChange } from '../lib/changeline.js';
+import { changedFields, fieldLines } from '../lib/editfields.js';
+import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschange.js';
+import { SeriesDialog } from './SeriesDialog.js';
+import { creationLine } from '../lib/seriesplan.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -73,6 +78,9 @@ function buildRrule(r, allDay = false, tz = null, start = null) {
     const { nth, last } = weekOfMonth(start);
     const n = (r.monthly === 'last' && last) || nth === 5 ? -1 : nth;
     parts.push('BYDAY=' + n + DAY_CODES[start.getDay()]);
+  } else if (r.freq === 'MONTHLY' && start) {
+    const day = monthDayRule(r.monthly, start);
+    if (day) parts.push(day);
   }
   return withRepeatEnd(parts.join(';'), end, allDay, tz);
 }
@@ -103,6 +111,9 @@ function parseRrule(rrule, tz = null, start = null) {
   r.interval = Number(p.INTERVAL) || 1;
   if (p.FREQ === 'WEEKLY' && p.BYDAY) r.byday = p.BYDAY.split(',');
   if (p.FREQ === 'MONTHLY' && p.BYDAY) r.monthly = /^-1/.test(p.BYDAY) ? 'last' : 'nth';
+  else if (p.FREQ === 'MONTHLY' && p.BYMONTHDAY) {
+    r.monthly = p.BYSETPOS === '-1' ? 'clamp' : p.BYMONTHDAY === '-1' ? 'lastday' : /^-[2-7]$/.test(p.BYMONTHDAY) ? 'fromend' : 'day';
+  }
   Object.assign(r, (({ kind, until, count }) => ({ ends: kind, until, count }))(repeatEnd(rrule, tz)));
   if (r.freq === 'none' || looseBase(buildRrule({ ...r, ends: 'never' }, false, null, start), start) !== looseBase(rrule, start)) {
     r.custom = rrule;
@@ -186,6 +197,12 @@ const isMineCal = (cal) => !cal || (cal.role || 'mine') === 'mine';
 
 export function EditorDrawer() {
   const editor = useStore((s) => s.editor);
+  // A save for all events asking for its plan, or waiting in the dialog.
+  const seriesAsk = useStore((s) => (s.seriesChange && s.seriesChange.kind === 'editor' ? (s.seriesChange.hidden ? 'asking' : 'open') : null));
+  // The drawer closing (Back, Esc elsewhere) takes its dialog with it.
+  useEffect(() => () => {
+    if (state.seriesChange && state.seriesChange.kind === 'editor') cancelSeriesChange();
+  }, [editor]);
   const panelRef = useRef(null);
 
   const [form, setForm] = useState(null);
@@ -561,6 +578,45 @@ export function EditorDrawer() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [editor]);
 
+  // The Repeat row's line: the rule in words and its first dates, from a
+  // preview. A new rule (a new event, or the repeat controls touched) asks
+  // for a creation plan; a series' own rule, for a plan with no changes.
+  // Each change asks again, and a newer answer replaces an older one; no
+  // debounce timer.
+  const [repeatLine, setRepeatLine] = useState(null);
+  const repeatReq = useRef(0);
+  let repeatAsk = '';
+  if (editor && form && seriesPlans() && (form.rrule.custom || form.rrule.freq !== 'none')) {
+    let opened = null;
+    try { opened = JSON.parse(initialSnapRef.current); } catch { /* none yet */ }
+    const touched = !opened || JSON.stringify(form.rrule) !== JSON.stringify(opened.rrule);
+    const [fs, fe] = formInstants(form);
+    if (!isNaN(fs) && !isNaN(fe) && fe > fs) {
+      repeatAsk = editor.occ && editor.occ.recurring && !touched
+        ? 'series|' + editor.occ.instanceId
+        : 'new|' + buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(editor.occ), fromInputValue(form.start)) + '|' + fs.getTime() + '|' + fe.getTime() + '|' + form.allDay + '|' + form.calendarId;
+    }
+  }
+  useEffect(() => {
+    const my = ++repeatReq.current;
+    // The line for the rule before stays up only until it would mislead.
+    setRepeatLine(null);
+    if (!repeatAsk) return;
+    const occNow = editor.occ;
+    const [fs, fe] = formInstants(form);
+    const start = toISOWithOffset(fs);
+    const ask = repeatAsk.startsWith('series|')
+      ? api('/events/' + occNow.eventId, { method: 'PATCH', body: { scope: 'all', instanceStart: occNow.start, preview: true } })
+      : api('/events', { method: 'POST', body: {
+        preview: true, start, end: toISOWithOffset(fe), allDay: form.allDay, calendarId: Number(form.calendarId),
+        tzid: form.tzTouched && !form.allDay ? form.tz : (occNow && occNow.tzid) || localTz(),
+        rrule: repeatAsk.split('|')[1],
+      } });
+    ask.then((res) => {
+      if (my === repeatReq.current) setRepeatLine(creationLine(res && res.plan, { typedStart: repeatAsk.startsWith('series|') ? null : start, tz: (occNow && occNow.tzid) || null }));
+    }).catch(() => { if (my === repeatReq.current) setRepeatLine(null); });
+  }, [repeatAsk]); // eslint-disable-line
+
   if (!editor || !form) return null;
 
   const occ = editor.occ;
@@ -687,6 +743,8 @@ export function EditorDrawer() {
 
   const submit = async (e) => {
     e.preventDefault();
+    // The series dialog is up for this save: it answers, not a second Save.
+    if (state.seriesChange) return;
     const [s, en] = formInstants(form);
     if (isNaN(s) || isNaN(en) || en <= s) return;
     // A name nobody has confirmed as a person yet. Saving would have to either
@@ -700,39 +758,56 @@ export function EditorDrawer() {
       flashTimer.current = setTimeout(() => setNlFlash(null), 1400);
       return;
     }
-    const fields = {
-      title: form.title,
-      calendarId: Number(form.calendarId),
-      start: toISOWithOffset(s),
-      end: toISOWithOffset(en),
-      allDay: form.allDay,
-      location: form.location || null,
-      // Picked coordinates persist directly; free-typed text sends null so
-      // stale coordinates clear and the lazy geocode re-resolves later.
-      locationLat: form.location ? form.locationLat : null,
-      locationLng: form.location ? form.locationLng : null,
-      // Which geocoder found a picked place; the server records provenance
-      // only when the coordinates changed.
-      ...(form.locationProvider ? { locationProvider: form.locationProvider } : {}),
-      url: form.url || null,
-      description: isEmptyHtml(form.description) ? null : form.description,
-      tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
-      // Ids, never names: a name-keyed save can't tell a new person from a
-      // stale copy of a renamed one, and resolves that ambiguity by creating a
-      // duplicate. Proposed chips (id null) are blocked above, so every chip
-      // here is a directory person the user confirmed.
-      personIds: form.people.map((c) => c.id),
-      rrule: buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(occ), fromInputValue(form.start)),
+    // The form as fields; for an edit, the same from the form as it opened.
+    const formFields = (fm) => {
+      const [fs, fe] = formInstants(fm);
+      const out = {
+        title: fm.title,
+        calendarId: Number(fm.calendarId),
+        start: toISOWithOffset(fs),
+        end: toISOWithOffset(fe),
+        allDay: fm.allDay,
+        location: fm.location || null,
+        // Picked coordinates persist directly; free-typed text sends null so
+        // stale coordinates clear and the lazy geocode re-resolves later.
+        locationLat: fm.location ? fm.locationLat : null,
+        locationLng: fm.location ? fm.locationLng : null,
+        // Which geocoder found a picked place; the server records provenance
+        // only when the coordinates changed.
+        ...(fm.locationProvider ? { locationProvider: fm.locationProvider } : {}),
+        url: fm.url || null,
+        description: isEmptyHtml(fm.description) ? null : fm.description,
+        tagNames: fm.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        // Ids, never names: a name-keyed save can't tell a new person from a
+        // stale copy of a renamed one, and resolves that ambiguity by creating a
+        // duplicate. Proposed chips (id null) are blocked above, so every chip
+        // here is a directory person the user confirmed.
+        personIds: fm.people.map((c) => c.id),
+        rrule: buildRrule(fm.rrule, fm.allDay, fm.tzTouched ? fm.tz : untilZone(occ), fromInputValue(fm.start)),
+      };
+      // A zone the owner picked becomes the event's own zone: it is what a
+      // repeating event keeps its clock time in across DST changes. All-day
+      // events are dates and have no use for one.
+      if (fm.tzTouched && !fm.allDay) out.tzid = fm.tz;
+      return out;
     };
-    // A zone the owner picked becomes the event's own zone: it is what a
-    // repeating event keeps its clock time in across DST changes. All-day
-    // events are dates and have no use for one.
-    if (form.tzTouched && !form.allDay) fields.tzid = form.tz;
+    let fields = formFields(form);
     // Only send reminders when the override actually changed, so unrelated
     // edits never clobber an inherited default with a snapshot of it.
     const remNow = form.reminders === null ? null : [...form.reminders].sort((a, b) => a - b).join(',');
     if (remNow !== form.remInitial) {
       fields.reminders = form.reminders === null ? null : normalizeMinutesList(form.reminders);
+    }
+    // An edit sends only what the person changed (#199): the rule only when
+    // the repeat controls were touched, so a rename isn't a new rule.
+    let opened = null;
+    if (occ) {
+      try { opened = JSON.parse(initialSnapRef.current); } catch { /* no baseline: everything goes */ }
+      if (opened) {
+        const was = formFields(opened);
+        if ('reminders' in fields) was.reminders = opened.reminders;
+        fields = changedFields(fields, was, { rruleTouched: JSON.stringify(form.rrule) !== JSON.stringify(opened.rrule) });
+      }
     }
     // Trip flag: sent only when it changes (clearing it on a trip that still
     // has attached events gets the server's trip_has_members refusal, which
@@ -747,10 +822,37 @@ export function EditorDrawer() {
       if (form.rel !== was) fields.status = form.rel === 'maybe' ? 'tentative' : 'confirmed';
     }
     let ok;
+    const finish = () => {
+      // New people linked via this save should appear in the sidebar folder
+      // and autocomplete right away.
+      if ((fields.personIds || []).length > 0) loadPeople().catch(() => {});
+      clearEditorDraft();
+      set({ editor: null, editorDirty: false });
+    };
     if (occ) {
+      // Nothing changed: nothing to send.
+      if (Object.keys(fields).length === 0) { finish(); return; }
       // What the edit changed, for the toast ("Changed the title and time").
       let words = null;
-      try { words = editedWords(JSON.parse(initialSnapRef.current), form); } catch { /* no baseline: the toast says "Updated" */ }
+      try { words = editedWords(opened || JSON.parse(initialSnapRef.current), form); } catch { /* no baseline: the toast says "Updated" */ }
+      // All events in a series: the plan first, in the dialog over the
+      // footer (SeriesDialog.js), unless it says the change is direct.
+      // "This and following" keeps its old path until 1.5.1.
+      if (occ.recurring && scope === 'all' && seriesPlans()) {
+        const was = opened ? { ...formFields(opened), reminders: opened.reminders } : {};
+        openSeriesChange({
+          kind: 'editor', occ, body: fields, quiet: true,
+          fields: fieldLines(fields, was, {
+            calendarName: (id) => (state.calendars.find((c) => c.id === Number(id)) || {}).name || '',
+            reminderWords: (list) => (list == null ? 'default' : list.length ? list.map((m) => fmtReminder({ minutes: m })).join(', ') : 'none'),
+            personName: (id) => (state.people.find((p) => p.id === id) || {}).name || '',
+            timeWords: (a, b) => timeChange({ start: a.start, end: a.end, allDay: a.allDay }, { start: b.start, end: b.end, allDay: b.allDay }),
+          }),
+          apply: async (s) => { const done = await updateEvent(occ, fields, s, words); if (done) finish(); return done; },
+          onDone: finish,
+        });
+        return;
+      }
       ok = await updateEvent(occ, fields, scope, words);
     } else {
       const created = await createEvent(fields);
@@ -758,29 +860,22 @@ export function EditorDrawer() {
       // "New event in this trip": auto-attach the fresh event to its trip.
       if (created && editor.attachTrip) await attachToTrip(editor.attachTrip, created);
     }
-    if (ok) {
-      // New people linked via this save should appear in the sidebar folder
-      // and autocomplete right away.
-      if ((fields.personIds || []).length > 0) loadPeople().catch(() => {});
-      clearEditorDraft();
-      set({ editor: null, editorDirty: false });
-    }
+    if (ok) finish();
   };
 
   const r = form.rrule;
-  // Monthly choices come from the start: "on day 24", "on the fourth
-  // Thursday", and "on the last Thursday" when it is the month's last.
+  // Monthly choices come from the start: "on day 24", "on day 30, or the
+  // last day in shorter months", "on the last day", "on the second-last
+  // day", "on the fourth Thursday", and "on the last Thursday" when it is
+  // the month's last (monthlyOptions).
   const repeatStart = fromInputValue(form.start);
   const startWeek = repeatStart && !isNaN(repeatStart) ? weekOfMonth(repeatStart) : null;
-  const startDayName = startWeek ? repeatStart.toLocaleDateString(undefined, { weekday: 'long' }) : '';
-  const monthlyChoices = startWeek ? [
-    { value: 'day', label: 'on day ' + repeatStart.getDate() },
-    ...(startWeek.nth <= 4 ? [{ value: 'nth', label: `on the ${['first', 'second', 'third', 'fourth'][startWeek.nth - 1]} ${startDayName}` }] : []),
-    ...(startWeek.last ? [{ value: 'last', label: 'on the last ' + startDayName }] : []),
-  ] : [];
-  // What buildRrule will write for this start (a fifth weekday is "last").
-  const monthlyMode = !startWeek || (r.monthly !== 'nth' && r.monthly !== 'last') ? 'day'
-    : (r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth';
+  const monthlyChoices = startWeek ? monthlyOptions(repeatStart) : [];
+  // What buildRrule will write for this start (a fifth weekday is "last";
+  // a form this start doesn't offer is day N).
+  const monthlyMode = !startWeek ? 'day'
+    : r.monthly === 'nth' || r.monthly === 'last' ? ((r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth')
+      : monthlyChoices.some((c) => c.value === r.monthly) ? r.monthly : 'day';
   const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
   const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);
 
@@ -865,12 +960,29 @@ export function EditorDrawer() {
 
   const lab = (text, cls = '') => html`<span class=${'bc-ed-lab' + cls}>${text}</span>`;
 
+  // An edited day of a series says which of its fields are its own, each
+  // with a way to give it back (Use series value: this day only, one Undo).
+  // Its form would be stale after, so the editor closes; with changes
+  // typed here, those come first.
+  const own = occ && occ.isException && Array.isArray(occ.ownFields) && seriesPlans() ? occ.ownFields : [];
+  const giveBack = async (names) => {
+    if (state.editorDirty) { toast('Save or discard the changes here first'); return; }
+    if (await useSeriesValue(occ, names)) set({ editor: null, editorDirty: false });
+  };
+  const seriesName = occ && occ.seriesTitle ? occ.seriesTitle : 'the series';
+  const seriesWords = occ ? describeRepeat(occ.rrule || '', { start: fromInputValue(form.start), ends: false }) : null;
+  const ownLine = own.length > 0 && html`<div class="bc-ed-own" role="note">
+    <span>Edited day of ${seriesName}${seriesWords ? ' (' + seriesWords.charAt(0).toLowerCase() + seriesWords.slice(1) + ')' : ''}. Its own:</span>
+    ${own.map((f) => html`<button key=${f} type="button" class="bc-ed-ownfield" title=${'Use series value (' + seriesName + ')'} aria-label=${'Use series value for ' + ownFieldWords(f)} onClick=${() => giveBack([f])}>${ownFieldWords(f)}<${Icon} name="close" size=${10} /></button>`)}
+    ${own.length > 1 && html`<button type="button" class="bc-link-btn" onClick=${() => giveBack(own)}>Use series values</button>`}
+  </div>`;
+
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
     <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} onKeyDown=${onFormKeyDown} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
         <button type="button" class="bc-icon-btn bc-ed-x" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${phoneOpen ? 20 : 15} /></button>
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
-        ${phoneOpen && html`<button type="submit" class="bc-btn bc-btn-primary bc-ed-headsave" disabled=${backwards}>${occ ? 'Save' : 'Create'}</button>`}
+        ${phoneOpen && html`<button type="submit" class="bc-btn bc-btn-primary bc-ed-headsave" disabled=${backwards || !!seriesAsk}>${occ ? 'Save' : 'Create'}</button>`}
       </div>
 
       ${!occ && html`<div class="bc-nl" title="Fills the fields below as you type. Enter or Fill applies it now; everything stays editable.">
@@ -895,6 +1007,7 @@ export function EditorDrawer() {
       <div class=${'bc-ed-titlewrap' + flash('title')}>
         <input class="bc-ed-title" placeholder="Add a title" aria-label="Title" value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required />
       </div>
+      ${ownLine}
 
       <div class="bc-ed-grid">
         ${lab('Calendar')}
@@ -1092,6 +1205,9 @@ export function EditorDrawer() {
             ${r.ends === 'until' && html`<input type="date" value=${r.until} onInput=${(e) => updRrule({ until: e.target.value })} aria-label="Until date" />`}
             ${r.ends === 'count' && html`<input class="bc-num" type="number" min="1" max="999" value=${r.count} onInput=${(e) => updRrule({ count: Number(e.target.value) || 1 })} aria-label="Occurrence count" />`}
           </div>`}
+          ${repeatAsk && repeatLine && repeatLine.line && html`<div class="bc-ed-sub" role="status">${repeatLine.line}</div>`}
+          ${repeatAsk && repeatLine && repeatLine.moved && html`<div class="bc-ed-sub">${repeatLine.moved}</div>`}
+          ${!seriesPlans() && !r.custom && r.freq !== 'none' && html`<div class="bc-ed-sub">${describeRepeat(buildRrule(r, form.allDay, null, repeatStart), { start: repeatStart, ends: false }) || ''}</div>`}
         </div>
 
         ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>
@@ -1104,11 +1220,12 @@ export function EditorDrawer() {
       </div>
 
       <div class="bc-drawer-actions bc-ed-actions">
-        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards} title=${backwards ? 'The end is before the start' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${occ ? 'Save' : 'Create'}</button>
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards || !!seriesAsk} title=${backwards ? 'The end is before the start' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${seriesAsk === 'asking' ? 'Working out the plan…' : occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger bc-ed-delete" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
       </div>
+      <${SeriesDialog} host="editor" />
     </form>
   </div>`;
 }

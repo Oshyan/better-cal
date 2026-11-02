@@ -2158,14 +2158,40 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        // The day acted on takes the edit. Edited on its own before, it has
+        // a row of its own, carried like the later ones (its place in the
+        // series, its time by the key shift); the edit's other fields are
+        // then applied to it, the title, place, tags or people the person
+        // changed with that day open. Carried untouched, the one day they
+        // were editing was the one day the edit missed. The later edited
+        // days keep their own deviations.
+        $edit = array_diff_key($in, array_flip(['scope', 'instanceStart', 'start', 'end', 'allDay', 'tzid', 'rrule', 'calendarId']));
+        $splitDayId = null;
+        foreach ($movedOverrides as $ov) {
+            if ((string) $ov['recurrence_instance_utc'] === $instanceUtc) {
+                $splitDayId = (int) $ov['id'];
+            }
+        }
+        $beforeLinks = $splitDayId !== null ? $this->labels->eventLinkRows($splitDayId) : [];
 
-        $newId = $this->db->tx(function () use ($masterId, $oldRrule, $newMaster, $movedOverrides, $master, $shift): int {
+        $newId = $this->db->tx(function () use ($userId, $masterId, $oldRrule, $newMaster, $movedOverrides, $master, $shift, $edit, $splitDayId, $in): int {
             $this->db->update('events', ['rrule' => $oldRrule, 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
             $newId = $this->db->insert('events', $newMaster);
             foreach ($movedOverrides as $ov) {
                 $key = $shift === null ? (string) $ov['recurrence_instance_utc'] : $shift((string) $ov['recurrence_instance_utc']);
-                $set = ['recurrence_parent_id' => $newId, 'uid' => $newMaster['uid']] + self::movedOverride($ov, $key, $master, $newMaster);
+                // On the new series' calendar with it: parked on another, a
+                // row nothing can reach (as patchAll moves them).
+                $set = ['recurrence_parent_id' => $newId, 'uid' => $newMaster['uid'], 'calendar_id' => $newMaster['calendar_id']] + self::movedOverride($ov, $key, $master, $newMaster);
+                if ((int) $ov['id'] === $splitDayId) {
+                    $set = array_merge($set, $this->columnPatch($ov, $edit, null, forOverride: true));
+                }
                 $this->db->update('events', $set, 'id = ?', [(int) $ov['id']]);
+            }
+            if ($splitDayId !== null) {
+                if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                    $this->labels->setEventTags($userId, $splitDayId, $in['tagNames']);
+                }
+                $this->applyPeoplePatch($userId, $splitDayId, $in);
             }
             return $newId;
         });
@@ -2184,8 +2210,8 @@ final class Events
             'event',
             $masterId,
             'update',
-            ['events' => array_merge([$master], $movedOverrides)],
-            ['events' => array_merge([$afterMaster, $created], array_values(array_filter($overridesAfter)))],
+            ['events' => array_merge([$master], $movedOverrides)] + $beforeLinks,
+            ['events' => array_merge([$afterMaster, $created], array_values(array_filter($overridesAfter)))] + ($splitDayId !== null ? $this->labels->eventLinkRows($splitDayId) : []),
             touches: !empty($created['exdates_json']) ? [[Undo::keyOf('events', ['id' => $masterId]), 'exdates_json^']] : []
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
@@ -2399,12 +2425,32 @@ final class Events
         } elseif ($isMaster && $scope === 'following') {
             // From the first day it is the whole series (see patchFollowing),
             // edited dates included.
-            if ($this->requireInstance(['instanceStart' => $instanceStart], $event) === (string) $event['start_utc']) {
+            $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $event);
+            if ($instanceUtc === (string) $event['start_utc']) {
                 $scope = 'all';
             } else {
-                $targetId = $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]);
+                // The split and the answer are one change, with one entry
+                // (Undo::group), so undoing it makes the series whole again.
+                // Recorded apart, undoing the answer left the split behind.
+                $word = ['going' => 'going', 'interested' => 'interested', 'hidden' => 'hidden'][$attendance] ?? null;
+                $summary = ($word !== null ? "Marked '" . (string) $event['title'] . "' " . $word : "Cleared the answer to '" . (string) $event['title'] . "'")
+                    . ' from ' . $this->journalDay($userId, $event, Time::fromDb($instanceUtc)) . ' on';
+                $this->undo->group(function () use ($userId, $event, $attendance, $instanceStart): void {
+                    $this->answerAttendance($userId, $event, $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]), $attendance, true, 'following', false);
+                }, $summary);
+                return;
             }
         }
+        $this->answerAttendance($userId, $event, $targetId, $attendance, $isMaster, $scope, $made);
+    }
+
+    /**
+     * Write the answer to $targetId (an event, a date's own row, or a series
+     * and the edited dates it carries) and journal it. $made: the date's row
+     * was made for this answer.
+     */
+    private function answerAttendance(int $userId, array $event, int $targetId, string $attendance, bool $isMaster, ?string $scope, bool $made): void
+    {
         $target = $this->get($userId, $targetId);
         $beforeRows = [$target];
         $this->db->tx(function () use ($targetId, $attendance, $isMaster, $scope, &$beforeRows): void {
@@ -2437,7 +2483,7 @@ final class Events
                 default => null,
             };
             if ($kind !== null) {
-                $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $kind]);
+                $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => (int) $event['id'], 'kind' => $kind]);
             }
         }
     }

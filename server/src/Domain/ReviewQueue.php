@@ -6,9 +6,11 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 /**
  * Changes that arrived from outside and wait for the owner's decision.
@@ -148,6 +150,25 @@ final class ReviewQueue
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$seriesId, $occurrence]
         );
+    }
+
+    /**
+     * Does the series' rule name this occurrence (a UTC key), as Events
+     * checks an instanceStart? One it can't verify within the budget is
+     * taken as named, and left to the accept to refuse.
+     */
+    private static function hasOccurrence(array $series, string $occurrence): bool
+    {
+        if (empty($series['rrule'])) return false;
+        $at = Time::fromDb($occurrence);
+        try {
+            foreach ((new Recurrence())->expand($series, [], $at, $at->modify('+1 second'), new ExpansionBudget(1, 4, 1.0)) as $match) {
+                if ((string) $match['instanceUtc'] === $occurrence) return true;
+            }
+        } catch (WorkBudgetExceeded) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -677,10 +698,23 @@ final class ReviewQueue
                 }
                 if ($held === []) return 0;
                 $this->reconcilePending($userId, (int) $series, $sourceKey);
+                // Converted, closed as a day the series never had, or closed
+                // with nothing left to change (the day already skipped, say).
+                [$in, $p] = Db::in(array_map(static fn(array $row): int => (int) $row['id'], $held));
+                $changes = 0;
+                $noSuchDay = 0;
+                $other = 0;
+                foreach ($this->db->all("SELECT status, summary FROM review_items WHERE id IN $in", $p) as $now) {
+                    if ((string) $now['status'] === 'open') $changes++;
+                    elseif (str_contains((string) $now['summary'], 'has no such day')) $noSuchDay++;
+                    else $other++;
+                }
                 (new Undo($this->db))->record($userId, 'review', (int) $held[0]['id'], 'update', null, null,
-                    '"' . mb_substr((string) $held[0]['title'], 0, 200) . '" is on your calendar now: ' . (count($held) === 1
-                        ? 'a day of it held in Review is a change to that occurrence'
-                        : 'the days of it held in Review are changes to their occurrences'),
+                    '"' . mb_substr((string) $held[0]['title'], 0, 200) . '" is on your calendar now: ' . implode('; ', array_filter([
+                        $changes === 1 ? 'a day of it held in Review is a change to that occurrence' : ($changes > 1 ? 'the days of it held in Review are changes to their occurrences' : null),
+                        $noSuchDay === 1 ? 'a day of it held in Review was closed, the series having no such day' : ($noSuchDay > 1 ? 'days of it held in Review were closed, the series having no such days' : null),
+                        $other === 1 ? 'a day of it held in Review was closed, with nothing left to change' : ($other > 1 ? 'days of it held in Review were closed, with nothing left to change' : null),
+                    ])),
                     touches: array_merge(
                         array_map(static fn(array $row): array => [Undo::keyOf('review_items', ['id' => (int) $row['id']]), '*'], $held),
                         [[Undo::keyOf('events', ['id' => (int) $series]), '+']],
@@ -1235,6 +1269,17 @@ final class ReviewQueue
                 if ($occurrence !== null) {
                     $who = (string) ($incoming['organizer']['name'] ?? '') ?: (string) ($incoming['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
                     $day = self::occurrenceLabel($event, $occurrence, Settings::homeTzid($this->db, $userId));
+                    // A day the series never had (its RECURRENCE-ID names no
+                    // occurrence of the rule the series was added with) has
+                    // nothing to change: closed, saying so. Converted, its
+                    // accept closed it blaming a move of the series.
+                    if ($override === null && !self::hasOccurrence($event, $occurrence)) {
+                        $this->db->run('UPDATE review_items SET status = ?, decided_at = ?, summary = ? WHERE id = ?', ['superseded', Time::nowDb(),
+                            ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the series you added has no such day, so there is nothing to skip."
+                                : " changed the $day occurrence, but the series you added has no such day, so there is nothing to change."),
+                            (int) $pending['id']]);
+                        continue;
+                    }
                     $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
                     $summary = $method === 'CANCEL'
                         ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence of the series you added. Accepting skips just that one."

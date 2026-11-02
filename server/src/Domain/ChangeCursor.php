@@ -46,9 +46,16 @@ final class ChangeCursor
      */
     public function review(int $userId): string
     {
-        $parts = [];
+        // Review items count their open invitations apart: a day held before
+        // its series becomes a change to an occurrence as the queue is read
+        // (ReviewQueue::convertHeldDays), with the open count and the newest
+        // id as they were, and a tab still showing it waiting has to refetch.
+        $items = $this->db->one(
+            "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m, COUNT(CASE WHEN status = 'open' AND kind = ? THEN 1 END) AS w FROM review_items WHERE user_id = ?",
+            [ReviewQueue::KIND_INVITE_NEW, $userId]
+        );
+        $parts = [$items['c'] . '.' . $items['m'] . '.' . $items['w']];
         foreach ([
-            "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM review_items WHERE user_id = ?",
             "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM plugin_proposals WHERE user_id = ?",
             "SELECT COUNT(CASE WHEN status = 'possible' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM event_duplicates WHERE user_id = ?",
         ] as $sql) {

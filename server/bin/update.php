@@ -113,7 +113,8 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     if (version_compare($to, $current, '<=')) {
         if (version_compare($release['newest'], $current, '>')) {
             Cli::say();
-            return manualKeys("Better-Cal {$release['newest']} is available, but it and every release after $current are signed with keys this copy doesn't list");
+            // The app's notice says the same (web/src/lib/updatetext.js, blocked).
+            return manualKeys("Better-Cal {$release['newest']} is out, but this copy can't verify it: it and every release after $current are signed with keys this copy doesn't list");
         }
         Cli::say("Up to date: $current is the newest release.");
         return 0;

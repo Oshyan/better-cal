@@ -11615,10 +11615,12 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     };
     $sigFetches = 0;
     // A 9.8.0 install listing only old-key, and GitHub's list of built releases, newest first. @return array{Updates,BetterCal\Infra\Db}
-    $stepUpdates = static function (array $built) use ($oldKeys, &$sigFetches): array {
-        $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-        (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
-        (require dirname(__DIR__) . '/migrations/061_update_newest.php')($db);
+    $stepUpdates = static function (array $built, string $installed = '9.8.0', ?BetterCal\Infra\Db $db = null) use ($oldKeys, &$sigFetches): array {
+        if ($db === null) {
+            $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+            (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($db);
+            (require dirname(__DIR__) . '/migrations/061_update_newest.php')($db);
+        }
         $fetch = static function (string $url) use ($built, &$sigFetches): array {
             if (str_contains($url, 'api.github.com')) {
                 return ['status' => 200, 'body' => json_encode(array_column($built, 'release'))];
@@ -11635,7 +11637,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             }
             return ['status' => 404, 'body' => ''];
         };
-        return [new Updates($db, ['version' => '9.8.0'], $fetch, $oldKeys), $db];
+        return [new Updates($db, ['version' => $installed], $fetch, $oldKeys), $db];
     };
     [$stepping, $steppingDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
     $found = $stepping->newestRelease();
@@ -11698,6 +11700,104 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         check('update: a release that is not immutable behind a walked-past one stops the update and is named',
             !($e instanceof BetterCal\Support\UntrustedSignature) && str_contains($e->getMessage(), 'Release 9.9.1 is not immutable'));
     }
+
+    // Only a signature set that is whole and names no key this copy lists is
+    // a key it lacks. A listed key whose signature fails, an empty set or a
+    // malformed entry is a broken release: the check stops and names it,
+    // instead of quietly offering the release before it (review F4).
+    $stepReleaseWith = static function (string $v, ?array $signatures) {
+        $manifest = Updates::manifestJson($v, 'routine', '9.9.0');
+        $statement = BetterCal\Support\ReleaseSignature::statement($v, str_repeat('0', 40), hash('sha256', ''), hash('sha256', $manifest));
+        $sig = $signatures === null ? null : json_encode(['statement' => $statement, 'signatures' => $signatures]);
+        $assets = [['name' => Updates::MANIFEST_NAME, 'browser_download_url' => Updates::RELEASE_BASE . "v$v/" . Updates::MANIFEST_NAME, 'digest' => 'sha256:' . hash('sha256', $manifest)]];
+        if ($sig !== null) {
+            $assets[] = ['name' => BetterCal\Support\ReleaseSignature::ASSET, 'browser_download_url' => Updates::RELEASE_BASE . "v$v/" . BetterCal\Support\ReleaseSignature::ASSET, 'digest' => 'sha256:' . hash('sha256', $sig), 'size' => strlen($sig)];
+        }
+        return ['manifest' => $manifest, 'sig' => $sig ?? '', 'release' => [
+            'tag_name' => "v$v", 'draft' => false, 'prerelease' => false, 'immutable' => true,
+            'html_url' => "https://github.com/Oshyan/better-cal/releases/tag/v$v", 'published_at' => '2026-10-08T12:00:00Z',
+            'assets' => $assets,
+        ]];
+    };
+    $brokenSets = [
+        'a listed key whose signature fails' => [['key' => 'old-key', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\x11", 64))]],
+        'a listed key failing beside an unlisted one' => [['key' => 'new-key', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\x11", 64))], ['key' => 'old-key', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\x11", 64))]],
+        'an empty signature list' => [],
+        'a signature entry that is not an object' => ['junk'],
+        'a signature entry with a number for a key' => [['key' => 7, 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\x11", 64))]],
+        'a signature entry without a signature' => [['key' => 'new-key', 'type' => 'ed25519']],
+        'a signature entry that is not base64' => [['key' => 'new-key', 'type' => 'ed25519', 'sig' => '***']],
+        'no signature asset at all' => null,
+    ];
+    foreach ($brokenSets as $how => $signatures) {
+        [$damaged, $damagedDb] = $stepUpdates([$stepReleaseWith('9.9.2', $signatures), $stepRelease('9.9.0', 'old-key')]);
+        $stopped = null;
+        try { $damaged->newestRelease(); } catch (RuntimeException $e) { $stopped = $e; }
+        check("update: $how stops the update instead of stepping back, and names the release",
+            $stopped !== null && !($stopped instanceof BetterCal\Support\UntrustedSignature) && str_contains($stopped->getMessage(), 'Release 9.9.2')
+            && ($signatures === null || str_contains($stopped->getMessage(), 'broken signature')));
+        $threw = false;
+        try { $damaged->check(false); } catch (RuntimeException $e) { $threw = str_contains($e->getMessage(), 'Release 9.9.2'); }
+        $damagedRow = $damagedDb->one('SELECT latest_version, newest_version, last_error FROM app_update_state WHERE id = 1');
+        check("update: $how records no release and keeps the stop as the last error",
+            $threw && $damagedRow['latest_version'] === null && $damagedRow['newest_version'] === null && str_contains((string) $damagedRow['last_error'], 'Release 9.9.2'));
+    }
+    // A whole set from keys this copy doesn't list, of either kind, is still walked past.
+    $strangerAuth = hash('sha256', 'release-signing.better-cal', true) . chr(0x05) . pack('N', 1);
+    [$unlisted] = $stepUpdates([$stepReleaseWith('9.9.2', [
+        ['key' => 'hw-2', 'type' => 'fido2', 'authData' => base64_encode($strangerAuth), 'sig' => base64_encode(str_repeat("\x22", 64))],
+        ['key' => 'new-key', 'type' => 'ed25519', 'sig' => base64_encode(sodium_crypto_sign_detached('x', sodium_crypto_sign_secretkey($stepPairs['new-key'])))],
+    ]), $stepRelease('9.9.0', 'old-key')]);
+    $found = $unlisted->newestRelease();
+    checkEq('update: a whole signature set from keys this copy doesn\'t list is walked past, as before', ['9.9.0', '9.9.2'], [$found['version'], $found['newest']]);
+    // And a damaged release behind the walked-past ones stops the check and is named.
+    [$damagedBehind] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepReleaseWith('9.9.1', []), $stepRelease('9.9.0', 'old-key')]);
+    $stopped = null;
+    try { $damagedBehind->newestRelease(); } catch (RuntimeException $e) { $stopped = $e; }
+    check('update: a damaged release behind a walked-past one stops the update and is named',
+        $stopped !== null && !($stopped instanceof BetterCal\Support\UntrustedSignature) && str_contains($stopped->getMessage(), 'Release 9.9.1 has a broken signature'));
+
+    // Installed on the newest release this copy verifies while newer ones
+    // are signed with a key it doesn't list: the app must not say "up to
+    // date". The status says the update is blocked, the banner shows it
+    // once, and dismissing it is per newest release (review F5).
+    [$stuckOnStep, $stuckOnStepDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.1', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.9.0');
+    $stuckOnStep->check(false);
+    $stuckOnStepDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $stuckOnStepDb->run("INSERT INTO users VALUES (1, '{}')");
+    $blockedStatus = $stuckOnStep->status(1);
+    checkEq('update: a copy on the newest release it verifies, with newer ones it can\'t, is blocked, not up to date',
+        ['9.9.0', '9.9.0', '9.9.2', false, true, null, true, true],
+        [$blockedStatus['currentVersion'], $blockedStatus['latestVersion'], $blockedStatus['newestVersion'], $blockedStatus['available'], $blockedStatus['blocked'],
+            $blockedStatus['lastError'], $blockedStatus['showBanner'], $blockedStatus['dismissible']]);
+    $stuckOnStep->dismiss(1);
+    $afterDismiss = $stuckOnStep->status(1);
+    checkEq('update: the blocked notice is dismissed per newest release and stays in the status', [false, true, '9.9.2'],
+        [$afterDismiss['showBanner'], $afterDismiss['blocked'], $stuckOnStepDb->scalar('SELECT dismissed_version FROM user_update_notices WHERE user_id = 1')]);
+    $stuckOnStepDb->run("UPDATE users SET settings_json = '{\"updateNotifications\":\"security\"}' WHERE id = 1");
+    $stuckOnStepDb->run('DELETE FROM user_update_notices');
+    checkEq('update: a blocked notice is not a security notice, so Security only leaves the banner off', [false, true],
+        [$stuckOnStep->status(1)['showBanner'], $stuckOnStep->status(1)['blocked']]);
+    checkEq('update: a step this copy can still take is not blocked', [true, false], [$steppingStatus['available'], $steppingStatus['blocked']]);
+    checkEq('update: a newest release this copy verifies is plainly available, not blocked', [true, false], [$fineStatus['available'], $fineStatus['blocked']]);
+    [$currentCopy, $currentCopyDb] = $stepUpdates([$stepRelease('9.9.2', 'old-key')], '9.9.2');
+    $currentCopy->check(false);
+    $currentCopyDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $currentCopyDb->run("INSERT INTO users VALUES (1, '{}')");
+    $currentStatus = $currentCopy->status(1);
+    checkEq('update: an install on the newest release is neither available nor blocked', [false, false, false], [$currentStatus['available'], $currentStatus['blocked'], $currentStatus['showBanner']]);
+
+    // Two checks that verify the same step may have seen different newest
+    // releases; the one that finishes later must not move the notice back
+    // from the newer newest to an older one (review F6).
+    [$sawNewer, $sharedDb] = $stepUpdates([$stepRelease('9.9.3', 'new-key'), $stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')]);
+    [$sawOlder] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.8.0', $sharedDb);
+    $sawNewer->check(false);
+    $late = $sawOlder->check(false);
+    checkEq('update: a check that finishes after one that saw a newer release keeps the newer newest', ['9.9.0', '9.9.3', null, '9.9.3'],
+        [$late['latest_version'], $late['newest_version'], $late['last_error'], $sharedDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1')]);
+    $sawNewer->check(false);
+    checkEq('update: and the newer newest is still recorded when it comes round again', '9.9.3', $sharedDb->scalar('SELECT newest_version FROM app_update_state WHERE id = 1'));
 
     exec('rm -r ' . escapeshellarg($tmp));
 }

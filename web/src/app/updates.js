@@ -2,25 +2,18 @@ import { html, useState } from '../../vendor/index.js';
 import { useStore, toast, set } from './store.js';
 import { checkUpdates, dismissUpdate } from './api.js';
 import { reloadForUpdate } from './drafts.js';
+import { updateStatusText, checkResultText, bannerText, INSTALL_UPDATING_URL } from '../lib/updatetext.js';
 
-// Behind a signing-key change the latest version this copy can verify is a
-// step towards the newest published one, and the update takes two runs; the
-// notice says so rather than naming the step as if it were the newest.
-function steppingStone(update) {
-  const newest = update && update.newestVersion;
-  return newest && newest !== update.latestVersion ? `; releases up to ${newest} need it first` : '';
-}
-
+// The wording lives in lib/updatetext.js: a step towards the newest release
+// behind a signing-key change, a copy blocked on the newest it can verify,
+// or plainly available.
 export function UpdateBanner() {
   const update = useStore((s) => s.updates);
   const [busy, setBusy] = useState(false);
-  if (!update || !update.showBanner || !update.available) return null;
+  const text = bannerText(update);
+  if (!text) return null;
 
   const required = !!update.securityRequired;
-  const recommended = update.priority === 'recommended';
-  const text = required
-    ? `A Better-Cal security update is required. Update to ${update.minimumSecureVersion} or newer.`
-    : `Better-Cal ${update.latestVersion} is ${recommended ? 'recommended' : 'available'}${steppingStone(update)}.`;
   const dismiss = async () => {
     setBusy(true);
     try { await dismissUpdate(); }
@@ -29,7 +22,8 @@ export function UpdateBanner() {
   };
   return html`<div class=${'bc-sysbanner bc-updatebanner' + (required ? ' is-required' : '')} role=${required ? 'alert' : 'status'}>
     <span>${text}</span>
-    ${update.releaseUrl && html`<a class="bc-btn" href=${update.releaseUrl} target="_blank" rel="noopener">View release</a>`}
+    ${update.blocked && html`<a class="bc-btn" href=${INSTALL_UPDATING_URL} target="_blank" rel="noopener">How to update</a>`}
+    ${update.releaseUrl && !update.blocked && html`<a class="bc-btn" href=${update.releaseUrl} target="_blank" rel="noopener">View release</a>`}
     ${update.dismissible && html`<button type="button" class="bc-icon-btn" disabled=${busy} aria-label="Dismiss this release" title="Dismiss this release" onClick=${dismiss}>×</button>`}
   </div>`;
 }
@@ -63,21 +57,16 @@ export function UpdateSettings({ update }) {
     setChecking(true);
     try {
       const next = await checkUpdates();
-      toast(next.available ? `Better-Cal ${next.latestVersion} is available${steppingStone(next)}` : 'Better-Cal is up to date');
+      toast(checkResultText(next));
     } catch (e) {
       toast(e.message || 'Could not check for updates', { error: true });
     } finally {
       setChecking(false);
     }
   };
-  const status = !update || !update.checkedAt
-    ? 'Not checked yet'
-    : update.securityRequired
-      ? `Security update required: ${update.minimumSecureVersion} or newer`
-      : update.available
-        ? `Version ${update.latestVersion} is available${steppingStone(update)}`
-        : `Up to date (checked ${new Date(update.checkedAt).toLocaleString()})`;
+  const status = updateStatusText(update);
   return html`<span class="bc-set-value">${status}${update && update.lastError ? html`<br /><span class="bc-sys-bad">Last check failed: ${update.lastError}</span>` : ''}</span>
     <button type="button" class="bc-btn" disabled=${checking} onClick=${check}>${checking ? 'Checking…' : 'Check now'}</button>
+    ${update && update.blocked && html`<a class="bc-btn" href=${INSTALL_UPDATING_URL} target="_blank" rel="noopener">How to update</a>`}
     ${update && update.releaseUrl && update.available && html`<a class="bc-btn" href=${update.releaseUrl} target="_blank" rel="noopener">View release</a>`}`;
 }

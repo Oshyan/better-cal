@@ -68,6 +68,24 @@ final class MailPolicy
     }
 
     /**
+     * One mailbox, for telling whether two strings name the same one (a
+     * stored organizer and a claimed one, an organizer and the sender): the
+     * display name, angle brackets and mailto: gone, then the form address()
+     * stores, so the Unicode and punycode spellings of one domain compare
+     * equal, as they already do in the approved-sender list. Anything that
+     * isn't an address is compared as written, lowercased. Equal here says
+     * the strings name one mailbox, nothing about who sent the mail: that
+     * judgment stays with MailIngest::imipMayMutate.
+     */
+    public static function mailbox(mixed $value): string
+    {
+        $s = is_string($value) ? trim($value) : '';
+        if (preg_match('/<([^>]+)>/', $s, $m) === 1) $s = trim($m[1]);
+        if (stripos($s, 'mailto:') === 0) $s = substr($s, 7);
+        return self::address($s) ?? strtolower(trim($s));
+    }
+
+    /**
      * A domain as rules store and match it: lowercase ASCII, with any
      * non-ASCII label punycoded (IDNA 2008), or null when it isn't a
      * hostname. Without PHP's intl extension a non-ASCII name can't be

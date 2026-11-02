@@ -1353,6 +1353,22 @@ check('imip organizer case/name insensitive', $may($bound, ['organizer' => ['ema
 check('imip trusted sender covers relayed body', $may($bound, ['organizer' => ['email' => 'bob@evil.test'], 'sequence' => 3], 'Alice <alice@example.com>')[0]);
 check('imip mailto: prefix normalizes', $may($bound, ['organizer' => ['email' => 'mailto:alice@example.com'], 'sequence' => 2], '')[0]);
 
+// One mailbox, two spellings of its domain: an internationalized domain
+// reaches us in Unicode from one calendar and as punycode from another. The
+// approved-sender list already treats them as one (MailPolicy::address); the
+// organizer check must too, or the organizer's own update is refused.
+$boundIdn = ['organizer' => ['email' => 'host@bücher.example'], 'sequence' => 1, 'organizerTrust' => 'owner'];
+check('imip organizer: the punycode spelling of a Unicode organizer is the same mailbox',
+    $may($boundIdn, ['organizer' => ['email' => 'host@xn--bcher-kva.example'], 'sequence' => 2], 'host@xn--bcher-kva.example')[0]);
+check('imip organizer: the Unicode spelling of a punycode organizer is the same mailbox',
+    $may(['organizer' => ['email' => 'host@xn--bcher-kva.example']] + $boundIdn, ['organizer' => ['email' => 'Host@BÜCHER.example'], 'sequence' => 2], '')[0]);
+check('imip organizer: the sender alone in the other spelling is enough',
+    $may($boundIdn, ['organizer' => ['email' => 'relay@lists.example'], 'sequence' => 2], 'Alex Example <host@xn--bcher-kva.example>')[0]);
+checkEq('imip organizer: another mailbox at the same internationalized domain is still a mismatch', 'organizer mismatch',
+    $may($boundIdn, ['organizer' => ['email' => 'other@xn--bcher-kva.example'], 'sequence' => 2], 'other@bücher.example')[1]);
+checkEq('imip organizer: a near-identical punycode label is another domain, not the organizer', 'organizer mismatch',
+    $may($boundIdn, ['organizer' => ['email' => 'host@xn--bcher-kwa.example'], 'sequence' => 2], '')[1]);
+
 checkEq('imip forged cancel refused', 'organizer mismatch', $may($bound, ['organizer' => ['email' => 'mallory@evil.test'], 'sequence' => 9], 'mallory@evil.test')[1]);
 checkEq('imip no-organizer message refused', 'organizer mismatch', $may($bound, ['sequence' => 3], 'mallory@evil.test')[1]);
 checkEq('imip stale sequence refused', 'stale sequence', $may($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 1], '')[1]);
@@ -1863,8 +1879,10 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $earlyPayload['occurrence'] ?? null, $earlyPayload['fields']['tzid'] ?? null,
         str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$earlyItem]), 'not on your calendar yet'),
     ]);
-    checkEq('occurrence before its series: cancelling a day of a series that isn\'t there changes nothing', ['skipped', null],
-        array_slice($applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL'] + $earlyInvite] + $earlyOcc, 'UTC', ['messageId' => 'early-cancel@example.test'] + $earlyMsg), 0, 2));
+    // Only a changed day of this series waits, not the series: a cancelled
+    // day of a series nothing knows is nothing to keep, and the log says so.
+    checkEq('occurrence before its series: cancelling a day of a series that isn\'t there or waiting changes nothing, and says why', ['skipped', null, 'no series on the calendar or waiting in Review for this day'],
+        $applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL'] + $earlyInvite] + $earlyOcc, 'UTC', ['messageId' => 'early-cancel@example.test'] + $earlyMsg));
     try {
         $queueA->accept(1, $earlyItem);
         check('occurrence before its series: accepting it adds nothing', false);
@@ -1959,6 +1977,106 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             // writes) says the series was added, not that its day is held.
             checkEq("moved day with its series, $order: the message is logged as created, naming the series", ['imip', 'created', (int) ($autoSeries['id'] ?? 0)],
                 [$autoResult['tier'], $autoResult['outcome'], $autoResult['eventId']]);
+        }
+
+        // A cancelled day sent with its series (the organizer called one off
+        // before inviting) while every new event waits in Review: the
+        // cancellation waits with the series, and adding the series makes it
+        // a cancellation of that day, as it is when the series is added
+        // automatically. It used to be dropped, and the day came back.
+        $withCancelledDay = static function (string $uid, string $organizer): string {
+            $series = "BEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:0\r\nDTSTAMP:20300101T120000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nSUMMARY:Reading group\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\n";
+            $day = "BEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:0\r\nDTSTAMP:20300101T120000Z\r\nRECURRENCE-ID:20300114T180000Z\r\nDTSTART:20300114T180000Z\r\nDTEND:20300114T190000Z\r\nSUMMARY:Reading group\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\n";
+            return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:REQUEST\r\n" . $day . $series . "END:VCALENDAR\r\n";
+        };
+        $priorSettingsA = $adb->scalar('SELECT settings_json FROM users WHERE id = 1');
+        $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [json_encode(['mailEventMode' => 'review'] + (json_decode((string) $priorSettingsA, true) ?: []))]);
+        $cancelledUid = 'cancelled-day-held';
+        $cancelledResult = $runTiersA->invoke($mailA, 1, ['messageId' => "$cancelledUid@example.test", 'subject' => 'Invitation: Reading group', 'from' => 'organizer@example.test',
+            'icsParts' => [$withCancelledDay($cancelledUid, 'organizer@example.test')], 'html' => null, 'text' => null], 'UTC');
+        $cancelledItems = $adb->all("SELECT * FROM review_items WHERE source_key = ? AND status = 'open' ORDER BY id", [$cancelledUid]);
+        $cancelledPayloads = array_map(static fn(array $r): array => json_decode((string) $r['payload_json'], true), $cancelledItems);
+        $dayAt = static fn(array $p): ?string => $p['occurrence'] ?? null;
+        checkEq('cancelled day with its series, in Review mode: both wait, the day as a cancellation, and nothing is added', ['held', 0, ['invite_new', 'invite_new'], [null, '2030-01-14 18:00:00'], 'CANCEL', true], [
+            $cancelledResult['outcome'], (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ?', [$cancelledUid]), array_column($cancelledItems, 'kind'),
+            array_map($dayAt, $cancelledPayloads),
+            $cancelledPayloads[1]['method'] ?? null,
+            str_contains((string) ($cancelledItems[1]['summary'] ?? ''), 'cancelled one occurrence') && str_contains((string) ($cancelledItems[1]['summary'] ?? ''), 'Nothing has been added'),
+        ]);
+        checkEq('cancelled day with its series: the same cancellation again is the same item', count($cancelledItems), (function () use ($runTiersA, $mailA, $withCancelledDay, $cancelledUid, $adb): int {
+            $runTiersA->invoke($mailA, 1, ['messageId' => "$cancelledUid-again@example.test", 'subject' => 'Invitation: Reading group', 'from' => 'organizer@example.test',
+                'icsParts' => [$withCancelledDay($cancelledUid, 'organizer@example.test')], 'html' => null, 'text' => null], 'UTC');
+            return (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid]);
+        })());
+        $cancelledSeriesItem = (int) $cancelledItems[0]['id'];
+        $cancelledDayItem = (int) $cancelledItems[1]['id'];
+        try {
+            $queueA->accept(1, $cancelledDayItem);
+            check('cancelled day with its series: accepting the cancellation first adds nothing', false);
+        } catch (HttpError $e) {
+            checkEq('cancelled day with its series: accepting the cancellation first says to add the series, and the item stays', [409, 'review_waiting', true, 'open'],
+                [$e->status, $e->errorCode, str_contains($e->getMessage(), 'cancels one occurrence'), $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$cancelledDayItem])]);
+        }
+        $cancelledSeriesId = (int) $queueA->accept(1, $cancelledSeriesItem)['eventId'];
+        $cancelledDayRow = $adb->one('SELECT * FROM review_items WHERE id = ?', [$cancelledDayItem]);
+        $cancelledDayPayload = json_decode((string) $cancelledDayRow['payload_json'], true);
+        checkEq('cancelled day with its series: adding the series makes the day a cancellation of that occurrence', ['invite_change', 'open', $cancelledSeriesId, 'CANCEL', '2030-01-14 18:00:00', ['Occurrence'], true], [
+            $cancelledDayRow['kind'], $cancelledDayRow['status'], (int) $cancelledDayRow['event_id'], $cancelledDayPayload['method'] ?? null, $cancelledDayPayload['occurrence'] ?? null,
+            array_column($cancelledDayPayload['diff'] ?? [], 'label'),
+            str_contains((string) $cancelledDayRow['summary'], 'cancelled the Mon 14 Jan 2030 occurrence of the series you added') && str_contains((string) $cancelledDayRow['summary'], 'Accepting skips just that one'),
+        ]);
+        $queueA->accept(1, $cancelledDayItem);
+        checkEq('cancelled day with its series: accepting the cancellation skips that day and leaves the rest', [['2030-01-14 18:00:00'], 'FREQ=WEEKLY;COUNT=3', 'accepted'], [
+            BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$cancelledSeriesId])),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$cancelledSeriesId]), $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$cancelledDayItem]),
+        ]);
+        // Undo the two decisions: the day is back as a cancellation to
+        // decide, then the series is off the calendar and both wait again.
+        $undoA->undoLatest(1);
+        checkEq('cancelled day with its series: undoing the cancellation puts the day back, and its item back to decide', [[], 'open', 'invite_change'], [
+            BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$cancelledSeriesId])),
+            $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$cancelledDayItem]), $adb->scalar('SELECT kind FROM review_items WHERE id = ?', [$cancelledDayItem]),
+        ]);
+        $undoA->undoLatest(1);
+        checkEq('cancelled day with its series: undoing the add puts both back in Review, the day as it was held', [0, ['open', 'open'], ['invite_new', 'invite_new'], '2030-01-14 18:00:00', 'CANCEL'], [
+            (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ? AND deleted_at IS NULL', [$cancelledUid]),
+            array_column($adb->all('SELECT status FROM review_items WHERE source_key = ? ORDER BY id', [$cancelledUid]), 'status'),
+            array_column($adb->all('SELECT kind FROM review_items WHERE source_key = ? ORDER BY id', [$cancelledUid]), 'kind'),
+            json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$cancelledDayItem]), true)['occurrence'] ?? null,
+            json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$cancelledDayItem]), true)['method'] ?? null,
+        ]);
+        // A cancelled day whose series was dismissed, not added, is nothing
+        // to keep either: no series waits for it any more.
+        $queueA->dismiss(1, $cancelledSeriesItem);
+        $queueA->dismiss(1, $cancelledDayItem);
+        $orphanCancel = $runTiersA->invoke($mailA, 1, ['messageId' => "$cancelledUid-after@example.test", 'subject' => 'Cancelled: Reading group', 'from' => 'organizer@example.test',
+            'icsParts' => ["BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:$cancelledUid\r\nSEQUENCE:1\r\nDTSTAMP:20300102T120000Z\r\nRECURRENCE-ID:20300121T180000Z\r\nDTSTART:20300121T180000Z\r\nDTEND:20300121T190000Z\r\nSUMMARY:Reading group\r\nORGANIZER:mailto:organizer@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"],
+            'html' => null, 'text' => null], 'UTC');
+        checkEq('cancelled day of a dismissed series: skipped, with the reason', ['skipped', 0], [$orphanCancel['outcome'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$cancelledUid])]);
+        $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettingsA]);
+
+        // The organizer's domain spelled two ways (Unicode in one calendar's
+        // mail, punycode in another's): the same mailbox, so the organizer's
+        // own update is held for Review, not refused as someone else's.
+        BetterCal\Domain\MailPolicy::approve($adb, 1, 'host@bücher.example', 'address');
+        $idnInvite = static fn(string $uid, int $sequence, string $organizer, string $title): string =>
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:$sequence\r\nDTSTAMP:20301201T120000Z\r\nDTSTART:20301203T180000Z\r\nDTEND:20301203T190000Z\r\nSUMMARY:$title\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        foreach (['Unicode then punycode' => ['host@bücher.example', 'host@xn--bcher-kva.example'], 'punycode then Unicode' => ['host@xn--bcher-kva.example', 'host@bücher.example']] as $order => [$first, $second]) {
+            $uid = 'idn-organizer-' . preg_replace('/\W+/', '-', strtolower($order));
+            $firstResult = $runTiersA->invoke($mailA, 1, ['messageId' => "$uid-1@example.test", 'subject' => 'Invitation: Book club', 'from' => $first,
+                'icsParts' => [$idnInvite($uid, 1, $first, 'Book club')], 'html' => null, 'text' => null], 'UTC');
+            $secondResult = $runTiersA->invoke($mailA, 1, ['messageId' => "$uid-2@example.test", 'subject' => 'Updated: Book club', 'from' => $second,
+                'icsParts' => [$idnInvite($uid, 2, $second, 'Book club, new chapter')], 'html' => null, 'text' => null], 'UTC');
+            $idnEventId = (int) $adb->scalar('SELECT id FROM events WHERE uid = ? AND deleted_at IS NULL', [$uid]);
+            checkEq("organizer in two spellings, $order: added from the approved sender, then the update is held, not refused", ['created', 'held', 1, 0, $first], [
+                $firstResult['outcome'], $secondResult['outcome'],
+                (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open'", [$idnEventId]),
+                (int) $adb->scalar("SELECT COUNT(*) FROM mutations WHERE op = 'refuse' AND entity_id = ?", [$idnEventId]),
+                json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$idnEventId]), true)['organizer']['email'] ?? null,
+            ]);
+            $idnOther = $runTiersA->invoke($mailA, 1, ['messageId' => "$uid-3@example.test", 'subject' => 'Updated: Book club', 'from' => 'other@xn--bcher-kva.example',
+                'icsParts' => [$idnInvite($uid, 3, 'other@bücher.example', 'Book club, taken over')], 'html' => null, 'text' => null], 'UTC');
+            checkEq("organizer in two spellings, $order: another mailbox at that domain is still refused", ['refused', 'organizer mismatch'], [$idnOther['outcome'], $idnOther['error']]);
         }
     }
 

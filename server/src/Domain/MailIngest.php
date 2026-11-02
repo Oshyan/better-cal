@@ -622,18 +622,16 @@ final class MailIngest
     }
 
     /**
-     * Normalised mail identity for comparison: lowercased address, angle
-     * brackets and display name stripped. "Alice <A@Example.COM>" and
-     * "a@example.com" are the same organizer.
+     * Normalised mail identity for comparison (MailPolicy::mailbox): the
+     * display name, angle brackets and mailto: stripped, the address in its
+     * canonical form. "Alex <A@Example.COM>" and "a@example.com" are the same
+     * organizer, and so are the Unicode and punycode spellings of one
+     * internationalized domain, which the approved-sender list already
+     * treats as one.
      */
     private static function addrKey(mixed $addr): string
     {
-        $s = is_string($addr) ? $addr : '';
-        if (preg_match('/<([^>]+)>/', $s, $m) === 1) {
-            $s = $m[1];
-        }
-        $s = strtolower(trim($s));
-        return str_starts_with($s, 'mailto:') ? substr($s, 7) : $s;
+        return MailPolicy::mailbox($addr);
     }
 
     /**
@@ -857,12 +855,20 @@ final class MailIngest
             // waiting in Review itself. Made an event of its own it would
             // later pass for the whole series, so it waits as a change to
             // that one day, and becomes one once the series is added
-            // (ReviewQueue::reconcilePending). Cancelling a day of a series
-            // that isn't there changes nothing.
-            if ($cancel) {
-                return ['skipped', null];
+            // (ReviewQueue::reconcilePending). A cancelled day waits the
+            // same way while its series waits (sent with it, or after it),
+            // and becomes a cancellation of that day; it used to be dropped,
+            // and the day came back with the series. Cancelling a day of a
+            // series that is neither there nor waiting changes nothing.
+            if ($cancel && !$this->review->seriesWaiting($userId, $uid)) {
+                return ['skipped', null, 'no series on the calendar or waiting in Review for this day'];
             }
-            $result = $this->createNew($userId, $msg, $uid, $occurrenceFields, (array) ($ev['invite'] ?? []), 'imip', $occurrence);
+            $result = $this->createNew(
+                $userId, $msg, $uid,
+                $cancel ? ['title' => (string) ($ev['title'] ?? '(untitled)')] : $occurrenceFields,
+                ($cancel ? ['method' => 'CANCEL'] : []) + (array) ($ev['invite'] ?? []),
+                'imip', $occurrence,
+            );
             return $result['error'] === null ? [$result['outcome'], $result['eventId']] : [$result['outcome'], $result['eventId'], $result['error']];
         }
 

@@ -87,6 +87,11 @@ if (function_exists('idn_to_ascii')) {
         'bücher.example (xn--bcher-kva.example)', '*.bücher.example (*.xn--bcher-kva.example)',
         'jörg@bücher.example (jörg@xn--bcher-kva.example)', 'alex@example.test', '*.example.test',
     ], array_map([MailPolicy::class, 'display'], ['xn--bcher-kva.example', '*.xn--bcher-kva.example', 'jörg@xn--bcher-kva.example', 'alex@example.test', '*.example.test']));
+    // Identity comparison (an organizer with a sender): one mailbox however
+    // its domain is spelled or who is named in front of it.
+    checkEq('mail identity: one mailbox in every spelling, anything else compared as written',
+        ['host@xn--bcher-kva.example', 'host@xn--bcher-kva.example', 'host@xn--bcher-kva.example', 'alex@example.test', 'not-an-address', ''],
+        array_map([MailPolicy::class, 'mailbox'], ['Host@BÜCHER.example', 'mailto:host@xn--bcher-kva.example', 'Alex Example <host@bücher.example>', ' ALEX@Example.test ', 'Not-An-Address', null]));
 }
 checkEq('mail policy: bytes that are not text are not an address', null, MailPolicy::address("\xff@example.test"));
 

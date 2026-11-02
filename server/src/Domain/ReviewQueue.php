@@ -186,9 +186,10 @@ final class ReviewQueue
         $sequence = (int) ($invite['sequence'] ?? 0);
         $candidateKey = hash('sha256', json_encode([$uid, $fromAddr, $fields, $invite, $occurrence], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES) ?: '');
         $who = (string) ($invite['organizer']['name'] ?? '') ?: (string) ($invite['organizer']['email'] ?? '') ?: $fromAddr;
+        $cancelsDay = $occurrence !== null && ($invite['method'] ?? '') === 'CANCEL';
         if ($occurrence !== null) {
-            $summary = ($who !== '' ? $who : 'The organizer') . ' changed one occurrence of a repeating event that is not on your calendar yet.'
-                . ' Once that series is added, this becomes a change to that occurrence. Nothing has been added.';
+            $summary = ($who !== '' ? $who : 'The organizer') . ($cancelsDay ? ' cancelled' : ' changed') . ' one occurrence of a repeating event that is not on your calendar yet.'
+                . ' Once that series is added, this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence. Nothing has been added.';
         } else {
             $summary = $mode === 'review'
                 ? 'Your email setting holds every new event for Review. This event has not been added.'
@@ -196,7 +197,7 @@ final class ReviewQueue
         }
         $sourceKey = mb_substr($uid, 0, 255);
 
-        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $fields, $invite, $fromAddr, $sequence, $candidateKey, $summary, $sourceKey, $tier, $occurrence): int {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $uid, $fields, $invite, $fromAddr, $sequence, $candidateKey, $summary, $sourceKey, $tier, $occurrence, $cancelsDay): int {
             foreach ($this->db->all(
                 "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC",
                 [$userId, self::KIND_INVITE_NEW, $sourceKey]
@@ -223,10 +224,27 @@ final class ReviewQueue
                     'candidateKey' => $candidateKey,
                 ] + ($occurrence !== null ? ['occurrence' => $occurrence] : []), JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
             ]);
-            $this->journalHeld($userId, $held, 'create', null, 'Held an emailed ' . ($occurrence !== null ? 'change to one occurrence of' : 'invitation to')
+            $this->journalHeld($userId, $held, 'create', null, 'Held an emailed ' . ($occurrence !== null ? ($cancelsDay ? 'cancellation of one occurrence of' : 'change to one occurrence of') : 'invitation to')
                 . ' "' . mb_substr((string) ($fields['title'] ?? '(untitled)'), 0, 200) . '" for Review');
             return $held;
         });
+    }
+
+    /**
+     * Is a first version of this series itself waiting in Review, not only
+     * a changed day of it? A cancelled day arriving before its series is
+     * kept only while this holds (MailIngest::applyImipEvent): with nothing
+     * to cancel a day of, there is nothing to decide.
+     */
+    public function seriesWaiting(int $userId, string $uid): bool
+    {
+        foreach ($this->db->all(
+            "SELECT payload_json FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
+            [$userId, self::KIND_INVITE_NEW, mb_substr($uid, 0, 255)]
+        ) as $open) {
+            if (!isset(self::payload($open)['occurrence'])) return true;
+        }
+        return false;
     }
 
     /**
@@ -744,7 +762,9 @@ final class ReviewQueue
             // change to that occurrence, shown before it is applied.
             if (isset($payload['occurrence'])) {
                 if ($existing === null) {
-                    return self::decisionError('review_waiting', 'This changes one occurrence of a repeating event that is not on your calendar. Add the series first and this becomes a change to that occurrence, or dismiss it.');
+                    $cancelsDay = ($payload['method'] ?? '') === 'CANCEL';
+                    return self::decisionError('review_waiting', 'This ' . ($cancelsDay ? 'cancels' : 'changes') . ' one occurrence of a repeating event that is not on your calendar.'
+                        . ' Add the series first and this becomes a ' . ($cancelsDay ? 'cancellation of' : 'change to') . ' that occurrence, or dismiss it.');
                 }
                 $this->reconcilePending($userId, (int) $existing, (string) $row['source_key']);
                 return (string) $this->db->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $row['id']]) === 'open'
@@ -1039,7 +1059,9 @@ final class ReviewQueue
                     $who = (string) ($incoming['organizer']['name'] ?? '') ?: (string) ($incoming['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
                     $day = self::occurrenceLabel($event, $occurrence, Settings::homeTzid($this->db, $userId));
                     $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
-                    $summary = ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence of the series you added: $changed. Accepting changes just that one.";
+                    $summary = $method === 'CANCEL'
+                        ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence of the series you added. Accepting skips just that one."
+                        : ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence of the series you added: $changed. Accepting changes just that one.";
                 } else {
                     $summary = 'Another emailed version is waiting. Compare it with the event you added.';
                 }

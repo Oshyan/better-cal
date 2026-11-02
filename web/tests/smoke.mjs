@@ -4096,15 +4096,15 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: weekdays', said('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'), 'Every weekday');
   eq('repeat: weekends', said('FREQ=WEEKLY;BYDAY=SA,SU'), 'Every weekend');
   eq('repeat: every other week', said('FREQ=WEEKLY;INTERVAL=2;BYDAY=SA'), 'Every 2 weeks on Saturday');
-  eq('repeat: monthly on a day', said('FREQ=MONTHLY;BYMONTHDAY=15'), 'Monthly on day 15');
-  eq('repeat: monthly takes the start day', said('FREQ=MONTHLY', { start: tue }), 'Monthly on day 4');
+  eq('repeat: monthly on a day', said('FREQ=MONTHLY;BYMONTHDAY=15'), 'Monthly on the 15th');
+  eq('repeat: monthly takes the start day', said('FREQ=MONTHLY', { start: tue }), 'Monthly on the 4th');
   eq('repeat: first Monday', said('FREQ=MONTHLY;BYDAY=1MO'), 'Monthly on the first Monday');
   eq('repeat: last Friday', said('FREQ=MONTHLY;BYDAY=-1FR'), 'Monthly on the last Friday');
   eq('repeat: last day', said('FREQ=MONTHLY;BYMONTHDAY=-1'), 'Monthly on the last day');
   eq('repeat: last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), 'Monthly on the last weekday');
   eq('repeat: first and third Monday', said('FREQ=MONTHLY;BYDAY=1MO,3MO'), 'Monthly on the first and third Monday');
   eq('repeat: nth days that differ', said('FREQ=MONTHLY;BYDAY=1MO,-1FR'), 'Monthly on the first Monday and last Friday');
-  eq('repeat: two days of the month', said('FREQ=MONTHLY;BYMONTHDAY=1,15'), 'Monthly on day 1 and 15');
+  eq('repeat: two days of the month', said('FREQ=MONTHLY;BYMONTHDAY=1,15'), 'Monthly on the 1st and 15th');
   eq('repeat: first and last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1'), 'Monthly on the first and last weekday');
   eq('repeat: a last day in a list cannot be said', said('FREQ=MONTHLY;BYMONTHDAY=1,-1'), null);
   eq('repeat: quarterly', said('FREQ=MONTHLY;INTERVAL=3'), 'Every 3 months');
@@ -4112,7 +4112,26 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: count', said('FREQ=WEEKLY;BYDAY=SU;COUNT=10'), 'Weekly on Sunday, 10 times');
   assert('repeat: until', /^Weekly on Tuesday, until /.test(said('FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215')));
   eq('repeat: ends left out on request', said('FREQ=WEEKLY;BYDAY=TU;COUNT=3', { ends: false }), 'Weekly on Tuesday');
-  eq('repeat: a rule it cannot say', said('FREQ=YEARLY;BYMONTH=3;BYDAY=2SU'), null);
+  eq('repeat: a rule it cannot say', said('FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO'), null);
+  // The series sentences (docs/design/series-model-examples.md), 1.5.0.
+  eq('repeat: the 30th, or the last day', said('FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1'), 'Monthly on the 30th, or the last day in shorter months');
+  eq('repeat: the clamped 29th', said('FREQ=MONTHLY;BYMONTHDAY=28,29;BYSETPOS=-1'), 'Monthly on the 29th, or the last day in shorter months');
+  eq('repeat: the clamped form, short', said('FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', { short: true }), 'Monthly on the 30th, or the last day');
+  eq('repeat: a clamp it does not know', said('FREQ=MONTHLY;BYMONTHDAY=27,30;BYSETPOS=-1'), null);
+  eq('repeat: every 31st skips months', said('FREQ=MONTHLY;BYMONTHDAY=31'), 'Monthly on the 31st, skipping months without one');
+  eq('repeat: a bare rule from the 30th', said('FREQ=MONTHLY', { start: new Date(2027, 0, 30) }), 'Monthly on the 30th, skipping months without one');
+  eq('repeat: the second-last day', said('FREQ=MONTHLY;BYMONTHDAY=-2'), 'Monthly on the second-last day');
+  eq('repeat: the seventh-last day', said('FREQ=MONTHLY;BYMONTHDAY=-7'), 'Monthly on the seventh-last day');
+  eq('repeat: past the seventh-last, no words', said('FREQ=MONTHLY;BYMONTHDAY=-8'), null);
+  eq('repeat: ordinals', [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 31].map((n) => said('FREQ=MONTHLY;BYMONTHDAY=' + n).replace('Monthly on the ', '').replace(', skipping months without one', '')),
+    ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '23rd', '31st']);
+  eq('repeat: yearly nth weekday of a month', said('FREQ=YEARLY;BYMONTH=3;BYDAY=2SU'), 'Yearly on the second Sunday of March');
+  eq('repeat: yearly on 29 February', said('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29'), 'Yearly on 29 February, only in leap years');
+  eq('repeat: yearly on the last day of February', said('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1'), 'Yearly on the last day of February');
+  eq('repeat: yearly on two months', said('FREQ=YEARLY;BYMONTH=3,9;BYDAY=2TU'), 'Yearly on the second Tuesday of March and September');
+  assert('repeat: yearly on a month and day', /^Yearly on (Mar 15|15 Mar)$/.test(said('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15')));
+  eq('repeat: BYMONTH outside a yearly rule is not said', said('FREQ=WEEKLY;BYMONTH=3;BYDAY=MO'), null);
+  eq('presets: day 30 says it skips', repeatPresets(new Date(2027, 2, 30)).find((p) => p.key === 'monthly-day').label, 'Monthly on the 30th, skipping months without one');
   eq('repeat: hourly is not ours', describable('FREQ=HOURLY'), false);
   eq('repeat: the sentence', repeatSentence('FREQ=WEEKLY;BYDAY=MO'), 'Repeats weekly on Monday');
   eq('repeat: the sentence falls back', repeatSentence('FREQ=YEARLY;BYWEEKNO=20'), 'Repeats');
@@ -4476,6 +4495,156 @@ console.log('--- update notices (#194) ---');
     'A Better-Cal security update is required. Update to 1.5.1 or newer.');
   eq('updates: not checked yet', updateStatusText({ ...current, checkedAt: null }), 'Not checked yet');
   assert('updates: the by-hand link goes to the Updating section', /docs\/install\.md#updating$/.test(INSTALL_UPDATING_URL));
+}
+
+console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---');
+{
+  const { planView, planDate, commitPlan, creationLine, ruleLine } = await import('../src/lib/seriesplan.js');
+  const LA = 'America/Los_Angeles';
+  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', tz: LA, refYear: 2027, ...extra });
+  // "A Plan as JSON" in docs/design/series-model-examples.md, as written there.
+  const choir = {
+    hash: '9f2c41d07a', scope: 'all', direct: false,
+    rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Wednesday at 19:00' },
+    start: '2027-01-06T19:00:00-08:00',
+    bound: { kind: 'none', words: 'No end, as before' },
+    next: [{ start: '2027-03-10T19:00:00-08:00', kind: 'acted' }, { start: '2027-03-17T19:00:00-07:00', kind: 'occurrence' },
+      { start: '2027-03-26T19:00:00-07:00', kind: 'edited', words: 'its own date' }, { start: '2027-04-07T19:00:00-07:00', kind: 'occurrence' }],
+    groups: [{ id: 'movedDays', label: 'Days moved on their own', selected: 'keep', options: [{ id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' }] }],
+    days: [
+      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', words: "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place" },
+      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', outcome: 'stays', words: 'Tue 23 Mar, moved to Fri 26 Mar: stays there' },
+      { key: '2027-03-31T02:00:00Z', newKey: '2027-04-01T02:00:00Z', kind: 'skipped', outcome: 'moves' },
+    ],
+    losses: [], gains: [], refusals: [], notes: [],
+    summary: 'Moved Choir (all events): weekly on Tuesday, now Wednesday, from 6 Jan.',
+  };
+  const v = planView(choir, ctx());
+  eq('series dialog: the heading names the action and the series', v.heading, 'Move all events · Choir');
+  eq('series dialog: the rule before and after on one line', v.rule, 'Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00');
+  eq('series dialog: the bound beside it', v.bound, 'No end, as before');
+  eq('series dialog: the next four, the edited day marked', v.next, 'Wed 10 Mar · Wed 17 Mar · Fri 26 Mar (its own date) · Wed 7 Apr');
+  eq('series dialog: edited days in the plan\'s words', v.edited.map((d) => d.words),
+    ["'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place", 'Tue 23 Mar, moved to Fri 26 Mar: stays there']);
+  eq('series dialog: a skipped day without words reads by its key, in the series\' zone', v.skipped, '30 Mar moves to 31 Mar');
+  eq('series dialog: a choice that isn\'t a reading sits on a line of its own', v.choices.map((g) => [g.label, g.options.map((o) => [o.label, o.selected])]),
+    [['Days moved on their own', [['Keep Fri 26 Mar', true], ['Move to Sat 27 Mar', false]]]]);
+  eq('series dialog: no readings, nothing refused, and it can be confirmed', [v.readings.length, v.refused, v.canConfirm, v.action], [0, null, true, 'Move all events']);
+  eq('series dialog: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
+  eq('series dialog: a pick goes into the commit', commitPlan(choir, { movedDays: 'move' }).choices, { movedDays: 'move' });
+  eq('series dialog: a pick that is no option is the plan\'s', commitPlan(choir, { movedDays: 'nowhere' }).choices, { movedDays: 'keep' });
+  const onDay = planView({ ...choir, groups: [{ ...choir.groups[0], day: '2027-03-24T02:00:00Z' }] }, ctx());
+  eq('series dialog: a choice for one day sits on that day\'s line', [onDay.choices.length, onDay.edited[1].choice && onDay.edited[1].choice.options.map((o) => o.label)],
+    [0, ['Keep Fri 26 Mar', 'Move to Sat 27 Mar']]);
+  const waiting = planView(null, ctx());
+  eq('series dialog: before the plan, only what the client knows, and no confirm', [waiting.heading, waiting.loading, waiting.canConfirm], ['Move all events · Choir', true, false]);
+  eq('series dialog: a plan without a hash can\'t be confirmed', planView({ ...choir, hash: '' }, ctx()).canConfirm, false);
+
+  // Lists: "Gym", Wed 10 Mar dragged to Thu 11 Mar, then to Fri 12 Mar.
+  const gymNext = (days) => days.map((d) => '2027-03-' + d + 'T07:00:00-0' + (Number(d) >= 14 ? '7' : '8') + ':00');
+  const gym = {
+    hash: 'a1', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', after: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', wordsBefore: 'Weekly on Monday, Wednesday and Friday at 07:00', words: 'Weekly on Monday, Thursday and Friday at 07:00' },
+    bound: { words: 'No end, as before' },
+    groups: [{ id: 'rule', label: 'How the rule reads', selected: 'member', options: [
+      { id: 'member', label: 'Move every Wednesday to Thursday: Monday, Thursday and Friday', next: gymNext(['11', '12', '15']) },
+      { id: 'pattern', label: 'Shift the whole weekly pattern: Tuesday, Thursday and Saturday', next: gymNext(['11', '13', '16']) },
+    ] }],
+    days: [], refusals: [],
+  };
+  const g = planView(gym, ctx({ title: 'Gym' }));
+  eq('series dialog: list readings, preselected first, each with its dates', g.readings[0].options.map((o) => [o.label, o.dates, o.selected]), [
+    ['Move every Wednesday to Thursday: Monday, Thursday and Friday', 'Thu 11 Mar · Fri 12 Mar · Mon 15 Mar', true],
+    ['Shift the whole weekly pattern: Tuesday, Thursday and Saturday', 'Thu 11 Mar · Sat 13 Mar · Tue 16 Mar', false],
+  ]);
+  const toFri = {
+    ...gym,
+    groups: [{ ...gym.groups[0], selected: 'pattern', options: [{ id: 'member', label: 'Move every Wednesday to Friday', next: [] }, { id: 'pattern', label: 'Shift the whole weekly pattern: Wednesday, Friday and Sunday', next: gymNext(['12', '14', '17']) }] }],
+    refusals: [{ group: 'rule', option: 'member', words: 'Friday is already one of its days' }],
+  };
+  const f = planView(toFri, ctx({ title: 'Gym' }));
+  eq('series dialog: a refused reading is a disabled row with its reason, the rest stands', [f.readings[0].options[0].disabled, f.readings[0].options[0].reason, f.refused, f.canConfirm], [true, 'Friday is already one of its days', null, true]);
+  eq('series dialog: a refused reading can\'t be picked into the commit', commitPlan(toFri, { rule: 'member' }).choices, { rule: 'pattern' });
+
+  // Month ends, monthly dates read without the weekday: "Book club".
+  const bookClub = {
+    hash: 'b1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=15', after: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', wordsBefore: 'Monthly on the 15th at 19:00', words: 'Monthly on the 30th, or the last day in shorter months at 19:00' },
+    groups: [{ id: 'monthEnd', label: 'Which 30th', selected: 'clamped', options: [
+      { id: 'clamped', label: 'On the 30th, or the last day in shorter months', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: 'in February: 28 Feb, and 29 Feb 2028' } },
+      { id: 'skip', label: 'On the 30th, skipping months without one', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: "none in February: drops 15 Feb's event, then every February" } },
+    ] }],
+  };
+  eq('series dialog: month-end readings as the examples write them', planView(bookClub, ctx({ title: 'Book club' })).readings[0].options.map((o) => o.label + '   ' + o.dates + '   ' + o.note), [
+    'On the 30th, or the last day in shorter months   30 Mar · 30 Apr · 30 May   in February: 28 Feb, and 29 Feb 2028',
+    "On the 30th, skipping months without one   30 Mar · 30 Apr · 30 May   none in February: drops 15 Feb's event, then every February",
+  ]);
+  const leap = {
+    hash: 'c1', rule: { after: 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' },
+    groups: [{ id: 'feb29', selected: 'last', options: [
+      { id: 'last', label: 'On the last day of February', next: ['2028-02-29', '2029-02-28', '2030-02-28'] },
+      { id: 'leap', label: 'On 29 February, only in leap years', next: ['2028-02-29', '2032-02-29', '2036-02-29'], words: 'drops three years in four' },
+    ] }],
+  };
+  eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.note ? '   ' + o.note : '')),
+    ['29 Feb 2028 · 28 Feb 2029 · 28 Feb 2030', '29 Feb 2028 · 29 Feb 2032 · 29 Feb 2036   drops three years in four']);
+
+  // A count: "Piano lesson with Alex Example", the bound as a reading group.
+  const firsts = ['02', '03', '04', '05', '06', '07'].map((m) => '2027-' + m + '-01T16:00:00-0' + (m === '02' ? '8' : '7') + ':00');
+  const piano = {
+    hash: 'd1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
+    bound: { words: '6 in the series + 1 separate' },
+    groups: [
+      { id: 'bound', label: 'Bound', selected: 'count', options: [
+        { id: 'count', label: 'Keep 6 events', next: firsts, bound: { words: 'ends 1 Jul (was 31 Oct)' } },
+        { id: 'end', label: 'Keep the end', next: firsts.slice(0, 3), words: 'Changes 6 events to 10, 1 Feb to 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct; the recital moves with its event to 1 Nov' },
+      ] },
+      { id: 'outside', label: 'After the new end', day: '2027-11-01T00:00:00Z', selected: 'own', options: [{ id: 'own', label: 'Keep it as an event of its own' }, { id: 'delete', label: 'Delete it' }] },
+    ],
+    days: [{ key: '2027-11-01T00:00:00Z', kind: 'edited', outcome: 'outside', words: "After the new end: 'Recital at Sample Hall' 31 Oct" }],
+  };
+  const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
+  eq('series dialog: a count, the rule and its total', [p.rule, p.bound], ['Monthly on the 31st at 16:00, now monthly on the 1st', '6 in the series + 1 separate']);
+  eq('series dialog: keep 6 events with its dates and end', [p.readings[0].options[0].dates, p.readings[0].options[0].note],
+    ['1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'ends 1 Jul (was 31 Oct)']);
+  eq('series dialog: the day after the end carries its own choice', [p.edited[0].words, p.edited[0].choice.options.map((o) => o.label)],
+    ["After the new end: 'Recital at Sample Hall' 31 Oct", ['Keep it as an event of its own', 'Delete it']]);
+  eq('series dialog: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { bound: 'count', outside: 'delete' });
+
+  // Google, until 1.5.2: the rule-changing drag refused, the time change noted.
+  const googleWords = 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.';
+  const gRefused = planView({ hash: 'e1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE' }, refusals: [{ code: 'google_rule', words: googleWords }] }, ctx());
+  eq('series dialog: a refused change shows its reason in place of the rule, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm], [googleWords, false]);
+  const gTime = planView({
+    hash: 'e2', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', line: 'Weekly on Tuesday, now at 19:30', words: 'Weekly on Tuesday at 19:30' },
+    notes: [{ kind: 'google', words: "Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone." }],
+  }, ctx({ kind: 'resize' }));
+  eq('series dialog: what is still possible on Google, with its notice', [gTime.heading, gTime.rule, gTime.notes, gTime.edited, gTime.canConfirm],
+    ['Change all events · Choir', 'Weekly on Tuesday, now at 19:30', ["Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone."], [], true]);
+
+  // An editor save: the rule as before, the fields changed, an own title.
+  const save = planView({
+    hash: 'f1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Tuesday at 19:00' },
+    bound: { words: 'No end, as before' },
+    groups: [{ id: 'ownTitle', label: "'Rehearsal' Tue 13 Apr keeps its own title", selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }],
+  }, ctx({ kind: 'editor', fields: [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }] }));
+  eq('series dialog: an editor save names its fields, the rule as before', [save.heading, save.fields.map((x) => x.label + ' ' + x.words), save.rule, save.action], [
+    'Save for all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Save for all events']);
+  eq('series dialog: the own title\'s choice', save.choices.map((c) => c.label), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
+  eq('series dialog: a start moved for another reason says why', planView({ hash: 'g', start: { at: '2027-01-15', words: 'Starts Fri 15 Jan, the first 15th (was 1 Jan)' } }, ctx()).start, 'Starts Fri 15 Jan, the first 15th (was 1 Jan)');
+  eq('series dialog: gains and losses named', [planView({ hash: 'h', gains: [{ words: 'adds every February, which had no 30th' }] }, ctx()).gains], ['Adds every February, which had no 30th']);
+  eq('series dialog: a series that changed meanwhile says so', planView(choir, ctx({ changed: true })).changed, true);
+  eq('series dialog: the following scope names its own action', planView(null, ctx({ scope: 'following' })).action, 'Move this and following');
+  eq('series dialog: a rule line from the server is used as it is', ruleLine({ line: 'Monthly on the 1st and 15th, now on the 15th and 20th' }), 'Monthly on the 1st and 15th, now on the 15th and 20th');
+  eq('plan dates: weekday, month, and the year only when it isn\'t this one', [planDate('2027-03-10T19:00:00-08:00', { refYear: 2027 }), planDate('2028-02-29', { weekday: false, refYear: 2027 }), planDate('2027-04-14T02:00:00Z', { tz: LA, refYear: 2027 })],
+    ['Wed 10 Mar', '29 Feb 2028', 'Tue 13 Apr']);
+
+  // Creating a series: quick add's line and the editor's Repeat row.
+  const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
+  eq('creation line: the rule, the first three dates, the bound', creationLine(created, { typedStart: '2027-01-30', refYear: 2027 }), { line: 'Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar · 6 events', moved: '' });
+  eq('creation line: a start moved to the rule\'s first day says so', creationLine({ ...created, start: '2027-03-02T09:00:00-08:00', startWords: 'Starts Tue 2 Mar, the first Tuesday on or after the date you typed' }, { typedStart: '2027-02-27', refYear: 2027 }).moved,
+    'Starts Tue 2 Mar, the first Tuesday on or after the date you typed');
+  eq('creation line: without the server\'s words, a plain one', creationLine({ ...created, start: '2027-03-02T09:00:00-08:00' }, { typedStart: '2027-02-27', refYear: 2027 }).moved,
+    'Starts Tue 2 Mar, its first day on or after the date you typed');
+  eq('creation line: none without a plan', creationLine(null), null);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

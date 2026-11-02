@@ -16,7 +16,16 @@ const WEEKDAYS = 'MO,TU,WE,TH,FR';
 const WEEKEND = 'SA,SU';
 // The parts the words and presets understand; anything else (BYMONTH,
 // BYYEARDAY, ...) is a rule only the full editor's custom view can carry.
-const KNOWN = new Set(['FREQ', 'INTERVAL', 'BYDAY', 'BYMONTHDAY', 'BYSETPOS', 'UNTIL', 'COUNT', 'WKST']);
+const KNOWN = new Set(['FREQ', 'INTERVAL', 'BYDAY', 'BYMONTHDAY', 'BYSETPOS', 'BYMONTH', 'UNTIL', 'COUNT', 'WKST']);
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// The series sentences' days of the month (docs/design/series-model-examples.md):
+// "the 15th", "the second-last day", as the plan's words say them.
+const LAST_ORDINAL = { 2: 'second', 3: 'third', 4: 'fourth', 5: 'fifth', 6: 'sixth', 7: 'seventh' };
+export function ordinalDay(n) {
+  const t = n % 100;
+  const suffix = t >= 11 && t <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+  return n + suffix;
+}
 const ORDER = ['FREQ', 'INTERVAL', 'BYDAY', 'BYMONTHDAY', 'BYSETPOS'];
 
 // "FREQ=WEEKLY;BYDAY=TU" -> { FREQ: 'WEEKLY', BYDAY: 'TU' }.
@@ -73,6 +82,7 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
   if (p.FREQ === 'DAILY' && p.BYDAY && n === 1 && !p.BYMONTHDAY && !p.BYSETPOS) p.FREQ = 'WEEKLY';
   const every = (unit, adverb) => (n === 1 ? adverb : `Every ${n} ${unit}s`);
   const startCode = start ? DAY_CODES[start.getDay()] : null;
+  if (p.BYMONTH && p.FREQ !== 'YEARLY') return null;
   let text;
   if (p.FREQ === 'DAILY') {
     if (p.BYDAY || p.BYMONTHDAY || p.BYSETPOS) return null;
@@ -91,10 +101,19 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
     // Lists read as one phrase ("the first and third Monday", "day 1 and 15").
     const andList = (items) => (items.length > 1 ? items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1] : items[0]);
     if (p.BYMONTHDAY) {
-      if (byday.length || p.BYSETPOS) return null;
+      if (byday.length) return null;
       const days = p.BYMONTHDAY.split(',').map((d) => parseInt(d, 10));
-      if (days.length === 1 && days[0] === -1) text += ' on the last day';
-      else if (days.every((d) => d >= 1 && d <= 31)) text += ' on day ' + andList(days);
+      // "On the 30th, or the last day in shorter months": the clamped form,
+      // the latest of 28 to N that the month has.
+      if (p.BYSETPOS) {
+        const top = days[days.length - 1];
+        const clamped = p.BYSETPOS === '-1' && (top === 29 || top === 30) && days.join(',') === Array.from({ length: top - 27 }, (_, i) => 28 + i).join(',');
+        if (!clamped) return null;
+        text += ` on the ${ordinalDay(top)}, or the last day${short ? '' : ' in shorter months'}`;
+      } else if (days.length === 1 && days[0] === -1) text += ' on the last day';
+      else if (days.length === 1 && LAST_ORDINAL[-days[0]]) text += ` on the ${LAST_ORDINAL[-days[0]]}-last day`;
+      else if (days.length === 1 && days[0] >= 29 && days[0] <= 31) text += ` on the ${ordinalDay(days[0])}, skipping months without one`;
+      else if (days.every((d) => d >= 1 && d <= 31)) text += ' on the ' + andList(days.map(ordinalDay));
       else return null;
     } else if (p.BYSETPOS) {
       const pos = p.BYSETPOS.split(',').map((n) => ORDINAL[parseInt(n, 10)]);
@@ -112,11 +131,35 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
         ? ` on the ${andList(nth.map((m) => ORDINAL[parseInt(m[1], 10)]))} ${DAY_NAMES[days[0]]}`
         : ' on the ' + andList(nth.map((m) => `${ORDINAL[parseInt(m[1], 10)]} ${DAY_NAMES[m[2]]}`));
     } else if (start) {
-      text += ' on day ' + start.getDate();
+      // A bare rule repeats on its start's day, which months without one skip.
+      text += ' on the ' + ordinalDay(start.getDate()) + (start.getDate() >= 29 ? ', skipping months without one' : '');
     }
   } else {
-    if (p.BYDAY || p.BYMONTHDAY || p.BYSETPOS) return null;
-    text = every('year', 'Yearly') + (start ? ' on ' + monthDay(start) : '');
+    text = every('year', 'Yearly');
+    if (p.BYMONTH) {
+      const months = p.BYMONTH.split(',').map((m) => parseInt(m, 10));
+      if (months.some((m) => !(m >= 1 && m <= 12)) || p.BYSETPOS) return null;
+      const andList = (items) => (items.length > 1 ? items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1] : items[0]);
+      const names = andList(months.map((m) => MONTH_NAMES[m - 1]));
+      const byday = (p.BYDAY || '').split(',').filter(Boolean);
+      if (p.BYMONTHDAY && !byday.length) {
+        const day = parseInt(p.BYMONTHDAY, 10);
+        if (String(day) !== p.BYMONTHDAY) return null;
+        if (day === -1) text += ' on the last day of ' + names;
+        else if (months.length === 1 && months[0] === 2 && day === 29) text += ' on 29 February, only in leap years';
+        else if (day >= 1 && day <= 31) text += ' on ' + andList(months.map((m) => monthDay(new Date(2000, m - 1, day))));
+        else return null;
+      } else if (byday.length === 1 && !p.BYMONTHDAY) {
+        const m = /^([+-]?\d)([A-Z]{2})$/.exec(byday[0]);
+        if (!m || !ORDINAL[parseInt(m[1], 10)] || !DAY_NAMES[m[2]]) return null;
+        text += ` on the ${ORDINAL[parseInt(m[1], 10)]} ${DAY_NAMES[m[2]]} of ${names}`;
+      } else if (!byday.length && !p.BYMONTHDAY && start) {
+        text += ' on ' + andList(months.map((mo) => monthDay(new Date(2000, mo - 1, start.getDate()))));
+      } else return null;
+    } else {
+      if (p.BYDAY || p.BYMONTHDAY || p.BYSETPOS) return null;
+      text += start ? ' on ' + monthDay(start) : '';
+    }
   }
   if (!ends) return text;
   if (p.COUNT && /^\d+$/.test(p.COUNT)) text += `, ${p.COUNT} times`;
@@ -161,7 +204,7 @@ export function repeatPresets(d) {
   ];
   if (nth <= 4) out.push({ key: 'monthly-nth', label: `Monthly on the ${ORDINAL[nth]} ${name}`, rrule: `FREQ=MONTHLY;BYDAY=${nth}${code}` });
   if (last) out.push({ key: 'monthly-last', label: `Monthly on the last ${name}`, rrule: `FREQ=MONTHLY;BYDAY=-1${code}` });
-  out.push({ key: 'monthly-day', label: 'Monthly on day ' + d.getDate(), rrule: 'FREQ=MONTHLY;BYMONTHDAY=' + d.getDate() });
+  out.push({ key: 'monthly-day', label: 'Monthly on the ' + ordinalDay(d.getDate()) + (d.getDate() >= 29 ? ', skipping months without one' : ''), rrule: 'FREQ=MONTHLY;BYMONTHDAY=' + d.getDate() });
   out.push({ key: 'yearly', label: 'Yearly on ' + monthDay(d), rrule: 'FREQ=YEARLY' });
   return out;
 }

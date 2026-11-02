@@ -60,6 +60,41 @@ final class ChangeLog
     }
 
     /**
+     * record() for many objects of one calendar (an undo putting back a
+     * calendar of tens of thousands of events): the same rows, each with
+     * the token it would have had, in a few statements rather than three
+     * per object.
+     *
+     * @param list<string> $uids
+     */
+    public static function recordMany(Db $db, int $calendarId, array $uids, int $op): void
+    {
+        if ($uids === []) {
+            return;
+        }
+        try {
+            $db->tx(function () use ($db, $calendarId, $uids, $op): void {
+                $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
+                if ($token === null) {
+                    return; // calendar gone (cascade delete); nothing to journal
+                }
+                $token = (int) $token;
+                foreach (array_chunk($uids, 500) as $chunk) {
+                    $params = [];
+                    foreach ($chunk as $uid) {
+                        array_push($params, $calendarId, DavIcs::objectUri((string) $uid), $op, $token++);
+                    }
+                    $db->run('INSERT INTO dav_changes (calendar_id, uri, operation, synctoken) VALUES '
+                        . implode(', ', array_fill(0, count($chunk), '(?, ?, ?, ?)')), $params);
+                }
+                $db->run('UPDATE calendars SET synctoken = synctoken + ? WHERE id = ?', [count($uids), $calendarId]);
+            });
+        } catch (\PDOException $e) {
+            error_log('dav changelog failed for calendar ' . $calendarId . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
      * Journal an event update given before/after rows; a calendar move is a
      * delete on the old calendar plus an add on the new one.
      *

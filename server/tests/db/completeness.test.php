@@ -376,6 +376,17 @@ return static function (Db $db): void {
         $importer = new CalendarImport($db, $d->calendars);
         $journaled('a file imported into a calendar', fn() => $importer->importIcs($u, $ics, 'ignored', null, $home));
         $journaled('a file imported as a new calendar', fn() => $importer->importIcs($u, $ics, 'Imported calendar'));
+        // As a file too large for one row of the journal is kept (#191):
+        // the events it brought in, in pieces apart from the entry.
+        $inline = Undo::$inlineBytes;
+        Undo::$inlineBytes = 0;
+        try {
+            $journaled('a file imported into a calendar, its events kept in pieces', fn() => $importer->importIcs($u, str_replace('imported-', 'pieces-', $ics), 'ignored', null, $home));
+        } finally {
+            Undo::$inlineBytes = $inline;
+        }
+        checkEq('journal: that import kept its events in pieces', ['after:events'], array_map(static fn(array $r): string => $r['side'] . ':' . $r['table_name'],
+            $db->all("SELECT DISTINCT side, table_name FROM mutation_rows WHERE mutation_id = (SELECT MAX(id) FROM mutations WHERE source = 'import')")));
 
         $feed = (int) $d->calendars->create($u, ['name' => 'Club feed'], 'subscribed', 'https://feeds.example.test/club.ics')['id'];
         $feeds = new Feeds($db, null, ['session_secret' => str_repeat('t', 32)]);

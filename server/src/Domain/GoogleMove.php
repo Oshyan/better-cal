@@ -328,6 +328,7 @@ final class GoogleMove
                         OR (entity = 'calendar' AND entity_id = ?)",
                     [$calendarId, $calendarId, $calendarId]
                 );
+                Undo::dropUnusedPieces($this->db);
             });
             $count = (int) $this->db->scalar('SELECT done_count FROM calendar_moves WHERE id = ?', [$moveId]);
             $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,

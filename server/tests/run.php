@@ -118,9 +118,9 @@ function davJournal(\BetterCal\Infra\Db|\PDO $db): void
 
 /**
  * The undo journal for a test database, in the shape the migrations give
- * it (mutations, what each entry touched, the calendars it refers to), so
- * a setup can't drift from it. Tests of the journal itself run against
- * MariaDB (server/tests/db).
+ * it (mutations, what each entry touched, the calendars it refers to, the
+ * rows a large one keeps apart), so a setup can't drift from it. Tests of
+ * the journal itself run against MariaDB (server/tests/db).
  */
 function undoJournal(\BetterCal\Infra\Db $db): void
 {
@@ -128,6 +128,7 @@ function undoJournal(\BetterCal\Infra\Db $db): void
         before_json TEXT, after_json TEXT, source TEXT DEFAULT 'web', run_id TEXT, summary TEXT, details_json TEXT,
         undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     (require __DIR__ . '/../migrations/056_mutation_touches.php')($db);
+    (require __DIR__ . '/../migrations/062_mutation_rows.php')($db);
     $db->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
 }
 
@@ -8533,6 +8534,7 @@ require __DIR__ . '/plugins.php';
     $adb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
     $adb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
+    (require __DIR__ . '/../migrations/062_mutation_rows.php')($adb);
     $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY)');
     $adb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, label TEXT)');
     $adb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
@@ -8540,6 +8542,9 @@ require __DIR__ . '/plugins.php';
         (1, datetime('now', '-100 days'), '{}', NULL),
         (2, datetime('now', '-10 days'), NULL, '{}'),
         (3, datetime('now', '-1 hour'), '{}', '{}')");
+    // Rows two of them keep apart (a large calendar deleted): the older
+    // entry's go with its snapshots, the recent one's stay.
+    $adb->run("INSERT INTO mutation_rows (mutation_id, seq, side, table_name, rows_json) VALUES (2, 1, 'after', 'events', '[]'), (3, 1, 'before', 'events', '[]'), (3, 2, 'before', 'event_tags', '[]')");
     // A plugin's calendars: one still here (7), one deleted ten days ago (8)
     // and one an hour ago (9), each delete holding the calendar as it was.
     $adb->run('INSERT INTO calendars (id) VALUES (7)');
@@ -8553,6 +8558,7 @@ require __DIR__ . '/plugins.php';
     checkEq('prune: snapshots older than 7 days cleared (count, not statement)', 3, $pruned['snapshotsCleared']);
     checkEq('prune: rows older than 90 days deleted', 1, $pruned['deleted']);
     checkEq('prune: recent rows untouched', 4, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
+    checkEq('prune: rows kept apart go with their snapshots, recent ones stay', [3, 3], array_map('intval', array_column($adb->all('SELECT mutation_id FROM mutation_rows ORDER BY mutation_id'), 'mutation_id')));
     $left = static fn(): array => [array_column($adb->all('SELECT label FROM plugin_ranges ORDER BY id'), 'label'), array_column($adb->all('SELECT k FROM plugin_kv ORDER BY k'), 'k')];
     checkEq("prune: a deleted plugin calendar's bands and status rows go once its undo window closes; one still undoable keeps them; a plugin's own key that only starts like one is not a calendar row",
         [3, [['whole plugin', 'here', 'just gone'], ['__calplace.0', '__calplace.7', '__calplace.7x', '__calstatus.7', '__calstatus.9', '__calstatus.text', '__options.stations']]], [$pruned['pluginRowsForgotten'], $left()]);

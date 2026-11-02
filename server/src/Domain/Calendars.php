@@ -450,12 +450,14 @@ final class Calendars
             CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
             $calendar = $this->get($userId, $id);
             $wasDefault = Settings::defaultCalendarId($this->db, $userId) === $id;
-            $events = $this->db->all('SELECT * FROM events WHERE calendar_id = ?', [$id]);
-            $before = [
+            // Its events go into the entry a page at a time, kept apart from
+            // it: tens of thousands of them in one row of the journal were
+            // more than the database takes in one statement (#191).
+            $entry = $this->undo->record($userId, 'calendar', $id, 'delete', [
                 'calendars' => [$calendar],
                 'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-                'events' => $events,
-            ] + Undo::linksOf($this->db, array_map(static fn($e) => (int) $e['id'], $events));
+            ], null);
+            $this->undo->recordRemovedEvents($entry, 'calendar_id = ?', [$id]);
             $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
             $next = null;
             $stored = null;
@@ -466,9 +468,9 @@ final class Calendars
                 // calendar made takes over (create()).
                 $stored = $next !== null && $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$next]) === MailIngest::INVITE_CALENDAR ? null : $next;
                 Settings::setDefaultCalendar($this->db, $userId, $stored);
+                // Undone, it's where new events go again.
+                $this->undo->noteSettings($entry, ['defaultCalendarId' => [$id, $stored]]);
             }
-            // Undone, it's where new events go again.
-            $this->undo->record($userId, 'calendar', $id, 'delete', $before, null, details: $wasDefault ? ['settings' => ['defaultCalendarId' => [$id, $stored]]] : null);
             return $next;
         });
     }

@@ -4792,5 +4792,67 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   globalThis.fetch = realFetch;
 }
 
+console.log('--- the editor\'s save: only what changed (#199), all events through the plan (1.5.0) ---');
+{
+  const { changedFields, fieldLines } = await import('../src/lib/editfields.js');
+  const was = {
+    title: 'Sample choir', calendarId: 3, start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00', allDay: false,
+    location: 'Sample Hall', locationLat: 1, locationLng: 2, url: null, description: null, tagNames: ['music'], personIds: [5],
+    rrule: 'FREQ=WEEKLY;BYDAY=TU',
+  };
+  eq('editor payload: a rename sends the title alone, no rule', changedFields({ ...was, title: 'Sample chorus' }, was), { title: 'Sample chorus' });
+  eq('editor payload: a rule built differently but untouched is not sent', changedFields({ ...was, rrule: 'FREQ=WEEKLY;INTERVAL=1;BYDAY=TU' }, was), {});
+  eq('editor payload: the repeat controls touched send the rule', changedFields({ ...was, rrule: 'FREQ=WEEKLY;BYDAY=WE' }, was, { rruleTouched: true }), { rrule: 'FREQ=WEEKLY;BYDAY=WE' });
+  eq('editor payload: a new end time sends the whole time', changedFields({ ...was, end: '2027-03-09T21:00:00-08:00' }, was),
+    { end: '2027-03-09T21:00:00-08:00', start: was.start, allDay: false });
+  eq('editor payload: a zone picked sends the time with it', Object.keys(changedFields({ ...was, tzid: 'Europe/Berlin' }, was)), ['tzid', 'start', 'end', 'allDay']);
+  eq('editor payload: a new place sends its coordinates too', changedFields({ ...was, location: 'Sample Annex', locationLat: null, locationLng: null }, was),
+    { location: 'Sample Annex', locationLat: null, locationLng: null });
+  eq('editor payload: tags by value, not by reference', changedFields({ ...was, tagNames: ['music'] }, was), {});
+  eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }, {
+    reminderWords: (l) => l.map((m) => (m === 60 ? '1 hour before' : m + ' minutes')).join(', '),
+  }), [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
+
+  const realFetch = globalThis.fetch;
+  const { openSeriesChange, confirmSeriesChange } = await import('../src/app/serieschange.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const sent = [];
+  let plan = null;
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p === '/events/52' && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      sent.push(body);
+      return body.preview ? json({ plan }) : json({ ok: true });
+    }
+    if (p === '/changes/cursor') return json({ cursor: 'e1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  put({ seriesChange: null, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+  const occ = { instanceId: '52@1', eventId: 52, calendarId: 3, title: 'Sample choir', recurring: true, start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:30:00-08:00' };
+  let closed = 0;
+  // Direct: a rename no edited day owns. Previewed, then committed at once, no dialog.
+  plan = { hash: 'd1', direct: true, groups: [], refusals: [] };
+  openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+  eq('editor save: while the plan is asked for, the dialog stays hidden', [st.seriesChange && st.seriesChange.hidden], [true]);
+  await tick();
+  eq('editor save, direct: previewed with only the title, then committed with its hash', sent.map((b) => [b.title, b.rrule, b.preview, b.plan]),
+    [['Sample chorus', undefined, true, undefined], ['Sample chorus', undefined, undefined, { hash: 'd1', choices: {} }]]);
+  eq('editor save, direct: no dialog, and the editor closes', [st.seriesChange, closed], [null, 1]);
+  // Not direct: an edited day owns its title, so the dialog opens over the footer.
+  sent.length = 0;
+  plan = { hash: 'n1', direct: false, groups: [{ id: 'ownTitle', selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }], refusals: [] };
+  openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+  await tick();
+  eq('editor save, previewed: the dialog opens with the plan, nothing written', [st.seriesChange && st.seriesChange.hidden, st.seriesChange && st.seriesChange.status, sent.length, closed], [false, 'ready', 1, 1]);
+  await confirmSeriesChange();
+  await tick();
+  eq('editor save, previewed: Confirm saves with the choice and closes the editor', [sent[1].plan, st.seriesChange, closed], [{ hash: 'n1', choices: { ownTitle: 'keep' } }, null, 2]);
+  globalThis.fetch = realFetch;
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

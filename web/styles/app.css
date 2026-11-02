@@ -4372,6 +4372,13 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-ed-repeat > .bc-ed-inline > select:first-child { width: auto; }
 .bc-ed-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .bc-ed-sub { font-size: 12.5px; color: var(--fg-muted); }
+/* An edited day's own fields, each a chip that gives it back to the series. */
+.bc-ed-own { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12.5px; color: var(--fg-muted); }
+.bc-ed-ownfield {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; font-size: 12px;
+  background: var(--bg-inset); border: 1px solid var(--border); border-radius: 10px; color: var(--fg);
+}
+.bc-ed-ownfield:hover { border-color: var(--border-strong); }
 .bc-ed-actions {
   position: sticky; bottom: 0; z-index: 6; margin: auto -16px 0;
   padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));

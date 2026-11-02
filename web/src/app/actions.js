@@ -580,6 +580,29 @@ export async function updateEvent(occ, fields, scope, words = null) {
   }
 }
 
+// "Use series value" on an edited day of a series (docs/design/series-model.md,
+// Own Fields): the day gives these fields back to the series and takes its
+// values. A change to this day only: no dialog, one Undo.
+const OWN_FIELD_WORDS = {
+  date: 'date', time: 'time', length: 'length', allDay: 'all-day', title: 'title', location: 'place',
+  description: 'description', url: 'link', reminders: 'reminders', status: 'planned or maybe',
+  attendance: 'attendance', tags: 'tags', people: 'people', icon: 'icon',
+};
+export function ownFieldWords(name) { return OWN_FIELD_WORDS[name] || name; }
+export async function useSeriesValue(occ, names) {
+  if (!occ || !names || !names.length) return false;
+  try {
+    const res = await api('/events/' + occ.eventId, { method: 'PATCH', body: { scope: 'this', instanceStart: occ.start, useSeries: names } });
+    toast(names.length === 1 ? "Uses the series' " + ownFieldWords(names[0]) : "Uses the series' values", { title: itemName(occ), undo: entriesOf(res), note: NO_UNDO });
+    invalidateRecords(occ.eventId);
+    await refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Update failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
 export async function deleteEvent(occ, scope) {
   const removed = occ.recurring && (scope || 'this') === 'this'
     ? [removeOccurrence(occ.instanceId)].filter(Boolean)

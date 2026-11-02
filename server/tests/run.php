@@ -1583,8 +1583,15 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         (int) $idb->scalar('SELECT COUNT(*) FROM events'),
         (int) $idb->scalar("SELECT COUNT(*) FROM review_items WHERE kind = 'invite_new' AND status = 'open'"),
     ]);
-    checkEq('imip unknown cancellation: still creates neither event nor decision', ['skipped', null],
-        $apply->invoke($ingest, 1, 'CANCEL', $genuine, 'UTC', ['messageId' => 'cancel@example.test', 'subject' => 'Cancelled', 'from' => 'real@example.test']));
+    // The genuine organizer's cancellation closes the candidate that is
+    // theirs, saying so, and leaves the forged one for the owner to see;
+    // still no event, and nothing to undo.
+    checkEq('imip unknown cancellation: closes the waiting invitation from that organizer, creates no event, and leaves the other candidate', [['skipped', null, 'the organizer cancelled it; the invitation waiting in Review was closed'], 0, 'Forged first arrival', 'gone'], [
+        $apply->invoke($ingest, 1, 'CANCEL', $genuine, 'UTC', ['messageId' => 'cancel@example.test', 'subject' => 'Cancelled', 'from' => 'real@example.test']),
+        (int) $idb->scalar('SELECT COUNT(*) FROM events'),
+        $idb->scalar("SELECT title FROM review_items WHERE kind = 'invite_new' AND status = 'open'"),
+        $idb->scalar("SELECT status FROM review_items WHERE kind = 'invite_new' AND title = 'Genuine invitation'"),
+    ]);
 }
 
 // The positive owner path is exercised with the real Events domain. Acceptance
@@ -2116,6 +2123,107 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
                 'icsParts' => [$idnInvite($uid, 3, 'other@bücher.example', 'Book club, taken over')], 'html' => null, 'text' => null], 'UTC');
             checkEq("organizer in two spellings, $order: another mailbox at that domain is still refused", ['refused', 'organizer mismatch'], [$idnOther['outcome'], $idnOther['error']]);
         }
+    }
+
+    // A day held before its series, and the series then added automatically
+    // from an approved sender: the held day becomes a change to that
+    // occurrence of the added series at once, as it does when the series is
+    // added from Review, and the add's one entry undoes the two together.
+    // The queue never lists a day as waiting for a series that is on the
+    // calendar: one left behind by another path is converted as it is read.
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $autoSeries = static fn(string $uid, int $sequence = 0): string =>
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:$sequence\r\nDTSTAMP:20300101T120000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Reading group\r\nORGANIZER:mailto:organizer@example.test\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $autoDay = static fn(string $uid, bool $cancel): string =>
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:" . ($cancel ? 'CANCEL' : 'REQUEST') . "\r\nBEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:1\r\nDTSTAMP:20300102T120000Z\r\nRECURRENCE-ID:20300114T180000Z\r\nDTSTART:20300114T" . ($cancel ? '18' : '20') . "0000Z\r\nDTEND:20300114T" . ($cancel ? '19' : '21') . "0000Z\r\nSUMMARY:Reading group\r\n" . ($cancel ? "STATUS:CANCELLED\r\n" : '') . "ORGANIZER:mailto:organizer@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $wholeCancel = static fn(string $uid, string $organizer): string =>
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Sample//EN\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:$uid\r\nSEQUENCE:1\r\nDTSTAMP:20300102T120000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Reading group\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:$organizer\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $autoMsg = static fn(string $id, string $ics, string $from = 'organizer@example.test'): array =>
+            ['messageId' => "$id@example.test", 'subject' => 'Reading group', 'from' => $from, 'icsParts' => [$ics], 'html' => null, 'text' => null];
+        $listedFor = static fn(string $uid): array => array_values(array_filter($queueA->listFor(1), static fn(array $i): bool => ($i['detail']['uid'] ?? '') === $uid));
+        foreach (['cancelled' => true, 'changed' => false] as $what => $cancel) {
+            $uid = "auto-added-after-$what-day";
+            $dayResult = $runTiersA->invoke($mailA, 1, $autoMsg("$uid-day", $autoDay($uid, $cancel)), 'UTC');
+            $sinceAdd = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+            $seriesResult = $runTiersA->invoke($mailA, 1, $autoMsg("$uid-series", $autoSeries($uid)), 'UTC');
+            $autoSeriesId = (int) $adb->scalar('SELECT id FROM events WHERE uid = ? AND deleted_at IS NULL', [$uid]);
+            $dayRow = $adb->one('SELECT * FROM review_items WHERE source_key = ? ORDER BY id LIMIT 1', [$uid]);
+            $dayPayload = json_decode((string) $dayRow['payload_json'], true);
+            checkEq("$what day before its series, series added automatically: the day is a change to that occurrence of the added series", ['held', 'created', 'invite_change', 'open', $autoSeriesId, $cancel ? 'CANCEL' : 'REQUEST', '2030-01-14 18:00:00', true], [
+                $dayResult['outcome'], $seriesResult['outcome'], $dayRow['kind'], $dayRow['status'], (int) $dayRow['event_id'], $dayPayload['method'] ?? null, $dayPayload['occurrence'] ?? null,
+                str_contains((string) $dayRow['summary'], 'Mon 14 Jan 2030 occurrence of the series you added'),
+            ]);
+            checkEq("$what day before its series, series added automatically: Review lists it as a change with its differences, never as a day waiting for its series", [['invite_change'], [true]], [
+                array_column($listedFor($uid), 'kind'), array_map(static fn(array $i): bool => $i['diff'] !== [], $listedFor($uid)),
+            ]);
+            $addEntries = $adb->all('SELECT id, summary, before_json, after_json FROM mutations WHERE id > ? ORDER BY id', [$sinceAdd]);
+            checkEq("$what day before its series, series added automatically: one entry, with the day's item in it to undo", [1, true, true], [
+                count($addEntries), str_contains((string) ($addEntries[0]['after_json'] ?? ''), '"review_items"'), str_contains((string) ($addEntries[0]['before_json'] ?? ''), '"invite_new"'),
+            ]);
+            $undoA->undoById(1, (int) $addEntries[0]['id']);
+            $dayAfterUndo = $adb->one('SELECT * FROM review_items WHERE id = ?', [(int) $dayRow['id']]);
+            checkEq("$what day before its series, series added automatically: undoing the add puts the day back as it waited", [0, 'invite_new', 'open', null, '2030-01-14 18:00:00', true], [
+                (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ? AND deleted_at IS NULL', [$uid]), $dayAfterUndo['kind'], $dayAfterUndo['status'], $dayAfterUndo['event_id'],
+                json_decode((string) $dayAfterUndo['payload_json'], true)['occurrence'] ?? null, str_contains((string) $dayAfterUndo['summary'], 'not on your calendar yet'),
+            ]);
+            $againResult = $runTiersA->invoke($mailA, 1, $autoMsg("$uid-series-again", $autoSeries($uid)), 'UTC');
+            checkEq("$what day before its series, series added automatically: sent again, the series is added and the day is a change to it again", ['created', 'invite_change', 'open'], [
+                $againResult['outcome'], $adb->scalar('SELECT kind FROM review_items WHERE id = ?', [(int) $dayRow['id']]), $adb->scalar('SELECT status FROM review_items WHERE id = ?', [(int) $dayRow['id']]),
+            ]);
+        }
+        // A day held before a series that is on the calendar by now, by a
+        // path that did not convert it: converted as the queue is read, with
+        // a note in Activity, so it never shows as waiting beside its series.
+        $staleUid = 'auto-added-after-cancelled-day';
+        $staleSeriesId = (int) $adb->scalar('SELECT id FROM events WHERE uid = ? AND deleted_at IS NULL', [$staleUid]);
+        $staleDay = $queueA->holdNewInvitation(1, $staleUid, ['title' => 'Reading group'], ['method' => 'CANCEL', 'organizer' => ['email' => 'organizer@example.test'], 'sequence' => 2], 'organizer@example.test', 'imip', 'approved', '2030-01-21 18:00:00');
+        $sinceStale = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+        $staleListed = array_values(array_filter($queueA->listFor(1), static fn(array $i): bool => $i['id'] === $staleDay));
+        $staleEntry = $adb->one('SELECT summary, before_json, after_json FROM mutations WHERE id > ? ORDER BY id DESC LIMIT 1', [$sinceStale]);
+        checkEq('a day held before a series that is on the calendar by now: listed as a change to that occurrence, with a note of it', ['invite_change', 'open', $staleSeriesId, 'CANCEL', true, true], [
+            $staleListed[0]['kind'] ?? null, $staleListed[0]['status'] ?? null, $staleListed[0]['eventId'] ?? null, $staleListed[0]['method'] ?? null,
+            str_contains((string) ($staleEntry['summary'] ?? ''), 'Reading group'), $staleEntry !== null && $staleEntry['before_json'] === null && $staleEntry['after_json'] === null,
+        ]);
+        checkEq('a day held before a series that is on the calendar by now: read again, nothing more to convert', (int) $adb->scalar('SELECT MAX(id) FROM mutations'), (function () use ($queueA, $adb): int {
+            $queueA->listFor(1);
+            return (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+        })());
+
+        // The organizer cancels a whole series whose invitation is still
+        // waiting in Review: the invitation closes saying so, with the days
+        // held before it, as a note in Activity (closing a held item changes
+        // no event). A cancellation from anyone else leaves it waiting. A
+        // cancelled day arriving after is nothing to decide, and says why;
+        // invited again, the series waits anew and such a day waits with it.
+        $priorSettingsB = $adb->scalar('SELECT settings_json FROM users WHERE id = 1');
+        $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [json_encode(['mailEventMode' => 'review'] + (json_decode((string) $priorSettingsB, true) ?: []))]);
+        $waitingUid = 'cancelled-while-waiting';
+        $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-series", $autoSeries($waitingUid)), 'UTC');
+        $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-day", $autoDay($waitingUid, true)), 'UTC');
+        $waitingItems = $adb->all("SELECT * FROM review_items WHERE source_key = ? AND status = 'open' ORDER BY id", [$waitingUid]);
+        $strangerCancel = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-stranger", $wholeCancel($waitingUid, 'other@example.test'), 'other@example.test'), 'UTC');
+        checkEq('whole-series cancellation while the invitation waits: from someone else, the invitation keeps waiting', [2, 'skipped', null, 2], [
+            count($waitingItems), $strangerCancel['outcome'], $strangerCancel['error'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$waitingUid]),
+        ]);
+        $sinceCancel = (int) $adb->scalar('SELECT MAX(id) FROM mutations');
+        $organizerCancel = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-cancel", $wholeCancel($waitingUid, 'organizer@example.test')), 'UTC');
+        $seriesClosed = $adb->one('SELECT * FROM review_items WHERE id = ?', [(int) $waitingItems[0]['id']]);
+        $dayClosed = $adb->one('SELECT * FROM review_items WHERE id = ?', [(int) $waitingItems[1]['id']]);
+        $cancelEntry = $adb->one('SELECT summary, before_json, after_json FROM mutations WHERE id > ? ORDER BY id DESC LIMIT 1', [$sinceCancel]);
+        checkEq('whole-series cancellation while the invitation waits: the invitation closes saying the organizer cancelled it, its held day with it, and nothing is added', ['skipped', 'the organizer cancelled it; the invitation waiting in Review was closed', 'gone', true, 'superseded', 0, true, true], [
+            $organizerCancel['outcome'], $organizerCancel['error'], $seriesClosed['status'], str_contains((string) $seriesClosed['summary'], 'cancelled this before you added it'),
+            $dayClosed['status'], (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE uid = ?', [$waitingUid]),
+            str_contains((string) ($cancelEntry['summary'] ?? ''), 'Reading group') && str_contains((string) ($cancelEntry['summary'] ?? ''), 'cancelled'),
+            $cancelEntry !== null && $cancelEntry['before_json'] === null && $cancelEntry['after_json'] === null,
+        ]);
+        $lateDay = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-late-day", $autoDay($waitingUid, true)), 'UTC');
+        checkEq('whole-series cancellation while the invitation waits: a cancelled day arriving after is skipped, with the reason', ['skipped', 'the organizer cancelled the series before it was added'], [$lateDay['outcome'], $lateDay['error']]);
+        $invitedAgain = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-again", $autoSeries($waitingUid, 2)), 'UTC');
+        $dayAgain = $runTiersA->invoke($mailA, 1, $autoMsg("$waitingUid-day-again", $autoDay($waitingUid, true)), 'UTC');
+        checkEq('whole-series cancellation while the invitation waits: invited again, the series waits anew and a cancelled day waits with it', ['held', 'held', 2], [
+            $invitedAgain['outcome'], $dayAgain['outcome'], (int) $adb->scalar("SELECT COUNT(*) FROM review_items WHERE source_key = ? AND status = 'open'", [$waitingUid]),
+        ]);
+        $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettingsB]);
     }
 
     // Where an event's coordinates came from (migration 048).
@@ -12142,8 +12250,27 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             $blockedStatus['lastError'], $blockedStatus['showBanner'], $blockedStatus['dismissible']]);
     $stuckOnStep->dismiss(1);
     $afterDismiss = $stuckOnStep->status(1);
-    checkEq('update: the blocked notice is dismissed per newest release and stays in the status', [false, true, '9.9.2'],
+    checkEq('update: the blocked notice is dismissed per newest release and stays in the status', [false, true, 'blocked:9.9.2'],
         [$afterDismiss['showBanner'], $afterDismiss['blocked'], $stuckOnStepDb->scalar('SELECT dismissed_version FROM user_update_notices WHERE user_id = 1')]);
+    // What was dismissed is the blocked notice, not the release: withdrawn
+    // and published again signed with a key this copy lists, 9.9.2 is
+    // installable, and that notice shows until it is dismissed in its own
+    // right, which records the bare version. (The other way round, a
+    // verified release becoming unverifiable, is not a state a check can
+    // save: the verified version never moves backwards.)
+    [$blockedThenFreed, $freedDb] = $stepUpdates([$stepRelease('9.9.2', 'new-key'), $stepRelease('9.9.0', 'old-key')], '9.9.0');
+    $blockedThenFreed->check(false);
+    $freedDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $freedDb->run("INSERT INTO users VALUES (1, '{}')");
+    $blockedThenFreed->dismiss(1);
+    [$republished] = $stepUpdates([$stepRelease('9.9.2', 'old-key'), $stepRelease('9.9.0', 'old-key')], '9.9.0', $freedDb);
+    $republished->check(false);
+    $republishedStatus = $republished->status(1);
+    checkEq('update: a blocked notice dismissed for a release does not hide that release once it is installable', ['blocked:9.9.2', '9.9.2', true, false, true],
+        [$freedDb->scalar('SELECT dismissed_version FROM user_update_notices WHERE user_id = 1'), $republishedStatus['latestVersion'], $republishedStatus['available'], $republishedStatus['blocked'], $republishedStatus['showBanner']]);
+    $republished->dismiss(1);
+    checkEq('update: the installable notice dismissed in its own right records the version and hides it', ['9.9.2', false],
+        [$freedDb->scalar('SELECT dismissed_version FROM user_update_notices WHERE user_id = 1'), $republished->status(1)['showBanner']]);
     $stuckOnStepDb->run("UPDATE users SET settings_json = '{\"updateNotifications\":\"security\"}' WHERE id = 1");
     $stuckOnStepDb->run('DELETE FROM user_update_notices');
     checkEq('update: a blocked notice is not a security notice, so Security only leaves the banner off', [false, true],

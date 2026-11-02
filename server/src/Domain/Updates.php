@@ -149,9 +149,13 @@ final class Updates
         // bin/update.php says up to date for it.
         $blocked = !$available && $latest !== null && $newest !== null
             && version_compare($newest, $latest, '>') && version_compare($newest, $current, '>');
-        // A dismissal is per release named: the verified one, or for a
-        // blocked copy the newest, so a newer one shows again.
-        $named = $blocked ? $newest : $latest;
+        // A dismissal is per release named and per notice: the verified one
+        // when it is installable, or the newest for a blocked copy, kept
+        // apart (dismissalKey) so a newer one shows again, and so does the
+        // same release once what is said of it changes: a blocked notice
+        // dismissed for 9.9.2 does not hide "9.9.2 is installable" when it
+        // is published again signed with a key this copy lists.
+        $named = self::dismissalKey($blocked ? $newest : $latest, $blocked);
         $dismissed = $named !== null && ($notice['dismissed_version'] ?? null) === $named;
         $show = $preference !== 'off'
             && ($securityRequired || ($preference === 'all' && ($available || $blocked) && !$dismissed));
@@ -186,11 +190,21 @@ final class Updates
             throw HttpError::badRequest('A required security update cannot be dismissed. Update Better-Cal or turn update notices off in Settings.');
         }
         if ($status['blocked'] && is_string($status['newestVersion'])) {
-            $this->saveNotice($userId, ['dismissed_version' => $status['newestVersion']]);
+            $this->saveNotice($userId, ['dismissed_version' => self::dismissalKey($status['newestVersion'], true)]);
             return;
         }
         if (!is_string($status['latestVersion']) || !$status['available']) return;
-        $this->saveNotice($userId, ['dismissed_version' => $status['latestVersion']]);
+        $this->saveNotice($userId, ['dismissed_version' => self::dismissalKey($status['latestVersion'], false)]);
+    }
+
+    /**
+     * What a dismissal records: the version the notice names, marked when
+     * the notice was that this copy can't verify it rather than that it
+     * can be installed. Null when there is nothing to name.
+     */
+    private static function dismissalKey(?string $version, bool $blocked): ?string
+    {
+        return $version === null ? null : ($blocked ? 'blocked:' : '') . $version;
     }
 
     /**

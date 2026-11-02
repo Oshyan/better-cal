@@ -182,4 +182,27 @@ return static function (Db $db): void {
     checkEq('review page: once the series is added, the held days are changes to their occurrences, with their actions', [['Skip that occurrence', 'Dismiss'], ['Accept change', 'Dismiss']], [
         array_column($cards["invite_change:$cancelledDay"]['actions'] ?? [], 'label'), array_column($cards["invite_change:$changedDay"]['actions'] ?? [], 'label'),
     ]);
+    // The same when the series is added automatically, from an approved
+    // sender: the page never shows a day waiting for a series that is on
+    // the calendar, and a day left waiting by another path is converted as
+    // the page is read.
+    \BetterCal\Domain\MailIngest::ensureInviteCalendar($db, $q);
+    \BetterCal\Domain\Settings::put($db, $q, ['mailApprovedSenders' => ['host@example.test'], 'mailEventMode' => 'approved']);
+    $mailQ = new \BetterCal\Domain\MailIngest($db, $dq->events, null, new \BetterCal\Domain\MailAdmission($db));
+    $ics = static fn(string $method, string $vevent): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:$method\r\n$vevent" . "END:VCALENDAR\r\n";
+    $message = static fn(string $id, string $body): array => ['messageId' => "$id@example.test", 'subject' => 'Sample reading group', 'from' => 'host@example.test', 'icsParts' => [$body], 'html' => null, 'text' => null];
+    $autoUid = 'reading-group-auto@example.test';
+    $mailQ->ingestMessage($q, $message('auto-day', $ics('CANCEL', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300102T000000Z\r\nRECURRENCE-ID:20300114T180000Z\r\nDTSTART:20300114T180000Z\r\nDTEND:20300114T190000Z\r\nSUMMARY:Sample reading group\r\nSTATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nEND:VEVENT\r\n")), 'UTC');
+    $autoDay = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND source_key = ? AND status = 'open'", [$q, $autoUid]);
+    $added = $mailQ->ingestMessage($q, $message('auto-series', $ics('REQUEST', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300101T000000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Sample reading group\r\nSEQUENCE:0\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\n")), 'UTC');
+    $cards = $listed();
+    checkEq('review page: a day held before its series, the series added automatically: a cancellation of that occurrence with its action, not a day waiting', ['created', ['Skip that occurrence', 'Dismiss'], false], [
+        $added['outcome'], array_column($cards["invite_change:$autoDay"]['actions'] ?? [], 'label'), isset($cards["invite_new:$autoDay"]),
+    ]);
+    $waitingListed = static fn(array $cards): array => array_values(array_filter($cards, static fn(array $c): bool => $c['kind'] === 'invite_new' && !empty($c['detail']['occurrence'])));
+    $staleDay = $rq->holdNewInvitation($q, $autoUid, ['title' => 'Sample reading group'], ['method' => 'CANCEL', 'sequence' => 2] + $invite, 'host@example.test', 'imip', 'approved', '2030-01-21 18:00:00');
+    $cards = $listed();
+    checkEq('review page: a day held before a series that is on the calendar by now is listed as a cancellation of that occurrence, never as waiting', [['Skip that occurrence', 'Dismiss'], []], [
+        array_column($cards["invite_change:$staleDay"]['actions'] ?? [], 'label'), $waitingListed($cards),
+    ]);
 };

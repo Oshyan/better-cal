@@ -607,7 +607,7 @@ Written: the master's zone `Europe/Berlin`, its start 09:00 Berlin on 4 Jan (clo
 | 19 Jan, own time | "Tue 19 Jan stays, keeps its own time at 13:00" (`outcome: stays`, `kept: [time]`) | its key moves to 20:00, its 13:00 stays |
 | 2 Feb, own place | "Tue 2 Feb moves to 20:00, keeps its place" (`outcome: moves`, `takes: [time]`) | 20:00 to 21:00, its place kept |
 
-Coming up: Tue 12 Jan 20:00 · Tue 19 Jan 13:00 · Tue 26 Jan 20:00 … Never: 19 Jan at 14:00 (an own time moved by the delta) or at 20:00. On a Google calendar the same change is offered with the Google note and no outcome for either day.
+In the panel, 19 Jan has a row of its own that states its time, "'Study group' on Tue, Jan 19 stays at 1:00 PM.", from the plan's `at` beside `newKey`. Coming up: Tue 12 Jan 20:00 · Tue 19 Jan 13:00 · Tue 26 Jan 20:00 … Never: 19 Jan at 14:00 (an own time moved by the delta) or at 20:00. On a Google calendar the same change is offered with the Google note and no outcome for either day.
 
 ### 11. A Day Moved on Its Own, Then the Series
 

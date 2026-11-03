@@ -1782,7 +1782,9 @@ final class Model
             // this edit changes that it takes from the series.
             $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
                 'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays',
-                'shows' => Cal::date($wasShown), 'to' => Cal::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))))] + $said + [
+                'shows' => Cal::date($wasShown), 'to' => Cal::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))))]
+                // Where it shows after, as an instant in its zone (timed days): beside newKey, the series' own time there.
+                + ($allDay ? [] : ['at' => Time::iso($start->setTimezone(Time::zone($tz)))]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
         foreach ($outsideRows as $id => $img) {

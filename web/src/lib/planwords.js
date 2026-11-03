@@ -284,6 +284,17 @@ function ownAside(d) {
   return own.some((f) => f !== 'title') ? ', with its own ' + fieldList(own) + ',' : '';
 }
 
+/**
+ * The time a day shows at after the change when it isn't the series' new
+ * time there (its own time kept): "1:00 PM", else "". That time is its
+ * outcome, so its row states it; a time equal to the series' is never said.
+ */
+export function ownClock(d, opts = {}) {
+  if (!d || !d.at || !d.newKey) return '';
+  const at = fmtClock(d.at, opts.tz);
+  return at && at !== fmtClock(d.newKey, opts.tz) ? at : '';
+}
+
 // Where a day goes: its new date, or its new time on the same day.
 function goes(d, opts) {
   if (d.to && d.shows && d.to !== d.shows) return 'moves to ' + fmtDay(d.to, { ...opts, prev: d.shows });
@@ -304,12 +315,16 @@ export function dayLines(d, opts = {}) {
       ? { line1: 'The day you moved becomes an event of its own on ' + fmtDay(d.to, opts) + '.', line2: '' }
       : { line1: 'The day you moved stays where you put it, on ' + fmtDay(d.to, opts) + '.', line2: '' };
   }
+  const clock = (d.outcome === 'moves' || d.outcome === 'stays') ? ownClock(d, opts) : '';
+  const day = d.to || d.shows;
   if ((d.kept || []).includes('date')) {
+    if (clock) return { line1: dayName(d, opts.series) + (day !== d.shows ? ' moves to ' : ' stays on ') + fmtDay(day, opts) + ' at ' + clock + (changes ? ', and ' + changes : '') + '.', line2: '' };
     return { line1: dayName(d, opts.series) + ' was moved earlier to ' + fmtDay(d.shows, opts) + (changes ? ', and ' + changes : '') + '.', line2: '' };
   }
   switch (d.outcome) {
     case 'moves':
     case 'stays':
+      if (clock) return { line1: name + on + (day !== d.shows ? ' moves to ' + fmtDay(day, { ...opts, prev: d.shows }) + ' at ' : ' stays at ') + clock + (changes ? ' and ' + changes : '') + '.', line2: '' };
       return { line1: name + on + ' ' + goes(d, opts) + (changes ? ' and ' + changes : '') + '.', line2: '' };
     case 'separate':
       return { line1: name + on + ' becomes an event of its own on ' + fmtDay(d.to || d.shows, { ...opts, prev: d.shows }) + '.', line2: '' };

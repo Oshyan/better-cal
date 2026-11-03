@@ -4688,6 +4688,29 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       ['2 removed days before the new start are no longer needed.'],
       ['1 removed day before the new start is no longer needed.', "'Pottery class' on Mon, Mar 1 was removed earlier, and stays removed."],
     ]);
+    // Acceptance 8 in the panel: REMOVED DAYS says the two in one line.
+    const course = {
+      hash: 'a8', rule: rule('FREQ=WEEKLY;BYDAY=MO;COUNT=8', 'FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-04T18:00:00-08:00', '2027-01-18T18:00:00-08:00'),
+      bound: { kind: 'count', count: 8, events: 8, last: '2027-03-08', from: { kind: 'count', count: 8, events: 8, last: '2027-02-22' } }, counts: { events: 8, edited: 0, skipped: 0 },
+      groups: [], days: [before('2027-01-05T02:00:00Z', '2027-01-04'), before('2027-01-12T02:00:00Z', '2027-01-11')],
+    };
+    eq('series panel: acceptance 8, the removed days before the new start in one line', planView(course, ctx({ kind: 'editor', title: 'Pottery class' })).skipped.map((r) => r.line1),
+      ['2 removed days before the new start are no longer needed.']);
+    // Acceptance 10: a day at a time of its own after the change has its own row, which states that time.
+    const study = {
+      hash: 'a10', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05T19:00:00-08:00', '2027-01-05T20:00:00-08:00'), bound: noEnd,
+      counts: { events: null, edited: 3, skipped: 0 }, groups: [],
+      days: [
+        { key: '2027-01-20T03:00:00Z', newKey: '2027-01-20T04:00:00Z', kind: 'edited', title: 'Study group', outcome: 'stays', shows: '2027-01-19', to: '2027-01-19', at: '2027-01-19T13:00:00-08:00', kept: ['time'], takes: [] },
+        { key: '2027-01-27T03:00:00Z', newKey: '2027-01-27T04:00:00Z', kind: 'edited', title: 'Study group', outcome: 'stays', shows: '2027-01-22', to: '2027-01-22', at: '2027-01-22T13:00:00-08:00', kept: ['date', 'time'], takes: [] },
+        { key: '2027-02-03T03:00:00Z', newKey: '2027-02-03T04:00:00Z', kind: 'edited', title: 'Study group', outcome: 'moves', shows: '2027-02-02', to: '2027-02-02', at: '2027-02-02T20:00:00-08:00', kept: ['location'], takes: ['time'] },
+      ],
+    };
+    eq('series panel: acceptance 10, an own time after the change is stated on its row; one at the series\' time is not', planView(study, ctx({ kind: 'editor', title: 'Study group' })).edited.map((r) => r.line1), [
+      "'Study group' on Tue, Jan 19 stays at 1:00 PM.",
+      "'Study group' stays on Fri, Jan 22 at 1:00 PM.",
+      "'Study group', with its own location, on Tue, Feb 2 moves to 8:00 PM.",
+    ]);
   }
 
   // The other days: after the new end, going back to the series, deleted, a rename's own title.

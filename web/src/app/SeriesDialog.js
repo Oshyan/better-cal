@@ -10,7 +10,7 @@
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '../../vendor/index.js';
 import { useStore } from './store.js';
-import { planView, planDate, cardPlace } from '../lib/seriesplan.js';
+import { planView, planDate, cardPlace, cardFit } from '../lib/seriesplan.js';
 import { fmtTime, parseISO } from '../lib/dates.js';
 import { PHONE_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -20,6 +20,7 @@ import {
 } from './serieschange.js';
 
 const CARD_W = 520;
+const NO_DROP = { x: 16, y: 80 }; // where the card goes without a drop point
 
 // The box the pending block is drawn in, every piece of it on screen
 // (a block can show in more than one place), or null when it isn't drawn.
@@ -51,6 +52,7 @@ function SeriesCard({ sc }) {
   const cancelRef = useRef(null);
   const actionRef = useRef(null);
   const [allEdited, setAllEdited] = useState(false);
+  const [, setViewSize] = useState(0);
   const phone = typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches;
   // Dates name their year when it isn't this one, as the server's words
   // do, so a plan reads one way.
@@ -64,18 +66,29 @@ function SeriesCard({ sc }) {
   const canConfirm = following || (!busy && view.canConfirm);
 
   // Placed by its real size, clear of the dragged block: below it, or
-  // above or beside it when there's no room below (cardPlace).
+  // above or beside it when there's no room below (cardPlace). In either
+  // host it is no taller than the viewport (cardFit); a longer plan, such
+  // as every edited day shown, scrolls in its body.
   useLayoutEffect(() => {
     const el = rootRef.current;
-    if (!el || phone || sc.kind === 'editor' || !sc.at) return;
+    if (!el || phone) return;
+    el.style.maxHeight = cardFit({ w: window.innerWidth, h: window.innerHeight }) + 'px';
+    if (sc.kind === 'editor') return;
     const r = el.getBoundingClientRect();
     const place = cardPlace({
       w: r.width, h: r.height, view: { w: window.innerWidth, h: window.innerHeight },
-      at: sc.at, block: pendingBox(sc.occ.instanceId),
+      at: sc.at || NO_DROP, block: sc.at ? pendingBox(sc.occ.instanceId) : null,
     });
     el.style.left = place.left + 'px';
     el.style.top = place.top + 'px';
   });
+
+  // A window resized while the card is open places and fits it again.
+  useEffect(() => {
+    const onResize = () => setViewSize((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Keys: Enter confirms (a button keeps its own Enter), Esc cancels.
   useEffect(() => {
@@ -109,7 +122,7 @@ function SeriesCard({ sc }) {
 
   let style = '';
   if (!phone && sc.kind !== 'editor') {
-    const at = sc.at || { x: 16, y: 80 };
+    const at = sc.at || NO_DROP;
     style = 'left:' + Math.max(8, Math.min(at.x, window.innerWidth - CARD_W - 8)) + 'px;top:' + Math.max(8, at.y + 12) + 'px';
   }
   const cls = 'bc-sd' + (phone ? ' is-sheet' : sc.kind === 'editor' ? ' is-editor' : '');
@@ -130,7 +143,7 @@ function SeriesCard({ sc }) {
       <button type="button" class="bc-link-btn bc-sd-only" onClick=${() => onlyThisOne()}>Only this one</button>
     </div>
     ${thisDay && html`<div class="bc-sd-thisday">${thisDay}</div>`}
-    <div class="bc-sd-body" ref=${bodyRef}>
+    <div class="bc-sd-body bc-scroll-edges" ref=${bodyRef}>
       ${following ? html`<p class="bc-sd-note">This and following splits the series at this day, as it did before; its preview comes in a later version.</p>`
         : !sc.plan ? html`<p class="bc-sd-working" role="status">Working out the plan…</p>`
         : html`<${PlanLines} view=${view} shownEdited=${shownEdited} moreEdited=${moreEdited} onMore=${() => setAllEdited(true)} working=${busy} />`}

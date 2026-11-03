@@ -4130,6 +4130,18 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: yearly on the last day of February', said('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1'), 'Yearly on the last day of February');
   eq('repeat: yearly on two months', said('FREQ=YEARLY;BYMONTH=3,9;BYDAY=2TU'), 'Yearly on the second Tuesday of March and September');
   assert('repeat: yearly on a month and day', /^Yearly on (Mar 15|15 Mar)$/.test(said('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15')));
+  // A month without the day is skipped, never rolled into the next one
+  // (31 February is no 2 March). Dates read "Mar 31" whatever the locale's order.
+  const mdOrder = (s) => s && s.replace(/\b(\d{1,2}) ([A-Z][a-z]{2})\b/g, '$2 $1');
+  eq('repeat: yearly, a listed month without the day is skipped, not rolled over', mdOrder(said('FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=31;COUNT=3')), 'Yearly on Mar 31, skipping February, 3 times');
+  eq('repeat: yearly, several months without the day', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2,4,5;BYMONTHDAY=31')), 'Yearly on Jan 31 and May 31, skipping February and April');
+  eq('repeat: yearly on the 30th of January and February', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2;BYMONTHDAY=30')), 'Yearly on Jan 30, skipping February');
+  eq('repeat: yearly, the 29th in February only in leap years', mdOrder(said('FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=29')), 'Yearly on Feb 29 and Mar 29, February only in leap years');
+  eq('repeat: yearly, months that all have the day', mdOrder(said('FREQ=YEARLY;BYMONTH=1,3;BYMONTHDAY=31')), 'Yearly on Jan 31 and Mar 31');
+  eq('repeat: yearly, a day no listed month has gets no words', said('FREQ=YEARLY;BYMONTH=2,4;BYMONTHDAY=31'), null);
+  eq('repeat: yearly from the start\'s day, a month without it skipped', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2,3', { start: new Date(2027, 0, 31) })), 'Yearly on Jan 31 and Mar 31, skipping February');
+  eq('repeat: yearly from the start\'s day, every month has it', mdOrder(said('FREQ=YEARLY;BYMONTH=4,6', { start: new Date(2027, 3, 30) })), 'Yearly on Apr 30 and Jun 30');
+  eq('repeat: yearly from the start\'s day, none of the months has it', said('FREQ=YEARLY;BYMONTH=4,6', { start: new Date(2027, 2, 31) }), null);
   eq('repeat: BYMONTH outside a yearly rule is not said', said('FREQ=WEEKLY;BYMONTH=3;BYDAY=MO'), null);
   eq('presets: day 30 says it skips', repeatPresets(new Date(2027, 2, 30)).find((p) => p.key === 'monthly-day').label, 'Monthly on the 30th, skipping months without one');
   eq('repeat: hourly is not ours', describable('FREQ=HOURLY'), false);
@@ -4753,6 +4765,54 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   const tallAt = cardPlace({ w: 520, h: 420, view: screen, at: { x: 380, y: 600 }, block: tall });
   eq('series card: a block too tall for above or below gets the card beside it', [tallAt.left, overlaps(tallAt, 520, 420, tall)], [472, false]);
   eq('series card: without the block drawn, the drop point stands in', cardPlace({ w: 520, h: 300, view: screen, at: { x: 100, y: 100 } }), { left: 100, top: 112 });
+
+  // A long plan in a desktop card: forty edited days with "and 37 more"
+  // opened, or a long choice group. The card is drawn no taller than
+  // cardFit, at cardPlace after a drag or at the bottom right over the
+  // editor (app.css .bc-sd.is-editor); its header and action row keep their
+  // height and the body, which takes the rest, scrolls. Lines as drawn at
+  // 12.5px in the 520px card: about 60 characters to a text line of 17px
+  // (forty edited days came to 1,320px of body, as a browser measured
+  // them), the header 30, the action row 38.
+  const { cardFit } = await import('../src/lib/seriesplan.js');
+  const LINE = 17, PER_LINE = 60, HEAD = 30, ACTIONS = 38;
+  const rows = (text) => Math.max(1, Math.ceil(String(text || '').length / PER_LINE));
+  const longEdited = { ...choir, hash: 'long1', days: Array.from({ length: 40 }, (_, i) => ({
+    key: `2027-${String(4 + Math.floor(i / 4)).padStart(2, '0')}-${String(1 + (i % 4) * 7).padStart(2, '0')}T02:00:00Z`,
+    kind: 'edited', outcome: 'moves', words: `'Rehearsal at Sample Hall ${i + 1}' moves to Wednesday, keeps its title and place`,
+  })) };
+  const longChoice = { ...choir, hash: 'long2', groups: [{ id: 'reading', label: 'How it repeats', selected: 'r0',
+    options: Array.from({ length: 30 }, (_, i) => ({ id: 'r' + i, label: `Reading ${i + 1}`, words: `moves day ${i + 1} of the series, keeps every other week` })) }] };
+  const lines = (plan) => {
+    const v = planView(plan, ctx());
+    return v.fields.length + rows(v.rule) + (v.start ? 1 : 0)
+      + v.readings.reduce((n, g) => n + (g.showLabel ? 1 : 0) + g.options.reduce((m, o) => m + rows(o.label) + rows(o.words), 0), 0)
+      + rows(v.next) + v.edited.reduce((n, d) => n + rows(d.words), 0) + (v.skipped ? 1 : 0) + v.choices.length + v.notes.reduce((n, t) => n + rows(t), 0);
+  };
+  eq('series card: all forty edited days are there to show once opened', planView(longEdited, ctx()).edited.length, 40);
+  const drawn = (host, plan, view, at, block) => {
+    const natural = HEAD + ACTIONS + lines(plan) * LINE;
+    const h = Math.min(natural, cardFit(view));
+    const top = host === 'editor' ? view.h - 8 - h : cardPlace({ w: 520, h: natural, view, at, block }).top;
+    return { top, bottom: top + h, actionsTop: top + h - ACTIONS, body: h - HEAD - ACTIONS, content: natural - HEAD - ACTIONS };
+  };
+  for (const view of [{ w: 1280, h: 800 }, { w: 1400, h: 900 }]) {
+    const near = { top: view.h - 160, bottom: view.h - 100, left: 600, right: 760 };
+    const cases = [
+      ['calendar', 'edited days opened, a drop near the top', longEdited, { x: 640, y: 140 }, high],
+      ['calendar', 'edited days opened, a drop near the bottom', longEdited, { x: 640, y: near.top + 20 }, near],
+      ['calendar', 'a long choice group', longChoice, { x: 640, y: 300 }, { top: 280, bottom: 330, left: 600, right: 760 }],
+      ['editor', 'edited days opened', longEdited],
+      ['editor', 'a long choice group', longChoice],
+    ];
+    for (const [host, what, plan, at, block] of cases) {
+      const d = drawn(host, plan, view, at, block);
+      eq(`series card, ${host} at ${view.w} x ${view.h}, ${what}: on screen, actions in view, the body scrolls`,
+        [d.top >= 8, d.bottom <= view.h - 8, d.actionsTop >= 8 && d.actionsTop + ACTIONS <= view.h, d.body > 0 && d.content > d.body], [true, true, true, true]);
+    }
+  }
+  eq('series card: a short plan keeps its own height, its body not scrolling', (() => { const d = drawn('editor', choir, screen); return d.content === d.body; })(), true);
+  eq('series card: the fit is the viewport less 8px above and below', [cardFit({ w: 1280, h: 800 }), cardFit({ w: 1400, h: 900 })], [784, 884]);
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };

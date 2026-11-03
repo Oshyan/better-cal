@@ -278,14 +278,25 @@ export function creationLine(plan, { typedStart = null, tz = null, refYear } = {
 }
 
 /**
+ * The tallest the desktop card may be, in either host: the viewport less a
+ * margin above and below. A longer plan scrolls in the card's body, its
+ * header and action row staying in view (app.css .bc-sd).
+ */
+export function cardFit(view, margin = 8) {
+  return Math.max(0, view.h - 2 * margin);
+}
+
+/**
  * Where the desktop card goes after a drag, so the dragged block stays in
  * sight: below the block, else above it, else beside it (right, then
  * left), each kept on screen; when none is clear of the block, the one
- * that covers least of it. w, h: the card's size. view: {w, h}. at: the
+ * that covers least of it. w, h: the card's size, h as tall as its content
+ * would make it (it is drawn no taller than cardFit). view: {w, h}. at: the
  * drop point. block: the pending block's box {left, top, right, bottom},
  * null when it isn't drawn (the drop point stands in). Returns {left, top}.
  */
 export function cardPlace({ w, h, view, at, block = null, margin = 8, gap = 12 }) {
+  h = Math.min(h, cardFit(view, margin));
   const b = block || { left: at.x, right: at.x, top: at.y, bottom: at.y };
   const x = (v) => Math.max(margin, Math.min(v, view.w - w - margin));
   const y = (v) => Math.max(margin, Math.min(v, view.h - h - margin));

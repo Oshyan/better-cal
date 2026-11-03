@@ -210,6 +210,7 @@ export function EditorDrawer() {
   const [scope, setScope] = useState('this');
   // Set to the whole series by a calendar change, not by hand (below).
   const autoScope = useRef(false);
+  const scopeRef = useRef(null); // the Apply to select, where the series dialog's "Change scope" returns
   // Custom reminder entry (number + unit) revealed by the Custom option.
   const [remCustom, setRemCustom] = useState(null); // {n, unit} | null
 
@@ -849,6 +850,8 @@ export function EditorDrawer() {
             timeWords: (a, b) => timeChange({ start: a.start, end: a.end, allDay: a.allDay }, { start: b.start, end: b.end, allDay: b.allDay }),
           }),
           apply: async (s) => { const done = await updateEvent(occ, fields, s, words); if (done) finish(); return done; },
+          // "Change scope": back to the form, at its Apply to select.
+          rescope: () => { if (scopeRef.current) scopeRef.current.focus(); },
           onDone: finish,
         });
         return;
@@ -1211,7 +1214,7 @@ export function EditorDrawer() {
         </div>
 
         ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>
-          <select value=${scope} onChange=${(e) => { setScope(e.target.value); autoScope.current = false; }} aria-label="Apply to">
+          <select ref=${scopeRef} value=${scope} onChange=${(e) => { setScope(e.target.value); autoScope.current = false; }} aria-label="Apply to">
             <option value="this">This event only</option>
             ${!(occ.isException && Number(form.calendarId) !== occ.calendarId) && html`<option value="following">This and following</option>`}
             <option value="all">All events in series</option>

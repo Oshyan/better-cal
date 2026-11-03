@@ -666,7 +666,9 @@ export function App() {
     // Option/Alt held at the drop: a copy there, the original stays.
     if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope), occ, false, seriesAllLabel()); return; }
+    // "Change scope" in the series dialog asks again, at the same drop point.
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope, ask), occ, false, seriesAllLabel());
+    if (occ && occ.recurring && p.at) { ask(); return; }
     moveEvent(p);
   }, [promptScopeAt]);
 
@@ -689,7 +691,8 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope), occ, false, seriesAllLabel()); return; }
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope, ask), occ, false, seriesAllLabel());
+    if (occ && occ.recurring && p.at) { ask(); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
 
@@ -801,13 +804,14 @@ export function App() {
   const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey, x, y }) => {
     exitReschedule();
     const occ = state.occ.get(instanceId);
+    const ask = () => promptScopeAt({ x, y }, land, occ, false, seriesAllLabel());
     const land = (scope) => {
-      if (scope === 'all' && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope);
+      if (scope === 'all' && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope, ask);
       else moveEvent({ instanceId, newStart, newEnd, scope });
       jumpToDate(targetKey, instanceId); // return the view to where the event now is
     };
     // A series asks which occurrences, at the confirm chip, like a grid drop.
-    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ, false, seriesAllLabel()); return; }
+    if (occ && occ.recurring && x != null) { ask(); return; }
     land(undefined);
   }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);

@@ -1,13 +1,13 @@
-// A series plan (docs/design/series-model.md, The Plan) in the lines the
-// series change dialog shows, top to bottom. Pure, no DOM: the dialog
+// A series plan (docs/design/series-model.md, The Plan) in the blocks the
+// series change panel shows, top to bottom. Pure, no DOM: the panel
 // (app/SeriesDialog.js) draws what this returns, and the smoke tests check
 // its words against the examples (docs/design/series-model-examples.md).
 //
 // The plan is the server's; its sentences (rule words, day outcomes, option
-// labels, refusals, notes) are the server's too, so the dialog, the Activity
+// labels, refusals, notes) are the server's too, so the panel, the Activity
 // entry and an agent read the same words. What's put together here is only
-// the frame: the dates as short dates, "now" between the rule before and
-// after, the action's name.
+// the frame: every date through one formatter, "now" between the rule
+// before and after, the rows each day is drawn as, the size and the action.
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -15,6 +15,11 @@ const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'O
 const lowerFirst = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 const upperFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const wordsOf = (x) => (x == null ? '' : typeof x === 'string' ? x : x.words || '');
+
+/** The zone the calendar is drawn in: this device's. */
+export function calendarZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; }
+}
 
 // The wall date an ISO value names: its own date when it carries an offset
 // (the plan writes occurrences on the series' clock), the date in `tz` for
@@ -41,6 +46,9 @@ export function wallDate(iso, tz = null) {
 /**
  * A plan date as the examples write it: "Wed 10 Mar", or "10 Mar" without
  * the weekday, with the year only when it isn't `refYear` ("29 Feb 2028").
+ * A UTC key is read in `tz`; the panel always passes one (the series' zone,
+ * else the calendar's), so a Tuesday evening in Los Angeles is never read
+ * as the Wednesday its UTC instant falls on.
  */
 export function planDate(iso, { weekday = true, tz = null, refYear = new Date().getFullYear() } = {}) {
   const w = wallDate(iso, tz);
@@ -49,34 +57,32 @@ export function planDate(iso, { weekday = true, tz = null, refYear = new Date().
   return (weekday ? WEEKDAY[day] + ' ' : '') + w.d + ' ' + MONTH[w.mo - 1] + (w.y !== refYear ? ' ' + w.y : '');
 }
 
-// Daily and weekly rules name their dates with the weekday; monthly and
-// yearly ones by the day of the month alone, as the examples do.
-function freqOf(rule) {
-  const m = /FREQ=([A-Z]+)/i.exec(String(rule || ''));
-  return m ? m[1].toUpperCase() : null;
-}
-export function datesWithWeekday(plan) {
-  const f = freqOf(plan && plan.rule && (plan.rule.after || plan.rule.before));
-  return f === 'DAILY' || f === 'WEEKLY';
-}
-
 const startOf = (n) => (typeof n === 'string' ? n : n && n.start);
 
 // The groups that are choices about days, not readings of the rule: drawn
-// inline, never as dated rows, though the server gives their options dates.
+// as radios on a row, never as dated rows, though the server gives their
+// options dates.
 const PLAIN_GROUP = /^(movedDays|outside|own[A-Z].*)$/;
 
-// What each action is called, on the heading and its button.
-const ACTIONS = {
-  drag: { all: 'Move all events', following: 'Move this and following' },
-  resize: { all: 'Change all events', following: 'Change this and following' },
-  editor: { all: 'Save for all events', following: 'Save for this and following' },
-};
-export function actionWords(kind, scope) {
-  return (ACTIONS[kind] || ACTIONS.editor)[scope === 'following' ? 'following' : 'all'];
+/**
+ * What the change is called: its verb (Move for a drag, Change for a resize
+ * or an editor save, Rename for an editor save of the title alone), the
+ * header's title ("Move all events") and the action button, which says the
+ * count when the plan has one ("Move 13 events").
+ */
+export function verbOf(kind, edits = []) {
+  if (kind === 'drag') return 'Move';
+  if (kind === 'editor' && edits.length === 1 && edits[0] === 'title') return 'Rename';
+  return 'Change';
+}
+export function actionWords(kind, scope, { edits = [], count = null } = {}) {
+  const verb = verbOf(kind, edits);
+  if (scope === 'following') return verb + ' this and following';
+  if (count == null) return verb + ' all events';
+  return verb + ' ' + count + (count === 1 ? ' event' : ' events');
 }
 
-/** The rule's line: before and after, or "as before" when its days don't change. */
+/** The rule's words: before and after, or "as before" when its days don't change. */
 export function ruleLine(rule) {
   if (!rule) return '';
   if (rule.line) return rule.line;
@@ -85,6 +91,18 @@ export function ruleLine(rule) {
   if (!after) return before;
   if (!before || before === after || (rule.before && rule.before === rule.after)) return 'Repeats ' + lowerFirst(after) + ', as before';
   return before + ', now ' + lowerFirst(after);
+}
+
+/** The Change sentence: the rule, the end part of it. */
+export function changeLine(rule, bound) {
+  const r = ruleLine(rule);
+  const b = wordsOf(bound);
+  if (!r) return upperFirst(b);
+  if (!b) return r;
+  // "as before" once, at the end, when the rule and the end both say it.
+  const AS_BEFORE = ', as before';
+  const head = r.endsWith(AS_BEFORE) && b.endsWith(AS_BEFORE) ? r.slice(0, -AS_BEFORE.length) : r;
+  return head + ', ' + lowerFirst(b);
 }
 
 // A refusal is of the whole plan unless it names an option (or a group).
@@ -108,29 +126,54 @@ export function chosen(plan, choices = {}) {
   return out;
 }
 
+// Skipped days that stay skipped in the new series (a forgotten one leaves
+// it, an anchor was never an event).
+const isSkip = (d) => d.kind === 'skipped' && d.outcome !== 'anchor' && d.outcome !== 'dropped';
+
 /**
- * Everything the dialog shows, from a plan (null while it is being worked
+ * How many events the series has after the change, from the plan: its
+ * bound's count less the skipped days among them; null with no count (no
+ * end, or an end date: the plan says no number then).
+ */
+export function planCount(plan) {
+  const n = plan && plan.bound && plan.bound.count;
+  if (typeof n !== 'number' || !isFinite(n)) return null;
+  return Math.max(0, n - (plan.days || []).filter(isSkip).length);
+}
+
+/**
+ * Everything the panel shows, from a plan (null while it is being worked
  * out). ctx: kind ('drag' | 'resize' | 'editor'), title (the series'),
  * scope ('all' | 'following'), choices (picked so far), tz (the series'
- * zone, for UTC keys), refYear, fields ([{label, words}] the editor
- * changed), changed (a 409 replaced the plan).
+ * zone; the calendar's when the occurrence carries none), refYear, fields
+ * ([{label, words}] the editor changed), edits (the field names the change
+ * sends, for its verb), changed (a 409 replaced the plan).
  */
 export function planView(plan, ctx = {}) {
-  const action = actionWords(ctx.kind, ctx.scope);
+  const edits = ctx.edits || [];
+  const verb = verbOf(ctx.kind, edits);
+  const title = actionWords(ctx.kind, ctx.scope, { edits });
   const view = {
-    heading: action + (ctx.title ? ' · ' + ctx.title : ''),
-    action,
+    heading: title + (ctx.title ? ' · ' + ctx.title : ''),
+    title,
+    name: ctx.title || '',
+    verb,
+    action: title,
+    onlyThis: verb + ' only this one',
     loading: !plan,
     changed: !!ctx.changed,
     fields: [],
     refused: null,
     rule: '',
     bound: '',
+    change: '',
     start: '',
     readings: [],
     next: '',
+    size: '',
+    count: null,
     edited: [],
-    skipped: '',
+    skipped: [],
     choices: [],
     ownership: '',
     gains: '',
@@ -139,8 +182,9 @@ export function planView(plan, ctx = {}) {
     canConfirm: false,
   };
   if (!plan) return view;
-  const weekday = datesWithWeekday(plan);
-  const fmt = (iso, wd = weekday) => planDate(iso, { weekday: wd, tz: ctx.tz || null, refYear: ctx.refYear });
+  // One formatter for every date the panel derives, read in one zone.
+  const tz = ctx.tz || calendarZone();
+  const at = (iso, weekday = true) => planDate(iso, { weekday, tz, refYear: ctx.refYear });
   // The server's field lines read "Title: Choir, now Chorus"; the label
   // goes in its column.
   view.fields = (plan.fields || ctx.fields || []).map((f) => {
@@ -152,10 +196,11 @@ export function planView(plan, ctx = {}) {
   view.refused = planRefusal(plan);
   view.rule = ruleLine(plan.rule);
   view.bound = wordsOf(plan.bound);
+  view.change = changeLine(plan.rule, plan.bound);
   view.start = plan.start && typeof plan.start === 'object' ? wordsOf(plan.start) : (plan.startWords || '');
   const picked = chosen(plan, ctx.choices);
   const days = plan.days || [];
-  const inline = (g) => ({
+  const radios = (g) => ({
     id: g.id,
     label: g.label || '',
     options: (g.options || []).map((o) => {
@@ -170,23 +215,22 @@ export function planView(plan, ctx = {}) {
     }),
   });
   // The option labels and the preselection are the plan's, in its order.
-  // A group for one day sits on that day's line, whatever its options
+  // A group for one day is that day's row's radios, whatever its options
   // carry (the server gives every option its dates and bound). The other
   // choices that aren't readings (a day moved on its own, days outside the
-  // new series, own values for a changed field) sit inline on a line of
-  // their own. The rest, a group whose options carry dates or words, is
-  // drawn as rows: "Don't add Fri 8 Jan   5 events, ends 22 Jan", each
-  // row's words (what it drops or adds, the clocks a zone moves) under
-  // its label.
+  // new series, own values for a changed field) are rows of their own in
+  // the Edited block. The rest, a group whose options carry dates or words,
+  // is reading rows under Change: its label, its dates, its consequence
+  // (what it drops or adds, the clocks a zone moves).
   const noted = (o) => (Array.isArray(o.next) && o.next.length) || wordsOf(o.words) || wordsOf(o.differs) || wordsOf(o.bound);
   const dateList = (list) => (list || []).map((n) => {
-    const at = fmt(startOf(n));
-    return at && n && typeof n === 'object' && n.words ? at + ' (' + n.words + ')' : at;
+    const d = at(startOf(n));
+    return d && n && typeof n === 'object' && n.words ? d + ' (' + n.words + ')' : d;
   }).filter(Boolean).join(' · ');
   for (const g of plan.groups || []) {
-    if (g.day != null && days.some((d) => d.key === g.day)) continue; // drawn on its day's line
+    if (g.day != null && days.some((d) => d.key === g.day)) continue; // on its day's row
     if (!PLAIN_GROUP.test(g.id || '') && (g.options || []).some(noted)) {
-      const group = inline(g);
+      const group = radios(g);
       group.dated = (g.options || []).some((o) => Array.isArray(o.next) && o.next.length);
       group.options = group.options.map((o, i) => {
         const src = g.options[i];
@@ -196,38 +240,37 @@ export function planView(plan, ctx = {}) {
       });
       view.readings.push(group);
     } else {
-      view.choices.push(inline(g));
+      view.choices.push({ key: 'choice:' + g.id, head: g.label || '', line: '', choice: radios(g) });
     }
   }
   view.next = dateList(plan.next);
   const groupOf = (key) => (plan.groups || []).find((g) => g.day === key);
-  // The day acted on is in the Next line where it landed; it gets a line of
-  // its own only when it doesn't simply move there (kept on its own, say).
-  // A day that does something other than go with its event (stays at its
-  // own date, becomes an event of its own, is deleted) or carries a choice
-  // is a consequence to see, and has its own line, first; a day at its own
-  // date is one that owns its date (`kept` has it). Days that go with their
-  // events the same way are one line, by the plan's data: their outcome,
-  // the fields they keep and take (`kept`, `takes`), and whether a choice
-  // is theirs. Their days are under it, each in its own words (groupLine).
-  // A group of one is its day's line.
-  const lines = [];
+  // The day acted on is in Next where it landed; it gets a row of its own
+  // only when it doesn't simply move there (kept on its own, say). A day
+  // that does something other than go with its event (stays at its own
+  // date, becomes an event of its own, is deleted) or carries a choice is a
+  // consequence to see, and has its own row, first; a day at its own date
+  // is one that owns its date (`kept` has it). Days that go with their
+  // events the same way are one row, by the plan's data: their outcome, the
+  // fields they keep and take (`kept`, `takes`), and whether a choice is
+  // theirs. Their days open under it, each its own row (groupRow).
+  const rows = [];
   const groups = new Map();
   const list = (x) => (Array.isArray(x) ? x : []);
   for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
     const g = groupOf(d.key);
-    const line = { key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null };
+    const row = { ...dayRow(d, at), choice: g ? radios(g) : null };
     const kept = list(d.kept), takes = list(d.takes);
     const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !g && !kept.includes('date');
-    if (!goesWith) { lines.push(line); continue; }
+    if (!goesWith) { rows.push(row); continue; }
     const id = JSON.stringify([d.outcome, kept, takes, !!g]);
     if (!groups.has(id)) groups.set(id, { outcome: d.outcome, kept, takes, days: [] });
-    groups.get(id).days.push({ d, line });
+    groups.get(id).days.push({ d, row });
   }
-  view.edited = [...lines, ...[...groups.values()].map((grp) => groupLine(grp, { tz: ctx.tz || null, refYear: ctx.refYear }))];
+  view.edited = [...rows, ...[...groups.values()].map((grp) => groupRow(grp, { tz, at }))];
   // An anchor is the stored day before a first day in a skipped hour: no
-  // event of the series, so it has no line (the gap note says the time).
-  view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
+  // event of the series, so it has no row (the gap note says the time).
+  view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => skipRow(d, at));
   // A group's name leads its rows when there's more than one, or when its
   // rows aren't readings of the rule ("First week", "Bound").
   for (const g of view.readings) g.showLabel = !!g.label && (view.readings.length > 1 || !g.dated);
@@ -235,21 +278,74 @@ export function planView(plan, ctx = {}) {
   view.gains = upperFirst((plan.gains || []).map(wordsOf).filter(Boolean).join('; '));
   view.losses = upperFirst((plan.losses || []).map(wordsOf).filter(Boolean).join('; '));
   view.notes = (plan.notes || []).map(wordsOf).filter(Boolean);
+  // Size: the events after the change, then the skipped and edited among them.
+  view.count = planCount(plan);
+  const skips = days.filter(isSkip).length;
+  const editedDays = days.filter((d) => d.kind === 'edited').length;
+  view.size = [view.count == null ? 'All events' : view.count + (view.count === 1 ? ' event' : ' events'),
+    skips ? skips + ' skipped' : '', editedDays ? editedDays + ' edited' : ''].filter(Boolean).join(', ');
+  view.action = actionWords(ctx.kind, ctx.scope, { edits, count: view.count });
   const everyGroup = (plan.groups || []).every((g) => picked[g.id] != null);
   view.canConfirm = !view.refused && everyGroup && !!plan.hash;
   return view;
 }
 
-// A day's line when the plan gave none: "30 Mar moves to 31 Mar".
-function dayWords(d, fmt) {
-  const at = fmt(d.key);
+// What follows a day's head in a line two: "; keeps its title" rather than
+// a comma run, so the outcome reads first.
+const outcomeLine = (s) => String(s || '').trim().replace(/^[,:;]\s*/, '').replace(/, (keeps|takes) /, '; $1 ');
+
+/**
+ * A day as a row: line one its head (its name when it owns its title, its
+ * date, and "moved to <date>" when it shows at a date of its own), line two
+ * what happens to it. The words are the server's sentence ("'Rehearsal'
+ * Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"); the head is
+ * the part that opens it with the day's own name and date, as this
+ * formatter writes them. A sentence that doesn't open with that head is
+ * line one whole.
+ */
+function dayRow(d, at) {
+  const words = d.words || dayWords(d, at);
+  const date = d.key ? at(d.key) : '';
+  const name = d.title && words.startsWith("'" + d.title + "' ") ? "'" + d.title + "' " : '';
+  const head = name + date;
+  let row = { key: d.key, head: words, line: '', words };
+  if (date && words.startsWith(head)) {
+    const rest = words.slice(head.length);
+    const own = /^, moved to (.+?): (.*)$/.exec(rest);
+    row = own ? { key: d.key, head: head + ', moved to ' + own[1], line: outcomeLine(own[2]), words }
+      : { key: d.key, head, line: outcomeLine(rest), words };
+  }
+  return row;
+}
+
+/**
+ * A skipped day as a row: its date, then what happens to it. Moved and
+ * kept skips are written from their keys, so their dates carry the weekday
+ * as every date here does; other outcomes take the server's words after
+ * the day.
+ */
+function skipRow(d, at) {
+  const key = d.key || d.newKey;
+  const date = key ? at(key) : '';
+  const words = d.words || dayWords(d, (iso) => at(iso, false));
+  if (d.outcome === 'moves' && d.key && d.newKey) return { key: d.key, head: date, line: 'moves to ' + at(d.newKey), words };
+  if (d.outcome === 'stays' && d.key) return { key: d.key, head: date, line: 'stays skipped', words };
+  for (const prefix of [date, 'Skipped ' + date, 'Skipped ' + (key ? at(key, false) : '')]) {
+    if (prefix.trim() && words.startsWith(prefix + ' ')) return { key: key || words, head: date, line: outcomeLine(words.slice(prefix.length)), words };
+  }
+  return { key: key || words, head: words, line: '', words };
+}
+
+// A day's sentence when the plan gave none: "Tue 30 Mar moves to Wed 31 Mar".
+function dayWords(d, at) {
+  const day = at(d.key);
   const title = d.title ? "'" + d.title + "' " : '';
-  if (d.outcome === 'moves' && d.newKey) return title + at + ' moves to ' + fmt(d.newKey);
-  if (d.outcome === 'stays') return title + at + ' stays';
-  if (d.outcome === 'own' || d.outcome === 'separate') return title + at + ' becomes an event of its own';
-  if (d.outcome === 'deleted') return title + at + ' is deleted';
-  if (d.outcome === 'dropped') return title + at + ' is forgotten';
-  return title + at;
+  if (d.outcome === 'moves' && d.newKey) return title + day + ' moves to ' + at(d.newKey);
+  if (d.outcome === 'stays') return title + day + ' stays';
+  if (d.outcome === 'own' || d.outcome === 'separate') return title + day + ' becomes an event of its own';
+  if (d.outcome === 'deleted') return title + day + ' is deleted';
+  if (d.outcome === 'dropped') return title + day + ' is forgotten';
+  return title + day;
 }
 
 // The own fields in words, as the server's sentences name them.
@@ -281,20 +377,22 @@ function wallClock(iso, tz) {
   return /Z$/i.test(s) ? new Date(s).toISOString().slice(11, 16) : s.slice(11, 16);
 }
 
-// One line for days that go with their events the same way, from what
-// the plan says of them, not their sentences: the outcome, where their
-// keys land (newKey), the fields they keep and take. "38 edited days from
-// 6 Apr to 4 Jan 2028 move to Wednesday; each keeps its title and place."
-// Its days are under it, each in its own words. A group of one is that
-// day's line.
-function groupLine({ outcome, kept, takes, days }, { tz, refYear }) {
-  if (days.length === 1) return days[0].line;
+/**
+ * One row for days that go with their events the same way, from what the
+ * plan says of them, not their sentences: the outcome, where their keys
+ * land (newKey), the fields they keep and take. Line one the count and the
+ * range of their dates ("9 edited days, Tue 3 Nov to Tue 19 Jan 2027"),
+ * line two what they share ("move to Wednesday; each keeps its title").
+ * Its days open under it, each its own row. A group of one is that day's
+ * row.
+ */
+function groupRow({ outcome, kept, takes, days }, { tz, at }) {
+  if (days.length === 1) return days[0].row;
   const sorted = [...days].sort((a, b) => (Date.parse(a.d.key) || 0) - (Date.parse(b.d.key) || 0));
-  const at = (x) => planDate(x.d.key, { weekday: false, tz, refYear });
-  const first = at(sorted[0]), last = at(sorted[sorted.length - 1]);
-  const range = first === last ? 'on ' + first : 'from ' + first + ' to ' + last;
+  const first = at(sorted[0].d.key), last = at(sorted[sorted.length - 1].d.key);
   // Where they go: a weekday they all land on, a shift they all make, or
-  // a clock time they all take.
+  // a clock time they all take. Every day read in the same zone as the
+  // dates, so a Tuesday evening's key lands on Wednesday, not Thursday.
   let does = 'stay';
   let named = [];
   if (outcome === 'moves') {
@@ -322,11 +420,15 @@ function groupLine({ outcome, kept, takes, days }, { tz, refYear }) {
   }
   const taken = takes.filter((f) => !named.includes(f));
   const each = [kept.length ? 'keeps its ' + fieldList(kept) : '', taken.length ? 'takes the new ' + fieldList(taken) : ''].filter(Boolean);
+  const count = sorted.length + ' edited days';
   return {
     key: 'group:' + sorted[0].d.key,
-    words: sorted.length + ' edited days ' + range + ' ' + does + (each.length ? '; each ' + each.join(', ') : ''),
+    strong: count,
+    head: first === last ? first : first + ' to ' + last,
+    words: count + ', ' + (first === last ? first : first + ' to ' + last),
+    line: does + (each.length ? '; each ' + each.join(', ') : ''),
     choice: null,
-    days: sorted.map((x) => ({ key: x.line.key, words: x.line.words })),
+    days: sorted.map((x) => x.row),
   };
 }
 
@@ -373,40 +475,3 @@ export function creationLine(plan, { typedStart = null, tz = null, refYear } = {
   return { line, moved };
 }
 
-/**
- * The tallest the desktop card may be, in either host: the viewport less a
- * margin above and below. A longer plan scrolls in the card's body, its
- * header and action row staying in view (app.css .bc-sd).
- */
-export function cardFit(view, margin = 8) {
-  return Math.max(0, view.h - 2 * margin);
-}
-
-/**
- * Where the desktop card goes after a drag, so the dragged block stays in
- * sight: below the block, else above it, else beside it (right, then
- * left), each kept on screen; when none is clear of the block, the one
- * that covers least of it. w, h: the card's size, h as tall as its content
- * would make it (it is drawn no taller than cardFit). view: {w, h}. at: the
- * drop point. block: the pending block's box {left, top, right, bottom},
- * null when it isn't drawn (the drop point stands in). Returns {left, top}.
- */
-export function cardPlace({ w, h, view, at, block = null, margin = 8, gap = 12 }) {
-  h = Math.min(h, cardFit(view, margin));
-  const b = block || { left: at.x, right: at.x, top: at.y, bottom: at.y };
-  const x = (v) => Math.max(margin, Math.min(v, view.w - w - margin));
-  const y = (v) => Math.max(margin, Math.min(v, view.h - h - margin));
-  const wanted = [
-    { left: at.x, top: b.bottom + gap },
-    { left: at.x, top: b.top - gap - h },
-    { left: b.right + gap, top: b.top },
-    { left: b.left - gap - w, top: b.top },
-  ];
-  const covered = (c) => {
-    const dx = Math.min(c.left + w, b.right) - Math.max(c.left, b.left);
-    const dy = Math.min(c.top + h, b.bottom) - Math.max(c.top, b.top);
-    return dx > 0 && dy > 0 ? dx * dy : 0;
-  };
-  const places = wanted.map((c) => ({ left: x(c.left), top: y(c.top) }));
-  return places.find((c) => covered(c) === 0) || places.reduce((a, c) => (covered(c) < covered(a) ? c : a));
-}

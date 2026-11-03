@@ -7,11 +7,11 @@
 // as pending, and nothing else on the calendar moves. Cancel puts it back.
 // A 409 series_plan_changed brings the new plan and asks again; a 422
 // series_refused brings the plan with its reasons. "This event" and, until
-// 1.5.1, "This and following" keep their old path (the caller's apply).
+// 1.5.1, "This and following" keep their old path, from the scope chooser.
 
 import { state, set, toast, patchOccurrence, restoreOccurrence, localSaved, invalidateRecords } from './store.js';
 import { api, entriesOf, refreshWindow } from './api.js';
-import { commitPlan, chosen, planRefusal } from '../lib/seriesplan.js';
+import { commitPlan, chosen, planRefusal, calendarZone } from '../lib/seriesplan.js';
 
 let seq = 0;      // the newest request; an older answer is dropped
 let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
@@ -57,24 +57,28 @@ function requestBody(sc, extra) {
 
 /**
  * Open the dialog for a change to all events and ask for its plan.
- * kind: 'drag' | 'resize' | 'editor'. body: the change's fields. at: the
- * drop point {x, y} (desktop card), null for the editor. pending: for a
- * drag, {start, end} to draw the block at while it waits. apply(scope):
- * the old path for 'this' and 'following', resolving true when it worked.
- * onDone(): after a commit. quiet: open only once the plan says it isn't
- * direct (the editor: a rename no edited day owns saves at once).
+ * kind: 'drag' | 'resize' | 'editor'. body: the change's fields. pending:
+ * for a drag, {start, end} to draw the block at while it waits.
+ * apply(scope): the old path for 'this' and 'following', resolving true
+ * when it worked. rescope(): back to the scope chooser ("Change scope":
+ * the drop chip again after a drag, the editor's Apply to select). onDone():
+ * after a commit. quiet: open only once the plan says it isn't direct (the
+ * editor: a rename no edited day owns saves at once).
  */
-export function openSeriesChange({ kind, occ, body, at = null, pending = null, apply = null, onDone = null, fields = [], quiet = false }) {
+export function openSeriesChange({ kind, occ, body, pending = null, apply = null, rescope = null, onDone = null, fields = [], quiet = false }) {
   if (!occ || !seriesPlans()) return null;
   const id = ++dialogs;
   const before = pending ? patchOccurrence(occ.instanceId, { start: pending.start, end: pending.end, seriesPending: true }) : null;
   set({
     seriesChange: {
-      id, kind, occ, body, at, before, apply, onDone, fields,
+      id, kind, occ, body, before, apply, rescope, onDone, fields,
       // The series' name, also when the change is made from an edited day
       // with a title of its own (its occurrence names its series).
       title: occ.seriesTitle || occ.title || 'Untitled event',
-      tz: occ.tzid || null,
+      // Every date the panel derives from a key is read in this zone: the
+      // series' own, else the one the calendar is drawn in (the window's
+      // occurrences carry none). Never the key's UTC date.
+      tz: occ.tzid || calendarZone(),
       google: google(occ),
       scope: 'all',
       plan: null,
@@ -133,18 +137,21 @@ export function pickSeriesOption(groupId, optionId) {
   requestPlan(sc.id);
 }
 
-/** The scope switch. "This and following" keeps its old path until 1.5.1. */
-export function setSeriesScope(scope) {
+/**
+ * "Change scope": the preview cancelled (a dragged block goes back) and
+ * the scope chooser again, where the change was asked for.
+ */
+export function changeSeriesScope() {
   const sc = state.seriesChange;
-  if (!sc || sc.status === 'committing' || sc.scope === scope) return;
-  set({ seriesChange: { ...sc, scope } });
+  if (!sc || sc.status === 'committing') return;
+  cancelSeriesChange();
+  if (sc.rescope) sc.rescope();
 }
 
 /** Confirm: the commit, with the plan's hash and an option for every group. */
 export async function confirmSeriesChange() {
   const sc = state.seriesChange;
   if (!sc || sc.status === 'committing') return false;
-  if (sc.scope === 'following') return useOldPath('following');
   const plan = sc.plan;
   if (sc.status !== 'ready' || !plan || !plan.hash || planRefusal(plan)) return false;
   const id = sc.id;
@@ -206,16 +213,12 @@ export function cancelSeriesChange() {
   set({ seriesChange: null });
 }
 
-/** "Only this one": the change applied to the one day, as "This event" does. */
+/** "Only this one", a refused plan's action: the change applied to the one day, as "This event" does. */
 export function onlyThisOne() {
-  return useOldPath('this');
-}
-
-function useOldPath(scope) {
   const sc = state.seriesChange;
   if (!sc || sc.status === 'committing') return false;
   seq++;
   if (sc.before) restoreOccurrence(sc.occ.instanceId, sc.before);
   set({ seriesChange: null });
-  return sc.apply ? sc.apply(scope) : false;
+  return sc.apply ? sc.apply('this') : false;
 }

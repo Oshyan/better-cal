@@ -4575,15 +4575,26 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('series dialog: the heading names the action and the series', v.heading, 'Move all events · Choir');
   eq('series dialog: the rule before and after on one line', v.rule, 'Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00');
   eq('series dialog: the bound beside it', v.bound, 'No end, as before');
+  eq('series panel: Change is one sentence, the end part of it', v.change, 'Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00, no end, as before');
+  eq('series panel: the title states the action and the scope, the series beside it', [v.title, v.name], ['Move all events', 'Choir']);
   eq('series dialog: the next four, the edited day marked', v.next, 'Wed 10 Mar · Wed 17 Mar · Fri 26 Mar (its own date) · Wed 7 Apr');
   // The day at its own date first: it is a consequence, not a day going
   // with its event.
-  eq('series dialog: edited days in the plan\'s words, the one at its own date first', v.edited.map((d) => d.words),
+  eq('series panel: edited days as rows, the one at its own date first: its head, then what happens', v.edited.map((d) => [d.head, d.line]),
+    [['Tue 23 Mar, moved to Fri 26 Mar', 'stays there'], ["'Rehearsal' Tue 13 Apr", 'moves to Wed 14 Apr; keeps its title and place']]);
+  eq('series panel: the rows keep the server\'s sentence whole beside them', v.edited.map((d) => d.words),
     ['Tue 23 Mar, moved to Fri 26 Mar: stays there', "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"]);
-  eq('series dialog: a skipped day without words reads by its key, in the series\' zone', v.skipped, '30 Mar moves to 31 Mar');
-  eq('series dialog: a choice that isn\'t a reading sits on a line of its own', v.choices.map((g) => [g.label, g.options.map((o) => [o.label, o.selected])]),
+  eq('series panel: a skipped day is a row from its keys, read in the series\' zone, with weekdays', v.skipped.map((r) => [r.head, r.line]), [['Tue 30 Mar', 'moves to Wed 31 Mar']]);
+  eq('series panel: a choice that isn\'t a reading is a row of its own, its question then its radios', v.choices.map((r) => [r.head, r.choice.options.map((o) => [o.label, o.selected])]),
     [['Days moved on their own', [['Keep Fri 26 Mar', true], ['Move to Sat 27 Mar', false]]]]);
+  eq('series panel: Size says the events, then the skipped and edited among them; no end, no number', v.size, 'All events, 1 skipped, 2 edited');
   eq('series dialog: no readings, nothing refused, and it can be confirmed', [v.readings.length, v.refused, v.canConfirm, v.action], [0, null, true, 'Move all events']);
+  // The weekday bug: a Tuesday 19:00 key in Los Angeles is a Tuesday, its
+  // Wednesday image a Wednesday, whatever zone the device is in.
+  const tueToWed = planView({ hash: 'w1', days: [3, 10, 17].map((n) => ({ key: `2026-11-${String(n + 1).padStart(2, '0')}T03:00:00Z`, newKey: `2026-11-${String(n + 2).padStart(2, '0')}T03:00:00Z`,
+    kind: 'edited', title: 'Sample practice', outcome: 'moves', words: '', kept: ['title'], takes: ['date'] })) }, ctx({ refYear: 2026 }));
+  eq('series panel: days moved Tuesday to Wednesday at 19:00 Los Angeles say Wednesday, their range read on Tuesdays', [tueToWed.edited[0].strong, tueToWed.edited[0].head, tueToWed.edited[0].line],
+    ['3 edited days', 'Tue 3 Nov to Tue 17 Nov', 'move to Wednesday; each keeps its title']);
   eq('series dialog: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
   eq('series dialog: a pick goes into the commit', commitPlan(choir, { movedDays: 'move' }).choices, { movedDays: 'move' });
   eq('series dialog: a pick that is no option is the plan\'s', commitPlan(choir, { movedDays: 'nowhere' }).choices, { movedDays: 'keep' });
@@ -4627,9 +4638,9 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
       { id: 'skip', label: 'On the 30th, skipping months without one', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: "none in February: drops 15 Feb's event, then every February" } },
     ] }],
   };
-  eq('series dialog: month-end readings as the examples write them', planView(bookClub, ctx({ title: 'Book club' })).readings[0].options.map((o) => o.label + '   ' + o.dates + '   ' + o.note), [
-    'On the 30th, or the last day in shorter months   30 Mar · 30 Apr · 30 May   in February: 28 Feb, and 29 Feb 2028',
-    "On the 30th, skipping months without one   30 Mar · 30 Apr · 30 May   none in February: drops 15 Feb's event, then every February",
+  eq('series dialog: month-end readings, every date with its weekday', planView(bookClub, ctx({ title: 'Book club' })).readings[0].options.map((o) => o.label + '   ' + o.dates + '   ' + o.note), [
+    'On the 30th, or the last day in shorter months   Tue 30 Mar · Fri 30 Apr · Sun 30 May   in February: 28 Feb, and 29 Feb 2028',
+    "On the 30th, skipping months without one   Tue 30 Mar · Fri 30 Apr · Sun 30 May   none in February: drops 15 Feb's event, then every February",
   ]);
   const leap = {
     hash: 'c1', rule: { after: 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' },
@@ -4639,7 +4650,7 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     ] }],
   };
   eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.words ? '   ' + o.words : '')),
-    ['29 Feb 2028 · 28 Feb 2029 · 28 Feb 2030', '29 Feb 2028 · 29 Feb 2032 · 29 Feb 2036   drops three years in four']);
+    ['Tue 29 Feb 2028 · Wed 28 Feb 2029 · Thu 28 Feb 2030', 'Tue 29 Feb 2028 · Sun 29 Feb 2032 · Fri 29 Feb 2036   drops three years in four']);
 
   // A count: "Piano lesson with Alex Example", the bound as a reading group.
   const firsts = ['02', '03', '04', '05', '06', '07'].map((m) => '2027-' + m + '-01T16:00:00-0' + (m === '02' ? '8' : '7') + ':00');
@@ -4658,7 +4669,7 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
   eq('series dialog: a count, the rule and its total', [p.rule, p.bound], ['Monthly on the 31st at 16:00, now monthly on the 1st', '6 in the series + 1 separate']);
   eq('series dialog: keep 6 events with its dates and end', [p.readings[0].options[0].dates, p.readings[0].options[0].note],
-    ['1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'ends 1 Jul (was 31 Oct)']);
+    ['Mon 1 Feb · Mon 1 Mar · Thu 1 Apr · Sat 1 May · Tue 1 Jun · Thu 1 Jul', 'ends 1 Jul (was 31 Oct)']);
   eq('series dialog: the day after the end carries its own choice', [p.edited[0].words, p.edited[0].choice.options.map((o) => o.label)],
     ["After the new end: 'Recital at Sample Hall' 31 Oct", ['Keep it as an event of its own', 'Delete it']]);
   eq('series dialog: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { bound: 'count', outside: 'delete' });
@@ -4680,8 +4691,8 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   };
   const c = planView(cello, ctx({ title: 'Cello lesson' }));
   eq('series dialog: a count that would split off the dragged day, keep the end first and preselected', c.readings[0].options.map((o) => [o.label, o.selected, o.dates, o.note]), [
-    ['Keep the end', true, '1 Feb · 1 Mar · 1 Apr · 1 Nov', 'Changes 6 events to 10, ends 1 Nov'],
-    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul · 1 Nov (separately)', 'parts on 1 Aug; 6 in the series + 1 separate'],
+    ['Keep the end', true, 'Mon 1 Feb · Mon 1 Mar · Thu 1 Apr · Mon 1 Nov', 'Changes 6 events to 10, ends 1 Nov'],
+    ['Keep 6 events + this one on its own', false, 'Mon 1 Feb · Mon 1 Mar · Thu 1 Apr · Sat 1 May · Tue 1 Jun · Thu 1 Jul · Mon 1 Nov (separately)', 'parts on 1 Aug; 6 in the series + 1 separate'],
   ]);
   eq('series dialog: the bound line for it', c.bound, 'Changes 6 events to 10, ends 1 Nov');
   eq('series dialog: Enter takes the plan\'s preselection', commitPlan(cello, {}).choices, { bound: 'end' });
@@ -4694,7 +4705,7 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   ] });
   const pottery = {
     hash: 'p2', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', after: 'FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', wordsBefore: 'Weekly on Monday and Wednesday at 18:00', words: 'Weekly on Wednesday and Friday at 18:00' },
-    bound: { words: '5 events, ends 22 Jan (was 20 Jan)' },
+    bound: { kind: 'count', count: 6, words: '5 events, ends 22 Jan (was 20 Jan)' },
     groups: [potteryGroup(['5 events, ends 22 Jan (was 20 Jan)', "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"])],
     days: [{ key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' }],
   };
@@ -4703,7 +4714,8 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     ["Don't add Fri 8 Jan", true, '5 events, ends 22 Jan (was 20 Jan)'],
     ['Add Fri 8 Jan', false, "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"],
   ]]);
-  eq('series dialog: the generated skip is listed with the skipped days', pv.skipped, 'Fri 8 Jan skipped, so the series starts as before');
+  eq('series panel: the generated skip is a skipped row, its day then what it is', pv.skipped.map((r) => [r.head, r.line]), [['Fri 8 Jan', 'skipped, so the series starts as before']]);
+  eq('series panel: a count names its events, less the skip among them, on Size and the button', [pv.size, pv.action], ['5 events, 1 skipped', 'Move 5 events']);
   // Case 7, a day already skipped: the count's line names it.
   const skippedBefore = {
     ...pottery, hash: 'p3',
@@ -4717,12 +4729,12 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   const sb = planView(skippedBefore, ctx({ title: 'Pottery' }));
   eq('series dialog: a count with an earlier skip says so', [sb.bound, sb.readings[0].options.map((o) => o.note)], ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)',
     ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place']]);
-  eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
+  eq('series panel: skipped days one row each, every date with its weekday', sb.skipped.map((r) => [r.head, r.line]), [['Fri 8 Jan', 'skipped, so the series starts as before'], ['Wed 13 Jan', 'stays skipped']]);
   eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
   // A first day in a skipped hour: the stored day before it is no event, so no line names it.
   const anchored = planView({ ...pottery, hash: 'p4', days: [{ key: null, newKey: '2027-02-14T10:30:00Z', kind: 'skipped', outcome: 'anchor', words: '' }],
     notes: [{ kind: 'gap', words: 'No 02:30 on 14 Mar in Los Angeles: that one is at 03:30' }] }, ctx({ title: 'Night shift' }));
-  eq('series dialog: an anchor day has no skipped line; the gap note says the time', [anchored.skipped, anchored.notes], ['', ['No 02:30 on 14 Mar in Los Angeles: that one is at 03:30']]);
+  eq('series dialog: an anchor day has no skipped row; the gap note says the time', [anchored.skipped, anchored.notes], [[], ['No 02:30 on 14 Mar in Los Angeles: that one is at 03:30']]);
 
   // As the server sends a plan: every option of every group carries its
   // next dates and its bound, the ones not preselected how they differ, and
@@ -4751,9 +4763,9 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   ]);
   eq('series dialog, server plan: the day moved on its own is on its day\'s line only', [fs.edited[0].words, fs.edited[0].choice && fs.edited[0].choice.options.map((o) => o.label), fs.choices.some((g) => g.id === 'movedDays')],
     ['Tue 23 Mar, moved to Fri 26 Mar: stays there', ['Keep Fri 26 Mar', 'Move to Sat 27 Mar'], false]);
-  eq('series dialog, server plan: an own-values choice stays inline though its options carry dates', fs.choices.map((g) => [g.id, g.options.map((o) => o.label)]),
+  eq('series dialog, server plan: an own-values choice is a row with radios though its options carry dates', fs.choices.map((r) => [r.choice.id, r.choice.options.map((o) => o.label)]),
     [['ownTitle', ['Keep its own title', 'Give it the new title too']]]);
-  const radioSets = [...fs.readings, ...fs.choices, ...fs.edited.map((d) => d.choice).filter(Boolean)].map((g) => g.id);
+  const radioSets = [...fs.readings, ...fs.choices.map((r) => r.choice), ...fs.edited.map((d) => d.choice).filter(Boolean)].map((g) => g.id);
   eq('series dialog, server plan: every group is drawn once, so no two radio sets share a name', radioSets.length, new Set(radioSets).size);
   eq('series dialog, server plan: a consequence field is never read', planView({ hash: 'q', groups: [{ id: 'reading', selected: 'a', options: [{ id: 'a', label: 'A', consequence: 'old words', next: ['2027-03-10'] }] }] }, ctx()).readings[0].options[0].words, '');
   const outside = planView({ ...piano, groups: piano.groups.map((g) => (g.id === 'outside' ? { ...g, options: g.options.map((o) => served(o, 'own')) } : g)) }, ctx({ title: 'Piano lesson with Alex Example' }));
@@ -4777,8 +4789,12 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     groups: [{ id: 'ownTitle', label: "'Rehearsal' Tue 13 Apr keeps its own title", selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }],
   }, ctx({ kind: 'editor', fields: [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }] }));
   eq('series dialog: an editor save names its fields, the rule as before', [save.heading, save.fields.map((x) => x.label + ' ' + x.words), save.rule, save.action], [
-    'Save for all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Save for all events']);
-  eq('series dialog: the own title\'s choice', save.choices.map((c) => c.label), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
+    'Change all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Change all events']);
+  eq('series panel: an editor save of the title alone is a rename, the end said once as before', (() => { const r = planView({ hash: 'f3', rule: { wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Tuesday at 19:00' }, bound: { kind: 'count', count: 13, words: 'No end, as before' } }, ctx({ kind: 'editor', edits: ['title'] }));
+    return [r.title, r.action, r.change]; })(), ['Rename all events', 'Rename 13 events', 'Repeats weekly on Tuesday at 19:00, no end, as before']);
+  eq('series panel: a resize changes, and a refused plan offers only this one', [planView({ hash: 'z' }, ctx({ kind: 'resize' })).action, planView({ hash: 'z', refusals: [{ words: 'No.' }] }, ctx()).onlyThis],
+    ['Change all events', 'Move only this one']);
+  eq('series dialog: the own title\'s choice', save.choices.map((c) => c.head), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
   // As the server writes them: {field, words} with the label in the words.
   eq('series dialog: the server\'s field lines put their label in its column', planView({ hash: 'f2', fields: [{ field: 'title', words: 'Title: Choir, now Chorus' }, { field: 'reminders', words: 'Reminder: 1 hour before, now 30 minutes' }] }, ctx({ kind: 'editor' })).fields,
     [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
@@ -4794,39 +4810,17 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('plan dates: weekday, month, and the year only when it isn\'t this one', [planDate('2027-03-10T19:00:00-08:00', { refYear: 2027 }), planDate('2028-02-29', { weekday: false, refYear: 2027 }), planDate('2027-04-14T02:00:00Z', { tz: LA, refYear: 2027 })],
     ['Wed 10 Mar', '29 Feb 2028', 'Tue 13 Apr']);
 
-  // The desktop card after a drag keeps the dragged block in sight.
-  const { cardPlace } = await import('../src/lib/seriesplan.js');
-  const screen = { w: 1280, h: 800 };
-  const overlaps = (c, w, h, b) => c.left < b.right && c.left + w > b.left && c.top < b.bottom && c.top + h > b.top;
-  const high = { left: 600, top: 100, right: 760, bottom: 180 };
-  eq('series card: below the block when there is room', cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 140 }, block: high }), { left: 640, top: 192 });
-  const low = { left: 600, top: 650, right: 760, bottom: 760 };
-  const lowAt = cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 700 }, block: low });
-  eq('series card: near the bottom it opens above, clear of the block', [lowAt.top + 300 <= low.top, overlaps(lowAt, 520, 300, low)], [true, false]);
-  const tall = { left: 300, top: 120, right: 460, bottom: 700 };
-  const tallAt = cardPlace({ w: 520, h: 420, view: screen, at: { x: 380, y: 600 }, block: tall });
-  eq('series card: a block too tall for above or below gets the card beside it', [tallAt.left, overlaps(tallAt, 520, 420, tall)], [472, false]);
-  eq('series card: without the block drawn, the drop point stands in', cardPlace({ w: 520, h: 300, view: screen, at: { x: 100, y: 100 } }), { left: 100, top: 112 });
-
-  // A long plan in a desktop card: forty edited days with "and 37 more"
-  // opened, or a long choice group. The card is drawn no taller than
-  // cardFit, at cardPlace after a drag or at the bottom right over the
-  // editor (app.css .bc-sd.is-editor); its header and action row keep their
-  // height and the body, which takes the rest, scrolls. Lines as drawn at
-  // 12.5px in the 520px card: about 60 characters to a text line of 17px
-  // (forty edited days came to 1,320px of body, as a browser measured
-  // them), the header 30, the action row 38.
-  const { cardFit } = await import('../src/lib/seriesplan.js');
-  const LINE = 17, PER_LINE = 60, HEAD = 30, ACTIONS = 38;
-  const rows = (text) => Math.max(1, Math.ceil(String(text || '').length / PER_LINE));
+  // Forty edited days, as the server sends them (sampleEditedDays). A
+  // group's row: its count and range on line one, what they share on line two.
+  const said = (d) => (d.days ? d.words + ' | ' + d.line : d.words);
   // Forty edited days read as what happens to them: the two that do
   // something of their own first, each on its line, then the 38 that go
   // with their events the same way as one line, with their days under it.
   const forty = planView(sampleEditedDays(), ctx());
-  eq('edited days grouped: the forty are two lines of their own and one line for the rest', forty.edited.map((d) => d.words), [
+  eq('edited days grouped: the forty are two rows of their own and one row for the rest', forty.edited.map(said), [
     "'Sample practice 6' Tue 11 May, moved to Fri 14 May: stays there, keeps its title",
     "'Sample practice 21' Tue 24 Aug becomes an event of its own",
-    '38 edited days from 6 Apr to 4 Jan 2028 move to Wednesday; each keeps its title and place',
+    '38 edited days, Tue 6 Apr to Tue 4 Jan 2028 | move to Wednesday; each keeps its title and place',
   ]);
   eq('edited days grouped: the day at its own date keeps its choice on its line', [forty.edited[0].choice && forty.edited[0].choice.id, forty.choices.length], ['movedDays', 0]);
   const fortyNamed = [...forty.edited.filter((d) => !d.days), ...forty.edited.flatMap((d) => d.days || [])].map((d) => d.words);
@@ -4835,19 +4829,19 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('edited days grouped: a group\'s days in their own words, by date', forty.edited[2].days.slice(0, 2).map((d) => d.words),
     ["'Sample practice 1' Tue 6 Apr moves to Wed 7 Apr, keeps its title and place", "'Sample practice 2' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"]);
   const mixed = planView(sampleEditedDays((i) => (i < 20 ? ['title', 'location'] : i < 39 ? ['title'] : ['location'])), ctx());
-  eq('edited days grouped: other fields kept make other groups, and a group of one is its day\'s line', mixed.edited.map((d) => [d.words, d.days ? d.days.length : 0]), [
+  eq('edited days grouped: other fields kept make other groups, and a group of one is its day\'s row', mixed.edited.map((d) => [said(d), d.days ? d.days.length : 0]), [
     ["'Sample practice 6' Tue 11 May, moved to Fri 14 May: stays there, keeps its title", 0],
     ["'Sample practice 21' Tue 24 Aug becomes an event of its own", 0],
-    ['19 edited days from 6 Apr to 17 Aug move to Wednesday; each keeps its title and place', 19],
-    ['18 edited days from 31 Aug to 28 Dec move to Wednesday; each keeps its title', 18],
+    ['19 edited days, Tue 6 Apr to Tue 17 Aug | move to Wednesday; each keeps its title and place', 19],
+    ['18 edited days, Tue 31 Aug to Tue 28 Dec | move to Wednesday; each keeps its title', 18],
     ['Tue 4 Jan 2028 moves to Wed 5 Jan 2028, keeps its place', 0],
   ]);
   const timed = planView({ hash: 't1', days: [1, 2, 3].map((n) => ({ key: `2027-0${n}-10T03:00:00Z`, newKey: `2027-0${n}-10T04:00:00Z`, kind: 'edited', title: 'Sample class', outcome: 'moves', words: `${fixtureDate(`2027-0${n}-10T03:00:00Z`, { tz: LA, refYear: 2027 })} moves to 20:00, keeps its notes`, kept: ['description'], takes: ['time'] })) }, ctx());
-  eq('edited days grouped: days taking a new clock time say it once', timed.edited.map((d) => d.words), ['3 edited days from 9 Jan to 9 Mar move to 20:00; each keeps its notes']);
+  eq('edited days grouped: days taking a new clock time say it once', timed.edited.map(said), ['3 edited days, Sat 9 Jan to Tue 9 Mar | move to 20:00; each keeps its notes']);
   const twoLater = (k) => new Date(Date.parse(k) + 2 * 86400000).toISOString().slice(0, 10);
   const shifted = planView({ hash: 't2', days: ['2027-03-03', '2027-03-11', '2027-03-19'].map((k) => ({ key: k, newKey: twoLater(k), kind: 'edited', outcome: 'moves',
     words: `${fixtureDate(k, { refYear: 2027 })} moves to ${fixtureDate(twoLater(k), { refYear: 2027 })}`, kept: [], takes: ['date'] })) }, ctx());
-  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => d.words), ['3 edited days from 3 Mar to 19 Mar move 2 days later']);
+  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map(said), ['3 edited days, Wed 3 Mar to Fri 19 Mar | move 2 days later']);
   const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'own' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', label: 'Keep it' }, { id: 'move', label: 'Move it' }] })) }, ctx());
   eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
 
@@ -4858,62 +4852,10 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('edited days grouped: by outcome, kept and takes, whatever the words say', planView(reworded, ctx()).edited.map((d) => d.days ? d.days.length : 0), [0, 0, 38]);
   const takesSplit = sampleEditedDays();
   takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'time'] } : d));
-  eq('edited days grouped: days taking other fields are another group, named in its line', planView(takesSplit, ctx()).edited.slice(2).map((d) => d.words), [
-    '28 edited days from 6 Apr to 26 Oct move to Wednesday; each keeps its title and place',
-    '10 edited days from 2 Nov to 4 Jan 2028 move to Wednesday; each keeps its title and place, takes the new time',
+  eq('edited days grouped: days taking other fields are another group, named in its row', planView(takesSplit, ctx()).edited.slice(2).map(said), [
+    '28 edited days, Tue 6 Apr to Tue 26 Oct | move to Wednesday; each keeps its title and place',
+    '10 edited days, Tue 2 Nov to Tue 4 Jan 2028 | move to Wednesday; each keeps its title and place, takes the new time',
   ]);
-
-  const longEdited = sampleEditedDays();
-  const longChoice = { ...choir, hash: 'long2', groups: [{ id: 'reading', label: 'How it repeats', selected: 'r0',
-    options: Array.from({ length: 30 }, (_, i) => ({ id: 'r' + i, label: `Reading ${i + 1}`, words: `moves day ${i + 1} of the series, keeps every other week` })) }] };
-  const lines = (plan, open = false) => {
-    const v = planView(plan, ctx());
-    return v.fields.length + rows(v.rule) + (v.start ? 1 : 0)
-      + v.readings.reduce((n, g) => n + (g.showLabel ? 1 : 0) + g.options.reduce((m, o) => m + rows(o.label) + rows(o.words), 0), 0)
-      + rows(v.next) + v.edited.reduce((n, d) => n + rows(d.words) + (open && d.days ? d.days.reduce((m, x) => m + rows(x.words), 0) : 0), 0)
-      + (v.skipped ? 1 : 0) + v.choices.length + v.notes.reduce((n, t) => n + rows(t), 0);
-  };
-  const drawn = (host, plan, view, at, block, open = true) => {
-    const natural = HEAD + ACTIONS + lines(plan, open) * LINE;
-    const h = Math.min(natural, cardFit(view));
-    const top = host === 'editor' ? view.h - 8 - h : cardPlace({ w: 520, h: natural, view, at, block }).top;
-    return { top, bottom: top + h, actionsTop: top + h - ACTIONS, body: h - HEAD - ACTIONS, content: natural - HEAD - ACTIONS };
-  };
-  for (const view of [{ w: 1280, h: 800 }, { w: 1400, h: 900 }]) {
-    const near = { top: view.h - 160, bottom: view.h - 100, left: 600, right: 760 };
-    const cases = [
-      ['calendar', 'a group of edited days opened, a drop near the top', longEdited, { x: 640, y: 140 }, high],
-      ['calendar', 'a group of edited days opened, a drop near the bottom', longEdited, { x: 640, y: near.top + 20 }, near],
-      ['calendar', 'a long choice group', longChoice, { x: 640, y: 300 }, { top: 280, bottom: 330, left: 600, right: 760 }],
-      ['editor', 'a group of edited days opened', longEdited],
-      ['editor', 'a long choice group', longChoice],
-    ];
-    for (const [host, what, plan, at, block] of cases) {
-      const d = drawn(host, plan, view, at, block);
-      eq(`series card, ${host} at ${view.w} x ${view.h}, ${what}: on screen, actions in view, the body scrolls`,
-        [d.top >= 8, d.bottom <= view.h - 8, d.actionsTop >= 8 && d.actionsTop + ACTIONS <= view.h, d.body > 0 && d.content > d.body], [true, true, true, true]);
-    }
-    for (const host of ['calendar', 'editor']) {
-      const d = drawn(host, longEdited, view, { x: 640, y: 140 }, high, false);
-      eq(`series card, ${host} at ${view.w} x ${view.h}, forty edited days grouped: on screen, every line shown without scrolling`,
-        [d.top >= 8, d.bottom <= view.h - 8, d.content === d.body], [true, true, true]);
-    }
-  }
-  // The phone sheet (app.css .bc-sd.is-sheet): at the bottom, up to 66% of
-  // the screen, lines at 14px about 19px high and 50 characters across a
-  // 500px screen, a header of two rows (60), the action row 56.
-  for (const open of [false, true]) {
-    const SHEET_LINE = 19, SHEET_PER = 50, SHEET_HEAD = 60, SHEET_ACTIONS = 56;
-    const v = planView(longEdited, ctx());
-    const sheetRows = [v.rule, v.bound, v.next, ...v.edited.flatMap((d) => [d.words, ...(open && d.days ? d.days.map((x) => x.words) : [])])]
-      .filter(Boolean).reduce((n, t) => n + Math.max(1, Math.ceil(String(t).length / SHEET_PER)), 0);
-    const natural = SHEET_HEAD + SHEET_ACTIONS + sheetRows * SHEET_LINE;
-    const h = Math.min(natural, Math.floor(600 * 0.66));
-    eq(`series sheet at 500 x 600, forty edited days ${open ? 'with the group opened' : 'grouped'}: within the screen, header and actions on it${open ? ', the body scrolling' : ''}`,
-      [600 - h >= 0, 600 - h + SHEET_HEAD <= 600, natural > h], [true, true, open]);
-  }
-  eq('series card: a short plan keeps its own height, its body not scrolling', (() => { const d = drawn('editor', choir, screen); return d.content === d.body; })(), true);
-  eq('series card: the fit is the viewport less 8px above and below', [cardFit({ w: 1280, h: 800 }), cardFit({ w: 1400, h: 900 })], [784, 884]);
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
@@ -4934,13 +4876,12 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('quick add: no plan in the parse, none to show', parsedSeries({ ...draft, series: undefined }, draft.rrule, range), null);
 }
 
-console.log('--- the series card, open while the window crosses the phone width (1.5.0) ---');
+console.log('--- the series panel, docked, open while the window crosses the phone width (1.5.0) ---');
 {
-  // The card drawn by Preact into a small stand-in DOM and kept open while
+  // The panel drawn by Preact into a small stand-in DOM and kept open while
   // the window goes from desktop to phone width and back: the same element,
-  // its edited days still opened, its inline sizing and placement those of
-  // the layout it is in now. A desktop height left on the sheet put its
-  // header above the top of the window.
+  // its edited days still opened, and nothing written on it for any layout
+  // (app.css places and sizes it).
   const kebab = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
   const fakeStyle = () => {
     const props = new Map();
@@ -5058,74 +4999,65 @@ console.log('--- the series card, open while the window crosses the phone width 
     await settle();
     return box;
   };
-  const card = (box) => box.firstChild;
-  const edited = (box) => box.querySelectorAll('.bc-sd-line').filter((n) => n.textContent.includes('Sample practice')).length;
-  // Opens (or closes) the group of the 38 days that go with their events.
-  const toggle = (box) => box.querySelectorAll('.bc-link-btn').find((b) => /^(show|hide) them$/.test(b.textContent));
-  const expand = async (box) => {
-    const more = toggle(box);
-    if (more && more.getAttribute('aria-expanded') !== 'true') more.click();
-    await settle();
-  };
-  const seen = (box) => {
-    const el = card(box);
-    return { sheet: el.classes.includes('is-sheet'), maxHeight: el.style.maxHeight, left: el.style.left, top: el.style.top, edited: edited(box) };
-  };
+  const panel = (box) => box.firstChild;
+  // The rows of the Edited block, and the group's button.
+  const editedRows = (box) => box.querySelectorAll('.bc-sd-block').find((b) => b.firstChild && b.firstChild.textContent === 'Edited');
+  const topRows = (box) => editedRows(box).childNodes[1].childNodes.filter((n) => n.classes.includes('bc-sd-row'));
+  const toggle = (box) => box.querySelectorAll('.bc-sd-toggle')[0];
+  const openDays = (box) => box.querySelectorAll('.bc-sd-days').flatMap((n) => n.childNodes).length;
+  const seen = (box) => ({ cls: panel(box).getAttribute('class'), style: panel(box).style.cssText, rows: topRows(box).length, opened: openDays(box) });
   const close = async (box) => { render(null, box); box.remove(); put({ seriesChange: null }); await settle(); };
-
-  const { cardPlace, cardFit } = await import('../src/lib/seriesplan.js');
-  // Where a desktop card is drawn: over the editor, by app.css alone; after
-  // a drag, where cardPlace puts it at its measured size (its fit, here),
-  // not the drop point's first guess (640, 312).
-  const desktop = (host, w, h) => {
-    if (host === 'editor') return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: '', top: '', edited: 40 };
-    const p = cardPlace({ w: 520, h: cardFit({ w, h }), view: { w, h }, at: { x: 640, y: 300 }, block: null });
-    return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: p.left + 'px', top: p.top + 'px', edited: 40 };
-  };
-  const phoneSheet = { sheet: true, maxHeight: '', left: '', top: '', edited: 40 };
-  eq('series card: after a drag it is drawn where it was measured to fit, not at the first guess', [desktop('calendar', 1280, 800).left, desktop('calendar', 1280, 800).top !== '312px'], ['640px', true]);
+  const docked = { cls: 'bc-sd', style: '', rows: 3, opened: 0 };
 
   for (const host of ['editor', 'calendar']) {
-    // Opened on a desktop, every edited day shown, then narrowed to a phone.
     await resize(1280, 800);
-    let box = await open(host);
-    const el = card(box);
-    const groupLine = () => box.querySelectorAll('.bc-sd-line').find((n) => /^38 edited days /.test(n.textContent));
-    eq(`series card, ${host}: forty edited days drawn as two lines of their own and one for the 38, closed`,
-      [edited(box), !!groupLine(), toggle(box) && toggle(box).textContent, toggle(box) && toggle(box).getAttribute('aria-expanded')], [2, true, 'show them', 'false']);
-    await expand(box);
-    eq(`series card, ${host}: "show them" lists the group's days under it`,
-      [edited(box), box.querySelectorAll('.bc-sd-day').length, toggle(box).textContent, toggle(box).getAttribute('aria-expanded')], [40, 38, 'hide them', 'true']);
-    eq(`series card, ${host}: opened at 1280 x 800 with its edited days shown, a desktop card no taller than the window`, seen(box), desktop(host, 1280, 800));
-    await resize(500, 600);
-    eq(`series card, ${host}: narrowed to 500 x 600 while open, the same card is the sheet with no desktop height or place left on it`,
-      [card(box) === el, seen(box), el.style.cssText], [true, phoneSheet, '']);
-    await resize(1280, 800);
-    eq(`series card, ${host}: widened back to 1280 x 800, the same card is a desktop card again, fitted and placed`, [card(box) === el, seen(box)], [true, desktop(host, 1280, 800)]);
-    await resize(1400, 900);
-    eq(`series card, ${host}: a taller desktop window fits and places it again`, seen(box), desktop(host, 1400, 900));
+    const box = await open(host);
+    const el = panel(box);
+    eq(`series panel, ${host}: forty edited days as two rows of their own and one group row, closed, with no style of its own`, seen(box), docked);
+    eq(`series panel, ${host}: the group row's lines and its button`, [
+      topRows(box)[2].childNodes[0].textContent, topRows(box)[2].childNodes[1].textContent,
+      toggle(box).localName, toggle(box).textContent, toggle(box).getAttribute('aria-expanded'),
+    ], ['38 edited days, Tue 6 Apr 2027 to Tue 4 Jan 2028', 'move to Wednesday; each keeps its title and place', 'button', 'Show 38 days', 'false']);
+    eq(`series panel, ${host}: a day's choice is its radios, each on a line of its own`,
+      topRows(box)[0].querySelectorAll('.bc-sd-opt').map((n) => n.textContent), ['Keep Fri 14 May', 'Move to Sat 15 May']);
     toggle(box).click();
     await settle();
-    eq(`series card, ${host}: "hide them" folds the group again`, [edited(box), toggle(box).textContent], [2, 'show them']);
-    await close(box);
-
-    // Opened as the phone sheet, then widened to a desktop and narrowed again.
-    await resize(500, 600);
-    box = await open(host);
-    const sheetEl = card(box);
-    await expand(box);
-    eq(`series card, ${host}: opened at 500 x 600, the sheet with no inline height or place`, [seen(box), sheetEl.style.cssText], [phoneSheet, '']);
-    await resize(1280, 800);
-    eq(`series card, ${host}: widened to 1280 x 800 while open, the same card is a desktop card no taller than the window`, [card(box) === sheetEl, seen(box)], [true, desktop(host, 1280, 800)]);
-    await resize(500, 600);
-    eq(`series card, ${host}: narrowed again, the sheet drops the desktop height and place`, [card(box) === sheetEl, seen(box), sheetEl.style.cssText], [true, phoneSheet, '']);
+    eq(`series panel, ${host}: "Show 38 days" opens the days under the group as rows`, [openDays(box), toggle(box).textContent, toggle(box).getAttribute('aria-expanded')], [38, 'Hide', 'true']);
+    // Its place is app.css's: a window crossing the phone width changes nothing on the element.
+    for (const [w, h] of [[412, 915], [1400, 900], [1280, 800]]) {
+      await resize(w, h);
+      eq(`series panel, ${host}: at ${w} x ${h} the same element, its class and its (empty) style unchanged, the group still open`,
+        [panel(box) === el, seen(box)], [true, { ...docked, opened: 38 }]);
+    }
+    toggle(box).click();
+    await settle();
+    eq(`series panel, ${host}: "Hide" folds the group again`, [openDays(box), toggle(box).textContent], [0, 'Show 38 days']);
+    eq(`series panel, ${host}: the header is the title, the series and Change scope; the action names the change`, [
+      box.querySelectorAll('.bc-sd-head')[0].textContent, box.querySelectorAll('.bc-sd-actions')[0].textContent,
+    ], [(host === 'editor' ? 'Change all events' : 'Move all events') + ' · Sample practiceChange scope', 'Cancel' + (host === 'editor' ? 'Change all events' : 'Move all events')]);
     await close(box);
   }
-  // The renderer owns the card's style: the component writes none itself,
+  // Where the panel sits and how tall it may be are app.css's alone:
+  // docked bottom right, beside the editor drawer or the event panel, the
+  // sheet on a phone.
+  const { readFileSync: readCss } = await import('node:fs');
+  const css = readCss(new URL('../styles/app.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const i = css.indexOf('\n' + sel + ' {'); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
+  const sd = rule('.bc-sd');
+  eq('series panel css: docked bottom right of the calendar, 440 wide, no taller than the window less a margin', [
+    /right: calc\(var\(--bc-sd-side, 0px\) \+ 12px\)/.test(sd), /bottom: 12px/.test(sd), /width: 440px/.test(sd), /max-height: calc\(100dvh - 24px\)/.test(sd),
+  ], [true, true, true, true]);
+  eq('series panel css: the editor drawer and the event panel say how far they reach, so it docks beside them', [
+    /\.bc-drawer \{ --bc-sd-side: min\(480px, 94vw\); \}/.test(css), /\.bc-app:has\(\.bc-evpanel\) \{ --bc-sd-side: min\(480px, 100vw\); \}/.test(css),
+  ], [true, true]);
+  const phoneAt = css.indexOf('@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {\n  .bc-sd {');
+  const sheet = phoneAt < 0 ? '' : css.slice(phoneAt, css.indexOf('}', phoneAt + 100));
+  eq('series panel css: on a phone, the bottom sheet up to two thirds of the screen', [phoneAt > 0, /left: 0; right: 0; bottom: 0/.test(sheet), /max-height: 66dvh/.test(sheet)], [true, true, true]);
+  // The renderer owns the panel's style: the component writes none itself,
   // so no layout can leave one behind for another.
   const { readFileSync: readSource } = await import('node:fs');
   const dialogSource = readSource(new URL('../src/app/SeriesDialog.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');
-  eq('series card: SeriesDialog.js writes no inline style of its own', /\.style\s*(\.|\[|=)|setProperty|cssText/.test(dialogSource), false);
+  eq('series panel: SeriesDialog.js writes no inline style of its own and measures nothing', /\.style\s*(\.|\[|=)|setProperty|cssText|getBoundingClientRect|innerWidth|innerHeight/.test(dialogSource), false);
 
   if (savedRaf === undefined) delete options.requestAnimationFrame; else options.requestAnimationFrame = savedRaf;
   if (savedDebounce === undefined) delete options.debounceRendering; else options.debounceRendering = savedDebounce;
@@ -5137,7 +5069,7 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
 {
   const realFetch = globalThis.fetch;
   const { seriesDrop } = await import('../src/app/actions.js');
-  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, setSeriesScope } = await import('../src/app/serieschange.js');
+  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, changeSeriesScope } = await import('../src/app/serieschange.js');
   const { planView } = await import('../src/lib/seriesplan.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -5267,11 +5199,17 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   seriesDrop('resize', st.occ.get(occ.instanceId), { ...drop, newStart: occ.start }, 'all');
   await tick();
   eq('series resize: through the dialog too, named for what it does', [st.seriesChange.kind, planView(st.seriesChange.plan, { kind: 'resize' }).action, sent[0].preview], ['resize', 'Change all events', true]);
-  // "This and following" in the dialog keeps its old path until 1.5.1, on Confirm.
-  setSeriesScope('following');
-  await confirmSeriesChange();
+  cancelSeriesChange();
+
+  // 9. "Change scope": the preview cancelled, the block back where it was,
+  // and the scope chooser asked again; nothing more is sent.
+  reset();
+  answer = () => json({ plan: groupPlan('c1') });
+  let asked = 0;
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all', () => { asked++; });
   await tick();
-  eq('series resize: this and following from the switch goes the old way', [st.seriesChange, sent[1].scope, sent[1].plan], [null, 'following', undefined]);
+  changeSeriesScope();
+  eq('series drag: Change scope cancels the preview, puts the block back and asks the scope again', [st.seriesChange, shown().start, !!shown().seriesPending, asked, sent.length], [null, occ.start, false, 1, 1]);
 
   put({ seriesChange: null });
   st.occ.clear();

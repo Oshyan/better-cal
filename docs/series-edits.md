@@ -5,20 +5,21 @@ Changing every event in a series moves days you can't see, so Better-Cal shows w
 ## When It Asks
 
 - **Drag or resize with All events.** Drop an event of a series and pick **All events…** on the chip. The block stays where you dropped it, drawn as an outline, and nothing else on the calendar moves until you confirm.
-- **Save in the editor with All events in series.** A change nothing else depends on (a new title when no edited day has its own) saves at once. Anything else shows the same card over the editor's buttons.
+- **Save in the editor with All events in series.** A change nothing else depends on (a new title when no edited day has its own) saves at once. Anything else shows the same panel, beside the editor.
 - **This event** acts at once, as before. **This and following** and the deletes keep their old behavior for now; their preview comes in 1.5.1.
 
-## What the Card Says
+## What the Panel Says
 
-- **The rule, before and after:** "Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00", with the end beside it ("No end, as before", "6 events, ends 1 Jul").
-- **Readings,** when a change can mean more than one thing: dragging Wednesday's class to Thursday in a Monday, Wednesday and Friday series can move every Wednesday, or shift the whole pattern a day. Each choice shows its own next dates and end, and under it what it drops or adds; a choice of time zone says which events change their clock. The first one is what Enter does. A choice between keeping the count and keeping the end works the same way.
-- **The next dates** as they'll show, with edited days marked. Dates name their year only when it isn't this one.
-- **Edited and skipped days:** every one is named. A day that does something of its own (stays at its own date, becomes an event of its own, is deleted) or has a choice gets its own line, first, with the choice on that line. Days that go with their events the same way share one line, "38 edited days from 6 Apr to 4 Jan 2028 move to Wednesday; each keeps its title and place", and **show them** lists each. Other choices (a gain at the start, own titles for a rename) sit on their own line below.
-- **Refusals:** a change the series can't take says why, with **Only this one** to change just the day you dragged. A reading that can't apply is shown greyed out with its reason.
+The panel opens in one place every time: at the bottom right of the calendar on a desktop (beside the editor or the event panel when one is open), and as a sheet at the bottom of the screen on a phone. The dropped event stays where you put it, drawn as an outline. Each part of the plan has its label at the left:
 
-**Confirm** stays off until the plan has arrived. **Cancel** or Esc puts everything back, and a press outside the card does the same. The switch at the top changes between **This and following** and **All events**. If the series changed meanwhile (another tab, a sync), the card shows the new plan and asks again.
+- **Change:** the rule before and after, with its end: "Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00, no end, as before". When a change can mean more than one thing (dragging Wednesday's class to Thursday in a Monday, Wednesday and Friday series can move every Wednesday, or shift the whole pattern a day), each choice is a row under it with its own next dates and what it drops or adds; a choice of time zone says which events change their clock. The first one is what Enter does. A choice between keeping the count and keeping the end works the same way.
+- **Next:** the next dates as they'll show, with edited days marked.
+- **Size:** how many events there will be and how many of them are skipped and edited: "6 events, 1 skipped, 2 edited", or "All events, ..." for a series with no end.
+- **Edited:** every edited day is named, one row each: the day, then what happens to it ("moves to Wed 14 Apr; keeps its title and place"), then its choice when it has one. Days that do something of their own come first. Days that go with their events the same way share one row, "38 edited days, Tue 6 Apr to Tue 4 Jan 2028", and **Show 38 days** lists each.
+- **Skipped:** each skipped day and where it goes.
+- **Refusals:** a change the series can't take says why, and its button is **Move only this one**, to change just the day you dragged. A reading that can't apply is shown greyed out with its reason.
 
-On a desktop the card opens beside the drop point, below the dragged block or above or beside it when there's no room, so the block stays in sight. On a phone the card is a sheet at the bottom of the screen and scrolls inside.
+Every date names its weekday, and its year only when it isn't this one. The button says what it does: **Move 6 events**, **Rename 6 events**, **Change 6 events** (or "all events" with no end); it stays off until the plan has arrived. **Cancel** or Esc puts everything back, and a press outside the panel does the same. **Change scope** at the top goes back to the choice of This event, This + following or All events. If the series changed meanwhile (another tab, a sync), the panel shows the new plan and asks again.
 
 ## Creating a Series
 
@@ -32,4 +33,4 @@ A change to an edited day from another app (a phone's calendar over CalDAV, a fe
 
 ## Google Calendars
 
-Until 1.5.2, a series on a Google calendar takes only changes that keep its rule as written: a new time, length or end, or new details for all events. A drag that would change which days it repeats on says so and offers **Only this one**. What Google does with edited days on those changes hasn't been checked yet, and they can't be undone.
+Until 1.5.2, a series on a Google calendar takes only changes that keep its rule as written: a new time, length or end, or new details for all events. A drag that would change which days it repeats on says so and offers **Move only this one**. What Google does with edited days on those changes hasn't been checked yet, and they can't be undone.

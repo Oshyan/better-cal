@@ -448,17 +448,18 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
 // A drop on a series occurrence with its scope picked (App.js): "All events"
 // waits for the series dialog (SeriesDialog.js), its block drawn pending
 // where it was dropped; "This event" and, until 1.5.1, "This and following"
-// act at once, as before.
-export function seriesDrop(kind, occ, p, scope) {
+// act at once, as before. rescope(): the scope chooser again, for the
+// dialog's "Change scope".
+export function seriesDrop(kind, occ, p, scope, rescope = null) {
   const act = kind === 'resize' ? resizeEvent : moveEvent;
   // A server without series plans takes the change at once, as before 1.5.0.
   if (scope !== 'all' || !seriesPlans()) return act({ ...p, scope });
   openSeriesChange({
     kind, occ,
     body: { start: p.newStart, end: p.newEnd },
-    at: p.at ? { x: p.at.x, y: p.at.y } : null,
     pending: { start: p.newStart, end: p.newEnd },
     apply: (s) => act({ ...p, scope: s }),
+    rescope,
   });
   return null;
 }

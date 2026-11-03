@@ -204,6 +204,19 @@ final class Readings
             }
             return [['nth', ['t' => 'nth', 'n' => $n, 'wd' => $wd]]];
         }
+        // A form that gives the landed day in its month (a drag by whole
+        // months) stays as written, the one reading: "every 31st" stays every
+        // 31st, the clamped 30th stays clamped (Written, not inferred). A day
+        // counted from the end keeps both of its row's readings.
+        $n0 = (int) $old['n'];
+        $gives = match ($old['t']) {
+            'day' => $n0 > 0 && $n0 === $d,
+            'clamp' => min($n0, $len) === $d,
+            default => false,
+        };
+        if ($gives) {
+            return [[$old['t'] === 'clamp' ? 'clamp' : ($n0 >= 29 ? 'skip' : 'day'), $old]];
+        }
         if ($old['t'] === 'day' && (int) $old['n'] < 0 && $fromEnd <= 7) {
             $out[] = ['fromEnd', ['t' => 'day', 'n' => -$fromEnd]];
         }

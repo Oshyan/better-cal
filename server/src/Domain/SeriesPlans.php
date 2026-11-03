@@ -406,7 +406,8 @@ trait SeriesPlans
         }
         $beforeLinks = Undo::linksOf($this->db, array_merge([$id], $touchedIds));
         $created = [];
-        $this->db->tx(function () use ($w, $id, $userId, $master, $byId, $in, &$created): void {
+        $createdEdited = [];
+        $this->db->tx(function () use ($w, $id, $userId, $master, $byId, $in, &$created, &$createdEdited): void {
             $now = Time::nowDb();
             if ($w['master'] !== []) {
                 $this->db->update('events', $w['master'] + ['updated_at' => $now], 'id = ?', [$id]);
@@ -454,13 +455,27 @@ trait SeriesPlans
                 $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
                 $created[] = $newId;
             }
+            // An occurrence the plan makes an edited day (the day acted on,
+            // where it keeps a placement of its own): its row, as "this event"
+            // makes one, from the series as written, with its tags and people.
+            foreach ($w['createEdited'] ?? [] as $cols) {
+                $row = $this->copyForChild($after);
+                $row['recurrence_parent_id'] = $id;
+                $row['rrule'] = null;
+                $row['exdates_json'] = null;
+                $row['created_via'] = ActivityContext::get();
+                $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
+                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
+                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
+                $createdEdited[] = $newId;
+            }
             foreach ($w['tags'] as $target => $names) {
                 $this->labels->setEventTags($userId, $target === 'master' ? $id : (int) $target, $names);
             }
             foreach (array_keys($w['people']) as $target) {
                 $this->applyPeoplePatch($userId, $target === 'master' ? $id : (int) $target, $in);
             }
-            foreach ($created as $newId) {
+            foreach (array_merge($created, $createdEdited) as $newId) {
                 // A created row takes the series' new tags and people too.
                 if (isset($w['tags']['master'])) {
                     $this->labels->setEventTags($userId, $newId, $w['tags']['master']);
@@ -472,7 +487,7 @@ trait SeriesPlans
         });
         $afterMaster = $this->get($userId, $id);
         $afterRows = [$afterMaster];
-        foreach (array_merge($touchedIds, $created) as $rid) {
+        foreach (array_merge($touchedIds, $created, $createdEdited) as $rid) {
             $row = $this->db->one('SELECT * FROM events WHERE id = ?', [$rid]);
             if ($row !== null) {
                 $afterRows[] = $row;
@@ -484,7 +499,7 @@ trait SeriesPlans
             $id,
             'update',
             ['events' => $beforeRows] + $beforeLinks,
-            ['events' => $afterRows] + Undo::linksOf($this->db, array_merge([$id], $touchedIds, $created)),
+            ['events' => $afterRows] + Undo::linksOf($this->db, array_merge([$id], $touchedIds, $created, $createdEdited)),
             mb_substr((string) $result['plan']['summary'], 0, 300)
         );
         ChangeLog::recordUpdate($this->db, $master, $afterMaster);

@@ -663,7 +663,9 @@ final class Recurrence
     }
 
     /**
-     * Default expander: sabre/vobject EventIterator, DTSTART in the event tzid.
+     * Default expander: sabre/vobject's EventIterator over the app's rule
+     * iterator (Series\RuleIterator, which also steps MINUTELY and
+     * SECONDLY), DTSTART in the event tzid.
      *
      * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
      */
@@ -715,7 +717,11 @@ final class Recurrence
             // stored (Time::parseAllDay). Read in UTC, a series in a zone west
             // of UTC came out a day early: midnight UTC is the evening before.
             // A UTC-zoned series, as imports and CalDAV store them, is unchanged.
-            $it = new \Sabre\VObject\Recur\EventIterator($vcal, $uid, $allDay ? $tz : Time::utc());
+            // A timed series iterates from its stored instant, so a start in a
+            // repeated hour keeps the instant it is stored at (SeriesIterator).
+            $it = $allDay
+                ? new \BetterCal\Domain\Series\SeriesIterator($vcal, $uid, $tz)
+                : new \BetterCal\Domain\Series\SeriesIterator($vcal, $uid, Time::utc(), $start, $end);
             $it->fastForward(\DateTime::createFromImmutable($winStart));
             $budget?->checkpoint();
             $count = 0;

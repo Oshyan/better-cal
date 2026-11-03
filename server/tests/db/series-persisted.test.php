@@ -91,6 +91,30 @@ return static function (Db $db): void {
         checkEq('undone, every row is as before', $before, $rows($run));
     });
 
+    scenario('series persisted: an occurrence is what the stored series yields, its carried clock and its minute step included (causes 1, 9)', function () use ($d, $u, $db, $keys, $create): void {
+        // DAILY with BYDAY after a spring gap: sabre's daily iterator carries 03:30.
+        $run = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR', 'America/Los_Angeles');
+        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T03:30:00-07:00', 'title' => 'Sample race']);
+        checkEq('a "this event" rename of 17 Mar at its carried 03:30 is accepted, keyed there', ['2027-03-17 10:30:00'], array_column($keys($run), 'recurrence_instance_utc'));
+        // Every 720 minutes: the second occurrence is twelve hours on.
+        $watch = $create('Sample watch', '2027-01-30T09:00:00+01:00', '2027-01-30T10:30:00+01:00', 'FREQ=MINUTELY;INTERVAL=720;COUNT=3', 'Europe/Berlin');
+        $d->events->patch($u, $watch, ['scope' => 'this', 'instanceStart' => '2027-01-30T21:00:00+01:00', 'title' => 'Sample night watch']);
+        checkEq('a "this event" rename of the second of every 720 minutes is keyed at 21:00', ['2027-01-30 20:00:00'], array_column($keys($watch), 'recurrence_instance_utc'));
+    });
+
+    scenario('series persisted: a dragged day that keeps where it was put becomes an edited day, and Undo removes it (cause 12)', function () use ($d, $u, $db, $rows, $keys, $create): void {
+        // Mondays at 02:30 from 1 Mar: from 15 Mar on, the expander shows 03:30.
+        $wk = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO', 'America/Los_Angeles');
+        $before = $rows($wk);
+        $plan = planned($d->events, $u, $wk, ['scope' => 'all', 'instanceStart' => '2027-03-08T02:30:00-08:00', 'start' => '2027-03-15T02:30:00-07:00', 'end' => '2027-03-15T03:30:00-07:00']);
+        $row = $db->one('SELECT * FROM events WHERE recurrence_parent_id = ?', [$wk]);
+        checkEq('dragged a week to 15 Mar at 02:30: its row keyed on the 03:30 occurrence shows at 02:30, its own time', [
+            '2027-03-15 10:30:00', '2027-03-15 09:30:00', '["time"]', '2027-03-15T02:30:00-07:00',
+        ], [$row['recurrence_instance_utc'] ?? null, $row['start_utc'] ?? null, $row['override_fields'] ?? null, $plan['next'][0]['start'] ?? null]);
+        $d->undo->undoLatest($u);
+        checkEq('undone, the series is as before and the created row is gone', $before, $rows($wk));
+    });
+
     scenario('series persisted: a reading whose members coincide in some month is refused before anything is written (R3)', function () use ($d, $u, $rows, $create): void {
         foreach (['ordinary occurrences' => false, 'two edited rows at the colliding members' => true] as $what => $edited) {
             $billing = $create('Sample billing', '2027-01-01T09:00:00+00:00', '2027-01-01T10:00:00+00:00', 'FREQ=MONTHLY;BYMONTHDAY=1,-1;COUNT=4');

@@ -35,6 +35,12 @@ final class Rule
     public ?int $wkst = null;
     public ?int $hour = null;
     public ?int $minute = null;
+    /**
+     * @var list<string> the clock parts read into $hour and $minute (one
+     *  value each): those props are the parts from then on, so a clock the
+     *  edit takes away (all-day has none) leaves the rule with it.
+     */
+    private array $clockParts = [];
     public ?int $count = null;
     public ?string $until = null;
     /** The day comes from the start (no BYDAY or BYMONTHDAY written). */
@@ -99,6 +105,7 @@ final class Rule
             if (isset($parts[$key])) {
                 if (preg_match('/^\d{1,2}$/', $parts[$key]) === 1) {
                     $r->$prop = (int) $parts[$key];
+                    $r->clockParts[] = $key;
                 } else {
                     $r->several = true;
                 }
@@ -575,8 +582,7 @@ final class Rule
     public function text(): string
     {
         if (!$this->dirty) {
-            $parts = $this->parts;
-            unset($parts['COUNT'], $parts['UNTIL']);
+            $parts = $this->asRead();
             if ($this->hour !== null) {
                 $parts['BYHOUR'] = (string) $this->hour;
             }
@@ -626,6 +632,46 @@ final class Rule
         return self::join($parts, $this->count, $this->until);
     }
 
+    /**
+     * The pattern's text as a set of parts, each list part a set: what a
+     * calendar that keeps the rule text (Google until 1.5.2) stores, read
+     * without the order of its parts or lists and without INTERVAL=1.
+     */
+    public function textKey(): string
+    {
+        $parts = [];
+        foreach (explode(';', $this->pattern()) as $piece) {
+            [$k, $v] = array_pad(explode('=', $piece, 2), 2, '');
+            if (str_contains($v, ',')) {
+                $items = explode(',', $v);
+                sort($items);
+                $v = implode(',', $items);
+            }
+            $parts[$k] = $v;
+        }
+        if (($parts['INTERVAL'] ?? '') === '1') {
+            unset($parts['INTERVAL']);
+        }
+        ksort($parts);
+        return json_encode($parts);
+    }
+
+    /** The parts as read, without the bound, the clock parts as the props now hold them. @return array<string,string> */
+    private function asRead(): array
+    {
+        $parts = $this->parts;
+        unset($parts['COUNT'], $parts['UNTIL']);
+        foreach ($this->clockParts as $k) {
+            $v = $k === 'BYHOUR' ? $this->hour : $this->minute;
+            if ($v === null) {
+                unset($parts[$k]);
+            } else {
+                $parts[$k] = (string) $v;
+            }
+        }
+        return $parts;
+    }
+
     private static function join(array $parts, ?int $count, ?string $until): string
     {
         if ($count !== null) {
@@ -648,8 +694,7 @@ final class Rule
     public function comparable(): string
     {
         if (!$this->supported()) {
-            $parts = $this->parts;
-            unset($parts['COUNT'], $parts['UNTIL']);
+            $parts = $this->asRead();
             // The clock it names, as text() writes it.
             if ($this->hour !== null) {
                 $parts['BYHOUR'] = (string) $this->hour;
@@ -663,20 +708,31 @@ final class Rule
             if (!isset($parts['BYWEEKNO'])) {
                 unset($parts['WKST']);
             }
+            // A list part is a set (RFC 5545 3.3.10): its order says nothing.
+            foreach ($parts as $k => $v) {
+                if (str_starts_with($k, 'BY') && str_contains($v, ',')) {
+                    $items = explode(',', $v);
+                    sort($items);
+                    $parts[$k] = implode(',', $items);
+                }
+            }
             ksort($parts);
             return json_encode($parts);
         }
-        $key = [$this->kind, $this->interval, $this->months, $this->members, $this->set, $this->hour, $this->minute];
-        if ($this->kind === 'weekly') {
-            $m = $this->members;
-            sort($m);
-            $key[3] = $m;
-            if ($this->interval > 1 && count($m) > 1) {
-                $key[] = $this->weekStart();
-            }
-        }
-        if ($this->kind === 'monthly' && count($this->members) === 1 && $this->members[0]['t'] === 'nth') {
-            $key[3] = [['t' => 'nth', 'n' => $this->members[0]['n'], 'wd' => $this->members[0]['wd']]];
+        // Members, months and the set are sets too, compared in one order.
+        $canon = static function (array $list): array {
+            $list = array_map(static function ($m) {
+                if (is_array($m)) {
+                    ksort($m);
+                }
+                return $m;
+            }, $list);
+            usort($list, static fn($a, $b): int => strcmp(json_encode($a), json_encode($b)));
+            return $list;
+        };
+        $key = [$this->kind, $this->interval, $canon($this->months), $canon($this->members), $canon($this->set), $this->hour, $this->minute];
+        if ($this->kind === 'weekly' && $this->interval > 1 && count($this->members) > 1) {
+            $key[] = $this->weekStart();
         }
         return json_encode($key);
     }

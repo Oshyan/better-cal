@@ -528,6 +528,19 @@ trait Invariants
         $this->check($inv . '-skips', $cutSkips($skips) === $cutSkips($gotSkips), 'the skipped days are the images of the old ones, with the generated ones', ['expected' => array_map([Days::class, 'date'], $skips), 'stored' => array_map([Days::class, 'date'], $gotSkips)]);
         // Edited days: keyed on their images, or outside with their outcome.
         $standalone = $this->standalones();
+        // The day acted on with no row, outside the new series, is an event of
+        // its own where it was put (Changing the Series from an Edited Day, 3):
+        // that event is no edited day's, even on an edited day's date and title.
+        $ofEdited = $standalone;
+        if ($edit['sent'] !== null && $edit['fromRow'] === null && $x->kind !== 'newrule' && !$out['actedInside']) {
+            $putAt = ($choices['zone'] ?? null) === 'moment' && $x->zoneGroup ? Clock::db($x->momentAt) : (string) $edit['sent']['start'];
+            foreach (array_reverse(array_keys($ofEdited)) as $i) {
+                if ((string) $ofEdited[$i]['start_utc'] === $putAt && !isset($before['overrides'][(int) $ofEdited[$i]['id']])) {
+                    unset($ofEdited[$i]);
+                    break;
+                }
+            }
+        }
         $outside = $choices['outside'] ?? 'keep';
         $move = ($choices['movedDays'] ?? 'keep') === 'move';
         foreach ($out['rows'] as $id => $r) {
@@ -560,7 +573,7 @@ trait Invariants
                 continue;
             }
             $own = null;
-            foreach ($standalone as $sr) {
+            foreach ($ofEdited as $sr) {
                 if ((string) $sr['start_utc'] === (string) $ov0['start_utc'] && (string) $sr['title'] === (string) $ov0['title']) {
                     $own = $sr;
                 }

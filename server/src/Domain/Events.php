@@ -1527,9 +1527,8 @@ final class Events
         // series' edit, with that day as the day acted on (Changing the
         // Series from an Edited Day): preview and commit alike.
         if (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all' && !isset($in['calendarId'])) {
-            [$master, $masterIn] = $this->editFromEditedDay($userId, $event, $in);
-            // The day acted on is this row: it takes the change where it shows.
-            $this->asFromEditedDay(fn() => $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority));
+            [$master, $masterIn] = $this->routeToMaster($userId, $event, $in);
+            $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority);
             return;
         }
 

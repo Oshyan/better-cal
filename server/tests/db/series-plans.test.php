@@ -306,20 +306,67 @@ return static function (Db $db): void {
         checkEq('undone: every row as before', $before, $rows($night));
     });
 
-    scenario('edited days: the server\'s own routing flag can\'t be set by a client', function () use ($d, $u, $db, $weekly): void {
-        $choir = $weekly('Choir');
-        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-16T18:00:00+00:00', 'title' => 'Rehearsal']);
-        $rename = ['scope' => 'all', 'instanceStart' => '2027-03-16T18:00:00+00:00', 'title' => 'Chorus'];
-        $plain = $d->events->previewPatch($u, $choir, $rename);
-        $flagged = $d->events->previewPatch($u, $choir, $rename + ['_fromEditedDay' => true]);
-        $lines = static fn(array $plan): array => array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'words');
-        checkEq('a body sent to the master carrying _fromEditedDay gets the plan it gets without it: the day acted on keeps its own title', [true, $lines($plain)],
-            [str_contains(implode(' ', $lines($plain)), 'keeps its title'), $lines($flagged)]);
-        planned($d->events, $u, $choir, $rename + ['_fromEditedDay' => true]);
-        checkEq('committed with the flag: the day keeps its own title', ['Rehearsal', ['title']], [
-            $db->scalar('SELECT title FROM events WHERE recurrence_parent_id = ?', [$choir]),
-            json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$choir]), true),
+    // Re-expected for the structure rework: there is no routing flag any
+    // more. An edit naming a day by its key acts on that day as it shows,
+    // whichever row id it came through, so from the master the day acted
+    // on takes the new title, as it does from its own row (F6).
+    scenario('edited days: one delta whichever row the request names (structure review F3, F6, F8)', function () use ($d, $u, $db, $weekly, $answer, $home): void {
+        $own = static fn(int $id): array => json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$id]), true) ?? [];
+        // F6: 9 Feb owns its title and its time, 17:00; the series is at 18:00 UTC.
+        $choir = $weekly('Sample choir');
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'title' => 'Sample concert', 'start' => '2027-02-09T17:00:00+00:00', 'end' => '2027-02-09T18:00:00+00:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$choir]);
+        $edit = ['title' => 'Sample chorus', 'start' => '2027-02-09T18:00:00+00:00', 'end' => '2027-02-09T19:00:00+00:00'];
+        $fromRow = $d->events->previewPatch($u, $day, ['scope' => 'all'] + $edit);
+        $fromMaster = $d->events->previewPatch($u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00'] + $edit);
+        checkEq('F6: an hour later and renamed, from the day\'s own row and from the master naming its key: the same plan', $fromRow, $fromMaster);
+        [$code] = $answer(fn() => $d->events->patch($u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'title' => 'Sample chorus']));
+        checkEq('F6: a plan-less rename naming that day is 409 series_plan_required (the day owns its title)', '409 series_plan_required', $code);
+        planned($d->events, $u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00', '_fromEditedDay' => true] + $edit);
+        checkEq('F6: committed from the master (a stray _fromEditedDay in the body is nothing): the series at 19:00, the day at 18:00 with the new title, its time its own and its title not', [
+            '2027-01-05 19:00:00', 'Sample chorus', '2027-02-09 18:00:00', ['time'],
+        ], [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$choir]), $db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$day]), $own($day)]);
+
+        // F3: an all-day edited day of a timed series, dragged a day later from its row.
+        foreach (['dates only' => [], 'with allDay: true' => ['allDay' => true]] as $how => $more) {
+            $s = $weekly('Sample rehearsal');
+            $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'allDay' => true, 'start' => '2027-02-09', 'end' => '2027-02-10']);
+            $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$s]);
+            planned($d->events, $u, $row, ['scope' => 'all', 'start' => '2027-02-10', 'end' => '2027-02-11'] + $more);
+            checkEq("F3 ($how): every event a day later at 18:00, still timed; the day all-day on 10 Feb", [
+                'FREQ=WEEKLY;BYDAY=WE', '2027-01-06 18:00:00', 0, ['2027-02-10 00:00:00', 1],
+            ], [
+                $db->scalar('SELECT rrule FROM events WHERE id = ?', [$s]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$s]), (int) $db->scalar('SELECT all_day FROM events WHERE id = ?', [$s]),
+                [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$row]), (int) $db->scalar('SELECT all_day FROM events WHERE id = ?', [$row])],
+            ]);
+        }
+
+        // F8: a day at its own time in Berlin; its zone sent back with a rename.
+        $s = $weekly('Sample call');
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'tzid' => 'Europe/Berlin', 'start' => '2027-02-09T19:00:00+01:00', 'end' => '2027-02-09T20:00:00+01:00']);
+        $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$s]);
+        $plan = planned($d->events, $u, $row, ['scope' => 'all', 'tzid' => 'Europe/Berlin', 'title' => 'Sample briefing']);
+        checkEq('F8: no zone group, and the series stays in UTC at 18:00', [false, 'UTC', '2027-01-05 18:00:00'],
+            [in_array('zone', array_column($plan['groups'], 'id'), true), $db->scalar('SELECT tzid FROM events WHERE id = ?', [$s]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$s])]);
+
+        // F2: a rule the expander can't read, renamed: its edited day stays attached.
+        $odd = $weekly('Sample supper', 'FREQ=WEEKLY;BYDAY=TU;COUNT=10');
+        $d->events->patch($u, $odd, ['scope' => 'this', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'location' => 'Sample Hall']);
+        $db->run("UPDATE events SET rrule = 'FREQ=WEEKLY;BYDAY=TU;COUNT=10;RSCALE=GREGORIAN' WHERE id = ?", [$odd]);
+        $d->events->patch($u, $odd, ['scope' => 'all', 'title' => 'Sample dinner']);
+        checkEq('F2: renamed with no plan (direct): the edited day is still the series\' own, on its key, with the new title', [1, '2027-02-09 18:00:00', 'Sample dinner', 0], [
+            (int) $db->scalar("SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND location = 'Sample Hall' AND deleted_at IS NULL", [$odd]),
+            $db->scalar("SELECT recurrence_instance_utc FROM events WHERE recurrence_parent_id = ? AND location = 'Sample Hall'", [$odd]),
+            $db->scalar("SELECT title FROM events WHERE recurrence_parent_id = ? AND location = 'Sample Hall'", [$odd]),
+            (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Sample supper' AND rrule IS NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL", [$u]),
         ]);
+
+        // F11: a new series whose first day falls in the spring gap.
+        $call = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample early call', 'start' => '2027-03-13T02:30:00-08:00', 'end' => '2027-03-13T03:30:00-08:00',
+            'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=SU;COUNT=4'])['eventId'];
+        checkEq('F11: typed on Sat 13 Mar at 02:30, every Sunday: stored from 7 Mar at 02:30, skipped, COUNT one higher', [
+            '2027-03-07 10:30:00', 'FREQ=WEEKLY;BYDAY=SU;COUNT=5', ['2027-03-07 10:30:00'],
+        ], [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$call]), $db->scalar('SELECT rrule FROM events WHERE id = ?', [$call]), json_decode((string) $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$call]), true)]);
     });
 
     scenario('a rule the expander can\'t read: only its details change', function () use ($d, $u, $db, $home, $answer): void {

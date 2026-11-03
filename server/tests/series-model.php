@@ -673,14 +673,15 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
 
     // N3, N5, own time: the lines say where a day goes and what it takes.
     $moved = [smEdited($choir, 3, '2027-03-23 19:00', [], '2027-03-26 19:00', ['date'])];
-    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-24 19:00', ['fromEditedDay' => true]));
+    // The edit names the occurrence by its key and says where it was put (S'), whichever row it came through.
+    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-27 19:00'));
     checkEq('from an edited day with its own date, dragged a day: its line says where it goes', 'Tue 23 Mar, moved to Fri 26 Mar: moves to Sat 27 Mar',
         array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
-    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-23 20:00', ['fromEditedDay' => true]));
+    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-26 20:00'));
     checkEq('and a clock-only drag of it says the new time', 'Tue 23 Mar, moved to Fri 26 Mar: moves to 20:00',
         array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
     $named = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal'], null, ['title'])];
-    $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F'], 'fromEditedDay' => true]);
+    $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F']]);
     checkEq('an editor save from an edited day: its line says it takes the new title', "'Rehearsal' Tue 16 Mar stays, takes 'Choir F'",
         array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null);
     $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
@@ -905,6 +906,152 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $m1 = $stored($weekly, $p['writes']);
     [$want, $got] = $agrees($p, $m1);
     checkEq('R4: a weekly list\'s pattern reading moved a day and to 10:45 writes 10:45 too', ['FREQ=WEEKLY;BYDAY=TU,TH;BYHOUR=10;BYMINUTE=45', $want], [$m1['rrule'], $got]);
+
+    // ---- One structure: the structure review's eleven findings ----------
+    // Each a consequence of the model's structure (series-model.md, The
+    // Function): one delta against the occurrence acted on as it shows, the
+    // day acted on an ordinary exception, keys from the expander, `kind`
+    // for words and `direct` only. Every series invented.
+    $keysOk = static function (array $p): bool {
+        foreach ($p['writes']['overrides'] ?? [] as $cols) {
+            if (array_key_exists('recurrence_instance_utc', $cols) && (string) $cols['recurrence_instance_utc'] === '') {
+                return false;
+            }
+        }
+        foreach ($p['plan']['days'] as $d) {
+            if ($d['newKey'] === null && !in_array($d['outcome'], ['separate', 'deleted', 'dropped'], true)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    $dayOf = static fn(array $p, string $key): ?array => array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['key'] === $key))[0] ?? null;
+    $utcWeekly = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU;COUNT=10', '2027-01-05 19:00', 60, false, [], 'UTC');
+    $feb9 = '2027-02-09T19:00:00Z';
+
+    // F1: a new time with a new end that leaves the day acted on outside.
+    foreach (['its own title' => [[], ['title']], 'its own time' => [['start_utc' => smAt('2027-02-09 18:00', 'UTC'), 'end_utc' => smAt('2027-02-09 19:00', 'UTC')], ['title', 'time']]] as $what => [$cols, $own]) {
+        $row = smEdited($utcWeekly, 2, '2027-02-09 19:00', ['title' => 'Sample concert'] + $cols, null, $own);
+        $seenStart = $cols['start_utc'] ?? smAt('2027-02-09 19:00', 'UTC');
+        $edit = ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=3',
+            'landed' => ['start_utc' => $seenStart, 'end_utc' => Time::toDb(Time::fromDb($seenStart)->modify('+2 hours')), 'all_day' => 0, 'tzid' => 'UTC']];
+        $p = null;
+        try {
+            $p = smPlan($utcWeekly, [$row], $edit);
+        } catch (\Throwable $e) {
+            check("F1 ($what): a new length with a count of 3 plans without an error", false, $e->getMessage());
+        }
+        if ($p !== null) {
+            checkEq("F1 ($what): the day acted on, outside the new series, becomes an event of its own where it was put; no key is empty", [
+                true, 'separate', Time::toDb(Time::fromDb($seenStart)->modify('+2 hours')), true,
+            ], [$keysOk($p), $dayOf($p, $feb9)['outcome'] ?? null, $p['writes']['detach'][2]['end_utc'] ?? null, str_contains($p['plan']['bound']['words'], '+ 1 separate')]);
+        }
+    }
+    $allDayWeekly = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=TU;COUNT=10', '2027-01-05', 60, true);
+    $p = smPlan($allDayWeekly, [smEdited($allDayWeekly, 2, '2027-02-09', ['title' => 'Sample fair, day two'], null, ['title'])],
+        ['acted' => smAt('2027-02-09 00:00', 'UTC'), 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=3', 'landed' => ['start_utc' => smAt('2027-02-09 00:00', 'UTC'), 'end_utc' => smAt('2027-02-11 00:00', 'UTC'), 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('F1 (all-day): two days long with a count of 3: the day becomes an event of its own, no empty key', [true, 'separate'],
+        [$keysOk($p), $dayOf($p, '2027-02-09T00:00:00Z')['outcome'] ?? null]);
+
+    // F2: a rename of a rule the expander can't read keeps every row.
+    $odd = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU;COUNT=10;RSCALE=GREGORIAN', '2027-01-05 19:00', 60, false, [], 'UTC');
+    $oddRow = smEdited($odd, 2, '2027-02-09 19:00', ['location' => 'Sample Hall'], null, ['location']);
+    $p = smPlan($odd, [$oddRow], ['columns' => ['title' => 'Sample chorus']]);
+    checkEq('F2: renaming a series whose rule the expander can\'t read keeps its edited day, on its key, with no outside group', [
+        [], [], 'stays', null, true,
+    ], [$p['writes']['detach'], smOptions($p, 'outside'), $dayOf($p, $feb9)['outcome'] ?? null, $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $p['plan']['direct']]);
+    checkEq('F2: anything needing keys is still refused for it (a new bound)', 'unreadable',
+        smPlan($odd, [$oddRow], ['rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=4;RSCALE=GREGORIAN'])['plan']['refusals'][0]['code'] ?? null);
+
+    // F3: an all-day edited day of a timed series dragged a day later.
+    $f3 = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00', 60, false, [], 'UTC');
+    $f3row = smEdited($f3, 2, '2027-02-09 19:00', ['all_day' => 1, 'tzid' => 'UTC', 'start_utc' => smAt('2027-02-09 00:00', 'UTC'), 'end_utc' => smAt('2027-02-10 00:00', 'UTC')], null, ['allDay', 'time', 'length']);
+    $p = smPlan($f3, [$f3row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'landed' => ['start_utc' => smAt('2027-02-10 00:00', 'UTC'), 'end_utc' => smAt('2027-02-11 00:00', 'UTC'), 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('F3: every event a day later at 19:00, the series timed; the edited day all-day on 10 Feb, keyed on 10 Feb at 19:00', [
+        'FREQ=WEEKLY;BYDAY=WE', '2027-01-06 19:00:00', false, ['2027-02-10 19:00:00', '2027-02-10 00:00:00', '2027-02-11 00:00:00'],
+    ], [$p['writes']['master']['rrule'] ?? null, $p['writes']['master']['start_utc'] ?? null, isset($p['writes']['master']['all_day']), [
+        $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? null, $p['writes']['overrides'][2]['end_utc'] ?? null,
+    ]]);
+
+    // F4: from an edited day, a field set back to the series' value.
+    $f4row = smEdited($utcWeekly, 2, '2027-02-09 19:00', ['title' => 'Sample concert'], null, ['title']);
+    $p = smPlan($utcWeekly, [$f4row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample choir']]);
+    checkEq('F4: the series\' title sent from the day that owns another: the day takes it, no longer its own, and the plan isn\'t direct', [
+        false, 'Sample choir', '[]', [],
+    ], [$p['plan']['direct'], $p['writes']['overrides'][2]['title'] ?? null, $p['writes']['overrides'][2]['override_fields'] ?? null, array_keys($p['writes']['master'])]);
+    $p = smPlan($utcWeekly, [smEdited($utcWeekly, 2, '2027-02-09 19:00', [], null, ['tags'])], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'tags' => ['sample']],
+        [], ['masterTags' => ['sample'], 'rowTags' => [2 => ['extra']]]);
+    checkEq('F4: the same for tags: the day takes the series\' tags', [false, ['sample']], [$p['plan']['direct'], $p['writes']['tags'][2] ?? null]);
+
+    // F5: a rule naming its hour in a zone with a spring change: the
+    // model's days are the expander's (sabre steps hours and yields no 14 Mar).
+    $f5 = smSeries('Sample night watch', 'FREQ=DAILY;BYHOUR=2;BYMINUTE=30;COUNT=8', '2027-03-11 02:30');
+    $f5row = smEdited($f5, 2, '2027-03-15 02:30', ['title' => 'Sample night watch, inspection'], null, ['title']);
+    $p = smPlan($f5, [$f5row], ['columns' => ['title' => 'Sample late watch']]);
+    $f5next = array_map(static fn(array $n): string => substr($n['start'], 0, 16), smPlan($f5, [$f5row], ['acted' => smAt('2027-03-12 02:30'), 'columns' => ['title' => 'Sample late watch']])['plan']['next']);
+    checkEq('F5: a rename says 8 events ending 19 Mar and lists no 14 Mar', [true, false], [str_starts_with($p['plan']['bound']['words'], '8 events, ends 19 Mar'), in_array('2027-03-14T03:30', $f5next, true)]);
+    $p = smPlan($f5, [$f5row], smDrag($f5, '2027-03-12 02:30', '2027-03-11 02:30'));
+    $m1 = $stored($f5, $p['writes']);
+    $sabreKeys = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($m1, Time::fromDb($m1['start_utc'])->modify('-1 day'), Time::fromDb($m1['start_utc'])->modify('+60 days')));
+    $f5key = $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null;
+    check('F5: a drag a day earlier keys the edited day on an occurrence the expander yields, or gives it an outcome', $f5key === null ? isset($p['writes']['detach'][2]) || in_array(2, $p['writes']['delete'], true) : in_array($f5key, $sabreKeys, true), json_encode([$f5key, $sabreKeys]));
+
+    // F6: the same edit on the same day, named by its key: one plan.
+    $f6 = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00', 60, false, [], 'UTC');
+    $f6row = smEdited($f6, 2, '2027-02-09 19:00', ['title' => 'Sample concert', 'start_utc' => smAt('2027-02-09 17:00', 'UTC'), 'end_utc' => smAt('2027-02-09 18:00', 'UTC')], null, ['title', 'time']);
+    $p = smPlan($f6, [$f6row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample chorus'],
+        'landed' => ['start_utc' => smAt('2027-02-09 18:00', 'UTC'), 'end_utc' => smAt('2027-02-09 19:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC']]);
+    checkEq('F6: an hour later and renamed, acting on the day at its own 17:00: the series at 20:00, the day takes the title and lands at 18:00', [
+        '2027-01-05 20:00:00', 'Sample chorus', '2027-02-09 18:00:00',
+    ], [$p['writes']['master']['start_utc'] ?? null, $p['writes']['overrides'][2]['title'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? null]);
+    $p = smPlan($f6, [$f6row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample chorus']]);
+    checkEq('F6: a rename naming a day that owns its title is no direct edit', false, $p['plan']['direct']);
+
+    // F7: a timed edited day of an all-day series lands where dropped.
+    $fair = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05', 60, true);
+    $f7row = smEdited($fair, 2, '2027-02-09', ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => smAt('2027-02-09 09:00'), 'end_utc' => smAt('2027-02-09 10:00')], null, ['allDay', 'time']);
+    $p = smPlan($fair, [$f7row], ['acted' => smAt('2027-02-09 00:00', 'UTC'), 'landed' => ['start_utc' => smAt('2027-02-10 10:00'), 'end_utc' => smAt('2027-02-10 11:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+    checkEq('F7: the all-day series moves to Wednesday; the timed day shows on 10 Feb at 10:00 where it was dropped', ['FREQ=WEEKLY;BYDAY=WE', smAt('2027-02-10 10:00')],
+        [$p['writes']['master']['rrule'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? null]);
+
+    // F8: a zone sent back unchanged from a day in its own zone.
+    $f8row = smEdited($f6, 2, '2027-02-09 19:00', ['tzid' => 'Europe/Berlin', 'start_utc' => smAt('2027-02-09 19:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-02-09 20:00', 'Europe/Berlin')], null, ['time']);
+    $p = smPlan($f6, [$f8row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample chorus'],
+        'landed' => ['start_utc' => $f8row['start_utc'], 'end_utc' => $f8row['end_utc'], 'all_day' => 0, 'tzid' => 'Europe/Berlin']]);
+    checkEq('F8: the day\'s own zone sent back as it is changes no zone: no zone group, the series stays in UTC', [[], false],
+        [smOptions($p, 'zone'), isset($p['writes']['master']['tzid'])]);
+
+    // F9: the zone's "same moment" is a delta on the instant.
+    $f9 = smSeries('Sample early call', 'FREQ=WEEKLY;BYDAY=SU', '2027-03-07 02:30');
+    $f9edit = ['acted' => smAt('2027-03-14 03:30'), 'landed' => ['start_utc' => smAt('2027-03-14 03:30', 'Europe/Berlin'), 'end_utc' => smAt('2027-03-14 04:30', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']];
+    $p = smPlan($f9, [], $f9edit, ['zone' => 'moment']);
+    $f9at = Time::fromDb((string) ($p['writes']['master']['start_utc'] ?? $f9['start_utc']))->setTimezone(Time::zone('Europe/Berlin'))->format('H:i');
+    checkEq('F9: from the gap-shifted 14 Mar, the same moment in Berlin is every Sunday at 10:30, as from any other Sunday', ['10:30', '10:30'],
+        [$f9at, Time::fromDb((string) (smPlan($f9, [], ['acted' => smAt('2027-03-21 02:30'), 'landed' => ['start_utc' => smAt('2027-03-21 02:30', 'Europe/Berlin'), 'end_utc' => smAt('2027-03-21 03:30', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment'])['writes']['master']['start_utc'] ?? ''))->setTimezone(Time::zone('Europe/Berlin'))->format('H:i')]);
+
+    // F10: "move with their events" wherever correspondence by member exists.
+    $f10 = [
+        'monthly on the 15th to the 16th' => [smSeries('Sample rent', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-15 09:00'), '2027-03-15 09:00', 'FREQ=MONTHLY;BYMONTHDAY=16', '2027-03-16'],
+        'Monday and Wednesday to Tuesday and Thursday' => [smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=MO,WE', '2027-01-04 09:00'), '2027-03-10 09:00', 'FREQ=WEEKLY;BYDAY=TU,TH', '2027-03-11'],
+        'Tuesday to Thursday' => [smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00'), '2027-03-09 19:00', 'FREQ=WEEKLY;BYDAY=TH', '2027-03-11'],
+    ];
+    foreach ($f10 as $what => [$series, $edited, $rule, $want]) {
+        $row = smEdited($series, 2, $edited, ['title' => 'Sample, edited'], null, ['title']);
+        $p = smPlan($series, [$row], ['rrule' => $rule]);
+        $mapped = smPlan($series, [$row], ['rrule' => $rule], ['reading' => 'map']);
+        $nk = (string) ($mapped['writes']['overrides'][2]['recurrence_instance_utc'] ?? '');
+        checkEq("F10 ($what): the new rule offers moving edited days with their events, and that moves the day by member", [['map', 'keep'], $want],
+            [smOptions($p, 'reading'), $nk === '' ? null : Time::fromDb($nk)->setTimezone(Time::zone('America/Los_Angeles'))->format('Y-m-d')]);
+    }
+
+    // F11: a new series whose first day falls in the spring gap.
+    $start = new ReflectionMethod(BetterCal\Domain\Events::class, 'seriesStart');
+    $typed = ['rrule' => 'FREQ=WEEKLY;BYDAY=SU;COUNT=4', 'start_utc' => smAt('2027-03-13 02:30'), 'end_utc' => smAt('2027-03-13 03:30'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'exdates_json' => null];
+    $aligned = array_merge($typed, $start->invoke(null, $typed));
+    $words = BetterCal\Domain\Events::creationPlan($aligned, $typed);
+    checkEq('F11: typed on Sat 13 Mar at 02:30, every Sunday: stored from 7 Mar, skipped, COUNT one higher; shown 14 Mar at 03:30, then 02:30; the line says 02:30', [
+        smAt('2027-03-07 02:30'), 'FREQ=WEEKLY;BYDAY=SU;COUNT=5', [smAt('2027-03-07 02:30')], ['2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00'], 'Weekly on Sunday at 02:30', '4 events, ends 4 Apr 2027',
+    ], [$aligned['start_utc'], $aligned['rrule'], json_decode((string) $aligned['exdates_json'], true), array_slice($shown($aligned), 0, 2), $words['rule']['words'], $words['bound']['words']]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

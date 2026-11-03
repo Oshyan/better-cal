@@ -35,26 +35,6 @@ trait SeriesPlans
      */
     private bool $preselected = false;
 
-    /**
-     * Set only while the server routes an edit with all events from an
-     * edited day's own row to its master (editFromEditedDay): the day at
-     * instanceStart is the day acted on and takes the edit's fields. Never
-     * read from a request body, so a client can't set it on the master.
-     */
-    private bool $fromEditedDay = false;
-
-    /** Run $fn as the master's edit routed from an edited day's own row. */
-    private function asFromEditedDay(callable $fn): mixed
-    {
-        $was = $this->fromEditedDay;
-        $this->fromEditedDay = true;
-        try {
-            return $fn();
-        } finally {
-            $this->fromEditedDay = $was;
-        }
-    }
-
     /** Run $fn with whole-series edits taking their preselected options. */
     public function withPreselectedPlan(callable $fn): mixed
     {
@@ -112,76 +92,22 @@ trait SeriesPlans
     }
 
     /**
-     * An edit with all events sent to an edited day's own row, as its
-     * master takes it (Changing the Series from an Edited Day): the day's
-     * key is the day acted on, and the change the person made to where the
-     * day shows (S to S') is the change of its occurrence (K to K + the same
-     * days, at its clock time moved by the same amount). The fields ride
-     * along; the day takes them (Own Fields: a scope-all edit from that day
-     * clears the fields it sets). Adoption ("this becomes the series' day")
-     * is #189's and not offered yet.
+     * An edit with all events sent to an edited day's own row is the
+     * series' edit acting on that day's occurrence (Changing the Series
+     * from an Edited Day): its key names the occurrence, and the body goes
+     * as it was sent. The model measures every delta from where that
+     * occurrence shows, whichever row the request came through, so there is
+     * nothing to translate here.
      *
      * @return array{0:array,1:array} the master and the edit for it
      */
-    private function editFromEditedDay(int $userId, array $row, array $in): array
+    private function routeToMaster(int $userId, array $row, array $in): array
     {
         $master = $this->get($userId, (int) $row['recurrence_parent_id']);
-        $masterAllDay = (int) $master['all_day'] === 1;
         $key = Time::fromDb((string) $row['recurrence_instance_utc']);
-        $out = array_diff_key($in, array_flip(['start', 'end', 'allDay', 'tzid', 'instanceStart', 'rrule']));
-        $out['scope'] = 'all';
-        $out['instanceStart'] = $masterAllDay ? $key->format('Y-m-d') : Time::iso($key);
-        if (array_key_exists('rrule', $in)) {
-            $out['rrule'] = $in['rrule'];
-        }
-        $timeKeys = array_intersect_key($in, array_flip(['start', 'end', 'allDay', 'tzid']));
-        if ($timeKeys === []) {
-            return [$master, $out];
-        }
-        // Where the day shows now, and where the edit puts it.
-        $f = $this->columnPatch($row, $timeKeys, null, true);
-        $rowTz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
-        $newAllDay = (int) ($f['all_day'] ?? $row['all_day']) === 1;
-        $newTz = $newAllDay ? 'UTC' : (string) ($f['tzid'] ?? $row['tzid']);
-        $shown = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($rowTz));
-        $sent = Time::fromDb((string) ($f['start_utc'] ?? $row['start_utc']))->setTimezone(Time::zone($newTz));
-        $sentEnd = Time::fromDb((string) ($f['end_utc'] ?? $row['end_utc']));
-        $seriesTz = Time::zone($masterAllDay ? 'UTC' : (string) $master['tzid']);
-        $days = Cal::dnOf($sent->setTimezone($seriesTz)) - Cal::dnOf($shown->setTimezone($seriesTz));
-        if ($newAllDay || (int) $row['all_day'] === 1) {
-            $days = Cal::dnOf($sent) - Cal::dnOf($shown);
-        }
-        $secs = static fn(\DateTimeImmutable $t): int => (int) $t->format('G') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s');
-        $clockShift = $newAllDay || (int) $row['all_day'] === 1 ? 0 : $secs($sent) - $secs($shown);
-        // The length change likewise, measured on the day and put on its
-        // occurrence's length; between an all-day and a timed length there
-        // is no change to measure, so the sent length is the new one.
-        $length = max(0, $sentEnd->getTimestamp() - $sent->getTimestamp());
-        if ($newAllDay === ((int) $row['all_day'] === 1) && $newAllDay === $masterAllDay) {
-            $rowLength = Time::fromDb((string) $row['end_utc'])->getTimestamp() - Time::fromDb((string) $row['start_utc'])->getTimestamp();
-            $length = max(0, Recurrence::durationSeconds($master) + $length - $rowLength);
-        }
-        $keyLocal = $key->setTimezone($seriesTz);
-        if ($newAllDay) {
-            $day = Cal::date(Cal::dnOf($keyLocal) + $days);
-            $out['start'] = $day;
-            $out['end'] = Cal::date(Cal::dnOf($keyLocal) + $days + max(1, (int) round($length / 86400)));
-        } else {
-            $wallTz = isset($in['tzid']) ? Time::zone($newTz) : $seriesTz;
-            $clock = $masterAllDay ? $secs($sent) : $secs($keyLocal) + $clockShift;
-            $dayDn = Cal::dnOf($keyLocal) + $days + intdiv($clock - ($clock % 86400 + 86400) % 86400, 86400);
-            $clock = ($clock % 86400 + 86400) % 86400;
-            $at = new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($dayDn), intdiv($clock, 3600), intdiv($clock % 3600, 60), $clock % 60), $wallTz);
-            $out['start'] = Time::iso($at);
-            $out['end'] = Time::iso($at->modify('+' . $length . ' seconds'));
-        }
-        if (isset($in['allDay'])) {
-            $out['allDay'] = $in['allDay'];
-        }
-        if (isset($in['tzid'])) {
-            $out['tzid'] = $in['tzid'];
-        }
-        return [$master, $out];
+        $in['scope'] = 'all';
+        $in['instanceStart'] = (int) $master['all_day'] === 1 ? $key->format('Y-m-d') : Time::iso($key);
+        return [$master, $in];
     }
 
     /**
@@ -198,10 +124,9 @@ trait SeriesPlans
             $in = ['calendarId' => $in['calendarId'], 'scope' => 'all', 'instanceStart' => $instance] + (isset($in['plan']) ? ['plan' => $in['plan']] : []);
             $event = $this->get($userId, (int) $event['recurrence_parent_id']);
         } elseif (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
-            // Any other edit with all events from an edited day's own row.
-            [$event, $in] = $this->editFromEditedDay($userId, $event, $in);
-            // The day acted on is that row: it takes the change where it shows.
-            return $this->asFromEditedDay(fn(): array => $this->previewPatch($userId, (int) $event['id'], $in));
+            // Any other edit with all events from an edited day's own row:
+            // the series' edit acting on that day's occurrence.
+            [$event, $in] = $this->routeToMaster($userId, $event, $in);
         }
         if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || (string) ($in['scope'] ?? '') !== 'all') {
             throw HttpError::badRequest('preview is for changes to all events of a repeating series', 'preview_unavailable');
@@ -244,11 +169,11 @@ trait SeriesPlans
     public static function creationPlan(array $row, array $asked, ?string $homeTz = null): array
     {
         $tz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
-        $start = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz));
-        $dn = Cal::dnOf($start);
-        $rule = Rule::parse((string) $row['rrule'], $dn);
-        $clock = (int) $row['all_day'] === 1 ? null : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
-        $calc = new Calc($rule, $dn, $tz, (int) $row['all_day'] === 1, $clock ?? [0, 0, 0], Recurrence::durationSeconds($row));
+        // Read as the model reads a stored series: from its first shown day.
+        $calc = Calc::fromRow($row);
+        $rule = $calc->rule;
+        $dn = $calc->startDn;
+        $clock = (int) $row['all_day'] === 1 ? null : $calc->clock;
         $year = (int) Time::nowUtc()->setTimezone(Time::zone($homeTz ?? $tz))->format('Y');
         $first = $calc->occurrences(PHP_INT_MAX, 4);
         $next = array_map(static fn(int $d): array => ['start' => Time::iso($calc->instant($d)->setTimezone(Time::zone($tz)))], $first);
@@ -260,7 +185,7 @@ trait SeriesPlans
         $askedDn = Cal::dnOf(Time::fromDb((string) $asked['start_utc'])->setTimezone(Time::zone($tz)));
         $plan = [
             'rule' => ['after' => (string) $row['rrule'], 'words' => Words::rule($rule, $clock)],
-            'start' => Time::iso($start),
+            'start' => Time::iso($calc->instant($dn)->setTimezone(Time::zone($tz))),
             'next' => $next,
             'bound' => ['words' => $bound],
         ];
@@ -280,39 +205,60 @@ trait SeriesPlans
     /**
      * A new series starts on a day of its rule, for every family (Creating
      * a Series): the first occurrence of its rule on or after the start
-     * asked for. A rule outside the drag table is taken as written.
+     * asked for, at the clock asked for. A first day in a skipped hour is
+     * stored as an edit stores it (Zones, DST and All-Day Days): from the
+     * rule's day before, that day a skip and COUNT one higher. A rule
+     * outside the drag table is taken as written.
      */
     private static function seriesStart(array $row): array
     {
         if (empty($row['rrule'])) {
             return [];
         }
-        $tz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
+        $allDay = (int) $row['all_day'] === 1;
+        $tz = $allDay ? 'UTC' : (string) $row['tzid'];
         $start = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz));
         $dn = Cal::dnOf($start);
         $rule = Rule::parse((string) $row['rrule'], $dn);
-        if (!$rule->supported() || $rule->bare) {
+        if (!$rule->supported()) {
             return [];
         }
-        $p = $rule->periodOf($dn);
-        $first = null;
-        for ($i = 0; $i < 4800 && $first === null; $i++) {
-            foreach ($rule->periodDays($p) as [$d]) {
-                if ($d >= $dn) {
-                    $first = $d;
-                    break;
+        $first = $dn;
+        if (!$rule->bare) {
+            $p = $rule->periodOf($dn);
+            $found = null;
+            for ($i = 0; $i < 4800 && $found === null; $i++) {
+                foreach ($rule->periodDays($p) as [$d]) {
+                    if ($d >= $dn) {
+                        $found = $d;
+                        break;
+                    }
                 }
+                $p = $rule->periodPlus($p, $rule->interval);
             }
-            $p = $rule->periodPlus($p, $rule->interval);
+            $first = $found ?? $dn;
         }
-        if ($first === null || $first === $dn) {
+        $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
+        $length = Recurrence::durationSeconds($row);
+        $calc = new Calc($rule, $first, $tz, $allDay, $clock, $length);
+        if ($first === $dn && $calc->anchor === null) {
             return [];
         }
-        $n = $first - $dn;
-        return [
-            'start_utc' => Time::toDb($start->modify('+' . $n . ' days')),
-            'end_utc' => Time::toDb(Time::fromDb((string) $row['end_utc'])->setTimezone(Time::zone($tz))->modify('+' . $n . ' days')),
+        $at = $calc->storedStart();
+        $out = [
+            'start_utc' => Time::toDb($at),
+            'end_utc' => Time::toDb($allDay ? $at->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $at->modify('+' . $length . ' seconds')),
         ];
+        if ($calc->anchor !== null) {
+            if ($rule->count !== null) {
+                $out['rrule'] = $calc->storedRule()->text();
+            }
+            $skips = Recurrence::decodeExdates($row['exdates_json'] ?? null);
+            $skips[] = Time::toDb($at);
+            sort($skips);
+            $out['exdates_json'] = json_encode(array_values(array_unique($skips)));
+        }
+        return $out;
     }
 
     /**
@@ -332,18 +278,17 @@ trait SeriesPlans
         }
         $timeKeys = array_intersect_key($in, array_flip(['start', 'end', 'allDay', 'tzid']));
         if ($timeKeys !== []) {
-            $key = $edit['acted'] ?? (string) $master['start_utc'];
-            $occ = ['start_utc' => $key, 'end_utc' => Time::toDb(Time::fromDb($key)->add(new \DateInterval('PT' . Recurrence::durationSeconds($master) . 'S')))] + $master;
-            $f = $this->columnPatch($occ, $timeKeys);
+            // Where the request puts the occurrence acted on, read against
+            // it as it shows (its edited row when it has one): the model
+            // measures the deltas from there.
+            $occ = Model::occurrence($master, $rows, $edit['acted'] ?? null);
+            $f = $this->columnPatch($occ, $timeKeys, null, true);
             $edit['landed'] = [
                 'start_utc' => (string) ($f['start_utc'] ?? $occ['start_utc']),
                 'end_utc' => (string) ($f['end_utc'] ?? $occ['end_utc']),
                 'all_day' => (int) ($f['all_day'] ?? $occ['all_day']),
                 'tzid' => (string) ($f['tzid'] ?? $occ['tzid']),
             ];
-        }
-        if ($this->fromEditedDay) {
-            $edit['fromEditedDay'] = true;
         }
         if (array_key_exists('rrule', $in)) {
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];

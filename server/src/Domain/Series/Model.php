@@ -16,7 +16,8 @@ use BetterCal\Support\Time;
  *  - acted: the day acted on, as its key (UTC db string); the series' start when null
  *  - landed: ['start_utc','end_utc','all_day','tzid'] for the day acted on after the edit, or null
  *  - rrule: present when a rule was sent (a string, or null for "does not repeat")
- *  - columns: the content columns the edit sets (title, location..., calendar_id), already normalized
+ *  - columns: the content columns the edit sets (title, location..., calendar_id), already normalized,
+ *    and the series columns (SERIES_COLUMNS: the trip flag), which no edited day owns
  *  - tags, people: the series' new tag names or person ids, when sent
  *  - calendarId: a move to another calendar
  *
@@ -30,6 +31,9 @@ use BetterCal\Support\Time;
 final class Model
 {
     public const CONTENT_FIELDS = ['title', 'location', 'description', 'url', 'reminders', 'status', 'icon', 'attendance', 'tags', 'people'];
+
+    /** Columns of the series that no edited day owns: every row takes them (the trip flag). */
+    public const SERIES_COLUMNS = ['is_container' => 'Trip'];
 
     private const OWN_WORDS = [
         'date' => 'date', 'time' => 'time', 'length' => 'length', 'allDay' => 'all-day setting', 'title' => 'title', 'location' => 'place',
@@ -75,6 +79,8 @@ final class Model
     private bool $google;
     /** @var array<string,array<string,mixed>> content field => columns it sets */
     private array $changed = [];
+    /** @var array<string,mixed> series columns the edit changes (SERIES_COLUMNS) */
+    private array $seriesCols = [];
     private bool $readable;
     /** The stored start is a skipped day before a start in a skipped hour (Zones, DST and All-Day Days). */
     private bool $anchored = false;
@@ -171,6 +177,9 @@ final class Model
             $field = OwnFields::fieldOf((string) $col);
             if ($field !== null && isset($content[$field])) {
                 $this->changed[$field][$col] = $value;
+            }
+            if (isset(self::SERIES_COLUMNS[$col]) && (string) ($master[$col] ?? '') !== (string) ($value ?? '')) {
+                $this->seriesCols[$col] = $value;
             }
         }
         if (array_key_exists('tags', $edit) && $edit['tags'] !== null && self::set((array) $edit['tags']) !== self::set((array) ($opts['masterTags'] ?? []))) {
@@ -338,16 +347,36 @@ final class Model
         }
         return count(array_unique(array_map('json_encode', $ends))) > 1 ? $ends : null;
     }
+
+    /**
+     * The plan's hash (series-model.md, The API): everything the plan reads
+     * and may overwrite, by value. Every column of the master and of each
+     * edited row as read, their tags and people, the edit and the chosen
+     * options; a write that leaves a row's timestamp alone (a tag-only
+     * change, one in the same second) still changes it. Not `today`, which
+     * only names years in the words.
+     */
     private function hash(array $selected): string
     {
+        $row = static function (array $r): array {
+            ksort($r);
+            return array_map(static fn($v) => $v === null ? null : (string) $v, $r);
+        };
+        $set = static function (mixed $list): ?array {
+            if (!is_array($list)) {
+                return null;
+            }
+            $list = array_map('strval', $list);
+            sort($list);
+            return $list;
+        };
         $rows = [];
-        foreach ($this->rows as $id => $row) {
-            $rows[] = [$id, $row['recurrence_instance_utc'] ?? null, $row['start_utc'] ?? null, $row['end_utc'] ?? null, $row['updated_at'] ?? null, $row['override_fields'] ?? null];
+        foreach ($this->rows as $id => $r) {
+            $rows[] = [$row($r), $set($this->opts['rowTags'][$id] ?? null), $set($this->opts['rowPeople'][$id] ?? null)];
         }
         ksort($selected);
-        $m = $this->master;
         return substr(sha1(json_encode([
-            [$m['id'] ?? null, $m['rrule'] ?? null, $m['start_utc'] ?? null, $m['end_utc'] ?? null, $m['tzid'] ?? null, $m['all_day'] ?? null, $m['exdates_json'] ?? null, $m['updated_at'] ?? null, $m['title'] ?? null],
+            $row($this->master), $set($this->opts['masterTags'] ?? null), $set($this->opts['masterPeople'] ?? null),
             $rows, $this->edit, $selected, $this->google,
         ])), 0, 10);
     }
@@ -1203,6 +1232,7 @@ final class Model
         if (isset($this->edit['calendarId'])) {
             $masterCols['calendar_id'] = (int) $this->edit['calendarId'];
         }
+        $masterCols = $this->seriesCols + $masterCols;
 
         $overrideWrites = [];
         $detach = [];
@@ -1255,6 +1285,9 @@ final class Model
                         $put($col, $v);
                     }
                 }
+            }
+            foreach ($this->seriesCols as $col => $v) {
+                $put($col, $v);
             }
             $encoded = OwnFields::encode($ownAfter);
             if ((string) ($row['override_fields'] ?? '') !== $encoded) {
@@ -1382,6 +1415,9 @@ final class Model
         $fieldsWords = [];
         foreach ($this->changed as $field => $cols) {
             $fieldsWords[] = ['field' => $field, 'words' => $this->fieldWords($field, $cols)];
+        }
+        foreach ($this->seriesCols as $col => $v) {
+            $fieldsWords[] = ['field' => $col, 'words' => self::SERIES_COLUMNS[$col] . ': ' . ((int) $v === 1 ? 'no, now yes' : 'yes, now no')];
         }
         $groupsOut = $this->groups;
         $direct = $this->kind === 'fields' && $groupsOut === [] && $this->refusals === [] && !isset($this->edit['calendarId']);

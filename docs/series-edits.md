@@ -28,6 +28,8 @@ Quick add and the editor's Repeat row show the rule in words with its first date
 
 A day you changed on its own keeps what you changed (its date, title, place and so on) when the series changes later. The editor lists those fields under the title for that day ("Edited day of Choir (weekly on Tuesday). Its own: date, title"). Click one to give it back to the series, or **Use series values** for all of them; that changes only this day and can be undone. The toast names the fields that went back; if the server didn't change the day, it says so instead. A day with nothing left of its own is an ordinary event of the series again.
 
+A change to an edited day from another app (a phone's calendar over CalDAV, a feed) counts only what it changed: moving the day to Thursday there makes its date its own and leaves what it already had, its own time say, as it was.
+
 ## Google Calendars
 
 Until 1.5.2, a series on a Google calendar takes only changes that keep its rule as written: a new time, length or end, or new details for all events. A drag that would change which days it repeats on says so and offers **Only this one**. What Google does with edited days on those changes hasn't been checked yet, and they can't be undone.

@@ -191,7 +191,14 @@ final class OwnFields
         return self::normalize($own);
     }
 
-    /** The fields whose values differ between two versions of one row. @return list<string> */
+    /**
+     * The fields whose values differ between two versions of one row. The
+     * day, the clock with its zone and the length are each compared on
+     * their own (Rows from Elsewhere): a move to another day at the same
+     * clock time changes the date only, though its instants all differ.
+     *
+     * @return list<string>
+     */
     public static function changedFields(array $a, array $b): array
     {
         $out = [];
@@ -204,16 +211,45 @@ final class OwnFields
                 $out[] = $field;
             }
         }
-        if ((string) ($a['start_utc'] ?? '') !== (string) ($b['start_utc'] ?? '') || (string) ($a['tzid'] ?? '') !== (string) ($b['tzid'] ?? '')) {
-            $out[] = 'date';
-            $out[] = 'time';
-        }
-        if ((string) ($a['end_utc'] ?? '') !== (string) ($b['end_utc'] ?? '')) {
-            $out[] = 'length';
+        $placed = static fn(array $r): bool => !empty($r['start_utc']) && !empty($r['end_utc']);
+        if ($placed($a) && $placed($b)) {
+            if (self::shownDay($a) !== self::shownDay($b)) {
+                $out[] = 'date';
+            }
+            if (self::clock($a) !== self::clock($b)) {
+                $out[] = 'time';
+            }
+            if (self::seconds($a) !== self::seconds($b)) {
+                $out[] = 'length';
+            }
+        } elseif ($placed($a) !== $placed($b)) {
+            array_push($out, 'date', 'time', 'length');
         }
         if ((int) ($a['all_day'] ?? 0) !== (int) ($b['all_day'] ?? 0)) {
             $out[] = 'allDay';
         }
         return self::normalize($out);
+    }
+
+    /** The day a row shows on: its local date, in UTC for an all-day row. */
+    private static function shownDay(array $r): string
+    {
+        $tz = (int) ($r['all_day'] ?? 0) === 1 ? 'UTC' : (string) ($r['tzid'] ?? 'UTC');
+        return Time::fromDb((string) $r['start_utc'])->setTimezone(Time::zone($tz))->format('Y-m-d');
+    }
+
+    /** A row's time: its clock and zone, none for an all-day row. */
+    private static function clock(array $r): string
+    {
+        if ((int) ($r['all_day'] ?? 0) === 1) {
+            return '';
+        }
+        $tz = Time::normalizeTzid((string) ($r['tzid'] ?? 'UTC'));
+        return Time::fromDb((string) $r['start_utc'])->setTimezone(Time::zone($tz))->format('H:i:s') . ' ' . $tz;
+    }
+
+    private static function seconds(array $r): int
+    {
+        return Time::fromDb((string) $r['end_utc'])->getTimestamp() - Time::fromDb((string) $r['start_utc'])->getTimestamp();
     }
 }

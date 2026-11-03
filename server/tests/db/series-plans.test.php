@@ -359,4 +359,224 @@ return static function (Db $db): void {
             $db->scalar('SELECT updated_at FROM events WHERE recurrence_parent_id = ?', [$s]),
         ]);
     });
+
+    scenario('the trip flag for all events: on and off, as the editor sends it', function () use ($d, $u, $db, $weekly, $answer): void {
+        $flags = static fn(int $id): array => array_map('intval', array_column($db->all('SELECT is_container FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$id, $id]), 'is_container'));
+        $trip = $weekly('Ski weekend');
+        $d->events->patch($u, $trip, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Ski weekend, lessons']);
+        $on = ['scope' => 'all', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => true];
+        $plan = $d->events->previewPatch($u, $trip, $on + ['preview' => true]);
+        checkEq('preview: direct, and the trip line among the changed fields', [true, ['Trip: no, now yes']], [$plan['direct'], array_column($plan['fields'], 'words')]);
+        planned($d->events, $u, $trip, $on);
+        checkEq('"This is a trip" for all events: the series and its edited day are a trip', [1, 1], $flags($trip));
+        $d->events->patch($u, $trip, ['scope' => 'all', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => false]);
+        checkEq('turned off for all events, sent with no plan (direct): no row is a trip', [0, 0], $flags($trip));
+        $d->undo->undoLatest($u);
+        checkEq('undone: a trip again', [1, 1], $flags($trip));
+        // From the edited day's own row, with all events: the series' flag.
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$trip]);
+        planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => false]);
+        checkEq('off from the edited day\'s own row with all events: no row is a trip', [0, 0], $flags($trip));
+        planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => true]);
+        checkEq('and on again from there', [1, 1], $flags($trip));
+        // A member attached to the edited day: clearing is refused and nothing changes.
+        $member = (int) $d->events->create($u, eventAt((int) $db->scalar('SELECT calendar_id FROM events WHERE id = ?', [$trip]), 'Ski rental pickup', '2027-01-16'))['eventId'];
+        (new BetterCal\Domain\Trips($db, $d->undo))->attach($u, $day, $member);
+        [$code] = $answer(fn() => planned($d->events, $u, $trip, ['scope' => 'all', 'isContainer' => false]));
+        checkEq('a member on an edited day of the trip: clearing for all events is 400 trip_has_members, nothing written', ['400 trip_has_members', [1, 1]], [$code, $flags($trip)]);
+    });
+
+    scenario('"Use series value" for one of date, time, length, all-day: the zone goes with the time it keeps', function () use ($d, $u, $db, $home): void {
+        $ny = 'America/New_York';
+        $series = static function (string $title, string $tzid = 'UTC') use ($d, $u, $home): int {
+            $o = $tzid === 'UTC' ? '+00:00' : '-05:00';
+            return (int) $d->events->create($u, ['calendarId' => $home, 'title' => $title, 'start' => '2027-01-05T18:00:00' . $o, 'end' => '2027-01-05T19:00:00' . $o,
+                'allDay' => false, 'tzid' => $tzid, 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
+        };
+        $day = static fn(int $id): array => $db->one('SELECT start_utc, end_utc, all_day, tzid, override_fields FROM events WHERE recurrence_parent_id = ?', [$id]) ?? [];
+        $local = static function (array $row): string {
+            $tz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
+            return BetterCal\Support\Time::fromDb((string) $row['start_utc'])->setTimezone(new DateTimeZone($tz))->format('D Y-m-d H:i') . ' ' . $tz;
+        };
+        $length = static fn(array $row): int => BetterCal\Support\Time::fromDb((string) $row['end_utc'])->getTimestamp() - BetterCal\Support\Time::fromDb((string) $row['start_utc'])->getTimestamp();
+        // The whole series 91 days later, across the spring clock change.
+        $later = static function (int $id, string $tzid = 'UTC') use ($d, $u): void {
+            [$o, $o2] = $tzid === 'UTC' ? ['+00:00', '+00:00'] : ['-05:00', '-04:00'];
+            planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-05T18:00:00' . $o, 'start' => '2027-04-06T18:00:00' . $o2, 'end' => '2027-04-06T19:00:00' . $o2], ['movedDays' => 'move']);
+        };
+        $own = static fn(array $row): array => json_decode((string) ($row['override_fields'] ?? 'null'), true) ?? [];
+
+        // Length: the day keeps its 18:00 in New York.
+        $a = $series('Sample lecture');
+        $d->events->patch($u, $a, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-12T18:00:00-05:00', 'end' => '2027-01-12T20:00:00-05:00', 'tzid' => $ny, 'title' => 'Sample lecture, guest']);
+        $d->events->patch($u, $a, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'useSeries' => ['length']]);
+        $row = $day($a);
+        checkEq('length to the series\': an hour, still its own 18:00 in New York', [['time', 'title'], 'Tue 2027-01-12 18:00 ' . $ny, 3600], [$own($row), $local($row), $length($row)]);
+        $later($a);
+        checkEq('then the series 91 days later: its own 18:00 New York time on Tue 13 Apr', 'Tue 2027-04-13 18:00 ' . $ny, $local($day($a)));
+
+        // Date: back on its occurrence's day, at its own time and zone.
+        $b = $series('Sample seminar');
+        $d->events->patch($u, $b, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-14T18:00:00-05:00', 'end' => '2027-01-14T20:00:00-05:00', 'tzid' => $ny]);
+        $d->events->patch($u, $b, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'useSeries' => ['date']]);
+        $row = $day($b);
+        checkEq('date to the series\': Tue 12 Jan at its own 18:00 in New York, two hours', [['time', 'length'], 'Tue 2027-01-12 18:00 ' . $ny, 7200], [$own($row), $local($row), $length($row)]);
+        $later($b);
+        checkEq('then the series 91 days later: its own 18:00 New York time on Tue 13 Apr', 'Tue 2027-04-13 18:00 ' . $ny, $local($day($b)));
+
+        // Time: its own date stays, the clock and zone are the series'.
+        $c = $series('Sample workshop');
+        $d->events->patch($u, $c, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-14T18:00:00-05:00', 'end' => '2027-01-14T20:00:00-05:00', 'tzid' => $ny]);
+        $d->events->patch($u, $c, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'useSeries' => ['time']]);
+        $row = $day($c);
+        checkEq('time to the series\': Thu 14 Jan at 18:00 UTC, its own two hours', [['date', 'length'], 'Thu 2027-01-14 18:00 UTC', 7200], [$own($row), $local($row), $length($row)]);
+        $later($c);
+        checkEq('then the series 91 days later, its own date moved with it: the series\' 18:00 UTC', 'Thu 2027-04-15 18:00 UTC', $local($day($c)));
+
+        // All-day: a day made all-day in a New York series goes back to the series' 18:00 there.
+        $e = $series('Sample clinic', $ny);
+        $d->events->patch($u, $e, ['scope' => 'this', 'instanceStart' => '2027-01-12T23:00:00+00:00', 'allDay' => true, 'start' => '2027-01-12', 'end' => '2027-01-13', 'title' => 'Sample clinic, open day']);
+        $before = $own($day($e));
+        $d->events->patch($u, $e, ['scope' => 'this', 'instanceStart' => '2027-01-12T23:00:00+00:00', 'useSeries' => ['allDay']]);
+        $row = $day($e);
+        checkEq('all-day to the series\': timed again at the series\' 18:00 in New York, an hour', [true, false, 'Tue 2027-01-12 18:00 ' . $ny, 3600], [
+            in_array('allDay', $before, true), in_array('allDay', $own($row), true), $local($row), $length($row)]);
+        $later($e, $ny);
+        checkEq('then the series 91 days later: 18:00 New York time on Tue 13 Apr', 'Tue 2027-04-13 18:00 ' . $ny, $local($day($e)));
+
+        // All-day the other way: a timed day in an all-day series, made all-day again.
+        $f = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample fair', 'start' => '2027-01-05', 'end' => '2027-01-06', 'allDay' => true, 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
+        $d->events->patch($u, $f, ['scope' => 'this', 'instanceStart' => '2027-01-12', 'allDay' => false, 'start' => '2027-01-12T09:00:00-05:00', 'end' => '2027-01-12T11:00:00-05:00', 'tzid' => $ny, 'title' => 'Sample fair, talks']);
+        $d->events->patch($u, $f, ['scope' => 'this', 'instanceStart' => '2027-01-12', 'useSeries' => ['allDay']]);
+        $row = $day($f);
+        checkEq('a timed day in an all-day series given the series\' all-day: all day on Tue 12 Jan, one day, its clock and length gone with its timing', [
+            1, '2027-01-12 00:00:00', '2027-01-13 00:00:00', 'UTC', ['title'],
+        ], [(int) $row['all_day'], $row['start_utc'], $row['end_utc'], $row['tzid'], $own($row)]);
+        $g = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample market', 'start' => '2027-01-05', 'end' => '2027-01-06', 'allDay' => true, 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
+        $d->events->patch($u, $g, ['scope' => 'this', 'instanceStart' => '2027-01-12', 'allDay' => false, 'start' => '2027-01-12T09:00:00-05:00', 'end' => '2027-01-12T11:00:00-05:00', 'tzid' => $ny]);
+        $d->events->patch($u, $g, ['scope' => 'this', 'instanceStart' => '2027-01-12', 'useSeries' => ['allDay']]);
+        checkEq('the same with nothing else its own: an occurrence again, its row gone', 0, (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ?', [$g]));
+    });
+
+    scenario('own fields from elsewhere: date, time with its zone, and length, each compared on its own', function () use ($d, $u, $db, $home, $weekly): void {
+        $token = (new BetterCal\Domain\ApiTokens($db))->create($u, 'Sample tablet');
+        $dav = new BetterCal\Dav\CalendarBackend($db, $d->undo, fn() => BetterCal\Domain\RequestAuthority::credential($u, (int) $token['id'], null));
+        $ownOf = static fn(int $id): array => json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$id]), true) ?? [];
+        $shown = static fn(int $id): string => (string) $db->scalar('SELECT start_utc FROM events WHERE recurrence_parent_id = ?', [$id]);
+        // An edited day owning its time and length, the series then given the same: own values equal to the master's.
+        $equal = static function (string $title) use ($d, $u, $db, $weekly, $ownOf): int {
+            $id = $weekly($title);
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'start' => '2027-01-12T19:00:00+00:00', 'end' => '2027-01-12T20:30:00+00:00']);
+            planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'start' => '2027-01-05T19:00:00+00:00', 'end' => '2027-01-05T20:30:00+00:00']);
+            checkEq("$title: the edited day still owns its time and length, now the series' too", [['time', 'length'], '2027-01-12 19:00:00', '2027-01-05 19:00:00'],
+                [$ownOf($id), (string) $db->scalar('SELECT start_utc FROM events WHERE recurrence_parent_id = ?', [$id]), (string) $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$id])]);
+            return $id;
+        };
+        // The object as a client reads it, its edited day's start and end replaced, PUT back.
+        $put = static function (int $id, ?string $start, ?string $end) use ($dav, $db, $home): void {
+            $uri = BetterCal\Dav\DavIcs::objectUri((string) $db->scalar('SELECT uid FROM events WHERE id = ?', [$id]));
+            $parts = explode('BEGIN:VEVENT', (string) $dav->getCalendarObject($home, $uri)['calendardata']);
+            foreach ($parts as $i => $part) {
+                if (str_contains($part, 'RECURRENCE-ID')) {
+                    $part = $start !== null ? (string) preg_replace('/^DTSTART[^\r\n]*/m', $start, $part) : $part;
+                    $parts[$i] = $end !== null ? (string) preg_replace('/^DTEND[^\r\n]*/m', $end, $part) : $part;
+                }
+            }
+            $dav->updateCalendarObject($home, $uri, implode('BEGIN:VEVENT', $parts));
+        };
+        $at20 = static fn(int $id) => planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-05T19:00:00+00:00', 'start' => '2027-01-05T20:00:00+00:00', 'end' => '2027-01-05T21:30:00+00:00']);
+
+        $echo = $equal('Sample choir');
+        $put($echo, null, null);
+        checkEq('PUT echoed unchanged: it keeps its own time and length', ['time', 'length'], $ownOf($echo));
+        $date = $equal('Sample band');
+        $put($date, 'DTSTART:20270114T190000Z', 'DTEND:20270114T203000Z');
+        checkEq('PUT moving only its date: its own date, and it keeps its own time and length', ['date', 'time', 'length'], $ownOf($date));
+        $at20($date);
+        checkEq('then the series at 20:00: Thu 14 Jan stays at its own 19:00', '2027-01-14 19:00:00', $shown($date));
+        $time = $equal('Sample quartet');
+        $put($time, 'DTSTART:20270112T193000Z', 'DTEND:20270112T210000Z');
+        checkEq('PUT changing only its clock: its own time, and it keeps its own length', ['time', 'length'], $ownOf($time));
+        $at20($time);
+        checkEq('then the series at 20:00: it stays at 19:30 for 90 minutes', ['2027-01-12 19:30:00', '2027-01-12 21:00:00'],
+            array_values($db->one('SELECT start_utc, end_utc FROM events WHERE recurrence_parent_id = ?', [$time])));
+        $zone = $equal('Sample trio');
+        $put($zone, 'DTSTART;TZID=America/New_York:20270112T190000', 'DTEND;TZID=America/New_York:20270112T203000');
+        checkEq('PUT changing only its zone (the same clock in New York): its own time, and it keeps its own length', ['time', 'length'], $ownOf($zone));
+        $length = $equal('Sample duo');
+        $put($length, null, 'DTEND:20270112T210000Z');
+        checkEq('PUT changing only its length: its own length, and it keeps its own time', ['time', 'length'], $ownOf($length));
+        $at20($length);
+        checkEq('then the series at 20:00: it stays at its own 19:00', '2027-01-12 19:00:00', $shown($length));
+
+        // The feed path (and Google's, which goes through it).
+        $calendarId = (int) $db->insert('calendars', ['user_id' => $u, 'name' => 'Sample events feed', 'kind' => 'subscribed', 'color' => '#336699']);
+        $feeds = new BetterCal\Domain\Feeds($db);
+        $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
+        $ev = static fn(string $uid, ?string $key, string $start, string $end, string $tzid = 'UTC'): array => ['uid' => $uid, 'title' => 'Sample recital', 'description' => null,
+            'location' => null, 'url' => null, 'start_utc' => $start, 'end_utc' => $end, 'all_day' => 0, 'tzid' => $tzid,
+            'rrule' => $key === null ? 'FREQ=WEEKLY;BYDAY=TU' : null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => $key];
+        $feedOwn = static fn(string $uid) => json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_parent_id IS NOT NULL', [$calendarId, $uid]), true);
+        $master = static fn(string $uid): array => $ev($uid, null, '2027-01-05 19:00:00', '2027-01-05 20:30:00');
+        $feedDay = static function (string $uid, string $start, string $end, string $tzid = 'UTC') use ($feeds, $calendar, $ev, $master): void {
+            $feeds->sync($calendar, [$master($uid), $ev($uid, '2027-01-12 18:00:00', $start, $end, $tzid)]);
+        };
+        // Its own 19:00 and 90 minutes; then the series takes the same, the day echoed.
+        $feedEqual = static function (string $uid) use ($feeds, $calendar, $ev, $feedDay): void {
+            $feeds->sync($calendar, [$ev($uid, null, '2027-01-05 18:00:00', '2027-01-05 19:00:00'), $ev($uid, '2027-01-12 18:00:00', '2027-01-12 19:00:00', '2027-01-12 20:30:00')]);
+            $feedDay($uid, '2027-01-12 19:00:00', '2027-01-12 20:30:00');
+        };
+        $feedEqual('feed-echo@example.test');
+        checkEq('feed: own time and length kept when the series takes the same values', ['time', 'length'], $feedOwn('feed-echo@example.test'));
+        $feedDay('feed-echo@example.test', '2027-01-12 19:00:00', '2027-01-12 20:30:00');
+        checkEq('feed: echoed again, unchanged', ['time', 'length'], $feedOwn('feed-echo@example.test'));
+        $feedEqual('feed-date@example.test');
+        $feedDay('feed-date@example.test', '2027-01-14 19:00:00', '2027-01-14 20:30:00');
+        checkEq('feed: only its date moved there: its own date, and it keeps its own time and length', ['date', 'time', 'length'], $feedOwn('feed-date@example.test'));
+        $feedEqual('feed-time@example.test');
+        $feedDay('feed-time@example.test', '2027-01-12 19:30:00', '2027-01-12 21:00:00');
+        checkEq('feed: only its clock changed there: its own time, and it keeps its own length', ['time', 'length'], $feedOwn('feed-time@example.test'));
+        $feedEqual('feed-zone@example.test');
+        $feedDay('feed-zone@example.test', '2027-01-13 00:00:00', '2027-01-13 01:30:00', 'America/New_York');
+        checkEq('feed: only its zone changed there: its own time, and it keeps its own length', ['time', 'length'], $feedOwn('feed-zone@example.test'));
+        $feedEqual('feed-length@example.test');
+        $feedDay('feed-length@example.test', '2027-01-12 19:00:00', '2027-01-12 21:00:00');
+        checkEq('feed: only its length changed there: its own length, and it keeps its own time', ['time', 'length'], $feedOwn('feed-length@example.test'));
+        $feedDay('feed-length@example.test', '2027-01-12 19:00:00', '2027-01-12 20:30:00');
+        checkEq('feed: its length put back to the series\' there: inherited, its time still its own', ['time'], $feedOwn('feed-length@example.test'));
+    });
+
+    scenario('a stale plan: tags, people and columns of the edited days all count', function () use ($d, $u, $db, $weekly, $answer): void {
+        $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
+        $peopleOf = static fn(int $id): array => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ? ORDER BY p.name', [$id]), 'name');
+        $s = $weekly('Sample club');
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'tagNames' => ['Original tag'], 'personNames' => ['Alex Example']]);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$s]);
+        // The model's choices sent with each preview and with the stale commit.
+        $stale = static function (array $edit, string $group, callable $meanwhile) use ($d, $u, $s, $answer): array {
+            $plan = $d->events->previewPatch($u, $s, $edit + ['plan' => ['choices' => [$group => 'give']]]);
+            $meanwhile();
+            $again = $d->events->previewPatch($u, $s, $edit + ['plan' => ['choices' => [$group => 'give']]]);
+            [$code] = $answer(fn() => $d->events->patch($u, $s, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => [$group => 'give']]]));
+            return [$again['hash'] !== $plan['hash'], $code];
+        };
+        $edit = ['scope' => 'all', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'tagNames' => ['Proposed series tag']];
+        $result = $stale($edit, 'ownTags', fn() => $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'tagNames' => ['Newer tag']]));
+        checkEq('a tag-only change to an edited day already owning its tags: a new hash, the old commit 409 series_plan_changed, the newer tag kept', [
+            true, '409 series_plan_changed', ['Newer tag'],
+        ], [...$result, $tagsOf($day)]);
+        $edit = ['scope' => 'all', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'personNames' => ['Sam Sample']];
+        $result = $stale($edit, 'ownPeople', fn() => $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'personNames' => ['Newer person']]));
+        checkEq('a people-only change to an edited day already owning its people: a new hash, the old commit 409, the newer person kept', [
+            true, '409 series_plan_changed', ['Newer person'],
+        ], [...$result, $peopleOf($day)]);
+        // An ordinary column, its timestamp left as it was (a write in the same second).
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'description' => 'Original notes']);
+        $edit = ['scope' => 'all', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'description' => 'Proposed series notes'];
+        $result = $stale($edit, 'ownDescription', fn() => $db->run('UPDATE events SET description = ? WHERE id = ?', ['Newer notes', $day]));
+        checkEq('a column changed within the same second: a new hash, the old commit 409, the newer notes kept', [true, '409 series_plan_changed', 'Newer notes'],
+            [...$result, $db->scalar('SELECT description FROM events WHERE id = ?', [$day])]);
+        planned($d->events, $u, $s, $edit, ['ownDescription' => 'give']);
+        checkEq('the fresh plan commits', 'Proposed series notes', $db->scalar('SELECT description FROM events WHERE id = ?', [$day]));
+    });
 };

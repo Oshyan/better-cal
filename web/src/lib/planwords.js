@@ -357,8 +357,23 @@ export function skipLines(d, opts = {}) {
   const was = name + ' on ' + fmtDay(d.shows, opts) + ' was removed earlier';
   if (d.outcome === 'moves') return { line1: was + ', so no event is added on ' + fmtDay(d.to, { ...opts, prev: d.shows }) + '.', line2: '' };
   if (d.outcome === 'stays') return { line1: was + ', and stays removed.', line2: '' };
-  if (d.outcome === 'dropped') return { line1: was + (d.why === 'outside' ? '; it falls outside the new series.' : '; the new pattern has no day there.'), line2: '' };
+  if (d.outcome === 'dropped') return { line1: was + (d.why !== 'outside' ? '; the new pattern has no day there.' : d.side === 'start' ? '; it is before the new start, so it is no longer needed.' : '; it falls outside the new series.'), line2: '' };
   return { line1: 'Nothing will show on ' + fmtDay(d.to, opts) + '.', line2: '' };
+}
+
+/**
+ * REMOVED DAYS as rows, from the plan's skipped days: a skip belongs to the
+ * occurrence it removed, so the ones before a start moved later go with
+ * their occurrences, said once: "2 removed days before the new start are
+ * no longer needed." Every other removed day is its own row (skipLines).
+ */
+export function removedRows(days, opts = {}) {
+  const before = (days || []).filter((d) => d.outcome === 'dropped' && d.why === 'outside' && d.side === 'start');
+  const rows = (days || []).filter((d) => !before.includes(d)).map((d) => ({ key: d.key || d.newKey, ...skipLines(d, opts) }));
+  if (!before.length) return rows;
+  const n = before.length;
+  const line1 = n === 1 ? '1 removed day before the new start is no longer needed.' : n + ' removed days before the new start are no longer needed.';
+  return [{ key: 'removed:start', line1, line2: '' }, ...rows];
 }
 
 // ---- choices -----------------------------------------------------------------

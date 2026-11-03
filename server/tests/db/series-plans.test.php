@@ -671,7 +671,55 @@ return static function (Db $db): void {
         checkEq('undone: every row of the series as before', $before, $rows($daily));
     });
 
-    scenario('a stale plan: tags, people and columns of the edited days all count', function () use ($d, $u, $db, $weekly, $answer): void {
+    scenario('series plans: acceptance cases 8, 11 and 12 committed and undone', function () use ($d, $u, $db, $rows, $home): void {
+        $col = static fn(int $id, string $c): mixed => $db->scalar("SELECT $c FROM events WHERE id = ?", [$id]);
+        // Acceptance 8: sessions 1 and 2 removed, the start moved to session 3's date (no day named).
+        $course = (int) $d->events->create($u, eventAt($home, 'Pottery class', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=8']))['eventId'];
+        $d->events->deleteEvent($u, $course, 'this', '2027-01-04T18:00:00+00:00');
+        $d->events->deleteEvent($u, $course, 'this', '2027-01-11T18:00:00+00:00');
+        $before = $rows($course);
+        $plan = planned($d->events, $u, $course, ['scope' => 'all', 'start' => '2027-01-18T18:00:00+00:00', 'end' => '2027-01-18T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=8']);
+        checkEq('Acceptance 8: the plan drops both removed days before the new start and counts none', [[['dropped', 'start'], ['dropped', 'start']], 0],
+            [array_map(static fn(array $x): array => [$x['outcome'], $x['side'] ?? null], $plan['days']), $plan['counts']['skipped']]);
+        checkEq('Acceptance 8 committed: COUNT=8 from 18 Jan, no skips remain', ['FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-18 18:00:00', null],
+            [$col($course, 'rrule'), $col($course, 'start_utc'), $col($course, 'exdates_json')]);
+        $d->undo->undoLatest($u);
+        checkEq('Acceptance 8 undone: every row byte-identical, both skips back', $before, $rows($course));
+
+        // Acceptance 11: a day moved on its own to a Friday, then Monday to Wednesday, each choice.
+        $wheel = (int) $d->events->create($u, eventAt($home, 'Pottery', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=8']))['eventId'];
+        $d->events->patch($u, $wheel, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-22T18:00:00+00:00', 'end' => '2027-01-22T19:00:00+00:00']);
+        $before = $rows($wheel);
+        $drag = ['scope' => 'all', 'instanceStart' => '2027-01-11T18:00:00+00:00', 'start' => '2027-01-13T18:00:00+00:00', 'end' => '2027-01-13T19:00:00+00:00'];
+        $day = static fn() => array_values($db->one('SELECT recurrence_instance_utc, start_utc FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$wheel]) ?? []);
+        foreach (['keep' => '2027-01-22 18:00:00', 'move' => '2027-01-24 18:00:00'] as $choice => $shows) {
+            planned($d->events, $u, $wheel, $drag, ['movedDays' => $choice]);
+            checkEq("Acceptance 11, $choice: weekly on Wednesday, the moved day keyed Wed 20 Jan, one row, shown on $shows", ['FREQ=WEEKLY;BYDAY=WE;COUNT=8', ['2027-01-20 18:00:00', $shows], 1],
+                [$col($wheel, 'rrule'), $day(), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$wheel])]);
+            $d->undo->undoLatest($u);
+            checkEq("Acceptance 11, $choice undone: byte-identical", $before, $rows($wheel));
+        }
+
+        // Acceptance 12: all events from an edited day's own row, renamed and moved a day.
+        $choir = (int) $d->events->create($u, eventAt($home, 'Choir', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU']))['eventId'];
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'title' => 'Choir, sectionals', 'start' => '2027-03-09T17:00:00+00:00', 'end' => '2027-03-09T18:00:00+00:00']);
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-03-23T18:00:00+00:00', 'title' => 'Choir, concert']);
+        $sectionals = (int) $db->scalar("SELECT id FROM events WHERE recurrence_parent_id = ? AND title = 'Choir, sectionals'", [$choir]);
+        $before = $rows($choir);
+        $plan = planned($d->events, $u, $sectionals, ['scope' => 'all', 'start' => '2027-03-10T17:00:00+00:00', 'end' => '2027-03-10T18:00:00+00:00', 'title' => 'Chorus']);
+        checkEq('Acceptance 12: started from the edited day, the series on Wednesday as Chorus, the day at its own 17:00, the concert keeps its title', [
+            'Choir, sectionals', 'FREQ=WEEKLY;BYDAY=WE', 'Chorus',
+            ['2027-03-10 18:00:00', '2027-03-10 17:00:00', 'Chorus', ['time']], ['2027-03-24 18:00:00', 'Choir, concert'],
+        ], [
+            $plan['acted']['title'] ?? null, $col($choir, 'rrule'), $col($choir, 'title'),
+            [$col($sectionals, 'recurrence_instance_utc'), $col($sectionals, 'start_utc'), $col($sectionals, 'title'), json_decode((string) $col($sectionals, 'override_fields'), true)],
+            array_values($db->one("SELECT recurrence_instance_utc, title FROM events WHERE recurrence_parent_id = ? AND title = 'Choir, concert'", [$choir]) ?? []),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('Acceptance 12 undone: byte-identical', $before, $rows($choir));
+    });
+
+    scenario('a stale plan: tags, people and columns of the edited days all count',function () use ($d, $u, $db, $weekly, $answer): void {
         $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
         $peopleOf = static fn(int $id): array => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ? ORDER BY p.name', [$id]), 'name');
         $s = $weekly('Sample club');

@@ -460,7 +460,7 @@ The harness's twelve open causes, each by the cell that settles it. Run at 976f4
 
 ## Acceptance Cases from the Third and Fourth Reviews
 
-Seven independent cases, the first six one per point of the third review and the seventh from the fourth, each a pure model test (and a harness case where the harness can generate it). Every series is new here; dates are 2027 and times Los Angeles time. Each lists what the plan must offer, what each choice writes, and what must never happen.
+Thirteen independent cases: the first six one per point of the third review, the seventh from the fourth, and six added after the panel work (8 and 13 the skip rule, 9 to 12 kinds of edit the earlier rounds named without a worked case). Each is a pure model test (and a harness case where the harness can generate it); 8, 11 and 12 are also committed and undone against a database. Every series is new here; dates are 2027 and times Los Angeles time. Each lists what the plan must offer, what each choice writes, and what must never happen.
 
 ### 1. The Destination Stays
 
@@ -558,6 +558,106 @@ Skipped     Fri 8 Jan skipped, so the series starts as before · 13 Jan stays sk
 | Add, keep the end | `BYDAY=WE,FR;COUNT=6`, EXDATE 13 Jan | 6, 8, 15, 20, 22 Jan |
 
 COUNT is raised by one for 8 Jan, the skip this change generates, and not for 13 Jan, which the person cancelled. Never: `COUNT=7` with both EXDATEs, which shows five (6, 15, 20, 22 and 27 Jan; probed) and quietly brings back the cancelled session on another day, or `COUNT=5` with both, which shows three (6, 15 and 20 Jan; probed).
+
+### 8. Removed Days Before a Later Start
+
+"Pottery class", weekly on Monday at 18:00, 8 sessions from Mon 4 Jan (`BYDAY=MO;COUNT=8`), sessions 1 and 2 removed (EXDATE 4 and 11 Jan), so it shows six, 18 Jan to 22 Feb. The start is then moved to session 3's date, Mon 18 Jan, through the editor: the series' start, a request naming no day (`start` without `instanceStart`), with the rule sent back unchanged. 18 Jan is a day the pattern gives, so this is a start moved alone (Bounds): no day moves, the two removed days fall before the new start, and their skips go with their occurrences. This is the case calendar bug trackers report the other way: the deletions carried onto the new first sessions.
+
+```
+Bound     (•) Keep 8 events     8 events, ends 8 Mar (was 22 Feb)
+          ( ) Keep the end      Changes 8 events to 6, ends 22 Feb
+Skipped   Skipped Mon 4 Jan is no longer needed: it is before the new start
+          Skipped Mon 11 Jan is no longer needed: it is before the new start
+```
+
+| Choice | Written | Shows |
+|---|---|---|
+| Keep 8 events (preselected) | `BYDAY=MO;COUNT=8` from Mon 18 Jan, no EXDATE | 18 Jan to 8 Mar, 8 sessions |
+| Keep the end | `BYDAY=MO;COUNT=6` from Mon 18 Jan, no EXDATE | 18 Jan to 22 Feb |
+
+The panel says the two in one line under REMOVED DAYS: "2 removed days before the new start are no longer needed." ("1 removed day before the new start is no longer needed." for one). The plan's days: 4 and 11 Jan `dropped`, `why: outside`, `side: start`; `counts.skipped` 0; no loss named (a removed day is no event to lose). Never: an EXDATE on 18 or 25 Jan, a real session the person never removed, or six sessions where eight were kept. An edited day before the new start gets the outside choice like any other (kept as an event of its own, preselected). The same start reached by dragging the first session shown (Mon 18 Jan to Mon 1 Feb, a day named) is a drag: every session moves two weeks and the skips with theirs. A start put on a Tuesday changes the pattern: the first session is dragged there (`BYDAY=TU`). Undo puts back the series from 4 Jan with both skips, byte for byte.
+
+### 9. A Zone Change, Both Readings
+
+"Team call", weekly on Monday at 09:00 Los Angeles time from Mon 4 Jan, no end. Mon 18 Jan at its own 11:00, Mon 15 Mar at its own 07:30, Mon 1 Feb "Team call, planning" (own title). The zone changed to Berlin from Mon 11 Jan, all events. Los Angeles changes its clocks on 14 Mar and Berlin on 28 Mar, so for two weeks they are eight hours apart instead of nine.
+
+```
+Zone  (•) 09:00 in Berlin           every Monday at 09:00 Berlin time; 00:00 in Los Angeles, 01:00 on 15 and 22 Mar and 1 Nov
+      ( ) The same moment as now   every Monday at 18:00 Berlin time; 09:00 in Los Angeles, 10:00 on 15 and 22 Mar and 1 Nov
+```
+
+| Day | The clock time (preselected) | The same moment |
+|---|---|---|
+| An ordinary Monday (11 Jan) | 09:00 Berlin (00:00 Los Angeles) | 18:00 Berlin (09:00 Los Angeles) |
+| An ordinary Monday between the changes (22 Mar) | 09:00 Berlin (01:00 Los Angeles) | 18:00 Berlin (10:00 Los Angeles) |
+| An ordinary Monday after both (5 Apr) | 09:00 Berlin (00:00 Los Angeles) | 18:00 Berlin (09:00 Los Angeles) |
+| 18 Jan, own time | 11:00 Los Angeles, stays (20:00 Berlin) | 11:00 Los Angeles, stays |
+| 15 Mar, own time | 07:30 Los Angeles, stays (15:30 Berlin) | 07:30 Los Angeles, stays |
+| 1 Feb, own title | 09:00 Berlin, keeps "Team call, planning" | 18:00 Berlin, keeps its title |
+
+Written: the master's zone `Europe/Berlin`, its start 09:00 Berlin on 4 Jan (clock) or the same instant as before (moment); the own-time rows keep their instants and zones and only their keys move to the new series' keys on their days; the own-title row takes the series' time in Berlin. Never: an own time read again in Berlin, or the moment reading moving the day acted on off its instant.
+
+### 10. A Time Change Outside Google
+
+"Study group", weekly on Tuesday 19:00 to 20:00 from Tue 5 Jan, no end. Tue 19 Jan at its own 13:00, Tue 2 Feb at its own place ("Sample Library"). Tue 12 Jan moved to 20:00, all events, on a local calendar. No choice: an own time stays, an inherited one follows.
+
+| Day | Row | Written |
+|---|---|---|
+| Ordinary Tuesdays | (none) | `BYDAY=TU` from Tue 5 Jan at 20:00 |
+| 19 Jan, own time | "Tue 19 Jan stays, keeps its own time at 13:00" (`outcome: stays`, `kept: [time]`) | its key moves to 20:00, its 13:00 stays |
+| 2 Feb, own place | "Tue 2 Feb moves to 20:00, keeps its place" (`outcome: moves`, `takes: [time]`) | 20:00 to 21:00, its place kept |
+
+Coming up: Tue 12 Jan 20:00 · Tue 19 Jan 13:00 · Tue 26 Jan 20:00 … Never: 19 Jan at 14:00 (an own time moved by the delta) or at 20:00. On a Google calendar the same change is offered with the Google note and no outcome for either day.
+
+### 11. A Day Moved on Its Own, Then the Series
+
+"Pottery", weekly on Monday at 18:00, 8 sessions from Mon 4 Jan; Mon 18 Jan moved on its own to Fri 22 Jan (own date). Mon 11 Jan dragged to Wed 13 Jan, all events, on a local calendar: weekly on Wednesday from Wed 6 Jan, ending 24 Feb. The moved day's occurrence goes to Wed 20 Jan:
+
+```
+Days moved on their own  (•) Keep Fri 22 Jan     Mon 18 Jan, moved to Fri 22 Jan: stays there
+                         ( ) Move to Sun 24 Jan  Mon 18 Jan, moved to Fri 22 Jan: moves to Sun 24 Jan
+```
+
+| Choice | Its row | Coming up |
+|---|---|---|
+| Keep it there (preselected) | keyed Wed 20 Jan, shows Fri 22 Jan | Wed 13 Jan · Fri 22 Jan · Wed 27 Jan … |
+| Move it with the rest | keyed Wed 20 Jan, shows Sun 24 Jan | Wed 13 Jan · Sun 24 Jan · Wed 27 Jan … |
+
+The rule: no day shows twice. Each occurrence has one key and at most one row, and a row replaces its key's day wherever it shows, so Wed 20 Jan shows only as that row, on Fri 22 or Sun 24 Jan, never also on the 20th. The harness checks it as invariant h (every edited day's key a raw occurrence of its rule, one edited row per day), and the model test reads it from the plan's next dates. Undo of either choice puts back the Monday series with the day on Fri 22 Jan.
+
+### 12. All Events from an Edited Day
+
+"Choir", weekly on Tuesday at 19:00 from Tue 5 Jan, no end. Tue 9 Mar "Choir, sectionals" at its own 18:00 (own title and time), Tue 23 Mar "Choir, concert" (own title), Tue 6 Apr at its own place. From 9 Mar's own row, in the editor: renamed "Chorus" and moved to Wed 10 Mar at 18:00, all events. Every delta is measured from where 9 Mar shows (Tue 9 Mar, 18:00), not from its key (19:00): one day later, no clock change, the title from its own "Choir, sectionals" to "Chorus". So the series moves to Wednesday at 19:00 and is renamed; its time doesn't change. The plan's `acted` names the day (its title "Choir, sectionals", shown on 9 Mar, its own time and title), so the panel's header has its third line, "Started from 'Choir, sectionals' on Tue, Mar 9."
+
+```
+Fields   Title: Choir, now Chorus
+Rule     Weekly on Wednesday at 19:00 (was weekly on Tuesday at 19:00)
+Title    1 edited day keeps its own title   (•) Keep its own title   ( ) Give it the new title too
+Days     'Choir, sectionals' Tue 9 Mar moves to Wed 10 Mar, takes 'Chorus'
+         'Choir, concert' Tue 23 Mar moves to Wed 24 Mar, keeps its title
+         Tue 6 Apr moves to Wed 7 Apr, keeps its place
+```
+
+| Row | Changes |
+|---|---|
+| The master | `BYDAY=WE` from Wed 6 Jan at 19:00, title "Chorus" |
+| 9 Mar, the day acted on | keyed Wed 10 Mar, shows at 18:00 where it was put, titled "Chorus"; its own list becomes `[time]` (the title equals the series' now, the date is its image's) |
+| 23 Mar, own title | keyed and shown Wed 24 Mar, keeps "Choir, concert" (preselected) |
+| 6 Apr, own place | keyed and shown Wed 7 Apr, takes "Chorus", keeps its place |
+
+Never: every day moved to 18:00 (the day's own time taken as the series' change), the delta measured from 19:00, or 9 Mar's title kept as its own. Undo puts every row back byte for byte.
+
+### 13. The Skip Rule's Other Sides
+
+"Pottery class", weekly on Monday at 18:00, 8 sessions from Mon 4 Jan, Mon 11 Jan and Mon 15 Feb removed. Three edits, each from the stored series, show the rest of case 8's rule: a skip moves with its occurrence while the new series has it, and goes with it when it doesn't.
+
+| Edit | 11 Jan's skip | 15 Feb's skip | Written |
+|---|---|---|---|
+| Ends after 6 (editor) | stays | dropped: past the new end (`outside`, `side: end`) | `COUNT=6`, EXDATE 11 Jan; shows 4, 18, 25 Jan, 1 and 8 Feb |
+| Every other Monday (editor, new rule) | dropped: the new pattern has no 11 Jan (`noday`) | stays | `INTERVAL=2;COUNT=8`, EXDATE 15 Feb |
+| Mon 18 Jan dragged to Tue 19 Jan | moves to Tue 12 Jan | moves to Tue 16 Feb | `BYDAY=TU;COUNT=8`, EXDATE 12 Jan and 16 Feb |
+
+Never: a dropped skip carried onto another day, or a moved one left on a Monday the series no longer has.
 
 ## Prediction Cases
 

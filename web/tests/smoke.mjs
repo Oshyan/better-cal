@@ -4677,6 +4677,18 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     [1, 'The new rule would add Fri, Jan 8 at the start.', 'Add it, or leave it out?', ['Leave it out', 'Add it']]);
   eq('series panel: a skip the new rule has no day for', planView({ ...pottery, groups: [], days: [{ key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'dropped', shows: '2027-01-13', why: 'noday' }] }, ctx()).skipped.map((r) => r.line1),
     ["'Choir' on Wed, Jan 13 was removed earlier; the new pattern has no day there."]);
+  // A start moved later: the removed days before it go with their occurrences, said once.
+  {
+    const W = await import('../src/lib/planwords.js');
+    const before = (key, shows) => ({ key, newKey: null, kind: 'skipped', outcome: 'dropped', shows, why: 'outside', side: 'start' });
+    eq('series panel: removed days before a start moved later are no longer needed, two and one', [
+      W.removedRows([before('2027-01-05T02:00:00Z', '2027-01-04'), before('2027-01-12T02:00:00Z', '2027-01-11')], { series: 'Pottery class' }).map((r) => r.line1),
+      W.removedRows([before('2027-01-05T02:00:00Z', '2027-01-04'), { key: '2027-03-02T02:00:00Z', newKey: '2027-03-02T02:00:00Z', kind: 'skipped', outcome: 'stays', shows: '2027-03-01' }], { series: 'Pottery class', refYear: 2027 }).map((r) => r.line1),
+    ], [
+      ['2 removed days before the new start are no longer needed.'],
+      ['1 removed day before the new start is no longer needed.', "'Pottery class' on Mon, Mar 1 was removed earlier, and stays removed."],
+    ]);
+  }
 
   // The other days: after the new end, going back to the series, deleted, a rename's own title.
   const piano = {

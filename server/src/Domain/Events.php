@@ -1419,14 +1419,16 @@ final class Events
 
         // Clearing the trip flag requires an empty trip: members would
         // otherwise dangle pointing at a non-container.
+        $wholeSeries = !empty($event['rrule']) && empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all';
         if (
             array_key_exists('isContainer', $in)
             && !filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)
-            && (int) ($event['is_container'] ?? 0) === 1
+            && ((int) ($event['is_container'] ?? 0) === 1 || $wholeSeries)
         ) {
-            $members = $this->trips->liveMemberCount($id);
-            if (!empty($event['rrule']) && empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
-                // For all events every edited day of the trip clears its flag too.
+            $members = (int) ($event['is_container'] ?? 0) === 1 ? $this->trips->liveMemberCount($id) : 0;
+            if ($wholeSeries) {
+                // For all events every edited day of the trip clears its flag
+                // too, the master's own flag clear or not.
                 foreach ($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL AND is_container = 1', [$id]) as $edited) {
                     $members += $this->trips->liveMemberCount((int) $edited['id']);
                 }
@@ -1525,9 +1527,8 @@ final class Events
         // series' edit, with that day as the day acted on (Changing the
         // Series from an Edited Day): preview and commit alike.
         if (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all' && !isset($in['calendarId'])) {
-            [$master, $masterIn] = $this->editFromEditedDay($userId, $event, $in);
-            // The day acted on is this row: it takes the change where it shows.
-            $this->asFromEditedDay(fn() => $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority));
+            [$master, $masterIn] = $this->routeToMaster($userId, $event, $in);
+            $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority);
             return;
         }
 

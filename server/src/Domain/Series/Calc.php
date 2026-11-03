@@ -7,24 +7,42 @@ namespace BetterCal\Domain\Series;
 use BetterCal\Support\Time;
 
 /**
- * A series' raw occurrences (no skips applied), worked out without the
- * expander's display cap: by arithmetic on periods for the rules in the drag
- * table, by sabre/vobject over the actual span for anything else. The start
- * is always an occurrence and counts toward COUNT, as sabre has it.
+ * A series' raw occurrences (no skips applied), read from the expander the
+ * app persists and shows (sabre/vobject's RRuleIterator), without the
+ * display cap: every day and key here is one sabre yields for the series as
+ * it is stored. Nothing in the model computes an occurrence's instant by
+ * itself, so the app's quirks of the expander (a clock carried past a
+ * skipped hour, a day an hour-stepping rule leaves out) are the model's
+ * too, with no list of them to keep.
+ *
+ * What Calc adds is the storage rule for a first day in a skipped hour
+ * (Zones, DST and All-Day Days): the series is stored from its rule's
+ * latest day before that one on which the clock exists, that day a
+ * generated skip and COUNT one higher, so the expander keeps the clock.
+ * The series as the model reads it starts on its first shown day, and
+ * this class expands the stored form and leaves the stored day out.
+ *
+ * Arithmetic on members and periods (images, phases, the No Loss walk)
+ * stays in Rule and Readings.
  */
 final class Calc
 {
-    /** No series is walked further than this many periods or occurrences. */
+    /** No series is walked further than this many occurrences. */
     public const MAX_STEPS = 400000;
 
-    /** @var array{0:int,1:int,2:int} */
+    /** @var array{0:int,1:int,2:int} the series' clock time (BYHOUR and BYMINUTE win) */
     public array $clock;
 
-    /** @var null|list<int> */
-    private ?array $all = null;
+    /** The stored day before a first day in a skipped hour, or null. */
+    public ?int $anchor = null;
+
+    /** @var array<string,array{keys:list<array{0:int,1:string}>,it:?\Iterator,done:bool,ok:bool}> */
+    private static array $cache = [];
 
     /**
-     * @param array{0:int,1:int,2:int} $clock the series' clock time (BYHOUR and BYMINUTE win)
+     * @param array{0:int,1:int,2:int} $clock
+     * @param bool|int $anchor true: store a first day in a skipped hour from
+     *  the day before (Zones); false: as it is; an int: from that stored day
      */
     public function __construct(
         public Rule $rule,
@@ -33,6 +51,7 @@ final class Calc
         public bool $allDay,
         array $clock,
         public int $length,
+        bool|int $anchor = true,
     ) {
         if ($rule->hour !== null) {
             $clock[0] = $rule->hour;
@@ -41,6 +60,42 @@ final class Calc
             $clock[1] = $rule->minute;
         }
         $this->clock = $allDay ? [0, 0, 0] : $clock;
+        if (is_int($anchor)) {
+            $this->anchor = $anchor;
+        } elseif ($anchor && !$this->allDay && self::inGap($startDn, $this->clock, $tz)) {
+            $this->anchor = $this->anchorDay();
+        }
+    }
+
+    /**
+     * A stored series row as the model reads it: its rule from its stored
+     * start, except a series stored from the period before a first day in a
+     * skipped hour (its stored start a skip, the next day in the gap), which
+     * is read from that first shown day with its COUNT less the stored one.
+     */
+    public static function fromRow(array $row, ?Rule $rule = null): self
+    {
+        $allDay = (int) ($row['all_day'] ?? 0) === 1;
+        $tz = $allDay ? 'UTC' : (string) ($row['tzid'] ?? 'UTC');
+        $start = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz));
+        $dn = Cal::dnOf($start);
+        $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
+        $len = max(0, Time::fromDb((string) $row['end_utc'])->getTimestamp() - $start->getTimestamp());
+        $rule ??= Rule::parse((string) $row['rrule'], $dn);
+        $calc = new self($rule, $dn, $tz, $allDay, $clock, $len, false);
+        try {
+            $skips = \BetterCal\Domain\Recurrence::decodeExdates($row['exdates_json'] ?? null);
+        } catch (\Throwable) {
+            $skips = [];
+        }
+        if (!$allDay && $rule->supported() && in_array((string) $row['start_utc'], $skips, true)) {
+            $two = $calc->occurrences(PHP_INT_MAX, 2);
+            if (count($two) === 2 && self::inGap($two[1], $calc->clock, $tz)) {
+                $logical = $rule->count !== null ? $rule->withBound($rule->count - 1, null) : $rule;
+                return new self($logical, $two[1], $tz, false, $calc->clock, $len, $dn);
+            }
+        }
+        return $calc;
     }
 
     public function zone(): \DateTimeZone
@@ -48,100 +103,306 @@ final class Calc
         return Time::zone($this->tz);
     }
 
-    /** The UTC instant of the occurrence on a local day (a gap's clock time moves forward). */
-    public function instant(int $dn): \DateTimeImmutable
+    // ---- the stored form ---------------------------------------------------
+
+    /** The rule as stored: COUNT counts the stored day before an anchored start. */
+    public function storedRule(): Rule
     {
-        $r = $this->rule;
-        // The expander (sabre/vobject 4.6.1, RRuleIterator::nextWeekly)
-        // skips the weeks an INTERVAL leaves out by jumping from their week
-        // start without setting the clock again. When that week start falls
-        // in a skipped hour, the gap-shifted clock (03:30 for 02:30) carries
-        // to the next counted week start, and an occurrence on that day has
-        // it. The app's days are sabre's, so the key is too.
-        if (!$this->allDay && $r->freq === 'WEEKLY' && $r->interval > 1 && !$r->bare && $r->hour === null && $r->minute === null
-            && Cal::wd($dn) === $r->weekStart() && in_array($r->weekStart(), $r->members, true)) {
-            $turn = $dn - 7 * ($r->interval - 1);
-            if ($turn > $this->startDn) {
-                $at = self::at($turn, $this->clock, $this->tz)->setTimezone($this->zone());
-                if ($at->format('H:i:s') !== sprintf('%02d:%02d:%02d', ...$this->clock)) {
-                    return self::at($dn, [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')], $this->tz);
-                }
-            }
-        }
-        return self::at($dn, $this->clockOn($dn), $this->tz);
+        return $this->anchor !== null && $this->rule->count !== null ? $this->rule->withBound($this->rule->count + 1, null) : $this->rule;
     }
 
-    /** @var null|list<array{0:int,1:array{0:int,1:int,2:int}}> where the clock of a DAILY;BYDAY rule changes */
-    private ?array $steps = null;
-    private int $stepsTo = 0;
+    /** The start as stored (UTC): the anchor day at the clock, or the first day. */
+    public function storedStart(): \DateTimeImmutable
+    {
+        return $this->allDay ? self::at($this->startDn, [0, 0, 0], 'UTC') : self::at($this->anchor ?? $this->startDn, $this->clock, $this->tz);
+    }
+
+    /** What the expansion depends on: equal signatures expand alike. */
+    public function signature(): string
+    {
+        return json_encode([$this->storedRule()->text(), Time::toDb($this->storedStart()), Time::normalizeTzid($this->allDay ? 'UTC' : $this->tz), $this->allDay, $this->anchor]);
+    }
 
     /**
-     * The series' clock on a local day. The same every day, except for a rule
-     * written FREQ=DAILY with BYDAY: sabre's daily iterator (sabre/vobject
-     * 4.6.1, RRuleIterator::nextDaily) steps from one day to the next with
-     * modify('+1 days') and never sets the clock again, so once a day's clock
-     * falls in a skipped hour (02:30 becoming 03:30) every later day has the
-     * shifted clock. The app persists what sabre expands, so the keys and the
-     * days shown follow it.
-     *
-     * @return array{0:int,1:int,2:int}
+     * The latest day of the rule and its phase before the first day on
+     * which the clock exists, when the rule stored from it gives the same
+     * days after it; null when there is none.
      */
-    public function clockOn(int $dn): array
+    private function anchorDay(): ?int
     {
-        if ($this->allDay || !$this->rule->expandsAsDaily() || $dn <= $this->startDn) {
-            return $this->clock;
+        $r = $this->rule;
+        if (!$r->supported()) {
+            return null;
         }
-        if ($this->steps === null) {
-            $this->steps = [];
-            $this->stepsTo = $this->startDn;
-        }
-        if ($dn > $this->stepsTo) {
-            $this->stepTo(max($dn, $this->stepsTo + 3660));
-        }
-        $clock = $this->clock;
-        foreach ($this->steps as [$from, $c]) {
-            if ($from > $dn) {
-                break;
+        $want = array_column(self::expansion($r->text(), self::at($this->startDn, $this->clock, $this->tz), $this->tz, false, PHP_INT_MAX, 40), 0);
+        $p = $r->periodOf($this->startDn);
+        for ($i = 0; $i < 60; $i++) {
+            foreach (array_reverse($r->periodDays($p)) as [$d]) {
+                if ($d >= $this->startDn) {
+                    continue;
+                }
+                if (self::inGap($d, $this->clock, $this->tz)) {
+                    return null;
+                }
+                $stored = $r->count !== null ? $r->withBound($r->count + 1, null) : $r;
+                $got = array_column(self::expansion($stored->text(), self::at($d, $this->clock, $this->tz), $this->tz, false, PHP_INT_MAX, 41), 0);
+                return array_slice(array_values(array_unique($got)), 1) === array_values(array_unique($want)) ? $d : null;
             }
-            $clock = $c;
+            $p = $r->periodPlus($p, -$r->interval);
         }
-        return $clock;
+        return null;
     }
 
-    /** Finds the days through $to on which a DAILY;BYDAY rule's clock moves (clockOn). */
-    private function stepTo(int $to): void
+    // ---- the expansion -----------------------------------------------------
+
+    /**
+     * Every raw occurrence as [local day, key], from the start through $maxDn,
+     * at most $max: what sabre yields for the stored form, the stored anchor
+     * day left out. A rule several times a day has several keys on a day.
+     *
+     * @return list<array{0:int,1:string}>
+     */
+    public function keys(int $maxDn, int $max = PHP_INT_MAX): array
     {
-        $zone = $this->zone();
-        $clock = $this->steps === [] ? $this->clock : $this->steps[count($this->steps) - 1][1];
-        $from = (new \DateTimeImmutable(Cal::date($this->stepsTo) . ' 00:00:00', $zone))->getTimestamp() - 86400;
-        $until = (new \DateTimeImmutable(Cal::date($to) . ' 23:59:59', $zone))->getTimestamp() + 86400;
-        $days = [];
-        $prev = null;
-        foreach ($zone->getTransitions($from, $until) ?: [] as $i => $t) {
-            if ($i > 0 && $prev !== null && $t['offset'] > $prev) {
-                // A skipped hour: on the local day the change shows on, or the
-                // one before it when the gap starts before midnight.
-                $d = Cal::dnOf((new \DateTimeImmutable('@' . $t['ts']))->setTimezone($zone));
-                $days[] = $d - 1;
-                $days[] = $d;
+        $this->extend($maxDn, $max, false);
+        $out = [];
+        foreach ($this->list as $k) {
+            if ($k[0] > $maxDn || count($out) >= $max) {
+                break;
             }
-            $prev = $t['offset'];
+            $out[] = $k;
         }
-        $days = array_values(array_unique($days));
-        sort($days);
-        foreach ($days as $d) {
-            if ($d <= $this->stepsTo || $d > $to || $d <= $this->startDn) {
-                continue;
-            }
-            $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$clock);
-            $at = new \DateTimeImmutable($wall, $zone);
-            if ($at->format('Y-m-d H:i:s') !== $wall && Cal::dnOf($at) === $d) {
-                $clock = [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')];
-                $this->steps[] = [$d, $clock];
-            }
-        }
-        $this->stepsTo = $to;
+        return $out;
     }
+
+    /** @var list<array{0:int,1:string}> the expansion read so far, the anchor day left out */
+    private array $list = [];
+    /** @var array<int,list<string>> the same, by local day */
+    private array $byDay = [];
+    /** Every key on a day up to this one has been read. */
+    private ?int $readTo = null;
+    private bool $complete = false;
+
+    /**
+     * Reads the expansion on through $maxDn, or until it holds $max keys
+     * ($days: $max counts days instead), in growing steps so that lookups
+     * day by day don't read it again from the start each time.
+     */
+    private function extend(int $maxDn, int $max, bool $days): void
+    {
+        $limit = Cal::dn(9999, 12, 31);
+        $maxDn = min($maxDn, $limit);
+        $have = function () use ($maxDn, $days): int {
+            if (!$days) {
+                $n = 0;
+                foreach ($this->list as $k) {
+                    if ($k[0] > $maxDn) {
+                        break;
+                    }
+                    $n++;
+                }
+                return $n;
+            }
+            $n = 0;
+            foreach ($this->byDay as $d => $_) {
+                if ($d > $maxDn) {
+                    break;
+                }
+                $n++;
+            }
+            return $n;
+        };
+        while (!$this->complete && ($this->readTo === null || $this->readTo < $maxDn) && ($max === PHP_INT_MAX || $have() < $max)) {
+            $from = $this->readTo ?? $this->startDn;
+            $to = min($maxDn, $from + max(400, 2 * ($from - $this->startDn)));
+            $ck = self::cacheKey($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay);
+            $raw = self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $to, PHP_INT_MAX);
+            $this->list = [];
+            $this->byDay = [];
+            foreach ($raw as $k) {
+                if ($this->anchor !== null && $k[0] === $this->anchor) {
+                    continue;
+                }
+                $this->list[] = $k;
+                $this->byDay[$k[0]][] = $k[1];
+            }
+            $this->readTo = $to;
+            $this->complete = self::$cache[$ck]['done'] && count($raw) === count(self::$cache[$ck]['keys']);
+            if ($to >= $limit) {
+                $this->complete = true;
+            }
+        }
+    }
+
+    /** Whether the expander reads the stored rule at all. */
+    public function expandable(): bool
+    {
+        self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $this->startDn, 1);
+        return self::$cache[self::cacheKey($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay)]['ok'];
+    }
+
+    /**
+     * Raw occurrences from the start to $maxDn (inclusive), at most $max, one per day.
+     *
+     * @return list<int>
+     */
+    public function occurrences(int $maxDn, int $max = PHP_INT_MAX): array
+    {
+        $this->extend($maxDn, $max, true);
+        $out = [];
+        foreach ($this->byDay as $d => $_) {
+            if ($d > $maxDn || count($out) >= $max) {
+                break;
+            }
+            $out[] = $d;
+        }
+        return $out;
+    }
+
+    /** The keys sabre yields on one local day, in order. @return list<string> */
+    public function keysOn(int $dn): array
+    {
+        if ($dn < $this->startDn) {
+            return [];
+        }
+        $this->extend($dn, PHP_INT_MAX, false);
+        return $this->byDay[$dn] ?? [];
+    }
+
+    /** The UTC instant of the occurrence on a local day; a day with none, the series' clock there. */
+    public function instant(int $dn): \DateTimeImmutable
+    {
+        $on = $this->keysOn($dn);
+        if ($on !== []) {
+            return Time::fromDb($on[0]);
+        }
+        return $this->allDay ? self::at($dn, [0, 0, 0], 'UTC') : self::at($dn, $this->clock, $this->tz);
+    }
+
+    public function key(int $dn): string
+    {
+        return Time::toDb($this->instant($dn));
+    }
+
+    /** Whether $dn is a raw occurrence of the series, bound included. */
+    public function isOccurrence(int $dn): bool
+    {
+        return $this->keysOn($dn) !== [];
+    }
+
+    /** Whether the pattern from this start, ignoring the bound, gives $dn. */
+    public function patternHas(int $dn): bool
+    {
+        return $dn === $this->startDn || $this->withoutBound()->isOccurrence($dn);
+    }
+
+    public function withoutBound(): self
+    {
+        return new self($this->rule->withBound(null, null), $this->startDn, $this->tz, $this->allDay, $this->clock, $this->length, $this->anchor ?? false);
+    }
+
+    /** The local day an instant falls on in the series' zone. */
+    public function dnOf(string $dbUtc): int
+    {
+        return Cal::dnOf(Time::fromDb($dbUtc)->setTimezone($this->allDay ? Time::utc() : $this->zone()));
+    }
+
+    /** UNTIL as an instant, read the way sabre reads it: a date is midnight in the series' zone. */
+    public function untilInstant(): ?\DateTimeImmutable
+    {
+        $u = $this->rule->until;
+        if ($u === null) {
+            return null;
+        }
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/', $u, $m) !== 1) {
+            return null;
+        }
+        $tz = isset($m[7]) && $m[7] === 'Z' ? Time::utc() : ($this->allDay ? Time::utc() : $this->zone());
+        $text = sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00');
+        return (new \DateTimeImmutable($text, $tz))->setTimezone(Time::utc());
+    }
+
+    public function bounded(): bool
+    {
+        return $this->rule->count !== null || $this->rule->until !== null;
+    }
+
+    /** Every raw occurrence of a bounded series, one per day. @return list<int> */
+    public function all(): array
+    {
+        return $this->occurrences(PHP_INT_MAX);
+    }
+
+    /** The last raw occurrence of a bounded series. */
+    public function last(): ?int
+    {
+        if (!$this->bounded()) {
+            return null;
+        }
+        $all = $this->all();
+        return $all === [] ? null : $all[count($all) - 1];
+    }
+
+    // ---- sabre -------------------------------------------------------------
+
+    private static function cacheKey(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay): string
+    {
+        return $rrule . '|' . $start->getTimestamp() . '|' . ($allDay ? 'D' : Time::normalizeTzid($tz));
+    }
+
+    /**
+     * sabre's raw occurrences of a stored rule from a stored start, as [local
+     * day, key], through $maxDn and at most $max, extended on demand and
+     * kept per stored form. A rule sabre can't read gives none.
+     *
+     * @return list<array{0:int,1:string}>
+     */
+    private static function expansion(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay, int $maxDn, int $max): array
+    {
+        $ck = self::cacheKey($rrule, $start, $tz, $allDay);
+        if (!isset(self::$cache[$ck])) {
+            if (count(self::$cache) > 256) {
+                self::$cache = array_slice(self::$cache, -128, null, true);
+            }
+            $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
+            try {
+                $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
+                $entry['it'] = new \Sabre\VObject\Recur\RRuleIterator($rrule, $local);
+            } catch (\Throwable) {
+                $entry['done'] = true;
+                $entry['ok'] = false;
+            }
+            self::$cache[$ck] = $entry;
+        }
+        $e = &self::$cache[$ck];
+        $zone = $allDay ? Time::utc() : Time::zone($tz);
+        while (!$e['done'] && count($e['keys']) < $max && ($e['keys'] === [] || $e['keys'][count($e['keys']) - 1][0] <= $maxDn)) {
+            try {
+                if (!$e['it']->valid() || count($e['keys']) >= self::MAX_STEPS) {
+                    $e['done'] = true;
+                    break;
+                }
+                $at = \DateTimeImmutable::createFromInterface($e['it']->current());
+                $dn = Cal::dnOf($at->setTimezone($zone));
+                $e['keys'][] = [$dn, $allDay ? Cal::date($dn) . ' 00:00:00' : Time::toDb($at)];
+                $e['it']->next();
+            } catch (\Throwable) {
+                $e['done'] = true;
+                $e['ok'] = $e['keys'] !== [];
+            }
+        }
+        $out = [];
+        foreach ($e['keys'] as $k) {
+            if ($k[0] > $maxDn || count($out) >= $max) {
+                break;
+            }
+            $out[] = $k;
+        }
+        unset($e);
+        return $out;
+    }
+
+    // ---- wall clocks -------------------------------------------------------
 
     /** @param array{0:int,1:int,2:int} $clock */
     public static function at(int $dn, array $clock, string $tz): \DateTimeImmutable
@@ -163,236 +424,10 @@ final class Calc
         return $at->setTimezone(Time::utc());
     }
 
-    public function key(int $dn): string
+    /** Whether a clock time doesn't exist on a local day (a spring-forward gap). */
+    public static function inGap(int $dn, array $clock, string $tz): bool
     {
-        return Time::toDb($this->instant($dn));
-    }
-
-    /** The local day an instant falls on in the series' zone. */
-    public function dnOf(string $dbUtc): int
-    {
-        return Cal::dnOf(Time::fromDb($dbUtc)->setTimezone($this->zone()));
-    }
-
-    /** UNTIL as an instant, read the way sabre reads it: a date is midnight in the series' zone. */
-    public function untilInstant(): ?\DateTimeImmutable
-    {
-        $u = $this->rule->until;
-        if ($u === null) {
-            return null;
-        }
-        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/', $u, $m) !== 1) {
-            return null;
-        }
-        $tz = isset($m[7]) && $m[7] === 'Z' ? Time::utc() : $this->zone();
-        $text = sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00');
-        return (new \DateTimeImmutable($text, $tz))->setTimezone(Time::utc());
-    }
-
-    public function bounded(): bool
-    {
-        return $this->rule->count !== null || $this->rule->until !== null;
-    }
-
-    /** Every raw occurrence of a bounded series. @return list<int> */
-    public function all(): array
-    {
-        if ($this->all === null) {
-            $this->all = $this->occurrences(PHP_INT_MAX);
-        }
-        return $this->all;
-    }
-
-    /** The last raw occurrence of a bounded series. */
-    public function last(): ?int
-    {
-        if (!$this->bounded()) {
-            return null;
-        }
-        $all = $this->all();
-        return $all === [] ? null : $all[count($all) - 1];
-    }
-
-    /**
-     * Raw occurrences from the start to $maxDn (inclusive), at most $max.
-     *
-     * @return list<int>
-     */
-    public function occurrences(int $maxDn, int $max = PHP_INT_MAX): array
-    {
-        if ($this->all !== null) {
-            return array_values(array_filter($this->all, static fn(int $d): bool => $d <= $maxDn));
-        }
-        if (!$this->rule->supported()) {
-            return $this->sabre($maxDn, $max);
-        }
-        $count = $this->rule->count;
-        $until = $this->untilInstant();
-        $out = [$this->startDn];
-        if (($count !== null && $count <= 1) || $max <= 1) {
-            return $out;
-        }
-        $r = $this->rule;
-        $p0 = $r->periodOf($this->startDn);
-        $p = $p0;
-        $empty = 0;
-        for ($step = 0; $step < self::MAX_STEPS; $step++) {
-            if ($this->periodFirst($p) > $maxDn) {
-                break;
-            }
-            $days = $r->periodDays($p);
-            if ($days === []) {
-                // A rule that gives nothing for a whole cycle never will.
-                if (++$empty > 4800) {
-                    break;
-                }
-            } else {
-                $empty = 0;
-            }
-            foreach ($days as [$d]) {
-                if ($d <= $this->startDn) {
-                    continue;
-                }
-                if ($d > $maxDn) {
-                    break 2;
-                }
-                if ($until !== null && $this->instant($d) > $until) {
-                    break 2;
-                }
-                $out[] = $d;
-                if (($count !== null && count($out) >= $count) || count($out) >= $max) {
-                    break 2;
-                }
-            }
-            $p = $r->periodPlus($p, $r->interval);
-            if ($r->kind === 'yearly' && $p > 9999) {
-                break;
-            }
-        }
-        return $out;
-    }
-
-    /** The first day of a period. */
-    public function periodFirst(int $p): int
-    {
-        [$y, $m] = Cal::fromMi($p);
-        return match ($this->rule->kind) {
-            'monthly' => Cal::dn($y, $m, 1),
-            'yearly' => Cal::dn($p, 1, 1),
-            default => $p,
-        };
-    }
-
-    /** Whether the pattern (from this start, ignoring the bound) gives $dn. */
-    public function patternHas(int $dn): bool
-    {
-        if ($dn === $this->startDn) {
-            return true;
-        }
-        if ($dn < $this->startDn) {
-            return false;
-        }
-        if (!$this->rule->supported()) {
-            return in_array($dn, $this->withoutBound()->occurrences($dn), true);
-        }
-        $r = $this->rule;
-        $p = $r->periodOf($dn);
-        if (!$r->counted($p, $r->periodOf($this->startDn))) {
-            return false;
-        }
-        return $r->memberOf($dn) !== null;
-    }
-
-    /** Whether $dn is a raw occurrence of the series, bound included. */
-    public function isOccurrence(int $dn): bool
-    {
-        if (!$this->patternHas($dn)) {
-            return false;
-        }
-        if ($this->rule->count !== null) {
-            $last = $this->last();
-            return $last !== null && $dn <= $last;
-        }
-        $until = $this->untilInstant();
-        return $until === null || $this->instant($dn) <= $until || $dn === $this->startDn;
-    }
-
-    public function withoutBound(): self
-    {
-        return new self($this->rule->withBound(null, null), $this->startDn, $this->tz, $this->allDay, $this->clock, $this->length);
-    }
-
-    /** @return list<int> */
-    private function sabre(int $maxDn, int $max): array
-    {
-        if (!class_exists(\Sabre\VObject\Component\VCalendar::class)) {
-            return [$this->startDn];
-        }
-        $vcal = new \Sabre\VObject\Component\VCalendar();
-        $vevent = $vcal->add('VEVENT', ['UID' => 'series-model']);
-        $start = (new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($this->startDn), ...$this->clock), $this->zone()));
-        if ($this->allDay) {
-            $vevent->add('DTSTART', $start->format('Ymd'), ['VALUE' => 'DATE']);
-        } else {
-            $vevent->add('DTSTART', $start);
-        }
-        $vevent->add('RRULE', $this->rule->text());
-        $out = [];
-        try {
-            $it = new \Sabre\VObject\Recur\EventIterator($vcal, 'series-model', $this->allDay ? $this->zone() : Time::utc());
-            for ($i = 0; $it->valid() && $i < self::MAX_STEPS && count($out) < $max; $i++) {
-                $dn = Cal::dnOf(\DateTimeImmutable::createFromInterface($it->getDtStart())->setTimezone($this->zone()));
-                if ($dn > $maxDn) {
-                    break;
-                }
-                if ($out === [] || end($out) !== $dn) {
-                    $out[] = $dn;
-                }
-                $it->next();
-            }
-        } catch (\Throwable) {
-            return [$this->startDn];
-        }
-        return $out === [] ? [$this->startDn] : $out;
-    }
-
-    /**
-     * Raw occurrences as keys, from the start to $maxDn, at most $max: one
-     * per day for the rules the model reads by day, every one sabre yields
-     * for the rest (a rule several times a day has several keys on a day).
-     *
-     * @return list<array{0:int,1:string}> [local day, key]
-     */
-    public function keys(int $maxDn, int $max = PHP_INT_MAX): array
-    {
-        if ($this->rule->supported() || !class_exists(\Sabre\VObject\Component\VCalendar::class)) {
-            return array_map(fn(int $d): array => [$d, $this->key($d)], $this->occurrences($maxDn, $max));
-        }
-        $vcal = new \Sabre\VObject\Component\VCalendar();
-        $vevent = $vcal->add('VEVENT', ['UID' => 'series-model']);
-        $start = new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($this->startDn), ...$this->clock), $this->zone());
-        if ($this->allDay) {
-            $vevent->add('DTSTART', $start->format('Ymd'), ['VALUE' => 'DATE']);
-        } else {
-            $vevent->add('DTSTART', $start);
-        }
-        $vevent->add('RRULE', $this->rule->text());
-        $out = [];
-        try {
-            $it = new \Sabre\VObject\Recur\EventIterator($vcal, 'series-model', $this->allDay ? $this->zone() : Time::utc());
-            for ($i = 0; $it->valid() && $i < self::MAX_STEPS && count($out) < $max; $i++) {
-                $at = \DateTimeImmutable::createFromInterface($it->getDtStart());
-                $dn = Cal::dnOf($at->setTimezone($this->zone()));
-                if ($dn > $maxDn) {
-                    break;
-                }
-                $out[] = [$dn, $this->allDay ? Cal::date($dn) . ' 00:00:00' : Time::toDb($at)];
-                $it->next();
-            }
-        } catch (\Throwable) {
-            return [[$this->startDn, $this->key($this->startDn)]];
-        }
-        return $out;
+        return self::at($dn, $clock, $tz)->setTimezone(Time::zone($tz))->format('H:i:s') !== sprintf('%02d:%02d:%02d', ...$clock);
     }
 
     /** Whether sabre can read the rule at all (RSCALE and X- parts it refuses). */

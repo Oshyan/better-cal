@@ -203,10 +203,28 @@ export function planView(plan, ctx = {}) {
   const groupOf = (key) => (plan.groups || []).find((g) => g.day === key);
   // The day acted on is in the Next line where it landed; it gets a line of
   // its own only when it doesn't simply move there (kept on its own, say).
+  // A day that does something other than go with its event (stays at its
+  // own date, becomes an event of its own, is deleted) or carries a choice
+  // is a consequence to see, and has its own line, first; a day at its own
+  // date is one that owns its date (`kept` has it). Days that go with their
+  // events the same way are one line, by the plan's data: their outcome,
+  // the fields they keep and take (`kept`, `takes`), and whether a choice
+  // is theirs. Their days are under it, each in its own words (groupLine).
+  // A group of one is its day's line.
+  const lines = [];
+  const groups = new Map();
+  const list = (x) => (Array.isArray(x) ? x : []);
   for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
     const g = groupOf(d.key);
-    view.edited.push({ key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null });
+    const line = { key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null };
+    const kept = list(d.kept), takes = list(d.takes);
+    const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !g && !kept.includes('date');
+    if (!goesWith) { lines.push(line); continue; }
+    const id = JSON.stringify([d.outcome, kept, takes, !!g]);
+    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, kept, takes, days: [] });
+    groups.get(id).days.push({ d, line });
   }
+  view.edited = [...lines, ...[...groups.values()].map((grp) => groupLine(grp, { tz: ctx.tz || null, refYear: ctx.refYear }))];
   // An anchor is the stored day before a first day in a skipped hour: no
   // event of the series, so it has no line (the gap note says the time).
   view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
@@ -232,6 +250,84 @@ function dayWords(d, fmt) {
   if (d.outcome === 'deleted') return title + at + ' is deleted';
   if (d.outcome === 'dropped') return title + at + ' is forgotten';
   return title + at;
+}
+
+// The own fields in words, as the server's sentences name them.
+const FIELD_WORDS = {
+  date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'place',
+  description: 'notes', url: 'link', reminders: 'reminders', status: 'status', attendance: 'answer',
+  tags: 'tags', people: 'people', icon: 'icon',
+};
+const WEEKDAY_NAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const andList = (items) => (items.length <= 1 ? items[0] || '' : items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1]);
+const fieldList = (fields) => andList(fields.map((f) => FIELD_WORDS[f] || f));
+
+const dayNumber = (iso, tz) => {
+  const w = wallDate(iso, tz);
+  return w ? Date.UTC(w.y, w.mo - 1, w.d) / 86400000 : null;
+};
+
+// The wall clock an ISO value names ("19:00"), in `tz` for a UTC key; null
+// for a bare date.
+function wallClock(iso, tz) {
+  const s = String(iso || '');
+  if (!/T\d{2}:\d{2}/.test(s)) return null;
+  if (/Z$/i.test(s) && tz) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(s));
+      return parts.find((p) => p.type === 'hour').value + ':' + parts.find((p) => p.type === 'minute').value;
+    } catch { /* an unknown zone reads as UTC */ }
+  }
+  return /Z$/i.test(s) ? new Date(s).toISOString().slice(11, 16) : s.slice(11, 16);
+}
+
+// One line for days that go with their events the same way, from what
+// the plan says of them, not their sentences: the outcome, where their
+// keys land (newKey), the fields they keep and take. "38 edited days from
+// 6 Apr to 4 Jan 2028 move to Wednesday; each keeps its title and place."
+// Its days are under it, each in its own words. A group of one is that
+// day's line.
+function groupLine({ outcome, kept, takes, days }, { tz, refYear }) {
+  if (days.length === 1) return days[0].line;
+  const sorted = [...days].sort((a, b) => (Date.parse(a.d.key) || 0) - (Date.parse(b.d.key) || 0));
+  const at = (x) => planDate(x.d.key, { weekday: false, tz, refYear });
+  const first = at(sorted[0]), last = at(sorted[sorted.length - 1]);
+  const range = first === last ? 'on ' + first : 'from ' + first + ' to ' + last;
+  // Where they go: a weekday they all land on, a shift they all make, or
+  // a clock time they all take.
+  let does = 'stay';
+  let named = [];
+  if (outcome === 'moves') {
+    does = 'move with their events';
+    const shifts = new Set(sorted.map((x) => {
+      const a = dayNumber(x.d.key, tz), b = dayNumber(x.d.newKey, tz);
+      return a == null || b == null ? null : b - a;
+    }));
+    const [shift] = shifts;
+    const weekdays = new Set(sorted.map((x) => {
+      const w = wallDate(x.d.newKey, tz);
+      return w ? new Date(Date.UTC(w.y, w.mo - 1, w.d)).getUTCDay() : null;
+    }));
+    const [wd] = weekdays;
+    const clocks = new Set(sorted.map((x) => wallClock(x.d.newKey, tz)));
+    const [clock] = clocks;
+    const sameClock = clocks.size === 1 && clock && sorted.every((x) => wallClock(x.d.key, tz) !== clock);
+    if (shifts.size === 1 && shift === 0) {
+      if (sameClock && takes.includes('time')) { does = 'move to ' + clock; named = ['time']; }
+    } else if (!shifts.has(null) && !shifts.has(0)) {
+      named = ['date'];
+      if (weekdays.size === 1 && wd != null) does = 'move to ' + WEEKDAY_NAME[wd];
+      else if (shifts.size === 1) does = 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier');
+    }
+  }
+  const taken = takes.filter((f) => !named.includes(f));
+  const each = [kept.length ? 'keeps its ' + fieldList(kept) : '', taken.length ? 'takes the new ' + fieldList(taken) : ''].filter(Boolean);
+  return {
+    key: 'group:' + sorted[0].d.key,
+    words: sorted.length + ' edited days ' + range + ' ' + does + (each.length ? '; each ' + each.join(', ') : ''),
+    choice: null,
+    days: sorted.map((x) => ({ key: x.line.key, words: x.line.words })),
+  };
 }
 
 /** The commit's plan: the hash and an option for every group. */

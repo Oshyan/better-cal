@@ -39,6 +39,21 @@ final class Expect
 
     public function __construct(array $old, array $edit)
     {
+        // A series stored from the period before a first day in a skipped hour
+        // (Zones, DST and All-Day Days): its stored day, skipped, holds the
+        // clock and is no day of the series, so the series is read from its
+        // first shown day, its COUNT without the stored day.
+        $raw = $old['raw'];
+        if (!$old['allDay'] && count($raw) >= 2 && $raw[0]['key'] === (string) ($old['row']['start_utc'] ?? '') && in_array($raw[0]['key'], $old['exdates'], true)
+            && Clock::inGap($raw[1]['dn'], $old['clock'], $old['tz'])) {
+            $old['raw'] = array_values(array_slice($raw, 1));
+            $old['exdates'] = array_values(array_diff($old['exdates'], [$raw[0]['key']]));
+            $old['startDn'] = $raw[1]['dn'];
+            if ($old['shape']->count !== null) {
+                $old['shape'] = clone $old['shape'];
+                $old['shape']->count--;
+            }
+        }
         $this->o = $old;
         $this->e = $edit;
         $this->s0 = $old['shape'];
@@ -726,8 +741,17 @@ final class Expect
         $bound = $this->boundRule($choices);
         $interval = $isNewRule && $this->newShape() !== null ? $this->newShape()->interval : $this->s0->interval;
         $span = ($isNewRule && $this->newShape() !== null ? $this->newShape()->periodSpan() : $this->s0->periodSpan()) * $interval;
+        // An unbounded series is walked over its window and on past every
+        // exception's image, so a day beyond the window is looked for where
+        // it is (README, The Oracle).
+        $exImages = [];
+        foreach (array_merge($o['exdates'], array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $o['overrides'])) as $k) {
+            if (($images[$k] ?? null) !== null) {
+                $exImages[] = (int) $images[$k];
+            }
+        }
         $hi = match ($bound['kind']) {
-            'none' => $earliest + self::WINDOW[$unit],
+            'none' => max($earliest + self::WINDOW[$unit], $exImages === [] ? 0 : max($exImages) + $span + 1),
             'end' => (int) $latest,
             'until' => $bound['dn'] + 1,
             default => max((int) $latest, $earliest) + ($bound['n'] + 4) * $span * 8 + 400,
@@ -803,7 +827,8 @@ final class Expect
             'edge' => array_keys($edge),
             'skips' => $skips,
             'rows' => $rows,
-            'actedInside' => $actedImg === null || $inside($actedImg),
+            // Under a new pattern the day acted on has no special place (Every Kind of Edit): nothing is kept for it.
+            'actedInside' => $isNewRule || $actedImg === null || $inside($actedImg),
             'images' => $images,
             'latest' => $latest,
         ];
@@ -874,7 +899,8 @@ final class Expect
         }
         $rows = [];
         foreach ($out['rows'] as $id => $r) {
-            $rows[$id] = [$r['img'], $r['inside']];
+            // An edited day outside the series has the same outcome wherever its image would have been.
+            $rows[$id] = [$r['inside'] ? $r['img'] : null, $r['inside']];
         }
         return json_encode([$out['days'], $out['skips'], $rows, $out['actedInside']]);
     }
@@ -886,12 +912,18 @@ final class Expect
      */
     public function samePlans(array $a, array $b, array $choices): bool
     {
-        if (self::planKey($this->outcome($a, $choices)) !== self::planKey($this->outcome($b, $choices))) {
+        $oa = $this->outcome($a, $choices);
+        $ob = $this->outcome($b, $choices);
+        if (self::planKey($oa) !== self::planKey($ob)) {
             return false;
         }
+        // The same occurrences for as long as the rule could run: each walk
+        // from its own start on, past the bound (Finding the Readings). A day
+        // before a reading's start is no occurrence of it.
         $lo = $this->o['startDn'] - 400;
         $hi = $this->o['startDn'] + min(1200 * $this->s0->periodSpan() * $this->s0->interval, 146097);
-        return array_keys($this->walk($a['T'], $lo, $hi)) === array_keys($this->walk($b['T'], $lo, $hi));
+        $from = static fn(array $walk, array $out): array => array_values(array_filter(array_keys($walk), static fn(int $d): bool => empty($out['empty']) && $d >= $out['start']));
+        return $from($this->walk($a['T'], $lo, $hi), $oa) === $from($this->walk($b['T'], $lo, $hi), $ob);
     }
 
     /** The readings' preselection (open decision 1): the design's order, the first enabled one. */

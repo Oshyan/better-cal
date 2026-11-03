@@ -934,7 +934,7 @@ final class Model
             $start = $this->ruleDelta === 'none' ? $rebased : self::firstOn($rule, $rebased);
         }
         $pattern = $rule->withBound(null, null);
-        $probe = new Calc($pattern, $start, $this->tz1, $this->allDay1, $this->clock1, $this->len1);
+        $probe = new Calc($pattern, $start, $this->tz1, $this->allDay1, $this->clock1, $this->len1, true, $this->old->storedStart());
         $keep = [
             'id' => 'keep', 'label' => 'Keep them where they are, as events of their own', 'rule' => $pattern, 'start' => $start,
             'image' => static fn(int $dn): ?int => $probe->patternHas($dn) ? $dn : null, 'textKept' => false, 'newRule' => $rule,
@@ -1199,7 +1199,7 @@ final class Model
             $newStart = min($imageSet);
         }
         $anchor = !$this->google && $this->ruleDelta !== 'none';
-        $calcP = new Calc($r1p, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor);
+        $calcP = new Calc($r1p, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor, $this->old->storedStart());
         $latest = $imageSet === [] ? null : max($imageSet);
 
         // Gains: occurrences of the new rule that are no old one's image.
@@ -1262,7 +1262,7 @@ final class Model
             $r1 = $sc !== null ? $r1p->withBound($this->rawCount($calcP, $sc, $genSkips), null) : $r1p->withBound(null, $this->sentRule->until);
         } elseif ($this->r0->count !== null || $this->r0->until !== null) {
             $kept = $r1p->withBound($this->r0->count, $this->r0->until);
-            $keptCalc = new Calc($kept, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor);
+            $keptCalc = new Calc($kept, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor, $this->old->storedStart());
         }
         $instants = static fn(Calc $c): array => array_column($c->keys(PHP_INT_MAX), 1);
         if (isset($kept, $keptCalc) && $r1p->comparable() === $this->r0->comparable() && $keptCalc->last() === $latest && $instants($keptCalc) === $instants($this->old)) {
@@ -1300,7 +1300,7 @@ final class Model
                 }
             }
         }
-        $calc1 = $unchanged ? $this->old : new Calc($r1, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor);
+        $calc1 = $unchanged ? $this->old : new Calc($r1, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor, $this->old->storedStart());
         if ($calc1 !== $this->old && $calc1->signature() === $this->old->signature()) {
             // The same stored series: the same expansion, so the same keys.
             $calc1 = $this->old;
@@ -1536,6 +1536,7 @@ final class Model
         $overrideWrites = [];
         $detach = [];
         $delete = [];
+        $rejoined = [];
         $create = [];
         $tags = isset($this->changed['tags']) ? ['master' => $this->changed['tags']['names']] : [];
         $people = isset($this->changed['people']) ? ['master' => $this->changed['people']['ids']] : [];
@@ -1600,10 +1601,23 @@ final class Model
             if (isset($masterCols['calendar_id'])) {
                 $cols['calendar_id'] = $masterCols['calendar_id'];
             }
+            $odn = $this->old->dnOf((string) $row['recurrence_instance_utc']);
+            if (!$this->google && OwnFields::normalize($ownAfter) === []) {
+                // Left with nothing of its own, it is an ordinary occurrence
+                // again (Own Fields): its row goes, its key and links in Undo,
+                // and the series shows the day at its new key.
+                $delete[] = $id;
+                $rejoined[$id] = true;
+                unset($tags[$id], $people[$id]);
+                $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
+                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
+                    'title' => (string) $row['title'], 'outcome' => 'rejoins', 'words' => $name . Words::date($odn, $this->thisYear) . ' is an ordinary occurrence again',
+                    'kept' => [], 'takes' => OwnFields::normalize($edited)];
+                continue;
+            }
             if ($cols !== []) {
                 $overrideWrites[$id] = $cols;
             }
-            $odn = $this->old->dnOf((string) $row['recurrence_instance_utc']);
             $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'];
             $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
             $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance'], $ownAfter));
@@ -1723,7 +1737,7 @@ final class Model
         // where the request put it when that is earlier (an own date, or a
         // zone kept at its moment), so nothing between them goes unlisted.
         $putDn = $this->placed ? Cal::dnOf(Time::fromDb($this->landedCols['start_utc'])->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $this->tz1))) : $landedDn;
-        $next = $this->readable ? $this->next($calc1, $newExdates, $placeRows, $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [];
+        $next = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [];
         $nextDates = array_map(static fn(array $n): string => $n['start'], $next);
         if ($this->google) {
             $this->notes[] = ['kind' => 'google', 'words' => self::GOOGLE_NOTE];
@@ -1966,13 +1980,19 @@ final class Model
         return ['until', Words::upper($ends) . $wasWords . $counted . ($personSkipped > 0 ? '; ' . $scheduled : '') . $lost . ($extra > 0 ? '; ' . $extra . ' separate' : '')];
     }
 
-    /** The next four events as they will show, from the day acted on. */
+    /**
+     * The next four events as they will show, from the day acted on: every
+     * edited day by the day it shows on (its own zone), wherever its key is,
+     * and the occurrences with no row at their keys.
+     */
     private function next(Calc $calc1, array $exdates, array $placeRows, array $overrideWrites, int $fromDn, ?array $separate, int $actedDn, array $createdRows = []): array
     {
         $skip = array_flip($exdates);
         $byKey = [];
+        $shownDn = static fn(string $start, string $tz): int => Cal::dnOf(Time::fromDb($start)->setTimezone(Time::zone($tz)));
         foreach ($createdRows as $c) {
-            $byKey[(string) $c['recurrence_instance_utc']] = ['start' => Time::dbToIso((string) $c['start_utc'], (int) $c['all_day'] === 1 ? 'UTC' : (string) $c['tzid']), 'kind' => 'acted'];
+            $tz = (int) $c['all_day'] === 1 ? 'UTC' : (string) $c['tzid'];
+            $byKey[(string) $c['recurrence_instance_utc']] = ['start' => Time::dbToIso((string) $c['start_utc'], $tz), 'kind' => 'acted', 'dn' => $shownDn((string) $c['start_utc'], $tz)];
         }
         foreach ($placeRows as $id => $img) {
             $row = $this->rows[$id];
@@ -1980,29 +2000,32 @@ final class Model
             $tz = (int) ($overrideWrites[$id]['all_day'] ?? $row['all_day']) === 1 ? 'UTC' : (string) ($overrideWrites[$id]['tzid'] ?? $row['tzid']);
             $own = $this->ownOf($row);
             $key = (string) ($overrideWrites[$id]['recurrence_instance_utc'] ?? $row['recurrence_instance_utc']);
-            $byKey[$key] = ['start' => Time::dbToIso((string) $start, $tz), 'kind' => 'edited']
+            $byKey[$key] = ['start' => Time::dbToIso((string) $start, $tz), 'kind' => 'edited', 'dn' => $shownDn((string) $start, $tz)]
                 + (in_array('date', $own, true) && $img !== $actedDn ? ['words' => 'its own date'] : []);
         }
-        $out = [];
+        $rows = [];
+        foreach ($byKey as $key => $item) {
+            if (!isset($skip[$key]) && $item['dn'] >= $fromDn) {
+                unset($item['dn']);
+                $rows[] = $item;
+            }
+        }
+        $plain = [];
         $span = 400;
-        for ($tries = 0; $tries < 6 && count($out) < 4; $tries++) {
-            $out = [];
-            // Every key the expander gives (several on a day for a rule several times a day).
-            $occ = $calc1->keys($fromDn + $span, 4000);
+        for ($tries = 0; $tries < 6 && count($plain) < 4; $tries++) {
+            $plain = [];
+            // Every key the expander gives (several on a day for a rule several
+            // times a day); a bounded series read to its end, so the edited
+            // days listed above never pass plain occurrences left unread.
+            $occ = $calc1->keys($calc1->bounded() ? PHP_INT_MAX : $fromDn + $span, 4000);
             foreach ($occ as [$d, $key]) {
-                if ($d < $fromDn) {
-                    continue;
-                }
-                if (isset($skip[$key])) {
+                if ($d < $fromDn || isset($skip[$key]) || isset($byKey[$key])) {
                     continue;
                 }
                 $tz = $this->allDay1 ? 'UTC' : $this->tz1;
-                $item = $byKey[$key] ?? ['start' => Time::iso(Time::fromDb($key)->setTimezone(Time::zone($tz))), 'kind' => 'occurrence'];
-                if ($d === $actedDn && $item['kind'] === 'occurrence') {
-                    $item['kind'] = 'acted';
-                }
-                $out[] = $item;
-                if (count($out) >= 8) {
+                $item = ['start' => Time::iso(Time::fromDb($key)->setTimezone(Time::zone($tz))), 'kind' => $d === $actedDn ? 'acted' : 'occurrence'];
+                $plain[] = $item;
+                if (count($plain) >= 4) {
                     break;
                 }
             }
@@ -2011,6 +2034,7 @@ final class Model
                 break;
             }
         }
+        $out = array_merge($rows, $plain);
         if ($separate !== null) {
             // The day acted on, where it was put, on its own.
             $out[] = ['start' => Time::dbToIso((string) $separate['start_utc'], (int) $separate['all_day'] === 1 ? 'UTC' : (string) $separate['tzid']), 'kind' => 'acted', 'words' => 'on its own'];
@@ -2247,7 +2271,7 @@ final class Model
         $u = (string) $sent->until;
         $dateForm = strlen($u) === 8;
         if (!$dateForm && !$this->allDay0) {
-            $a = new Calc($sent, $this->old->startDn, $this->tz0, $this->allDay0, $this->clock0, $this->len0, $this->old->anchor ?? false);
+            $a = new Calc($sent, $this->old->startDn, $this->tz0, $this->allDay0, $this->clock0, $this->len0, $this->old->anchor ?? false, $this->old->storedStart());
             return $a->last() === $this->old->last();
         }
         if ($dateForm) {

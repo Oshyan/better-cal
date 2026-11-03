@@ -36,6 +36,14 @@ final class Calc
     /** The stored day before a first day in a skipped hour, or null. */
     public ?int $anchor = null;
 
+    /**
+     * The instant the start is stored at, where it is one of two the wall
+     * clock names (a repeated hour): the expander iterates from the stored
+     * instant, never from its wall clock read back (Zones, DST and All-Day
+     * Days). Null: the first instant, as Calc::at reads it.
+     */
+    private ?\DateTimeImmutable $stored = null;
+
     /** @var array<string,array{keys:list<array{0:int,1:string}>,it:?\Iterator,done:bool,ok:bool}> */
     private static array $cache = [];
 
@@ -43,6 +51,10 @@ final class Calc
      * @param array{0:int,1:int,2:int} $clock
      * @param bool|int $anchor true: store a first day in a skipped hour from
      *  the day before (Zones); false: as it is; an int: from that stored day
+     * @param ?\DateTimeImmutable $at an instant a series is stored at: kept as
+     *  this one's stored start when it is the same wall clock on the same
+     *  stored day in the same zone (a start that doesn't move keeps its
+     *  instant), else ignored
      */
     public function __construct(
         public Rule $rule,
@@ -52,6 +64,7 @@ final class Calc
         array $clock,
         public int $length,
         bool|int $anchor = true,
+        ?\DateTimeImmutable $at = null,
     ) {
         if ($rule->hour !== null) {
             $clock[0] = $rule->hour;
@@ -64,6 +77,13 @@ final class Calc
             $this->anchor = $anchor;
         } elseif ($anchor && !$this->allDay && self::inGap($startDn, $this->clock, $tz)) {
             $this->anchor = $this->anchorDay();
+        }
+        if ($at !== null && !$this->allDay) {
+            $zone = Time::zone($this->tz);
+            $wall = static fn(\DateTimeImmutable $t): string => $t->setTimezone($zone)->format('Y-m-d H:i:s');
+            if ($wall($at) === $wall($this->storedStart())) {
+                $this->stored = $at->setTimezone(Time::utc());
+            }
         }
     }
 
@@ -82,7 +102,7 @@ final class Calc
         $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
         $len = max(0, Time::fromDb((string) $row['end_utc'])->getTimestamp() - $start->getTimestamp());
         $rule ??= Rule::parse((string) $row['rrule'], $dn);
-        $calc = new self($rule, $dn, $tz, $allDay, $clock, $len, false);
+        $calc = new self($rule, $dn, $tz, $allDay, $clock, $len, false, $start);
         try {
             $skips = \BetterCal\Domain\Recurrence::decodeExdates($row['exdates_json'] ?? null);
         } catch (\Throwable) {
@@ -92,7 +112,7 @@ final class Calc
             $two = $calc->occurrences(PHP_INT_MAX, 2);
             if (count($two) === 2 && self::inGap($two[1], $calc->clock, $tz)) {
                 $logical = $rule->count !== null ? $rule->withBound($rule->count - 1, null) : $rule;
-                return new self($logical, $two[1], $tz, false, $calc->clock, $len, $dn);
+                return new self($logical, $two[1], $tz, false, $calc->clock, $len, $dn, $start);
             }
         }
         return $calc;
@@ -114,6 +134,9 @@ final class Calc
     /** The start as stored (UTC): the anchor day at the clock, or the first day. */
     public function storedStart(): \DateTimeImmutable
     {
+        if ($this->stored !== null) {
+            return $this->stored;
+        }
         return $this->allDay ? self::at($this->startDn, [0, 0, 0], 'UTC') : self::at($this->anchor ?? $this->startDn, $this->clock, $this->tz);
     }
 
@@ -300,7 +323,7 @@ final class Calc
 
     public function withoutBound(): self
     {
-        return new self($this->rule->withBound(null, null), $this->startDn, $this->tz, $this->allDay, $this->clock, $this->length, $this->anchor ?? false);
+        return new self($this->rule->withBound(null, null), $this->startDn, $this->tz, $this->allDay, $this->clock, $this->length, $this->anchor ?? false, $this->stored);
     }
 
     /** The local day an instant falls on in the series' zone. */

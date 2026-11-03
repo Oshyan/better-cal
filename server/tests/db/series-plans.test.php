@@ -76,22 +76,33 @@ return static function (Db $db): void {
         checkEq('undone, every row of the series is as before the commit', $stale, $rows($choir));
     });
 
-    scenario('series plans: direct field edits, refusals', function () use ($d, $u, $db, $answer, $weekly, $home): void {
+    scenario('series plans: direct field edits, refusals', function () use ($d, $u, $db, $rows, $answer, $weekly, $home): void {
         $plain = $weekly('Swim');
         $d->events->patch($u, $plain, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-19T19:00:00+00:00', 'end' => '2027-01-19T20:00:00+00:00']);
         $d->events->patch($u, $plain, ['scope' => 'all', 'title' => 'Swim practice']);
         checkEq('a rename with no edited day owning its title is direct: applied at once, the edited day takes the new title', ['Swim practice', 'Swim practice'], [
             $db->scalar('SELECT title FROM events WHERE id = ?', [$plain]), $db->scalar('SELECT title FROM events WHERE recurrence_parent_id = ?', [$plain]),
         ]);
-        $owned = $weekly('Choir');
+        $owned = (int) $d->events->create($u, eventAt($home, 'Choir', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU', 'tagNames' => ['sample']]))['eventId'];
         $d->events->patch($u, $owned, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Rehearsal']);
         [$code, $plan] = $answer(fn() => $d->events->patch($u, $owned, ['scope' => 'all', 'title' => 'Chorus']));
         checkEq('the same rename where a day owns its title is 409 series_plan_required, the group to give it the title too', ['409 series_plan_required', ['ownTitle']], [$code, array_column($plan['groups'] ?? [], 'id')]);
-        planned($d->events, $u, $owned, ['scope' => 'all', 'title' => 'Chorus'], ['ownTitle' => 'give']);
-        checkEq('"Give it the new title too": the day takes it and no longer owns its title', ['Chorus', []], [
-            $db->scalar('SELECT title FROM events WHERE recurrence_parent_id = ?', [$owned]),
-            json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE recurrence_parent_id = ?', [$owned]), true),
+        // Its title was all it owned: given the series' title, every value is
+        // the series' and the day is an ordinary occurrence again, its row
+        // deleted (Own Fields); Undo puts the row and its tags back as they were.
+        $tagRows = static fn(): array => $db->all('SELECT t.event_id, t.tag_id FROM event_tags t JOIN events e ON e.id = t.event_id WHERE e.recurrence_parent_id = ? ORDER BY t.event_id, t.tag_id', [$owned]);
+        $beforeGive = [$rows($owned), $tagRows()];
+        $plan = planned($d->events, $u, $owned, ['scope' => 'all', 'title' => 'Chorus'], ['ownTitle' => 'give']);
+        checkEq('"Give it the new title too" to a day that owned only its title: its row is deleted and the plan says it goes back to the series', [
+            'Chorus', 0, ['rejoins'], ['2027-01-12T18:00:00Z'],
+        ], [
+            $db->scalar('SELECT title FROM events WHERE id = ?', [$owned]),
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ?', [$owned]),
+            array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'outcome'),
+            array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'newKey'),
         ]);
+        $d->undo->undoLatest($u);
+        checkEq('undone, the edited day\'s row and its tags are byte-identical to before', $beforeGive, [$rows($owned), $tagRows()]);
         $weekno = (int) $d->events->create($u, eventAt($home, 'Kickoff', '2027-01-04', ['rrule' => 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO']))['eventId'];
         $before = $db->one('SELECT * FROM events WHERE id = ?', [$weekno]);
         [$code, $plan] = $answer(fn() => $d->events->patch($u, $weekno, ['scope' => 'all', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'start' => '2027-01-05T18:00:00+00:00', 'end' => '2027-01-05T19:00:00+00:00']));

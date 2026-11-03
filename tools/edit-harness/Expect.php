@@ -246,6 +246,10 @@ final class Expect
             $k = Days::miOf($l) - Days::miOf($a);
             $j = $s->memberOf($a) ?? 0;
             $old = $s->forms[$j];
+            if ($old[0] === 'pos') {
+                // Set positions are their own row, one position or several (the drag table).
+                return [$this->setPosition($k)];
+            }
             if (count($s->forms) === 1) {
                 $out = [];
                 foreach ($this->landedForms($old, $l, $s->bare) as [$id, $form]) {
@@ -254,13 +258,9 @@ final class Expect
                 return $out;
             }
             $n = count($s->forms);
-            if ($old[0] === 'pos') {
-                return [$this->setPosition($k)];
-            }
             $ks = array_fill(0, $n, 0);
             $ks[$j] = $k;
             if ($old[0] === 'd') {
-                [, , $ad] = Days::ymd($a);
                 $newJ = $old[1] > 0 ? ['d', $ld] : ['d', $ld - $llen - 1];
                 $forms = $s->forms;
                 $forms[$j] = $newJ;
@@ -271,7 +271,10 @@ final class Expect
                 } elseif ($k % $s->interval !== 0) {
                     $member = self::disabled($member, 'interval_month');
                 }
-                $dd = $ld - $ad;
+                // δ is the dragged member's change in its own counting (by
+                // number, or from the end), so the pattern lands the day acted
+                // on where it was dropped (series-model.md, Vocabulary: δ).
+                $dd = $newJ[1] - $old[1];
                 $pforms = [];
                 $bad = false;
                 foreach ($s->forms as $f) {

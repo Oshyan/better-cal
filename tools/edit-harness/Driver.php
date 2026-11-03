@@ -537,6 +537,9 @@ final class Driver
             $lastDn = strlen($u) === 8 ? Days::ofDate(substr($u, 0, 4) . '-' . substr($u, 4, 2) . '-' . substr($u, 6, 2)) : Clock::dnOf(\DateTimeImmutable::createFromFormat('Ymd\THis\Z', $u, Clock::utc())->setTimezone(Clock::zone($st['tz'])));
             $oldBound = ';UNTIL=' . ($toAllDay ? str_replace('-', '', Days::date($lastDn)) : Clock::at($lastDn, 86399, $toTz)->setTimezone(Clock::utc())->format('Ymd\THis\Z'));
         }
+        // A new pattern that is the stored one by the design's comparison (a weekly
+        // BYDAY of the start's weekday is the bare rule) is no new rule (Mapping, Defined, step 1).
+        $newIsSame = $v['rule'] === 'new' && Shape::samePattern($st['shape'], Shape::parse($v['newRule'], $st['startDn']));
         if ($v['rule'] !== 'absent' || $newBound !== null) {
             $pattern = $v['rule'] === 'new' ? $v['newRule'] : Shape::pattern((string) $master['rrule']);
             if ($v['rule'] === 'same' && $v['sameForm'] === 'editor') {
@@ -546,7 +549,7 @@ final class Driver
             $in['rrule'] = $pattern . $boundText;
             $ruleText = $v['rule'] === 'new' ? $in['rrule'] : null;
             $boundSent = $newBound['oracle'] ?? null;
-            if ($boundSent !== null && $v['rule'] !== 'new' && $this->sameBound($st, $boundSent)) {
+            if ($boundSent !== null && ($v['rule'] !== 'new' || $newIsSame) && $this->sameBound($st, $boundSent)) {
                 $boundSent = null; // the same end, in another form, is no bound change (Mapping, Defined, step 1)
             }
         }
@@ -563,8 +566,8 @@ final class Driver
             'fromRow' => $fromRow,
             'shown' => $shown,
             'sent' => $sent,
-            'rule' => $v['rule'] === 'new' ? 'new' : ($v['rule'] === 'same' ? 'same' : 'absent'),
-            'ruleText' => $ruleText,
+            'rule' => $newIsSame ? 'same' : ($v['rule'] === 'new' ? 'new' : ($v['rule'] === 'same' ? 'same' : 'absent')),
+            'ruleText' => $newIsSame ? null : $ruleText,
             'boundSent' => $boundSent,
             'fields' => $changed,
             'trip' => $v['trip'],

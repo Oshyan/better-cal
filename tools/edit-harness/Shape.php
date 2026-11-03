@@ -187,6 +187,28 @@ final class Shape
         return $s;
     }
 
+    /**
+     * Whether two patterns of the drag table are the same pattern by the
+     * design's comparison (Mapping, Defined, step 1): every list a set, a
+     * bare rule its start's member (a weekly one its weekday, a monthly one
+     * its day, a yearly one its month and day), WKST only where it counts.
+     */
+    public static function samePattern(self $a, self $b): bool
+    {
+        if ($a->cap !== 'table' || $b->cap !== 'table') {
+            return false;
+        }
+        $canon = static function (array $l): array {
+            $l = array_map('json_encode', $l);
+            sort($l);
+            return $l;
+        };
+        $wkst = static fn(self $s): ?int => $s->freq === 'WEEKLY' && $s->interval > 1 && count($s->wds) > 1 ? $s->wkst : null;
+        return $a->freq === $b->freq && $a->interval === $b->interval && $a->dailyList === $b->dailyList
+            && $canon($a->wds) === $canon($b->wds) && $canon($a->forms) === $canon($b->forms)
+            && $canon($a->months) === $canon($b->months) && $canon($a->set) === $canon($b->set) && $wkst($a) === $wkst($b);
+    }
+
     /** @return list<array>|null */
     private static function monthForms(array $mdays, array $plain, array $nth, array $setpos, int $startDay, self $s): ?array
     {

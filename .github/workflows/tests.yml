@@ -34,6 +34,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: PHP and extensions
         run: php -v && php -m | grep -Ei 'pdo_sqlite|sodium|mbstring|curl'
+      # The suite runs with the libraries every install has (the series
+      # model reads occurrences through the expander), installed as the
+      # other jobs install them.
+      - name: Composer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libzip-dev unzip git
+          docker-php-ext-install zip
+          php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
+          php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
+          php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) { fwrite(STDERR, "Composer installer signature mismatch\n"); exit(1); }'
+          php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
+      - name: composer install
+        working-directory: server
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --no-dev --no-interaction --prefer-dist
       - name: Server tests
         run: php server/tests/run.php
       - name: Deploy privilege-boundary tests

@@ -4510,12 +4510,16 @@ console.log('--- update notices (#194) ---');
 }
 
 // A weekly series on Tuesdays at 19:00 in Los Angeles dragged to Wednesday,
-// with forty edited days in the server's sentences (Series/Model.php): the
-// sixth shown at a date of its own, with its keep-or-move choice, the
-// twenty-first becoming an event of its own, and the rest going with their
-// events, each keeping what keeps(i) names.
+// with forty edited days as the server sends them (Series/Model.php): their
+// sentences, and `kept` and `takes`, the own fields each keeps and the
+// fields of this edit it takes from the series. The sixth is shown at a
+// date of its own, with its keep-or-move choice, the twenty-first becomes
+// an event of its own, and the rest go with their events (taking the new
+// date), each keeping the fields keeps(i) names.
 const { planDate: fixtureDate } = await import('../src/lib/seriesplan.js');
-function sampleEditedDays(keeps = () => 'title and place') {
+const FIXTURE_WORDS = { title: 'title', location: 'place', description: 'notes' };
+const fixtureList = (fields) => { const w = fields.map((f) => FIXTURE_WORDS[f]); return w.length <= 1 ? w[0] || '' : w.slice(0, -1).join(', ') + ' and ' + w[w.length - 1]; };
+function sampleEditedDays(keeps = () => ['title', 'location']) {
   const at = (iso) => fixtureDate(iso, { tz: 'America/Los_Angeles', refYear: 2027 });
   const iso = (ms) => new Date(ms).toISOString().replace('.000Z', 'Z');
   const DAY = 86400000;
@@ -4526,15 +4530,15 @@ function sampleEditedDays(keeps = () => 'title and place') {
     const title = 'Sample practice ' + (i + 1);
     if (i === 5) {
       const own = Date.parse(key) + 3 * DAY;
-      days.push({ key, newKey, kind: 'edited', title, outcome: 'stays', words: `'${title}' ${at(key)}, moved to ${at(iso(own))}: stays there, keeps its title` });
+      days.push({ key, newKey, kind: 'edited', title, outcome: 'stays', words: `'${title}' ${at(key)}, moved to ${at(iso(own))}: stays there, keeps its title`, kept: ['date', 'title'], takes: [] });
       groups.push({ id: 'movedDays', label: 'Days moved on their own', day: key, selected: 'keep',
         options: [{ id: 'keep', label: 'Keep ' + at(iso(own)) }, { id: 'move', label: 'Move to ' + at(iso(own + DAY)) }] });
     } else if (i === 20) {
-      days.push({ key, newKey: null, kind: 'edited', title, outcome: 'separate', words: `'${title}' ${at(key)} becomes an event of its own` });
+      days.push({ key, newKey: null, kind: 'edited', title, outcome: 'separate', words: `'${title}' ${at(key)} becomes an event of its own`, kept: ['title'], takes: [] });
     } else {
-      const k = keeps(i);
-      const name = /\btitle\b/.test(k) ? `'${title}' ` : '';
-      days.push({ key, newKey, kind: 'edited', title, outcome: 'moves', words: `${name}${at(key)} moves to ${at(newKey)}${k ? ', keeps its ' + k : ''}` });
+      const kept = keeps(i);
+      const name = kept.includes('title') ? `'${title}' ` : '';
+      days.push({ key, newKey, kind: 'edited', title, outcome: 'moves', words: `${name}${at(key)} moves to ${at(newKey)}${kept.length ? ', keeps its ' + fixtureList(kept) : ''}`, kept, takes: ['date'] });
     }
   }
   return {
@@ -4560,8 +4564,8 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
       { start: '2027-03-26T19:00:00-07:00', kind: 'edited', words: 'its own date' }, { start: '2027-04-07T19:00:00-07:00', kind: 'occurrence' }],
     groups: [{ id: 'movedDays', label: 'Days moved on their own', selected: 'keep', options: [{ id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' }] }],
     days: [
-      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', words: "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place" },
-      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', outcome: 'stays', words: 'Tue 23 Mar, moved to Fri 26 Mar: stays there' },
+      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', words: "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place", kept: ['title', 'location'], takes: ['date'] },
+      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', outcome: 'stays', words: 'Tue 23 Mar, moved to Fri 26 Mar: stays there', kept: ['date'], takes: [] },
       { key: '2027-03-31T02:00:00Z', newKey: '2027-04-01T02:00:00Z', kind: 'skipped', outcome: 'moves' },
     ],
     losses: [], gains: [], refusals: [], notes: [],
@@ -4830,7 +4834,7 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     sampleEditedDays().days.every((d) => fortyNamed.includes(d.words))], [38, 40, 40, true]);
   eq('edited days grouped: a group\'s days in their own words, by date', forty.edited[2].days.slice(0, 2).map((d) => d.words),
     ["'Sample practice 1' Tue 6 Apr moves to Wed 7 Apr, keeps its title and place", "'Sample practice 2' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"]);
-  const mixed = planView(sampleEditedDays((i) => (i < 20 ? 'title and place' : i < 39 ? 'title' : 'place')), ctx());
+  const mixed = planView(sampleEditedDays((i) => (i < 20 ? ['title', 'location'] : i < 39 ? ['title'] : ['location'])), ctx());
   eq('edited days grouped: other fields kept make other groups, and a group of one is its day\'s line', mixed.edited.map((d) => [d.words, d.days ? d.days.length : 0]), [
     ["'Sample practice 6' Tue 11 May, moved to Fri 14 May: stays there, keeps its title", 0],
     ["'Sample practice 21' Tue 24 Aug becomes an event of its own", 0],
@@ -4838,14 +4842,26 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
     ['18 edited days from 31 Aug to 28 Dec move to Wednesday; each keeps its title', 18],
     ['Tue 4 Jan 2028 moves to Wed 5 Jan 2028, keeps its place', 0],
   ]);
-  const timed = planView({ hash: 't1', days: [1, 2, 3].map((n) => ({ key: `2027-0${n}-10T03:00:00Z`, newKey: `2027-0${n}-10T04:00:00Z`, kind: 'edited', title: 'Sample class', outcome: 'moves', words: `${fixtureDate(`2027-0${n}-10T03:00:00Z`, { tz: LA, refYear: 2027 })} moves to 20:00, keeps its notes` })) }, ctx());
+  const timed = planView({ hash: 't1', days: [1, 2, 3].map((n) => ({ key: `2027-0${n}-10T03:00:00Z`, newKey: `2027-0${n}-10T04:00:00Z`, kind: 'edited', title: 'Sample class', outcome: 'moves', words: `${fixtureDate(`2027-0${n}-10T03:00:00Z`, { tz: LA, refYear: 2027 })} moves to 20:00, keeps its notes`, kept: ['description'], takes: ['time'] })) }, ctx());
   eq('edited days grouped: days taking a new clock time say it once', timed.edited.map((d) => d.words), ['3 edited days from 9 Jan to 9 Mar move to 20:00; each keeps its notes']);
   const twoLater = (k) => new Date(Date.parse(k) + 2 * 86400000).toISOString().slice(0, 10);
   const shifted = planView({ hash: 't2', days: ['2027-03-03', '2027-03-11', '2027-03-19'].map((k) => ({ key: k, newKey: twoLater(k), kind: 'edited', outcome: 'moves',
-    words: `${fixtureDate(k, { refYear: 2027 })} moves to ${fixtureDate(twoLater(k), { refYear: 2027 })}` })) }, ctx());
+    words: `${fixtureDate(k, { refYear: 2027 })} moves to ${fixtureDate(twoLater(k), { refYear: 2027 })}`, kept: [], takes: ['date'] })) }, ctx());
   eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => d.words), ['3 edited days from 3 Mar to 19 Mar move 2 days later']);
   const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'own' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', label: 'Keep it' }, { id: 'move', label: 'Move it' }] })) }, ctx());
   eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
+
+  // The groups come from the plan's lists, never its sentences: reworded
+  // days still fold together, and different fields taken split them.
+  const reworded = sampleEditedDays();
+  reworded.days = reworded.days.map((d, i) => (d.outcome === 'moves' ? { ...d, words: `Day ${i + 1} goes along (worded differently each time: ${'x'.repeat(i)})` } : d));
+  eq('edited days grouped: by outcome, kept and takes, whatever the words say', planView(reworded, ctx()).edited.map((d) => d.days ? d.days.length : 0), [0, 0, 38]);
+  const takesSplit = sampleEditedDays();
+  takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'time'] } : d));
+  eq('edited days grouped: days taking other fields are another group, named in its line', planView(takesSplit, ctx()).edited.slice(2).map((d) => d.words), [
+    '28 edited days from 6 Apr to 26 Oct move to Wednesday; each keeps its title and place',
+    '10 edited days from 2 Nov to 4 Jan 2028 move to Wednesday; each keeps its title and place, takes the new time',
+  ]);
 
   const longEdited = sampleEditedDays();
   const longChoice = { ...choir, hash: 'long2', groups: [{ id: 'reading', label: 'How it repeats', selected: 'r0',

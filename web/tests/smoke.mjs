@@ -4588,7 +4588,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: the title states the action and the scope; the series on its calendar under it', [v.title, v.series], ['Move all events', "'Choir' on Sample"]);
   eq('series panel: CHANGE says from and to, the end part of it', v.change, 'From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, its ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 · Wed, Apr 7 …');
-  eq('series panel: AFFECTS, all events with no end, then the edited and skipped', v.affects, 'All events, with no end. 2 of them are edited, 1 is skipped.');
+  eq('series panel: AFFECTS, all events with no end, then the edited and skipped', v.affects, 'All events, with no end. 2 were changed earlier, 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
     "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
@@ -4617,7 +4617,10 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   ], ['with no end (was 6 events).', 'ending Jan 20, 2028, as before.', 'ending Nov 1 (was Oct 31).', 'for 6 events, as before.', 'for 10 events (was 6).']);
   const until = planView({ ...choir, bound: { kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }, counts: { events: 13, edited: 11, skipped: 1 }, nextMore: false }, ctx());
   eq('series panel: an end date, its count on Affects and the button, no ellipsis once the list reaches past it', [until.affects, until.action, until.comingUp.endsWith('…')],
-    ['13 events, ending Jan 20, 2028. 11 of them are edited, 1 is skipped.', 'Move 13 events', false]);
+    ['13 events, ending Jan 20, 2028. 11 were changed earlier, 1 was removed.', 'Move 13 events', false]);
+  eq('series panel: Affects in the singular, a zero part left out', [
+    planView({ ...choir, counts: { events: null, edited: 1, skipped: 0 } }, ctx()).affects, planView({ ...choir, counts: { events: null, edited: 0, skipped: 2 } }, ctx()).affects,
+  ], ['All events, with no end. 1 was changed earlier.', 'All events, with no end. 2 were removed.']);
   eq('series panel: Affects says nothing more when no day is edited or skipped', planView({ ...choir, counts: { events: null, edited: 0, skipped: 0 } }, ctx()).affects, 'All events, with no end.');
 
   // Readings: "Gym", Wed 10 Mar dragged to Thu 11 Mar.

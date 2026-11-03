@@ -128,9 +128,9 @@ export function comingUp(next, more, opts = {}) {
 }
 
 /**
- * AFFECTS: "All events, with no end. 11 of them are edited, 1 is skipped."
+ * AFFECTS: "All events, with no end. 11 were changed earlier, 1 was removed."
  * or "13 events, ending Jan 20, 2027. ..."; the second sentence only when a
- * day is edited or skipped.
+ * day was changed or removed earlier.
  */
 export function affects(counts, bound, opts = {}) {
   const c = counts || {};
@@ -138,10 +138,10 @@ export function affects(counts, bound, opts = {}) {
   const first = c.events == null
     ? 'All events, with no end.'
     : plural(c.events, 'event', 'events') + (last ? ', ending ' + fmtDay(last, { weekday: false, ...opts }) : '') + '.';
-  const be = (n) => (n === 1 ? 'is' : 'are');
+  const was = (n) => (n === 1 ? 'was' : 'were');
   const parts = [];
-  if (c.edited) parts.push(c.edited + ' of them ' + be(c.edited) + ' edited');
-  if (c.skipped) parts.push(c.skipped + (parts.length ? ' ' : ' of them ') + be(c.skipped) + ' skipped');
+  if (c.edited) parts.push(c.edited + ' ' + was(c.edited) + ' changed earlier');
+  if (c.skipped) parts.push(c.skipped + ' ' + was(c.skipped) + ' removed');
   return parts.length ? first + ' ' + parts.join(', ') + '.' : first;
 }
 

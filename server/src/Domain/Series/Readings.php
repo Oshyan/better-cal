@@ -25,13 +25,34 @@ final class Readings
     public static function forDrag(Rule $r0, int $actedDn, int $landedDn, int $startDn): array
     {
         $delta = $landedDn - $actedDn;
-        return match ($r0->kind) {
+        $out = match ($r0->kind) {
             'daily' => [self::reading('follow', '', $r0, static fn(int $dn): int => $dn + $delta, true)],
             'weekly' => self::weekly($r0, $actedDn, $delta, $startDn),
             'monthly' => self::monthly($r0, $actedDn, $landedDn),
             'yearly' => self::yearly($r0, $actedDn, $landedDn),
             default => [],
         };
+        // A generated rule meets the constraint a parsed one does: no two
+        // members on one day in any period (Correspondence, by Member). Two
+        // members that coincide only sometimes (28 and -1 in February) would
+        // map two old occurrences, and two edited days, onto one key.
+        foreach ($out as $i => $r) {
+            if (empty($r['disabled']) && ($pair = $r['rule']->collision()) !== null) {
+                $out[$i] = self::disable($r, 'member_taken', self::collisionWords($pair));
+            }
+        }
+        return $out;
+    }
+
+    /** "the 28th and the last day would be one day in some months". */
+    private static function collisionWords(array $pair): string
+    {
+        [$a, $b] = $pair;
+        if (is_int($a)) {
+            return Words::day($a) . ' would be one of its days twice';
+        }
+        $name = static fn(array $m): string => $m['t'] === 'nth' ? Words::member($m) : 'the ' . self::memberShort($m);
+        return $name($a) . ' and ' . $name($b) . ' would be one day in some months';
     }
 
     /** The reading that leaves the days where they are (a time, zone, all-day, bound or field edit). */
@@ -70,7 +91,9 @@ final class Readings
         // place in its week and its week's place in the interval.
         $pattern = clone $r0;
         $pattern->members = array_map($shift, $r0->members);
-        $pattern->dirty = true;
+        // A DAILY;BYDAY list moved by whole weeks is the same rule: kept as
+        // written, so its days and clock stay sabre's daily ones.
+        $pattern->dirty = !($r0->dailyList && $whole && !$r0->dirty);
         if ($r0->interval > 1) {
             $pattern->wkst = $shift($r0->weekStart());
             if ($pattern->wkst === 0 && $r0->wkst === null) {

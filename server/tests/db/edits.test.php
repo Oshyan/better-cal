@@ -50,4 +50,15 @@ return static function (Db $db): void {
             ]);
         }
     });
+    // An all-day every-other-Friday series dragged by no days and no time:
+    // the app writes nothing, so its stored UNTIL stays a valid bound, which
+    // the oracle once insisted be rewritten to the last occurrence.
+    scenario('edit harness: a no-op drag keeps its bound', function () use ($db): void {
+        $runner = new Runner($db, domains($db), 3);
+        $runner->run(2218, null, null, 2218);
+        checkEq('edit harness: seed 3 case 2218 ran and has no failing check', [1, []], [
+            $runner->counts['cases'],
+            array_map(static fn(array $f): string => Runner::signature($f) . ': ' . $f['what'], $runner->failures),
+        ]);
+    });
 };

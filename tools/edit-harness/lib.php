@@ -883,18 +883,19 @@ final class Driver
         return (int) $this->events->create($this->userId, $in)['eventId'];
     }
 
-    /** What create() does to a start off its pattern, for the probe that picks an UNTIL. */
+    /**
+     * What create() does to a start off its pattern, for the probe that
+     * picks an UNTIL: the same alignment creation applies (SeriesPlans::
+     * seriesStart, the first day of the rule counted from the start's
+     * period), so an every-other-week bound falls in the weeks the series
+     * counts. A day-by-day search for the first matching weekday could pick
+     * the other week of the pair (seed 3 case 2218).
+     */
     private static function alignedForProbe(array $row, string $family): array
     {
-        if (in_array($family, ['daily', 'weekly_plain', 'monthly_plain', 'yearly_plain'], true)) {
-            return $row;
-        }
-        $tz = Time::zone((string) $row['tzid']);
-        $start = Time::fromDb((string) $row['start_utc'])->setTimezone((int) $row['all_day'] === 1 ? Time::utc() : $tz);
-        $first = RepeatParser::firstOn(RepeatParser::ruleParts((string) $row['rrule']), $start);
-        $row['start_utc'] = Time::toDb($first);
-        $row['end_utc'] = $row['start_utc'];
-        return $row;
+        unset($family);
+        $align = new \ReflectionMethod(Events::class, 'seriesStart');
+        return array_merge($row, (array) $align->invoke(null, $row));
     }
 
     private function instanceArg(array $master, string $key): string
@@ -1423,9 +1424,13 @@ final class Driver
             if (($choices['zone'] ?? 'clock') === 'clock') {
                 $this->checkActed($after, $landed, $newTz, $newAllDay, $payload);
             }
-            // UNTIL is an occurrence: the last one.
+            // UNTIL is an occurrence, the last one, after a change that
+            // rewrote it. An edit that left the rule and start as they were
+            // (a drag of no days and no time) keeps the stored bound, which
+            // may be any valid upper bound: a no-op writes no new dates.
             $p1 = RepeatParser::ruleParts((string) $m1['rrule']);
-            if (isset($p1['UNTIL']) && $after['raw'] !== []) {
+            $boundKept = (string) $m1['rrule'] === (string) $m0['rrule'] && (string) $m1['start_utc'] === (string) $m0['start_utc'];
+            if (isset($p1['UNTIL']) && $after['raw'] !== [] && !$boundKept) {
                 $last = end($after['raw']);
                 $untilOk = strlen((string) $p1['UNTIL']) === 8 ? str_replace('-', '', $last['day']) === $p1['UNTIL'] : Time::fromDb($last['key'])->format('Ymd\THis\Z') === $p1['UNTIL'];
                 $this->check('1-until', $untilOk || !in_array($edit['kind'], ['drag_all', 'time_all', 'allday_all', 'zone_all'], true), 'UNTIL is the last occurrence', ['until' => $p1['UNTIL'], 'last' => $last['key']]);

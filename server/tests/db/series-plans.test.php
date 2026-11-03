@@ -63,6 +63,23 @@ return static function (Db $db): void {
             ["Tue 23 Mar$yr, moved to Fri 26 Mar$yr", 'stays there', "Tue 23 Mar$yr, moved to Fri 26 Mar$yr: stays there"],
             ["Tue 30 Mar$yr", "moves to Wed 31 Mar$yr", "Skipped Tue 30 Mar$yr moves to Wed 31 Mar$yr"],
         ], [$parts($byKey['2027-04-13T18:00:00Z'] ?? null), $parts($byKey['2027-03-23T18:00:00Z'] ?? null), $parts($byKey['2027-03-30T18:00:00Z'] ?? null)]);
+        // The plan as data, for the client's own sentences: the rule before
+        // and after with its start and zone, the bound before and after,
+        // the counts, whether the series goes on past Next, each day's dates.
+        checkEq('the plan carries its data: rules, bounds, counts, the day dates and the moved day\'s option dates', [
+            ['FREQ=WEEKLY;BYDAY=TU', '2027-01-05', false], ['FREQ=WEEKLY;BYDAY=WE', '2027-01-06', false],
+            ['none', null, 'none'], ['events' => null, 'edited' => 2, 'skipped' => 1], true,
+            ['2027-04-13', '2027-04-14'], ['2027-03-26', '2027-03-26'], ['2027-03-30', '2027-03-31'],
+            ['2027-03-26', '2027-03-27'], 1,
+        ], [
+            [$plan['rule']['from']['rrule'], substr($plan['rule']['from']['start'], 0, 10), $plan['rule']['from']['allDay']],
+            [$plan['rule']['to']['rrule'], substr($plan['rule']['to']['start'], 0, 10), $plan['rule']['to']['allDay']],
+            [$plan['bound']['kind'], $plan['bound']['events'], $plan['bound']['from']['kind']], $plan['counts'], $plan['nextMore'],
+            [$byKey['2027-04-13T18:00:00Z']['shows'] ?? null, $byKey['2027-04-13T18:00:00Z']['to'] ?? null],
+            [$byKey['2027-03-23T18:00:00Z']['shows'] ?? null, $byKey['2027-03-23T18:00:00Z']['to'] ?? null],
+            [$byKey['2027-03-30T18:00:00Z']['shows'] ?? null, $byKey['2027-03-30T18:00:00Z']['to'] ?? null],
+            array_column($plan['groups'][0]['options'] ?? [], 'date'), $plan['groups'][0]['count'] ?? null,
+        ]);
         [$code, $again] = $answer(fn() => $d->events->patch($u, $choir, $drag));
         checkEq('a drag sent without a plan is 409 series_plan_required with the plan, nothing written', ['409 series_plan_required', $plan['hash'], $before],
             [$code, $again['hash'] ?? null, $rows($choir)]);

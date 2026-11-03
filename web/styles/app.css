@@ -1120,12 +1120,16 @@ body.bc-drag-copy .bc-drag-ghost::after {
   border-radius: var(--radius); box-shadow: var(--shadow);
   display: flex; flex-direction: column; font-size: 13px; line-height: 1.4; outline: none;
 }
-.bc-sd-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); flex: none; }
+/* Header: the action and Change scope on one line, the series and its calendar on the next. */
+.bc-sd-head { display: grid; gap: 4px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); flex: none; }
+.bc-sd-head-row { display: flex; align-items: center; gap: 10px; }
 .bc-sd-title { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bc-sd-name { font-weight: 400; color: var(--fg-muted); }
+.bc-sd-series { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg); }
+.bc-sd-disc { background: var(--cal, var(--border-strong)); }
+.bc-sd-series-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The panel's small outlined buttons: Change scope, Show N days. */
+.bc-sd-small { padding: 1px 10px; font-size: 12px; flex: none; }
 /* Plain text controls: "Change scope" and Cancel. */
-.bc-sd-quiet { background: none; border: none; padding: 2px 4px; color: var(--fg-muted); font: inherit; cursor: pointer; white-space: nowrap; }
-.bc-sd-quiet:hover { color: var(--fg); text-decoration: underline; }
 /* Its scroll bar thin and always shown (a drawn rail on touch screens),
    with the edge shadows marking more above or below. */
 .bc-sd-body {
@@ -1135,32 +1139,32 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-plan.is-stale { opacity: 0.55; }
 /* Two columns: every block's label in one left column, its rows beside it;
    blocks apart by a hairline, rows by 6px. */
-.bc-sd-block { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 0 10px; padding: 8px 0; }
+.bc-sd-block { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0 10px; padding: 8px 0; }
 .bc-sd-block + .bc-sd-block { border-top: 1px solid var(--border); }
 .bc-sd-lab {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
-  color: var(--fg-muted); line-height: 18px; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg-muted); line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bc-sd-rows { display: grid; gap: 6px; min-width: 0; }
 .bc-sd-row { display: grid; gap: 1px; min-width: 0; }
 .bc-sd-r1 { color: var(--fg); }
 .bc-sd-r2 { color: var(--fg-muted); }
 .bc-sd-dates { font-variant-numeric: tabular-nums; }
-.bc-sd-refused { color: var(--fg); }
 .bc-sd-changed { margin: 8px 0 0; color: var(--warn-strong); }
 .bc-sd-working { margin: 10px 0; color: var(--fg-muted); }
 /* Choices: each radio on a full-width line of its own. */
-.bc-sd-radios { display: grid; gap: 2px; margin-top: 2px; }
-.bc-sd-opt { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; align-items: baseline; cursor: pointer; }
-.bc-sd-opt input, .bc-sd-reading input { margin: 0; align-self: start; margin-top: 3px; }
-.bc-sd-readings { display: grid; gap: 6px; }
-.bc-sd-reading { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; cursor: pointer; }
-.bc-sd-reading-text { display: grid; gap: 1px; min-width: 0; }
-.bc-sd-reading.is-disabled, .bc-sd-opt.is-disabled { cursor: default; }
-.bc-sd-reading.is-disabled .bc-sd-r1, .bc-sd-opt.is-disabled span { color: var(--fg-muted); }
+/* A choice: its reason, then each option on a line of its own, its dates
+   and consequence under its label. */
+.bc-sd-choice { display: grid; gap: 2px; margin-top: 2px; }
+.bc-sd-radios { display: grid; gap: 3px; margin-top: 2px; }
+.bc-sd-opt { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; cursor: pointer; }
+.bc-sd-opt input { margin: 0; align-self: start; margin-top: 3px; }
+.bc-sd-opt-text { display: grid; gap: 1px; min-width: 0; }
+.bc-sd-opt.is-disabled { cursor: default; }
+.bc-sd-opt.is-disabled .bc-sd-r1 { color: var(--fg-muted); }
 /* A group's days, opened under it: rows of the same shape, set in a little.
    Its button grows its tap area up on touch screens, never below the list. */
-.bc-sd-toggle { justify-self: start; margin-top: 3px; padding: 1px 10px; font-size: 12px; }
+.bc-sd-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 @media (pointer: coarse) { .bc-sd-toggle::after { bottom: 0; } }
 .bc-sd-days { display: grid; gap: 6px; margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--border); }
 .bc-sd-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); flex: none; }
@@ -1173,10 +1177,9 @@ body.bc-drag-copy .bc-drag-ghost::after {
   }
   .bc-sd-head { padding: 12px 14px 10px; }
   .bc-sd-body { padding: 0 14px; }
-  .bc-sd-block { grid-template-columns: 64px minmax(0, 1fr); }
-  .bc-sd-quiet { min-height: 40px; padding: 0 6px; }
-  .bc-sd-opt, .bc-sd-reading { padding: 4px 0; }
-  .bc-sd-toggle { min-height: 36px; }
+  .bc-sd-block { grid-template-columns: 92px minmax(0, 1fr); }
+  .bc-sd-small { min-height: 36px; }
+  .bc-sd-opt { padding: 4px 0; }
   .bc-sd-actions { padding: 8px 14px max(8px, env(safe-area-inset-bottom)); }
   .bc-sd-actions .bc-btn { min-height: 40px; padding: 6px 16px; }
 }

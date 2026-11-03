@@ -16,7 +16,7 @@ The panel opens in one place every time: at the bottom right of the calendar on 
 - **Coming up:** the next dates as they'll show, with "…" when the series goes on.
 - **Affects:** "All events, with no end. 11 were changed earlier, 1 was removed." or "13 events, ending Jan 20, 2027. ..."
 - **Edited days:** every day you changed earlier is named in a sentence that says what was done to it and what happens now ("'Sample practice 6' was moved earlier to Fri, Dec 11."), and a day with a choice asks right under it ("Keep it there, or move it with the rest?"). Only a field that changes is mentioned; what a day keeps isn't. Days that end up the same way share one row, "10 days that were changed earlier move to Wednesday.", and **Show 10 days** lists each. A day left with nothing of its own goes back to the series.
-- **Removed days:** "'Sample practice' on Tue, Dec 29 was removed earlier. Nothing will show on Wed, Dec 30 either."
+- **Removed days:** "'Sample practice' on Tue, Dec 29 was removed earlier, so no event is added on Wed, Dec 30."
 - **Refusals:** a change the series can't take says why, and its button is **Move only this one**, to change just the day you dragged. A choice that can't apply is shown greyed out with its reason.
 
 The button says what it does: **Move 6 events**, **Rename 6 events**, **Change 6 events** (or "all events" with no end); it stays off until the plan has arrived. **Cancel** or Esc puts everything back, and a press outside the panel does the same. If the series changed meanwhile (another tab, a sync), the panel shows the new plan and asks again.

@@ -1150,6 +1150,8 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-r1 { color: var(--fg); }
 .bc-sd-r2 { color: var(--fg-muted); }
 .bc-sd-dates { font-variant-numeric: tabular-nums; }
+/* Coming up is one line: three dates and the ellipsis. */
+.bc-sd-oneline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bc-sd-changed { margin: 8px 0 0; color: var(--warn-strong); }
 .bc-sd-working { margin: 10px 0; color: var(--fg-muted); }
 /* Choices: each radio on a full-width line of its own. */

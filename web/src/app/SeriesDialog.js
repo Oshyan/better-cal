@@ -156,7 +156,7 @@ function PlanBlocks({ view, openGroups, onToggle, working }) {
         : view.change && html`<div class="bc-sd-r1">${view.change}</div>`}
       ${view.readings.map((c) => html`<${Choice} key=${c.id} choice=${c} />`)}
     <//>
-    ${view.comingUp && html`<${Block} label="Coming up"><div class="bc-sd-r1 bc-sd-dates">${view.comingUp}</div><//>`}
+    ${view.comingUp && html`<${Block} label="Coming up"><div class="bc-sd-r1 bc-sd-dates bc-sd-oneline" title=${view.comingUp}>${view.comingUp}</div><//>`}
     ${view.affects && html`<${Block} label="Affects"><div class="bc-sd-r1">${view.affects}</div><//>`}
     ${view.edited.length > 0 && html`<${Block} label="Edited days">
       ${view.edited.map((r) => html`<${Row} key=${r.key} row=${r} open=${!!r.days && openGroups.has(r.key)} onToggle=${() => onToggle(r.key)} />`)}

@@ -4587,12 +4587,12 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const v = planView(choir, ctx());
   eq('series panel: the title states the action and the scope; the series on its calendar under it', [v.title, v.series], ['Move all events', "'Choir' on Sample"]);
   eq('series panel: CHANGE says from and to, the end part of it', v.change, 'From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before.');
-  eq('series panel: COMING UP, its ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 · Wed, Apr 7 …');
-  eq('series panel: AFFECTS, all events with no end, then the edited and skipped', v.affects, 'All events, with no end. 2 were changed earlier, 1 was removed.');
+  eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
+  eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
     "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
-  eq('series panel: a removed day that moves with the series', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier. Nothing will show on Wed, Mar 31 either."]);
+  eq('series panel: a removed day that moves with the series, in one sentence with its consequence', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier, so no event is added on Wed, Mar 31."]);
   eq('series panel: no count, so the button says all events', [v.action, v.canConfirm, v.refused], ['Move all events', true, null]);
   eq('series panel: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
   eq('series panel: a pick goes into the commit, and a pick that is no option is the plan\'s', [commitPlan(choir, { movedDays: 'move' }).choices, commitPlan(choir, { movedDays: 'nowhere' }).choices], [{ movedDays: 'move' }, { movedDays: 'keep' }]);
@@ -4615,12 +4615,15 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     bound({ kind: 'count', count: 6, events: 6, last: '2027-07-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
     bound({ kind: 'count', count: 10, events: 10, last: '2027-11-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
   ], ['with no end (was 6 events).', 'ending Jan 20, 2028, as before.', 'ending Nov 1 (was Oct 31).', 'for 6 events, as before.', 'for 10 events (was 6).']);
-  const until = planView({ ...choir, bound: { kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }, counts: { events: 13, edited: 11, skipped: 1 }, nextMore: false }, ctx());
-  eq('series panel: an end date, its count on Affects and the button, no ellipsis once the list reaches past it', [until.affects, until.action, until.comingUp.endsWith('…')],
-    ['13 events, ending Jan 20, 2028. 11 were changed earlier, 1 was removed.', 'Move 13 events', false]);
+  const until = planView({ ...choir, bound: { kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }, counts: { events: 13, edited: 11, skipped: 1 }, next: choir.next.slice(0, 3), nextMore: false }, ctx());
+  eq('series panel: an end date, its count on Affects and the button, no ellipsis when the series ends with the list', [until.affects, until.action, until.comingUp.endsWith('…')],
+    ['13 events, ending Jan 20, 2028. 11 were changed earlier (title, location and 1 other), 1 was removed.', 'Move 13 events', false]);
+  const fieldsOf = (kepts) => planView({ ...choir, counts: { events: null, edited: kepts.length, skipped: 0 }, days: kepts.map((kept, i) => ({ key: 'k' + i, kind: 'edited', outcome: 'moves', kept })) }, ctx()).affects;
+  eq('series panel: AFFECTS names the fields, most common first, at most two', [fieldsOf([['title'], ['title']]), fieldsOf([['title', 'location'], ['title']]), fieldsOf([['title', 'location', 'description'], ['title', 'reminders']])], [
+    'All events, with no end. 2 were changed earlier (title).', 'All events, with no end. 2 were changed earlier (title and location).', 'All events, with no end. 2 were changed earlier (title, location and 2 others).']);
   eq('series panel: Affects in the singular, a zero part left out', [
     planView({ ...choir, counts: { events: null, edited: 1, skipped: 0 } }, ctx()).affects, planView({ ...choir, counts: { events: null, edited: 0, skipped: 2 } }, ctx()).affects,
-  ], ['All events, with no end. 1 was changed earlier.', 'All events, with no end. 2 were removed.']);
+  ], ['All events, with no end. 1 was changed earlier (title, location and 1 other).', 'All events, with no end. 2 were removed.']);
   eq('series panel: Affects says nothing more when no day is edited or skipped', planView({ ...choir, counts: { events: null, edited: 0, skipped: 0 } }, ctx()).affects, 'All events, with no end.');
 
   // Readings: "Gym", Wed 10 Mar dragged to Thu 11 Mar.
@@ -4637,7 +4640,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: readings under CHANGE, a reason, then each option with its dates and how it differs', [g.readings[0].reason, g.readings[0].options.map((o) => [o.label, o.dates, o.note, o.selected])], [
     'This change can mean two things:', [
       ['Move every Wednesday to Thursday', 'Thu, Mar 11 · Fri, Mar 12 · Mon, Mar 15', '', true],
-      ['Shift the whole weekly pattern', 'Thu, Mar 11 · Sat, Mar 13 · Tue, Mar 16', 'differs from the first choice from Sat, Mar 13', false],
+      ['Shift the whole weekly pattern', 'Thu, Mar 11 · Sat, Mar 13 · Tue, Mar 16', 'first differs on Sat, Mar 13', false],
     ]]);
   const toFri = { ...gym, groups: [{ ...gym.groups[0], selected: 'pattern' }], refusals: [{ group: 'reading', option: 'member', code: 'member_taken', words: 'Server reason' }] };
   const f = planView(toFri, ctx({ title: 'Gym' }));
@@ -4736,6 +4739,21 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   ], ['Move only the 15th of the month', 'Move only this day of the pattern']);
   eq('series panel: a repeat several times a day says why it can\'t move as a series', planView({ hash: 's', refusals: [{ code: 'several' }] }, ctx()).refused,
     'This repeat happens several times a day, so its days and times can\u2019t be moved all at once. Move only this one, or change its details for all events.');
+
+  // From the scenario set: the clock before a month-end clause, a start that moved, an nth weekday, a choice about several days.
+  eq('series panel: the clock goes with the day, before a month-end clause', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=31', 'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-31T18:00:00-08:00', '2027-03-30T18:00:00-07:00') }, ctx()).change,
+    'From monthly on the 31st at 6:00 PM, skipping months without one to monthly on the 30th at 6:00 PM, skipping months without one, with no end, as before.');
+  eq('series panel: the same rule starting on another day says where it starts now', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-01-01T16:00:00-08:00', '2027-02-01T16:00:00-08:00'),
+    bound: { kind: 'count', count: 6, events: 6, from: { kind: 'count', count: 6 } } }, ctx()).change, 'Still monthly on the 1st at 4:00 PM, now starting Mon, Feb 1 (was Fri, Jan 1), for 6 events, as before.');
+  eq('series panel: an nth weekday moved reads as the days people name', labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=MONTHLY;BYDAY=2WE,3MO' }, { id: 'pattern', rrule: 'FREQ=MONTHLY;BYDAY=1WE,3WE' }] },
+    rule('FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=2WE,3MO', '2026-11-02T19:00:00-08:00', '2026-11-02T19:00:00-08:00')), ['Move every first Monday to the second Wednesday', 'Shift the whole monthly pattern']);
+  const twoTitles = planView({ ...choir, rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=TU', '2026-11-03T19:00:00-08:00', '2026-11-03T19:00:00-08:00'),
+    groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 2, days: ['k1', 'k2'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: [{ key: 'k1', kind: 'edited', title: 'Choir, extra rehearsal', outcome: 'stays', shows: '2026-11-17', to: '2026-11-17', kept: ['title'], takes: [] },
+      { key: 'k2', kind: 'edited', title: 'Choir, concert', outcome: 'stays', shows: '2026-12-15', to: '2026-12-15', kept: ['title'], takes: [] }] },
+  ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', refYear: 2026 }));
+  eq('series panel: a choice about several days sits on their group row', [twoTitles.edited.length, twoTitles.edited[0].line1, twoTitles.edited[0].range, twoTitles.edited[0].choice.lead, twoTitles.edited[0].choice.reason, twoTitles.edited[0].choice.options.map((o) => o.label)],
+    [1, '2 days that were changed earlier have their own titles.', 'Nov 17 to Dec 15', '', 'Keep their titles, or give them the new one too?', ['Keep their own titles', "Rename them to 'Chorus'"]]);
 
   // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
   const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));

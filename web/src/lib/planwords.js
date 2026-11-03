@@ -72,6 +72,9 @@ export function ruleWords(part) {
   const start = dayKeyOf(part.start);
   const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false }) || 'on a custom schedule';
   const clock = !part.allDay && part.start ? ' at ' + fmtClock(part.start, part.tz) : '';
+  // "on the 31st at 6:00 PM, skipping months without one", never the clock after the clause.
+  const clause = /(, skipping months without one|, or the last day(?: in shorter months)?)$/.exec(words);
+  if (clause) return lowerFirst(words.slice(0, clause.index)) + clock + clause[1];
   return lowerFirst(words) + clock;
 }
 
@@ -105,6 +108,10 @@ export function changeSentence(rule, bound, opts = {}) {
   const to = ruleWords(rule && rule.to);
   const end = boundPhrase(bound, opts);
   if (!from && !to) return upperFirst(end) + '.';
+  const fromDay = dayKeyOf(rule && rule.from && rule.from.start), toDay = dayKeyOf(rule && rule.to && rule.to.start);
+  if ((from === to || !to) && fromDay && toDay && fromDay !== toDay) {
+    return 'Still ' + from + ', now starting ' + fmtDay(toDay, opts) + ' (was ' + fmtDay(fromDay, { ...opts, prev: toDay }) + '), ' + end + '.';
+  }
   if (from === to || !to) return 'Still ' + from + ', ' + end + '.';
   return 'From ' + from + ' to ' + to + ', ' + end + '.';
 }
@@ -114,25 +121,31 @@ export const fieldSentence = (f) => f.label + ': ' + f.words + '.';
 
 // ---- coming up and affects ---------------------------------------------------
 
-/** COMING UP: "Wed, Nov 11 · Wed, Nov 18 · Wed, Nov 25 · Wed, Dec 2 …". */
+/**
+ * COMING UP: the next three dates, "Wed, Nov 11 · Wed, Nov 18 · Wed, Nov
+ * 25 …", the ellipsis whenever the series goes on past them.
+ */
 export function comingUp(next, more, opts = {}) {
   let prev = null;
-  const days = (next || []).map((n) => {
+  const list = next || [];
+  const days = list.slice(0, 3).map((n) => {
     const at = typeof n === 'string' ? n : n && n.start;
     const s = fmtDay(at, { ...opts, prev });
     prev = dayKeyOf(at);
     return s;
   }).filter(Boolean);
   if (!days.length) return '';
-  return days.join(' · ') + (more ? ' …' : '');
+  return days.join(' · ') + (more || list.length > 3 ? ' …' : '');
 }
 
 /**
- * AFFECTS: "All events, with no end. 11 were changed earlier, 1 was removed."
- * or "13 events, ending Jan 20, 2027. ..."; the second sentence only when a
- * day was changed or removed earlier.
+ * AFFECTS: "All events, with no end. 11 were changed earlier (title), 1 was
+ * removed." or "13 events, ending Jan 20, 2027. ..."; the second sentence
+ * only when a day was changed or removed earlier. The parenthesis names the
+ * fields the changed days have of their own, by how many days have each, at
+ * most two named and the rest counted. `days` are the plan's days.
  */
-export function affects(counts, bound, opts = {}) {
+export function affects(counts, bound, opts = {}, days = []) {
   const c = counts || {};
   const last = bound && (bound.last || (bound.until ? untilDayKey(bound.until) : null));
   const first = c.events == null
@@ -140,9 +153,26 @@ export function affects(counts, bound, opts = {}) {
     : plural(c.events, 'event', 'events') + (last ? ', ending ' + fmtDay(last, { weekday: false, ...opts }) : '') + '.';
   const was = (n) => (n === 1 ? 'was' : 'were');
   const parts = [];
-  if (c.edited) parts.push(c.edited + ' ' + was(c.edited) + ' changed earlier');
+  if (c.edited) parts.push(c.edited + ' ' + was(c.edited) + ' changed earlier' + ownFieldsAside(days));
   if (c.skipped) parts.push(c.skipped + ' ' + was(c.skipped) + ' removed');
   return parts.length ? first + ' ' + parts.join(', ') + '.' : first;
+}
+
+// The fields changed days have of their own, most common first: " (title,
+// location and 2 others)". Ties keep the editor's order.
+const OWN_ORDER = ['title', 'location', 'description', 'date', 'time', 'length', 'reminders', 'status', 'tags', 'people', 'url', 'icon', 'attendance', 'allDay'];
+function ownFieldsAside(days) {
+  const counts = new Map();
+  for (const d of days || []) {
+    if (d.kind !== 'edited') continue;
+    for (const f of d.kept || []) counts.set(f, (counts.get(f) || 0) + 1);
+  }
+  const fields = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || OWN_ORDER.indexOf(a) - OWN_ORDER.indexOf(b));
+  if (!fields.length) return '';
+  const named = fields.slice(0, 2).map((f) => FIELD_NOUNS[f] || f);
+  const rest = fields.length - named.length;
+  if (!rest) return ' (' + andList(named) + ')';
+  return ' (' + named.join(', ') + ' and ' + plural(rest, 'other', 'others') + ')';
 }
 
 // ---- the header and the action ----------------------------------------------
@@ -250,11 +280,19 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
   return { line1: count + ' days that were changed earlier ' + does + '.', range, toggle: (open) => (open ? 'Hide' : 'Show ' + count + ' days') };
 }
 
+/** A group row's sentence when a choice is about its days: "2 days that were changed earlier have their own title." */
+export function sharedLine(g, count) {
+  if (/^own[A-Z]/.test(g.id || '')) { const noun = FIELD_NOUNS[g.field] || 'value'; return count + ' days that were changed earlier have their own ' + (/s$|people/.test(noun) ? noun : noun + 's') + '.'; }
+  if (g.id === 'outside') return count + ' days that were changed earlier fall after the new end.';
+  if (g.id === 'movedDays') return count + ' days were moved earlier to dates of their own.';
+  return count + ' days that were changed earlier.';
+}
+
 /** A removed day's row (a skipped occurrence). */
 export function skipLines(d, opts = {}) {
   const name = quoted(opts.series || 'Untitled event');
   const was = name + ' on ' + fmtDay(d.shows, opts) + ' was removed earlier';
-  if (d.outcome === 'moves') return { line1: was + '. Nothing will show on ' + fmtDay(d.to, { ...opts, prev: d.shows }) + ' either.', line2: '' };
+  if (d.outcome === 'moves') return { line1: was + ', so no event is added on ' + fmtDay(d.to, { ...opts, prev: d.shows }) + '.', line2: '' };
   if (d.outcome === 'stays') return { line1: was + ', and stays removed.', line2: '' };
   if (d.outcome === 'dropped') return { line1: was + (d.why === 'outside' ? '; it falls outside the new series.' : '; the new pattern has no day there.'), line2: '' };
   return { line1: 'Nothing will show on ' + fmtDay(d.to, opts) + '.', line2: '' };
@@ -286,7 +324,7 @@ export function choiceWords(g, ctx = {}) {
   }
   if (g.id === 'outside') {
     return {
-      lead: n > 1 ? n + ' edited days fall after the new end.' : '',
+      lead: n > 1 && !ctx.onRow ? n + ' days that were changed earlier fall after the new end.' : '',
       reason: n > 1 ? 'Keep them as events of their own, or delete them?' : 'Keep it as an event of its own, or delete it?',
       options: label((x) => (x.id === 'keep' ? (n > 1 ? 'Keep them on their own' : 'Keep it on its own') : (n > 1 ? 'Delete them' : 'Delete it'))),
     };
@@ -297,7 +335,7 @@ export function choiceWords(g, ctx = {}) {
     const old = ctx.oldTitle || '';
     const fresh = g.value || ctx.newTitle || '';
     return {
-      lead: n > 1 ? n + ' edited days have their own ' + noun + '.' : '',
+      lead: n > 1 && !ctx.onRow ? n + ' days that were changed earlier have their own ' + noun + '.' : '',
       reason: n > 1 ? 'Keep their ' + noun + (title ? 's' : '') + ', or give them the new one too?' : 'Keep its ' + noun + ', or give it the new one too?',
       options: label((x) => (x.id === 'keep'
         ? (title && n === 1 && old ? 'Keep ' + quoted(old) : n > 1 ? 'Keep their own ' + noun + (title ? 's' : '') : 'Keep its own ' + noun)
@@ -384,7 +422,12 @@ function movedMember(before, after) {
     const x = list(a, k), y = list(b, k);
     const gone = x.filter((v) => !y.includes(v)), added = y.filter((v) => !x.includes(v));
     if (gone.length === 1 && added.length === 1) {
-      if (k === 'BYDAY') return DAY_CODE[gone[0]] != null && DAY_CODE[added[0]] != null ? [WEEKDAY_NAMES[DAY_CODE[gone[0]]], WEEKDAY_NAMES[DAY_CODE[added[0]]]] : null;
+      if (k === 'BYDAY') {
+        const nth = (v) => { const m = /^([+-]?\d)?([A-Z]{2})$/.exec(v); return m && DAY_CODE[m[2]] != null ? (m[1] ? (Number(m[1]) === -1 ? 'last' : ordinalWord(Number(m[1]))) + ' ' : '') + WEEKDAY_NAMES[DAY_CODE[m[2]]] : null; };
+        const g = nth(gone[0]), n = nth(added[0]);
+        if (!g || !n) return null;
+        return /^[A-Z]{2}$/.test(added[0]) ? [g, n] : [g, 'the ' + n];
+      }
       return [ordinalDay(Number(gone[0])), 'the ' + ordinalDay(Number(added[0]))];
     }
   }
@@ -402,7 +445,7 @@ export function optionLines(x, { selected = false, opts = {} } = {}) {
   let prev = null;
   const dates = (x.next || []).map((n) => { const at = typeof n === 'string' ? n : n && n.start; const s = fmtDay(at, { ...opts, prev }); prev = dayKeyOf(at); return s; }).filter(Boolean).join(' · ');
   const parts = (x.differs && x.differs.dates) || [];
-  const differs = !selected && parts.length ? 'differs from the first choice from ' + fmtDay(parts[0], opts) : '';
+  const differs = !selected && parts.length ? 'first differs on ' + fmtDay(parts[0], opts) : '';
   return { dates, note: differs };
 }
 

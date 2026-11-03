@@ -151,9 +151,10 @@ export function planView(plan, ctx = {}) {
   view.change = view.refused ? '' : W.changeSentence(plan.rule, plan.bound, opts);
   view.comingUp = W.comingUp(plan.next, plan.nextMore, opts);
   view.count = plan.counts ? plan.counts.events : null;
-  view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts);
+  view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts, plan.days);
 
   const onDay = new Map();
+  const onDays = new Map(); // a day's key -> the choice about it and other days
   const editedChoices = [];
   const skippedChoices = [];
   for (const g of plan.groups || []) {
@@ -161,6 +162,7 @@ export function planView(plan, ctx = {}) {
     if (CHANGE_GROUPS.has(g.id)) view.readings.push(choice(g));
     else if (g.id === 'edge') skippedChoices.push({ key: 'choice:edge', line1: '', line2: '', choice: choice(g) });
     else if (day != null && byKey.has(day)) onDay.set(day, [...(onDay.get(day) || []), g]);
+    else if (/^own[A-Z]/.test(g.id) && Array.isArray(g.days) && g.days.length > 1 && g.days.every((k) => byKey.has(k) && ['moves', 'stays'].includes(byKey.get(k).outcome))) g.days.forEach((k) => onDays.set(k, g));
     else editedChoices.push({ key: 'choice:' + g.id, line1: '', line2: '', choice: choice(g) });
   }
 
@@ -184,9 +186,11 @@ export function planView(plan, ctx = {}) {
     else if (gs.length) row.choice = choice(gs[0]);
     const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date');
     if (!goesWith) { rows.push(row); continue; }
-    // Grouped by outcome alone: what a day keeps or takes never splits a group.
-    const id = d.outcome;
-    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, days: [] });
+    // Grouped by outcome alone: what a day keeps or takes never splits a
+    // group; days a choice is about together are a group of their own with it.
+    const shared = onDays.get(d.key) || null;
+    const id = d.outcome + (shared ? ':' + shared.id : '');
+    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, shared, days: [] });
     groups.get(id).days.push({ d, row });
   }
   const groupRows = [...groups.values()].map((grp) => {
@@ -204,7 +208,8 @@ export function planView(plan, ctx = {}) {
       clock: grp.outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((x) => (x.d.takes || []).includes('time')) ? clock : null,
       first: sorted[0].d.shows, last: sorted[sorted.length - 1].d.shows,
     }, opts);
-    return { key: 'group:' + sorted[0].d.key, line1: words.line1, range: words.range, toggle: words.toggle, choice: null, days: sorted.map((x) => x.row) };
+    const line1 = grp.shared ? W.sharedLine(grp.shared, sorted.length) : words.line1;
+    return { key: 'group:' + sorted[0].d.key, line1, range: words.range, toggle: words.toggle, choice: grp.shared ? choice(grp.shared, { onRow: true }) : null, days: sorted.map((x) => x.row) };
   });
   view.edited = [...rows, ...groupRows, ...editedChoices];
   // Skipped days: an anchor is no event, and a day the new rule would add

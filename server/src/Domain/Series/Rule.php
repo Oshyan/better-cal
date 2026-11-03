@@ -645,6 +645,13 @@ final class Rule
         if (!$this->supported()) {
             $parts = $this->parts;
             unset($parts['COUNT'], $parts['UNTIL']);
+            // The clock it names, as text() writes it.
+            if ($this->hour !== null) {
+                $parts['BYHOUR'] = (string) $this->hour;
+            }
+            if ($this->minute !== null) {
+                $parts['BYMINUTE'] = (string) $this->minute;
+            }
             if (($parts['INTERVAL'] ?? '') === '1') {
                 unset($parts['INTERVAL']);
             }

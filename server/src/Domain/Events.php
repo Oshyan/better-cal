@@ -1424,7 +1424,14 @@ final class Events
             && !filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)
             && (int) ($event['is_container'] ?? 0) === 1
         ) {
-            Trips::assertClearable($this->trips->liveMemberCount($id));
+            $members = $this->trips->liveMemberCount($id);
+            if (!empty($event['rrule']) && empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
+                // For all events every edited day of the trip clears its flag too.
+                foreach ($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL AND is_container = 1', [$id]) as $edited) {
+                    $members += $this->trips->liveMemberCount((int) $edited['id']);
+                }
+            }
+            Trips::assertClearable($members);
         }
 
         $isRecurringMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);

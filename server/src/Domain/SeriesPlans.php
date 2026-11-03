@@ -341,7 +341,8 @@ trait SeriesPlans
         if (array_key_exists('rrule', $in)) {
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
-        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'reminders']));
+        // The trip flag rides along as a series column (Model::SERIES_COLUMNS): no edited day owns it.
+        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'reminders', 'isContainer']));
         $edit['columns'] = $content === [] ? [] : $this->columnPatch($master, $content);
         $ids = array_merge([$id], array_map(static fn(array $r): int => (int) $r['id'], $rows));
         $labels = $this->labels->forEvents($ids);
@@ -589,26 +590,8 @@ trait SeriesPlans
      */
     private static function changedOwnFields(array $before, array $after, array $in): array
     {
+        // A move within its day is a new time only; a new day at the same clock a date only.
         $out = OwnFields::changedFields($before, $after);
-        // A move within its day is a new time only; a new day is a date.
-        if (in_array('date', $out, true) && in_array('time', $out, true)) {
-            $tzB = Time::zone((int) $before['all_day'] === 1 ? 'UTC' : (string) $before['tzid']);
-            $tzA = Time::zone((int) $after['all_day'] === 1 ? 'UTC' : (string) $after['tzid']);
-            $b = Time::fromDb((string) $before['start_utc'])->setTimezone($tzB);
-            $a = Time::fromDb((string) $after['start_utc'])->setTimezone($tzA);
-            if ($b->format('Y-m-d') === $a->format('Y-m-d')) {
-                $out = array_values(array_diff($out, ['date']));
-            }
-            if ($b->format('H:i:s') === $a->format('H:i:s') && (string) $before['tzid'] === (string) $after['tzid']) {
-                $out = array_values(array_diff($out, ['time']));
-            }
-        }
-        if (in_array('length', $out, true)) {
-            $len = static fn(array $r): int => Time::fromDb((string) $r['end_utc'])->getTimestamp() - Time::fromDb((string) $r['start_utc'])->getTimestamp();
-            if ($len($before) === $len($after)) {
-                $out = array_values(array_diff($out, ['length']));
-            }
-        }
         // A content field sent is the day's own, even typed equal to the
         // series' value: the person chose it (the editor sends only what changed).
         foreach (['title' => 'title', 'location' => 'location', 'description' => 'description', 'url' => 'url', 'reminders' => 'reminders', 'status' => 'status', 'icon' => 'icon'] as $key => $field) {
@@ -660,19 +643,27 @@ trait SeriesPlans
         $len = Recurrence::durationSeconds($master);
         if (array_intersect($fields, ['date', 'time', 'length', 'allDay']) !== []) {
             $tz = Time::zone((int) $master['all_day'] === 1 ? 'UTC' : (string) $master['tzid']);
-            $rowTz = Time::zone((int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid']);
+            $rowAllDay = (int) $row['all_day'] === 1;
+            $rowTz = Time::zone($rowAllDay ? 'UTC' : (string) $row['tzid']);
+            $allDay = in_array('allDay', $left, true) ? $rowAllDay : (int) $master['all_day'] === 1;
+            if ($allDay !== $rowAllDay) {
+                // A day given the series' all-day setting leaves its own
+                // clock and length behind: they belonged to the other kind.
+                $left = array_values(array_diff($left, ['time', 'length']));
+            }
             $shown = Time::fromDb((string) $row['start_utc'])->setTimezone($rowTz);
+            $ownTime = in_array('time', $left, true) && !$allDay;
             $day = in_array('date', $left, true) ? $shown->format('Y-m-d') : $key->setTimezone($tz)->format('Y-m-d');
-            $clock = in_array('time', $left, true) ? $shown->format('H:i:s') : $key->setTimezone($tz)->format('H:i:s');
-            $zone = in_array('time', $left, true) ? $rowTz : $tz;
+            // Its own time is its clock in its own zone; otherwise the series' (Own Fields).
+            $clock = $allDay ? '00:00:00' : ($ownTime ? $shown->format('H:i:s') : $key->setTimezone($tz)->format('H:i:s'));
+            $zone = $allDay ? Time::utc() : ($ownTime ? $rowTz : $tz);
             $start = new \DateTimeImmutable($day . ' ' . $clock, $zone);
-            $length = in_array('length', $left, true) ? Recurrence::durationSeconds($row) : $len;
+            // The series' length, unless it's the day's own or the day isn't of the series' kind (all-day or timed).
+            $length = in_array('length', $left, true) || $allDay !== ((int) $master['all_day'] === 1) ? Recurrence::durationSeconds($row) : $len;
             $set['start_utc'] = Time::toDb($start);
             $set['end_utc'] = Time::toDb($start->modify('+' . $length . ' seconds'));
-            if (!in_array('allDay', $left, true)) {
-                $set['all_day'] = (int) $master['all_day'];
-                $set['tzid'] = (string) $master['tzid'];
-            }
+            $set['all_day'] = $allDay ? 1 : 0;
+            $set['tzid'] = in_array('allDay', $left, true) && $allDay ? (string) $row['tzid'] : ($ownTime ? (string) $row['tzid'] : (string) $master['tzid']);
         }
         $id = (int) $row['id'];
         $links = Undo::linksOf($this->db, [$id]);

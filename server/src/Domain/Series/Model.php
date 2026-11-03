@@ -87,6 +87,8 @@ final class Model
     private array $clock1;
     private int $len1;
     private int $landedDn;
+    /** Where a request naming no day starts the series, on a day its pattern gives: a bound, the days unmoved. */
+    private ?int $startTo = null;
     /** The request put the occurrence acted on somewhere else (any placement delta). */
     private bool $placed = false;
     /** Both sides timed, in different zones: the zone readings apply. */
@@ -272,6 +274,19 @@ final class Model
                 $this->sentRule->minute = null;
             }
         }
+
+        // A request naming no day moves the series' start, which is a bound
+        // (Bounds: Start, End and Days Outside). Put on a day the series'
+        // own pattern gives, it changes nothing about the days: every
+        // occurrence is its own image, and the series starts there, so the
+        // days before it, and their exceptions, are outside it. Put on a day
+        // the pattern doesn't give, the pattern changes too, and the first
+        // occurrence moves there as a drag.
+        if (!$named && $this->readable && !$this->r0->several && !$this->newRule() && !$this->zoneChanged && $this->allDay1 === $this->allDay0
+            && $this->landedDn !== $this->actedDn0 && $this->old->patternHas($this->landedDn)) {
+            $this->startTo = $this->landedDn;
+            $this->landedDn = $this->actedDn0;
+        }
     }
 
     /**
@@ -306,6 +321,7 @@ final class Model
         return match (true) {
             $this->ruleDelta === 'none' => 'norule',
             $this->ruleDelta === 'pattern' => 'newrule',
+            $this->startTo !== null => 'start',
             $this->landedDn !== $this->actedDn0 => 'drag',
             $this->seriesTimeChanged() || $this->placed => 'time',
             $this->ruleDelta === 'bound' => 'bound',
@@ -990,7 +1006,7 @@ final class Model
         if ($this->newRule()) {
             return $this->newRuleReadings($delta);
         }
-        $readings = $delta === 0 ? [Readings::same($this->r0)] : Readings::forDrag($this->r0, $this->actedDn0, $landedDn, $this->old->startDn);
+        $readings = $delta === 0 ? [Readings::same($this->r0) + ($this->startTo !== null ? ['start' => $this->startTo] : [])] : Readings::forDrag($this->r0, $this->actedDn0, $landedDn, $this->old->startDn);
         // A rule that names its clock (BYHOUR, BYMINUTE) takes the new one
         // in every reading, a drag across days included: a rule that says
         // 09:30 can't move to 10:45 otherwise (Imported Rules, by Capability).
@@ -1221,13 +1237,14 @@ final class Model
         $newRule = $this->newRule();
         // The request's placement is the acted day's own (the priority rule):
         // under a new rule it has no special place (Every Kind of Edit).
-        $actedPlaced = $this->placed && !$newRule;
+        // A start moved alone names no day, so no day has a place of its own.
+        $actedPlaced = $this->placed && !$newRule && $this->startTo === null;
         $member = fn(int $dn): ?int => $this->r0->supported() ? $this->r0->memberOf($dn) : null;
         $imageOf = fn(int $dn): ?int => $image($dn, $member($dn));
         // Nothing about the expansion changes (the reading moves no day, and
         // the rule, start, zone, all-day flag and clock stay): the new series
         // is the stored one, and each key is its own image.
-        $unchanged = $reading['id'] === 'same' && !$newRule && $this->ruleDelta === null && $clock1 === $this->clock0
+        $unchanged = $reading['id'] === 'same' && !$newRule && $this->ruleDelta === null && $this->startTo === null && $clock1 === $this->clock0
             && Time::normalizeTzid($this->tz1) === Time::normalizeTzid($this->tz0) && $this->allDay1 === $this->allDay0;
 
         // The old raw occurrences this needs: all of a bounded series; of an
@@ -1449,8 +1466,17 @@ final class Model
                     $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves', 'shows' => Cal::date($odn), 'to' => Cal::date((int) $img)]
                         + Words::dayParts(Words::date($odn, $this->thisYear), $img === $odn ? 'stays skipped' : 'moves to ' . Words::date((int) $img, $this->thisYear), ' ', 'Skipped ');
                 } else {
+                    // A skip belongs to the occurrence it removed: when the
+                    // new series has no such occurrence (no image, or one
+                    // before its start or past its end), it goes with it.
+                    $side = $img === null ? null : ($img < $newStart ? 'start' : 'end');
                     $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped', 'shows' => Cal::date($odn), 'why' => $img === null ? 'noday' : 'outside']
-                        + Words::dayParts(Words::date($odn, $this->thisYear), 'is forgotten' . ($img === null ? ': the new series has no ' . Words::date($odn, $this->thisYear) : ': it falls outside the series'), ' ', 'Skipped ');
+                        + ($side !== null ? ['side' => $side] : [])
+                        + Words::dayParts(Words::date($odn, $this->thisYear), match ($side) {
+                            null => 'is forgotten: the new series has no ' . Words::date($odn, $this->thisYear),
+                            'start' => 'is no longer needed: it is before the new start',
+                            default => 'is no longer needed: it is past the new end',
+                        }, ' ', 'Skipped ');
                 }
             }
             foreach ($genSkips as $g) {
@@ -1756,7 +1782,9 @@ final class Model
             // this edit changes that it takes from the series.
             $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
                 'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays',
-                'shows' => Cal::date($wasShown), 'to' => Cal::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))))] + $said + [
+                'shows' => Cal::date($wasShown), 'to' => Cal::date(Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))))]
+                // Where it shows after, as an instant in its zone (timed days): beside newKey, the series' own time there.
+                + ($allDay ? [] : ['at' => Time::iso($start->setTimezone(Time::zone($tz)))]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
         foreach ($outsideRows as $id => $img) {
@@ -1816,6 +1844,10 @@ final class Model
         if ($separate) {
             $outcomeDays[$this->actedDn0] = true;
         }
+        // A removed day is no event to lose: its skip's outcome names it.
+        foreach ($this->exdates as $key) {
+            $outcomeDays[$this->old->dnOf($key)] = true;
+        }
         $lossDays = [];
         $losses = [];
         foreach ($images as $dn => $img) {
@@ -1825,7 +1857,7 @@ final class Model
             if ($img !== null) {
                 $lossDays[] = $img;
             }
-            $losses[] = ['date' => Cal::date($dn), 'words' => Words::dayMonth($dn, $this->thisYear) . ($img === null ? ' has no place in the new series' : ' falls after the new end')];
+            $losses[] = ['date' => Cal::date($dn), 'words' => Words::dayMonth($dn, $this->thisYear) . ($img === null ? ' has no place in the new series' : ($img < $newStart ? ' falls before the new start' : ' falls after the new end'))];
         }
         [$boundKind, $boundWords, $boundData] = $this->boundWords($r1, $calc1, $oldOcc, $separate, $outside === 'keep' ? count($outsideRows) : 0, count($genSkips), $personSkipped, $lossDays, $allKeys);
         // A gain past the new end is no gain (P2-6: "Keep 6 events" adds nothing after its sixth).
@@ -1864,10 +1896,13 @@ final class Model
         $direct = $this->kind() === 'fields' && $groupsOut === [] && $this->refusals === [] && !isset($this->edit['calendarId']) && !$mixed && !$actedOwns;
         $kind = $this->kind();
         $verb = match ($kind) {
-            'drag' => 'Moved', 'newrule', 'norule' => 'Changed how ' . $title . ' repeats', default => 'Changed',
+            'drag', 'start' => 'Moved', 'newrule', 'norule' => 'Changed how ' . $title . ' repeats', default => 'Changed',
         };
+        $startAlone = $kind === 'start' && $words === $wordsBefore;
         $summary = ($kind === 'newrule' || $kind === 'norule' ? $verb : $verb . ' ' . $title) . ' (all events): '
-            . (in_array($kind, ['drag', 'newrule', 'norule'], true) || $words !== $wordsBefore ? Words::lower($wordsBefore) . ', now ' . Words::lower($words) . ', from ' . Words::dayMonth($newStart, $this->thisYear) : Words::lower($words) . ', as before')
+            . ($startAlone
+                ? 'starts ' . Words::dayMonth($newStart, $this->thisYear) . ' (was ' . Words::dayMonth($this->old->startDn, $this->thisYear) . '), ' . Words::lower($words) . ', as before'
+                : (in_array($kind, ['drag', 'start', 'newrule', 'norule'], true) || $words !== $wordsBefore ? Words::lower($wordsBefore) . ', now ' . Words::lower($words) . ', from ' . Words::dayMonth($newStart, $this->thisYear) : Words::lower($words) . ', as before'))
             . '.';
         $detachCount = count(array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited'));
         $ownership = null;

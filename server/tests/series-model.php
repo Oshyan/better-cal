@@ -373,6 +373,159 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $h = smPlan($holiday, [], ['rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3']);
     checkEq('Acceptance 6: ends after 3 refused with the reason', [true, Model::REASONS['unreadable']], [$h['refused'], $h['plan']['refusals'][0]['words'] ?? null]);
 
+    // Acceptance 8 to 13, in a scope of their own.
+    (static function (): void {
+        // Acceptance 8: a skip belongs to the occurrence it removed. Pottery
+        // class, 8 Mondays from 4 Jan, sessions 1 and 2 removed, the start
+        // moved to session 3's date (a request naming no day): the days stay
+        // where they are, the two removed days before the new start go with
+        // their occurrences, and 8 sessions show from 18 Jan.
+        $course = smSeries('Pottery class', 'FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-04 18:00', 120, false, ['2027-01-04 18:00', '2027-01-11 18:00']);
+        $startEdit = ['landed' => ['start_utc' => smAt('2027-01-18 18:00'), 'end_utc' => smAt('2027-01-18 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'], 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=8'];
+        $p = smPlan($course, [], $startEdit);
+        checkEq('Acceptance 8 (Pottery class, the start moved to session 3): no skips remain, COUNT=8 from 18 Jan, 8 sessions', [
+            null, smAt('2027-01-18 18:00'), null,
+            ['2027-01-18', '2027-01-25', '2027-02-01', '2027-02-08', '2027-02-15', '2027-02-22', '2027-03-01', '2027-03-08'],
+        ], [$p['writes']['master']['rrule'] ?? null, $p['writes']['master']['start_utc'] ?? null, array_key_exists('exdates_json', $p['writes']['master']) ? $p['writes']['master']['exdates_json'] : 'kept', smShows($course, $p['writes'], '2027-04-30')]);
+        checkEq('Acceptance 8: the two removed days are dropped before the new start, no loss named, none counted, the count kept (preselected)', [
+            [['2027-01-04', 'dropped', 'outside', 'start'], ['2027-01-11', 'dropped', 'outside', 'start']], [], 0, ['count', 'end'], 'count', 8,
+        ], [array_map(static fn(array $d): array => [$d['shows'], $d['outcome'], $d['why'], $d['side'] ?? null], $p['plan']['days']), $p['plan']['losses'],
+            $p['plan']['counts']['skipped'], smOptions($p, 'bound'), smGroup($p, 'bound')['selected'] ?? null, $p['plan']['bound']['events']]);
+        checkEq('Acceptance 8: the start moved alone, said as a start', ['Moved Pottery class (all events): starts 18 Jan (was 4 Jan), weekly on Monday at 18:00, as before.', '2027-01-18'],
+            [$p['plan']['summary'], substr($p['plan']['rule']['to']['start'], 0, 10)]);
+        // The same start reached by dragging the first session shown (a day
+        // named) is a drag: that day moves, and the skips go with theirs.
+        $dragged = smPlan($course, [], smDrag($course, '2027-01-18 18:00', '2027-02-01 18:00'));
+        checkEq('Acceptance 8: a drag of a day named still moves every occurrence, its skips with them', ['moves', 'moves'], array_column($dragged['plan']['days'], 'outcome'));
+        // A start put on a day the pattern doesn't give changes the pattern: the first occurrence moves there.
+        $tue = smPlan($course, [], ['landed' => ['start_utc' => smAt('2027-01-19 18:00'), 'end_utc' => smAt('2027-01-19 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+        checkEq('Acceptance 8: a start on a Tuesday is the first occurrence dragged there', 'FREQ=WEEKLY;BYDAY=TU;COUNT=8', $tue['writes']['master']['rrule'] ?? null);
+        // An edited day before a moved start is outside it, with the usual choice.
+        $early = smEdited($course, 11, '2027-01-04 18:00', ['title' => 'Pottery, intro'], null, ['title']);
+        $q = smPlan(smSeries('Pottery class', 'FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-04 18:00', 120, false, ['2027-01-11 18:00']), [$early], $startEdit);
+        checkEq('Acceptance 8: an edited day before the new start gets the outside choice, kept on its own (preselected)', [['outside', 'keep'], 'separate'],
+            [[smGroup($q, 'outside')['id'] ?? null, smGroup($q, 'outside')['selected'] ?? null], array_values(array_filter($q['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'))[0]['outcome'] ?? null]);
+
+        // Acceptance 9: a zone change, both readings, every day's local time.
+        // Team call, weekly Monday 09:00 Los Angeles from 4 Jan; 18 Jan at its
+        // own 11:00, 15 Mar at its own 07:30, 1 Feb with its own title; moved to
+        // Berlin time from Mon 11 Jan. Los Angeles changes its clocks on 14 Mar,
+        // Berlin on 28 Mar.
+        $call = smSeries('Team call', 'FREQ=WEEKLY;BYDAY=MO', '2027-01-04 09:00', 60);
+        $callRows = [
+            smEdited($call, 11, '2027-01-18 09:00', [], '2027-01-18 11:00', ['time']),
+            smEdited($call, 12, '2027-03-15 09:00', [], '2027-03-15 07:30', ['time']),
+            smEdited($call, 13, '2027-02-01 09:00', ['title' => 'Team call, planning'], null, ['title']),
+        ];
+        $toBerlin = ['acted' => smAt('2027-01-11 09:00'), 'landed' => ['start_utc' => smAt('2027-01-11 09:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-11 10:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']];
+        $clock = smPlan($call, $callRows, $toBerlin);
+        $moment = smPlan($call, $callRows, $toBerlin, ['zone' => 'moment']);
+        $at = static fn(string $utc, string $tz): string => Time::fromDb($utc)->setTimezone(Time::zone($tz))->format('D H:i');
+        checkEq('Acceptance 9: the zone group, the clock time first and preselected, each reading in words', [
+            ['clock', 'moment'], 'clock',
+            'every Monday at 09:00 Berlin time; 00:00 in Los Angeles, 01:00 on 15 and 22 Mar and 1 Nov',
+            'every Monday at 18:00 Berlin time; 09:00 in Los Angeles, 10:00 on 15 and 22 Mar and 1 Nov',
+        ], [smOptions($clock, 'zone'), smGroup($clock, 'zone')['selected'] ?? null, smGroup($clock, 'zone')['options'][0]['words'] ?? null, smGroup($clock, 'zone')['options'][1]['words'] ?? null]);
+        checkEq('Acceptance 9, the clock time: the series at 09:00 Berlin; the own times stay in Los Angeles; the own-title day takes 09:00 Berlin', [
+            'Europe/Berlin', ['2027-01-11T09:00:00+01:00', '2027-01-18T11:00:00-08:00', '2027-01-25T09:00:00+01:00', '2027-02-01T09:00:00+01:00'],
+            smAt('2027-01-18 11:00'), smAt('2027-03-15 07:30'), [smAt('2027-02-01 09:00', 'Europe/Berlin'), 'Europe/Berlin'],
+            'Mon 01:00', ['stays', 'stays', 'moves'],
+        ], [$clock['writes']['master']['tzid'] ?? null, array_column($clock['plan']['next'], 'start'),
+            $clock['writes']['overrides'][11]['start_utc'] ?? $callRows[0]['start_utc'],
+            $clock['writes']['overrides'][12]['start_utc'] ?? $callRows[1]['start_utc'],
+            [$clock['writes']['overrides'][13]['start_utc'] ?? null, $clock['writes']['overrides'][13]['tzid'] ?? null],
+            $at(smAt('2027-03-22 09:00', 'Europe/Berlin'), 'America/Los_Angeles'), array_column($clock['plan']['days'], 'outcome')]);
+        checkEq('Acceptance 9, the same moment: the series at 18:00 Berlin (09:00 in Los Angeles, 10:00 between the two clock changes); the own times stay', [
+            'Europe/Berlin', null, ['2027-01-11T18:00:00+01:00', '2027-01-18T11:00:00-08:00', '2027-01-25T18:00:00+01:00', '2027-02-01T18:00:00+01:00'],
+            'Mon 10:00', 'Mon 09:00', $callRows[0]['start_utc'], $callRows[1]['start_utc'], 'Europe/Berlin',
+        ], [$moment['writes']['master']['tzid'] ?? null, $moment['writes']['master']['start_utc'] ?? null, array_column($moment['plan']['next'], 'start'),
+            $at(smAt('2027-03-22 18:00', 'Europe/Berlin'), 'America/Los_Angeles'), $at(smAt('2027-04-05 18:00', 'Europe/Berlin'), 'America/Los_Angeles'),
+            $moment['writes']['overrides'][11]['start_utc'] ?? $callRows[0]['start_utc'], $moment['writes']['overrides'][12]['start_utc'] ?? $callRows[1]['start_utc'],
+            $moment['writes']['overrides'][13]['tzid'] ?? null]);
+
+        // Acceptance 10: a time change outside Google. Study group, weekly
+        // Tuesday 19:00 to 20:00 from 5 Jan; 19 Jan at its own 13:00, 2 Feb at
+        // its own place. Moved to 20:00 from 12 Jan, all events.
+        $study = smSeries('Study group', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00', 60);
+        $studyRows = [
+            smEdited($study, 11, '2027-01-19 19:00', [], '2027-01-19 13:00', ['time']),
+            smEdited($study, 12, '2027-02-02 19:00', ['location' => 'Sample Library'], null, ['location']),
+        ];
+        $later = ['acted' => smAt('2027-01-12 19:00'), 'landed' => ['start_utc' => smAt('2027-01-12 20:00'), 'end_utc' => smAt('2027-01-12 21:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+        $p = smPlan($study, $studyRows, $later);
+        checkEq('Acceptance 10 (Study group to 20:00): no choice; 13:00 kept and said; the own-place day moves to 20:00', [
+            [], ['2027-01-12T20:00:00-08:00', '2027-01-19T13:00:00-08:00', '2027-01-26T20:00:00-08:00', '2027-02-02T20:00:00-08:00'],
+            ['stays', ['time'], [], 'Tue 19 Jan stays, keeps its own time at 13:00'], ['moves', ['location'], ['time'], smAt('2027-02-02 20:00')],
+            smAt('2027-01-05 20:00'),
+        ], [$p['plan']['groups'], array_column($p['plan']['next'], 'start'),
+            [$p['plan']['days'][0]['outcome'], $p['plan']['days'][0]['kept'], $p['plan']['days'][0]['takes'], $p['plan']['days'][0]['words']],
+            [$p['plan']['days'][1]['outcome'], $p['plan']['days'][1]['kept'], $p['plan']['days'][1]['takes'], $p['writes']['overrides'][12]['start_utc'] ?? null],
+            $p['writes']['master']['start_utc'] ?? null]);
+        check('Acceptance 10: the own-time day\'s row keeps its 13:00 (only its key moves)', !isset($p['writes']['overrides'][11]['start_utc']) && ($p['writes']['overrides'][11]['recurrence_instance_utc'] ?? null) === smAt('2027-01-19 20:00'));
+
+        // Acceptance 11: a day moved on its own, then the series moved. Pottery,
+        // 8 Mondays from 4 Jan, its 18 Jan moved to Fri 22 Jan; Mon 11 Jan
+        // dragged to Wed 13 Jan, all events. Each occurrence shows once: the
+        // moved day's key goes to Wed 20 Jan, and Wed 20 Jan shows only as that
+        // row, on Fri 22 Jan (kept) or Sun 24 Jan (moved with the rest); the
+        // harness's invariant h checks one row per key, every key a raw day.
+        $wheel = smSeries('Pottery', 'FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-04 18:00', 120);
+        $moved = smEdited($wheel, 11, '2027-01-18 18:00', [], '2027-01-22 18:00', ['date']);
+        $keep = smPlan($wheel, [$moved], smDrag($wheel, '2027-01-11 18:00', '2027-01-13 18:00'));
+        $move = smPlan($wheel, [$moved], smDrag($wheel, '2027-01-11 18:00', '2027-01-13 18:00'), ['movedDays' => 'move']);
+        checkEq('Acceptance 11 (Pottery Mon to Wed, a day on Fri 22 Jan): keep it there (preselected) or move it to Sun 24 Jan', [
+            ['keep', 'move'], 'keep', ['Keep Fri 22 Jan', 'Move to Sun 24 Jan'], 'FREQ=WEEKLY;BYDAY=WE;COUNT=8',
+        ], [smOptions($keep, 'movedDays'), smGroup($keep, 'movedDays')['selected'] ?? null, array_column(smGroup($keep, 'movedDays')['options'] ?? [], 'label'), $keep['writes']['master']['rrule'] ?? null]);
+        checkEq('Acceptance 11: kept, the row keyed Wed 20 Jan shows on Fri 22 Jan; moved, on Sun 24 Jan; Wed 20 Jan never shows as well', [
+            [smAt('2027-01-20 18:00'), null], ['2027-01-13', '2027-01-22', '2027-01-27', '2027-02-03'],
+            [smAt('2027-01-20 18:00'), smAt('2027-01-24 18:00')], ['2027-01-13', '2027-01-24', '2027-01-27', '2027-02-03'],
+        ], [[$keep['writes']['overrides'][11]['recurrence_instance_utc'] ?? null, $keep['writes']['overrides'][11]['start_utc'] ?? null], smNext($keep),
+            [$move['writes']['overrides'][11]['recurrence_instance_utc'] ?? null, $move['writes']['overrides'][11]['start_utc'] ?? null], smNext($move)]);
+
+        // Acceptance 12: all events from an edited day. Choir, weekly Tuesday
+        // 19:00 from 5 Jan; 9 Mar 'Choir, sectionals' at its own 18:00, 23 Mar
+        // 'Choir, concert', 6 Apr at its own place. From 9 Mar's own row:
+        // renamed 'Chorus' and moved to Wed 10 Mar 18:00. Every delta is from
+        // where 9 Mar shows: a day later, no clock change, the title from its own.
+        $choir = smSeries('Choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00', 60);
+        $choirRows = [
+            smEdited($choir, 11, '2027-03-09 19:00', ['title' => 'Choir, sectionals'], '2027-03-09 18:00', ['title', 'time']),
+            smEdited($choir, 12, '2027-03-23 19:00', ['title' => 'Choir, concert'], null, ['title']),
+            smEdited($choir, 13, '2027-04-06 19:00', ['location' => 'Sample Hall'], null, ['location']),
+        ];
+        $p = smPlan($choir, $choirRows, ['acted' => smAt('2027-03-09 19:00'), 'landed' => ['start_utc' => smAt('2027-03-10 18:00'), 'end_utc' => smAt('2027-03-10 19:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'], 'columns' => ['title' => 'Chorus']]);
+        checkEq('Acceptance 12 (Choir from its 9 Mar): weekly on Wednesday at 19:00, renamed; started from \'Choir, sectionals\' on 9 Mar; one choice, the concert\'s own title', [
+            ['rrule' => 'FREQ=WEEKLY;BYDAY=WE', 'start_utc' => smAt('2027-01-06 19:00'), 'end_utc' => smAt('2027-01-06 20:00'), 'title' => 'Chorus'],
+            ['key' => '2027-03-10T03:00:00Z', 'title' => 'Choir, sectionals', 'shows' => '2027-03-09', 'kept' => ['time', 'title']],
+            ['ownTitle'], 'keep',
+        ], [$p['writes']['master'], $p['plan']['acted'], array_column($p['plan']['groups'], 'id'), smGroup($p, 'ownTitle')['selected'] ?? null]);
+        checkEq('Acceptance 12: 9 Mar lands at Wed 10 Mar 18:00 as Chorus, its time still its own; the concert keeps its title on Wed 24 Mar; 6 Apr moves to Wed 7 Apr and takes Chorus', [
+            [smAt('2027-03-10 19:00'), smAt('2027-03-10 18:00'), 'Chorus', '["time"]'], [smAt('2027-03-24 19:00'), null],
+            [smAt('2027-04-07 19:00'), 'Chorus'], [['time'], ['date', 'title']],
+        ], [
+            [$p['writes']['overrides'][11]['recurrence_instance_utc'] ?? null, $p['writes']['overrides'][11]['start_utc'] ?? null, $p['writes']['overrides'][11]['title'] ?? null, $p['writes']['overrides'][11]['override_fields'] ?? null],
+            [$p['writes']['overrides'][12]['recurrence_instance_utc'] ?? null, $p['writes']['overrides'][12]['title'] ?? null],
+            [$p['writes']['overrides'][13]['recurrence_instance_utc'] ?? null, $p['writes']['overrides'][13]['title'] ?? null],
+            [$p['plan']['days'][0]['kept'], $p['plan']['days'][0]['takes']],
+        ]);
+
+        // Acceptance 13: the skip rule's other sides. Pottery class, 8 Mondays
+        // from 4 Jan, 11 Jan and 15 Feb removed: the end shortened to 6 drops
+        // 15 Feb past it; every other Monday has no 11 Jan and keeps 15 Feb; a
+        // drag to Tuesday keeps both occurrences, so both skips move.
+        $course = smSeries('Pottery class', 'FREQ=WEEKLY;BYDAY=MO;COUNT=8', '2027-01-04 18:00', 120, false, ['2027-01-11 18:00', '2027-02-15 18:00']);
+        $sides = static fn(array $p): array => array_map(static fn(array $d): array => [$d['shows'], $d['outcome'], $d['why'] ?? null, $d['side'] ?? null, $d['to'] ?? null], $p['plan']['days']);
+        $end = smPlan($course, [], ['acted' => smAt('2027-01-04 18:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=6']);
+        $other = smPlan($course, [], ['acted' => smAt('2027-01-04 18:00'), 'rrule' => 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;COUNT=8']);
+        $tuesday = smPlan($course, [], smDrag($course, '2027-01-18 18:00', '2027-01-19 18:00'));
+        checkEq('Acceptance 13: past a shortened end the skip is dropped, on a day the new rule lacks it is dropped, where the occurrence stays it moves with it', [
+            [['2027-01-11', 'stays', null, null, '2027-01-11'], ['2027-02-15', 'dropped', 'outside', 'end', null]],
+            [['2027-01-11', 'dropped', 'noday', null, null], ['2027-02-15', 'stays', null, null, '2027-02-15']],
+            [['2027-01-11', 'moves', null, null, '2027-01-12'], ['2027-02-15', 'moves', null, null, '2027-02-16']],
+            [json_encode([smAt('2027-01-11 18:00')]), json_encode([smAt('2027-02-15 18:00')]), json_encode([smAt('2027-01-12 18:00'), smAt('2027-02-16 18:00')])],
+        ], [$sides($end), $sides($other), $sides($tuesday), [$end['writes']['master']['exdates_json'] ?? null, $other['writes']['master']['exdates_json'] ?? null, $tuesday['writes']['master']['exdates_json'] ?? null]]);
+    })();
+
     // ---- Lists ---------------------------------------------------------------
     $gym = smSeries('Gym', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', '2027-01-04 07:00');
     $p = smPlan($gym, [], smDrag($gym, '2027-03-10 07:00', '2027-03-11 07:00'));

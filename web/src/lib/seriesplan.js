@@ -186,7 +186,8 @@ export function planView(plan, ctx = {}) {
     if (outside) row = { key: d.key, line1: W.dayName(d, opts.series) + ' on ' + W.fmtDay(d.shows, opts) + ' falls after the new end.', line2: '', choice: choice(outside) };
     else if (own) row = { key: d.key, line1: W.dayName({ ...d, kept: ['title'] }) + ' on ' + W.fmtDay(d.shows, opts) + ' has its own ' + (own.field === 'title' ? 'title, ' + "'" + d.title + "'" : W.fieldNoun(own.field)) + '.', line2: '', choice: choice(own, { oldTitle: d.title }) };
     else if (gs.length) row.choice = choice(gs[0]);
-    const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date');
+    // A day at a time of its own after the change has an outcome of its own: its row says the time.
+    const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date') && !W.ownClock(d, opts);
     if (!goesWith) { rows.push(row); continue; }
     // Grouped by outcome alone: what a day keeps or takes never splits a
     // group; days a choice is about together are a group of their own with it.
@@ -218,7 +219,7 @@ export function planView(plan, ctx = {}) {
   // is said by its choice.
   const edge = skippedChoices.length > 0;
   view.skipped = [
-    ...days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor' && !(edge && x.outcome === 'generated')).map((d) => ({ key: d.key || d.newKey, ...W.skipLines(d, opts), choice: null })),
+    ...W.removedRows(days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor' && !(edge && x.outcome === 'generated')), opts).map((r) => ({ ...r, choice: null })),
     ...skippedChoices,
   ];
   view.notes = (plan.notes || []).map((n) => W.noteWords(n, opts)).filter(Boolean);

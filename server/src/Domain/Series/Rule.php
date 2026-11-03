@@ -50,10 +50,10 @@ final class Rule
     /** Several times a day (BYHOUR or BYMINUTE lists, HOURLY and finer). */
     public bool $several = false;
     /**
-     * Written FREQ=DAILY with BYDAY: read as the weekly list, but expanded by
-     * sabre's daily iterator, whose clock behaves differently across a
-     * skipped hour (Calc::clockOn). Kept as written until a reading rewrites
-     * the members, which writes it as WEEKLY.
+     * Written FREQ=DAILY with BYDAY: read as the weekly list, its text kept
+     * as written (the expander reads it as written, whatever that does
+     * across a skipped hour) until a reading rewrites the members, which
+     * writes it as WEEKLY.
      */
     public bool $dailyList = false;
 
@@ -399,12 +399,6 @@ final class Rule
         return $days;
     }
 
-    /** Whether the rule as written is expanded by sabre's daily iterator with BYDAY (Calc::clockOn). */
-    public function expandsAsDaily(): bool
-    {
-        return $this->dailyList && !$this->dirty;
-    }
-
     public function supported(): bool
     {
         return in_array($this->kind, ['daily', 'weekly', 'monthly', 'yearly'], true);
@@ -427,6 +421,17 @@ final class Rule
             'monthly' => Cal::miOf($dn),
             'yearly' => Cal::ymd($dn)[0],
             default => $dn,
+        };
+    }
+
+    /** The first day of a period. */
+    public function periodFirst(int $p): int
+    {
+        [$y, $m] = Cal::fromMi($p);
+        return match ($this->kind) {
+            'monthly' => Cal::dn($y, $m, 1),
+            'yearly' => Cal::dn($p, 1, 1),
+            default => $p,
         };
     }
 

@@ -31,6 +31,7 @@ final class Expect
     public bool $zoneGroup = false;
     private int $momentDn = 0;
     private int $momentSecs = 0;
+    public ?\DateTimeImmutable $momentAt = null;
     /** @var array<string,int> old key => old local day */
     private array $oldDn = [];
     /** Notes on parts the design leaves open, for the report. */
@@ -68,39 +69,40 @@ final class Expect
         $start = Clock::parse($sent['start']);
         $end = Clock::parse($sent['end']);
         $this->len1 = max(0, $end->getTimestamp() - $start->getTimestamp());
-        $at = $start->setTimezone(Clock::zone($this->tz1));
-        if ($e['fromRow'] === null) {
-            $this->landedDn = Clock::dnOf($at);
-            $this->clock1 = $this->allDay1 ? 0 : Clock::secsOf($at);
-            return;
-        }
-        // From an edited day: the move from where it shows (S) to where it
-        // was dropped (S'), in days in the series' zone, in clock time on
-        // the clock it shows on, and in length, is the move of its
-        // occurrence (K).
-        $shown = $e['shown'];
-        $seriesTz = $o['tz'];
+        // Every delta is measured from where the occurrence shows (S: its
+        // edited row's date, clock, zone and length when it has one, else
+        // its key in the series' zone) to where it was put (S'), whichever
+        // id the request came through: Δ in whole days, each read in its
+        // own zone; the clock change on those clocks; the length change.
+        $shown = $e['shown'] ?? ['start' => $e['actedKey'], 'end' => Clock::db(Clock::parse($e['actedKey'])->modify('+' . $o['len'] . ' seconds')), 'tz' => $o['tz'], 'allDay' => $o['allDay']];
+        $this->seenTz = $shown['allDay'] ? 'UTC' : $shown['tz'];
+        $this->seenStart = $shown['start'];
         $shownLen = Clock::parse($shown['end'])->getTimestamp() - Clock::parse($shown['start'])->getTimestamp();
-        if ($this->allDay1 === $o['allDay']) {
+        if ($this->allDay1 === $o['allDay'] && $this->allDay1 === $shown['allDay']) {
             $this->len1 = max(0, $o['len'] + ($this->len1 - $shownLen));
         }
-        $read = $start->setTimezone(Clock::zone($this->allDay1 ? 'UTC' : ($sent['tz'] ?? $shown['tz'])));
-        if ($this->allDay1 || $shown['allDay']) {
-            $days = Clock::dnOf($read) - Clock::dayOf($shown['start'], $shown['tz']);
-            $shift = 0;
-        } else {
-            $days = Clock::dnOf($start->setTimezone(Clock::zone($seriesTz))) - Clock::dayOf($shown['start'], $seriesTz);
-            $shift = Clock::secsOf($read) - Clock::secsOf(Clock::local($shown['start'], $shown['tz']));
-        }
+        $this->readTz = $this->allDay1 ? 'UTC' : ($sent['tz'] ?? $this->seenTz);
+        [$this->landedDn, $this->clock1] = $this->landAt($start);
+    }
+
+    private string $seenTz = 'UTC';
+    private string $seenStart = '';
+    private string $readTz = 'UTC';
+
+    /** Where the occurrence lands when S' is $start: its day and the series' new clock. */
+    private function landAt(\DateTimeImmutable $start): array
+    {
+        $o = $this->o;
+        $read = $start->setTimezone(Clock::zone($this->readTz));
+        $seen = Clock::local($this->seenStart, $this->seenTz);
+        $days = Clock::dnOf($read) - Clock::dnOf($seen);
         if ($this->allDay1) {
-            $this->landedDn = $this->actedDn + $days;
-            $this->clock1 = 0;
-            return;
+            return [$this->actedDn + $days, 0];
         }
-        $clock = ($o['allDay'] ? Clock::secsOf($at) : $o['clock'] + $shift);
+        $shift = $o['allDay'] ? 0 : Clock::secsOf($read) - Clock::secsOf($seen);
+        $clock = $o['allDay'] ? Clock::secsOf($read) : $o['clock'] + $shift;
         $over = intdiv($clock - (($clock % 86400) + 86400) % 86400, 86400);
-        $this->landedDn = $this->actedDn + $days + $over;
-        $this->clock1 = (($clock % 86400) + 86400) % 86400;
+        return [$this->actedDn + $days + $over, (($clock % 86400) + 86400) % 86400];
     }
 
     private function classify(): void
@@ -117,11 +119,14 @@ final class Expect
         } elseif ($this->e['boundSent'] !== null) {
             $this->kind = 'bound';
         }
-        // A zone change alone: the same clock in the new zone, or the same moment (Zones, DST and All-Day Days).
-        if ($this->kind === 'time' && $this->tz1 !== $o['tz'] && !$o['allDay'] && !$this->allDay1 && $this->clock1 === $o['clock']) {
-            $m = Clock::local($this->e['actedKey'], $this->tz1);
-            $this->momentDn = Clock::dnOf($m);
-            $this->momentSecs = Clock::secsOf($m);
+        // A zone change: the same clock in the new zone, or the same moment
+        // (Zones, DST and All-Day Days). The moment is the wall clock where
+        // it was put read on the clock it showed on, so the occurrence
+        // keeps its instant; its deltas are then measured as any others.
+        if ($this->e['sent'] !== null && $this->tz1 !== $o['tz'] && !$o['allDay'] && !$this->allDay1 && $this->readTz !== $this->seenTz) {
+            $put = Clock::parse($this->e['sent']['start'])->setTimezone(Clock::zone($this->readTz));
+            $this->momentAt = Clock::at(Clock::dnOf($put), Clock::secsOf($put), $this->seenTz);
+            [$this->momentDn, $this->momentSecs] = $this->landAt($this->momentAt);
             $this->zoneGroup = $this->momentDn !== $this->landedDn || $this->momentSecs !== $this->clock1;
         }
     }
@@ -136,7 +141,7 @@ final class Expect
         $c->landedDn = $this->momentDn;
         $c->clock1 = $this->momentSecs;
         $c->delta = $c->landedDn - $c->actedDn;
-        $c->kind = $c->delta !== 0 ? 'drag' : 'time';
+        $c->kind = $this->kind === 'newrule' ? 'newrule' : ($c->delta !== 0 ? 'drag' : 'time');
         return $c;
     }
 
@@ -472,18 +477,70 @@ final class Expect
         if ($s1 === null || !$s1->supported() || !$s->supported()) {
             return $out;
         }
-        if (($s->freq === 'WEEKLY' || $s->dailyList) && $s1->freq === 'WEEKLY' && $s1->interval === $s->interval && count($s1->wds) === count($s->wds)) {
-            for ($shift = 1; $shift < 7; $shift++) {
-                $moved = array_map(static fn(int $w): int => ($w + $shift) % 7, $s->wds);
-                sort($moved);
-                if ($moved === $s1->wds) {
-                    $out[] = self::reading('map', ['type' => 'shift', 'moved' => null, 'delta' => $shift, 'alt' => $shift - 7]);
-                    break;
+        // The old days shifted: the new pattern is what a drag of the old rule
+        // makes, a member's first occurrence dragged to another day of its
+        // period (the nearest such drag, earlier days of the period first),
+        // and that drag's correspondence by member is the reading.
+        $weekish = static fn(Shape $x): bool => $x->freq === 'WEEKLY' || $x->dailyList;
+        if (($weekish($s1) !== $weekish($s) || (!$weekish($s) && $s1->freq !== $s->freq)) || $s1->interval !== $s->interval || ($s->freq === 'DAILY' && !$s->dailyList)) {
+            return $out;
+        }
+        $first = [];
+        foreach (array_slice($this->o['raw'], 0, 4 * max(1, $s->memberCount())) as $occ) {
+            $m = $s->memberOf($occ['dn']);
+            if ($m !== null && !isset($first[$m])) {
+                $first[$m] = $occ['dn'];
+            }
+        }
+        ksort($first);
+        $o = $this->o;
+        $lo = $o['startDn'];
+        $hi = $o['startDn'] + 40 * $s->periodSpan() * $s->interval;
+        foreach ($first as $dn) {
+            $p = $s->periodOf($dn);
+            [$pLo, $pHi] = match ($s->freq) {
+                'WEEKLY' => [$p * 7 + ($s->wkst - 3), $p * 7 + ($s->wkst - 3) + 6],
+                'MONTHLY' => [Days::dn(...[...Days::fromMi($p), 1]), Days::dn(...[...Days::fromMi($p), Days::monthLen(...Days::fromMi($p))])],
+                'DAILY' => [$dn - Days::wd($dn), $dn - Days::wd($dn) + 6],
+                default => [Days::dn($p, 1, 1), Days::dn($p, 12, 31)],
+            };
+            for ($to = $pLo; $to <= $pHi; $to++) {
+                if ($to === $dn) {
+                    continue;
+                }
+                $x = clone $this;
+                $x->actedDn = $dn;
+                $x->landedDn = $to;
+                $x->delta = $to - $dn;
+                $x->kind = 'drag';
+                foreach ($x->readings() as $r) {
+                    if (!$r['enabled'] || $r['T']['type'] === 'same') {
+                        continue;
+                    }
+                    $days = array_keys($x->walk($r['T'], $lo, $hi));
+                    if ($days !== [] && $days === $s1->days($days[0], $lo, $hi)) {
+                        $out[] = self::reading('map', $r['T']);
+                        $this->mapDrag = $x;
+                        return $out;
+                    }
                 }
             }
         }
         return $out;
     }
+
+    /** The first day the plan's next dates may start on: where the occurrence lands, or where the day acted on was put when earlier. */
+    public function fromDn(): int
+    {
+        if ($this->e['sent'] === null) {
+            return $this->landedDn;
+        }
+        $put = Clock::dayOf($this->e['sent']['start'], $this->allDay1 ? 'UTC' : $this->tz1);
+        return min($this->landedDn, $put);
+    }
+
+    /** The drag whose correspondence the map reading uses. */
+    public ?self $mapDrag = null;
 
     private static function reading(string $id, array $t): array
     {

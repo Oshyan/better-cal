@@ -143,7 +143,7 @@ final class Driver
         } else {
             $start = new \DateTimeImmutable($s['start'], Clock::zone($s['tzid']));
             $in['start'] = Clock::iso($start);
-            $in['end'] = Clock::iso($start->modify('+' . $s['length'] . ' minutes'));
+            $in['end'] = Clock::iso(Clock::plus($start, $s['length'] * 60));
         }
         if ($s['import']) {
             // Stored as an import writes it (Rows from Elsewhere): made, then given its rule as the other app sent it.
@@ -257,7 +257,7 @@ final class Driver
                 if (in_array('allDay', $own, true)) {
                     if ($st['allDay']) {
                         $at = Clock::at($occ['dn'], 9 * 3600, 'Europe/Berlin');
-                        $in += ['allDay' => false, 'tzid' => 'Europe/Berlin', 'start' => Clock::iso($at), 'end' => Clock::iso($at->modify('+1 hour'))];
+                        $in += ['allDay' => false, 'tzid' => 'Europe/Berlin', 'start' => Clock::iso($at), 'end' => Clock::iso(Clock::plus($at, 3600))];
                         $want = array_merge($want, ['allDay', 'time']);
                     } else {
                         $in += ['allDay' => true, 'start' => Days::date($occ['dn']), 'end' => Days::date($occ['dn'] + 1)];
@@ -296,7 +296,7 @@ final class Driver
                     if (in_array('length', $own, true)) {
                         $want[] = 'length';
                     }
-                    $in += ['start' => Clock::iso($local), 'end' => Clock::iso($local->modify('+' . max(0, $l) . ' seconds'))];
+                    $in += ['start' => Clock::iso($local), 'end' => Clock::iso(Clock::plus($local, max(0, $l)))];
                 }
             }
             $this->events->patch($this->userId, $id, $in);
@@ -504,7 +504,7 @@ final class Driver
                         $in['tzid'] = $tz;
                     }
                 }
-                $end = $at->modify('+' . $l . ' seconds');
+                $end = Clock::plus($at, $l);
                 $in += ['start' => Clock::iso($at), 'end' => Clock::iso($end)];
                 $sent = ['start' => Clock::db($at), 'end' => Clock::db($end), 'allDay' => false, 'tz' => isset($in['tzid']) ? $tz : null];
             }
@@ -547,6 +547,14 @@ final class Driver
                 $boundSent = null; // the same end, in another form, is no bound change (Mapping, Defined, step 1)
             }
         }
+        // A field is changed only where the value sent differs from what the occurrence shows (its edited row's, or the series').
+        $shownRow = $fromRow !== null ? $st['overrides'][$fromRow] : $master;
+        $changed = [];
+        foreach ($v['fields'] as $f => $value) {
+            if (self::fieldValue($f, $shownRow, $st) !== self::sentValue($f, $value)) {
+                $changed[$f] = $value;
+            }
+        }
         $edit = [
             'actedKey' => $acted['key'],
             'fromRow' => $fromRow,
@@ -555,7 +563,7 @@ final class Driver
             'rule' => $v['rule'] === 'new' ? 'new' : ($v['rule'] === 'same' ? 'same' : 'absent'),
             'ruleText' => $ruleText,
             'boundSent' => $boundSent,
-            'fields' => $v['fields'],
+            'fields' => $changed,
             'trip' => $v['trip'],
         ];
         return [$target, $in, $edit];
@@ -730,14 +738,12 @@ final class Driver
         try {
             $row = $this->row($target);
             if (!empty($row['recurrence_parent_id'])) {
-                $edited = new \ReflectionMethod($this->events, 'editFromEditedDay');
-                [$row, $in] = $edited->invoke($this->events, $this->userId, $row, $in);
+                // As previewPatch routes an edited day's own row: the series' edit acting on its occurrence.
+                $route = new \ReflectionMethod($this->events, 'routeToMaster');
+                [$row, $in] = $route->invoke($this->events, $this->userId, $row, $in);
             }
             $input = new \ReflectionMethod($this->events, 'seriesInput');
             [$gm, $grows, $gedit, $gopts] = $input->invoke($this->events, $this->userId, $row, $in, false, true);
-            if (!empty($this->row($target)['recurrence_parent_id'])) {
-                $gedit['fromEditedDay'] = true;
-            }
             return \BetterCal\Domain\Series\Model::plan($gm, $grows, $gedit, $choices, $gopts);
         } catch (\Throwable $e) {
             return ['error' => $e->getMessage()];

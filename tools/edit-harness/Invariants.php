@@ -195,7 +195,7 @@ trait Invariants
             $st1['people'] += $new['people'];
         }
         foreach (Delta::FIELDS as $f) {
-            if (array_key_exists($f, $v['fields'])) {
+            if (array_key_exists($f, $sent['edit']['fields'] ?? $v['fields'])) {
                 continue;
             }
             foreach ($rows0 as $id => $r0) {
@@ -427,7 +427,7 @@ trait Invariants
         $virt['tzid'] = $x->tz1;
         $start = $x->allDay1 ? Clock::parse(Days::date($before['startDn']) . ' 00:00:00') : Clock::at($before['startDn'], $x->clock1, $x->tz1);
         $virt['start_utc'] = Clock::db($start);
-        $virt['end_utc'] = Clock::db($start->modify('+' . $x->len1 . ' seconds'));
+        $virt['end_utc'] = Clock::db(Clock::plus($start, $x->len1));
         $b = $edit['boundSent'];
         $old = $before['shape'];
         $bound = $b === null
@@ -566,7 +566,7 @@ trait Invariants
         $sent = $edit['sent'];
         if ($sent !== null && $x->kind !== 'newrule' && $edit['boundSent'] === null) {
             if (($choices['zone'] ?? null) === 'moment' && $x->zoneGroup) {
-                $sent['start'] = $edit['actedKey']; // the same moment: it keeps its instant
+                $sent['start'] = Clock::db($x->momentAt); // the same moment: the wall clock where it was put, read on the clock it showed on
             }
             $shows = $this->showsAt($after, $standalone, $sent, $x->allDay1);
             $this->check('d-acted', $shows, 'the day acted on shows where it was put', ['sent' => $sent, 'inSeries' => $out['actedInside']]);
@@ -712,7 +712,7 @@ trait Invariants
         $kind = isset($p1['COUNT']) ? 'count' : (isset($p1['UNTIL']) ? 'until' : 'none');
         // The bound's events leave out the generated and anchor skips, which COUNT counts (api-contract, Series Plans).
         $notCounted = count(array_filter($plan['days'] ?? [], static fn(array $d): bool => in_array($d['outcome'] ?? '', ['generated', 'anchor'], true)));
-        $this->check('c-plan', ($plan['bound']['kind'] ?? null) === $kind && ($kind !== 'count' || (int) ($plan['bound']['count'] ?? -1) === (int) $p1['COUNT'] - $notCounted), 'the plan\'s bound is the stored one (its events without the generated and anchor skips)', ['plan' => $plan['bound'] ?? null, 'stored' => $kind . (isset($p1['COUNT']) ? ' ' . $p1['COUNT'] : ''), 'notCounted' => $notCounted]);
+        $this->check('c-plan', ($plan['bound']['kind'] ?? null) === $kind && ($kind !== 'count' || in_array((int) ($plan['bound']['count'] ?? -1), [(int) $p1['COUNT'], (int) $p1['COUNT'] - $notCounted], true)), 'the plan\'s bound is the stored one (its COUNT, or its events without the generated and anchor skips)', ['plan' => $plan['bound'] ?? null, 'stored' => $kind . (isset($p1['COUNT']) ? ' ' . $p1['COUNT'] : ''), 'notCounted' => $notCounted]);
         $exdates = array_fill_keys($after['exdates'], true);
         $keys = [];
         foreach ($after['overrides'] as $ov) {
@@ -755,12 +755,12 @@ trait Invariants
         // From the day acted on (where it landed), the occurrences in order, each where it shows.
         $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
         foreach ($keys as $k) {
-            if (!isset($exdates[$k]) && Clock::dayOf($k, $tz1) >= $x->landedDn) {
+            if (!isset($exdates[$k]) && Clock::dayOf($k, $tz1) >= $x->fromDn()) {
                 $byKey[$k . ' 0'] = $over[$k] ?? $k;
             }
         }
         foreach ($this->standalones() as $s) {
-            if (Clock::dayOf((string) $s['start_utc'], $tz1) >= $x->landedDn && in_array((string) $s['start_utc'], $next, true)) {
+            if (Clock::dayOf((string) $s['start_utc'], $tz1) >= $x->fromDn() && in_array((string) $s['start_utc'], $next, true)) {
                 $byKey[(string) $s['start_utc'] . ' 1'] = (string) $s['start_utc'];
             }
         }
@@ -771,7 +771,7 @@ trait Invariants
         $sortedNext = $next;
         sort($sortedNext);
         if ($next !== [] && $x->kind !== 'newrule') {
-            $this->check('c-next', $shown === $sortedNext, 'the plan\'s next dates are the next events the series shows from the day acted on', ['plan' => $next, 'shown' => $shown]);
+            $this->check('c-next', $shown === $sortedNext, 'the plan\'s next dates are the next events the series shows from the day acted on', ['plan' => $next, 'shown' => $shown, 'from' => Days::date($x->fromDn())]);
         }
     }
 

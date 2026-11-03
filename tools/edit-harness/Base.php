@@ -196,7 +196,7 @@ final class Clock
         $t = new \DateTimeImmutable($wall, self::zone($tz));
         // A clock that happens twice (the autumn overlap) is its first, earlier instant (RFC 5545 3.3.5).
         foreach ([3600, 1800] as $back) {
-            $e = $t->modify('-' . $back . ' seconds');
+            $e = self::plus($t, -$back);
             if ($e->setTimezone(self::zone($tz))->format('Y-m-d H:i:s') === $wall) {
                 return $e->setTimezone(self::zone($tz));
             }
@@ -208,6 +208,12 @@ final class Clock
     public static function inGap(int $dn, int $secs, string $tz): bool
     {
         return self::secsOf(self::at($dn, $secs, $tz)) !== $secs;
+    }
+
+    /** An instant $secs of elapsed time later, in the same zone (wall-clock arithmetic across a clock change would be off by the change). */
+    public static function plus(\DateTimeImmutable $t, int $secs): \DateTimeImmutable
+    {
+        return (new \DateTimeImmutable('@' . ($t->getTimestamp() + $secs)))->setTimezone($t->getTimezone());
     }
 
     public static function iso(\DateTimeImmutable $t): string

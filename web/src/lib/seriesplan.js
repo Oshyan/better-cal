@@ -138,7 +138,7 @@ export function planView(plan, ctx = {}) {
       options: (g.options || []).map((o, i) => {
         const refusal = refusalFor(plan, g.id, o.id);
         const disabled = !!(o.disabled || refusal);
-        const lines = CHANGE_GROUPS.has(g.id) && g.id !== 'bound' ? W.optionLines(o, { selected: picked[g.id] === o.id, opts }) : { dates: '', note: '' };
+        const lines = CHANGE_GROUPS.has(g.id) && g.id !== 'bound' ? W.optionLines(o, { opts }) : { dates: '', note: '' };
         return {
           id: o.id, label: w.options[i].label, selected: picked[g.id] === o.id, disabled,
           reason: disabled ? W.refusalWords(refusal ? refusal.code : o.code) : '', dates: lines.dates, note: lines.note,
@@ -208,7 +208,7 @@ export function planView(plan, ctx = {}) {
       clock: grp.outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((x) => (x.d.takes || []).includes('time')) ? clock : null,
       first: sorted[0].d.shows, last: sorted[sorted.length - 1].d.shows,
     }, opts);
-    const line1 = grp.shared ? W.sharedLine(grp.shared, sorted.length) : words.line1;
+    const line1 = grp.shared ? W.sharedLine(grp.shared, sorted.length, sorted.map((x) => x.d.title).filter(Boolean)) : words.line1;
     return { key: 'group:' + sorted[0].d.key, line1, range: words.range, toggle: words.toggle, choice: grp.shared ? choice(grp.shared, { onRow: true }) : null, days: sorted.map((x) => x.row) };
   });
   view.edited = [...rows, ...groupRows, ...editedChoices];

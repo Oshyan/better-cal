@@ -4586,7 +4586,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   };
   const v = planView(choir, ctx());
   eq('series panel: the title states the action and the scope; the series on its calendar under it', [v.title, v.series], ['Move all events', "'Choir' on Sample"]);
-  eq('series panel: CHANGE says from and to, the end part of it', v.change, 'From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before.');
+  eq('series panel: CHANGE names only what changes, the rest as context, the end part of it', v.change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
@@ -4602,9 +4602,9 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
 
   // Every time in the user's setting: 12-hour and 24-hour.
   setTimeFormat('24');
-  eq('series panel: in the 24-hour setting every time is 24-hour', planView(choir, ctx()).change, 'From weekly on Tuesday at 19:00 to weekly on Wednesday at 19:00, with no end, as before.');
+  eq('series panel: in the 24-hour setting every time is 24-hour', planView(choir, ctx()).change, 'From Tuesday to Wednesday each week, at 19:00, with no end, as before.');
   setTimeFormat('12');
-  eq('series panel: and back in the 12-hour setting, 12-hour', planView(choir, ctx()).change, 'From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before.');
+  eq('series panel: and back in the 12-hour setting, 12-hour', planView(choir, ctx()).change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
 
   // The bound in the Change sentence and in Affects.
   const bound = (b) => planView({ ...choir, bound: b, counts: { events: b.events, edited: 0, skipped: 0 } }, ctx());
@@ -4640,7 +4640,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: readings under CHANGE, a reason, then each option with its dates and how it differs', [g.readings[0].reason, g.readings[0].options.map((o) => [o.label, o.dates, o.note, o.selected])], [
     'This change can mean two things:', [
       ['Move every Wednesday to Thursday', 'Thu, Mar 11 · Fri, Mar 12 · Mon, Mar 15', '', true],
-      ['Shift the whole weekly pattern', 'Thu, Mar 11 · Sat, Mar 13 · Tue, Mar 16', 'first differs on Sat, Mar 13', false],
+      ['Shift the whole weekly pattern', 'Thu, Mar 11 · Sat, Mar 13 · Tue, Mar 16', '', false],
     ]]);
   const toFri = { ...gym, groups: [{ ...gym.groups[0], selected: 'pattern' }], refusals: [{ group: 'reading', option: 'member', code: 'member_taken', words: 'Server reason' }] };
   const f = planView(toFri, ctx({ title: 'Gym' }));
@@ -4700,7 +4700,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     days: [{ key: '2027-04-14T02:00:00Z', newKey: '2027-04-14T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'stays', shows: '2027-04-13', to: '2027-04-13', kept: ['title'], takes: [] }] },
   ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', fields: [{ label: 'Title', words: 'Choir, now Chorus' }] }));
   eq('series panel: a rename, its field, the rule as before, and the day with its own title asking', [rename.title, rename.fields, rename.change, rename.edited[0].line1, rename.edited[0].choice.reason, rename.edited[0].choice.options.map((o) => o.label)], [
-    'Rename all events', ['Title: Choir, now Chorus.'], 'Still weekly on Tuesday at 7:00 PM, with no end, as before.',
+    'Rename all events', ["Title from 'Choir' to 'Chorus'."], 'Still weekly on Tuesday at 7:00 PM, with no end, as before.',
     "'Rehearsal' on Tue, Apr 13 has its own title, 'Rehearsal'.", 'Keep its title, or give it the new one too?', ["Keep 'Rehearsal'", "Rename it to 'Chorus'"]]);
   eq('series panel: a resize is a change, a refused plan offers only this one', [planView({ hash: 'z' }, ctx({ kind: 'resize' })).action, planView({ hash: 'z', refusals: [{ code: 'weekno' }] }, ctx()).onlyThis],
     ['Change all events', 'Move only this one']);
@@ -4742,9 +4742,9 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
 
   // From the scenario set: the clock before a month-end clause, a start that moved, an nth weekday, a choice about several days.
   eq('series panel: the clock goes with the day, before a month-end clause', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=31', 'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-31T18:00:00-08:00', '2027-03-30T18:00:00-07:00') }, ctx()).change,
-    'From monthly on the 31st at 6:00 PM, skipping months without one to monthly on the 30th at 6:00 PM, skipping months without one, with no end, as before.');
+    'From the 31st to the 30th each month, at 6:00 PM, skipping months without one, with no end, as before.');
   eq('series panel: the same rule starting on another day says where it starts now', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-01-01T16:00:00-08:00', '2027-02-01T16:00:00-08:00'),
-    bound: { kind: 'count', count: 6, events: 6, from: { kind: 'count', count: 6 } } }, ctx()).change, 'Still monthly on the 1st at 4:00 PM, now starting Mon, Feb 1 (was Fri, Jan 1), for 6 events, as before.');
+    bound: { kind: 'count', count: 6, events: 6, from: { kind: 'count', count: 6 } } }, ctx()).change, 'Starts Mon, Feb 1 (was Fri, Jan 1). Still monthly on the 1st at 4:00 PM, for 6 events, as before.');
   eq('series panel: an nth weekday moved reads as the days people name', labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=MONTHLY;BYDAY=2WE,3MO' }, { id: 'pattern', rrule: 'FREQ=MONTHLY;BYDAY=1WE,3WE' }] },
     rule('FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=2WE,3MO', '2026-11-02T19:00:00-08:00', '2026-11-02T19:00:00-08:00')), ['Move every first Monday to the second Wednesday', 'Shift the whole monthly pattern']);
   const twoTitles = planView({ ...choir, rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=TU', '2026-11-03T19:00:00-08:00', '2026-11-03T19:00:00-08:00'),
@@ -4753,7 +4753,27 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       { key: 'k2', kind: 'edited', title: 'Choir, concert', outcome: 'stays', shows: '2026-12-15', to: '2026-12-15', kept: ['title'], takes: [] }] },
   ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', refYear: 2026 }));
   eq('series panel: a choice about several days sits on their group row', [twoTitles.edited.length, twoTitles.edited[0].line1, twoTitles.edited[0].range, twoTitles.edited[0].choice.lead, twoTitles.edited[0].choice.reason, twoTitles.edited[0].choice.options.map((o) => o.label)],
-    [1, '2 days that were changed earlier have their own titles.', 'Nov 17 to Dec 15', '', 'Keep their titles, or give them the new one too?', ['Keep their own titles', "Rename them to 'Chorus'"]]);
+    [1, "2 days have their own titles ('Choir, extra rehearsal', 'Choir, concert').", 'Nov 17 to Dec 15', '', 'Keep their titles, or give them the new one too?', ['Keep their own titles', "Rename them to 'Chorus'"]]);
+
+  // The change sentence names only what changes.
+  const changeOf = (before, after, sb, sa) => planView({ ...choir, rule: rule(before, after, sb, sa) }, ctx()).change;
+  eq('series panel: only the clock changed', changeOf('FREQ=WEEKLY;BYDAY=MO', 'FREQ=WEEKLY;BYDAY=MO', '2026-11-09T09:00:00-08:00', '2026-11-09T10:00:00-08:00'), 'From 9:00 AM to 10:00 AM every Monday, with no end, as before.');
+  eq('series panel: nth weekdays changed', changeOf('FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=2WE,3MO', '2026-11-02T19:00:00-08:00', '2026-11-02T19:00:00-08:00'),
+    'From the first and third Monday to the second Wednesday and third Monday each month, at 7:00 PM, with no end, as before.');
+  eq('series panel: a new frequency gives both whole rules', changeOf('FREQ=WEEKLY;BYDAY=TU', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-05T19:00:00-08:00', '2027-01-15T19:00:00-08:00'),
+    'From weekly on Tuesday at 7:00 PM to monthly on the 15th at 7:00 PM, with no end, as before.');
+  // A reading's dates run until they differ from the other's; a change to earlier days is said.
+  const apart = planView({ ...gym, groups: [{ id: 'reading', selected: 'skip', options: [
+    { id: 'skip', rrule: 'FREQ=MONTHLY;BYMONTHDAY=30', dates: ['2027-03-30T18:00:00-07:00', '2027-04-30T18:00:00-07:00', '2027-05-30T18:00:00-07:00'], then: ['2028-01-30T18:00:00-08:00', '2028-03-30T18:00:00-07:00'], earlier: null },
+    { id: 'clamped', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', dates: ['2027-03-30T18:00:00-07:00', '2027-04-30T18:00:00-07:00', '2027-05-30T18:00:00-07:00'], then: ['2028-01-30T18:00:00-08:00', '2028-02-29T18:00:00-08:00'], earlier: '2027-02-28' },
+  ] }] }, ctx());
+  eq('series panel: readings list their dates until they differ, and say when one changes earlier days', apart.readings[0].options.map((o) => [o.dates, o.note]), [
+    ['Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Thu, Mar 30', ''],
+    ['Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Tue, Feb 29', 'also changes earlier days, from Sun, Feb 28'],
+  ]);
+  const fourTitles = planView({ ...choir, groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 4, days: ['a', 'b', 'c', 'd'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: ['a', 'b', 'c', 'd'].map((k, i) => ({ key: k, kind: 'edited', title: 'Choir ' + (i + 1), outcome: 'stays', shows: fixtureKey(300 + i * 7), to: fixtureKey(300 + i * 7), kept: ['title'], takes: [] })) }, ctx());
+  eq('series panel: a group with a choice names what its days have, three names and then a count', fourTitles.edited[0].line1, "4 days have their own titles ('Choir 1', 'Choir 2', 'Choir 3' and 1 more).");
 
   // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
   const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));

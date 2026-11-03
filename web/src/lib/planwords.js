@@ -109,15 +109,45 @@ export function changeSentence(rule, bound, opts = {}) {
   const end = boundPhrase(bound, opts);
   if (!from && !to) return upperFirst(end) + '.';
   const fromDay = dayKeyOf(rule && rule.from && rule.from.start), toDay = dayKeyOf(rule && rule.to && rule.to.start);
-  if ((from === to || !to) && fromDay && toDay && fromDay !== toDay) {
-    return 'Still ' + from + ', now starting ' + fmtDay(toDay, opts) + ' (was ' + fmtDay(fromDay, { ...opts, prev: toDay }) + '), ' + end + '.';
+  if (from === to || !to) {
+    const starts = fromDay && toDay && fromDay !== toDay ? 'Starts ' + fmtDay(toDay, opts) + ' (was ' + fmtDay(fromDay, { ...opts, prev: toDay }) + '). ' : '';
+    return starts + 'Still ' + from + ', ' + end + '.';
   }
-  if (from === to || !to) return 'Still ' + from + ', ' + end + '.';
+  // Only what changes, with the rest as context, while the frequency stays.
+  const a = ruleShape(rule.from), b = ruleShape(rule.to);
+  if (a && b && a.period === b.period && a.clause === b.clause && a.zone === b.zone) {
+    if (a.days === b.days) return 'From ' + a.clock + ' to ' + b.clock + ' ' + (a.days ? everyDays(a) : a.period) + b.clause + ', ' + end + '.';
+    if (a.clock === b.clock) return 'From ' + a.days + ' to ' + b.days + ' ' + a.period + (b.clock ? ', at ' + b.clock : '') + b.clause + ', ' + end + '.';
+    return 'From ' + a.days + ' at ' + a.clock + ' to ' + b.days + ' at ' + b.clock + ' ' + a.period + b.clause + ', ' + end + '.';
+  }
   return 'From ' + from + ' to ' + to + ', ' + end + '.';
 }
 
-/** A field the editor changed: "Title: Sample practice, now Sample rehearsal." */
-export const fieldSentence = (f) => f.label + ': ' + f.words + '.';
+// A rule's parts for the change sentence: its days ("Tuesday", "the 31st",
+// "the first and third Monday"), its period ("each week", "each month",
+// "every 2 weeks"), its clock, its month-end clause and its zone.
+const PERIODS = { Daily: 'each day', Weekly: 'each week', Monthly: 'each month', Yearly: 'each year' };
+function ruleShape(part) {
+  if (!part || !part.rrule) return null;
+  const start = dayKeyOf(part.start);
+  const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false });
+  const m = words && /^(Daily|Weekly|Monthly|Yearly|Every \d+ (?:day|week|month|year)s)(?: on (.+?))?(, skipping months without one|, or the last day(?: in shorter months)?)?$/.exec(words);
+  if (!m) return null;
+  return {
+    period: PERIODS[m[1]] || lowerFirst(m[1]), weekly: m[1] === 'Weekly', days: m[2] || '', clause: m[3] || '',
+    clock: !part.allDay && part.start ? fmtClock(part.start, part.tz) : '', zone: part.allDay ? '' : part.tz || '',
+  };
+}
+// "every Monday", "on the 1st each month".
+const everyDays = (s) => (s.weekly ? 'every ' + s.days : 'on ' + s.days + ' ' + s.period);
+
+/** A field the editor changed: "Title from 'Choir' to 'Chorus'.", "Reminder from 1 hour before to 30 minutes." */
+export function fieldSentence(f) {
+  const m = /^(.*), now (.*)$/.exec(f.words || '');
+  if (!m) return f.label + ': ' + f.words + '.';
+  const q = f.label === 'Title' ? quoted : (x) => x;
+  return f.label + ' from ' + q(m[1]) + ' to ' + q(m[2]) + '.';
+}
 
 // ---- coming up and affects ---------------------------------------------------
 
@@ -281,8 +311,13 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
 }
 
 /** A group row's sentence when a choice is about its days: "2 days that were changed earlier have their own title." */
-export function sharedLine(g, count) {
-  if (/^own[A-Z]/.test(g.id || '')) { const noun = FIELD_NOUNS[g.field] || 'value'; return count + ' days that were changed earlier have their own ' + (/s$|people/.test(noun) ? noun : noun + 's') + '.'; }
+export function sharedLine(g, count, titles = []) {
+  if (/^own[A-Z]/.test(g.id || '')) {
+    const noun = FIELD_NOUNS[g.field] || 'value';
+    const names = g.field === 'title' && titles.length
+      ? ' (' + titles.slice(0, 3).map(quoted).join(', ') + (titles.length > 3 ? ' and ' + (titles.length - 3) + ' more' : '') + ')' : '';
+    return count + ' days have their own ' + (/s$|people/.test(noun) ? noun : noun + 's') + names + '.';
+  }
   if (g.id === 'outside') return count + ' days that were changed earlier fall after the new end.';
   if (g.id === 'movedDays') return count + ' days were moved earlier to dates of their own.';
   return count + ' days that were changed earlier.';
@@ -441,12 +476,16 @@ function ordinalDay(n) {
 }
 
 /** A reading option's dates and consequence lines, from its data. */
-export function optionLines(x, { selected = false, opts = {} } = {}) {
+export function optionLines(x, { opts = {} } = {}) {
+  // From the day acted on until its first date that differs from the other
+  // reading's ("… Sun, Jan 30, 2028 · Tue, Feb 29" when that is further on).
   let prev = null;
-  const dates = (x.next || []).map((n) => { const at = typeof n === 'string' ? n : n && n.start; const s = fmtDay(at, { ...opts, prev }); prev = dayKeyOf(at); return s; }).filter(Boolean).join(' · ');
-  const parts = (x.differs && x.differs.dates) || [];
-  const differs = !selected && parts.length ? 'first differs on ' + fmtDay(parts[0], opts) : '';
-  return { dates, note: differs };
+  const say = (list) => list.map((n) => { const at = typeof n === 'string' ? n : n && n.start; const s = fmtDay(at, { ...opts, prev }); prev = dayKeyOf(at); return s; }).filter(Boolean).join(' · ');
+  const first = say(x.dates || x.next || []);
+  const then = (x.then || []).length ? say(x.then) : '';
+  const dates = then ? first + ' … ' + then : first;
+  const note = x.earlier ? 'also changes earlier days, from ' + fmtDay(x.earlier, opts) : '';
+  return { dates, note };
 }
 
 // ---- refusals and notes ----------------------------------------------------

@@ -143,6 +143,19 @@ return static function (Db $db): void {
         $plan = $d->events->previewPatch($u, $gym, $edit);
         [$code] = $answer(fn() => $d->events->patch($u, $gym, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => ['reading' => 'member']]]));
         checkEq('naming a disabled reading is 422 series_refused', '422 series_refused', $code);
+        // A reading's dates run from the day acted on until they differ from
+        // the other reading's; the one that also changes earlier days says from when.
+        $swap = (int) $d->events->create($u, eventAt($home, 'Book swap', '2027-01-31', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=31']))['eventId'];
+        $readings = $d->events->previewPatch($u, $swap, ['scope' => 'all', 'instanceStart' => '2027-03-31T18:00:00+00:00', 'start' => '2027-03-30T18:00:00+00:00', 'end' => '2027-03-30T19:00:00+00:00']);
+        $opts = array_column(array_values(array_filter($readings['groups'], static fn(array $g): bool => $g['id'] === 'reading'))[0]['options'] ?? [], null, 'id');
+        checkEq('reading dates: from the day acted on, three, then the last shared date and the first that differs; the clamped reading changes 28 Feb', [
+            '2027-03-30', 3, ['2028-01-30', '2028-03-30'], ['2028-01-30', '2028-02-29'], null, '2027-02-28',
+        ], [
+            substr((string) ($opts['skip']['dates'][0] ?? ''), 0, 10), count($opts['skip']['dates'] ?? []),
+            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['skip']['then'] ?? []),
+            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['clamp']['then'] ?? []),
+            array_key_exists('earlier', $opts['skip'] ?? []) ? $opts['skip']['earlier'] : 'missing', $opts['clamp']['earlier'] ?? null,
+        ]);
         [$code] = $answer(fn() => $d->events->patch($u, $gym, $edit + ['preview' => true]));
         checkEq('patch() never applies a preview', '400 preview_unavailable', $code);
     });

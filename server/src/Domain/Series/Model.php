@@ -395,6 +395,10 @@ final class Model
             if (!$consequence && count($alts) > 1 && count(array_unique(array_map('json_encode', $nexts))) === 1) {
                 $nexts = $this->partingDates($alts) ?? $nexts;
             }
+            // A reading's dates for the client: from the day acted on until
+            // its first date that differs from the other reading's, and the
+            // first earlier date it changes (series-model.md, The Plan).
+            $apart = $group['id'] === 'reading' && count($alts) > 1 ? $this->readingApart($alts, (int) array_search($group['selected'], array_column($group['options'], 'id'), true)) : [];
             foreach ($group['options'] as $oi => $option) {
                 if (!isset($alts[$oi])) {
                     if ($consequence) {
@@ -407,6 +411,9 @@ final class Model
                 $plan['groups'][$gi]['options'][$oi]['bound'] = $alt['plan']['bound'];
                 if ($option['id'] !== $group['selected']) {
                     $plan['groups'][$gi]['options'][$oi]['differs'] = $this->differs($alt, $result);
+                }
+                if (isset($apart[$oi])) {
+                    $plan['groups'][$gi]['options'][$oi] += $apart[$oi];
                 }
                 if ($consequence) {
                     $plan['groups'][$gi]['options'][$oi]['words'] = $group['id'] === 'zone' ? $this->zoneWords($alt) : $this->readingWords($alt, $alts);
@@ -481,6 +488,69 @@ final class Model
             $ends[$oi] = array_map(fn(int $d): string => $iso($s['calc'], $d), array_slice($s['days'], -3));
         }
         return count(array_unique(array_map('json_encode', $ends))) > 1 ? $ends : null;
+    }
+
+    /**
+     * Each reading's dates against the other's: `dates`, its dates from the
+     * day acted on through its first date that differs from the other
+     * reading's (three at least; when that is further on, the first three and
+     * `then`, the last date they share and its first different one), and
+     * `earlier`, the first date before the day acted on where it differs
+     * from the preselected reading (only for the others).
+     *
+     * @param array<int, array> $alts
+     * @return array<int, array{dates: list<string>, then: list<string>, earlier: ?string}>
+     */
+    private function readingApart(array $alts, int $selected): array
+    {
+        $seqs = [];
+        foreach ($alts as $oi => $alt) {
+            $calc = $alt['meta']['calc'] ?? null;
+            if (!$calc instanceof Calc) {
+                return [];
+            }
+            [, $periods] = $alt['walk'];
+            $seqs[$oi] = ['days' => array_values($periods ?? []), 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
+        }
+        if (!isset($seqs[$selected])) {
+            $selected = (int) array_key_first($seqs);
+        }
+        $iso = fn(Calc $c, int $d): string => Time::iso($c->instant($d)->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $c->tz)));
+        $out = [];
+        foreach ($seqs as $oi => $s) {
+            $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
+            $mine = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
+            $theirs = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
+            $i = 0;
+            while ($i < count($mine) && $i < count($theirs) && $mine[$i] === $theirs[$i]) {
+                $i++;
+            }
+            $differs = $i < count($mine) && ($i < count($theirs) || count($theirs) > 0);
+            $dates = array_slice($mine, 0, $differs ? max(3, $i + 1) : 3);
+            $then = [];
+            if ($differs && $i >= 4) {
+                $dates = array_slice($mine, 0, 3);
+                $then = array_slice($mine, $i - 1, 2);
+            }
+            $earlier = null;
+            if ($oi !== $selected) {
+                $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
+                $refBefore = array_values(array_filter($ref['days'], static fn(int $d): bool => $d < $ref['landed']));
+                $n = max(count($before), count($refBefore));
+                for ($j = 0; $j < $n; $j++) {
+                    if (($before[$j] ?? null) !== ($refBefore[$j] ?? null)) {
+                        $earlier = Cal::date(min(array_filter([$before[$j] ?? null, $refBefore[$j] ?? null], static fn($x): bool => $x !== null)));
+                        break;
+                    }
+                }
+            }
+            $out[$oi] = [
+                'dates' => array_map(fn(int $d): string => $iso($s['calc'], $d), $dates),
+                'then' => array_map(fn(int $d): string => $iso($s['calc'], $d), $then),
+                'earlier' => $earlier,
+            ];
+        }
+        return $out;
     }
 
     /**

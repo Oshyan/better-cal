@@ -1353,20 +1353,20 @@ final class Model
                 $nk = $newKey($key, $img);
                 if ($nk !== null) {
                     $newExdates[] = $nk;
-                    $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves',
-                        'words' => 'Skipped ' . Words::dayMonth($odn, $this->thisYear) . ($img === $odn ? ' stays skipped' : ' moves to ' . Words::dayMonth((int) $img, $this->thisYear))];
+                    $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves']
+                        + Words::dayParts(Words::date($odn, $this->thisYear), $img === $odn ? 'stays skipped' : 'moves to ' . Words::date((int) $img, $this->thisYear), ' ', 'Skipped ');
                 } else {
-                    $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped',
-                        'words' => 'Skipped ' . Words::dayMonth($odn, $this->thisYear) . ' is forgotten' . ($img === null ? ': the new series has no ' . Words::dayMonth($odn, $this->thisYear) : ': it falls outside the series')];
+                    $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped']
+                        + Words::dayParts(Words::date($odn, $this->thisYear), 'is forgotten' . ($img === null ? ': the new series has no ' . Words::date($odn, $this->thisYear) : ': it falls outside the series'), ' ', 'Skipped ');
                 }
             }
             foreach ($genSkips as $g) {
                 $nk = $calc1->key($g);
                 $newExdates[] = $nk;
-                $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated',
-                    'words' => Words::date($g, $this->thisYear) . (($edgeAt[$g] ?? 'start') === 'start' && $newStart === $this->old->startDn
-                        ? ' skipped, so the series starts as before'
-                        : ' skipped: no event of the series was on it')];
+                $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated']
+                    + Words::dayParts(Words::date($g, $this->thisYear), ($edgeAt[$g] ?? 'start') === 'start' && $newStart === $this->old->startDn
+                        ? 'skipped, so the series starts as before'
+                        : 'skipped: no event of the series was on it');
             }
         }
         $newExdates = array_values(array_unique($newExdates));
@@ -1421,8 +1421,8 @@ final class Model
                     'recurrence_instance_utc' => $nk, 'start_utc' => Time::toDb($cs), 'end_utc' => Time::toDb($ce),
                     'all_day' => $cAll ? 1 : 0, 'tzid' => $cTz, 'override_fields' => OwnFields::encode($own),
                 ];
-                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => [],
-                    'words' => 'This one, ' . Words::date(Cal::dnOf($cs->setTimezone(Time::zone($cAll ? 'UTC' : $cTz))), $this->thisYear) . ', keeps where it was put'];
+                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => []]
+                    + Words::dayParts('This one, ' . Words::date(Cal::dnOf($cs->setTimezone(Time::zone($cAll ? 'UTC' : $cTz))), $this->thisYear), 'keeps where it was put', ', ');
             }
         }
         $outside = 'keep';
@@ -1479,13 +1479,13 @@ final class Model
         if ($calc1->anchor !== null && $calc1 !== $this->old) {
             $newExdates[] = Time::toDb($start1);
             sort($newExdates);
-            $days[] = ['key' => null, 'newKey' => Time::toDb($start1), 'kind' => 'skipped', 'outcome' => 'anchor', 'words' => ''];
+            $days[] = ['key' => null, 'newKey' => Time::toDb($start1), 'kind' => 'skipped', 'outcome' => 'anchor'] + Words::dayParts('', '');
         } elseif ($calc1 === $this->old && $this->anchored) {
             $stored = $this->rule0;
             $start1 = Time::fromDb((string) $this->master['start_utc']);
             $newExdates[] = (string) $this->master['start_utc'];
             sort($newExdates);
-            $days[] = ['key' => (string) $this->master['start_utc'], 'newKey' => (string) $this->master['start_utc'], 'kind' => 'skipped', 'outcome' => 'anchor', 'words' => ''];
+            $days[] = ['key' => (string) $this->master['start_utc'], 'newKey' => (string) $this->master['start_utc'], 'kind' => 'skipped', 'outcome' => 'anchor'] + Words::dayParts('', '');
         }
 
         // The writes.
@@ -1610,9 +1610,11 @@ final class Model
                 $rejoined[$id] = true;
                 unset($tags[$id], $people[$id]);
                 $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
+                $shows = Cal::dnOf($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz)));
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
-                    'title' => (string) $row['title'], 'outcome' => 'rejoins', 'words' => $name . Words::date($odn, $this->thisYear) . ' is an ordinary occurrence again',
-                    'kept' => [], 'takes' => OwnFields::normalize($edited)];
+                    'title' => (string) $row['title'], 'outcome' => 'rejoins']
+                    + Words::dayParts($name . Words::date($odn, $this->thisYear), 'goes back to the series, on ' . Words::date($shows, $this->thisYear))
+                    + ['kept' => [], 'takes' => OwnFields::normalize($edited)];
                 continue;
             }
             if ($cols !== []) {
@@ -1648,17 +1650,17 @@ final class Model
                 $newShown = Cal::dnOf($localStart);
                 $clockMoved = !$allDay && Time::toDb($start) !== (string) $row['start_utc'];
                 $where = $newShown !== $wasShown ? 'moves to ' . Words::date($newShown, $this->thisYear) : ($clockMoved ? 'moves to ' . $localStart->format('H:i') : 'stays there');
-                $words = $name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($wasShown, $this->thisYear) . ': ' . $where . $keepsWords;
+                $said = Words::dayParts($name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($wasShown, $this->thisYear), $where . $keepsWords, ': ');
             } else {
                 // A day that keeps its date and changes its time says the time.
                 $localStart = $start->setTimezone(Time::zone($allDay ? 'UTC' : $tz));
                 $to = Cal::dnOf($localStart) === $wasShown && !$allDay ? $localStart->format('H:i') : Words::date(Cal::dnOf($localStart), $this->thisYear);
-                $words = $name . Words::date($odn, $this->thisYear) . ($moved ? ' moves to ' . $to : ' stays') . $keepsWords;
+                $said = Words::dayParts($name . Words::date($odn, $this->thisYear), ($moved ? 'moves to ' . $to : 'stays') . $keepsWords);
             }
             // As data beside the words: the own fields it keeps, and the fields
             // this edit changes that it takes from the series.
             $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
-                'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays', 'words' => $words,
+                'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays'] + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
         foreach ($outsideRows as $id => $img) {
@@ -1666,10 +1668,10 @@ final class Model
             $label = "'" . (string) $row['title'] . "' " . Words::date($this->shownDn($row), $this->thisYear);
             if ($outside === 'delete') {
                 $delete[] = $id;
-                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted', 'words' => $label . ' is deleted', 'kept' => $this->ownOf($row)];
+                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
             } else {
                 $detach[$id] = [];
-                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate', 'words' => $label . ' becomes an event of its own', 'kept' => $this->ownOf($row)];
+                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate'] + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
             }
             unset($img);
         }
@@ -1685,8 +1687,8 @@ final class Model
                 $create[] = $placed;
             }
             $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => $this->actedRowId !== null ? 'edited' : 'acted', 'outcome' => 'separate']
-                + ($this->actedRowId !== null ? ['title' => (string) $this->rows[$this->actedRowId]['title']] : []) + [
-                'words' => 'This one, ' . Words::date($landedDn, $this->thisYear) . ', becomes an event of its own'];
+                + ($this->actedRowId !== null ? ['title' => (string) $this->rows[$this->actedRowId]['title']] : [])
+                + Words::dayParts('This one, ' . Words::date($landedDn, $this->thisYear), 'becomes an event of its own', ', ');
         }
 
         // Words and the rest of the plan.

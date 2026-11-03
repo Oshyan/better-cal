@@ -683,10 +683,10 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $named = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal'], null, ['title'])];
     $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F']]);
     // Its title was all it owned: taking the series' leaves it nothing of its own, so it is an occurrence again (Own Fields).
-    checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar is an ordinary occurrence again", 'rejoins', [2], []],
+    checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", 'rejoins', [2], []],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, array_column($p['plan']['days'], 'outcome', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete'], $p['writes']['overrides']]);
     $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
-    checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar is an ordinary occurrence again", [2]],
+    checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", [2]],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete']]);
     $namedPlace = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal', 'location' => 'Sample Room'], null, ['title', 'location'])];
     $p = smPlan($choir, $namedPlace, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);

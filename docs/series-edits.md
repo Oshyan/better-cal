@@ -14,8 +14,8 @@ The panel opens in one place every time: at the bottom right of the calendar on 
 
 - **Change:** the rule before and after, with its end: "Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00, no end, as before". When a change can mean more than one thing (dragging Wednesday's class to Thursday in a Monday, Wednesday and Friday series can move every Wednesday, or shift the whole pattern a day), each choice is a row under it with its own next dates and what it drops or adds; a choice of time zone says which events change their clock. The first one is what Enter does. A choice between keeping the count and keeping the end works the same way.
 - **Next:** the next dates as they'll show, with edited days marked.
-- **Size:** how many events there will be and how many of them are skipped and edited: "6 events, 1 skipped, 2 edited", or "All events, ..." for a series with no end.
-- **Edited:** every edited day is named, one row each: the day, then what happens to it ("moves to Wed 14 Apr; keeps its title and place"), then its choice when it has one. Days that do something of their own come first. Days that go with their events the same way share one row, "38 edited days, Tue 6 Apr to Tue 4 Jan 2028", and **Show 38 days** lists each.
+- **Size:** the end, then how many days are edited and skipped: "6 events, 2 edited, 1 skipped", "Ends Wed 20 Jan 2027, 11 edited, 1 skipped" or "No end, 11 edited, 1 skipped".
+- **Edited:** every edited day is named, one row each: the day, then what happens to it ("moves to Wed 14 Apr; keeps its title and place"), then its choice when it has one. Days that do something of their own come first. Days that go with their events the same way share one row, "38 edited days, 6 Apr to 4 Jan 2028", and **Show 38 days** lists each. A day left with nothing of its own goes back to the series and says where it shows.
 - **Skipped:** each skipped day and where it goes.
 - **Refusals:** a change the series can't take says why, and its button is **Move only this one**, to change just the day you dragged. A reading that can't apply is shown greyed out with its reason.
 

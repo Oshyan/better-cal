@@ -53,6 +53,16 @@ return static function (Db $db): void {
             'FREQ=WEEKLY;BYDAY=WE', ['movedDays'], ['title', 'location'],
         ], [$plan['rule']['after'], array_column($plan['groups'], 'id'),
             json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE recurrence_parent_id = ? AND title = 'Rehearsal'", [$choir]), true)]);
+        // Each day's words in two parts beside the sentence (the dialog's two
+        // lines), every date with its weekday, the skipped day's too.
+        $byKey = array_column($plan['days'], null, 'key');
+        $yr = (int) gmdate('Y') === 2027 ? '' : ' 2027';
+        $parts = static fn(?array $x): array => [$x['head'] ?? null, $x['outcomeWords'] ?? null, $x['words'] ?? null];
+        checkEq('a day\'s head and outcome: the edited day, the one at its own date, the skipped one', [
+            ["'Rehearsal' Tue 13 Apr$yr", "moves to Wed 14 Apr$yr, keeps its title and place", "'Rehearsal' Tue 13 Apr$yr moves to Wed 14 Apr$yr, keeps its title and place"],
+            ["Tue 23 Mar$yr, moved to Fri 26 Mar$yr", 'stays there', "Tue 23 Mar$yr, moved to Fri 26 Mar$yr: stays there"],
+            ["Tue 30 Mar$yr", "moves to Wed 31 Mar$yr", "Skipped Tue 30 Mar$yr moves to Wed 31 Mar$yr"],
+        ], [$parts($byKey['2027-04-13T18:00:00Z'] ?? null), $parts($byKey['2027-03-23T18:00:00Z'] ?? null), $parts($byKey['2027-03-30T18:00:00Z'] ?? null)]);
         [$code, $again] = $answer(fn() => $d->events->patch($u, $choir, $drag));
         checkEq('a drag sent without a plan is 409 series_plan_required with the plan, nothing written', ['409 series_plan_required', $plan['hash'], $before],
             [$code, $again['hash'] ?? null, $rows($choir)]);
@@ -101,6 +111,10 @@ return static function (Db $db): void {
             array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'outcome'),
             array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'newKey'),
         ]);
+        $yr = (int) gmdate('Y') === 2027 ? '' : ' 2027';
+        $rejoined = array_values(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+        checkEq('the day going back to the series: its head, then where it shows', ["'Rehearsal' Tue 12 Jan$yr", "goes back to the series, on Tue 12 Jan$yr"],
+            [$rejoined['head'] ?? null, $rejoined['outcomeWords'] ?? null]);
         $d->undo->undoLatest($u);
         checkEq('undone, the edited day\'s row and its tags are byte-identical to before', $beforeGive, [$rows($owned), $tagRows()]);
         $weekno = (int) $d->events->create($u, eventAt($home, 'Kickoff', '2027-01-04', ['rrule' => 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO']))['eventId'];

@@ -9,6 +9,8 @@
 // the frame: every date through one formatter, "now" between the rule
 // before and after, the rows each day is drawn as, the size and the action.
 
+import { untilDayKey } from './dates.js';
+
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -142,6 +144,20 @@ export function planCount(plan) {
 }
 
 /**
+ * Size's first part: "13 events" with a count, "Ends Wed 20 Jan 2027" with
+ * an end date (its last day, read in the series' zone), "No end" without.
+ */
+export function endWords(bound, count, tz = null, refYear = new Date().getFullYear()) {
+  if (count != null) return count + (count === 1 ? ' event' : ' events');
+  const until = bound && bound.until;
+  if (until) {
+    const day = untilDayKey(until, tz);
+    if (day) return 'Ends ' + planDate(day, { tz, refYear });
+  }
+  return 'No end';
+}
+
+/**
  * Everything the panel shows, from a plan (null while it is being worked
  * out). ctx: kind ('drag' | 'resize' | 'editor'), title (the series'),
  * scope ('all' | 'following'), choices (picked so far), tz (the series'
@@ -270,7 +286,7 @@ export function planView(plan, ctx = {}) {
   view.edited = [...rows, ...[...groups.values()].map((grp) => groupRow(grp, { tz, at }))];
   // An anchor is the stored day before a first day in a skipped hour: no
   // event of the series, so it has no row (the gap note says the time).
-  view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => skipRow(d, at));
+  view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => dayRow(d, at));
   // A group's name leads its rows when there's more than one, or when its
   // rows aren't readings of the rule ("First week", "Bound").
   for (const g of view.readings) g.showLabel = !!g.label && (view.readings.length > 1 || !g.dated);
@@ -278,12 +294,13 @@ export function planView(plan, ctx = {}) {
   view.gains = upperFirst((plan.gains || []).map(wordsOf).filter(Boolean).join('; '));
   view.losses = upperFirst((plan.losses || []).map(wordsOf).filter(Boolean).join('; '));
   view.notes = (plan.notes || []).map(wordsOf).filter(Boolean);
-  // Size: the events after the change, then the skipped and edited among them.
+  // Size: the end (the events' count, or no end, or the end date), then the
+  // edited and skipped days among them, always in that order.
   view.count = planCount(plan);
   const skips = days.filter(isSkip).length;
   const editedDays = days.filter((d) => d.kind === 'edited').length;
-  view.size = [view.count == null ? 'All events' : view.count + (view.count === 1 ? ' event' : ' events'),
-    skips ? skips + ' skipped' : '', editedDays ? editedDays + ' edited' : ''].filter(Boolean).join(', ');
+  view.size = [endWords(plan.bound, view.count, tz, ctx.refYear),
+    editedDays ? editedDays + ' edited' : '', skips ? skips + ' skipped' : ''].filter(Boolean).join(', ');
   view.action = actionWords(ctx.kind, ctx.scope, { edits, count: view.count });
   const everyGroup = (plan.groups || []).every((g) => picked[g.id] != null);
   view.canConfirm = !view.refused && everyGroup && !!plan.hash;
@@ -295,57 +312,32 @@ export function planView(plan, ctx = {}) {
 const outcomeLine = (s) => String(s || '').trim().replace(/^[,:;]\s*/, '').replace(/, (keeps|takes) /, '; $1 ');
 
 /**
- * A day as a row: line one its head (its name when it owns its title, its
- * date, and "moved to <date>" when it shows at a date of its own), line two
- * what happens to it. The words are the server's sentence ("'Rehearsal'
- * Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"); the head is
- * the part that opens it with the day's own name and date, as this
- * formatter writes them. A sentence that doesn't open with that head is
- * line one whole.
+ * A day as a row, edited or skipped: line one its head, the day (its name
+ * when it owns its title, its date, and "moved to <date>" when it shows at
+ * a date of its own), line two what happens to it. Both are the server's
+ * (`head`, `outcomeWords`), so nothing here takes a sentence apart. A day
+ * the plan gives no parts for is its sentence on line one; one it gives no
+ * words for at all is put together from its keys and outcome.
  */
 function dayRow(d, at) {
-  const words = d.words || dayWords(d, at);
-  const date = d.key ? at(d.key) : '';
-  const name = d.title && words.startsWith("'" + d.title + "' ") ? "'" + d.title + "' " : '';
-  const head = name + date;
-  let row = { key: d.key, head: words, line: '', words };
-  if (date && words.startsWith(head)) {
-    const rest = words.slice(head.length);
-    const own = /^, moved to (.+?): (.*)$/.exec(rest);
-    row = own ? { key: d.key, head: head + ', moved to ' + own[1], line: outcomeLine(own[2]), words }
-      : { key: d.key, head, line: outcomeLine(rest), words };
-  }
-  return row;
+  const key = d.key || d.newKey || d.words || '';
+  if (d.head || d.outcomeWords) return { key, head: d.head || '', line: outcomeLine(d.outcomeWords), words: d.words || '' };
+  if (d.words) return { key, head: d.words, line: '', words: d.words };
+  const made = dayParts(d, at);
+  return { key, head: made.head, line: made.line, words: made.head + ' ' + made.line };
 }
 
-/**
- * A skipped day as a row: its date, then what happens to it. Moved and
- * kept skips are written from their keys, so their dates carry the weekday
- * as every date here does; other outcomes take the server's words after
- * the day.
- */
-function skipRow(d, at) {
-  const key = d.key || d.newKey;
-  const date = key ? at(key) : '';
-  const words = d.words || dayWords(d, (iso) => at(iso, false));
-  if (d.outcome === 'moves' && d.key && d.newKey) return { key: d.key, head: date, line: 'moves to ' + at(d.newKey), words };
-  if (d.outcome === 'stays' && d.key) return { key: d.key, head: date, line: 'stays skipped', words };
-  for (const prefix of [date, 'Skipped ' + date, 'Skipped ' + (key ? at(key, false) : '')]) {
-    if (prefix.trim() && words.startsWith(prefix + ' ')) return { key: key || words, head: date, line: outcomeLine(words.slice(prefix.length)), words };
-  }
-  return { key: key || words, head: words, line: '', words };
-}
-
-// A day's sentence when the plan gave none: "Tue 30 Mar moves to Wed 31 Mar".
-function dayWords(d, at) {
-  const day = at(d.key);
-  const title = d.title ? "'" + d.title + "' " : '';
-  if (d.outcome === 'moves' && d.newKey) return title + day + ' moves to ' + at(d.newKey);
-  if (d.outcome === 'stays') return title + day + ' stays';
-  if (d.outcome === 'own' || d.outcome === 'separate') return title + day + ' becomes an event of its own';
-  if (d.outcome === 'deleted') return title + day + ' is deleted';
-  if (d.outcome === 'dropped') return title + day + ' is forgotten';
-  return title + day;
+// A day's parts when the plan gave no words: "Tue 30 Mar", "moves to Wed 31 Mar".
+function dayParts(d, at) {
+  const head = (d.title && d.kind !== 'skipped' ? "'" + d.title + "' " : '') + (d.key ? at(d.key) : d.newKey ? at(d.newKey) : '');
+  const line = d.outcome === 'moves' && d.newKey ? 'moves to ' + at(d.newKey)
+    : d.outcome === 'stays' ? (d.kind === 'skipped' ? 'stays skipped' : 'stays')
+      : d.outcome === 'own' || d.outcome === 'separate' ? 'becomes an event of its own'
+        : d.outcome === 'deleted' ? 'is deleted'
+          : d.outcome === 'dropped' ? 'is forgotten'
+            : d.outcome === 'rejoins' ? 'goes back to the series' + (d.newKey ? ', on ' + at(d.newKey) : '')
+              : '';
+  return { head, line };
 }
 
 // The own fields in words, as the server's sentences name them.
@@ -389,7 +381,8 @@ function wallClock(iso, tz) {
 function groupRow({ outcome, kept, takes, days }, { tz, at }) {
   if (days.length === 1) return days[0].row;
   const sorted = [...days].sort((a, b) => (Date.parse(a.d.key) || 0) - (Date.parse(b.d.key) || 0));
-  const first = at(sorted[0].d.key), last = at(sorted[sorted.length - 1].d.key);
+  // The range without weekdays: the outcome line names where they land.
+  const first = at(sorted[0].d.key, false), last = at(sorted[sorted.length - 1].d.key, false);
   // Where they go: a weekday they all land on, a shift they all make, or
   // a clock time they all take. Every day read in the same zone as the
   // dates, so a Tuesday evening's key lands on Wednesday, not Thursday.

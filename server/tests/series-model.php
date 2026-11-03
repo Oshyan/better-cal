@@ -744,6 +744,167 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         'FREQ=WEEKLY;BYDAY=SU', '2026-09-20', ['2026-09-27T03:15:00+13:00', '2026-10-04T02:15:00+13:00'],
     ], [$m1['rrule'], Time::fromDb($m1['start_utc'])->setTimezone(Time::zone('Pacific/Auckland'))->format('Y-m-d'), array_slice($shown($m1), 0, 2)]);
 
+    // The plan's next dates against the stored series' expansion, from the
+    // plan's first one (instants compared, so offsets don't matter).
+    $agrees = static function (array $plan, array $m1) use ($shown): array {
+        $want = array_map(static fn(array $n): int => Time::parseIso($n['start'])->getTimestamp(), $plan['plan']['next']);
+        $got = array_values(array_filter(array_map(static fn(string $s): int => Time::parseIso($s)->getTimestamp(), $shown($m1, 400)), static fn(int $t): bool => $want !== [] && $t >= $want[0]));
+        return [$want, array_slice($got, 0, count($want))];
+    };
+
+    // R1: a field-only edit is an identity edit. Twice a day, 09:00 and
+    // 17:00 UTC, 60 events: a rename keeps every key, shown time and skip
+    // as stored (the model reads this rule by day and would have rebuilt
+    // the 17:00 exception's key at 09:00).
+    $twice = smSeries('Sample drills', 'FREQ=DAILY;BYHOUR=9,17;COUNT=60', '2027-03-01 09:00', 60, false, ['2027-03-20 17:00'], 'UTC');
+    $evening = smEdited($twice, 2, '2027-03-15 17:00', ['title' => 'Evening drill'], null, ['title']);
+    $morning = smEdited($twice, 3, '2027-03-15 09:00', ['title' => 'Morning drill'], null, ['title']);
+    $p = smPlan($twice, [$evening], ['columns' => ['title' => 'Sample practice']], ['ownTitle' => 'keep']);
+    checkEq('R1: twice a day, one exception at 17:00 renamed around: nothing about it is written, its key stays 17:00', [[], '2027-03-15T17:00:00Z', 'stays'],
+        [$p['writes']['overrides'], $p['plan']['days'][1]['newKey'] ?? null, $p['plan']['days'][1]['outcome'] ?? null]);
+    checkEq('R1: the master takes only the title; the 17:00 skip stays where it is', [['title' => 'Sample practice'], ['2027-03-20 17:00:00'], '2027-03-20T17:00:00Z'],
+        [$p['writes']['master'], $p['writes']['exdates'], $p['plan']['days'][0]['newKey'] ?? null]);
+    checkEq('R1: the count words keep 60 (the rule says COUNT=60, on 30 days), its skip among them', '60 scheduled occurrences, 1 skipped, ends 30 Mar', $p['plan']['bound']['words']);
+    checkEq('R1: next lists both times of a day', ['2027-03-01T09:00:00+00:00', '2027-03-01T17:00:00+00:00', '2027-03-02T09:00:00+00:00', '2027-03-02T17:00:00+00:00'],
+        array_column($p['plan']['next'], 'start'));
+    $p = smPlan($twice, [$evening, $morning], ['columns' => ['title' => 'Sample practice']], ['ownTitle' => 'keep']);
+    checkEq('R1: two exceptions on one day, renamed around: no key written, each keeps its own', [[], ['2027-03-15T17:00:00Z', '2027-03-15T09:00:00Z']],
+        [$p['writes']['overrides'], array_values(array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), 'newKey'))]);
+    $p = smPlan($twice, [$evening, $morning], ['columns' => ['title' => 'Sample practice']], ['ownTitle' => 'give']);
+    checkEq('R1: given the new title too, both take it on their own keys', [[2 => ['title' => 'Sample practice', 'override_fields' => '[]'], 3 => ['title' => 'Sample practice', 'override_fields' => '[]']]],
+        [$p['writes']['overrides']]);
+    $p = smPlan($twice, [$evening], smDrag($twice, '2027-03-01 09:00', '2027-03-01 09:00', ['columns' => ['title' => 'Sample practice']]), ['ownTitle' => 'keep']);
+    checkEq('R1: the day acted on sent back where it is (an editor save) is no time change, so not refused as several a day', [false, []], [$p['refused'], $p['writes']['overrides']]);
+    $p = smPlan($twice, [$evening], ['acted' => smAt('2027-03-01 17:00', 'UTC'), 'landed' => ['start_utc' => smAt('2027-03-01 17:00', 'UTC'), 'end_utc' => smAt('2027-03-01 18:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC'], 'columns' => ['title' => 'Sample practice']], ['ownTitle' => 'keep']);
+    checkEq('R1: likewise from its 17:00 occurrence', [false, []], [$p['refused'], $p['writes']['overrides']]);
+    $long = smDrag($twice, '2027-03-01 09:00', '2027-03-01 09:00');
+    $long['landed']['end_utc'] = smAt('2027-03-01 10:30', 'UTC');
+    $p = smPlan($twice, [$evening], $long);
+    checkEq('R1: a new length reaches the 17:00 exception at 17:00, its key kept', [[2 => ['end_utc' => '2027-03-15 18:30:00']], '2027-03-01 10:30:00'],
+        [$p['writes']['overrides'], $p['writes']['master']['end_utc'] ?? null]);
+    $p = smPlan($twice, [$evening], ['rrule' => 'FREQ=DAILY;BYHOUR=9,17;COUNT=40']);
+    checkEq('R1: a new bound keeps the keys and counts the events the rule says', [[], 'FREQ=DAILY;BYHOUR=9,17;COUNT=40', 'Changes 60 events to 40, ends 20 Mar; 40 scheduled occurrences, 1 skipped'],
+        [$p['writes']['overrides'], $p['writes']['master']['rrule'] ?? null, $p['plan']['bound']['words']]);
+    $p = smPlan($twice, [$evening], ['rrule' => 'FREQ=DAILY;BYHOUR=9,17;COUNT=20']);
+    checkEq('R1: a bound that ends before the 17:00 exception and the skip leaves both outside, by their keys', [['keep', 'delete'], [2], []],
+        [smOptions($p, 'outside'), array_keys($p['writes']['detach']), $p['writes']['exdates']]);
+
+    // R2: DAILY with BYDAY, 02:30 in Los Angeles from Mon 1 Mar 2027. Sabre's
+    // daily iterator keeps the gap-shifted 03:30 after 14 Mar; the model's
+    // keys follow it, and a rename keeps them as stored.
+    $mwf = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', '2027-03-01 02:30', 60, false, ['2027-03-19 03:30']);
+    $p = smPlan($mwf, [], ['acted' => smAt('2027-03-15 03:30')] + ['columns' => ['title' => 'Sample jog']]);
+    checkEq('R2: the plan reads its days as sabre does: 02:30 before the change, 03:30 after', ['2027-03-15T03:30:00-07:00', '2027-03-17T03:30:00-07:00', '2027-03-22T03:30:00-07:00', '2027-03-24T03:30:00-07:00'],
+        array_column($p['plan']['next'], 'start'));
+    $own = smEdited($mwf, 2, '2027-03-15 03:30', ['title' => 'Sample race'], null, ['title']);
+    $p = smPlan($mwf, [$own], ['columns' => ['title' => 'Sample jog']], ['ownTitle' => 'keep']);
+    checkEq('R2: renamed, its 03:30 exception keeps its key and time, the skip its key; 12 events', [[], smAt('2027-03-15 03:30'), [smAt('2027-03-19 03:30')], '12 scheduled occurrences, 1 skipped, ends 26 Mar', ['title' => 'Sample jog']],
+        [$p['writes']['overrides'], str_replace(['T', 'Z'], [' ', ''], (string) ($p['plan']['days'][1]['newKey'] ?? '')), $p['writes']['exdates'], $p['plan']['bound']['words'], $p['writes']['master']]);
+    // A new clock rewrites the rule and keeps it daily: the plan's next and
+    // the stored series agree, the exception follows to its new key.
+    $p = smPlan($mwf, [$own], smDrag($mwf, '2027-03-01 02:30', '2027-03-01 09:00'));
+    $m1 = $stored($mwf, $p['writes']);
+    [$want, $got] = $agrees($p, $m1);
+    checkEq('R2: moved to 09:00, the plan\'s next is the stored series\' expansion', $want, $got);
+    checkEq('R2: and the exception is keyed on a 09:00 occurrence of it', [smAt('2027-03-15 09:00'), 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12'],
+        [$p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $m1['rrule']]);
+    $p = smPlan($mwf, [$own], smDrag($mwf, '2027-03-01 02:30', '2027-03-02 02:30'));
+    $m1 = $stored($mwf, $p['writes']);
+    [$want, $got] = $agrees($p, $m1);
+    checkEq('R2: dragged a day (written as weekly now), the plan and the stored series agree', $want, $got);
+    $wkday = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO', '2027-03-01 02:30');
+    $p = smPlan($wkday, [], smDrag($wkday, '2027-03-08 02:30', '2027-03-15 02:30'));
+    $m1 = $stored($wkday, $p['writes']);
+    [$want, $got] = $agrees($p, $m1);
+    checkEq('R2: one day dragged a whole week stays daily as written, and agrees with its expansion', ['FREQ=DAILY;BYDAY=MO', $want], [$m1['rrule'], $got]);
+
+    // R2's differential: the model's keys for DAILY with BYDAY against the
+    // expander the app persists with, across northern, southern and
+    // half-hour zones, starts and clocks around their changes.
+    $mismatch = [];
+    $combos = 0;
+    foreach (['America/Los_Angeles', 'Europe/Berlin', 'America/St_Johns', 'Australia/Sydney', 'America/Santiago', 'Pacific/Auckland', 'Australia/Lord_Howe', 'Australia/Adelaide', 'UTC'] as $tz) {
+        foreach (['FREQ=DAILY;BYDAY=MO,WE,FR', 'FREQ=DAILY;BYDAY=SU', 'FREQ=DAILY;BYDAY=SA,SU;COUNT=30', 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;UNTIL=20271231T235959Z'] as $rr) {
+            foreach (['2026-09-01', '2027-03-01', '2027-03-12', '2027-10-25'] as $day) {
+                foreach (['00:30', '01:30', '02:15', '02:30', '09:00'] as $clk) {
+                    $start = new DateTimeImmutable("$day $clk", Time::zone($tz));
+                    if ($start->format('H:i') !== $clk) {
+                        continue;
+                    }
+                    $combos++;
+                    $dn = Cal::dnOf($start);
+                    [$h, $mi] = array_map('intval', explode(':', $clk));
+                    $calc = new BetterCal\Domain\Series\Calc(Rule::parse($rr, $dn), $dn, $tz, false, [$h, $mi, 0], 3600);
+                    $row = ['rrule' => $rr, 'start_utc' => Time::toDb($start), 'end_utc' => Time::toDb($start->modify('+1 hour')), 'tzid' => $tz, 'all_day' => 0, 'uid' => 'sm'];
+                    $sabre = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($row, $start->modify('-1 day'), $start->modify('+600 days')));
+                    $mine = array_map(static fn(int $d): string => $calc->key($d), $calc->occurrences($dn + 599));
+                    if ($sabre !== $mine) {
+                        $mismatch[] = "$tz $rr $day $clk";
+                    }
+                }
+            }
+        }
+    }
+    checkEq('R2: DAILY with BYDAY keys as the expander does in ' . $combos . ' rule, zone and start combinations', [], $mismatch);
+
+    // R3: a generated reading meets the parsed rules' constraint. The 1st
+    // and the last day, its 1 Jan dragged to the 28th: 28 and -1 are one
+    // day in February, so that reading is disabled with its reason, and
+    // with the other one refused, the drag is.
+    $ends = smSeries('Sample billing', 'FREQ=MONTHLY;BYMONTHDAY=1,-1;COUNT=4', '2027-01-01 09:00', 60, false, [], 'UTC');
+    $endsRows = [smEdited($ends, 2, '2027-02-01 09:00', ['title' => 'Sample first'], null, ['title']), smEdited($ends, 3, '2027-02-28 09:00', ['title' => 'Sample last'], null, ['title'])];
+    foreach (['ordinary' => [], 'two edited rows' => $endsRows] as $what => $rows) {
+        $p = smPlan($ends, $rows, smDrag($ends, '2027-01-01 09:00', '2027-01-28 09:00'));
+        checkEq("R3 ($what): refused, nothing written, the member reading disabled for the collision", [true, null, 'the 28th and the last day would be one day in some months'],
+            [$p['refused'], $p['writes'], array_column(array_filter($p['plan']['refusals'], static fn(array $r): bool => ($r['option'] ?? '') === 'member'), 'words')[0] ?? null]);
+    }
+    $p = smPlan($ends, $endsRows, smDrag($ends, '2027-01-01 09:00', '2027-01-02 09:00'));
+    checkEq('R3: to the 2nd nothing collides, and the reading stays', [false, 'member'], [$p['refused'], smGroup($p, 'reading')['selected'] ?? 'member']);
+    checkEq('R3: the check covers lists of every kind (28 and -1, 3 and -29, 4MO and -1MO, 1MO and 3TU, two Mondays)', [true, true, true, false, true], [
+        (static function (): bool {
+            $r = Rule::parse('FREQ=MONTHLY;BYMONTHDAY=1,-1', 0);
+            $r->members = [['t' => 'day', 'n' => 28], ['t' => 'day', 'n' => -1]];
+            return $r->collision() !== null;
+        })(),
+        (static function (): bool {
+            $r = Rule::parse('FREQ=MONTHLY;BYMONTHDAY=1,-1', 0);
+            $r->members = [['t' => 'day', 'n' => 3], ['t' => 'day', 'n' => -29]];
+            return $r->collision() !== null;
+        })(),
+        (static function (): bool {
+            $r = Rule::parse('FREQ=MONTHLY;BYDAY=1MO,3MO', 0);
+            $r->members = [['t' => 'nth', 'n' => 4, 'wd' => 0], ['t' => 'nth', 'n' => -1, 'wd' => 0]];
+            return $r->collision() !== null;
+        })(),
+        Rule::parse('FREQ=MONTHLY;BYDAY=1MO,3TU', 0)->collision() !== null,
+        (static function (): bool {
+            $r = Rule::parse('FREQ=WEEKLY;BYDAY=MO,WE', 0);
+            $r->members = [0, 0];
+            return $r->collision() !== null;
+        })(),
+    ]);
+
+    // R4: a rule that names its clock takes the new one in every reading,
+    // a drag across days included; the plan's next is the stored expansion.
+    foreach ([
+        'hour and minute' => ['FREQ=DAILY;BYHOUR=9;BYMINUTE=30;COUNT=4', 'FREQ=DAILY;BYHOUR=10;BYMINUTE=45;COUNT=4'],
+        'hour' => ['FREQ=DAILY;BYHOUR=9;COUNT=4', 'FREQ=DAILY;BYHOUR=10;COUNT=4'],
+        'minute' => ['FREQ=DAILY;BYMINUTE=30;COUNT=4', 'FREQ=DAILY;BYMINUTE=45;COUNT=4'],
+    ] as $what => [$rr, $written]) {
+        $clockSeries = smSeries('Sample standup', $rr, '2027-01-01 09:30', 60, false, [], 'UTC');
+        foreach (['moved a day and to 10:45' => '2027-01-03 10:45', 'to 10:45 the same day' => '2027-01-02 10:45'] as $how => $to) {
+            $p = smPlan($clockSeries, [], smDrag($clockSeries, '2027-01-02 09:30', $to));
+            $m1 = $stored($clockSeries, $p['writes']);
+            [$want, $got] = $agrees($p, $m1);
+            checkEq("R4 ($what, $how): the rule says 10:45 and the plan's next is the stored expansion", [$written, 'Daily at 10:45', true, $want],
+                [$m1['rrule'], $p['plan']['rule']['words'], count($want) >= 3, $got]);
+        }
+    }
+    $weekly = smSeries('Sample standup', 'FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=30', '2027-01-04 09:30', 60, false, [], 'UTC');
+    $p = smPlan($weekly, [], smDrag($weekly, '2027-01-06 09:30', '2027-01-07 10:45'), ['reading' => 'pattern']);
+    $m1 = $stored($weekly, $p['writes']);
+    [$want, $got] = $agrees($p, $m1);
+    checkEq('R4: a weekly list\'s pattern reading moved a day and to 10:45 writes 10:45 too', ['FREQ=WEEKLY;BYDAY=TU,TH;BYHOUR=10;BYMINUTE=45', $want], [$m1['rrule'], $got]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

@@ -49,6 +49,13 @@ final class Rule
     public ?string $fixedDays = null;
     /** Several times a day (BYHOUR or BYMINUTE lists, HOURLY and finer). */
     public bool $several = false;
+    /**
+     * Written FREQ=DAILY with BYDAY: read as the weekly list, but expanded by
+     * sabre's daily iterator, whose clock behaves differently across a
+     * skipped hour (Calc::clockOn). Kept as written until a reading rewrites
+     * the members, which writes it as WEEKLY.
+     */
+    public bool $dailyList = false;
 
     public static function parse(string $rrule, int $startDn): self
     {
@@ -139,11 +146,13 @@ final class Rule
                 if ($r->interval !== 1) {
                     return $r->other('dayset');
                 }
-                // DAILY with BYDAY and INTERVAL 1 reads as the weekly list.
+                // DAILY with BYDAY and INTERVAL 1 reads as the weekly list. It
+                // stays as written (and expanded as sabre's daily iterator
+                // does) until a reading changes its days.
                 $r->freq = 'WEEKLY';
                 $r->kind = 'weekly';
                 $r->members = self::sortedDays($plain, 0);
-                $r->dirty = true;
+                $r->dailyList = true;
                 return $r;
             }
             $r->kind = 'daily';
@@ -329,12 +338,71 @@ final class Rule
         return false;
     }
 
+    /**
+     * Two members that give one day in some period, or null: a listed
+     * weekday twice, or monthly members that coincide in a month of some
+     * length and first weekday (the 28th and the last day in February, the
+     * fourth and the last Monday in a month with four). The same constraint
+     * a parsed rule meets (monthMembers), checked over every kind of month:
+     * whether two members coincide depends only on the month's length and
+     * the weekday it starts on, and 28 years hold every such pair.
+     *
+     * @return null|array{0:int|array<string,int|string>,1:int|array<string,int|string>}
+     */
+    public function collision(): ?array
+    {
+        if (count($this->members) < 2) {
+            return null;
+        }
+        if ($this->kind === 'weekly') {
+            $seen = [];
+            foreach ($this->members as $wd) {
+                if (isset($seen[$wd])) {
+                    return [$wd, $wd];
+                }
+                $seen[$wd] = true;
+            }
+            return null;
+        }
+        if (!in_array($this->kind, ['monthly', 'yearly'], true)) {
+            return null;
+        }
+        $kinds = [];
+        for ($y = 2000; $y < 2028; $y++) {
+            for ($m = 1; $m <= 12; $m++) {
+                $sig = Cal::monthLen($y, $m) . ':' . Cal::wd(Cal::dn($y, $m, 1));
+                if (isset($kinds[$sig])) {
+                    continue;
+                }
+                $kinds[$sig] = true;
+                $days = [];
+                foreach ($this->members as $i => $mem) {
+                    $d = $this->evalMember($mem, $y, $m);
+                    if ($d === null) {
+                        continue;
+                    }
+                    if (isset($days[$d])) {
+                        return [$this->members[$days[$d]], $mem];
+                    }
+                    $days[$d] = $i;
+                }
+            }
+        }
+        return null;
+    }
+
     /** @param list<int> $days @return list<int> sorted from the week start */
     public static function sortedDays(array $days, int $wkst): array
     {
         $days = array_values(array_unique($days));
         usort($days, static fn(int $a, int $b): int => (($a - $wkst + 7) % 7) <=> (($b - $wkst + 7) % 7));
         return $days;
+    }
+
+    /** Whether the rule as written is expanded by sabre's daily iterator with BYDAY (Calc::clockOn). */
+    public function expandsAsDaily(): bool
+    {
+        return $this->dailyList && !$this->dirty;
     }
 
     public function supported(): bool

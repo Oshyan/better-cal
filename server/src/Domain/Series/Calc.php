@@ -68,7 +68,79 @@ final class Calc
                 }
             }
         }
-        return self::at($dn, $this->clock, $this->tz);
+        return self::at($dn, $this->clockOn($dn), $this->tz);
+    }
+
+    /** @var null|list<array{0:int,1:array{0:int,1:int,2:int}}> where the clock of a DAILY;BYDAY rule changes */
+    private ?array $steps = null;
+    private int $stepsTo = 0;
+
+    /**
+     * The series' clock on a local day. The same every day, except for a rule
+     * written FREQ=DAILY with BYDAY: sabre's daily iterator (sabre/vobject
+     * 4.6.1, RRuleIterator::nextDaily) steps from one day to the next with
+     * modify('+1 days') and never sets the clock again, so once a day's clock
+     * falls in a skipped hour (02:30 becoming 03:30) every later day has the
+     * shifted clock. The app persists what sabre expands, so the keys and the
+     * days shown follow it.
+     *
+     * @return array{0:int,1:int,2:int}
+     */
+    public function clockOn(int $dn): array
+    {
+        if ($this->allDay || !$this->rule->expandsAsDaily() || $dn <= $this->startDn) {
+            return $this->clock;
+        }
+        if ($this->steps === null) {
+            $this->steps = [];
+            $this->stepsTo = $this->startDn;
+        }
+        if ($dn > $this->stepsTo) {
+            $this->stepTo(max($dn, $this->stepsTo + 3660));
+        }
+        $clock = $this->clock;
+        foreach ($this->steps as [$from, $c]) {
+            if ($from > $dn) {
+                break;
+            }
+            $clock = $c;
+        }
+        return $clock;
+    }
+
+    /** Finds the days through $to on which a DAILY;BYDAY rule's clock moves (clockOn). */
+    private function stepTo(int $to): void
+    {
+        $zone = $this->zone();
+        $clock = $this->steps === [] ? $this->clock : $this->steps[count($this->steps) - 1][1];
+        $from = (new \DateTimeImmutable(Cal::date($this->stepsTo) . ' 00:00:00', $zone))->getTimestamp() - 86400;
+        $until = (new \DateTimeImmutable(Cal::date($to) . ' 23:59:59', $zone))->getTimestamp() + 86400;
+        $days = [];
+        $prev = null;
+        foreach ($zone->getTransitions($from, $until) ?: [] as $i => $t) {
+            if ($i > 0 && $prev !== null && $t['offset'] > $prev) {
+                // A skipped hour: on the local day the change shows on, or the
+                // one before it when the gap starts before midnight.
+                $d = Cal::dnOf((new \DateTimeImmutable('@' . $t['ts']))->setTimezone($zone));
+                $days[] = $d - 1;
+                $days[] = $d;
+            }
+            $prev = $t['offset'];
+        }
+        $days = array_values(array_unique($days));
+        sort($days);
+        foreach ($days as $d) {
+            if ($d <= $this->stepsTo || $d > $to || $d <= $this->startDn) {
+                continue;
+            }
+            $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$clock);
+            $at = new \DateTimeImmutable($wall, $zone);
+            if ($at->format('Y-m-d H:i:s') !== $wall && Cal::dnOf($at) === $d) {
+                $clock = [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')];
+                $this->steps[] = [$d, $clock];
+            }
+        }
+        $this->stepsTo = $to;
     }
 
     /** @param array{0:int,1:int,2:int} $clock */
@@ -282,6 +354,45 @@ final class Calc
             return [$this->startDn];
         }
         return $out === [] ? [$this->startDn] : $out;
+    }
+
+    /**
+     * Raw occurrences as keys, from the start to $maxDn, at most $max: one
+     * per day for the rules the model reads by day, every one sabre yields
+     * for the rest (a rule several times a day has several keys on a day).
+     *
+     * @return list<array{0:int,1:string}> [local day, key]
+     */
+    public function keys(int $maxDn, int $max = PHP_INT_MAX): array
+    {
+        if ($this->rule->supported() || !class_exists(\Sabre\VObject\Component\VCalendar::class)) {
+            return array_map(fn(int $d): array => [$d, $this->key($d)], $this->occurrences($maxDn, $max));
+        }
+        $vcal = new \Sabre\VObject\Component\VCalendar();
+        $vevent = $vcal->add('VEVENT', ['UID' => 'series-model']);
+        $start = new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($this->startDn), ...$this->clock), $this->zone());
+        if ($this->allDay) {
+            $vevent->add('DTSTART', $start->format('Ymd'), ['VALUE' => 'DATE']);
+        } else {
+            $vevent->add('DTSTART', $start);
+        }
+        $vevent->add('RRULE', $this->rule->text());
+        $out = [];
+        try {
+            $it = new \Sabre\VObject\Recur\EventIterator($vcal, 'series-model', $this->allDay ? $this->zone() : Time::utc());
+            for ($i = 0; $it->valid() && $i < self::MAX_STEPS && count($out) < $max; $i++) {
+                $at = \DateTimeImmutable::createFromInterface($it->getDtStart());
+                $dn = Cal::dnOf($at->setTimezone($this->zone()));
+                if ($dn > $maxDn) {
+                    break;
+                }
+                $out[] = [$dn, $this->allDay ? Cal::date($dn) . ' 00:00:00' : Time::toDb($at)];
+                $it->next();
+            }
+        } catch (\Throwable) {
+            return [[$this->startDn, $this->key($this->startDn)]];
+        }
+        return $out;
     }
 
     /** Whether sabre can read the rule at all (RSCALE and X- parts it refuses). */

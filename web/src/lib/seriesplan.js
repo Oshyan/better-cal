@@ -203,10 +203,24 @@ export function planView(plan, ctx = {}) {
   const groupOf = (key) => (plan.groups || []).find((g) => g.day === key);
   // The day acted on is in the Next line where it landed; it gets a line of
   // its own only when it doesn't simply move there (kept on its own, say).
+  // A day that does something other than go with its event (stays at its
+  // own date, becomes an event of its own, is deleted) or carries a choice
+  // is a consequence to see, and has its own line, first. Days that go with
+  // their events the same way are one line, by their outcome, the fields
+  // they keep and the shape of their sentence, with their days under it
+  // (dayGroups). A group of one is its day's line.
+  const lines = [];
+  const groups = new Map();
   for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
     const g = groupOf(d.key);
-    view.edited.push({ key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null });
+    const line = { key: d.key, words: d.words || dayWords(d, fmt), choice: g ? inline(g) : null };
+    const shape = !g && (d.outcome === 'moves' || d.outcome === 'stays') ? dayShape(d, line.words) : null;
+    if (!shape) { lines.push(line); continue; }
+    const id = [d.outcome, shape.kept, shape.template].join('|');
+    if (!groups.has(id)) groups.set(id, { days: [] });
+    groups.get(id).days.push({ d, line, shape });
   }
+  view.edited = [...lines, ...[...groups.values()].map((grp) => groupLine(grp, ctx.tz || null))];
   // An anchor is the stored day before a first day in a skipped hour: no
   // event of the series, so it has no line (the gap note says the time).
   view.skipped = days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor').map((d) => d.words || dayWords(d, (iso) => fmt(iso, false))).join(' · ');
@@ -232,6 +246,65 @@ function dayWords(d, fmt) {
   if (d.outcome === 'deleted') return title + at + ' is deleted';
   if (d.outcome === 'dropped') return title + at + ' is forgotten';
   return title + at;
+}
+
+// A plan date in the server's words: "Wed 10 Mar", "Wed 10 Mar 2028".
+const DATE_WORDS = /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?: \d{4})?\b/g;
+const WEEKDAY_NAME = { Sun: 'Sunday', Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday' };
+
+// The shape of a day's sentence when it goes with its event: its own
+// title (when it has one), its date, "moves to" a date or a clock time or
+// "stays", then what it keeps and takes ("'Rehearsal' Tue 13 Apr moves to
+// Wed 14 Apr, keeps its title and place"). The template is the sentence
+// without the title and with every date as #; kept, the fields it keeps,
+// in order. Null for a sentence of any other shape, which has its own line.
+function dayShape(d, words) {
+  const name = d.title ? "'" + d.title + "' " : '';
+  const rest = name && words.startsWith(name) ? words.slice(name.length) : words;
+  const template = rest.replace(DATE_WORDS, '#');
+  const m = /^# (moves to (?:#|\d{1,2}:\d{2})|stays)((?:, (?:keeps its|takes) .*)?)$/.exec(template);
+  if (!m) return null;
+  const keeps = /, keeps its (.*?)(?=, takes |$)/.exec(m[2]);
+  const kept = keeps ? keeps[1].split(/, | and /).map((s) => s.trim()).filter(Boolean).sort().join(',') : '';
+  return { template, verb: m[1], tail: m[2], kept, dates: rest.match(DATE_WORDS) || [] };
+}
+
+const dayNumber = (iso, tz) => {
+  const w = wallDate(iso, tz);
+  return w ? Date.UTC(w.y, w.mo - 1, w.d) / 86400000 : null;
+};
+
+// One line for days that go with their events the same way, from the
+// sentence they share: "38 edited days from 6 Apr to 21 Dec move to
+// Wednesday; each keeps its title and place". Its days are under it, each
+// in its own words. A group of one is that day's line.
+function groupLine({ days }, tz) {
+  if (days.length === 1) return days[0].line;
+  const sorted = [...days].sort((a, b) => (Date.parse(a.d.key) || 0) - (Date.parse(b.d.key) || 0));
+  const { verb, tail } = sorted[0].shape;
+  const bare = (x) => String(x.shape.dates[0] || '').replace(/^[A-Z][a-z]{2} /, '');
+  const first = bare(sorted[0]), last = bare(sorted[sorted.length - 1]);
+  const range = first === last ? 'on ' + first : 'from ' + first + ' to ' + last;
+  let does = 'stay';
+  if (verb === 'moves to #') {
+    const weekdays = new Set(sorted.map((x) => String(x.shape.dates[1] || '').slice(0, 3)));
+    const shifts = new Set(sorted.map((x) => {
+      const a = dayNumber(x.d.key, tz), b = dayNumber(x.d.newKey, tz);
+      return a == null || b == null ? null : b - a;
+    }));
+    const [wd] = weekdays, [shift] = shifts;
+    if (weekdays.size === 1 && WEEKDAY_NAME[wd]) does = 'move to ' + WEEKDAY_NAME[wd];
+    else if (shifts.size === 1 && shift) does = 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier');
+    else does = 'move with their events';
+  } else if (verb.startsWith('moves to ')) {
+    does = 'move to ' + verb.slice('moves to '.length);
+  }
+  return {
+    key: 'group:' + sorted[0].d.key,
+    words: sorted.length + ' edited days ' + range + ' ' + does + (tail ? '; each ' + tail.slice(2) : ''),
+    choice: null,
+    days: sorted.map((x) => ({ key: x.line.key, words: x.line.words })),
+  };
 }
 
 /** The commit's plan: the hash and an option for every group. */

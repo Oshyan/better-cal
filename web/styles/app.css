@@ -1136,6 +1136,11 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-bound { color: var(--fg-muted); white-space: nowrap; }
 .bc-sd-line { display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: baseline; }
 .bc-sd-lab { color: var(--fg-muted); }
+/* A group's days, opened under its line: set in a little, so they read as
+   its. On touch screens its "show them" tap area grows up, not down: grown
+   below the last line, it made a list that fits scroll by a few pixels. */
+.bc-sd-day > :last-child { padding-left: 12px; }
+@media (pointer: coarse) { .bc-sd-toggle::after { bottom: 0; } }
 .bc-sd-sub, .bc-sd-note, .bc-sd-changed, .bc-sd-refused, .bc-sd-working { margin: 0; }
 .bc-sd-sub, .bc-sd-note, .bc-sd-working { color: var(--fg-muted); }
 .bc-sd-changed { color: var(--warn-strong); }

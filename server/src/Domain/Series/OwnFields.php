@@ -17,6 +17,29 @@ final class OwnFields
 {
     public const FIELDS = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'reminders', 'status', 'attendance', 'tags', 'people', 'icon'];
 
+    /**
+     * What refers to an edited row, and so is the day's own without being a
+     * field it set (series-model.md, Own Fields): its trip, the event_links
+     * naming the row as a trip or as one of a trip's stops. A row exists for
+     * its own fields and for what refers to it, so a day in a trip never
+     * goes back to the series while the link stands. Read from event_links
+     * each time, never stored in override_fields.
+     */
+    public const REFERENCES = ['trip'];
+
+    /**
+     * An edited day's own things: the fields it owns and, when anything
+     * refers to it, its trip. Empty only for a day with nothing of its own,
+     * the one kind of row that goes back to the series.
+     *
+     * @param list<string> $fields
+     * @return list<string>
+     */
+    public static function own(array $fields, bool $inTrip): array
+    {
+        return self::normalize($inTrip ? array_merge($fields, ['trip']) : array_diff($fields, self::REFERENCES));
+    }
+
     /** The content fields and the columns each one writes. */
     public const COLUMNS = [
         'title' => ['title'],
@@ -69,17 +92,17 @@ final class OwnFields
         return self::normalize($list);
     }
 
-    /** @param list<string> $list */
+    /** The stored list: the fields alone, since what refers to a row is read from its links. @param list<string> $list */
     public static function encode(array $list): string
     {
-        return json_encode(self::normalize($list));
+        return json_encode(self::normalize(array_diff($list, self::REFERENCES)));
     }
 
     /** @param list<mixed> $list @return list<string> */
     public static function normalize(array $list): array
     {
         $out = [];
-        foreach (self::FIELDS as $f) {
+        foreach ([...self::FIELDS, ...self::REFERENCES] as $f) {
             if (in_array($f, $list, true)) {
                 $out[] = $f;
             }

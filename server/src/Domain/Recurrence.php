@@ -313,7 +313,9 @@ final class Recurrence
         $normalized = self::joinParts($parts);
         if (class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
             try {
-                new \Sabre\VObject\Recur\RRuleIterator($normalized, new \DateTimeImmutable('2026-01-01', Time::utc()));
+                // The app's expander: sabre's, with MINUTELY and SECONDLY,
+                // which refuses what RFC 5545 doesn't allow there.
+                new \BetterCal\Domain\Series\RuleIterator($normalized, new \DateTimeImmutable('2026-01-01', Time::utc()));
             } catch (\Throwable $e) {
                 throw HttpError::badRequest('Invalid RRULE: ' . $e->getMessage(), 'invalid_rrule');
             }

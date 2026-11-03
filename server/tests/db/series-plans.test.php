@@ -752,4 +752,58 @@ return static function (Db $db): void {
         planned($d->events, $u, $s, $edit, ['ownDescription' => 'give']);
         checkEq('the fresh plan commits', 'Proposed series notes', $db->scalar('SELECT description FROM events WHERE id = ?', [$day]));
     });
+
+    // Review F1: a row also exists for what refers to it. An edited day in a
+    // trip (a trip's own day with a stop in it, or a day that is a stop of
+    // another trip) owns its trip, so taking the series' title leaves it a
+    // row: it keeps its trip, and never rejoins while a link names it.
+    scenario('an edited day in a trip keeps its row and its links, in both directions (review F1)', function () use ($d, $u, $db, $rows, $home): void {
+        $trips = new BetterCal\Domain\Trips($db, $d->undo);
+        $links = static fn(array $ids): array => $db->all('SELECT * FROM event_links WHERE event_id IN (' . implode(',', $ids) . ') OR container_id IN (' . implode(',', $ids) . ') ORDER BY id');
+        $cases = [];
+        // The edited day is a trip with a stop in it.
+        $tripSeries = (int) $d->events->create($u, eventAt($home, 'Sample trip series', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU', 'isContainer' => true]))['eventId'];
+        $d->events->patch($u, $tripSeries, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Sample trip day']);
+        $tripDay = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$tripSeries]);
+        $stop = (int) $d->events->create($u, eventAt($home, 'Sample stop', '2027-01-12'))['eventId'];
+        $trips->attach($u, $tripDay, $stop);
+        $cases['the day is the trip'] = [$tripSeries, $tripDay, $stop];
+        // The edited day is a stop of another trip.
+        $stopSeries = (int) $d->events->create($u, eventAt($home, 'Sample stop series', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU']))['eventId'];
+        $d->events->patch($u, $stopSeries, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Sample stop day']);
+        $stopDay = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$stopSeries]);
+        $trip = (int) $d->events->create($u, eventAt($home, 'Sample trip', '2027-01-12', ['isContainer' => true]))['eventId'];
+        $trips->attach($u, $trip, $stopDay);
+        $cases['the day is a stop'] = [$stopSeries, $stopDay, $trip];
+        foreach ($cases as $name => [$series, $day, $other]) {
+            $before = [$rows($series), $rows($other), $links([$day, $other])];
+            $plan = planned($d->events, $u, $series, ['scope' => 'all', 'title' => 'Renamed sample series'], ['ownTitle' => 'give']);
+            $planned = array_values(array_filter($plan['days'] ?? [], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+            checkEq("$name: given the new title, the day keeps its row, owns its trip and stays, its link as it was", [
+                'Renamed sample series', '[]', $before[2], 'stays', ['trip'], "stays, keeps its trip, takes 'Renamed sample series'",
+            ], [
+                $db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]),
+                $links([$day, $other]), $planned['outcome'] ?? null, $planned['kept'] ?? null, $planned['outcomeWords'] ?? null,
+            ]);
+            $d->undo->undoLatest($u);
+            checkEq("$name: undone, the series, the other event and the link are byte-identical", $before, [$rows($series), $rows($other), $links([$day, $other])]);
+        }
+        // "Use series value" keeps the same rule: the day's only own field
+        // given back, its trip keeps the row.
+        [$series, $day, $other] = $cases['the day is a stop'];
+        $before = [$rows($series), $links([$day, $other])];
+        $d->events->patch($u, $series, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'useSeries' => ['title']]);
+        checkEq('"Use series value" on a stop\'s only own field: the row stays with no field of its own listed, its link kept', [
+            'Sample stop series', '[]', $before[1],
+        ], [$db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]), $links([$day, $other])]);
+        $d->undo->undoLatest($u);
+        checkEq('undone: the stop day and its link as before', $before, [$rows($series), $links([$day, $other])]);
+        // Once nothing refers to it, the same rename rejoins it.
+        $trips->detach($u, $other, $day);
+        $plan = planned($d->events, $u, $series, ['scope' => 'all', 'title' => 'Renamed sample series'], ['ownTitle' => 'give']);
+        checkEq('taken out of the trip, the day has nothing of its own left and goes back to the series', [0, ['rejoins']], [
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ?', [$series]),
+            array_column(array_filter($plan['days'] ?? [], static fn(array $x): bool => $x['kind'] === 'edited'), 'outcome'),
+        ]);
+    });
 };

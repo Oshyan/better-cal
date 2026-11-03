@@ -30,7 +30,8 @@ use BetterCal\Support\Time;
  * took.
  *
  * $opts: google (bool), today ('Y-m-d', for the years in words), masterTags,
- * masterPeople, rowTags [id => list], rowPeople [id => list].
+ * masterPeople, rowTags [id => list], rowPeople [id => list], rowLinks [id =>
+ * the ids of the event_links naming the row, as a trip or as a stop].
  *
  * Returns ['plan' => the plan as the API sends it, 'writes' => what the
  * writer applies, 'selected' => [group => option], 'groups' => list of
@@ -49,7 +50,7 @@ final class Model
     private const OWN_WORDS = [
         'date' => 'date', 'time' => 'time', 'length' => 'length', 'allDay' => 'all-day setting', 'title' => 'title', 'location' => 'place',
         'description' => 'notes', 'url' => 'link', 'reminders' => 'reminders', 'status' => 'status', 'attendance' => 'answer',
-        'tags' => 'tags', 'people' => 'people', 'icon' => 'icon',
+        'tags' => 'tags', 'people' => 'people', 'icon' => 'icon', 'trip' => 'trip',
     ];
 
     public const REASONS = [
@@ -594,7 +595,7 @@ final class Model
         };
         $rows = [];
         foreach ($this->rows as $id => $r) {
-            $rows[] = [$row($r), $set($this->opts['rowTags'][$id] ?? null), $set($this->opts['rowPeople'][$id] ?? null)];
+            $rows[] = [$row($r), $set($this->opts['rowTags'][$id] ?? null), $set($this->opts['rowPeople'][$id] ?? null), $set($this->opts['rowLinks'][$id] ?? null)];
         }
         ksort($selected);
         return substr(sha1(json_encode([
@@ -1724,9 +1725,10 @@ final class Model
             }
             $odn = $this->old->dnOf((string) $row['recurrence_instance_utc']);
             if (!$this->google && OwnFields::normalize($ownAfter) === []) {
-                // Left with nothing of its own, it is an ordinary occurrence
-                // again (Own Fields): its row goes, its key and links in Undo,
-                // and the series shows the day at its new key.
+                // Left with nothing of its own, no field and no trip (a row
+                // exists for what refers to it too), it is an ordinary
+                // occurrence again (Own Fields): its row goes, its key in
+                // Undo, and the series shows the day at its new key.
                 $delete[] = $id;
                 $rejoined[$id] = true;
                 unset($tags[$id], $people[$id]);
@@ -1743,7 +1745,7 @@ final class Model
             }
             $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'];
             $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
-            $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance'], $ownAfter));
+            $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance', 'trip'], $ownAfter));
             $keepWords = array_map(static fn(string $f): string => self::OWN_WORDS[$f], $keeps);
             // A timed day at its own time while the series' time changes says
             // the time it keeps ("keeps its own time at 09:00", the examples' all-day case).
@@ -2289,15 +2291,18 @@ final class Model
         return Words::andList($out);
     }
 
-    /** An edited row's own fields: as stored, or by equality when it has no list yet. @return list<string> */
+    /**
+     * An edited row's own things: its fields as stored, or by equality when
+     * it has no list yet, and its trip when a link refers to it (OwnFields::own).
+     *
+     * @return list<string>
+     */
     private function ownOf(array $row): array
     {
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known !== null) {
-            return $known;
-        }
         $id = (int) $row['id'];
-        return OwnFields::infer($row, $this->master, $this->opts['rowTags'][$id] ?? null, $this->opts['masterTags'] ?? null, $this->opts['rowPeople'][$id] ?? null, $this->opts['masterPeople'] ?? null);
+        $fields = OwnFields::decode($row['override_fields'] ?? null)
+            ?? OwnFields::infer($row, $this->master, $this->opts['rowTags'][$id] ?? null, $this->opts['masterTags'] ?? null, $this->opts['rowPeople'][$id] ?? null, $this->opts['masterPeople'] ?? null);
+        return OwnFields::own($fields, !empty($this->opts['rowLinks'][$id]));
     }
 
     /** The local day an edited row shows on. */

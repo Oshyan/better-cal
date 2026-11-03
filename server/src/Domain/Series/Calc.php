@@ -455,14 +455,18 @@ final class Calc
         return self::at($dn, $clock, $tz)->setTimezone(Time::zone($tz))->format('H:i:s') !== sprintf('%02d:%02d:%02d', ...$clock);
     }
 
-    /** Whether sabre can read the rule at all (RSCALE and X- parts it refuses). */
+    /**
+     * Whether the expander can read the rule at all: sabre refuses RSCALE
+     * and X- parts, and RuleIterator what RFC 5545 doesn't allow in a
+     * MINUTELY or SECONDLY rule.
+     */
     public static function sabreReads(string $rrule): bool
     {
         if (!class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
             return true;
         }
         try {
-            new \Sabre\VObject\Recur\RRuleIterator($rrule, new \DateTimeImmutable('2026-01-01', Time::utc()));
+            new RuleIterator($rrule, new \DateTimeImmutable('2026-01-01', Time::utc()));
             return true;
         } catch (\Throwable) {
             return false;

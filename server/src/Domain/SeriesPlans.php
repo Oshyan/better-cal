@@ -334,6 +334,9 @@ trait SeriesPlans
             $rowTags[(int) $r['id']] = $labels['tags'][(int) $r['id']] ?? [];
             $rowPeople[(int) $r['id']] = $people[(int) $r['id']] ?? [];
         }
+        // What refers to each edited row (its trip, either direction): the
+        // day's own, so a row named by a link never goes back to the series.
+        $rowLinks = self::linksNaming($this->db, array_map(static fn(array $r): int => (int) $r['id'], $rows));
         $opts = [
             'google' => $google,
             'today' => Time::nowUtc()->setTimezone(Time::zone($this->userTzid($userId)))->format('Y-m-d'),
@@ -341,6 +344,7 @@ trait SeriesPlans
             'masterPeople' => $people[$id] ?? [],
             'rowTags' => $rowTags,
             'rowPeople' => $rowPeople,
+            'rowLinks' => $rowLinks,
         ];
         return [$master, $rows, $edit, $opts];
     }
@@ -591,9 +595,33 @@ trait SeriesPlans
     }
 
     /**
+     * The event_links naming each row, as a trip or as one of a trip's
+     * stops, by row id.
+     *
+     * @param list<int> $ids
+     * @return array<int,list<string>>
+     */
+    private static function linksNaming(\BetterCal\Infra\Db $db, array $ids): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
+            [$in, $params] = \BetterCal\Infra\Db::in($chunk);
+            foreach ($db->all("SELECT id, container_id, event_id FROM event_links WHERE event_id IN $in OR container_id IN $in ORDER BY id", array_merge($params, $params)) as $l) {
+                foreach ([(int) $l['container_id'], (int) $l['event_id']] as $rid) {
+                    if (in_array($rid, $chunk, true)) {
+                        $out[$rid][] = (string) $l['id'];
+                    }
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
      * "Use series value": the fields named go back to the series' values
-     * and are no longer the day's own. A day left with none of its own is
-     * an occurrence again, and its row goes (its key in Undo).
+     * and are no longer the day's own. A day left with nothing of its own,
+     * no field and no trip, is an occurrence again, and its row goes (its
+     * key in Undo).
      */
     private function useSeriesValues(int $userId, array $master, array $row, array $fields): void
     {
@@ -636,7 +664,9 @@ trait SeriesPlans
         }
         $id = (int) $row['id'];
         $links = Undo::linksOf($this->db, [$id]);
-        $gone = $left === [];
+        // The write rule every writer shares: a row goes only when nothing of
+        // its own is left, its trip included (OwnFields::own).
+        $gone = OwnFields::own($left, !empty(self::linksNaming($this->db, [$id])[$id])) === [];
         $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
             if ($gone) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);

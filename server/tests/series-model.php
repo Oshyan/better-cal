@@ -1351,6 +1351,112 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $early = smEdited($every2, 2, '2027-04-11 09:00', [], '2027-04-08 09:00', ['date']);
     $p = smPlan($every2, [$early], smDrag($every2, '2027-04-01 09:00', '2027-04-21 09:00'), ['movedDays' => 'keep']);
     checkEq('next lists from where the day acted on lands, an edited day shown before it left out', ['2027-04-21', '2027-04-23', '2027-04-25', '2027-04-27'], smNext($p));
+
+    // Review F3: MINUTELY and SECONDLY by RFC 5545 3.3.10's table, against
+    // sets written out from the RFC's own examples and the review's tables,
+    // never against another reading of the same iterator. Each set is read
+    // three ways: the iterator alone, the window (Recurrence::sabreExpand)
+    // and the model's own expansion (a plan's next dates through Calc).
+    $iterate = static function (string $rrule, string $startLocal, string $tz, int $n): array {
+        $it = new BetterCal\Domain\Series\RuleIterator($rrule, new DateTimeImmutable($startLocal, Time::zone($tz)));
+        $out = [];
+        for ($it->rewind(); $it->valid() && count($out) < $n; $it->next()) {
+            $out[] = Time::toDb(DateTimeImmutable::createFromInterface($it->current()));
+        }
+        return $out;
+    };
+    $window = static function (string $rrule, string $startLocal, string $tz, int $n): array {
+        $start = smAt($startLocal, $tz);
+        $row = ['id' => 1, 'rrule' => $rrule, 'start_utc' => $start, 'end_utc' => Time::toDb(Time::fromDb($start)->modify('+1 second')), 'all_day' => 0, 'tzid' => $tz];
+        $occ = BetterCal\Domain\Recurrence::sabreExpand($row, Time::fromDb($start), Time::fromDb($start)->modify('+800 days'));
+        return array_slice(array_map(static fn(array $o): string => Time::toDb($o['start']), $occ), 0, $n);
+    };
+    $modelNext = static function (string $rrule, string $startLocal, string $tz): array {
+        $series = smSeries('Sample timer', $rrule, $startLocal, 0, false, [], $tz);
+        $series['end_utc'] = Time::toDb(Time::fromDb($series['start_utc'])->modify('+1 second'));
+        $p = smPlan($series, [], ['columns' => ['title' => 'Sample timer, renamed']]);
+        return array_map(static fn(array $x): string => Time::toDb(new DateTimeImmutable($x['start'])), $p['plan']['next']);
+    };
+    $utc = static fn(string ...$l): array => array_map(static fn(string $x): string => smAt($x, 'UTC'), $l);
+    $ny = static fn(string ...$l): array => array_map(static fn(string $x): string => smAt($x, 'America/New_York'), $l);
+    $twenty = [];
+    foreach (['1997-09-02', '1997-09-03'] as $day) {
+        foreach (range(9, 16) as $h) {
+            foreach ([0, 20, 40] as $m) {
+                $twenty[] = smAt(sprintf('%s %02d:%02d', $day, $h, $m), 'America/New_York');
+            }
+        }
+    }
+    $sets = [
+        // The review's two tables.
+        'MINUTELY, BYSECOND expands each minute' => ['FREQ=MINUTELY;BYSECOND=30,45;COUNT=4', '2027-01-01 09:00:30', 'UTC', $utc('2027-01-01 09:00:30', '2027-01-01 09:00:45', '2027-01-01 09:01:30', '2027-01-01 09:01:45')],
+        'MINUTELY, BYYEARDAY limits' => ['FREQ=MINUTELY;INTERVAL=60;BYYEARDAY=1;COUNT=2', '2027-01-01 23:00', 'UTC', $utc('2027-01-01 23:00', '2028-01-01 00:00')],
+        // RFC 5545 3.8.5.3's examples, from 2 Sep 1997 09:00 in New York.
+        'RFC: every 15 minutes for 6 occurrences' => ['FREQ=MINUTELY;INTERVAL=15;COUNT=6', '1997-09-02 09:00', 'America/New_York',
+            $ny('1997-09-02 09:00', '1997-09-02 09:15', '1997-09-02 09:30', '1997-09-02 09:45', '1997-09-02 10:00', '1997-09-02 10:15')],
+        'RFC: every hour and a half for 4 occurrences' => ['FREQ=MINUTELY;INTERVAL=90;COUNT=4', '1997-09-02 09:00', 'America/New_York',
+            $ny('1997-09-02 09:00', '1997-09-02 10:30', '1997-09-02 12:00', '1997-09-02 13:30')],
+        'RFC: every 20 minutes from 9:00 AM to 4:40 PM every day' => ['FREQ=MINUTELY;INTERVAL=20;BYHOUR=9,10,11,12,13,14,15,16', '1997-09-02 09:00', 'America/New_York', $twenty],
+        // Each other part of the table, one at a time.
+        'MINUTELY, BYDAY limits' => ['FREQ=MINUTELY;INTERVAL=720;BYDAY=MO;COUNT=3', '2027-01-04 00:00', 'UTC', $utc('2027-01-04 00:00', '2027-01-04 12:00', '2027-01-11 00:00')],
+        'MINUTELY, BYMONTH limits' => ['FREQ=MINUTELY;INTERVAL=1440;BYMONTH=3;COUNT=3', '2027-03-30 12:00', 'UTC', $utc('2027-03-30 12:00', '2027-03-31 12:00', '2028-03-01 12:00')],
+        'MINUTELY, BYSETPOS limits each minute\'s set' => ['FREQ=MINUTELY;BYSECOND=0,20,40;BYSETPOS=-1;COUNT=3', '2027-01-01 09:00:40', 'UTC', $utc('2027-01-01 09:00:40', '2027-01-01 09:01:40', '2027-01-01 09:02:40')],
+        'MINUTELY, BYMINUTE limits' => ['FREQ=MINUTELY;INTERVAL=5;BYMINUTE=0,30;COUNT=4', '2027-01-01 09:00', 'UTC', $utc('2027-01-01 09:00', '2027-01-01 09:30', '2027-01-01 10:00', '2027-01-01 10:30')],
+        'MINUTELY, an UNTIL ends it' => ['FREQ=MINUTELY;INTERVAL=15;UNTIL=20270101T100000Z', '2027-01-01 09:00', 'UTC', $utc('2027-01-01 09:00', '2027-01-01 09:15', '2027-01-01 09:30', '2027-01-01 09:45', '2027-01-01 10:00')],
+        'MINUTELY steps elapsed time across a clock change' => ['FREQ=MINUTELY;INTERVAL=30;COUNT=5', '2027-11-07 01:00', 'America/New_York',
+            $utc('2027-11-07 05:00', '2027-11-07 05:30', '2027-11-07 06:00', '2027-11-07 06:30', '2027-11-07 07:00')],
+        'SECONDLY, BYSECOND limits' => ['FREQ=SECONDLY;INTERVAL=10;BYSECOND=0,30;COUNT=4', '2027-01-01 09:00', 'UTC', $utc('2027-01-01 09:00:00', '2027-01-01 09:00:30', '2027-01-01 09:01:00', '2027-01-01 09:01:30')],
+        'SECONDLY, BYMINUTE and BYSECOND limit' => ['FREQ=SECONDLY;BYMINUTE=0;BYSECOND=0;COUNT=3', '2027-01-01 10:00', 'UTC', $utc('2027-01-01 10:00', '2027-01-01 11:00', '2027-01-01 12:00')],
+        'SECONDLY, BYMONTHDAY from the end and BYHOUR limit' => ['FREQ=SECONDLY;INTERVAL=3600;BYMONTHDAY=-1;BYHOUR=23;COUNT=3', '2027-01-31 23:00', 'UTC', $utc('2027-01-31 23:00', '2027-02-28 23:00', '2027-03-31 23:00')],
+        'SECONDLY, BYYEARDAY from the end limits' => ['FREQ=SECONDLY;INTERVAL=86400;BYYEARDAY=-1;COUNT=2', '2027-12-31 08:00', 'UTC', $utc('2027-12-31 08:00', '2028-12-31 08:00')],
+        'SECONDLY, BYSETPOS limits a set of one' => ['FREQ=SECONDLY;INTERVAL=30;BYSETPOS=1;COUNT=3', '2027-01-01 09:00', 'UTC', $utc('2027-01-01 09:00:00', '2027-01-01 09:00:30', '2027-01-01 09:01:00')],
+    ];
+    foreach ($sets as $name => [$rrule, $startLocal, $tz, $expected]) {
+        $n = count($expected);
+        checkEq("F3: $name: the iterator", $expected, $iterate($rrule, $startLocal, $tz, $n));
+        checkEq("F3: $name: the window", $expected, $window($rrule, $startLocal, $tz, $n));
+        checkEq("F3: $name: the model's next dates", array_slice($expected, 0, 3), array_slice($modelNext($rrule, $startLocal, $tz), 0, 3));
+    }
+    // What the table marks N/A for these frequencies is refused: a rule the
+    // expander can't read, a 400 where one is written, field changes only
+    // on one stored.
+    foreach (['FREQ=MINUTELY;BYWEEKNO=1', 'FREQ=SECONDLY;INTERVAL=60;BYDAY=1MO'] as $rrule) {
+        $code = null;
+        try {
+            BetterCal\Domain\Recurrence::validateRrule($rrule);
+        } catch (BetterCal\Http\HttpError $e) {
+            $code = $e->errorCode;
+        }
+        $stored = smSeries('Sample timer', $rrule . ';COUNT=3', '2027-01-04 09:00', 1, false, [], 'UTC');
+        $drag = smPlan($stored, [], smDrag($stored, '2027-01-04 09:00', '2027-01-05 09:00'));
+        $rename = smPlan($stored, [], ['columns' => ['title' => 'Sample timer, renamed']]);
+        checkEq("F3: $rrule is refused: unreadable, 400 invalid_rrule when written, a drag refused saying so, a rename taken", [
+            false, 'invalid_rrule', 'unreadable', Model::REASONS['unreadable'], ['title' => 'Sample timer, renamed'],
+        ], [BetterCal\Domain\Series\Calc::sabreReads($rrule), $code, $drag['plan']['refusals'][0]['code'] ?? null, $drag['plan']['refusals'][0]['words'] ?? null, $rename['writes']['master'] ?? null]);
+    }
+
+    // Review F1: a row exists for its own fields and for what refers to it.
+    // A day whose only own field is its title, in a trip, given the series'
+    // new title keeps its row and its trip; out of the trip, it rejoins.
+    $club = smSeries('Sample club', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 18:00', 60, false, [], 'UTC');
+    $inTrip = smEdited($club, 2, '2027-01-12 18:00', ['title' => 'Sample club, away'], null, ['title']);
+    $rename = ['columns' => ['title' => 'Sample club night']];
+    $p = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['7']]]);
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('F1: a day in a trip given the new title stays, keeps its trip, its row written with no field of its own', [
+        [], 'stays', ['trip'], "stays, keeps its trip, takes 'Sample club night'", ['title' => 'Sample club night', 'override_fields' => '[]'],
+    ], [$p['writes']['delete'], $day['outcome'] ?? null, $day['kept'] ?? null, $day['outcomeWords'] ?? null, $p['writes']['overrides'][2] ?? null]);
+    $p = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give']);
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('F1: the same day in no trip has nothing of its own left and rejoins', [[2], 'rejoins'], [$p['writes']['delete'], $day['outcome'] ?? null]);
+    $kept = smEdited($club, 2, '2027-01-12 18:00', [], null, []);
+    $p = smPlan($club, [$kept], $rename, [], ['rowLinks' => [2 => ['7']]]);
+    checkEq('F1: a row with no field of its own, kept for its trip, takes a rename and stays: the plan is direct', [true, [], ['title' => 'Sample club night']],
+        [$p['plan']['direct'], $p['writes']['delete'], $p['writes']['overrides'][2] ?? null]);
+    checkEq('F1: the trip is never stored in the own list', ['[]', ['title']], [OwnFields::encode(['trip']), OwnFields::own(['title', 'trip'], false)]);
+    $a = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['7']]]);
+    $b = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['8']]]);
+    checkEq('F1: the hash covers the links naming the rows', true, $a['plan']['hash'] !== $b['plan']['hash']);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

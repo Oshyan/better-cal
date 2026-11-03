@@ -66,6 +66,22 @@ const dayList = (codes, short) => {
   return names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0] || '';
 };
 const monthDay = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+// The most days each month can have, February counting its leap years.
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+// A yearly rule's day in its months: "on Jan 31 and Mar 31, skipping
+// February". A month without that day is skipped, as the recurrence does,
+// never rolled into the next month (31 February is no 3 March). Each date
+// is formatted from 2000, a leap year, only once the month is known to
+// have the day. Null when none of the months has it.
+function yearlyOn(months, day, andList) {
+  const has = months.filter((m) => day <= MONTH_DAYS[m - 1]);
+  const lacks = months.filter((m) => day > MONTH_DAYS[m - 1]);
+  if (!has.length) return null;
+  let text = ' on ' + andList(has.map((m) => monthDay(new Date(2000, m - 1, day))));
+  if (day === 29 && has.includes(2)) text += ', February only in leap years';
+  if (lacks.length) text += ', skipping ' + andList(lacks.map((m) => MONTH_NAMES[m - 1]));
+  return text;
+}
 
 /**
  * A rule in words: "Weekly on Tuesday", "Every weekday", "Monthly on the
@@ -147,14 +163,19 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
         if (String(day) !== p.BYMONTHDAY) return null;
         if (day === -1) text += ' on the last day of ' + names;
         else if (months.length === 1 && months[0] === 2 && day === 29) text += ' on 29 February, only in leap years';
-        else if (day >= 1 && day <= 31) text += ' on ' + andList(months.map((m) => monthDay(new Date(2000, m - 1, day))));
-        else return null;
+        else if (day >= 1 && day <= 31) {
+          const on = yearlyOn(months, day, andList);
+          if (!on) return null;
+          text += on;
+        } else return null;
       } else if (byday.length === 1 && !p.BYMONTHDAY) {
         const m = /^([+-]?\d)([A-Z]{2})$/.exec(byday[0]);
         if (!m || !ORDINAL[parseInt(m[1], 10)] || !DAY_NAMES[m[2]]) return null;
         text += ` on the ${ORDINAL[parseInt(m[1], 10)]} ${DAY_NAMES[m[2]]} of ${names}`;
       } else if (!byday.length && !p.BYMONTHDAY && start) {
-        text += ' on ' + andList(months.map((mo) => monthDay(new Date(2000, mo - 1, start.getDate()))));
+        const on = yearlyOn(months, start.getDate(), andList);
+        if (!on) return null;
+        text += on;
       } else return null;
     } else {
       if (p.BYDAY || p.BYMONTHDAY || p.BYSETPOS) return null;

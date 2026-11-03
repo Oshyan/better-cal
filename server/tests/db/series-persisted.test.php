@@ -131,6 +131,104 @@ return static function (Db $db): void {
         }
     });
 
+    // A length-only edit from any occurrence: each delta is measured against
+    // the occurrence acted on, so the series' clock, start, rule and every
+    // key stay, and only the length changes (F2).
+    $lengthOnly = function (string $what, int $id, int $target, array $in) use ($d, $u, $db, $rows, $keys): void {
+        $before = $rows($id);
+        $m0 = $db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $was = $keys($id);
+        planned($d->events, $u, $target, $in);
+        $m1 = $db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $len = static fn(array $r): int => strtotime((string) $r['end_utc']) - strtotime((string) $r['start_utc']);
+        checkEq("$what: the start, rule and skips as stored, two hours long, every key and start kept, every day two hours", [
+            $m0['start_utc'], $m0['rrule'], $m0['exdates_json'], 7200, array_map(static fn(array $k): array => [$k['id'], $k['recurrence_instance_utc'], $k['start_utc']], $was),
+            array_fill(0, count($was), 7200),
+        ], [
+            $m1['start_utc'], $m1['rrule'], $m1['exdates_json'], $len($m1), array_map(static fn(array $k): array => [$k['id'], $k['recurrence_instance_utc'], $k['start_utc']], $keys($id)),
+            array_map($len, $keys($id)),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq("$what: undone, every row is as before", $before, $rows($id));
+    };
+
+    scenario('series persisted: a length-only edit of a later time of a rule twice a day keeps the series\' clock (F2)', function () use ($d, $u, $db, $create, $lengthOnly): void {
+        $drills = $create('Sample drills', '2027-01-01T09:00:00+00:00', '2027-01-01T10:00:00+00:00', 'FREQ=DAILY;BYHOUR=9,17;COUNT=8');
+        $lengthOnly('09:00 of 2 Jan to 11:00', $drills, $drills, ['scope' => 'all', 'instanceStart' => '2027-01-02T09:00:00+00:00', 'start' => '2027-01-02T09:00:00+00:00', 'end' => '2027-01-02T11:00:00+00:00']);
+        $lengthOnly('17:00 of 2 Jan to 19:00', $drills, $drills, ['scope' => 'all', 'instanceStart' => '2027-01-02T17:00:00+00:00', 'start' => '2027-01-02T17:00:00+00:00', 'end' => '2027-01-02T19:00:00+00:00']);
+        $d->events->patch($u, $drills, ['scope' => 'this', 'instanceStart' => '2027-01-03T17:00:00+00:00', 'title' => 'Evening drill']);
+        $d->events->deleteEvent($u, $drills, 'this', '2027-01-04T17:00:00+00:00');
+        $lengthOnly('with an edited day and a skip, from an ordinary 17:00', $drills, $drills, ['scope' => 'all', 'instanceStart' => '2027-01-02T17:00:00+00:00', 'start' => '2027-01-02T17:00:00+00:00', 'end' => '2027-01-02T19:00:00+00:00']);
+        $plan = $d->events->previewPatch($u, $drills, ['scope' => 'all', 'instanceStart' => '2027-01-02T17:00:00+00:00', 'start' => '2027-01-02T17:00:00+00:00', 'end' => '2027-01-02T19:00:00+00:00', 'title' => 'Sample practice']);
+        $edited = array_values(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'));
+        checkEq('the edited day\'s lists in the plan: it keeps its own title and takes the length', [['title'], ['length']], [$edited[0]['kept'] ?? null, $edited[0]['takes'] ?? null]);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$drills]);
+        $lengthOnly('from the edited 17:00\'s own row', $drills, $day, ['scope' => 'all', 'start' => '2027-01-03T17:00:00+00:00', 'end' => '2027-01-03T19:00:00+00:00']);
+    });
+
+    scenario('series persisted: a length-only edit of DAILY with BYDAY after a spring change keeps earlier days at their time (F2)', function () use ($d, $u, $db, $create, $lengthOnly, $expanded): void {
+        $run = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', 'America/Los_Angeles');
+        $before = $expanded($run, 0, 12);
+        $lengthOnly('15 Mar 03:30 to 05:30', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
+        planned($d->events, $u, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
+        checkEq('committed: 1 Mar at 02:30 and every day shown where it was', ['2027-03-01 10:30:00', $before], [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$run]), $expanded($run, 0, 12)]);
+        $d->undo->undoLatest($u);
+        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T03:30:00-07:00', 'title' => 'Sample race']);
+        $d->events->deleteEvent($u, $run, 'this', '2027-03-19T03:30:00-07:00');
+        $lengthOnly('with an edited day and a skip, from 15 Mar', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$run]);
+        $lengthOnly('from the edited day\'s own row', $run, $day, ['scope' => 'all', 'start' => '2027-03-17T03:30:00-07:00', 'end' => '2027-03-17T05:30:00-07:00']);
+        $lengthOnly('from the first day', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-01T02:30:00-08:00', 'start' => '2027-03-01T02:30:00-08:00', 'end' => '2027-03-01T04:30:00-08:00']);
+    });
+
+    scenario('series persisted: the trip flag for all events reaches every row whatever each had (F1)', function () use ($d, $u, $db, $home, $rows): void {
+        $flags = static fn(int $id): array => array_map('intval', array_column($db->all('SELECT is_container FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$id, $id]), 'is_container'));
+        $answer = static function (callable $fn): ?string {
+            try {
+                $fn();
+                return null;
+            } catch (HttpError $e) {
+                return $e->status . ' ' . $e->errorCode;
+            }
+        };
+        $make = static function (bool $trip) use ($d, $u, $db, $home): array {
+            $id = (int) $d->events->create($u, eventAt($home, 'Sample trip', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU', 'isContainer' => $trip]))['eventId'];
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Sample trip, day two']);
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample trip, day three']);
+            return [$id, array_map('intval', array_column($db->all('SELECT id FROM events WHERE recurrence_parent_id = ? ORDER BY id', [$id]), 'id'))];
+        };
+        foreach ([[false, true], [true, false]] as [$masterFlag, $dayFlag]) {
+            foreach (['the edited day\'s own row' => 'day', 'the master' => 'master'] as $where => $to) {
+                [$id, $days] = $make($masterFlag);
+                $d->events->patch($u, $days[0], ['isContainer' => $dayFlag]);
+                $mixed = [(int) $masterFlag, (int) $dayFlag, (int) $masterFlag];
+                checkEq("master $masterFlag, one day $dayFlag: the mixed state", $mixed, $flags($id));
+                $before = $rows($id);
+                $in = ['scope' => 'all', 'isContainer' => $dayFlag];
+                if ($to === 'master') {
+                    $in['instanceStart'] = '2027-01-26T18:00:00+00:00';
+                }
+                $target = $to === 'master' ? $id : $days[0];
+                $plan = $d->events->previewPatch($u, $target, $in + ['preview' => true]);
+                check("sent to $where: the plan isn't direct and says the edited days take it", !$plan['direct'] && str_contains(implode(' ', array_column($plan['fields'], 'words')), 'edited day'), json_encode([$plan['direct'], $plan['fields']]));
+                planned($d->events, $u, $target, $in);
+                checkEq("sent to $where with all events: every row takes " . (int) $dayFlag, array_fill(0, 3, (int) $dayFlag), $flags($id));
+                $d->undo->undoLatest($u);
+                checkEq("sent to $where: undone, every row is as before", $before, $rows($id));
+            }
+        }
+        // Clearing with members on any affected row is refused, the master's flag clear or not.
+        [$id, $days] = $make(false);
+        $d->events->patch($u, $days[0], ['isContainer' => true]);
+        $member = (int) $d->events->create($u, eventAt($home, 'Sample rental pickup', '2027-01-13'))['eventId'];
+        (new BetterCal\Domain\Trips($db, $d->undo))->attach($u, $days[0], $member);
+        $before = $rows($id);
+        foreach (['the master' => [$id, ['instanceStart' => '2027-01-26T18:00:00+00:00']], 'the edited day with the member' => [$days[0], []], 'another edited day' => [$days[1], []]] as $where => [$target, $more]) {
+            $code = $answer(fn() => planned($d->events, $u, $target, ['scope' => 'all', 'isContainer' => false] + $more));
+            checkEq("a member on an edited day, the master clear, sent to $where: 400 trip_has_members, nothing written", ['400 trip_has_members', $before], [$code, $rows($id)]);
+        }
+    });
+
     scenario('series persisted: a drag of no days and no time keeps an UNTIL that is no occurrence (T1)', function () use ($d, $u, $home, $rows): void {
         $swim = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample swim', 'start' => '2027-02-12', 'end' => '2027-02-13', 'allDay' => true,
             'rrule' => 'FREQ=WEEKLY;INTERVAL=2;BYDAY=FR;UNTIL=20270709'])['eventId'];

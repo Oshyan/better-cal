@@ -153,7 +153,14 @@ trait SeriesPlans
         }
         $secs = static fn(\DateTimeImmutable $t): int => (int) $t->format('G') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s');
         $clockShift = $newAllDay || (int) $row['all_day'] === 1 ? 0 : $secs($sent) - $secs($shown);
+        // The length change likewise, measured on the day and put on its
+        // occurrence's length; between an all-day and a timed length there
+        // is no change to measure, so the sent length is the new one.
         $length = max(0, $sentEnd->getTimestamp() - $sent->getTimestamp());
+        if ($newAllDay === ((int) $row['all_day'] === 1) && $newAllDay === $masterAllDay) {
+            $rowLength = Time::fromDb((string) $row['end_utc'])->getTimestamp() - Time::fromDb((string) $row['start_utc'])->getTimestamp();
+            $length = max(0, Recurrence::durationSeconds($master) + $length - $rowLength);
+        }
         $keyLocal = $key->setTimezone($seriesTz);
         if ($newAllDay) {
             $day = Cal::date(Cal::dnOf($keyLocal) + $days);

@@ -412,9 +412,14 @@ trait SeriesPlans
             if ($w['master'] !== []) {
                 $this->db->update('events', $w['master'] + ['updated_at' => $now], 'id = ?', [$id]);
             }
-            // Edited days moved by the distance between them land on each
-            // other's old keys (unique per calendar and uid): they all leave
-            // their keys first, then take the new ones.
+            // Keys are unique per calendar and uid, and a new key may be one
+            // another row holds now (edited days moved by the distance between
+            // them, or a day moving onto the key of one leaving the series):
+            // every row that leaves the series or its key leaves it first,
+            // then the new keys are taken.
+            foreach ($w['delete'] as $rid) {
+                $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
+            }
             $park = [];
             foreach ($w['overrides'] as $rid => $cols) {
                 if (array_key_exists('recurrence_instance_utc', $cols) || isset($cols['calendar_id'])) {
@@ -435,9 +440,6 @@ trait SeriesPlans
                     $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
                 }
                 $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
-            }
-            foreach ($w['delete'] as $rid) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
             }
             $after = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             foreach ($w['create'] as $placed) {

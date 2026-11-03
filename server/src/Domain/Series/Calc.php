@@ -125,12 +125,15 @@ final class Calc
 
     /**
      * The latest day of the rule and its phase before the first day on
-     * which the clock exists, when the rule stored from it gives the same
-     * days after it; null when there is none.
+     * which the clock exists, when the pattern stored from it gives the same
+     * days after it; null when there is none. Which days follow is the
+     * pattern's alone: the bound is the same either way, and read from a
+     * start in the gap it would end by the shifted clock, not the series'
+     * (an UNTIL at the last day's clock), which is what the anchor is for.
      */
     private function anchorDay(): ?int
     {
-        $r = $this->rule;
+        $r = $this->rule->withBound(null, null);
         if (!$r->supported()) {
             return null;
         }
@@ -144,8 +147,7 @@ final class Calc
                 if (self::inGap($d, $this->clock, $this->tz)) {
                     return null;
                 }
-                $stored = $r->count !== null ? $r->withBound($r->count + 1, null) : $r;
-                $got = array_column(self::expansion($stored->text(), self::at($d, $this->clock, $this->tz), $this->tz, false, PHP_INT_MAX, 41), 0);
+                $got = array_column(self::expansion($r->text(), self::at($d, $this->clock, $this->tz), $this->tz, false, PHP_INT_MAX, 41), 0);
                 return array_slice(array_values(array_unique($got)), 1) === array_values(array_unique($want)) ? $d : null;
             }
             $p = $r->periodPlus($p, -$r->interval);

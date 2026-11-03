@@ -792,21 +792,23 @@ final class Model
         if ($readings === []) {
             return $this->refused('dayset');
         }
-        $options = [];
-        $default = null;
         foreach ($readings as $ri => $r) {
-            $opt = ['id' => $r['id'], 'label' => $r['label']];
             // On Google until 1.5.2: only a reading that keeps the rule text
             // as written (a list only as its whole-pattern shift), whatever
             // moves: a new time written into BYHOUR changes the text too.
             // Marked on the list itself, so a refusal of every reading gives
             // this reason.
             if ($this->google && ($r['rule']->textKey() !== $this->r0->textKey() || $r['id'] === 'member')) {
-                $r['disabled'] = true;
-                $r['code'] = 'google';
-                $r['reason'] = self::REASONS['google'];
-                $readings[$ri] = $r;
+                $readings[$ri] = ['disabled' => true, 'code' => 'google', 'reason' => self::REASONS['google']] + $r;
             }
+        }
+        // Each reading's plan on its own: readings with equal plans merge,
+        // and one that leaves no events is refused as any refused reading is.
+        $readings = $this->merged($readings, $land);
+        $options = [];
+        $default = null;
+        foreach ($readings as $r) {
+            $opt = ['id' => $r['id'], 'label' => $r['label']];
             if (!empty($r['disabled'])) {
                 $opt += ['disabled' => true, 'reason' => $r['reason']];
                 $this->refusals[] = ['group' => 'reading', 'option' => $r['id'], 'code' => $r['code'], 'words' => $r['reason']];
@@ -825,15 +827,6 @@ final class Model
             }
             return $this->refused($why['code'] ?? 'dayset', $why['reason'] ?? null);
         }
-        $readings = $this->merged($readings, $land);
-        $options = array_values(array_filter($options, static function (array $o) use ($readings): bool {
-            foreach ($readings as $r) {
-                if ($r['id'] === $o['id']) {
-                    return true;
-                }
-            }
-            return false;
-        }));
         $pickedId = count($options) > 1 ? $this->pick('reading', $this->kind() === 'newrule' ? 'Edited and skipped days' : 'How it repeats', $options, $default) : $default;
         $reading = null;
         foreach ($readings as $r) {
@@ -1058,7 +1051,7 @@ final class Model
         return $from;
     }
 
-    /** Readings whose whole plans are equal merge into the first (Finding the Readings). */
+    /** Readings whose whole plans are equal merge into the first (Finding the Readings); one whose plan leaves no events is refused. */
     private function merged(array $readings, array $land): array
     {
         if (count($readings) < 2) {
@@ -1076,7 +1069,12 @@ final class Model
             $this->choices = [];
             $m = $this->map($r, $land, true);
             [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
-            $sig = $m === null ? 'none' : json_encode([$m['walk'], $m['writes']['master']['start_utc'] ?? null, $m['boundKey'], $m['writes']['overrides'], $m['writes']['exdates'], $m['writes']['createEdited'], $m['writes']['detach'], $m['writes']['delete']]);
+            if ($m === null) {
+                // Nothing left (Bounds): refused, and the rest of the plan stands.
+                $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => self::REASONS['empty']] + $r;
+                continue;
+            }
+            $sig = json_encode([$m['walk'], $m['writes']['master']['start_utc'] ?? null, $m['boundKey'], $m['writes']['overrides'], $m['writes']['exdates'], $m['writes']['createEdited'], $m['writes']['detach'], $m['writes']['delete']]);
             if (isset($seen[$sig])) {
                 continue;
             }

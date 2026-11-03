@@ -1130,6 +1130,29 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $thirty = smSeries('Sample rent', 'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30 09:00');
     $p = smPlan($thirty, [], smDrag($thirty, '2027-04-30 09:00', '2027-05-30 09:00'));
     checkEq('C13: every 30th moved a month is offered no clamp and stays as written', [[], 'FREQ=MONTHLY;BYMONTHDAY=30'], [smOptions($p, 'reading'), $p['plan']['rule']['after']]);
+
+    // A new start in a skipped hour is stored from the period before whatever
+    // the bound: the anchor is the pattern's question, and an UNTIL at the
+    // last day's clock doesn't change which days follow. First Saturdays and
+    // last Sundays in Auckland, the first (27 Sep) in the spring gap, stored
+    // from 5 Sep; every first Saturday dragged to the third Sunday.
+    $nzTz = 'Pacific/Auckland';
+    $nz = smSeries('Sample market', 'FREQ=MONTHLY;BYDAY=1SA,-1SU;UNTIL=20270101T133000Z', '2026-09-05 02:30', 60, false, ['2026-09-05 02:30'], $nzTz);
+    $p = smPlan($nz, [], smDrag($nz, '2026-11-07 02:30', '2026-11-15 02:30'), ['reading' => 'member']);
+    $shown = smShows($nz, $p['writes'], '2027-02-28');
+    checkEq('a gap start under an UNTIL: stored from 20 Sep (skipped), 27 Sep first, 17 Jan the last day', [
+        smAt('2026-09-20 02:30', $nzTz), true, '2026-09-27', '2027-01-17',
+    ], [$p['writes']['master']['start_utc'] ?? null, in_array(smAt('2026-09-20 02:30', $nzTz), $p['writes']['exdates'], true), $shown[0] ?? null, $shown[count($shown) - 1] ?? null]);
+
+    // A reading that leaves no events is refused on its own row, and the
+    // rest of the plan stands: Mon, Tue and Thu changed to Sun, Mon and Wed
+    // ending 4 Mar. Read as the old days shifted (six days later) it starts
+    // on 7 Mar, after its end; kept where they are, it has 1 and 3 Mar.
+    $three = smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=MO,TU,TH;COUNT=11', '2027-03-01 02:30');
+    $p = smPlan($three, [], ['acted' => smAt('2027-03-09 02:30'), 'rrule' => 'FREQ=WEEKLY;BYDAY=SU,MO,WE;UNTIL=20270304T235959Z']);
+    checkEq('an empty reading is a disabled row, the other preselected and written', [['map!', 'keep'], 'keep', 'FREQ=WEEKLY;BYDAY=SU,MO,WE;UNTIL=20270304T235959Z', ['2027-03-01', '2027-03-03']], [
+        smOptions($p, 'reading'), smGroup($p, 'reading')['selected'] ?? null, $p['writes']['master']['rrule'] ?? null, $p['writes'] === null ? null : smShows($three, $p['writes'], '2027-03-31'),
+    ]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

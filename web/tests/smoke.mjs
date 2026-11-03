@@ -4590,7 +4590,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: COMING UP, its ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 · Wed, Apr 7 …');
   eq('series panel: AFFECTS, all events with no end, then the edited and skipped', v.affects, 'All events, with no end. 2 of them are edited, 1 is skipped.');
   eq('series panel: a day at its own date first, its keeps line, then its reason and its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
-    'The event was moved on its own to Fri, Mar 26.', '', 'This day has its own date. Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
+    "'Choir' was moved on its own to Fri, Mar 26.", '', 'This day has its own date. Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, with what it keeps', v.edited[1].line1, "'Rehearsal' on Tue, Apr 13 moves to Wed, Apr 14; keeps its title and place.");
   eq('series panel: a skip that moves with the series', v.skipped.map((r) => r.line1), ['Tue, Mar 30 was skipped. The skip moves with the series to Wed, Mar 31.']);
   eq('series panel: no count, so the button says all events', [v.action, v.canConfirm, v.refused], ['Move all events', true, null]);
@@ -4685,7 +4685,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
   eq('series panel: a day after the new end, a day going back to the series, a deleted day', p.edited.map((r) => [r.line1, r.choice && r.choice.reason, r.choice && r.choice.options.map((o) => o.label)]), [
     ["'Recital at Sample Hall' on Sun, Oct 31 falls after the new end.", 'Keep it as an event of its own, or delete it?', ['Keep it on its own', 'Delete it']],
-    ['The event on Tue, Mar 16 goes back to the series; nothing of its own is left.', null, null],
+    ["'Piano lesson with Alex Example' on Tue, Mar 16 goes back to the series; nothing of its own is left.", null, null],
     ["'Sample class' on Fri, Apr 30 is deleted.", null, null],
   ]);
   eq('series panel: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { outside: 'delete' });
@@ -4706,6 +4706,28 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
   eq('series panel: a note in the user\'s format', gap.notes, ['There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.']);
 
+  // Readability: a day with no title of its own carries the series' title.
+  const untitled = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-05T03:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'moves', shows: '2026-11-03', to: '2026-11-04', kept: ['location'], takes: ['date'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: a day with no title of its own carries the series\' title', untitled.edited[0].line1, "'Sample practice' on Tue, Nov 3 moves to Wed, Nov 4; keeps its place.");
+  const several = planView({ ...choir, groups: [{ id: 'movedDays', selected: 'keep', count: 2, options: [{ id: 'keep' }, { id: 'move' }] }] }, ctx());
+  const severalChoice = several.edited.find((r) => r.choice && r.choice.id === 'movedDays').choice;
+  eq('series panel: several days with their own dates give their reason first', [severalChoice.lead, severalChoice.reason, severalChoice.options.map((o) => o.label)],
+    ['', 'These days have their own dates. Keep them there, or move them with the rest?', ['Keep their dates', 'Move them with the rest']]);
+  const labels = (g, r = gym.rule) => planView({ ...gym, rule: r, groups: [g] }, ctx()).readings[0].options.map((o) => o.label);
+  eq('series panel: a new rule\'s readings', labels({ id: 'reading', selected: 'map', options: [{ id: 'map', rrule: 'FREQ=WEEKLY;BYDAY=TH' }, { id: 'keep', rrule: 'FREQ=WEEKLY;BYDAY=TH' }] }),
+    ['Move them along with the pattern', 'Keep them where they are, as events of their own']);
+  eq('series panel: one member moved by whole weeks is "only the Mondays"', labels({ id: 'reading', selected: 'member', options: [
+    { id: 'member', rrule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', next: ['2027-03-15T07:00:00-07:00'] }, { id: 'pattern', rrule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', next: ['2027-03-15T07:00:00-07:00'] }] }),
+    ['Move only the Mondays', 'Shift the whole weekly pattern']);
+  const monthly = rule('FREQ=MONTHLY;BYMONTHDAY=1,15', 'FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-01-01T07:00:00-08:00', '2027-01-01T07:00:00-08:00');
+  eq('series panel: a month day moved by whole months is "only the 15th of the month", anything else "this day of the pattern"', [
+    labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=MONTHLY;BYMONTHDAY=1,15', next: ['2027-04-15T07:00:00-07:00'] }, { id: 'pattern', rrule: 'FREQ=MONTHLY;BYMONTHDAY=1,15' }] }, monthly)[0],
+    labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=1', next: ['2028-03-01T07:00:00-08:00'] }, { id: 'pattern', rrule: 'FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=1' }] })[0],
+  ], ['Move only the 15th of the month', 'Move only this day of the pattern']);
+  eq('series panel: a repeat several times a day says why it can\'t move as a series', planView({ hash: 's', refusals: [{ code: 'several' }] }, ctx()).refused,
+    'This repeat happens several times a day, so its days and times can\u2019t be moved all at once. Move only this one, or change its details for all events.');
+
   // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
   const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));
   eq('edited days grouped: the forty are two rows of their own and one group row', forty.edited.map((d) => [d.line1, d.line2, d.range || null]), [
@@ -4724,7 +4746,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ["'Sample practice 21' on Tue, Aug 24 becomes an event of its own on Tue, Aug 24.", 0],
     ['19 edited days move to Wednesday; each keeps its title and place.', 19],
     ['18 edited days move to Wednesday; each keeps its title.', 18],
-    ['The event on Tue, Jan 4, 2028 moves to Wed, Jan 5; keeps its place.', 0],
+    ["'Choir' on Tue, Jan 4, 2028 moves to Wed, Jan 5; keeps its place.", 0],
   ]);
   const takesSplit = sampleEditedDays();
   takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'reminders'] } : d));
@@ -4940,8 +4962,8 @@ console.log('--- the series panel, docked, open while the window crosses the pho
   const css = readCss(new URL('../styles/app.css', import.meta.url), 'utf8');
   const rule = (sel) => { const i = css.indexOf('\n' + sel + ' {'); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
   const sd = rule('.bc-sd');
-  eq('series panel css: docked bottom right of the calendar, 440 wide, no taller than the window less a margin', [
-    /right: calc\(var\(--bc-sd-side, 0px\) \+ 12px\)/.test(sd), /bottom: 12px/.test(sd), /width: 440px/.test(sd), /max-height: calc\(100dvh - 24px\)/.test(sd),
+  eq('series panel css: docked bottom right of the calendar, 480 wide, no taller than the window less a margin', [
+    /right: calc\(var\(--bc-sd-side, 0px\) \+ 12px\)/.test(sd), /bottom: 12px/.test(sd), /width: 480px/.test(sd), /max-height: calc\(100dvh - 24px\)/.test(sd),
   ], [true, true, true, true]);
   eq('series panel css: the editor drawer and the event panel say how far they reach, so it docks beside them', [
     /\.bc-drawer \{ --bc-sd-side: min\(480px, 94vw\); \}/.test(css), /\.bc-app:has\(\.bc-evpanel\) \{ --bc-sd-side: min\(480px, 100vw\); \}/.test(css),

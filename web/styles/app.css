@@ -1114,7 +1114,7 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-app:has(.bc-evpanel) { --bc-sd-side: min(480px, 100vw); }
 .bc-sd {
   position: fixed; z-index: 1001; right: calc(var(--bc-sd-side, 0px) + 12px); bottom: 12px;
-  width: 440px; max-width: calc(100vw - var(--bc-sd-side, 0px) - 24px);
+  width: 480px; max-width: calc(100vw - var(--bc-sd-side, 0px) - 24px);
   max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   background: var(--bg-raised); border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: var(--shadow);

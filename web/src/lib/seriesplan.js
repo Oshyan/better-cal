@@ -99,7 +99,7 @@ const dayNumber = (key) => (key ? Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 
 export function planView(plan, ctx = {}) {
   const verb = W.verbOf(ctx.kind, ctx.edits || []);
   const title = W.titleWords(verb, ctx.scope);
-  const opts = { refYear: ctx.refYear, tz: ctx.tz || calendarZone() };
+  const opts = { refYear: ctx.refYear, tz: ctx.tz || calendarZone(), series: ctx.title || '' };
   const view = {
     heading: title + (ctx.title ? ' · ' + ctx.title : ''),
     title,
@@ -179,7 +179,7 @@ export function planView(plan, ctx = {}) {
     // A day's own choice sits on its row: its subject, then the reason and radios.
     const own = gs.find((g) => /^own[A-Z]/.test(g.id));
     const outside = gs.find((g) => g.id === 'outside');
-    if (outside) row = { key: d.key, line1: W.dayName(d) + ' on ' + W.fmtDay(d.shows, opts) + ' falls after the new end.', line2: '', choice: choice(outside) };
+    if (outside) row = { key: d.key, line1: W.dayName(d, opts.series) + ' on ' + W.fmtDay(d.shows, opts) + ' falls after the new end.', line2: '', choice: choice(outside) };
     else if (own) row = { key: d.key, line1: W.dayName({ ...d, kept: ['title'] }) + ' on ' + W.fmtDay(d.shows, opts) + ' has its own ' + (own.field === 'title' ? 'title, ' + "'" + d.title + "'" : W.keepsWords({ kept: [own.field] }).replace(/^keeps its /, '')) + '.', line2: '', choice: choice(own, { oldTitle: d.title }) };
     else if (gs.length) row.choice = choice(gs[0]);
     const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date');

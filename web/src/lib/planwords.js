@@ -169,9 +169,10 @@ const FIELD_NOUNS = {
 const fieldList = (fields) => andList(fields.map((f) => FIELD_NOUNS[f] || f));
 const contentOf = (list) => (list || []).filter((f) => f !== 'date' && f !== 'time');
 
-/** A day's name: its own title quoted, or "The event". */
-export function dayName(d) {
-  return (d.kept || []).includes('title') && d.title ? quoted(d.title) : 'The event';
+/** A day's name, quoted: its own title, or the series' when it has none of its own. */
+export function dayName(d, series = '') {
+  const own = (d.kept || []).includes('title') && d.title;
+  return quoted(own ? d.title : series || d.title || 'Untitled event');
 }
 
 /** What a day keeps and takes: "keeps its title and place; takes the new reminders". */
@@ -193,7 +194,7 @@ function goes(d, opts) {
  * what it keeps or takes, by its outcome.
  */
 export function dayLines(d, opts = {}) {
-  const name = dayName(d);
+  const name = dayName(d, opts.series);
   const on = d.shows ? ' on ' + fmtDay(d.shows, opts) : '';
   const keeps = keepsWords(d);
   if (d.kind === 'acted') {
@@ -265,8 +266,8 @@ export function choiceWords(g, ctx = {}) {
   const n = g.count || 1;
   if (g.id === 'movedDays') {
     return {
-      lead: n > 1 ? n + ' edited days have dates of their own.' : '',
-      reason: n > 1 ? 'Keep them there, or move them with the rest?' : 'This day has its own date. Keep it there, or move it with the rest?',
+      lead: '',
+      reason: n > 1 ? 'These days have their own dates. Keep them there, or move them with the rest?' : 'This day has its own date. Keep it there, or move it with the rest?',
       options: label((x) => (x.id === 'keep'
         ? (x.date ? 'Keep it on ' + fmtDay(x.date, opts) : 'Keep their dates')
         : (x.date ? 'Move it to ' + fmtDay(x.date, opts) : 'Move them with the rest'))),
@@ -345,17 +346,24 @@ export function choiceWords(g, ctx = {}) {
 function readingLabel(x, ctx) {
   const before = (ctx.rule && ctx.rule.from && ctx.rule.from.rrule) || '';
   if (x.id === 'keep') return 'Keep them where they are, as events of their own';
-  if (x.id === 'map') return 'Move them with their events, as a drag would';
+  if (x.id === 'map') return 'Move them along with the pattern';
   const freq = (ruleParts(x.rrule || before).FREQ || '').toLowerCase();
   const unit = freq === 'monthly' ? 'monthly' : freq === 'yearly' ? 'yearly' : freq === 'daily' ? 'daily' : 'weekly';
   if (x.id === 'pattern') return 'Shift the whole ' + unit + ' pattern';
   if (x.id === 'member') {
     const moved = movedMember(before, x.rrule);
-    return moved ? 'Move every ' + moved[0] + ' to ' + moved[1] : 'Move only the days like the one you moved';
+    if (moved) return 'Move every ' + moved[0] + ' to ' + moved[1];
+    // The same days moved by whole periods: the member is the day acted on's, where it lands.
+    const landed = dayKeyOf(startOfNext((x.next || [])[0]));
+    if (landed && unit === 'weekly') return 'Move only the ' + WEEKDAY_NAMES[dateOfDayKey(landed).getDay()] + 's';
+    if (landed && unit === 'monthly' && !ruleParts(x.rrule || before).BYDAY) return 'Move only the ' + ordinalDay(Number(landed.slice(8, 10))) + ' of the month';
+    return 'Move only this day of the pattern';
   }
   const start = ctx.rule && ctx.rule.to && dayKeyOf(ctx.rule.to.start);
   return upperFirst(describeRepeat(x.rrule || '', { start: start ? dateOfDayKey(start) : null, ends: false }) || 'Another reading');
 }
+
+const startOfNext = (n) => (typeof n === 'string' ? n : n && n.start);
 
 // The member a one-member reading moves, by comparing the lists before and after.
 function movedMember(before, after) {
@@ -391,7 +399,7 @@ export function optionLines(x, { selected = false, opts = {} } = {}) {
 
 const REFUSALS = {
   unreadable: 'This repeat came from another app in a form Better-Cal can’t read, so only its details can change here.',
-  several: 'This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can’t be moved or given another zone as a series. Move one event, or change its other details.',
+  several: 'This repeat happens several times a day, so its days and times can’t be moved all at once. Move only this one, or change its details for all events.',
   severalAllDay: 'This repeat happens several times a day, so it can’t be made all-day.',
   weekno: 'This repeat counts weeks of the year, so its days can’t follow a drag.',
   overlap: 'Two of its days are the same day in some months, so its days can’t follow a drag.',

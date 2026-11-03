@@ -2,6 +2,8 @@
 
 The worked examples for [series-model.md](series-model.md): what the confirmation dialog says for each kind of change, the full grid of family by edit, the harness's open causes and the reviewers' cases resolved under the revised model, the acceptance cases from the third and fourth reviews, and the prediction cases. Every series, title, place and person here is invented. Dates are 2027 unless they say otherwise; times are Los Angeles time unless they say otherwise. Sabre's answers were probed for the forms they name.
 
+The sentences here are the server's words (the plan's `words` fields, for the Activity entry and API callers, and the test table for the PHP sentence generator). The app's panel doesn't show them: it composes its own sentences from the plan's data in the user's locale and time format (series-model.md, The Plan), so it reads differently from these lines.
+
 In the dialog lines below, `(•)` is the preselected reading and `( )` another; the preselections are open decision 1's recommendations.
 
 ## A Drag, Start to Finish

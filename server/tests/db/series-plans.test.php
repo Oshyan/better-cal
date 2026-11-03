@@ -53,6 +53,37 @@ return static function (Db $db): void {
             'FREQ=WEEKLY;BYDAY=WE', ['movedDays'], ['title', 'location'],
         ], [$plan['rule']['after'], array_column($plan['groups'], 'id'),
             json_decode((string) $db->scalar("SELECT override_fields FROM events WHERE recurrence_parent_id = ? AND title = 'Rehearsal'", [$choir]), true)]);
+        // Each day's words in two parts beside the sentence (the dialog's two
+        // lines), every date with its weekday, the skipped day's too.
+        $byKey = array_column($plan['days'], null, 'key');
+        $yr = (int) gmdate('Y') === 2027 ? '' : ' 2027';
+        $parts = static fn(?array $x): array => [$x['head'] ?? null, $x['outcomeWords'] ?? null, $x['words'] ?? null];
+        checkEq('a day\'s head and outcome: the edited day, the one at its own date, the skipped one', [
+            ["'Rehearsal' Tue 13 Apr$yr", "moves to Wed 14 Apr$yr, keeps its title and place", "'Rehearsal' Tue 13 Apr$yr moves to Wed 14 Apr$yr, keeps its title and place"],
+            ["Tue 23 Mar$yr, moved to Fri 26 Mar$yr", 'stays there', "Tue 23 Mar$yr, moved to Fri 26 Mar$yr: stays there"],
+            ["Tue 30 Mar$yr", "moves to Wed 31 Mar$yr", "Skipped Tue 30 Mar$yr moves to Wed 31 Mar$yr"],
+        ], [$parts($byKey['2027-04-13T18:00:00Z'] ?? null), $parts($byKey['2027-03-23T18:00:00Z'] ?? null), $parts($byKey['2027-03-30T18:00:00Z'] ?? null)]);
+        // The plan as data, for the client's own sentences: the rule before
+        // and after with its start and zone, the bound before and after,
+        // the counts, whether the series goes on past Next, each day's dates.
+        checkEq('the plan carries its data: rules, bounds, counts, the day dates and the moved day\'s option dates', [
+            ['FREQ=WEEKLY;BYDAY=TU', '2027-01-05', false], ['FREQ=WEEKLY;BYDAY=WE', '2027-01-06', false],
+            ['none', null, 'none'], ['events' => null, 'edited' => 2, 'skipped' => 1], true,
+            ['2027-04-13', '2027-04-14'], ['2027-03-26', '2027-03-26'], ['2027-03-30', '2027-03-31'],
+            ['2027-03-26', '2027-03-27'], 1,
+        ], [
+            [$plan['rule']['from']['rrule'], substr($plan['rule']['from']['start'], 0, 10), $plan['rule']['from']['allDay']],
+            [$plan['rule']['to']['rrule'], substr($plan['rule']['to']['start'], 0, 10), $plan['rule']['to']['allDay']],
+            [$plan['bound']['kind'], $plan['bound']['events'], $plan['bound']['from']['kind']], $plan['counts'], $plan['nextMore'],
+            [$byKey['2027-04-13T18:00:00Z']['shows'] ?? null, $byKey['2027-04-13T18:00:00Z']['to'] ?? null],
+            [$byKey['2027-03-23T18:00:00Z']['shows'] ?? null, $byKey['2027-03-23T18:00:00Z']['to'] ?? null],
+            [$byKey['2027-03-30T18:00:00Z']['shows'] ?? null, $byKey['2027-03-30T18:00:00Z']['to'] ?? null],
+            array_column($plan['groups'][0]['options'] ?? [], 'date'), $plan['groups'][0]['count'] ?? null,
+        ]);
+        // The day the edit started from, when it has something of its own.
+        $fromRehearsal = $d->events->previewPatch($u, $choir, ['scope' => 'all', 'instanceStart' => '2027-04-13T18:00:00+00:00', 'start' => '2027-04-14T18:00:00+00:00', 'end' => '2027-04-14T19:00:00+00:00', 'preview' => true]);
+        checkEq('the plan names the day the edit started from when it has fields of its own, and no day otherwise', [true, 'Rehearsal', '2027-04-13', ['title', 'location']],
+            [array_key_exists('acted', $plan) && $plan['acted'] === null, $fromRehearsal['acted']['title'] ?? null, $fromRehearsal['acted']['shows'] ?? null, $fromRehearsal['acted']['kept'] ?? null]);
         [$code, $again] = $answer(fn() => $d->events->patch($u, $choir, $drag));
         checkEq('a drag sent without a plan is 409 series_plan_required with the plan, nothing written', ['409 series_plan_required', $plan['hash'], $before],
             [$code, $again['hash'] ?? null, $rows($choir)]);
@@ -101,6 +132,10 @@ return static function (Db $db): void {
             array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'outcome'),
             array_column(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'), 'newKey'),
         ]);
+        $yr = (int) gmdate('Y') === 2027 ? '' : ' 2027';
+        $rejoined = array_values(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+        checkEq('the day going back to the series: its head, then where it shows', ["'Rehearsal' Tue 12 Jan$yr", "goes back to the series, on Tue 12 Jan$yr"],
+            [$rejoined['head'] ?? null, $rejoined['outcomeWords'] ?? null]);
         $d->undo->undoLatest($u);
         checkEq('undone, the edited day\'s row and its tags are byte-identical to before', $beforeGive, [$rows($owned), $tagRows()]);
         $weekno = (int) $d->events->create($u, eventAt($home, 'Kickoff', '2027-01-04', ['rrule' => 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO']))['eventId'];
@@ -112,6 +147,19 @@ return static function (Db $db): void {
         $plan = $d->events->previewPatch($u, $gym, $edit);
         [$code] = $answer(fn() => $d->events->patch($u, $gym, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => ['reading' => 'member']]]));
         checkEq('naming a disabled reading is 422 series_refused', '422 series_refused', $code);
+        // A reading's dates run from the day acted on until they differ from
+        // the other reading's; the one that also changes earlier days says from when.
+        $swap = (int) $d->events->create($u, eventAt($home, 'Book swap', '2027-01-31', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=31']))['eventId'];
+        $readings = $d->events->previewPatch($u, $swap, ['scope' => 'all', 'instanceStart' => '2027-03-31T18:00:00+00:00', 'start' => '2027-03-30T18:00:00+00:00', 'end' => '2027-03-30T19:00:00+00:00']);
+        $opts = array_column(array_values(array_filter($readings['groups'], static fn(array $g): bool => $g['id'] === 'reading'))[0]['options'] ?? [], null, 'id');
+        checkEq('reading dates: from the day acted on, three, then the last shared date and the first that differs; both change earlier days from 30 Jan, against the series as it is today', [
+            '2027-03-30', 3, ['2028-01-30', '2028-03-30'], ['2028-01-30', '2028-02-29'], '2027-01-30', '2027-01-30',
+        ], [
+            substr((string) ($opts['skip']['dates'][0] ?? ''), 0, 10), count($opts['skip']['dates'] ?? []),
+            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['skip']['then'] ?? []),
+            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['clamp']['then'] ?? []),
+            array_key_exists('earlier', $opts['skip'] ?? []) ? $opts['skip']['earlier'] : 'missing', $opts['clamp']['earlier'] ?? null,
+        ]);
         [$code] = $answer(fn() => $d->events->patch($u, $gym, $edit + ['preview' => true]));
         checkEq('patch() never applies a preview', '400 preview_unavailable', $code);
     });

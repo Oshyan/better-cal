@@ -4510,410 +4510,325 @@ console.log('--- update notices (#194) ---');
 }
 
 // A weekly series on Tuesdays at 19:00 in Los Angeles dragged to Wednesday,
-// with forty edited days as the server sends them (Series/Model.php): their
-// sentences, and `kept` and `takes`, the own fields each keeps and the
-// fields of this edit it takes from the series. The sixth is shown at a
-// date of its own, with its keep-or-move choice, the twenty-first becomes
-// an event of its own, and the rest go with their events (taking the new
-// date), each keeping the fields keeps(i) names.
-const { planDate: fixtureDate } = await import('../src/lib/seriesplan.js');
-const FIXTURE_WORDS = { title: 'title', location: 'place', description: 'notes' };
-const fixtureList = (fields) => { const w = fields.map((f) => FIXTURE_WORDS[f]); return w.length <= 1 ? w[0] || '' : w.slice(0, -1).join(', ') + ' and ' + w[w.length - 1]; };
+// with forty edited days, as the server sends the plan (Series/Model.php):
+// data only for the panel (dates, outcomes, `kept` and `takes`), and the
+// server's own `words` beside them for API callers, which the panel never
+// reads. The sixth shows on a date of its own with its keep-or-move choice,
+// the twenty-first becomes an event of its own, and the rest go with their
+// events (taking the new date), each keeping the fields keeps(i) names.
+const fixtureKey = (n) => new Date(Date.UTC(2027, 0, 1) + n * 86400000).toISOString().slice(0, 10);
 function sampleEditedDays(keeps = () => ['title', 'location']) {
-  const at = (iso) => fixtureDate(iso, { tz: 'America/Los_Angeles', refYear: 2027 });
   const iso = (ms) => new Date(ms).toISOString().replace('.000Z', 'Z');
   const DAY = 86400000;
   const days = [], groups = [];
   for (let i = 0; i < 40; i++) {
     const key = iso(Date.UTC(2027, 3, 7, 2) + i * 7 * DAY);
     const newKey = iso(Date.parse(key) + DAY);
+    const shows = fixtureKey(95 + i * 7); // Tue 6 Apr 2027 on
+    const to = fixtureKey(96 + i * 7);
     const title = 'Sample practice ' + (i + 1);
     if (i === 5) {
-      const own = Date.parse(key) + 3 * DAY;
-      days.push({ key, newKey, kind: 'edited', title, outcome: 'stays', words: `'${title}' ${at(key)}, moved to ${at(iso(own))}: stays there, keeps its title`, kept: ['date', 'title'], takes: [] });
-      groups.push({ id: 'movedDays', label: 'Days moved on their own', day: key, selected: 'keep',
-        options: [{ id: 'keep', label: 'Keep ' + at(iso(own)) }, { id: 'move', label: 'Move to ' + at(iso(own + DAY)) }] });
+      const own = fixtureKey(95 + i * 7 + 3);
+      days.push({ key, newKey, kind: 'edited', title, outcome: 'stays', shows: own, to: own, kept: ['date', 'title'], takes: [],
+        head: `'${title}' server head`, outcomeWords: 'server outcome: stays there', words: `'${title}' server sentence: stays there, keeps its title` });
+      groups.push({ id: 'movedDays', label: 'Server label for days moved on their own', day: key, selected: 'keep', count: 1,
+        options: [{ id: 'keep', label: 'Server keep label', date: own }, { id: 'move', label: 'Server move label', date: fixtureKey(95 + i * 7 + 4) }] });
     } else if (i === 20) {
-      days.push({ key, newKey: null, kind: 'edited', title, outcome: 'separate', words: `'${title}' ${at(key)} becomes an event of its own`, kept: ['title'], takes: [] });
+      days.push({ key, newKey: null, kind: 'edited', title, outcome: 'separate', shows, to: shows, kept: ['title'], takes: [],
+        head: `'${title}' server head`, outcomeWords: 'server outcome: becomes an event of its own', words: `'${title}' server sentence: becomes an event of its own` });
     } else {
-      const kept = keeps(i);
-      const name = kept.includes('title') ? `'${title}' ` : '';
-      days.push({ key, newKey, kind: 'edited', title, outcome: 'moves', words: `${name}${at(key)} moves to ${at(newKey)}${kept.length ? ', keeps its ' + fixtureList(kept) : ''}`, kept, takes: ['date'] });
+      days.push({ key, newKey, kind: 'edited', title, outcome: 'moves', shows, to, kept: keeps(i), takes: ['date'],
+        head: `'${title}' server head`, outcomeWords: 'server outcome: moves', words: `'${title}' server sentence: moves, keeps its things` });
     }
   }
   return {
     hash: 'sample-forty', scope: 'all', direct: false,
-    rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Wednesday at 19:00' },
-    bound: { kind: 'none', words: 'No end, as before' },
+    rule: {
+      before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Server words before', words: 'Server words after',
+      from: { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: 'America/Los_Angeles', allDay: false },
+      to: { rrule: 'FREQ=WEEKLY;BYDAY=WE', start: '2027-01-06T19:00:00-08:00', tz: 'America/Los_Angeles', allDay: false },
+    },
+    bound: { kind: 'none', words: 'Server bound words', events: null, last: null, from: { kind: 'none' } },
+    next: ['2027-04-07T19:00:00-07:00', '2027-04-14T19:00:00-07:00', '2027-04-21T19:00:00-07:00', '2027-04-28T19:00:00-07:00'].map((start) => ({ start, kind: 'edited' })),
+    nextMore: true,
+    counts: { events: null, edited: 40, skipped: 0 },
     groups, days,
+    summary: 'Server summary',
   };
 }
 
-console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---');
+console.log('--- the series change panel, its sentences from the plan\'s data (1.5.0) ---');
 {
-  const { planView, planDate, commitPlan, creationLine, ruleLine } = await import('../src/lib/seriesplan.js');
+  const { planView, commitPlan, creationLine } = await import('../src/lib/seriesplan.js');
+  const { setTimeFormat } = await import('../src/lib/dates.js');
+  setTimeFormat('12');
   const LA = 'America/Los_Angeles';
-  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', tz: LA, refYear: 2027, ...extra });
-  // "A Plan as JSON" in docs/design/series-model-examples.md, as written there.
+  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', calendar: 'Sample', tz: LA, refYear: 2027, ...extra });
+  const rule = (before, after, startBefore, startAfter, extra = {}) => ({
+    before, after, from: { rrule: before, start: startBefore, tz: LA, allDay: false }, to: { rrule: after, start: startAfter, tz: LA, allDay: false }, ...extra,
+  });
+  const noEnd = { kind: 'none', events: null, last: null, from: { kind: 'none' } };
+  // The doc's "Choir": Tue 9 Mar dragged to Wed 10 Mar, an edited day with its own title and place, one at its own date, a skip.
   const choir = {
     hash: '9f2c41d07a', scope: 'all', direct: false,
-    rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Wednesday at 19:00' },
-    start: '2027-01-06T19:00:00-08:00',
-    bound: { kind: 'none', words: 'No end, as before' },
-    next: [{ start: '2027-03-10T19:00:00-08:00', kind: 'acted' }, { start: '2027-03-17T19:00:00-07:00', kind: 'occurrence' },
-      { start: '2027-03-26T19:00:00-07:00', kind: 'edited', words: 'its own date' }, { start: '2027-04-07T19:00:00-07:00', kind: 'occurrence' }],
-    groups: [{ id: 'movedDays', label: 'Days moved on their own', selected: 'keep', options: [{ id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' }] }],
+    rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'),
+    bound: noEnd,
+    next: ['2027-03-10T19:00:00-08:00', '2027-03-17T19:00:00-07:00', '2027-03-26T19:00:00-07:00', '2027-04-07T19:00:00-07:00'].map((start) => ({ start })),
+    nextMore: true,
+    counts: { events: null, edited: 2, skipped: 1 },
+    groups: [{ id: 'movedDays', day: '2027-03-24T02:00:00Z', selected: 'keep', count: 1, options: [{ id: 'keep', date: '2027-03-26' }, { id: 'move', date: '2027-03-27' }] }],
     days: [
-      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', words: "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place", kept: ['title', 'location'], takes: ['date'] },
-      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', outcome: 'stays', words: 'Tue 23 Mar, moved to Fri 26 Mar: stays there', kept: ['date'], takes: [] },
-      { key: '2027-03-31T02:00:00Z', newKey: '2027-04-01T02:00:00Z', kind: 'skipped', outcome: 'moves' },
+      { key: '2027-04-14T02:00:00Z', newKey: '2027-04-15T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'moves', shows: '2027-04-13', to: '2027-04-14', kept: ['title', 'location'], takes: ['date'] },
+      { key: '2027-03-24T02:00:00Z', newKey: '2027-03-25T02:00:00Z', kind: 'edited', title: 'Choir', outcome: 'stays', shows: '2027-03-26', to: '2027-03-26', kept: ['date'], takes: [] },
+      { key: '2027-03-31T02:00:00Z', newKey: '2027-04-01T02:00:00Z', kind: 'skipped', outcome: 'moves', shows: '2027-03-30', to: '2027-03-31', kept: [], takes: [] },
     ],
-    losses: [], gains: [], refusals: [], notes: [],
-    summary: 'Moved Choir (all events): weekly on Tuesday, now Wednesday, from 6 Jan.',
+    refusals: [], notes: [],
   };
   const v = planView(choir, ctx());
-  eq('series dialog: the heading names the action and the series', v.heading, 'Move all events · Choir');
-  eq('series dialog: the rule before and after on one line', v.rule, 'Weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00');
-  eq('series dialog: the bound beside it', v.bound, 'No end, as before');
-  eq('series dialog: the next four, the edited day marked', v.next, 'Wed 10 Mar · Wed 17 Mar · Fri 26 Mar (its own date) · Wed 7 Apr');
-  // The day at its own date first: it is a consequence, not a day going
-  // with its event.
-  eq('series dialog: edited days in the plan\'s words, the one at its own date first', v.edited.map((d) => d.words),
-    ['Tue 23 Mar, moved to Fri 26 Mar: stays there', "'Rehearsal' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"]);
-  eq('series dialog: a skipped day without words reads by its key, in the series\' zone', v.skipped, '30 Mar moves to 31 Mar');
-  eq('series dialog: a choice that isn\'t a reading sits on a line of its own', v.choices.map((g) => [g.label, g.options.map((o) => [o.label, o.selected])]),
-    [['Days moved on their own', [['Keep Fri 26 Mar', true], ['Move to Sat 27 Mar', false]]]]);
-  eq('series dialog: no readings, nothing refused, and it can be confirmed', [v.readings.length, v.refused, v.canConfirm, v.action], [0, null, true, 'Move all events']);
-  eq('series dialog: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
-  eq('series dialog: a pick goes into the commit', commitPlan(choir, { movedDays: 'move' }).choices, { movedDays: 'move' });
-  eq('series dialog: a pick that is no option is the plan\'s', commitPlan(choir, { movedDays: 'nowhere' }).choices, { movedDays: 'keep' });
-  const onDay = planView({ ...choir, groups: [{ ...choir.groups[0], day: '2027-03-24T02:00:00Z' }] }, ctx());
-  eq('series dialog: a choice for one day sits on that day\'s line', [onDay.choices.length, onDay.edited[0].choice && onDay.edited[0].choice.options.map((o) => o.label)],
-    [0, ['Keep Fri 26 Mar', 'Move to Sat 27 Mar']]);
+  eq('series panel: the title states the action and the scope; the series on its calendar under it', [v.title, v.series], ['Move all events', "'Choir' on Sample"]);
+  eq('series panel: CHANGE names only what changes, the rest as context, the end part of it', v.change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
+  eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
+  eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
+  eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
+    "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
+  eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
+  eq('series panel: a removed day that moves with the series, in one sentence with its consequence', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier, so no event is added on Wed, Mar 31."]);
+  eq('series panel: no count, so the button says all events', [v.action, v.canConfirm, v.refused], ['Move all events', true, null]);
+  eq('series panel: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
+  eq('series panel: a pick goes into the commit, and a pick that is no option is the plan\'s', [commitPlan(choir, { movedDays: 'move' }).choices, commitPlan(choir, { movedDays: 'nowhere' }).choices], [{ movedDays: 'move' }, { movedDays: 'keep' }]);
   const waiting = planView(null, ctx());
-  eq('series dialog: before the plan, only what the client knows, and no confirm', [waiting.heading, waiting.loading, waiting.canConfirm], ['Move all events · Choir', true, false]);
-  eq('series dialog: a plan without a hash can\'t be confirmed', planView({ ...choir, hash: '' }, ctx()).canConfirm, false);
+  eq('series panel: before the plan, only what the client knows, and no confirm', [waiting.title, waiting.loading, waiting.canConfirm], ['Move all events', true, false]);
+  eq('series panel: a plan without a hash can\'t be confirmed', planView({ ...choir, hash: '' }, ctx()).canConfirm, false);
 
-  // Lists: "Gym", Wed 10 Mar dragged to Thu 11 Mar, then to Fri 12 Mar.
+  // Every time in the user's setting: 12-hour and 24-hour.
+  setTimeFormat('24');
+  eq('series panel: in the 24-hour setting every time is 24-hour', planView(choir, ctx()).change, 'From Tuesday to Wednesday each week, at 19:00, with no end, as before.');
+  setTimeFormat('12');
+  eq('series panel: and back in the 12-hour setting, 12-hour', planView(choir, ctx()).change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
+
+  // The bound in the Change sentence and in Affects.
+  const bound = (b) => planView({ ...choir, bound: b, counts: { events: b.events, edited: 0, skipped: 0 } }, ctx());
+  eq('series panel: the bound, as before or changed', [
+    bound({ kind: 'none', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
+    bound({ kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }).change.replace(/^.*7:00 PM, /, ''),
+    bound({ kind: 'until', events: 13, last: '2027-11-01', from: { kind: 'until', last: '2027-10-31' } }).change.replace(/^.*7:00 PM, /, ''),
+    bound({ kind: 'count', count: 6, events: 6, last: '2027-07-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
+    bound({ kind: 'count', count: 10, events: 10, last: '2027-11-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
+  ], ['with no end (was 6 events).', 'ending Jan 20, 2028, as before.', 'ending Nov 1 (was Oct 31).', 'for 6 events, as before.', 'for 10 events (was 6).']);
+  const until = planView({ ...choir, bound: { kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }, counts: { events: 13, edited: 11, skipped: 1 }, next: choir.next.slice(0, 3), nextMore: false }, ctx());
+  eq('series panel: an end date, its count on Affects and the button, no ellipsis when the series ends with the list', [until.affects, until.action, until.comingUp.endsWith('…')],
+    ['13 events, ending Jan 20, 2028. 11 were changed earlier (title, location and 1 other), 1 was removed.', 'Move 13 events', false]);
+  const fieldsOf = (kepts) => planView({ ...choir, counts: { events: null, edited: kepts.length, skipped: 0 }, days: kepts.map((kept, i) => ({ key: 'k' + i, kind: 'edited', outcome: 'moves', kept })) }, ctx()).affects;
+  eq('series panel: AFFECTS names the fields, most common first, at most two', [fieldsOf([['title'], ['title']]), fieldsOf([['title', 'location'], ['title']]), fieldsOf([['title', 'location', 'description'], ['title', 'reminders']])], [
+    'All events, with no end. 2 were changed earlier (title).', 'All events, with no end. 2 were changed earlier (title and location).', 'All events, with no end. 2 were changed earlier (title, location and 2 others).']);
+  eq('series panel: Affects in the singular, a zero part left out', [
+    planView({ ...choir, counts: { events: null, edited: 1, skipped: 0 } }, ctx()).affects, planView({ ...choir, counts: { events: null, edited: 0, skipped: 2 } }, ctx()).affects,
+  ], ['All events, with no end. 1 was changed earlier (title, location and 1 other).', 'All events, with no end. 2 were removed.']);
+  eq('series panel: Affects says nothing more when no day is edited or skipped', planView({ ...choir, counts: { events: null, edited: 0, skipped: 0 } }, ctx()).affects, 'All events, with no end.');
+
+  // Readings: "Gym", Wed 10 Mar dragged to Thu 11 Mar.
   const gymNext = (days) => days.map((d) => '2027-03-' + d + 'T07:00:00-0' + (Number(d) >= 14 ? '7' : '8') + ':00');
   const gym = {
-    hash: 'a1', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', after: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', wordsBefore: 'Weekly on Monday, Wednesday and Friday at 07:00', words: 'Weekly on Monday, Thursday and Friday at 07:00' },
-    bound: { words: 'No end, as before' },
-    groups: [{ id: 'rule', label: 'How the rule reads', selected: 'member', options: [
-      { id: 'member', label: 'Move every Wednesday to Thursday: Monday, Thursday and Friday', next: gymNext(['11', '12', '15']) },
-      { id: 'pattern', label: 'Shift the whole weekly pattern: Tuesday, Thursday and Saturday', next: gymNext(['11', '13', '16']) },
+    hash: 'a1', rule: rule('FREQ=WEEKLY;BYDAY=MO,WE,FR', 'FREQ=WEEKLY;BYDAY=MO,TH,FR', '2027-01-04T07:00:00-08:00', '2027-01-04T07:00:00-08:00'), bound: noEnd,
+    groups: [{ id: 'reading', selected: 'member', options: [
+      { id: 'member', rrule: 'FREQ=WEEKLY;BYDAY=MO,TH,FR', next: gymNext(['11', '12', '15']) },
+      { id: 'pattern', rrule: 'FREQ=WEEKLY;BYDAY=TU,TH,SA', next: gymNext(['11', '13', '16']), differs: { dates: ['2027-03-13'] } },
     ] }],
     days: [], refusals: [],
   };
   const g = planView(gym, ctx({ title: 'Gym' }));
-  eq('series dialog: list readings, preselected first, each with its dates', g.readings[0].options.map((o) => [o.label, o.dates, o.selected]), [
-    ['Move every Wednesday to Thursday: Monday, Thursday and Friday', 'Thu 11 Mar · Fri 12 Mar · Mon 15 Mar', true],
-    ['Shift the whole weekly pattern: Tuesday, Thursday and Saturday', 'Thu 11 Mar · Sat 13 Mar · Tue 16 Mar', false],
-  ]);
-  const toFri = {
-    ...gym,
-    groups: [{ ...gym.groups[0], selected: 'pattern', options: [{ id: 'member', label: 'Move every Wednesday to Friday', next: [] }, { id: 'pattern', label: 'Shift the whole weekly pattern: Wednesday, Friday and Sunday', next: gymNext(['12', '14', '17']) }] }],
-    refusals: [{ group: 'rule', option: 'member', words: 'Friday is already one of its days' }],
-  };
+  eq('series panel: readings under CHANGE, a reason, then each option with its dates and how it differs', [g.readings[0].reason, g.readings[0].options.map((o) => [o.label, o.dates, o.note, o.selected])], [
+    'This change can mean two things:', [
+      ['Move every Wednesday to Thursday', 'Thu, Mar 11 · Fri, Mar 12 · Mon, Mar 15', '', true],
+      ['Shift the whole weekly pattern', 'Thu, Mar 11 · Sat, Mar 13 · Tue, Mar 16', '', false],
+    ]]);
+  const toFri = { ...gym, groups: [{ ...gym.groups[0], selected: 'pattern' }], refusals: [{ group: 'reading', option: 'member', code: 'member_taken', words: 'Server reason' }] };
   const f = planView(toFri, ctx({ title: 'Gym' }));
-  eq('series dialog: a refused reading is a disabled row with its reason, the rest stands', [f.readings[0].options[0].disabled, f.readings[0].options[0].reason, f.refused, f.canConfirm], [true, 'Friday is already one of its days', null, true]);
-  eq('series dialog: a refused reading can\'t be picked into the commit', commitPlan(toFri, { rule: 'member' }).choices, { rule: 'pattern' });
+  eq('series panel: a refused reading is a disabled row with its reason, the rest stands', [f.readings[0].options[0].disabled, f.readings[0].options[0].reason, f.refused, f.canConfirm], [true, 'That day is already one of its days.', null, true]);
+  eq('series panel: a refused reading can\'t be picked into the commit', commitPlan(toFri, { reading: 'member' }).choices, { reading: 'pattern' });
+  const monthEnd = planView({ ...gym, rule: rule('FREQ=MONTHLY;BYMONTHDAY=15', 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', '2027-01-15T19:00:00-08:00', '2027-01-30T19:00:00-08:00'), groups: [{ id: 'reading', selected: 'clamped', options: [
+    { id: 'clamped', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', next: ['2027-03-30T19:00:00-07:00'] }, { id: 'skip', rrule: 'FREQ=MONTHLY;BYMONTHDAY=30', next: ['2027-03-30T19:00:00-07:00'] },
+  ] }] }, ctx({ title: 'Book club' }));
+  eq('series panel: month-end readings read as their rules', monthEnd.readings[0].options.map((o) => o.label), ['Monthly on the 30th, or the last day in shorter months', 'Monthly on the 30th, skipping months without one']);
 
-  // Month ends, monthly dates read without the weekday: "Book club".
-  const bookClub = {
-    hash: 'b1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=15', after: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', wordsBefore: 'Monthly on the 15th at 19:00', words: 'Monthly on the 30th, or the last day in shorter months at 19:00' },
-    groups: [{ id: 'monthEnd', label: 'Which 30th', selected: 'clamped', options: [
-      { id: 'clamped', label: 'On the 30th, or the last day in shorter months', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: 'in February: 28 Feb, and 29 Feb 2028' } },
-      { id: 'skip', label: 'On the 30th, skipping months without one', next: ['2027-03-30T19:00:00-07:00', '2027-04-30T19:00:00-07:00', '2027-05-30T19:00:00-07:00'], differs: { words: "none in February: drops 15 Feb's event, then every February" } },
-    ] }],
-  };
-  eq('series dialog: month-end readings as the examples write them', planView(bookClub, ctx({ title: 'Book club' })).readings[0].options.map((o) => o.label + '   ' + o.dates + '   ' + o.note), [
-    'On the 30th, or the last day in shorter months   30 Mar · 30 Apr · 30 May   in February: 28 Feb, and 29 Feb 2028',
-    "On the 30th, skipping months without one   30 Mar · 30 Apr · 30 May   none in February: drops 15 Feb's event, then every February",
-  ]);
-  const leap = {
-    hash: 'c1', rule: { after: 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' },
-    groups: [{ id: 'feb29', selected: 'last', options: [
-      { id: 'last', label: 'On the last day of February', next: ['2028-02-29', '2029-02-28', '2030-02-28'] },
-      { id: 'leap', label: 'On 29 February, only in leap years', next: ['2028-02-29', '2032-02-29', '2036-02-29'], words: 'drops three years in four' },
-    ] }],
-  };
-  eq('series dialog: years are named when they aren\'t this one', planView(leap, ctx({ title: 'Leap party' })).readings[0].options.map((o) => o.dates + (o.words ? '   ' + o.words : '')),
-    ['29 Feb 2028 · 28 Feb 2029 · 28 Feb 2030', '29 Feb 2028 · 29 Feb 2032 · 29 Feb 2036   drops three years in four']);
-
-  // A count: "Piano lesson with Alex Example", the bound as a reading group.
-  const firsts = ['02', '03', '04', '05', '06', '07'].map((m) => '2027-' + m + '-01T16:00:00-0' + (m === '02' ? '8' : '7') + ':00');
-  const piano = {
-    hash: 'd1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
-    bound: { words: '6 in the series + 1 separate' },
-    groups: [
-      { id: 'bound', label: 'Bound', selected: 'count', options: [
-        { id: 'count', label: 'Keep 6 events', next: firsts, bound: { words: 'ends 1 Jul (was 31 Oct)' } },
-        { id: 'end', label: 'Keep the end', next: firsts.slice(0, 3), words: 'Changes 6 events to 10, 1 Feb to 1 Nov; adds 1 Mar, 1 May, 1 Jul and 1 Oct; the recital moves with its event to 1 Nov' },
-      ] },
-      { id: 'outside', label: 'After the new end', day: '2027-11-01T00:00:00Z', selected: 'own', options: [{ id: 'own', label: 'Keep it as an event of its own' }, { id: 'delete', label: 'Delete it' }] },
-    ],
-    days: [{ key: '2027-11-01T00:00:00Z', kind: 'edited', outcome: 'outside', words: "After the new end: 'Recital at Sample Hall' 31 Oct" }],
-  };
-  const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
-  eq('series dialog: a count, the rule and its total', [p.rule, p.bound], ['Monthly on the 31st at 16:00, now monthly on the 1st', '6 in the series + 1 separate']);
-  eq('series dialog: keep 6 events with its dates and end', [p.readings[0].options[0].dates, p.readings[0].options[0].note],
-    ['1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul', 'ends 1 Jul (was 31 Oct)']);
-  eq('series dialog: the day after the end carries its own choice', [p.edited[0].words, p.edited[0].choice.options.map((o) => o.label)],
-    ["After the new end: 'Recital at Sample Hall' 31 Oct", ['Keep it as an event of its own', 'Delete it']]);
-  eq('series dialog: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { bound: 'count', outside: 'delete' });
-
-  // The examples after the fourth review (6258688): labels, order and the
-  // preselection are the plan's. "Cello lesson", 31 Oct dragged to 1 Nov:
-  // keep the end comes first.
-  // As the server sends a bound group: every option with its dates and
-  // its own bound, the end shown from each option's bound words, every
-  // date sent shown (a date the server names, "separately", with it).
+  // The bound choice: "Cello lesson", 6 events, its 31 Oct dragged to 1 Nov.
   const cello = {
-    hash: 'k1', rule: { before: 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', after: 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', wordsBefore: 'Monthly on the 31st at 16:00', words: 'Monthly on the 1st' },
-    bound: { words: 'Changes 6 events to 10, ends 1 Nov' },
-    groups: [{ id: 'bound', label: 'Bound', selected: 'end', options: [
-      { id: 'end', label: 'Keep the end', next: [firsts[0], firsts[1], firsts[2], '2027-11-01T16:00:00-07:00'], bound: { words: 'Changes 6 events to 10, ends 1 Nov' } },
-      { id: 'count', label: 'Keep 6 events + this one on its own', next: [...firsts, { start: '2027-11-01T16:00:00-07:00', words: 'separately' }], bound: { words: '6 in the series + 1 separate' },
-        differs: { words: 'parts on 1 Aug' } },
+    hash: 'k1', rule: rule('FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10', '2027-01-31T16:00:00-08:00', '2027-02-01T16:00:00-08:00'),
+    bound: { kind: 'count', count: 10, events: 10, last: '2027-11-01', from: { kind: 'count', count: 6 } }, counts: { events: 10, edited: 0, skipped: 0 },
+    groups: [{ id: 'bound', selected: 'end', count: 6, splits: true, counted: true, options: [
+      { id: 'end', bound: { kind: 'count', events: 10, last: '2027-11-01' } }, { id: 'count', bound: { kind: 'count', events: 6, last: '2027-07-01', separate: 1 } },
     ] }],
   };
   const c = planView(cello, ctx({ title: 'Cello lesson' }));
-  eq('series dialog: a count that would split off the dragged day, keep the end first and preselected', c.readings[0].options.map((o) => [o.label, o.selected, o.dates, o.note]), [
-    ['Keep the end', true, '1 Feb · 1 Mar · 1 Apr · 1 Nov', 'Changes 6 events to 10, ends 1 Nov'],
-    ['Keep 6 events + this one on its own', false, '1 Feb · 1 Mar · 1 Apr · 1 May · 1 Jun · 1 Jul · 1 Nov (separately)', 'parts on 1 Aug; 6 in the series + 1 separate'],
-  ]);
-  eq('series dialog: the bound line for it', c.bound, 'Changes 6 events to 10, ends 1 Nov');
-  eq('series dialog: Enter takes the plan\'s preselection', commitPlan(cello, {}).choices, { bound: 'end' });
+  eq('series panel: the bound choice says why and asks', [c.readings[0].reason, c.readings[0].options.map((o) => [o.label, o.selected])], [
+    'The series is set to 6 events, and the day you moved would fall after the sixth. Keep the end date, or keep the count?',
+    [['Keep the end: 10 events, ending Nov 1', true], ['Keep 6 events; the moved day becomes an event of its own', false]]]);
+  eq('series panel: a count names its events on the button', c.action, 'Move 10 events');
 
-  // "Pottery", Mondays moved to Fridays: an edge gain left out by default,
-  // its rows with their bound lines and no dates of their own.
-  const potteryGroup = (bounds) => ({ id: 'edge', label: 'First week', selected: 'without', options: [
-    { id: 'without', label: "Don't add Fri 8 Jan", bound: { words: bounds[0] } },
-    { id: 'add', label: 'Add Fri 8 Jan', bound: { words: bounds[1] } },
-  ] });
+  // A day the new rule would add at the start: among the skipped days, a reason and its radios.
   const pottery = {
-    hash: 'p2', rule: { before: 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', after: 'FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', wordsBefore: 'Weekly on Monday and Wednesday at 18:00', words: 'Weekly on Wednesday and Friday at 18:00' },
-    bound: { words: '5 events, ends 22 Jan (was 20 Jan)' },
-    groups: [potteryGroup(['5 events, ends 22 Jan (was 20 Jan)', "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"])],
-    days: [{ key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' }],
+    hash: 'p2', rule: rule('FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5', 'FREQ=WEEKLY;BYDAY=WE,FR;COUNT=6', '2027-01-04T18:00:00-08:00', '2027-01-06T18:00:00-08:00'),
+    bound: { kind: 'count', count: 6, events: 5, last: '2027-01-22', from: { kind: 'count', count: 5 } }, counts: { events: 5, edited: 0, skipped: 1 },
+    groups: [{ id: 'edge', selected: 'without', dates: ['2027-01-08'], side: 'start', options: [{ id: 'without' }, { id: 'add' }] }],
+    days: [{ key: null, newKey: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', to: '2027-01-08', side: 'start' }],
   };
   const pv = planView(pottery, ctx({ title: 'Pottery' }));
-  eq('series dialog: an edge gain left out, preselected, with each choice\'s bound', [pv.readings[0].showLabel && pv.readings[0].label, pv.readings[0].options.map((o) => [o.label, o.selected, o.note])], ['First week', [
-    ["Don't add Fri 8 Jan", true, '5 events, ends 22 Jan (was 20 Jan)'],
-    ['Add Fri 8 Jan', false, "5 events, ends 20 Jan; Fri 22 Jan, the last Monday's, has no place"],
-  ]]);
-  eq('series dialog: the generated skip is listed with the skipped days', pv.skipped, 'Fri 8 Jan skipped, so the series starts as before');
-  // Case 7, a day already skipped: the count's line names it.
-  const skippedBefore = {
-    ...pottery, hash: 'p3',
-    bound: { words: '5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)' },
-    groups: [potteryGroup(['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place'])],
+  eq('series panel: a day the new rule would add is a choice among the skipped days', [pv.skipped.length, pv.skipped[0].choice.lead, pv.skipped[0].choice.reason, pv.skipped[0].choice.options.map((o) => o.label)],
+    [1, 'The new rule would add Fri, Jan 8 at the start.', 'Add it, or leave it out?', ['Leave it out', 'Add it']]);
+  eq('series panel: a skip the new rule has no day for', planView({ ...pottery, groups: [], days: [{ key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'dropped', shows: '2027-01-13', why: 'noday' }] }, ctx()).skipped.map((r) => r.line1),
+    ["'Choir' on Wed, Jan 13 was removed earlier; the new pattern has no day there."]);
+
+  // The other days: after the new end, going back to the series, deleted, a rename's own title.
+  const piano = {
+    hash: 'd1', rule: rule('FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-01-31T16:00:00-08:00', '2027-02-01T16:00:00-08:00'), bound: noEnd,
+    groups: [{ id: 'outside', day: '2027-11-01T00:00:00Z', selected: 'keep', count: 1, options: [{ id: 'keep' }, { id: 'delete' }] }],
     days: [
-      { key: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', words: 'Fri 8 Jan skipped, so the series starts as before' },
-      { key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'stays', words: '13 Jan stays skipped' },
+      { key: '2027-11-01T00:00:00Z', kind: 'edited', title: 'Recital at Sample Hall', outcome: 'separate', shows: '2027-10-31', to: '2027-10-31', kept: ['title'] },
+      { key: '2027-03-17T02:00:00Z', newKey: '2027-03-18T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'rejoins', shows: '2027-03-16', to: '2027-03-17', kept: [], takes: ['title'] },
+      { key: '2027-05-01T00:00:00Z', kind: 'edited', title: 'Sample class', outcome: 'deleted', shows: '2027-04-30', kept: ['title'] },
     ],
   };
-  const sb = planView(skippedBefore, ctx({ title: 'Pottery' }));
-  eq('series dialog: a count with an earlier skip says so', [sb.bound, sb.readings[0].options.map((o) => o.note)], ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)',
-    ['5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place']]);
-  eq('series dialog: skipped days on one line, as the examples write it', sb.skipped, 'Fri 8 Jan skipped, so the series starts as before · 13 Jan stays skipped');
-  eq('series dialog: plain choices stay inline, without a group name over them', planView(choir, ctx()).readings.length, 0);
-  // A first day in a skipped hour: the stored day before it is no event, so no line names it.
-  const anchored = planView({ ...pottery, hash: 'p4', days: [{ key: null, newKey: '2027-02-14T10:30:00Z', kind: 'skipped', outcome: 'anchor', words: '' }],
-    notes: [{ kind: 'gap', words: 'No 02:30 on 14 Mar in Los Angeles: that one is at 03:30' }] }, ctx({ title: 'Night shift' }));
-  eq('series dialog: an anchor day has no skipped line; the gap note says the time', [anchored.skipped, anchored.notes], ['', ['No 02:30 on 14 Mar in Los Angeles: that one is at 03:30']]);
-
-  // As the server sends a plan: every option of every group carries its
-  // next dates and its bound, the ones not preselected how they differ, and
-  // the reading and zone options their words. A group for one day is drawn
-  // on that day's line only, never again as reading rows.
-  const served = (o, sel) => ({ ...o, next: ['2027-03-10T19:00:00-08:00', '2027-03-17T19:00:00-07:00', '2027-03-24T19:00:00-07:00'], bound: { words: 'No end, as before' },
-    ...(o.id === sel ? {} : { differs: { dates: [], words: 'the same dates; its edited and skipped days differ' } }) });
-  const fromServer = {
-    ...choir, hash: 's1',
-    groups: [
-      { id: 'reading', label: 'How it repeats', selected: 'member', options: [
-        { id: 'member', label: 'Move every Tuesday to Wednesday', words: 'keeps every week' },
-        { id: 'moment', label: 'Keep each moment', words: 'Sun 14 Mar and Sun 7 Nov keep their instants, at 20:00' },
-      ].map((o) => served(o, 'member')) },
-      { id: 'movedDays', label: 'Days moved on their own', day: '2027-03-24T02:00:00Z', selected: 'keep', options: [
-        { id: 'keep', label: 'Keep Fri 26 Mar' }, { id: 'move', label: 'Move to Sat 27 Mar' },
-      ].map((o) => served(o, 'keep')) },
-      { id: 'ownTitle', label: '1 edited day keeps its own title', selected: 'keep', options: [
-        { id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' },
-      ].map((o) => served(o, 'keep')) },
-    ],
-  };
-  const fs = planView(fromServer, ctx());
-  eq('series dialog, server plan: one reading group, its rows with their words under the label', fs.readings.map((g) => [g.id, g.options.map((o) => [o.label, o.words])]), [
-    ['reading', [['Move every Tuesday to Wednesday', 'keeps every week'], ['Keep each moment', 'Sun 14 Mar and Sun 7 Nov keep their instants, at 20:00']]],
+  const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
+  eq('series panel: a day after the new end, a day going back to the series, a deleted day', p.edited.map((r) => [r.line1, r.choice && r.choice.reason, r.choice && r.choice.options.map((o) => o.label)]), [
+    ["'Recital at Sample Hall' on Sun, Oct 31 falls after the new end.", 'Keep it as an event of its own, or delete it?', ['Keep it on its own', 'Delete it']],
+    ["'Piano lesson with Alex Example' on Tue, Mar 16 goes back to the series; nothing of its own is left.", null, null],
+    ["'Sample class' on Fri, Apr 30 is deleted.", null, null],
   ]);
-  eq('series dialog, server plan: the day moved on its own is on its day\'s line only', [fs.edited[0].words, fs.edited[0].choice && fs.edited[0].choice.options.map((o) => o.label), fs.choices.some((g) => g.id === 'movedDays')],
-    ['Tue 23 Mar, moved to Fri 26 Mar: stays there', ['Keep Fri 26 Mar', 'Move to Sat 27 Mar'], false]);
-  eq('series dialog, server plan: an own-values choice stays inline though its options carry dates', fs.choices.map((g) => [g.id, g.options.map((o) => o.label)]),
-    [['ownTitle', ['Keep its own title', 'Give it the new title too']]]);
-  const radioSets = [...fs.readings, ...fs.choices, ...fs.edited.map((d) => d.choice).filter(Boolean)].map((g) => g.id);
-  eq('series dialog, server plan: every group is drawn once, so no two radio sets share a name', radioSets.length, new Set(radioSets).size);
-  eq('series dialog, server plan: a consequence field is never read', planView({ hash: 'q', groups: [{ id: 'reading', selected: 'a', options: [{ id: 'a', label: 'A', consequence: 'old words', next: ['2027-03-10'] }] }] }, ctx()).readings[0].options[0].words, '');
-  const outside = planView({ ...piano, groups: piano.groups.map((g) => (g.id === 'outside' ? { ...g, options: g.options.map((o) => served(o, 'own')) } : g)) }, ctx({ title: 'Piano lesson with Alex Example' }));
-  eq('series dialog, server plan: the day after the end keeps its choice on its line, not as rows', [outside.readings.map((g) => g.id), outside.edited[0].choice && outside.edited[0].choice.id], [['bound'], 'outside']);
+  eq('series panel: every group goes into the commit', commitPlan(piano, { outside: 'delete' }).choices, { outside: 'delete' });
+  const rename = planView({ ...choir, rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05T19:00:00-08:00', '2027-01-05T19:00:00-08:00'),
+    groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 1, days: ['2027-04-14T02:00:00Z'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: [{ key: '2027-04-14T02:00:00Z', newKey: '2027-04-14T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'stays', shows: '2027-04-13', to: '2027-04-13', kept: ['title'], takes: [] }] },
+  ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', fields: [{ label: 'Title', words: 'Choir, now Chorus' }] }));
+  eq('series panel: a rename, its field, the rule as before, and the day with its own title asking', [rename.title, rename.fields, rename.change, rename.edited[0].line1, rename.edited[0].choice.reason, rename.edited[0].choice.options.map((o) => o.label)], [
+    'Rename all events', ["Title from 'Choir' to 'Chorus'."], 'Still weekly on Tuesday at 7:00 PM, with no end, as before.',
+    "'Rehearsal' on Tue, Apr 13 has its own title, 'Rehearsal'.", 'Keep its title, or give it the new one too?', ["Keep 'Rehearsal'", "Rename it to 'Chorus'"]]);
+  eq('series panel: a resize is a change, a refused plan offers only this one', [planView({ hash: 'z' }, ctx({ kind: 'resize' })).action, planView({ hash: 'z', refusals: [{ code: 'weekno' }] }, ctx()).onlyThis],
+    ['Change all events', 'Move only this one']);
 
-  // Google, until 1.5.2: the rule-changing drag refused, the time change noted.
-  const googleWords = 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.';
-  const gRefused = planView({ hash: 'e1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE' }, refusals: [{ code: 'google_rule', words: googleWords }] }, ctx());
-  eq('series dialog: a refused change shows its reason in place of the rule, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm], [googleWords, false]);
-  const gTime = planView({
-    hash: 'e2', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', line: 'Weekly on Tuesday, now at 19:30', words: 'Weekly on Tuesday at 19:30' },
-    notes: [{ kind: 'google', words: "Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone." }],
-  }, ctx({ kind: 'resize' }));
-  eq('series dialog: what is still possible on Google, with its notice', [gTime.heading, gTime.rule, gTime.notes, gTime.edited, gTime.canConfirm],
-    ['Change all events · Choir', 'Weekly on Tuesday, now at 19:30', ["Google decides what happens to edited days, and Better-Cal hasn't checked what it does yet. This can't be undone."], [], true]);
+  // Refusals and notes, by code.
+  const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'google', words: 'Server words' }] }, ctx());
+  eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
+    ['On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.', false, '']);
+  const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
+  eq('series panel: a note in the user\'s format', gap.notes, ['There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.']);
 
-  // An editor save: the rule as before, the fields changed, an own title.
-  const save = planView({
-    hash: 'f1', rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=TU', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Tuesday at 19:00' },
-    bound: { words: 'No end, as before' },
-    groups: [{ id: 'ownTitle', label: "'Rehearsal' Tue 13 Apr keeps its own title", selected: 'keep', options: [{ id: 'keep', label: 'Keep its own title' }, { id: 'give', label: 'Give it the new title too' }] }],
-  }, ctx({ kind: 'editor', fields: [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }] }));
-  eq('series dialog: an editor save names its fields, the rule as before', [save.heading, save.fields.map((x) => x.label + ' ' + x.words), save.rule, save.action], [
-    'Save for all events · Choir', ['Title Choir, now Chorus', 'Reminder 1 hour before, now 30 minutes'], 'Repeats weekly on Tuesday at 19:00, as before', 'Save for all events']);
-  eq('series dialog: the own title\'s choice', save.choices.map((c) => c.label), ["'Rehearsal' Tue 13 Apr keeps its own title"]);
-  // As the server writes them: {field, words} with the label in the words.
-  eq('series dialog: the server\'s field lines put their label in its column', planView({ hash: 'f2', fields: [{ field: 'title', words: 'Title: Choir, now Chorus' }, { field: 'reminders', words: 'Reminder: 1 hour before, now 30 minutes' }] }, ctx({ kind: 'editor' })).fields,
-    [{ label: 'Title', words: 'Choir, now Chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
-  eq('series dialog: the dragged day has a line only when it doesn\'t just move', planView({ hash: 'a2', days: [
-    { key: '2027-03-10T03:00:00Z', kind: 'acted', outcome: 'moves', words: 'Tue 9 Mar moves to Wed 10 Mar' },
-    { key: '2027-11-01T23:00:00Z', kind: 'acted', outcome: 'separate', words: 'Mon 1 Nov stays as an event of its own' },
-  ] }, ctx()).edited.map((d) => d.words), ['Mon 1 Nov stays as an event of its own']);
-  eq('series dialog: a start moved for another reason says why', planView({ hash: 'g', start: { at: '2027-01-15', words: 'Starts Fri 15 Jan, the first 15th (was 1 Jan)' } }, ctx()).start, 'Starts Fri 15 Jan, the first 15th (was 1 Jan)');
-  eq('series dialog: gains and losses named', [planView({ hash: 'h', gains: [{ words: 'adds every February, which had no 30th' }] }, ctx()).gains], ['Adds every February, which had no 30th']);
-  eq('series dialog: a series that changed meanwhile says so', planView(choir, ctx({ changed: true })).changed, true);
-  eq('series dialog: the following scope names its own action', planView(null, ctx({ scope: 'following' })).action, 'Move this and following');
-  eq('series dialog: a rule line from the server is used as it is', ruleLine({ line: 'Monthly on the 1st and 15th, now on the 15th and 20th' }), 'Monthly on the 1st and 15th, now on the 15th and 20th');
-  eq('plan dates: weekday, month, and the year only when it isn\'t this one', [planDate('2027-03-10T19:00:00-08:00', { refYear: 2027 }), planDate('2028-02-29', { weekday: false, refYear: 2027 }), planDate('2027-04-14T02:00:00Z', { tz: LA, refYear: 2027 })],
-    ['Wed 10 Mar', '29 Feb 2028', 'Tue 13 Apr']);
+  // Readability: a day with no title of its own carries the series' title.
+  const untitled = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-05T03:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'moves', shows: '2026-11-03', to: '2026-11-04', kept: ['location'], takes: ['date'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: a day with no title of its own carries the series\' title', untitled.edited[0].line1, "'Sample practice', with its own location, on Tue, Nov 3 moves to Wed, Nov 4.");
+  const plain = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-05T03:00:00Z', kind: 'edited', title: 'Sample practice 1', outcome: 'moves', shows: '2026-11-03', to: '2026-11-04', kept: ['title'], takes: ['date'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: a day with only its own title says nothing more of itself', plain.edited[0].line1, "'Sample practice 1' on Tue, Nov 3 moves to Wed, Nov 4.");
+  const renamed = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-04T03:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'stays', shows: '2026-11-03', to: '2026-11-03', kept: ['location'], takes: ['title'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026, kind: 'editor', edits: ['title'], newTitle: 'Sample rehearsal' }));
+  eq('series panel: only a field that changes is said', renamed.edited[0].line1, "'Sample practice', with its own location, on Tue, Nov 3 stays where it is and is renamed to 'Sample rehearsal'.");
+  const several = planView({ ...choir, groups: [{ id: 'movedDays', selected: 'keep', count: 2, options: [{ id: 'keep' }, { id: 'move' }] }] }, ctx());
+  const severalChoice = several.edited.find((r) => r.choice && r.choice.id === 'movedDays').choice;
+  eq('series panel: several days with their own dates give their reason first', [severalChoice.lead, severalChoice.reason, severalChoice.options.map((o) => o.label)],
+    ['', 'These days were moved earlier. Keep them there, or move them with the rest?', ['Keep their dates', 'Move them with the rest']]);
+  const labels = (g, r = gym.rule) => planView({ ...gym, rule: r, groups: [g] }, ctx()).readings[0].options.map((o) => o.label);
+  eq('series panel: a new rule\'s readings', labels({ id: 'reading', selected: 'map', options: [{ id: 'map', rrule: 'FREQ=WEEKLY;BYDAY=TH' }, { id: 'keep', rrule: 'FREQ=WEEKLY;BYDAY=TH' }] }),
+    ['Move them along with the pattern', 'Keep them where they are, as events of their own']);
+  eq('series panel: one member moved by whole weeks is "only the Mondays"', labels({ id: 'reading', selected: 'member', options: [
+    { id: 'member', rrule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', next: ['2027-03-15T07:00:00-07:00'] }, { id: 'pattern', rrule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', next: ['2027-03-15T07:00:00-07:00'] }] }),
+    ['Move only the Mondays', 'Shift the whole weekly pattern']);
+  const monthly = rule('FREQ=MONTHLY;BYMONTHDAY=1,15', 'FREQ=MONTHLY;BYMONTHDAY=1,15', '2027-01-01T07:00:00-08:00', '2027-01-01T07:00:00-08:00');
+  eq('series panel: a month day moved by whole months is "only the 15th of the month", anything else "this day of the pattern"', [
+    labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=MONTHLY;BYMONTHDAY=1,15', next: ['2027-04-15T07:00:00-07:00'] }, { id: 'pattern', rrule: 'FREQ=MONTHLY;BYMONTHDAY=1,15' }] }, monthly)[0],
+    labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=1', next: ['2028-03-01T07:00:00-08:00'] }, { id: 'pattern', rrule: 'FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=1' }] })[0],
+  ], ['Move only the 15th of the month', 'Move only this day of the pattern']);
+  eq('series panel: a repeat several times a day says why it can\'t move as a series', planView({ hash: 's', refusals: [{ code: 'several' }] }, ctx()).refused,
+    'This repeat happens several times a day, so its days and times can\u2019t be moved all at once. Move only this one, or change its details for all events.');
 
-  // The desktop card after a drag keeps the dragged block in sight.
-  const { cardPlace } = await import('../src/lib/seriesplan.js');
-  const screen = { w: 1280, h: 800 };
-  const overlaps = (c, w, h, b) => c.left < b.right && c.left + w > b.left && c.top < b.bottom && c.top + h > b.top;
-  const high = { left: 600, top: 100, right: 760, bottom: 180 };
-  eq('series card: below the block when there is room', cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 140 }, block: high }), { left: 640, top: 192 });
-  const low = { left: 600, top: 650, right: 760, bottom: 760 };
-  const lowAt = cardPlace({ w: 520, h: 300, view: screen, at: { x: 640, y: 700 }, block: low });
-  eq('series card: near the bottom it opens above, clear of the block', [lowAt.top + 300 <= low.top, overlaps(lowAt, 520, 300, low)], [true, false]);
-  const tall = { left: 300, top: 120, right: 460, bottom: 700 };
-  const tallAt = cardPlace({ w: 520, h: 420, view: screen, at: { x: 380, y: 600 }, block: tall });
-  eq('series card: a block too tall for above or below gets the card beside it', [tallAt.left, overlaps(tallAt, 520, 420, tall)], [472, false]);
-  eq('series card: without the block drawn, the drop point stands in', cardPlace({ w: 520, h: 300, view: screen, at: { x: 100, y: 100 } }), { left: 100, top: 112 });
+  // From the scenario set: the clock before a month-end clause, a start that moved, an nth weekday, a choice about several days.
+  eq('series panel: the clock goes with the day, before a month-end clause', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=31', 'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-31T18:00:00-08:00', '2027-03-30T18:00:00-07:00') }, ctx()).change,
+    'From the 31st to the 30th each month, at 6:00 PM, skipping months without one, with no end, as before.');
+  eq('series panel: the same rule starting on another day says where it starts now', planView({ ...choir, rule: rule('FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-01-01T16:00:00-08:00', '2027-02-01T16:00:00-08:00'),
+    bound: { kind: 'count', count: 6, events: 6, from: { kind: 'count', count: 6 } } }, ctx()).change, 'Starts Mon, Feb 1 (was Fri, Jan 1). Still monthly on the 1st at 4:00 PM, for 6 events, as before.');
+  eq('series panel: an nth weekday moved reads as the days people name', labels({ id: 'reading', selected: 'member', options: [{ id: 'member', rrule: 'FREQ=MONTHLY;BYDAY=2WE,3MO' }, { id: 'pattern', rrule: 'FREQ=MONTHLY;BYDAY=1WE,3WE' }] },
+    rule('FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=2WE,3MO', '2026-11-02T19:00:00-08:00', '2026-11-02T19:00:00-08:00')), ['Move every first Monday to the second Wednesday', 'Shift the whole monthly pattern']);
+  const twoTitles = planView({ ...choir, rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=TU', '2026-11-03T19:00:00-08:00', '2026-11-03T19:00:00-08:00'),
+    groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 2, days: ['k1', 'k2'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: [{ key: 'k1', kind: 'edited', title: 'Choir, extra rehearsal', outcome: 'stays', shows: '2026-11-17', to: '2026-11-17', kept: ['title'], takes: [] },
+      { key: 'k2', kind: 'edited', title: 'Choir, concert', outcome: 'stays', shows: '2026-12-15', to: '2026-12-15', kept: ['title'], takes: [] }] },
+  ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', refYear: 2026 }));
+  eq('series panel: a choice about several days sits on their group row', [twoTitles.edited.length, twoTitles.edited[0].line1, twoTitles.edited[0].range, twoTitles.edited[0].choice.lead, twoTitles.edited[0].choice.reason, twoTitles.edited[0].choice.options.map((o) => o.label)],
+    [1, "2 days have their own titles ('Choir, extra rehearsal', 'Choir, concert').", 'Nov 17 to Dec 15', '', 'Keep their titles, or give them the new one too?', ['Keep their own titles', "Rename them to 'Chorus'"]]);
 
-  // A long plan in a desktop card: forty edited days with "and 37 more"
-  // opened, or a long choice group. The card is drawn no taller than
-  // cardFit, at cardPlace after a drag or at the bottom right over the
-  // editor (app.css .bc-sd.is-editor); its header and action row keep their
-  // height and the body, which takes the rest, scrolls. Lines as drawn at
-  // 12.5px in the 520px card: about 60 characters to a text line of 17px
-  // (forty edited days came to 1,320px of body, as a browser measured
-  // them), the header 30, the action row 38.
-  const { cardFit } = await import('../src/lib/seriesplan.js');
-  const LINE = 17, PER_LINE = 60, HEAD = 30, ACTIONS = 38;
-  const rows = (text) => Math.max(1, Math.ceil(String(text || '').length / PER_LINE));
-  // Forty edited days read as what happens to them: the two that do
-  // something of their own first, each on its line, then the 38 that go
-  // with their events the same way as one line, with their days under it.
-  const forty = planView(sampleEditedDays(), ctx());
-  eq('edited days grouped: the forty are two lines of their own and one line for the rest', forty.edited.map((d) => d.words), [
-    "'Sample practice 6' Tue 11 May, moved to Fri 14 May: stays there, keeps its title",
-    "'Sample practice 21' Tue 24 Aug becomes an event of its own",
-    '38 edited days from 6 Apr to 4 Jan 2028 move to Wednesday; each keeps its title and place',
+  // The change sentence names only what changes.
+  const changeOf = (before, after, sb, sa) => planView({ ...choir, rule: rule(before, after, sb, sa) }, ctx()).change;
+  eq('series panel: only the clock changed', changeOf('FREQ=WEEKLY;BYDAY=MO', 'FREQ=WEEKLY;BYDAY=MO', '2026-11-09T09:00:00-08:00', '2026-11-09T10:00:00-08:00'), 'From 9:00 AM to 10:00 AM every Monday, with no end, as before.');
+  eq('series panel: nth weekdays changed', changeOf('FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=2WE,3MO', '2026-11-02T19:00:00-08:00', '2026-11-02T19:00:00-08:00'),
+    'From the first and third Monday to the second Wednesday and third Monday each month, at 7:00 PM, with no end, as before.');
+  eq('series panel: a new frequency gives both whole rules', changeOf('FREQ=WEEKLY;BYDAY=TU', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-05T19:00:00-08:00', '2027-01-15T19:00:00-08:00'),
+    'From weekly on Tuesday at 7:00 PM to monthly on the 15th at 7:00 PM, with no end, as before.');
+  // A reading's dates run until they differ from the other's; a change to earlier days is said.
+  const apart = planView({ ...gym, groups: [{ id: 'reading', selected: 'skip', options: [
+    { id: 'skip', rrule: 'FREQ=MONTHLY;BYMONTHDAY=30', dates: ['2027-03-30T18:00:00-07:00', '2027-04-30T18:00:00-07:00', '2027-05-30T18:00:00-07:00'], then: ['2028-01-30T18:00:00-08:00', '2028-03-30T18:00:00-07:00'], earlier: null },
+    { id: 'clamped', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', dates: ['2027-03-30T18:00:00-07:00', '2027-04-30T18:00:00-07:00', '2027-05-30T18:00:00-07:00'], then: ['2028-01-30T18:00:00-08:00', '2028-02-29T18:00:00-08:00'], earlier: '2027-02-28' },
+  ] }] }, ctx());
+  eq('series panel: readings list their dates until they differ, and say when one changes earlier days', apart.readings[0].options.map((o) => [o.dates, o.note]), [
+    ['Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Thu, Mar 30', ''],
+    ['Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Tue, Feb 29', 'also changes earlier days, from Sun, Feb 28'],
   ]);
-  eq('edited days grouped: the day at its own date keeps its choice on its line', [forty.edited[0].choice && forty.edited[0].choice.id, forty.choices.length], ['movedDays', 0]);
-  const fortyNamed = [...forty.edited.filter((d) => !d.days), ...forty.edited.flatMap((d) => d.days || [])].map((d) => d.words);
-  eq('edited days grouped: opened, the group names every one of its days, so all forty are named once', [forty.edited[2].days.length, fortyNamed.length, new Set(fortyNamed).size,
-    sampleEditedDays().days.every((d) => fortyNamed.includes(d.words))], [38, 40, 40, true]);
-  eq('edited days grouped: a group\'s days in their own words, by date', forty.edited[2].days.slice(0, 2).map((d) => d.words),
-    ["'Sample practice 1' Tue 6 Apr moves to Wed 7 Apr, keeps its title and place", "'Sample practice 2' Tue 13 Apr moves to Wed 14 Apr, keeps its title and place"]);
+  const fourTitles = planView({ ...choir, groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 4, days: ['a', 'b', 'c', 'd'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: ['a', 'b', 'c', 'd'].map((k, i) => ({ key: k, kind: 'edited', title: 'Choir ' + (i + 1), outcome: 'stays', shows: fixtureKey(300 + i * 7), to: fixtureKey(300 + i * 7), kept: ['title'], takes: [] })) }, ctx());
+  eq('series panel: a group with a choice names what its days have, three names and then a count', fourTitles.edited[0].line1, "4 days have their own titles ('Choir 1', 'Choir 2', 'Choir 3' and 1 more).");
+
+  // Every reading that changes days before the day acted on says so, the preselected one included.
+  const preEarlier = planView({ ...gym, groups: [{ id: 'reading', selected: 'member', options: [
+    { id: 'member', rrule: 'FREQ=MONTHLY;BYDAY=2WE,3MO', dates: ['2026-12-09T19:00:00-08:00'], then: [], earlier: '2026-11-02' },
+    { id: 'pattern', rrule: 'FREQ=MONTHLY;BYDAY=1WE,3WE', dates: ['2026-12-09T19:00:00-08:00'], then: [], earlier: '2026-11-02' }] }] }, ctx({ refYear: 2026 }));
+  eq('series panel: the preselected reading says it changes earlier days too', preEarlier.readings[0].options.map((o) => o.note), ['also changes earlier days, from Mon, Nov 2', 'also changes earlier days, from Mon, Nov 2']);
+  // The header's third line, when the edit started from a day with something of its own.
+  const fromOwn = planView({ ...choir, acted: { key: 'k6', title: 'Sample practice 6', shows: '2026-12-11', kept: ['date', 'title'] } }, ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: started from a day with something of its own says so; from an ordinary day, nothing', [fromOwn.started, planView({ ...choir, acted: null }, ctx()).started,
+    planView({ ...choir, acted: { key: 'k', title: 'Sample practice', shows: '2026-12-11', kept: ['location'] } }, ctx({ title: 'Sample practice', refYear: 2026 })).started],
+    ["Started from 'Sample practice 6' on Fri, Dec 11.", '', "Started from 'Sample practice' on Fri, Dec 11."]);
+  // A change of the end or count alone says what stays.
+  const sameRule = (a, b) => rule(a, b, '2027-01-01T16:00:00-08:00', '2027-01-01T16:00:00-08:00');
+  const longer = planView({ ...choir, rule: sameRule('FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10'), bound: { kind: 'count', count: 10, events: 10, last: '2027-10-01', from: { kind: 'count', count: 6, events: 6 } },
+    counts: { events: 10, edited: 0, skipped: 0 }, days: [] }, ctx());
+  const later = planView({ ...choir, rule: sameRule('FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20271001T235959Z', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20280701T235959Z'), bound: { kind: 'until', events: 19, last: '2028-07-01', from: { kind: 'until', events: 10, last: '2027-10-01' } },
+    counts: { events: 19, edited: 0, skipped: 0 }, days: [] }, ctx({ refYear: 2027 }));
+  eq('series panel: a longer count or a later end says what stays unchanged', [longer.affects, later.affects], [
+    '10 events (was 6). The 6 events before the new ones are unchanged.', 'Ends Jul 1, 2028 (was Oct 1, 2027). The 10 events before it are unchanged.']);
+
+  // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
+  const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));
+  eq('edited days grouped: the forty are two rows of their own and one group row', forty.edited.map((d) => [d.line1, d.line2, d.range || null]), [
+    ["'Sample practice 6' was moved earlier to Fri, May 14.", '', null],
+    ["'Sample practice 21' on Tue, Aug 24 becomes an event of its own on Tue, Aug 24.", '', null],
+    ['38 days that were changed earlier move to Wednesday.', undefined, 'Apr 6 to Jan 4, 2028'],
+  ]);
+  eq('edited days grouped: the group\'s button, closed and open', [forty.edited[2].toggle(false), forty.edited[2].toggle(true)], ['Show 38 days', 'Hide']);
+  eq('edited days grouped: opened, its days in the ordinary form, by date', forty.edited[2].days.slice(0, 2).map((d) => d.line1),
+    ["'Sample practice 1', with its own title and location, on Tue, Apr 6 moves to Wed, Apr 7.", "'Sample practice 2', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14."]);
+  const named = [...forty.edited.filter((d) => !d.days), ...forty.edited.flatMap((d) => d.days || [])];
+  eq('edited days grouped: opened, all forty are named once', [named.length, new Set(named.map((d) => d.key)).size], [40, 40]);
   const mixed = planView(sampleEditedDays((i) => (i < 20 ? ['title', 'location'] : i < 39 ? ['title'] : ['location'])), ctx());
-  eq('edited days grouped: other fields kept make other groups, and a group of one is its day\'s line', mixed.edited.map((d) => [d.words, d.days ? d.days.length : 0]), [
-    ["'Sample practice 6' Tue 11 May, moved to Fri 14 May: stays there, keeps its title", 0],
-    ["'Sample practice 21' Tue 24 Aug becomes an event of its own", 0],
-    ['19 edited days from 6 Apr to 17 Aug move to Wednesday; each keeps its title and place', 19],
-    ['18 edited days from 31 Aug to 28 Dec move to Wednesday; each keeps its title', 18],
-    ['Tue 4 Jan 2028 moves to Wed 5 Jan 2028, keeps its place', 0],
+  eq('edited days grouped: by outcome alone, so days keeping other fields (a location of their own) join the group', mixed.edited.map((d) => [d.line1, d.days ? d.days.length : 0]), [
+    ["'Sample practice 6' was moved earlier to Fri, May 14.", 0],
+    ["'Sample practice 21' on Tue, Aug 24 becomes an event of its own on Tue, Aug 24.", 0],
+    ['38 days that were changed earlier move to Wednesday.', 38],
   ]);
-  const timed = planView({ hash: 't1', days: [1, 2, 3].map((n) => ({ key: `2027-0${n}-10T03:00:00Z`, newKey: `2027-0${n}-10T04:00:00Z`, kind: 'edited', title: 'Sample class', outcome: 'moves', words: `${fixtureDate(`2027-0${n}-10T03:00:00Z`, { tz: LA, refYear: 2027 })} moves to 20:00, keeps its notes`, kept: ['description'], takes: ['time'] })) }, ctx());
-  eq('edited days grouped: days taking a new clock time say it once', timed.edited.map((d) => d.words), ['3 edited days from 9 Jan to 9 Mar move to 20:00; each keeps its notes']);
-  const twoLater = (k) => new Date(Date.parse(k) + 2 * 86400000).toISOString().slice(0, 10);
-  const shifted = planView({ hash: 't2', days: ['2027-03-03', '2027-03-11', '2027-03-19'].map((k) => ({ key: k, newKey: twoLater(k), kind: 'edited', outcome: 'moves',
-    words: `${fixtureDate(k, { refYear: 2027 })} moves to ${fixtureDate(twoLater(k), { refYear: 2027 })}`, kept: [], takes: ['date'] })) }, ctx());
-  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => d.words), ['3 edited days from 3 Mar to 19 Mar move 2 days later']);
-  const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'own' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', label: 'Keep it' }, { id: 'move', label: 'Move it' }] })) }, ctx());
-  eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
-
-  // The groups come from the plan's lists, never its sentences: reworded
-  // days still fold together, and different fields taken split them.
-  const reworded = sampleEditedDays();
-  reworded.days = reworded.days.map((d, i) => (d.outcome === 'moves' ? { ...d, words: `Day ${i + 1} goes along (worded differently each time: ${'x'.repeat(i)})` } : d));
-  eq('edited days grouped: by outcome, kept and takes, whatever the words say', planView(reworded, ctx()).edited.map((d) => d.days ? d.days.length : 0), [0, 0, 38]);
+  eq('edited days grouped: the day with only its own location is among the group\'s rows', mixed.edited[2].days.map((d) => d.line1).slice(-1), ["'Choir', with its own location, on Tue, Jan 4, 2028 moves to Wed, Jan 5."]);
   const takesSplit = sampleEditedDays();
-  takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'time'] } : d));
-  eq('edited days grouped: days taking other fields are another group, named in its line', planView(takesSplit, ctx()).edited.slice(2).map((d) => d.words), [
-    '28 edited days from 6 Apr to 26 Oct move to Wednesday; each keeps its title and place',
-    '10 edited days from 2 Nov to 4 Jan 2028 move to Wednesday; each keeps its title and place, takes the new time',
+  takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'reminders'] } : d));
+  const split = planView(takesSplit, ctx());
+  eq('edited days grouped: days taking other fields stay in the group; each row says what it takes', [split.edited.slice(2).map((d) => d.line1), split.edited[2].days.slice(-1).map((d) => d.line1)], [
+    ['38 days that were changed earlier move to Wednesday.'],
+    ["'Sample practice 40', with its own title and location, on Tue, Jan 4, 2028 moves to Wed, Jan 5 and takes the new reminders."],
   ]);
-
-  const longEdited = sampleEditedDays();
-  const longChoice = { ...choir, hash: 'long2', groups: [{ id: 'reading', label: 'How it repeats', selected: 'r0',
-    options: Array.from({ length: 30 }, (_, i) => ({ id: 'r' + i, label: `Reading ${i + 1}`, words: `moves day ${i + 1} of the series, keeps every other week` })) }] };
-  const lines = (plan, open = false) => {
-    const v = planView(plan, ctx());
-    return v.fields.length + rows(v.rule) + (v.start ? 1 : 0)
-      + v.readings.reduce((n, g) => n + (g.showLabel ? 1 : 0) + g.options.reduce((m, o) => m + rows(o.label) + rows(o.words), 0), 0)
-      + rows(v.next) + v.edited.reduce((n, d) => n + rows(d.words) + (open && d.days ? d.days.reduce((m, x) => m + rows(x.words), 0) : 0), 0)
-      + (v.skipped ? 1 : 0) + v.choices.length + v.notes.reduce((n, t) => n + rows(t), 0);
-  };
-  const drawn = (host, plan, view, at, block, open = true) => {
-    const natural = HEAD + ACTIONS + lines(plan, open) * LINE;
-    const h = Math.min(natural, cardFit(view));
-    const top = host === 'editor' ? view.h - 8 - h : cardPlace({ w: 520, h: natural, view, at, block }).top;
-    return { top, bottom: top + h, actionsTop: top + h - ACTIONS, body: h - HEAD - ACTIONS, content: natural - HEAD - ACTIONS };
-  };
-  for (const view of [{ w: 1280, h: 800 }, { w: 1400, h: 900 }]) {
-    const near = { top: view.h - 160, bottom: view.h - 100, left: 600, right: 760 };
-    const cases = [
-      ['calendar', 'a group of edited days opened, a drop near the top', longEdited, { x: 640, y: 140 }, high],
-      ['calendar', 'a group of edited days opened, a drop near the bottom', longEdited, { x: 640, y: near.top + 20 }, near],
-      ['calendar', 'a long choice group', longChoice, { x: 640, y: 300 }, { top: 280, bottom: 330, left: 600, right: 760 }],
-      ['editor', 'a group of edited days opened', longEdited],
-      ['editor', 'a long choice group', longChoice],
-    ];
-    for (const [host, what, plan, at, block] of cases) {
-      const d = drawn(host, plan, view, at, block);
-      eq(`series card, ${host} at ${view.w} x ${view.h}, ${what}: on screen, actions in view, the body scrolls`,
-        [d.top >= 8, d.bottom <= view.h - 8, d.actionsTop >= 8 && d.actionsTop + ACTIONS <= view.h, d.body > 0 && d.content > d.body], [true, true, true, true]);
-    }
-    for (const host of ['calendar', 'editor']) {
-      const d = drawn(host, longEdited, view, { x: 640, y: 140 }, high, false);
-      eq(`series card, ${host} at ${view.w} x ${view.h}, forty edited days grouped: on screen, every line shown without scrolling`,
-        [d.top >= 8, d.bottom <= view.h - 8, d.content === d.body], [true, true, true]);
-    }
-  }
-  // The phone sheet (app.css .bc-sd.is-sheet): at the bottom, up to 66% of
-  // the screen, lines at 14px about 19px high and 50 characters across a
-  // 500px screen, a header of two rows (60), the action row 56.
-  for (const open of [false, true]) {
-    const SHEET_LINE = 19, SHEET_PER = 50, SHEET_HEAD = 60, SHEET_ACTIONS = 56;
-    const v = planView(longEdited, ctx());
-    const sheetRows = [v.rule, v.bound, v.next, ...v.edited.flatMap((d) => [d.words, ...(open && d.days ? d.days.map((x) => x.words) : [])])]
-      .filter(Boolean).reduce((n, t) => n + Math.max(1, Math.ceil(String(t).length / SHEET_PER)), 0);
-    const natural = SHEET_HEAD + SHEET_ACTIONS + sheetRows * SHEET_LINE;
-    const h = Math.min(natural, Math.floor(600 * 0.66));
-    eq(`series sheet at 500 x 600, forty edited days ${open ? 'with the group opened' : 'grouped'}: within the screen, header and actions on it${open ? ', the body scrolling' : ''}`,
-      [600 - h >= 0, 600 - h + SHEET_HEAD <= 600, natural > h], [true, true, open]);
-  }
-  eq('series card: a short plan keeps its own height, its body not scrolling', (() => { const d = drawn('editor', choir, screen); return d.content === d.body; })(), true);
-  eq('series card: the fit is the viewport less 8px above and below', [cardFit({ w: 1280, h: 800 }), cardFit({ w: 1400, h: 900 })], [784, 884]);
+  const shifted = planView({ hash: 't2', days: ['2027-03-03', '2027-03-11', '2027-03-19'].map((k, n) => ({ key: k + 'T00:00:00Z', newKey: null, kind: 'edited', outcome: 'moves',
+    shows: k, to: fixtureKey(61 + n * 8 + 2), kept: [], takes: ['date'] })) }, ctx());
+  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => [d.line1, d.range]), [['3 days that were changed earlier move 2 days later.', 'Mar 3 to Mar 19']]);
+  const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'movedDays' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', date: d.shows }, { id: 'move', date: d.to }] })) }, ctx());
+  eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
+  // The groups come from the plan's data, never its words.
+  const reworded = sampleEditedDays();
+  reworded.days = reworded.days.map((d, i) => ({ ...d, words: 'Reworded ' + 'x'.repeat(i), head: 'h' + i, outcomeWords: 'o' + i }));
+  eq('edited days grouped: by outcome, kept and takes, whatever the words say', planView(reworded, ctx()).edited.map((d) => (d.days ? d.days.length : 0)), [0, 0, 38]);
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
@@ -4934,13 +4849,12 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('quick add: no plan in the parse, none to show', parsedSeries({ ...draft, series: undefined }, draft.rrule, range), null);
 }
 
-console.log('--- the series card, open while the window crosses the phone width (1.5.0) ---');
+console.log('--- the series panel, docked, open while the window crosses the phone width (1.5.0) ---');
 {
-  // The card drawn by Preact into a small stand-in DOM and kept open while
+  // The panel drawn by Preact into a small stand-in DOM and kept open while
   // the window goes from desktop to phone width and back: the same element,
-  // its edited days still opened, its inline sizing and placement those of
-  // the layout it is in now. A desktop height left on the sheet put its
-  // header above the top of the window.
+  // its edited days still opened, and nothing written on it for any layout
+  // (app.css places and sizes it).
   const kebab = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
   const fakeStyle = () => {
     const props = new Map();
@@ -5035,7 +4949,7 @@ console.log('--- the series card, open while the window crosses the phone width 
   const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
   const { render, html } = await import('../vendor/index.js');
   const { SeriesDialog } = await import('../src/app/SeriesDialog.js');
-  const { set: put } = await import('../src/app/store.js');
+  const { set: put, state: st } = await import('../src/app/store.js');
   const resize = async (w, h) => {
     win.innerWidth = w; win.innerHeight = h;
     for (const fn of [...(win.listeners.resize || [])]) fn({ type: 'resize' });
@@ -5058,74 +4972,76 @@ console.log('--- the series card, open while the window crosses the phone width 
     await settle();
     return box;
   };
-  const card = (box) => box.firstChild;
-  const edited = (box) => box.querySelectorAll('.bc-sd-line').filter((n) => n.textContent.includes('Sample practice')).length;
-  // Opens (or closes) the group of the 38 days that go with their events.
-  const toggle = (box) => box.querySelectorAll('.bc-link-btn').find((b) => /^(show|hide) them$/.test(b.textContent));
-  const expand = async (box) => {
-    const more = toggle(box);
-    if (more && more.getAttribute('aria-expanded') !== 'true') more.click();
-    await settle();
-  };
-  const seen = (box) => {
-    const el = card(box);
-    return { sheet: el.classes.includes('is-sheet'), maxHeight: el.style.maxHeight, left: el.style.left, top: el.style.top, edited: edited(box) };
-  };
+  const panel = (box) => box.firstChild;
+  // The rows of the Edited block, and the group's button.
+  const editedRows = (box) => box.querySelectorAll('.bc-sd-block').find((b) => b.firstChild && b.firstChild.textContent === 'Edited days');
+  const topRows = (box) => editedRows(box).childNodes[1].childNodes.filter((n) => n.classes.includes('bc-sd-row'));
+  const toggle = (box) => box.querySelectorAll('.bc-sd-toggle')[0];
+  const openDays = (box) => box.querySelectorAll('.bc-sd-days').flatMap((n) => n.childNodes).length;
+  const seen = (box) => ({ cls: panel(box).getAttribute('class'), style: panel(box).style.cssText, rows: topRows(box).length, opened: openDays(box) });
   const close = async (box) => { render(null, box); box.remove(); put({ seriesChange: null }); await settle(); };
-
-  const { cardPlace, cardFit } = await import('../src/lib/seriesplan.js');
-  // Where a desktop card is drawn: over the editor, by app.css alone; after
-  // a drag, where cardPlace puts it at its measured size (its fit, here),
-  // not the drop point's first guess (640, 312).
-  const desktop = (host, w, h) => {
-    if (host === 'editor') return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: '', top: '', edited: 40 };
-    const p = cardPlace({ w: 520, h: cardFit({ w, h }), view: { w, h }, at: { x: 640, y: 300 }, block: null });
-    return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: p.left + 'px', top: p.top + 'px', edited: 40 };
-  };
-  const phoneSheet = { sheet: true, maxHeight: '', left: '', top: '', edited: 40 };
-  eq('series card: after a drag it is drawn where it was measured to fit, not at the first guess', [desktop('calendar', 1280, 800).left, desktop('calendar', 1280, 800).top !== '312px'], ['640px', true]);
+  const docked = { cls: 'bc-sd', style: '', rows: 3, opened: 0 };
 
   for (const host of ['editor', 'calendar']) {
-    // Opened on a desktop, every edited day shown, then narrowed to a phone.
     await resize(1280, 800);
-    let box = await open(host);
-    const el = card(box);
-    const groupLine = () => box.querySelectorAll('.bc-sd-line').find((n) => /^38 edited days /.test(n.textContent));
-    eq(`series card, ${host}: forty edited days drawn as two lines of their own and one for the 38, closed`,
-      [edited(box), !!groupLine(), toggle(box) && toggle(box).textContent, toggle(box) && toggle(box).getAttribute('aria-expanded')], [2, true, 'show them', 'false']);
-    await expand(box);
-    eq(`series card, ${host}: "show them" lists the group's days under it`,
-      [edited(box), box.querySelectorAll('.bc-sd-day').length, toggle(box).textContent, toggle(box).getAttribute('aria-expanded')], [40, 38, 'hide them', 'true']);
-    eq(`series card, ${host}: opened at 1280 x 800 with its edited days shown, a desktop card no taller than the window`, seen(box), desktop(host, 1280, 800));
-    await resize(500, 600);
-    eq(`series card, ${host}: narrowed to 500 x 600 while open, the same card is the sheet with no desktop height or place left on it`,
-      [card(box) === el, seen(box), el.style.cssText], [true, phoneSheet, '']);
-    await resize(1280, 800);
-    eq(`series card, ${host}: widened back to 1280 x 800, the same card is a desktop card again, fitted and placed`, [card(box) === el, seen(box)], [true, desktop(host, 1280, 800)]);
-    await resize(1400, 900);
-    eq(`series card, ${host}: a taller desktop window fits and places it again`, seen(box), desktop(host, 1400, 900));
+    const box = await open(host);
+    const el = panel(box);
+    eq(`series panel, ${host}: forty edited days as two rows of their own and one group row, closed, with no style of its own`, seen(box), docked);
+    eq(`series panel, ${host}: the group row's lines and its button`, [
+      topRows(box)[2].childNodes[0].textContent, topRows(box)[2].childNodes[1].textContent,
+      toggle(box).localName, toggle(box).textContent, toggle(box).getAttribute('aria-expanded'),
+    ], ['38 days that were changed earlier move to Wednesday.', 'Apr 6, 2027 to Jan 4, 2028 · Show 38 days', 'button', 'Show 38 days', 'false']);
+    eq(`series panel, ${host}: a day's choice is its radios, each on a line of its own`,
+      topRows(box)[0].querySelectorAll('.bc-sd-opt').map((n) => n.textContent), ['Keep it on Fri, May 14, 2027', 'Move it to Sat, May 15, 2027']);
+    // The panel writes every sentence itself: none of the server's words for the sample plan shows.
+    const text = panel(box).textContent;
+    const serverWords = [plan.rule.wordsBefore, plan.rule.words, plan.bound.words, plan.summary,
+      ...plan.days.flatMap((d) => [d.words, d.head, d.outcomeWords]), ...plan.groups.flatMap((g) => [g.label, ...g.options.map((o) => o.label)])].filter(Boolean);
+    eq(`series panel, ${host}: none of the server's words shows`, serverWords.filter((w) => text.includes(w)), []);
     toggle(box).click();
     await settle();
-    eq(`series card, ${host}: "hide them" folds the group again`, [edited(box), toggle(box).textContent], [2, 'show them']);
-    await close(box);
-
-    // Opened as the phone sheet, then widened to a desktop and narrowed again.
-    await resize(500, 600);
-    box = await open(host);
-    const sheetEl = card(box);
-    await expand(box);
-    eq(`series card, ${host}: opened at 500 x 600, the sheet with no inline height or place`, [seen(box), sheetEl.style.cssText], [phoneSheet, '']);
-    await resize(1280, 800);
-    eq(`series card, ${host}: widened to 1280 x 800 while open, the same card is a desktop card no taller than the window`, [card(box) === sheetEl, seen(box)], [true, desktop(host, 1280, 800)]);
-    await resize(500, 600);
-    eq(`series card, ${host}: narrowed again, the sheet drops the desktop height and place`, [card(box) === sheetEl, seen(box), sheetEl.style.cssText], [true, phoneSheet, '']);
+    eq(`series panel, ${host}: "Show 38 days" opens the days under the group as rows`, [openDays(box), toggle(box).textContent, toggle(box).getAttribute('aria-expanded')], [38, 'Hide', 'true']);
+    // Its place is app.css's: a window crossing the phone width changes nothing on the element.
+    for (const [w, h] of [[412, 915], [1400, 900], [1280, 800]]) {
+      await resize(w, h);
+      eq(`series panel, ${host}: at ${w} x ${h} the same element, its class and its (empty) style unchanged, the group still open`,
+        [panel(box) === el, seen(box)], [true, { ...docked, opened: 38 }]);
+    }
+    toggle(box).click();
+    await settle();
+    eq(`series panel, ${host}: "Hide" folds the group again`, [openDays(box), toggle(box).textContent], [0, 'Show 38 days']);
+    eq(`series panel, ${host}: the header is the title, the series and Change scope; the action names the change`, [
+      box.querySelectorAll('.bc-sd-head')[0].textContent, box.querySelectorAll('.bc-sd-actions')[0].textContent,
+    ], [(host === 'editor' ? 'Change all events' : 'Move all events') + "Change scope'Sample practice'", 'Cancel' + (host === 'editor' ? 'Change all events' : 'Move all events')]);
+    // Every time in the panel follows the user's 12- or 24-hour setting.
+    const { setTimeFormat: setClock } = await import('../src/lib/dates.js');
+    const times = async (tf) => { setClock(tf); put({ seriesChange: { ...st.seriesChange, choices: { ...st.seriesChange.choices } } }); await settle(); return panel(box).textContent; };
+    const twelve = await times('12'), full = await times('24');
+    eq(`series panel, ${host}: every time follows the 12- or 24-hour setting`, [/7:00\sPM/.test(twelve), /19:00/.test(twelve), /19:00/.test(full), /\b(AM|PM)\b/.test(full)], [true, false, true, false]);
+    setClock('12');
     await close(box);
   }
-  // The renderer owns the card's style: the component writes none itself,
+  // Where the panel sits and how tall it may be are app.css's alone:
+  // docked bottom right, beside the editor drawer or the event panel, the
+  // sheet on a phone.
+  const { readFileSync: readCss } = await import('node:fs');
+  const css = readCss(new URL('../styles/app.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const i = css.indexOf('\n' + sel + ' {'); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
+  const sd = rule('.bc-sd');
+  eq('series panel css: docked bottom right of the calendar, 480 wide, no taller than the window less a margin', [
+    /right: calc\(var\(--bc-sd-side, 0px\) \+ 12px\)/.test(sd), /bottom: 12px/.test(sd), /width: 480px/.test(sd), /max-height: calc\(100dvh - 24px\)/.test(sd),
+  ], [true, true, true, true]);
+  eq('series panel css: the editor drawer and the event panel say how far they reach, so it docks beside them', [
+    /\.bc-drawer \{ --bc-sd-side: min\(480px, 94vw\); \}/.test(css), /\.bc-app:has\(\.bc-evpanel\) \{ --bc-sd-side: min\(480px, 100vw\); \}/.test(css),
+  ], [true, true]);
+  const phoneAt = css.indexOf('@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {\n  .bc-sd {');
+  const sheet = phoneAt < 0 ? '' : css.slice(phoneAt, css.indexOf('}', phoneAt + 100));
+  eq('series panel css: on a phone, the bottom sheet up to two thirds of the screen', [phoneAt > 0, /left: 0; right: 0; bottom: 0/.test(sheet), /max-height: 66dvh/.test(sheet)], [true, true, true]);
+  // The renderer owns the panel's style: the component writes none itself,
   // so no layout can leave one behind for another.
   const { readFileSync: readSource } = await import('node:fs');
   const dialogSource = readSource(new URL('../src/app/SeriesDialog.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');
-  eq('series card: SeriesDialog.js writes no inline style of its own', /\.style\s*(\.|\[|=)|setProperty|cssText/.test(dialogSource), false);
+  eq('series panel: SeriesDialog.js writes no inline style of its own and measures nothing', /\.style\s*(\.|\[|=)|setProperty|cssText|getBoundingClientRect|innerWidth|innerHeight/.test(dialogSource), false);
 
   if (savedRaf === undefined) delete options.requestAnimationFrame; else options.requestAnimationFrame = savedRaf;
   if (savedDebounce === undefined) delete options.debounceRendering; else options.debounceRendering = savedDebounce;
@@ -5137,7 +5053,7 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
 {
   const realFetch = globalThis.fetch;
   const { seriesDrop } = await import('../src/app/actions.js');
-  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, setSeriesScope } = await import('../src/app/serieschange.js');
+  const { pickSeriesOption, confirmSeriesChange, cancelSeriesChange, onlyThisOne, changeSeriesScope } = await import('../src/app/serieschange.js');
   const { planView } = await import('../src/lib/seriesplan.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -5212,7 +5128,7 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   await confirmSeriesChange();
   eq('series drag: the commit names the hash and every group', sent[2].plan, { hash: 'h2', choices: { rule: 'pattern' } });
   eq('series drag: a stale hash brings the new plan and asks again', [st.seriesChange && st.seriesChange.plan.hash, st.seriesChange && st.seriesChange.changed, shown().seriesPending], ['h3', true, true]);
-  eq('series drag: the dialog says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, true);
+  eq('series drag: the panel says the series changed', planView(st.seriesChange.plan, { changed: st.seriesChange.changed }).changed, 'The series changed since this was worked out. Here is the new plan.');
   const toastsBefore = st.toasts.length;
   await confirmSeriesChange();
   await tick();
@@ -5235,12 +5151,11 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
 
   // 5. Refused: the reasons, no confirm, nothing written.
   reset();
-  const refusal = 'This repeat came from another app and counts weeks of the year, so its days can\'t follow a drag. Move only this one, or open the series to choose its days.';
-  answer = () => json({ error: { code: 'series_refused', message: 'Refused', plan: { hash: 'r1', refusals: [{ code: 'byweekno', words: refusal }] } } }, 422);
+  answer = () => json({ error: { code: 'series_refused', message: 'Refused', plan: { hash: 'r1', refusals: [{ code: 'weekno', words: 'Server words' }] } } }, 422);
   seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all');
   await tick();
   const refusedView = planView(st.seriesChange.plan, {});
-  eq('series drag: a refusal shows its reason, with no confirm', [refusedView.refused, refusedView.canConfirm], [refusal, false]);
+  eq('series drag: a refusal shows its reason by its code, with no confirm', [refusedView.refused, refusedView.canConfirm], ['This repeat counts weeks of the year, so its days can\u2019t follow a drag.', false]);
   eq('series drag: and confirm sends nothing', [await confirmSeriesChange(), sent.length], [false, 1]);
 
   // 6. "Only this one" from the dialog: the old path with scope this.
@@ -5267,11 +5182,17 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   seriesDrop('resize', st.occ.get(occ.instanceId), { ...drop, newStart: occ.start }, 'all');
   await tick();
   eq('series resize: through the dialog too, named for what it does', [st.seriesChange.kind, planView(st.seriesChange.plan, { kind: 'resize' }).action, sent[0].preview], ['resize', 'Change all events', true]);
-  // "This and following" in the dialog keeps its old path until 1.5.1, on Confirm.
-  setSeriesScope('following');
-  await confirmSeriesChange();
+  cancelSeriesChange();
+
+  // 9. "Change scope": the preview cancelled, the block back where it was,
+  // and the scope chooser asked again; nothing more is sent.
+  reset();
+  answer = () => json({ plan: groupPlan('c1') });
+  let asked = 0;
+  seriesDrop('drag', st.occ.get(occ.instanceId), drop, 'all', () => { asked++; });
   await tick();
-  eq('series resize: this and following from the switch goes the old way', [st.seriesChange, sent[1].scope, sent[1].plan], [null, 'following', undefined]);
+  changeSeriesScope();
+  eq('series drag: Change scope cancels the preview, puts the block back and asks the scope again', [st.seriesChange, shown().start, !!shown().seriesPending, asked, sent.length], [null, occ.start, false, 1, 1]);
 
   put({ seriesChange: null });
   st.occ.clear();

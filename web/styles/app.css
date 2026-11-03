@@ -1103,70 +1103,90 @@ body.bc-drag-copy .bc-drag-ghost::after {
 :is(.bc-chip, .bc-bar, .bc-block).is-series-pending {
   background: transparent !important; border: 1.5px dashed currentColor !important; box-shadow: none !important;
 }
-/* The series change dialog: a dense card at the drop point (no backdrop),
-   over the editor's footer for a save, a bottom sheet on a phone. The card
-   is never taller than the viewport (cardFit in lib/seriesplan.js sets the
-   same limit in pixels): its header and actions stay, the body scrolls. */
+/* The series change panel (SeriesDialog.js): one docked place for every plan,
+   from a drag or the editor. Desktop: bottom right of the calendar, 440 wide,
+   no taller than the window less 12px above and below, no backdrop; beside
+   the editor drawer or the event panel when one is open, which each say how
+   far they reach from the window's right edge (--bc-sd-side). Phone: a bottom
+   sheet over the bottom bar, up to two thirds of the screen. Header and
+   actions stay; the body scrolls. Its size and place are only ever set here. */
+.bc-drawer { --bc-sd-side: min(480px, 94vw); }
+.bc-app:has(.bc-evpanel) { --bc-sd-side: min(480px, 100vw); }
 .bc-sd {
-  position: fixed; z-index: 1001; width: 520px; max-width: calc(100vw - 16px);
-  max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px);
+  position: fixed; z-index: 1001; right: calc(var(--bc-sd-side, 0px) + 12px); bottom: 12px;
+  width: 480px; max-width: calc(100vw - var(--bc-sd-side, 0px) - 24px);
+  max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   background: var(--bg-raised); border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; font-size: 12.5px; outline: none;
+  display: flex; flex-direction: column; font-size: 13px; line-height: 1.4; outline: none;
 }
-.bc-sd.is-editor { right: 8px; bottom: 8px; }
-.bc-sd.is-sheet {
-  left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 66vh;
-  border-radius: 14px 14px 0 0; font-size: 14px; animation: bc-sheet-up 0.18s ease;
-}
-.bc-sd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px 4px; flex: none; }
+/* Header: the action and Change scope on one line, the series and its calendar on the next. */
+.bc-sd-head { display: grid; gap: 4px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); flex: none; }
+.bc-sd-head-row { display: flex; align-items: center; gap: 10px; }
 .bc-sd-title { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bc-sd-scope .bc-seg-btn { padding: 2px 8px; font-size: 12px; }
-.bc-sd-only { font-size: 12px; white-space: nowrap; }
-.bc-sd-thisday { padding: 0 10px 2px; color: var(--fg-muted); flex: none; }
+.bc-sd-series { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg); }
+.bc-sd-disc { background: var(--cal, var(--border-strong)); }
+.bc-sd-series-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Line 3, when the edit started from a day with something of its own. */
+.bc-sd-started { color: var(--fg-muted); }
+/* The panel's small outlined buttons: Change scope, Show N days. */
+.bc-sd-small { padding: 1px 10px; font-size: 12px; flex: none; }
+/* Plain text controls: "Change scope" and Cancel. */
 /* Its scroll bar thin and always shown (a drawn rail on touch screens),
    with the edge shadows marking more above or below. */
 .bc-sd-body {
-  position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 2px 10px 6px; min-height: 0; flex: 1 1 auto;
+  position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px; min-height: 0; flex: 1 1 auto;
   scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
 }
-.bc-sd-plan { display: grid; gap: 3px; }
 .bc-sd-plan.is-stale { opacity: 0.55; }
-.bc-sd-rule { display: flex; gap: 0 12px; justify-content: space-between; flex-wrap: wrap; }
-.bc-sd-bound { color: var(--fg-muted); white-space: nowrap; }
-.bc-sd-line { display: grid; grid-template-columns: 58px 1fr; gap: 6px; align-items: baseline; }
-.bc-sd-lab { color: var(--fg-muted); }
-/* A group's days, opened under its line: set in a little, so they read as
-   its. On touch screens its "show them" tap area grows up, not down: grown
-   below the last line, it made a list that fits scroll by a few pixels. */
-.bc-sd-day > :last-child { padding-left: 12px; }
-@media (pointer: coarse) { .bc-sd-toggle::after { bottom: 0; } }
-.bc-sd-sub, .bc-sd-note, .bc-sd-changed, .bc-sd-refused, .bc-sd-working { margin: 0; }
-.bc-sd-sub, .bc-sd-note, .bc-sd-working { color: var(--fg-muted); }
-.bc-sd-changed { color: var(--warn-strong); }
-.bc-sd-refused { color: var(--fg); }
-.bc-sd-readings { display: grid; gap: 1px; margin: 2px 0; }
-.bc-sd-reading { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; align-items: baseline; padding: 1px 0; cursor: pointer; }
-.bc-sd-reading input { margin: 0; align-self: start; margin-top: 2px; }
-.bc-sd-reading-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; min-width: 0; }
-.bc-sd-reading-label { font-weight: 500; }
+/* Two columns: every block's label in one left column, its rows beside it;
+   blocks apart by a hairline, rows by 6px. */
+.bc-sd-block { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 0 10px; padding: 8px 0; }
+.bc-sd-block + .bc-sd-block { border-top: 1px solid var(--border); }
+.bc-sd-lab {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--fg-muted); line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bc-sd-rows { display: grid; gap: 6px; min-width: 0; }
+.bc-sd-row { display: grid; gap: 1px; min-width: 0; }
+.bc-sd-r1 { color: var(--fg); }
+.bc-sd-r2 { color: var(--fg-muted); }
 .bc-sd-dates { font-variant-numeric: tabular-nums; }
-.bc-sd-conseq, .bc-sd-reason, .bc-sd-words { color: var(--fg-muted); }
-.bc-sd-words { flex: 1 0 100%; }
-.bc-sd-reading.is-disabled, .bc-sd-opt.is-disabled { cursor: default; }
-.bc-sd-reading.is-disabled .bc-sd-reading-label, .bc-sd-opt.is-disabled span { color: var(--fg-muted); }
-.bc-sd-choice { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
-.bc-sd-choice-label { color: var(--fg-muted); }
-.bc-sd-opt { display: inline-flex; align-items: baseline; gap: 4px; cursor: pointer; }
-.bc-sd-opt input { margin: 0; align-self: center; }
-.bc-sd-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); flex: none; }
-.bc-sd-actions .bc-btn { padding: 3px 12px; }
+/* Coming up is one line: three dates and the ellipsis. */
+.bc-sd-oneline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bc-sd-changed { margin: 8px 0 0; color: var(--warn-strong); }
+.bc-sd-working { margin: 10px 0; color: var(--fg-muted); }
+/* Choices: each radio on a full-width line of its own. */
+/* A choice: its reason, then each option on a line of its own, its dates
+   and consequence under its label. */
+.bc-sd-choice { display: grid; gap: 2px; margin-top: 2px; }
+.bc-sd-radios { display: grid; gap: 3px; margin-top: 2px; }
+.bc-sd-opt { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; cursor: pointer; }
+.bc-sd-opt input { margin: 0; align-self: start; margin-top: 3px; }
+.bc-sd-opt-text { display: grid; gap: 1px; min-width: 0; }
+.bc-sd-opt.is-disabled { cursor: default; }
+.bc-sd-opt.is-disabled .bc-sd-r1 { color: var(--fg-muted); }
+/* A group's days, opened under it: rows of the same shape, set in a little.
+   Its button grows its tap area up on touch screens, never below the list. */
+.bc-sd-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+@media (pointer: coarse) { .bc-sd-toggle::after { bottom: 0; } }
+.bc-sd-days { display: grid; gap: 6px; margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--border); }
+.bc-sd-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); flex: none; }
+.bc-sd-actions .bc-btn { padding: 4px 14px; }
 .bc-sd-status { color: var(--fg-muted); margin-right: auto; }
-.bc-sd.is-sheet .bc-sd-reading { gap: 0 8px; padding: 4px 0; }
-.bc-sd.is-sheet .bc-sd-reading-text { display: grid; }
-.bc-sd.is-sheet .bc-sd-line { grid-template-columns: 64px 1fr; }
-.bc-sd.is-sheet .bc-sd-actions { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
-.bc-sd.is-sheet .bc-sd-actions .bc-btn { min-height: 40px; padding: 6px 16px; }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-sd {
+    left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 66vh; max-height: 66dvh;
+    border-radius: 14px 14px 0 0; font-size: 15px; animation: bc-sheet-up 0.18s ease;
+  }
+  .bc-sd-head { padding: 12px 14px 10px; }
+  .bc-sd-body { padding: 0 14px; }
+  .bc-sd-block { grid-template-columns: 104px minmax(0, 1fr); }
+  .bc-sd-small { min-height: 36px; }
+  .bc-sd-opt { padding: 4px 0; }
+  .bc-sd-actions { padding: 8px 14px max(8px, env(safe-area-inset-bottom)); }
+  .bc-sd-actions .bc-btn { min-height: 40px; padding: 6px 16px; }
+}
 body.bc-dragging { cursor: grabbing; user-select: none; }
 body.bc-dragging * { cursor: grabbing !important; }
 

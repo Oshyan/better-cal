@@ -57,6 +57,21 @@ final class Words
         return self::SHORT[Cal::wd($dn)] . ' ' . $d . ' ' . substr(self::MONTHS[$m - 1], 0, 3) . ($y !== $thisYear ? ' ' . $y : '');
     }
 
+    /**
+     * A plan day's words in their two parts and whole: `head`, the day
+     * ("'Rehearsal' Tue 13 Apr", "Tue 23 Mar, moved to Fri 26 Mar"), and
+     * `outcomeWords`, what happens to it ("moves to Wed 14 Apr, keeps its
+     * title"), so the dialog draws them as two lines; `words` is the
+     * sentence they make, $lead before the head ("Skipped ") and $sep
+     * between them. Every date in either part is self::date's.
+     *
+     * @return array{head: string, outcomeWords: string, words: string}
+     */
+    public static function dayParts(string $head, string $outcome, string $sep = ' ', string $lead = ''): array
+    {
+        return ['head' => $head, 'outcomeWords' => $outcome, 'words' => $head === '' && $outcome === '' ? '' : $lead . $head . $sep . $outcome];
+    }
+
     /** "10 Mar", with the year when it isn't $thisYear. */
     public static function dayMonth(int $dn, int $thisYear): string
     {

@@ -1127,6 +1127,8 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-series { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg); }
 .bc-sd-disc { background: var(--cal, var(--border-strong)); }
 .bc-sd-series-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Line 3, when the edit started from a day with something of its own. */
+.bc-sd-started { color: var(--fg-muted); }
 /* The panel's small outlined buttons: Change scope, Show N days. */
 .bc-sd-small { padding: 1px 10px; font-size: 12px; flex: none; }
 /* Plain text controls: "Change scope" and Cancel. */

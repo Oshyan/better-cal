@@ -496,7 +496,8 @@ final class Model
      * reading's (three at least; when that is further on, the first three and
      * `then`, the last date they share and its first different one), and
      * `earlier`, the first date before the day acted on where it differs
-     * from the preselected reading (only for the others).
+     * from the series as it is today (for every reading, the preselected one
+     * included).
      *
      * @param array<int, array> $alts
      * @return array<int, array{dates: list<string>, then: list<string>, earlier: ?string}>
@@ -516,6 +517,8 @@ final class Model
             $selected = (int) array_key_first($seqs);
         }
         $iso = fn(Calc $c, int $d): string => Time::iso($c->instant($d)->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $c->tz)));
+        // The series as it is today, before the day acted on.
+        $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [])[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
         $out = [];
         foreach ($seqs as $oi => $s) {
             $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
@@ -532,16 +535,14 @@ final class Model
                 $dates = array_slice($mine, 0, 3);
                 $then = array_slice($mine, $i - 1, 2);
             }
+            // Against the series as it is today, for every reading.
             $earlier = null;
-            if ($oi !== $selected) {
-                $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
-                $refBefore = array_values(array_filter($ref['days'], static fn(int $d): bool => $d < $ref['landed']));
-                $n = max(count($before), count($refBefore));
-                for ($j = 0; $j < $n; $j++) {
-                    if (($before[$j] ?? null) !== ($refBefore[$j] ?? null)) {
-                        $earlier = Cal::date(min(array_filter([$before[$j] ?? null, $refBefore[$j] ?? null], static fn($x): bool => $x !== null)));
-                        break;
-                    }
+            $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
+            $n = max(count($before), count($oldBefore));
+            for ($j = 0; $j < $n; $j++) {
+                if (($before[$j] ?? null) !== ($oldBefore[$j] ?? null)) {
+                    $earlier = Cal::date(min(array_filter([$before[$j] ?? null, $oldBefore[$j] ?? null], static fn($x): bool => $x !== null)));
+                    break;
                 }
             }
             $out[$oi] = [
@@ -1903,6 +1904,9 @@ final class Model
             'bound' => ['kind' => $boundKind, 'words' => $boundWords] + ($r1->count !== null ? ['count' => $r1->count] : []) + ($r1->until !== null ? ['until' => $r1->until] : [])
                 + $boundData + ['from' => $this->boundFrom($oldOcc)],
             'next' => $next,
+            'acted' => $this->actedRowId !== null && $this->ownOf($this->rows[$this->actedRowId]) !== []
+                ? ['key' => $iso($this->acted), 'title' => (string) $this->rows[$this->actedRowId]['title'], 'shows' => Cal::date($this->shownDn($this->rows[$this->actedRowId])), 'kept' => OwnFields::normalize($this->ownOf($this->rows[$this->actedRowId]))]
+                : null,
             'nextMore' => $boundKind === 'none' || ($lastNext !== null && $boundData['last'] !== null && $lastNext < $boundData['last']),
             'counts' => [
                 'events' => $boundData['events'],

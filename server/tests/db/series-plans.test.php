@@ -80,6 +80,10 @@ return static function (Db $db): void {
             [$byKey['2027-03-30T18:00:00Z']['shows'] ?? null, $byKey['2027-03-30T18:00:00Z']['to'] ?? null],
             array_column($plan['groups'][0]['options'] ?? [], 'date'), $plan['groups'][0]['count'] ?? null,
         ]);
+        // The day the edit started from, when it has something of its own.
+        $fromRehearsal = $d->events->previewPatch($u, $choir, ['scope' => 'all', 'instanceStart' => '2027-04-13T18:00:00+00:00', 'start' => '2027-04-14T18:00:00+00:00', 'end' => '2027-04-14T19:00:00+00:00', 'preview' => true]);
+        checkEq('the plan names the day the edit started from when it has fields of its own, and no day otherwise', [true, 'Rehearsal', '2027-04-13', ['title', 'location']],
+            [array_key_exists('acted', $plan) && $plan['acted'] === null, $fromRehearsal['acted']['title'] ?? null, $fromRehearsal['acted']['shows'] ?? null, $fromRehearsal['acted']['kept'] ?? null]);
         [$code, $again] = $answer(fn() => $d->events->patch($u, $choir, $drag));
         checkEq('a drag sent without a plan is 409 series_plan_required with the plan, nothing written', ['409 series_plan_required', $plan['hash'], $before],
             [$code, $again['hash'] ?? null, $rows($choir)]);
@@ -148,8 +152,8 @@ return static function (Db $db): void {
         $swap = (int) $d->events->create($u, eventAt($home, 'Book swap', '2027-01-31', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=31']))['eventId'];
         $readings = $d->events->previewPatch($u, $swap, ['scope' => 'all', 'instanceStart' => '2027-03-31T18:00:00+00:00', 'start' => '2027-03-30T18:00:00+00:00', 'end' => '2027-03-30T19:00:00+00:00']);
         $opts = array_column(array_values(array_filter($readings['groups'], static fn(array $g): bool => $g['id'] === 'reading'))[0]['options'] ?? [], null, 'id');
-        checkEq('reading dates: from the day acted on, three, then the last shared date and the first that differs; the clamped reading changes 28 Feb', [
-            '2027-03-30', 3, ['2028-01-30', '2028-03-30'], ['2028-01-30', '2028-02-29'], null, '2027-02-28',
+        checkEq('reading dates: from the day acted on, three, then the last shared date and the first that differs; both change earlier days from 30 Jan, against the series as it is today', [
+            '2027-03-30', 3, ['2028-01-30', '2028-03-30'], ['2028-01-30', '2028-02-29'], '2027-01-30', '2027-01-30',
         ], [
             substr((string) ($opts['skip']['dates'][0] ?? ''), 0, 10), count($opts['skip']['dates'] ?? []),
             array_map(static fn(string $x): string => substr($x, 0, 10), $opts['skip']['then'] ?? []),

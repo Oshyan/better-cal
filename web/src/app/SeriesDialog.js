@@ -91,6 +91,7 @@ function SeriesPanel({ sc }) {
         <span class="bc-cal-dot bc-sd-disc" style=${calendar && calendar.color ? '--cal:' + calendar.color : ''}></span>
         <span class="bc-sd-series-text">${view.series}</span>
       </div>
+      ${view.started && html`<div class="bc-sd-started">${view.started}</div>`}
     </div>
     <div class="bc-sd-body bc-scroll-edges" ref=${bodyRef}>
       ${!sc.plan ? html`<p class="bc-sd-working" role="status">${view.working}</p>`

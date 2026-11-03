@@ -106,6 +106,7 @@ export function planView(plan, ctx = {}) {
     verb,
     name: ctx.title || '',
     series: W.seriesLine(ctx.title, ctx.calendar),
+    started: '',
     action: title,
     onlyThis: W.onlyThisWords(verb),
     loading: !plan,
@@ -150,8 +151,9 @@ export function planView(plan, ctx = {}) {
   view.refused = planRefusal(plan);
   view.change = view.refused ? '' : W.changeSentence(plan.rule, plan.bound, opts);
   view.comingUp = W.comingUp(plan.next, plan.nextMore, opts);
+  view.started = W.startedLine(plan.acted, opts);
   view.count = plan.counts ? plan.counts.events : null;
-  view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts, plan.days);
+  view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts, plan.days, plan.rule);
 
   const onDay = new Map();
   const onDays = new Map(); // a day's key -> the choice about it and other days

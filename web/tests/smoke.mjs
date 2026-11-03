@@ -4775,6 +4775,25 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     days: ['a', 'b', 'c', 'd'].map((k, i) => ({ key: k, kind: 'edited', title: 'Choir ' + (i + 1), outcome: 'stays', shows: fixtureKey(300 + i * 7), to: fixtureKey(300 + i * 7), kept: ['title'], takes: [] })) }, ctx());
   eq('series panel: a group with a choice names what its days have, three names and then a count', fourTitles.edited[0].line1, "4 days have their own titles ('Choir 1', 'Choir 2', 'Choir 3' and 1 more).");
 
+  // Every reading that changes days before the day acted on says so, the preselected one included.
+  const preEarlier = planView({ ...gym, groups: [{ id: 'reading', selected: 'member', options: [
+    { id: 'member', rrule: 'FREQ=MONTHLY;BYDAY=2WE,3MO', dates: ['2026-12-09T19:00:00-08:00'], then: [], earlier: '2026-11-02' },
+    { id: 'pattern', rrule: 'FREQ=MONTHLY;BYDAY=1WE,3WE', dates: ['2026-12-09T19:00:00-08:00'], then: [], earlier: '2026-11-02' }] }] }, ctx({ refYear: 2026 }));
+  eq('series panel: the preselected reading says it changes earlier days too', preEarlier.readings[0].options.map((o) => o.note), ['also changes earlier days, from Mon, Nov 2', 'also changes earlier days, from Mon, Nov 2']);
+  // The header's third line, when the edit started from a day with something of its own.
+  const fromOwn = planView({ ...choir, acted: { key: 'k6', title: 'Sample practice 6', shows: '2026-12-11', kept: ['date', 'title'] } }, ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: started from a day with something of its own says so; from an ordinary day, nothing', [fromOwn.started, planView({ ...choir, acted: null }, ctx()).started,
+    planView({ ...choir, acted: { key: 'k', title: 'Sample practice', shows: '2026-12-11', kept: ['location'] } }, ctx({ title: 'Sample practice', refYear: 2026 })).started],
+    ["Started from 'Sample practice 6' on Fri, Dec 11.", '', "Started from 'Sample practice' on Fri, Dec 11."]);
+  // A change of the end or count alone says what stays.
+  const sameRule = (a, b) => rule(a, b, '2027-01-01T16:00:00-08:00', '2027-01-01T16:00:00-08:00');
+  const longer = planView({ ...choir, rule: sameRule('FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=10'), bound: { kind: 'count', count: 10, events: 10, last: '2027-10-01', from: { kind: 'count', count: 6, events: 6 } },
+    counts: { events: 10, edited: 0, skipped: 0 }, days: [] }, ctx());
+  const later = planView({ ...choir, rule: sameRule('FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20271001T235959Z', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20280701T235959Z'), bound: { kind: 'until', events: 19, last: '2028-07-01', from: { kind: 'until', events: 10, last: '2027-10-01' } },
+    counts: { events: 19, edited: 0, skipped: 0 }, days: [] }, ctx({ refYear: 2027 }));
+  eq('series panel: a longer count or a later end says what stays unchanged', [longer.affects, later.affects], [
+    '10 events (was 6). The 6 events before the new ones are unchanged.', 'Ends Jul 1, 2028 (was Oct 1, 2027). The 10 events before it are unchanged.']);
+
   // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
   const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));
   eq('edited days grouped: the forty are two rows of their own and one group row', forty.edited.map((d) => [d.line1, d.line2, d.range || null]), [

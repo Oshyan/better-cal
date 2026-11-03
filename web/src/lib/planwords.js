@@ -175,17 +175,45 @@ export function comingUp(next, more, opts = {}) {
  * fields the changed days have of their own, by how many days have each, at
  * most two named and the rest counted. `days` are the plan's days.
  */
-export function affects(counts, bound, opts = {}, days = []) {
+export function affects(counts, bound, opts = {}, days = [], rule = null) {
   const c = counts || {};
   const last = bound && (bound.last || (bound.until ? untilDayKey(bound.until) : null));
-  const first = c.events == null
+  const first = endChange(bound, rule, opts) || (c.events == null
     ? 'All events, with no end.'
-    : plural(c.events, 'event', 'events') + (last ? ', ending ' + fmtDay(last, { weekday: false, ...opts }) : '') + '.';
+    : plural(c.events, 'event', 'events') + (last ? ', ending ' + fmtDay(last, { weekday: false, ...opts }) : '') + '.');
   const was = (n) => (n === 1 ? 'was' : 'were');
   const parts = [];
   if (c.edited) parts.push(c.edited + ' ' + was(c.edited) + ' changed earlier' + ownFieldsAside(days));
   if (c.skipped) parts.push(c.skipped + ' ' + was(c.skipped) + ' removed');
   return parts.length ? first + ' ' + parts.join(', ') + '.' : first;
+}
+
+// A change of the end or the count alone, the days kept: what it becomes,
+// what it was, and what stays. "Ends Jul 1, 2027 (was Oct 1). The 6 events
+// before it are unchanged." / "10 events (was 6). The 6 events before the
+// new ones are unchanged."
+const patternOf = (rrule) => String(rrule || '').split(';').filter((x) => !/^(COUNT|UNTIL)=/.test(x)).sort().join(';');
+function endChange(bound, rule, opts) {
+  const from = bound && bound.from;
+  if (!bound || !from || !rule || !rule.from || !rule.to) return '';
+  if (patternOf(rule.from.rrule) !== patternOf(rule.to.rrule) || dayKeyOf(rule.from.start) !== dayKeyOf(rule.to.start)) return '';
+  const was = from.events, now = bound.events;
+  if (bound.kind === 'count' && from.kind === 'count' && now != null && was != null && now !== was) {
+    const kept = Math.min(now, was);
+    return plural(now, 'event', 'events') + ' (was ' + was + '). ' + (now > was ? 'The ' + plural(kept, 'event', 'events') + ' before the new ones ' + (kept === 1 ? 'is' : 'are') + ' unchanged.' : 'The first ' + kept + ' ' + (kept === 1 ? 'is' : 'are') + ' unchanged.');
+  }
+  if (bound.kind === 'until' && from.kind === 'until' && bound.last && from.last && bound.last !== from.last) {
+    const kept = now != null && was != null ? Math.min(now, was) : null;
+    return 'Ends ' + fmtDay(bound.last, { weekday: false, ...opts }) + ' (was ' + fmtDay(from.last, { weekday: false, ...opts, prev: bound.last }) + ').'
+      + (kept != null ? ' The ' + plural(kept, 'event', 'events') + ' before it ' + (kept === 1 ? 'is' : 'are') + ' unchanged.' : '');
+  }
+  return '';
+}
+
+/** Header line 3, when the edit started from a day with something of its own: "Started from 'Sample practice 6' on Fri, Dec 11." */
+export function startedLine(acted, opts = {}) {
+  if (!acted || !(acted.kept || []).length) return '';
+  return 'Started from ' + dayName(acted, opts.series) + ' on ' + fmtDay(acted.shows, opts) + '.';
 }
 
 // The fields changed days have of their own, most common first: " (title,

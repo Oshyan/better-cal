@@ -682,11 +682,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
     $named = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal'], null, ['title'])];
     $p = smPlan($choir, $named, ['acted' => smAt('2027-03-16 19:00'), 'columns' => ['title' => 'Choir F']]);
-    checkEq('an editor save from an edited day: its line says it takes the new title', "'Rehearsal' Tue 16 Mar stays, takes 'Choir F'",
-        array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null);
+    // Its title was all it owned: taking the series' leaves it nothing of its own, so it is an occurrence again (Own Fields).
+    checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar is an ordinary occurrence again", 'rejoins', [2], []],
+        [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, array_column($p['plan']['days'], 'outcome', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete'], $p['writes']['overrides']]);
     $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
-    checkEq('"Give it the new title too" says so on its line', "'Rehearsal' Tue 16 Mar stays, takes 'Chorus'",
-        array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null);
+    checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar is an ordinary occurrence again", [2]],
+        [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete']]);
+    $namedPlace = [smEdited($choir, 2, '2027-03-16 19:00', ['title' => 'Rehearsal', 'location' => 'Sample Room'], null, ['title', 'location'])];
+    $p = smPlan($choir, $namedPlace, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
+    checkEq('"Give it the new title too" says so on its line, a day that keeps its place staying edited', ["'Rehearsal' Tue 16 Mar stays, keeps its place, takes 'Chorus'", []],
+        [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete']]);
     checkEq('Open studio made timed: the visit\'s line says the time it keeps, as the examples give it', "'Sample Hall visit' Sat 13 Mar stays, keeps its title and own time at 09:00",
         array_column($timed['plan']['days'], 'words', 'key')['2027-03-13T00:00:00Z'] ?? null);
 
@@ -772,8 +777,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('R1: two exceptions on one day, renamed around: no key written, each keeps its own', [[], ['2027-03-15T17:00:00Z', '2027-03-15T09:00:00Z']],
         [$p['writes']['overrides'], array_values(array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), 'newKey'))]);
     $p = smPlan($twice, [$evening, $morning], ['columns' => ['title' => 'Sample practice']], ['ownTitle' => 'give']);
-    checkEq('R1: given the new title too, both take it on their own keys', [[2 => ['title' => 'Sample practice', 'override_fields' => '[]'], 3 => ['title' => 'Sample practice', 'override_fields' => '[]']]],
-        [$p['writes']['overrides']]);
+    checkEq('R1: given the new title too, both are left with nothing of their own and go back to the series on their keys', [[], [2, 3], ['rejoins', 'rejoins'], ['2027-03-15T17:00:00Z', '2027-03-15T09:00:00Z']],
+        [$p['writes']['overrides'], $p['writes']['delete'], array_values(array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), 'outcome')),
+            array_values(array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), 'newKey'))]);
     $p = smPlan($twice, [$evening], smDrag($twice, '2027-03-01 09:00', '2027-03-01 09:00', ['columns' => ['title' => 'Sample practice']]), ['ownTitle' => 'keep']);
     checkEq('R1: the day acted on sent back where it is (an editor save) is no time change, so not refused as several a day', [false, []], [$p['refused'], $p['writes']['overrides']]);
     $p = smPlan($twice, [$evening], ['acted' => smAt('2027-03-01 17:00', 'UTC'), 'landed' => ['start_utc' => smAt('2027-03-01 17:00', 'UTC'), 'end_utc' => smAt('2027-03-01 18:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC'], 'columns' => ['title' => 'Sample practice']], ['ownTitle' => 'keep']);
@@ -981,12 +987,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     // F4: from an edited day, a field set back to the series' value.
     $f4row = smEdited($utcWeekly, 2, '2027-02-09 19:00', ['title' => 'Sample concert'], null, ['title']);
     $p = smPlan($utcWeekly, [$f4row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample choir']]);
-    checkEq('F4: the series\' title sent from the day that owns another: the day takes it, no longer its own, and the plan isn\'t direct', [
-        false, 'Sample choir', '[]', [],
-    ], [$p['plan']['direct'], $p['writes']['overrides'][2]['title'] ?? null, $p['writes']['overrides'][2]['override_fields'] ?? null, array_keys($p['writes']['master'])]);
+    checkEq('F4: the series\' title sent from the day that owns another: the day takes it, is left with nothing of its own and goes back to the series, and the plan isn\'t direct', [
+        false, [2], [], [],
+    ], [$p['plan']['direct'], $p['writes']['delete'], $p['writes']['overrides'], array_keys($p['writes']['master'])]);
     $p = smPlan($utcWeekly, [smEdited($utcWeekly, 2, '2027-02-09 19:00', [], null, ['tags'])], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'tags' => ['sample']],
         [], ['masterTags' => ['sample'], 'rowTags' => [2 => ['extra']]]);
-    checkEq('F4: the same for tags: the day takes the series\' tags', [false, ['sample']], [$p['plan']['direct'], $p['writes']['tags'][2] ?? null]);
+    checkEq('F4: the same for tags: the day takes the series\' tags and goes back to the series', [false, [2], null], [$p['plan']['direct'], $p['writes']['delete'], $p['writes']['tags'][2] ?? null]);
 
     // F5: a rule naming its hour in a zone with a spring change: the
     // model's days are the expander's (sabre steps hours and yields no 14 Mar).
@@ -1153,6 +1159,45 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('an empty reading is a disabled row, the other preselected and written', [['map!', 'keep'], 'keep', 'FREQ=WEEKLY;BYDAY=SU,MO,WE;UNTIL=20270304T235959Z', ['2027-03-01', '2027-03-03']], [
         smOptions($p, 'reading'), smGroup($p, 'reading')['selected'] ?? null, $p['writes']['master']['rrule'] ?? null, $p['writes'] === null ? null : smShows($three, $p['writes'], '2027-03-31'),
     ]);
+
+    // A series stored at the later of two instants its wall clock names (02:30
+    // on 31 Oct 2027 in Berlin, sent with +01:00) is read from the instant it
+    // is stored at: its first key is the window's, and a field edit keeps it.
+    $later = smSeries('Sample walk', 'FREQ=WEEKLY;BYDAY=MO,TU,TH,SA,SU', '2027-10-31 02:30', 60, false, [], 'Europe/Berlin');
+    $later['start_utc'] = '2027-10-31 01:30:00';
+    $later['end_utc'] = '2027-10-31 02:30:00';
+    $calc = BetterCal\Domain\Series\Calc::fromRow($later);
+    $window = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($later, Time::fromDb('2027-10-30 00:00:00'), Time::fromDb('2027-11-03 00:00:00')));
+    checkEq('a start stored at the later instant of a repeated hour: the model\'s keys are the window\'s, its first the stored one', [$window, '2027-10-31 01:30:00'],
+        [array_column($calc->keys($calc->startDn + 2), 1), $calc->keysOn($calc->startDn)[0] ?? null]);
+    $p = smPlan($later, [], ['columns' => ['title' => 'Sample stroll']]);
+    checkEq('and a rename of it keeps its stored start', [false, ['title' => 'Sample stroll']], [isset($p['writes']['master']['start_utc']), $p['writes']['master']]);
+
+    // A list of month days with a member counted from the end, shifted as a
+    // whole: δ is the dragged member's change in its own counting, so the
+    // dragged day lands where it was dropped. The 15th and the last day, its
+    // 30 Jun dragged to 29 Jul (the third-last): the 13th and the third-last.
+    $ends = smSeries('Sample review', 'FREQ=MONTHLY;BYMONTHDAY=15,-1;COUNT=8', '2027-04-30 09:00', 30, false, [], 'UTC');
+    $p = smPlan($ends, [], smDrag($ends, '2027-06-30 09:00', '2027-07-29 09:00'), ['reading' => 'pattern']);
+    checkEq('a month-day list with a last day, its whole pattern shifted from 30 Jun to 29 Jul: every member + δ = -2, the dragged day on 29 Jul, no edited row made', [
+        'FREQ=MONTHLY;BYMONTHDAY=13,-3;COUNT=8', true, [],
+    ], [$p['writes']['master']['rrule'] ?? null, in_array('2027-07-29', smShows($ends, $p['writes'], '2027-12-31'), true), $p['writes']['createEdited'] ?? []]);
+
+    // One set position is the set-position row as several are: the first
+    // weekday, its Fri 1 Oct dragged to Mon 4 Oct (the second weekday), is the
+    // second weekday; dragged to the next month's first weekday it stays.
+    $firstWd = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1', '2027-09-01 09:00', 60, false, [], 'UTC');
+    $p = smPlan($firstWd, [], smDrag($firstWd, '2027-10-01 09:00', '2027-10-04 09:00'));
+    checkEq('the first weekday dragged to the second: every position moves by one', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=2', $p['writes']['master']['rrule'] ?? null);
+    $p = smPlan($firstWd, [], smDrag($firstWd, '2027-10-01 09:00', '2027-11-01 09:00'));
+    checkEq('and to the next month\'s first weekday: the rule stays, never a day by number', [null, '2027-10-01'], [$p['writes']['master']['rrule'] ?? null, smShows($firstWd, $p['writes'], '2027-10-31')[0] ?? null]);
+
+    // The next events are the ones that show from the day acted on: an
+    // edited day keyed later but kept on an earlier date of its own isn't one.
+    $every2 = smSeries('Sample run', 'FREQ=DAILY;INTERVAL=2;COUNT=20', '2027-04-01 09:00', 30, false, [], 'UTC');
+    $early = smEdited($every2, 2, '2027-04-11 09:00', [], '2027-04-08 09:00', ['date']);
+    $p = smPlan($every2, [$early], smDrag($every2, '2027-04-01 09:00', '2027-04-21 09:00'), ['movedDays' => 'keep']);
+    checkEq('next lists from where the day acted on lands, an edited day shown before it left out', ['2027-04-21', '2027-04-23', '2027-04-25', '2027-04-27'], smNext($p));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

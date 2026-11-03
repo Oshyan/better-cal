@@ -215,6 +215,7 @@ trait Invariants
             }
         }
         $edit = $sent['edit'];
+        $choices = $sent['_choices'] ?? [];
         $timeSent = $edit['sent'] !== null;
         $ruleOrBound = $edit['rule'] === 'new' || $edit['boundSent'] !== null;
         if (!$timeSent && !$ruleOrBound) {
@@ -224,6 +225,10 @@ trait Invariants
             }
             foreach ($before['overrides'] as $id => $ov) {
                 $ov1 = $after['overrides'][$id] ?? null;
+                if (self::ownAfter($id, $before, $edit, $choices) === []) {
+                    $this->check('a-time', $ov1 === null, 'an edited day left with nothing of its own is an ordinary occurrence again, its row deleted', ['row' => $id, 'key' => $ov['recurrence_instance_utc']]);
+                    continue;
+                }
                 $this->check('a-time', $ov1 !== null, 'an edit with no time, rule or bound keeps every edited day', ['row' => $id, 'key' => $ov['recurrence_instance_utc']]);
                 if ($ov1 !== null) {
                     foreach (['recurrence_instance_utc', 'start_utc', 'end_utc', 'tzid', 'all_day'] as $col) {
@@ -448,10 +453,14 @@ trait Invariants
         $g = array_values(array_filter(array_column($after['raw'], 'dn'), static fn(int $d): bool => $d <= $cut));
         $this->check('c-days', $a === $g, 'a rule outside the drag table keeps its days under the edits it takes', ['rrule' => $after['row']['rrule']] + self::firstDiff($a, $g, true));
         $keep = array_fill_keys($a, true);
+        $placedAt = $this->placedAt($x, $edit, $choices);
+        $keyOn = array_column($want['occ'], 'key', 'dn');
         foreach ($before['overrides'] as $id => $ov) {
             $day = Clock::dayOf((string) $ov['recurrence_instance_utc'], $before['tz']);
             $ov1 = $after['overrides'][$id] ?? null;
-            if (isset($keep[$day]) || $day > $cut) {
+            if (self::ownAfter($id, $before, $edit, $choices, ['key' => $keyOn[Clock::dayOf((string) $ov['recurrence_instance_utc'], $before['tz'])] ?? null] + $placedAt) === []) {
+                $this->check('c-edited', $ov1 === null, 'an edited day left with nothing of its own is an ordinary occurrence again, its row deleted', ['row' => $id, 'was' => $ov['recurrence_instance_utc']]);
+            } elseif (isset($keep[$day]) || $day > $cut) {
                 $this->check('c-edited', $ov1 !== null && Clock::dayOf((string) $ov1['recurrence_instance_utc'], $tz1) === $day, 'an edited day of a rule outside the drag table stays on its day', ['row' => $id, 'was' => $ov['recurrence_instance_utc'], 'stored' => $ov1['recurrence_instance_utc'] ?? null]);
             }
         }
@@ -543,6 +552,8 @@ trait Invariants
         }
         $outside = $choices['outside'] ?? 'keep';
         $move = ($choices['movedDays'] ?? 'keep') === 'move';
+        $placedAt = $this->placedAt($x, $edit, $choices);
+        $gone = 0;
         foreach ($out['rows'] as $id => $r) {
             $ov0 = $before['overrides'][$id];
             $ov1 = $after['overrides'][$id] ?? null;
@@ -562,6 +573,11 @@ trait Invariants
                             $key = $k;
                         }
                     }
+                }
+                if ($key !== null && self::ownAfter($id, $before, $edit, $choices, ['key' => $key] + $placedAt) === []) {
+                    $gone++;
+                    $this->check($inv . '-edited', $ov1 === null, 'an edited day left with nothing of its own is an ordinary occurrence again, its row deleted', ['row' => $id, 'was' => $ov0['recurrence_instance_utc'], 'image' => Days::date((int) $r['img'])]);
+                    continue;
                 }
                 $this->check($inv . '-edited', $ov1 !== null && $key !== null && (string) $ov1['recurrence_instance_utc'] === $key, 'an edited day is keyed on its occurrence\'s image', ['row' => $id, 'was' => $ov0['recurrence_instance_utc'], 'image' => $r['img'] === null ? null : Days::date($r['img']), 'stored' => $ov1['recurrence_instance_utc'] ?? null]);
                 if ($ov1 !== null && !$r['acted']) {
@@ -601,7 +617,7 @@ trait Invariants
             }
             $createdActed = $k !== null && $k !== $putAt ? 1 : 0;
         }
-        $keptRows = count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])) + $createdActed;
+        $keptRows = count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])) - $gone + $createdActed;
         $this->check($inv . '-edited', count($after['overrides']) === $keptRows, 'the series has exactly the edited days the mapping keeps', ['expected' => $keptRows, 'stored' => count($after['overrides'])]);
         // (d) The day acted on shows where it was put.
         $sent = $edit['sent'];
@@ -703,6 +719,72 @@ trait Invariants
     }
 
     /**
+     * The fields an edited day still owns after a whole-series edit, by the
+     * design's rule (Own Fields): a field the edit changes leaves its list
+     * where the day takes it (the day acted on always, another day when the
+     * case gave it the new value too); its placement stays its own, except
+     * on the day acted on when the request placed it, whose placement is its
+     * own only where it was put isn't the series at its new key (Changing
+     * the Series from an Edited Day, 3). A day left owning nothing is an
+     * ordinary occurrence again, and its row is deleted.
+     *
+     * @param ?array $at the series at the day's new key and where the day acted on was put (placedAt)
+     */
+    private static function ownAfter(int $id, array $before, array $edit, array $choices, ?array $at = null): array
+    {
+        $own = $before['own'][$id] ?? [];
+        $acted = $id === $edit['fromRow'];
+        foreach (array_keys($edit['fields']) as $f) {
+            if ($acted || ($choices['own' . ucfirst($f)] ?? 'keep') === 'give') {
+                $own = array_diff($own, [$f]);
+            }
+        }
+        if (!$acted || $edit['sent'] === null || ($at !== null && !isset($at['start']))) {
+            // Under a new rule the request only sets where the rule starts, so
+            // the day acted on is an ordinary exception, its placement as it was
+            // (Correspondence, by Member: the day acted on).
+            return array_values($own);
+        }
+        if ($at === null || !isset($at['key'])) {
+            return ['unknown'];
+        }
+        $own = array_diff($own, ['date', 'time', 'length', 'allDay']);
+        $sZone = $at['allDay1'] ? 'UTC' : $at['tz1'];
+        $pZone = $at['allDay'] ? 'UTC' : $at['tz'];
+        if ($at['allDay'] !== $at['allDay1']) {
+            $own[] = 'allDay';
+        }
+        if (Clock::dayOf($at['start'], $pZone) !== Clock::dayOf($at['key'], $sZone)) {
+            $own[] = 'date';
+        }
+        if (!$at['allDay'] && ($at['allDay1'] || $at['tz'] !== $at['tz1'] || Clock::secsOf(Clock::local($at['start'], $pZone)) !== Clock::secsOf(Clock::local($at['key'], $sZone)))) {
+            $own[] = 'time';
+        }
+        if ($at['allDay'] === $at['allDay1'] && $at['len'] !== $at['len1']) {
+            $own[] = 'length';
+        }
+        return array_values($own);
+    }
+
+    /** Where the request put the day acted on (its start, length, all-day flag and zone) beside the series' new length, all-day flag and zone. */
+    private function placedAt(Expect $x, array $edit, array $choices): array
+    {
+        $put = $edit['sent'];
+        $base = ['len1' => $x->len1, 'allDay1' => $x->allDay1, 'tz1' => $x->allDay1 ? 'UTC' : $x->tz1];
+        if ($put === null || $x->kind === 'newrule') {
+            return $base;
+        }
+        $start = ($choices['zone'] ?? null) === 'moment' && $x->zoneGroup ? Clock::db($x->momentAt) : (string) $put['start'];
+        $allDay = (bool) $put['allDay'];
+        return $base + [
+            'start' => $start,
+            'len' => Clock::parse((string) $put['end'])->getTimestamp() - Clock::parse((string) $put['start'])->getTimestamp(),
+            'allDay' => $allDay,
+            'tz' => $allDay ? 'UTC' : (string) ($put['tz'] ?? $edit['shown']['tz'] ?? $x->tz1),
+        ];
+    }
+
+    /**
      * (b) Every content field the edit changed reaches the master and each
      * edited day that stays: the new value, except where the day owns the
      * field and the case kept its own (ownTitle and the rest: keep); the day
@@ -783,20 +865,31 @@ trait Invariants
         // The next dates are what the persisted series shows, in a row, in the order of their occurrences.
         $byKey = [];
         $over = [];
+        $overDn = [];
         foreach ($after['overrides'] as $ov) {
             $over[(string) $ov['recurrence_instance_utc']] = (string) $ov['start_utc'];
+            // The day it shows on, in its own zone (Own Fields: date).
+            $overDn[(string) $ov['recurrence_instance_utc']] = Clock::dayOf((string) $ov['start_utc'], Truth::tzOf($ov));
         }
         $next = array_map(static fn(array $n): string => (string) self::dbKey($n['start']), $plan['next'] ?? []);
+        if (($after['phantom'] ?? null) !== null) {
+            // The plan reads the expander, which yields the phantom UNTIL; it is
+            // taken out here as from the occurrences (README, Known Code Paths).
+            $next = array_values(array_diff($next, [$after['phantom']]));
+        }
         $keys = array_column($after['raw'], 'key');
         if ($next !== [] && $after['through'] !== null && max($next) >= $after['through']) {
             // Next dates past the window the series was read over: read them where they are.
             $span = (int) ((Clock::parse(max($next))->getTimestamp() - Clock::parse(min($next))->getTimestamp()) / 86400);
             $keys = Truth::keysFrom($after['row'], Clock::db(Clock::parse(min($next))->modify('-400 days')), $span + 800);
         }
-        // From the day acted on (where it landed), the occurrences in order, each where it shows.
+        // From the day acted on (where it landed), the events as they show:
+        // an occurrence at its key, an edited day on the day it shows on,
+        // wherever its key is (The Plan, 4: the next events as they will show).
         $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
-        foreach ($keys as $k) {
-            if (!isset($exdates[$k]) && Clock::dayOf($k, $tz1) >= $x->fromDn()) {
+        foreach (array_unique(array_merge($keys, array_keys($over))) as $k) {
+            $dn = $overDn[$k] ?? Clock::dayOf($k, $tz1);
+            if (!isset($exdates[$k]) && $dn >= $x->fromDn()) {
                 $byKey[$k . ' 0'] = $over[$k] ?? $k;
             }
         }

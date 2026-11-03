@@ -255,6 +255,12 @@ final class Readings
             $d = $r0->evalMember($mem, $y, $m);
             return $d === null ? null : Cal::dn($y, $m, $d);
         };
+        // Set positions over a set of days are their own row, one position
+        // or several: every position moves by the landed day's change of
+        // position in the set.
+        if ($r0->members[0]['t'] === 'pos') {
+            return [self::setPosition($r0, $actedDn, $landedDn, $k, $at)];
+        }
         if (count($r0->members) === 1 || $j === null) {
             $old = $r0->members[$j ?? 0];
             if (count($r0->members) > 1) {
@@ -272,22 +278,17 @@ final class Readings
             return $out;
         }
         $first = $r0->members[0];
-        [, , $a0] = Cal::ymd($actedDn);
         [$y1, $m1, $d1] = Cal::ymd($landedDn);
         $whole = $k !== 0;
-        if ($first['t'] === 'pos') {
-            return [self::setPosition($r0, $actedDn, $landedDn, $k, $at)];
-        }
         $old = $r0->members[$j];
         $out = [];
         if ($first['t'] === 'day') {
-            $delta = $d1 - $a0;
+            // The dragged member's new form counts as it counts (by number,
+            // or from the end), and δ is its change in that counting, so
+            // every member + δ gives the dragged one its landed day.
+            $newJ = ['t' => 'day', 'n' => (int) $old['n'] < 0 ? $d1 - Cal::monthLen($y1, $m1) - 1 : $d1];
+            $delta = (int) $newJ['n'] - (int) $old['n'];
             $sameDay = $delta === 0;
-            $newJ = ['t' => 'day', 'n' => $d1];
-            if ((int) $old['n'] < 0) {
-                $newJ = ['t' => 'day', 'n' => $d1 - Cal::monthLen($y1, $m1) - 1];
-                $sameDay = $newJ == $old;
-            }
             $mm = $r0->members;
             $mm[$j] = $newJ;
             $member = self::monthRule($r0, $mm);
@@ -306,7 +307,7 @@ final class Readings
             $pm = [];
             $bad = null;
             foreach ($r0->members as $mem) {
-                $n = (int) $mem['n'] + ((int) $mem['n'] < 0 ? $delta : $delta);
+                $n = (int) $mem['n'] + $delta;
                 if ((int) $mem['n'] > 0 && ($n < 1 || $n > 31)) {
                     $bad ??= $mem;
                 }

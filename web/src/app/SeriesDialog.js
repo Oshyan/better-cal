@@ -65,22 +65,23 @@ function SeriesCard({ sc }) {
   const busy = sc.status === 'loading' || sc.status === 'refreshing' || sc.status === 'committing';
   const canConfirm = following || (!busy && view.canConfirm);
 
-  // Placed by its real size, clear of the dragged block: below it, or
-  // above or beside it when there's no room below (cardPlace). In either
-  // host it is no taller than the viewport (cardFit); a longer plan, such
-  // as every edited day shown, scrolls in its body.
+  // After a drag the card is placed by its drawn size, clear of the
+  // dragged block: below it, or above or beside it when there's no room
+  // below (cardPlace). Measuring needs the card drawn, so this only
+  // measures and keeps the answer, for this viewport, for the render below
+  // to use; it writes no style. Same place, same state: no new render.
+  const [place, setPlace] = useState(null);
   useLayoutEffect(() => {
     const el = rootRef.current;
-    if (!el || phone) return;
-    el.style.maxHeight = cardFit({ w: window.innerWidth, h: window.innerHeight }) + 'px';
-    if (sc.kind === 'editor') return;
+    if (!el || phone || sc.kind === 'editor') return;
     const r = el.getBoundingClientRect();
-    const place = cardPlace({
-      w: r.width, h: r.height, view: { w: window.innerWidth, h: window.innerHeight },
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const p = cardPlace({
+      w: r.width, h: r.height, view: { w: vw, h: vh },
       at: sc.at || NO_DROP, block: sc.at ? pendingBox(sc.occ.instanceId) : null,
     });
-    el.style.left = place.left + 'px';
-    el.style.top = place.top + 'px';
+    const next = { view: vw + 'x' + vh, left: p.left, top: p.top };
+    setPlace((was) => (was && was.view === next.view && was.left === next.left && was.top === next.top ? was : next));
   });
 
   // A window resized while the card is open places and fits it again.
@@ -120,10 +121,25 @@ function SeriesCard({ sc }) {
     return attachScrollRail(el);
   }, []);
 
+  // Its size and place are all in the style rendered here, from the
+  // viewport and the host, so a change of layout renders them again and
+  // nothing written for another layout stays behind. A desktop card, in
+  // either host, is no taller than the viewport (cardFit); a longer plan,
+  // such as every edited day shown, scrolls in its body. After a drag it
+  // goes where it was measured to fit, or by the drop point until then;
+  // over the editor app.css puts it bottom right. The sheet renders no
+  // style: app.css places it and caps its height.
   let style = '';
-  if (!phone && sc.kind !== 'editor') {
-    const at = sc.at || NO_DROP;
-    style = 'left:' + Math.max(8, Math.min(at.x, window.innerWidth - CARD_W - 8)) + 'px;top:' + Math.max(8, at.y + 12) + 'px';
+  if (!phone) {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    style = 'max-height:' + cardFit({ w: vw, h: vh }) + 'px';
+    if (sc.kind !== 'editor') {
+      const at = sc.at || NO_DROP;
+      const fitted = place && place.view === vw + 'x' + vh ? place : null;
+      const left = fitted ? fitted.left : Math.max(8, Math.min(at.x, vw - CARD_W - 8));
+      const top = fitted ? fitted.top : Math.max(8, at.y + 12);
+      style += ';left:' + left + 'px;top:' + top + 'px';
+    }
   }
   const cls = 'bc-sd' + (phone ? ' is-sheet' : sc.kind === 'editor' ? ' is-editor' : '');
   const shownEdited = allEdited ? view.edited : view.edited.slice(0, phone ? 2 : 3);

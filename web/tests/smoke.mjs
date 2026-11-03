@@ -4833,6 +4833,203 @@ console.log('--- the series change dialog, from the examples\' plans (1.5.0) ---
   eq('quick add: no plan in the parse, none to show', parsedSeries({ ...draft, series: undefined }, draft.rrule, range), null);
 }
 
+console.log('--- the series card, open while the window crosses the phone width (1.5.0) ---');
+{
+  // The card drawn by Preact into a small stand-in DOM and kept open while
+  // the window goes from desktop to phone width and back: the same element,
+  // its edited days still opened, its inline sizing and placement those of
+  // the layout it is in now. A desktop height left on the sheet put its
+  // header above the top of the window.
+  const kebab = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+  const fakeStyle = () => {
+    const props = new Map();
+    const own = {
+      get cssText() { return [...props].map(([k, v]) => k + ': ' + v + ';').join(' '); },
+      set cssText(text) {
+        props.clear();
+        for (const part of String(text).split(';')) {
+          const i = part.indexOf(':');
+          if (i > 0) props.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+        }
+      },
+      setProperty(k, v) { if (v === '' || v == null) props.delete(k); else props.set(k, String(v)); },
+      removeProperty(k) { props.delete(k); },
+      getPropertyValue(k) { return props.get(k) || ''; },
+    };
+    return new Proxy(own, {
+      get: (t, k) => (k in t ? t[k] : typeof k === 'string' ? props.get(kebab(k)) || '' : undefined),
+      set: (t, k, v) => { if (k === 'cssText') t.cssText = v; else own.setProperty(kebab(k), v); return true; },
+    });
+  };
+  let fakeDoc = null;
+  class FakeNode {
+    constructor(nodeType, name = '') {
+      this.nodeType = nodeType; this.localName = name; this.namespaceURI = 'http://www.w3.org/1999/xhtml';
+      this.childNodes = []; this.parentNode = null; this.attrs = new Map(); this.listeners = {};
+      if (nodeType === 1) this.style = fakeStyle();
+    }
+    get ownerDocument() { return fakeDoc; }
+    get firstChild() { return this.childNodes[0] || null; }
+    get nextSibling() { const p = this.parentNode; return p ? p.childNodes[p.childNodes.indexOf(this) + 1] || null : null; }
+    get textContent() { return this.nodeType === 3 ? String(this.data) : this.childNodes.map((c) => c.textContent).join(''); }
+    get attributes() { return [...this.attrs].map(([name, value]) => ({ name, value })); }
+    get classes() { return (this.attrs.get('class') || '').split(/\s+/).filter(Boolean); }
+    insertBefore(node, ref) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+      const i = ref ? this.childNodes.indexOf(ref) : -1;
+      if (i < 0) this.childNodes.push(node); else this.childNodes.splice(i, 0, node);
+      node.parentNode = this;
+      return node;
+    }
+    appendChild(node) { return this.insertBefore(node, null); }
+    removeChild(node) { this.childNodes = this.childNodes.filter((c) => c !== node); node.parentNode = null; return node; }
+    remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+    setAttribute(k, v) { this.attrs.set(k, String(v)); }
+    getAttribute(k) { return this.attrs.has(k) ? this.attrs.get(k) : null; }
+    removeAttribute(k) { this.attrs.delete(k); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); }
+    focus() {}
+    contains(n) { for (; n; n = n.parentNode) if (n === this) return true; return false; }
+    matches(sel) { return sel.split(',').map((s) => s.trim()).some((s) => (s[0] === '.' ? this.classes.includes(s.slice(1)) : this.localName === s)); }
+    closest(sel) { for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (n.matches(sel)) return n; return null; }
+    querySelectorAll(sel) {
+      const out = [];
+      const walk = (n) => { for (const c of n.childNodes) if (c.nodeType === 1) { if (c.matches(sel)) out.push(c); walk(c); } };
+      walk(this);
+      return out;
+    }
+    // Drawn 520 wide and as tall as its limit lets it: forty edited days
+    // opened are taller than any window here.
+    getBoundingClientRect() {
+      const h = parseFloat(this.style.maxHeight) || 400;
+      return { left: 0, top: 0, width: 520, height: h, right: 520, bottom: h };
+    }
+    click() { for (const fn of [...(this.listeners.click || [])]) fn.call(this, { type: 'click', target: this, currentTarget: this }); }
+  }
+  fakeDoc = {
+    body: new FakeNode(1, 'body'),
+    createElementNS: (ns, name) => new FakeNode(1, name),
+    createElement: (name) => new FakeNode(1, name),
+    createTextNode: (data) => { const t = new FakeNode(3); t.data = data; return t; },
+    addEventListener() {}, removeEventListener() {},
+    querySelectorAll: (sel) => fakeDoc.body.querySelectorAll(sel),
+  };
+  const { PHONE_QUERY } = await import('../src/lib/breakpoints.js');
+  const win = {
+    innerWidth: 1280, innerHeight: 800, listeners: {}, location: { href: 'http://app.test/' },
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); },
+    matchMedia: (q) => ({ matches: q === PHONE_QUERY && win.innerWidth <= 640, addEventListener() {}, removeEventListener() {} }),
+  };
+  const hadWindow = 'window' in globalThis, savedWindow = globalThis.window;
+  const hadDocument = 'document' in globalThis, savedDocument = globalThis.document;
+  globalThis.window = win;
+  globalThis.document = fakeDoc;
+  // Renders and effects run when the queues they wait in are drained.
+  const { options } = await import('../vendor/preact.module.js');
+  const savedRaf = options.requestAnimationFrame, savedDebounce = options.debounceRendering;
+  options.requestAnimationFrame = (cb) => setImmediate(cb);
+  options.debounceRendering = (cb) => Promise.resolve().then(cb);
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+  const { render, html } = await import('../vendor/index.js');
+  const { SeriesDialog } = await import('../src/app/SeriesDialog.js');
+  const { set: put } = await import('../src/app/store.js');
+  const resize = async (w, h) => {
+    win.innerWidth = w; win.innerHeight = h;
+    for (const fn of [...(win.listeners.resize || [])]) fn({ type: 'resize' });
+    await settle();
+  };
+  const plan = {
+    hash: 'f3-forty', scope: 'all', direct: false,
+    rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after: 'FREQ=WEEKLY;BYDAY=WE', wordsBefore: 'Weekly on Tuesday at 19:00', words: 'Weekly on Wednesday at 19:00' },
+    bound: { kind: 'none', words: 'No end, as before' },
+    days: Array.from({ length: 40 }, (_, i) => ({
+      key: `2027-${String(4 + Math.floor(i / 4)).padStart(2, '0')}-${String(1 + (i % 4) * 7).padStart(2, '0')}T02:00:00Z`,
+      kind: 'edited', outcome: 'moves', words: `'Sample practice ${i + 1}' moves to Wednesday, keeps its title and place`,
+    })),
+  };
+  let opened = 0;
+  const open = async (host) => {
+    opened++;
+    put({ seriesChange: {
+      id: 9000 + opened, kind: host === 'editor' ? 'editor' : 'drag',
+      occ: { instanceId: 'sample-' + opened, allDay: false }, body: { start: '2027-03-10T19:00:00-08:00' },
+      at: host === 'editor' ? null : { x: 640, y: 300 }, before: null, apply: null, onDone: null, fields: [],
+      title: 'Sample practice', tz: 'America/Los_Angeles', google: false, scope: 'all',
+      plan, status: 'ready', choices: {}, changed: false, hidden: false,
+    } });
+    const box = new FakeNode(1, 'div');
+    fakeDoc.body.appendChild(box);
+    render(html`<${SeriesDialog} host=${host} />`, box);
+    await settle();
+    return box;
+  };
+  const card = (box) => box.firstChild;
+  const edited = (box) => box.querySelectorAll('.bc-sd-line').filter((n) => n.textContent.includes('Sample practice')).length;
+  const expand = async (box) => {
+    const more = box.querySelectorAll('.bc-link-btn').find((b) => /^and \d+ more$/.test(b.textContent));
+    if (more) more.click();
+    await settle();
+  };
+  const seen = (box) => {
+    const el = card(box);
+    return { sheet: el.classes.includes('is-sheet'), maxHeight: el.style.maxHeight, left: el.style.left, top: el.style.top, edited: edited(box) };
+  };
+  const close = async (box) => { render(null, box); box.remove(); put({ seriesChange: null }); await settle(); };
+
+  const { cardPlace, cardFit } = await import('../src/lib/seriesplan.js');
+  // Where a desktop card is drawn: over the editor, by app.css alone; after
+  // a drag, where cardPlace puts it at its measured size (its fit, here),
+  // not the drop point's first guess (640, 312).
+  const desktop = (host, w, h) => {
+    if (host === 'editor') return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: '', top: '', edited: 40 };
+    const p = cardPlace({ w: 520, h: cardFit({ w, h }), view: { w, h }, at: { x: 640, y: 300 }, block: null });
+    return { sheet: false, maxHeight: cardFit({ w, h }) + 'px', left: p.left + 'px', top: p.top + 'px', edited: 40 };
+  };
+  const phoneSheet = { sheet: true, maxHeight: '', left: '', top: '', edited: 40 };
+  eq('series card: after a drag it is drawn where it was measured to fit, not at the first guess', [desktop('calendar', 1280, 800).left, desktop('calendar', 1280, 800).top !== '312px'], ['640px', true]);
+
+  for (const host of ['editor', 'calendar']) {
+    // Opened on a desktop, every edited day shown, then narrowed to a phone.
+    await resize(1280, 800);
+    let box = await open(host);
+    const el = card(box);
+    await expand(box);
+    eq(`series card, ${host}: opened at 1280 x 800 with its edited days shown, a desktop card no taller than the window`, seen(box), desktop(host, 1280, 800));
+    await resize(500, 600);
+    eq(`series card, ${host}: narrowed to 500 x 600 while open, the same card is the sheet with no desktop height or place left on it`,
+      [card(box) === el, seen(box), el.style.cssText], [true, phoneSheet, '']);
+    await resize(1280, 800);
+    eq(`series card, ${host}: widened back to 1280 x 800, the same card is a desktop card again, fitted and placed`, [card(box) === el, seen(box)], [true, desktop(host, 1280, 800)]);
+    await resize(1400, 900);
+    eq(`series card, ${host}: a taller desktop window fits and places it again`, seen(box), desktop(host, 1400, 900));
+    await close(box);
+
+    // Opened as the phone sheet, then widened to a desktop and narrowed again.
+    await resize(500, 600);
+    box = await open(host);
+    const sheetEl = card(box);
+    await expand(box);
+    eq(`series card, ${host}: opened at 500 x 600, the sheet with no inline height or place`, [seen(box), sheetEl.style.cssText], [phoneSheet, '']);
+    await resize(1280, 800);
+    eq(`series card, ${host}: widened to 1280 x 800 while open, the same card is a desktop card no taller than the window`, [card(box) === sheetEl, seen(box)], [true, desktop(host, 1280, 800)]);
+    await resize(500, 600);
+    eq(`series card, ${host}: narrowed again, the sheet drops the desktop height and place`, [card(box) === sheetEl, seen(box), sheetEl.style.cssText], [true, phoneSheet, '']);
+    await close(box);
+  }
+  // The renderer owns the card's style: the component writes none itself,
+  // so no layout can leave one behind for another.
+  const { readFileSync: readSource } = await import('node:fs');
+  const dialogSource = readSource(new URL('../src/app/SeriesDialog.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');
+  eq('series card: SeriesDialog.js writes no inline style of its own', /\.style\s*(\.|\[|=)|setProperty|cssText/.test(dialogSource), false);
+
+  if (savedRaf === undefined) delete options.requestAnimationFrame; else options.requestAnimationFrame = savedRaf;
+  if (savedDebounce === undefined) delete options.debounceRendering; else options.debounceRendering = savedDebounce;
+  if (hadWindow) globalThis.window = savedWindow; else delete globalThis.window;
+  if (hadDocument) globalThis.document = savedDocument; else delete globalThis.document;
+}
+
 console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) ---');
 {
   const realFetch = globalThis.fetch;

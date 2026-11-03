@@ -4589,10 +4589,10 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: CHANGE says from and to, the end part of it', v.change, 'From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, its ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 · Wed, Apr 7 …');
   eq('series panel: AFFECTS, all events with no end, then the edited and skipped', v.affects, 'All events, with no end. 2 of them are edited, 1 is skipped.');
-  eq('series panel: a day at its own date first, its keeps line, then its reason and its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
-    "'Choir' was moved on its own to Fri, Mar 26.", '', 'This day has its own date. Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
-  eq('series panel: an ordinary edited day in one sentence, with what it keeps', v.edited[1].line1, "'Rehearsal' on Tue, Apr 13 moves to Wed, Apr 14; keeps its title and place.");
-  eq('series panel: a skip that moves with the series', v.skipped.map((r) => r.line1), ['Tue, Mar 30 was skipped. The skip moves with the series to Wed, Mar 31.']);
+  eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
+    "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
+  eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
+  eq('series panel: a removed day that moves with the series', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier. Nothing will show on Wed, Mar 31 either."]);
   eq('series panel: no count, so the button says all events', [v.action, v.canConfirm, v.refused], ['Move all events', true, null]);
   eq('series panel: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });
   eq('series panel: a pick goes into the commit, and a pick that is no option is the plan\'s', [commitPlan(choir, { movedDays: 'move' }).choices, commitPlan(choir, { movedDays: 'nowhere' }).choices], [{ movedDays: 'move' }, { movedDays: 'keep' }]);
@@ -4670,7 +4670,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: a day the new rule would add is a choice among the skipped days', [pv.skipped.length, pv.skipped[0].choice.lead, pv.skipped[0].choice.reason, pv.skipped[0].choice.options.map((o) => o.label)],
     [1, 'The new rule would add Fri, Jan 8 at the start.', 'Add it, or leave it out?', ['Leave it out', 'Add it']]);
   eq('series panel: a skip the new rule has no day for', planView({ ...pottery, groups: [], days: [{ key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'dropped', shows: '2027-01-13', why: 'noday' }] }, ctx()).skipped.map((r) => r.line1),
-    ['Wed, Jan 13 was skipped; the new rule has no day there, so the skip is no longer needed.']);
+    ["'Choir' on Wed, Jan 13 was removed earlier; the new pattern has no day there."]);
 
   // The other days: after the new end, going back to the series, deleted, a rename's own title.
   const piano = {
@@ -4709,11 +4709,17 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   // Readability: a day with no title of its own carries the series' title.
   const untitled = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-05T03:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'moves', shows: '2026-11-03', to: '2026-11-04', kept: ['location'], takes: ['date'] }], groups: [] },
     ctx({ title: 'Sample practice', refYear: 2026 }));
-  eq('series panel: a day with no title of its own carries the series\' title', untitled.edited[0].line1, "'Sample practice' on Tue, Nov 3 moves to Wed, Nov 4; keeps its place.");
+  eq('series panel: a day with no title of its own carries the series\' title', untitled.edited[0].line1, "'Sample practice', with its own location, on Tue, Nov 3 moves to Wed, Nov 4.");
+  const plain = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-05T03:00:00Z', kind: 'edited', title: 'Sample practice 1', outcome: 'moves', shows: '2026-11-03', to: '2026-11-04', kept: ['title'], takes: ['date'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026 }));
+  eq('series panel: a day with only its own title says nothing more of itself', plain.edited[0].line1, "'Sample practice 1' on Tue, Nov 3 moves to Wed, Nov 4.");
+  const renamed = planView({ ...choir, days: [{ key: '2026-11-04T03:00:00Z', newKey: '2026-11-04T03:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'stays', shows: '2026-11-03', to: '2026-11-03', kept: ['location'], takes: ['title'] }], groups: [] },
+    ctx({ title: 'Sample practice', refYear: 2026, kind: 'editor', edits: ['title'], newTitle: 'Sample rehearsal' }));
+  eq('series panel: only a field that changes is said', renamed.edited[0].line1, "'Sample practice', with its own location, on Tue, Nov 3 stays where it is and is renamed to 'Sample rehearsal'.");
   const several = planView({ ...choir, groups: [{ id: 'movedDays', selected: 'keep', count: 2, options: [{ id: 'keep' }, { id: 'move' }] }] }, ctx());
   const severalChoice = several.edited.find((r) => r.choice && r.choice.id === 'movedDays').choice;
   eq('series panel: several days with their own dates give their reason first', [severalChoice.lead, severalChoice.reason, severalChoice.options.map((o) => o.label)],
-    ['', 'These days have their own dates. Keep them there, or move them with the rest?', ['Keep their dates', 'Move them with the rest']]);
+    ['', 'These days were moved earlier. Keep them there, or move them with the rest?', ['Keep their dates', 'Move them with the rest']]);
   const labels = (g, r = gym.rule) => planView({ ...gym, rule: r, groups: [g] }, ctx()).readings[0].options.map((o) => o.label);
   eq('series panel: a new rule\'s readings', labels({ id: 'reading', selected: 'map', options: [{ id: 'map', rrule: 'FREQ=WEEKLY;BYDAY=TH' }, { id: 'keep', rrule: 'FREQ=WEEKLY;BYDAY=TH' }] }),
     ['Move them along with the pattern', 'Keep them where they are, as events of their own']);
@@ -4731,32 +4737,32 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   // Forty edited days: two rows of their own, then one row for the 38 that go with their events.
   const forty = planView(sampleEditedDays(), ctx({ title: 'Sample practice' }));
   eq('edited days grouped: the forty are two rows of their own and one group row', forty.edited.map((d) => [d.line1, d.line2, d.range || null]), [
-    ["'Sample practice 6' was moved on its own to Fri, May 14.", 'It keeps its own title.', null],
+    ["'Sample practice 6' was moved earlier to Fri, May 14.", '', null],
     ["'Sample practice 21' on Tue, Aug 24 becomes an event of its own on Tue, Aug 24.", '', null],
-    ['38 edited days move to Wednesday; each keeps its title and place.', undefined, 'Apr 6 to Jan 4, 2028'],
+    ['38 days that were changed earlier move to Wednesday.', undefined, 'Apr 6 to Jan 4, 2028'],
   ]);
   eq('edited days grouped: the group\'s button, closed and open', [forty.edited[2].toggle(false), forty.edited[2].toggle(true)], ['Show 38 days', 'Hide']);
   eq('edited days grouped: opened, its days in the ordinary form, by date', forty.edited[2].days.slice(0, 2).map((d) => d.line1),
-    ["'Sample practice 1' on Tue, Apr 6 moves to Wed, Apr 7; keeps its title and place.", "'Sample practice 2' on Tue, Apr 13 moves to Wed, Apr 14; keeps its title and place."]);
+    ["'Sample practice 1', with its own title and location, on Tue, Apr 6 moves to Wed, Apr 7.", "'Sample practice 2', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14."]);
   const named = [...forty.edited.filter((d) => !d.days), ...forty.edited.flatMap((d) => d.days || [])];
   eq('edited days grouped: opened, all forty are named once', [named.length, new Set(named.map((d) => d.key)).size], [40, 40]);
   const mixed = planView(sampleEditedDays((i) => (i < 20 ? ['title', 'location'] : i < 39 ? ['title'] : ['location'])), ctx());
-  eq('edited days grouped: other fields kept make other groups, and a group of one is its day\'s row', mixed.edited.map((d) => [d.line1, d.days ? d.days.length : 0]), [
-    ["'Sample practice 6' was moved on its own to Fri, May 14.", 0],
+  eq('edited days grouped: by outcome alone, so days keeping other fields (a location of their own) join the group', mixed.edited.map((d) => [d.line1, d.days ? d.days.length : 0]), [
+    ["'Sample practice 6' was moved earlier to Fri, May 14.", 0],
     ["'Sample practice 21' on Tue, Aug 24 becomes an event of its own on Tue, Aug 24.", 0],
-    ['19 edited days move to Wednesday; each keeps its title and place.', 19],
-    ['18 edited days move to Wednesday; each keeps its title.', 18],
-    ["'Choir' on Tue, Jan 4, 2028 moves to Wed, Jan 5; keeps its place.", 0],
+    ['38 days that were changed earlier move to Wednesday.', 38],
   ]);
+  eq('edited days grouped: the day with only its own location is among the group\'s rows', mixed.edited[2].days.map((d) => d.line1).slice(-1), ["'Choir', with its own location, on Tue, Jan 4, 2028 moves to Wed, Jan 5."]);
   const takesSplit = sampleEditedDays();
   takesSplit.days = takesSplit.days.map((d, i) => (d.outcome === 'moves' && i >= 30 ? { ...d, takes: ['date', 'reminders'] } : d));
-  eq('edited days grouped: days taking other fields are another group, named in its row', planView(takesSplit, ctx()).edited.slice(2).map((d) => d.line1), [
-    '28 edited days move to Wednesday; each keeps its title and place.',
-    '10 edited days move to Wednesday; each keeps its title and place and takes the new reminders.',
+  const split = planView(takesSplit, ctx());
+  eq('edited days grouped: days taking other fields stay in the group; each row says what it takes', [split.edited.slice(2).map((d) => d.line1), split.edited[2].days.slice(-1).map((d) => d.line1)], [
+    ['38 days that were changed earlier move to Wednesday.'],
+    ["'Sample practice 40', with its own title and location, on Tue, Jan 4, 2028 moves to Wed, Jan 5 and takes the new reminders."],
   ]);
   const shifted = planView({ hash: 't2', days: ['2027-03-03', '2027-03-11', '2027-03-19'].map((k, n) => ({ key: k + 'T00:00:00Z', newKey: null, kind: 'edited', outcome: 'moves',
     shows: k, to: fixtureKey(61 + n * 8 + 2), kept: [], takes: ['date'] })) }, ctx());
-  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => [d.line1, d.range]), [['3 edited days move 2 days later.', 'Mar 3 to Mar 19']]);
+  eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => [d.line1, d.range]), [['3 days that were changed earlier move 2 days later.', 'Mar 3 to Mar 19']]);
   const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'movedDays' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', date: d.shows }, { id: 'move', date: d.to }] })) }, ctx());
   eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
   // The groups come from the plan's data, never its words.
@@ -4924,7 +4930,7 @@ console.log('--- the series panel, docked, open while the window crosses the pho
     eq(`series panel, ${host}: the group row's lines and its button`, [
       topRows(box)[2].childNodes[0].textContent, topRows(box)[2].childNodes[1].textContent,
       toggle(box).localName, toggle(box).textContent, toggle(box).getAttribute('aria-expanded'),
-    ], ['38 edited days move to Wednesday; each keeps its title and place.', 'Apr 6, 2027 to Jan 4, 2028 · Show 38 days', 'button', 'Show 38 days', 'false']);
+    ], ['38 days that were changed earlier move to Wednesday.', 'Apr 6, 2027 to Jan 4, 2028 · Show 38 days', 'button', 'Show 38 days', 'false']);
     eq(`series panel, ${host}: a day's choice is its radios, each on a line of its own`,
       topRows(box)[0].querySelectorAll('.bc-sd-opt').map((n) => n.textContent), ['Keep it on Fri, May 14, 2027', 'Move it to Sat, May 15, 2027']);
     // The panel writes every sentence itself: none of the server's words for the sample plan shows.

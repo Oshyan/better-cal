@@ -161,7 +161,7 @@ function PlanBlocks({ view, openGroups, onToggle, working }) {
     ${view.edited.length > 0 && html`<${Block} label="Edited days">
       ${view.edited.map((r) => html`<${Row} key=${r.key} row=${r} open=${!!r.days && openGroups.has(r.key)} onToggle=${() => onToggle(r.key)} />`)}
     <//>`}
-    ${view.skipped.length > 0 && html`<${Block} label="Skipped days">${view.skipped.map((r) => html`<${Row} key=${r.key} row=${r} />`)}<//>`}
+    ${view.skipped.length > 0 && html`<${Block} label="Removed days">${view.skipped.map((r) => html`<${Row} key=${r.key} row=${r} />`)}<//>`}
     ${view.notes.length > 0 && html`<${Block} label="Note">${view.notes.map((n) => html`<div key=${n} class="bc-sd-r2">${n}</div>`)}<//>`}
   </div>`;
 }

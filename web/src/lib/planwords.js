@@ -162,7 +162,7 @@ export const seriesLine = (name, calendar) => quoted(name || 'Untitled event') +
 // ---- days --------------------------------------------------------------------
 
 const FIELD_NOUNS = {
-  date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'place',
+  date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location',
   description: 'notes', url: 'link', reminders: 'reminders', status: 'status', attendance: 'answer',
   tags: 'tags', people: 'people', icon: 'icon',
 };
@@ -175,11 +175,25 @@ export function dayName(d, series = '') {
   return quoted(own ? d.title : series || d.title || 'Untitled event');
 }
 
-/** What a day keeps and takes: "keeps its title and place; takes the new reminders". */
-export function keepsWords(d) {
-  const kept = contentOf(d.kept);
+/** A field's name as the editor labels it: "title", "location". */
+export const fieldNoun = (f) => FIELD_NOUNS[f] || f;
+
+/**
+ * What changes on a day besides its date: "is renamed to 'Chorus'", "takes
+ * the new reminders". What it keeps is never said; only what changes.
+ */
+export function changesWords(d, opts = {}) {
   const takes = contentOf(d.takes);
-  return [kept.length ? 'keeps its ' + fieldList(kept) : '', takes.length ? 'takes the new ' + fieldList(takes) : ''].filter(Boolean).join('; ');
+  const renamed = takes.includes('title') && opts.newTitle ? 'is renamed to ' + quoted(opts.newTitle) : '';
+  const rest = takes.filter((f) => !(renamed && f === 'title'));
+  return [renamed, rest.length ? 'takes the new ' + fieldList(rest) : ''].filter(Boolean).join(' and ');
+}
+
+// What a day has of its own, said after its name only when it is more
+// than its title: ", with its own title and location,".
+function ownAside(d) {
+  const own = contentOf(d.kept);
+  return own.some((f) => f !== 'title') ? ', with its own ' + fieldList(own) + ',' : '';
 }
 
 // Where a day goes: its new date, or its new time on the same day.
@@ -190,25 +204,25 @@ function goes(d, opts) {
 }
 
 /**
- * An edited day's row: line one its sentence, line two (when it has one)
- * what it keeps or takes, by its outcome.
+ * An edited day's row, by its outcome: what was done to it earlier, what
+ * happens to it now, and what changes on it (never what it keeps).
  */
 export function dayLines(d, opts = {}) {
-  const name = dayName(d, opts.series);
+  const name = dayName(d, opts.series) + ownAside(d);
   const on = d.shows ? ' on ' + fmtDay(d.shows, opts) : '';
-  const keeps = keepsWords(d);
+  const changes = changesWords(d, opts);
   if (d.kind === 'acted') {
     return d.outcome === 'separate'
       ? { line1: 'The day you moved becomes an event of its own on ' + fmtDay(d.to, opts) + '.', line2: '' }
       : { line1: 'The day you moved stays where you put it, on ' + fmtDay(d.to, opts) + '.', line2: '' };
   }
   if ((d.kept || []).includes('date')) {
-    return { line1: name + ' was moved on its own to ' + fmtDay(d.shows, opts) + '.', line2: keeps ? 'It ' + keeps.replace(/^keeps its /, 'keeps its own ') + '.' : '' };
+    return { line1: dayName(d, opts.series) + ' was moved earlier to ' + fmtDay(d.shows, opts) + (changes ? ', and ' + changes : '') + '.', line2: '' };
   }
   switch (d.outcome) {
     case 'moves':
     case 'stays':
-      return { line1: name + on + ' ' + goes(d, opts) + (keeps ? '; ' + keeps : '') + '.', line2: '' };
+      return { line1: name + on + ' ' + goes(d, opts) + (changes ? ' and ' + changes : '') + '.', line2: '' };
     case 'separate':
       return { line1: name + on + ' becomes an event of its own on ' + fmtDay(d.to || d.shows, { ...opts, prev: d.shows }) + '.', line2: '' };
     case 'deleted':
@@ -221,10 +235,10 @@ export function dayLines(d, opts = {}) {
 }
 
 /**
- * A group of days that go the same way: "9 edited days move to Wednesday;
- * each keeps its title." then "Nov 3 to Jan 19, 2027".
+ * A group of days with the same outcome: "10 days that were changed
+ * earlier move to Wednesday." then "Nov 3 to Jan 19, 2027".
  */
-export function groupLines({ count, outcome, weekday = null, shift = null, clock = null, kept = [], takes = [], first, last }, opts = {}) {
+export function groupLines({ count, outcome, weekday = null, shift = null, clock = null, first, last }, opts = {}) {
   let does = 'stay where they are';
   if (outcome === 'moves') {
     if (weekday != null) does = 'move to ' + WEEKDAY_NAMES[weekday];
@@ -232,21 +246,18 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
     else if (clock) does = 'move to ' + clock;
     else does = 'move with their events';
   }
-  const k = contentOf(kept), t = contentOf(takes);
-  const each = [k.length ? 'keeps its ' + fieldList(k) : '', t.length ? 'takes the new ' + fieldList(t) : ''].filter(Boolean).join(' and ');
   const range = first === last ? fmtDay(first, { weekday: false, ...opts }) : fmtDay(first, { weekday: false, ...opts }) + ' to ' + fmtDay(last, { weekday: false, ...opts, prev: first });
-  return { line1: count + ' edited days ' + does + (each ? '; each ' + each : '') + '.', range, toggle: (open) => (open ? 'Hide' : 'Show ' + count + ' days') };
+  return { line1: count + ' days that were changed earlier ' + does + '.', range, toggle: (open) => (open ? 'Hide' : 'Show ' + count + ' days') };
 }
 
-/** A skipped day's row. */
+/** A removed day's row (a skipped occurrence). */
 export function skipLines(d, opts = {}) {
-  const was = fmtDay(d.shows, opts) + ' was skipped';
-  if (d.outcome === 'moves') return { line1: was + '. The skip moves with the series to ' + fmtDay(d.to, { ...opts, prev: d.shows }) + '.', line2: '' };
-  if (d.outcome === 'stays') return { line1: was + ', and stays skipped.', line2: '' };
-  if (d.outcome === 'dropped') {
-    return { line1: was + (d.why === 'outside' ? '; it falls outside the new series' : '; the new rule has no day there') + ', so the skip is no longer needed.', line2: '' };
-  }
-  return { line1: fmtDay(d.to, opts) + ' is skipped.', line2: '' };
+  const name = quoted(opts.series || 'Untitled event');
+  const was = name + ' on ' + fmtDay(d.shows, opts) + ' was removed earlier';
+  if (d.outcome === 'moves') return { line1: was + '. Nothing will show on ' + fmtDay(d.to, { ...opts, prev: d.shows }) + ' either.', line2: '' };
+  if (d.outcome === 'stays') return { line1: was + ', and stays removed.', line2: '' };
+  if (d.outcome === 'dropped') return { line1: was + (d.why === 'outside' ? '; it falls outside the new series.' : '; the new pattern has no day there.'), line2: '' };
+  return { line1: 'Nothing will show on ' + fmtDay(d.to, opts) + '.', line2: '' };
 }
 
 // ---- choices -----------------------------------------------------------------
@@ -267,7 +278,7 @@ export function choiceWords(g, ctx = {}) {
   if (g.id === 'movedDays') {
     return {
       lead: '',
-      reason: n > 1 ? 'These days have their own dates. Keep them there, or move them with the rest?' : 'This day has its own date. Keep it there, or move it with the rest?',
+      reason: n > 1 ? 'These days were moved earlier. Keep them there, or move them with the rest?' : 'Keep it there, or move it with the rest?',
       options: label((x) => (x.id === 'keep'
         ? (x.date ? 'Keep it on ' + fmtDay(x.date, opts) : 'Keep their dates')
         : (x.date ? 'Move it to ' + fmtDay(x.date, opts) : 'Move them with the rest'))),

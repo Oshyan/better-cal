@@ -99,7 +99,7 @@ const dayNumber = (key) => (key ? Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 
 export function planView(plan, ctx = {}) {
   const verb = W.verbOf(ctx.kind, ctx.edits || []);
   const title = W.titleWords(verb, ctx.scope);
-  const opts = { refYear: ctx.refYear, tz: ctx.tz || calendarZone(), series: ctx.title || '' };
+  const opts = { refYear: ctx.refYear, tz: ctx.tz || calendarZone(), series: ctx.title || '', newTitle: ctx.newTitle || '' };
   const view = {
     heading: title + (ctx.title ? ' · ' + ctx.title : ''),
     title,
@@ -167,25 +167,26 @@ export function planView(plan, ctx = {}) {
   // Edited days. A day that does something of its own (stays at its own
   // date, becomes an event of its own, is deleted, goes back to the
   // series) or carries a choice has its own row, first. Days that go with
-  // their events the same way are one row, by the plan's data: outcome,
-  // kept, takes. The day acted on is in Coming up where it lands.
+  // their events the same way are one row, by their outcome alone (what
+  // they keep or take never splits it). The day acted on is in Coming up.
   const rows = [];
   const groups = new Map();
   const list = (x) => (Array.isArray(x) ? x : []);
   for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
     const gs = onDay.get(d.key) || [];
-    const kept = list(d.kept), takes = list(d.takes);
+    const kept = list(d.kept);
     let row = { key: d.key, ...W.dayLines(d, opts), choice: null };
     // A day's own choice sits on its row: its subject, then the reason and radios.
     const own = gs.find((g) => /^own[A-Z]/.test(g.id));
     const outside = gs.find((g) => g.id === 'outside');
     if (outside) row = { key: d.key, line1: W.dayName(d, opts.series) + ' on ' + W.fmtDay(d.shows, opts) + ' falls after the new end.', line2: '', choice: choice(outside) };
-    else if (own) row = { key: d.key, line1: W.dayName({ ...d, kept: ['title'] }) + ' on ' + W.fmtDay(d.shows, opts) + ' has its own ' + (own.field === 'title' ? 'title, ' + "'" + d.title + "'" : W.keepsWords({ kept: [own.field] }).replace(/^keeps its /, '')) + '.', line2: '', choice: choice(own, { oldTitle: d.title }) };
+    else if (own) row = { key: d.key, line1: W.dayName({ ...d, kept: ['title'] }) + ' on ' + W.fmtDay(d.shows, opts) + ' has its own ' + (own.field === 'title' ? 'title, ' + "'" + d.title + "'" : W.fieldNoun(own.field)) + '.', line2: '', choice: choice(own, { oldTitle: d.title }) };
     else if (gs.length) row.choice = choice(gs[0]);
     const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date');
     if (!goesWith) { rows.push(row); continue; }
-    const id = JSON.stringify([d.outcome, kept, takes]);
-    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, kept, takes, days: [] });
+    // Grouped by outcome alone: what a day keeps or takes never splits a group.
+    const id = d.outcome;
+    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, days: [] });
     groups.get(id).days.push({ d, row });
   }
   const groupRows = [...groups.values()].map((grp) => {
@@ -200,8 +201,8 @@ export function planView(plan, ctx = {}) {
       count: sorted.length, outcome: grp.outcome,
       weekday: moved && weekdays.size === 1 ? weekday : null,
       shift: moved && shifts.size === 1 ? shift : null,
-      clock: grp.outcome === 'moves' && !moved && clocks.size === 1 && grp.takes.includes('time') ? clock : null,
-      kept: grp.kept, takes: grp.takes, first: sorted[0].d.shows, last: sorted[sorted.length - 1].d.shows,
+      clock: grp.outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((x) => (x.d.takes || []).includes('time')) ? clock : null,
+      first: sorted[0].d.shows, last: sorted[sorted.length - 1].d.shows,
     }, opts);
     return { key: 'group:' + sorted[0].d.key, line1: words.line1, range: words.range, toggle: words.toggle, choice: null, days: sorted.map((x) => x.row) };
   });

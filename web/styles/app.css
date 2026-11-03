@@ -1139,7 +1139,7 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-plan.is-stale { opacity: 0.55; }
 /* Two columns: every block's label in one left column, its rows beside it;
    blocks apart by a hairline, rows by 6px. */
-.bc-sd-block { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0 10px; padding: 8px 0; }
+.bc-sd-block { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 0 10px; padding: 8px 0; }
 .bc-sd-block + .bc-sd-block { border-top: 1px solid var(--border); }
 .bc-sd-lab {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
@@ -1177,7 +1177,7 @@ body.bc-drag-copy .bc-drag-ghost::after {
   }
   .bc-sd-head { padding: 12px 14px 10px; }
   .bc-sd-body { padding: 0 14px; }
-  .bc-sd-block { grid-template-columns: 92px minmax(0, 1fr); }
+  .bc-sd-block { grid-template-columns: 104px minmax(0, 1fr); }
   .bc-sd-small { min-height: 36px; }
   .bc-sd-opt { padding: 4px 0; }
   .bc-sd-actions { padding: 8px 14px max(8px, env(safe-area-inset-bottom)); }

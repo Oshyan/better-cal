@@ -367,7 +367,7 @@ final class Calc
             $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
             try {
                 $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
-                $entry['it'] = new \Sabre\VObject\Recur\RRuleIterator($rrule, $local);
+                $entry['it'] = new RuleIterator($rrule, $local);
             } catch (\Throwable) {
                 $entry['done'] = true;
                 $entry['ok'] = false;

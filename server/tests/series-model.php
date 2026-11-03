@@ -817,7 +817,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($wkday, [], smDrag($wkday, '2027-03-08 02:30', '2027-03-15 02:30'));
     $m1 = $stored($wkday, $p['writes']);
     [$want, $got] = $agrees($p, $m1);
-    checkEq('R2: one day dragged a whole week stays daily as written, and agrees with its expansion', ['FREQ=DAILY;BYDAY=MO', $want], [$m1['rrule'], $got]);
+    // Its first day after the gap, 15 Mar, shows at 03:30 in the expansion
+    // (sabre's daily clock carried past 14 Mar); the dragged day was put at
+    // 02:30 there, so it owns its time and the plan creates its row.
+    checkEq('R2: one day dragged a whole week stays daily as written, and agrees with its expansion after the dragged day', ['FREQ=DAILY;BYDAY=MO', array_slice($want, 1)], [$m1['rrule'], array_slice($got, 1)]);
+    checkEq('R2: the dragged day keeps 02:30 where it was put, an edited day of its own time', [[smAt('2027-03-15 02:30')], '["time"]', '2027-03-15T02:30:00-07:00'],
+        [array_column($p['writes']['createEdited'], 'start_utc'), $p['writes']['createEdited'][0]['override_fields'] ?? null, $p['plan']['next'][0]['start'] ?? null]);
 
     // R2's differential: the model's keys for DAILY with BYDAY against the
     // expander the app persists with, across northern, southern and
@@ -1052,6 +1057,79 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('F11: typed on Sat 13 Mar at 02:30, every Sunday: stored from 7 Mar, skipped, COUNT one higher; shown 14 Mar at 03:30, then 02:30; the line says 02:30', [
         smAt('2027-03-07 02:30'), 'FREQ=WEEKLY;BYDAY=SU;COUNT=5', [smAt('2027-03-07 02:30')], ['2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00'], 'Weekly on Sunday at 02:30', '4 events, ends 4 Apr 2027',
     ], [$aligned['start_utc'], $aligned['rrule'], json_decode((string) $aligned['exdates_json'], true), array_slice($shown($aligned), 0, 2), $words['rule']['words'], $words['bound']['words']]);
+
+    // ---- the harness's root causes on the rebuilt harness, each by its structural rule ----
+
+    // Cause 1: the expander steps MINUTELY (sabre's iterator yielded the start again).
+    $twelve = smSeries('Sample watch', 'FREQ=MINUTELY;INTERVAL=720;COUNT=3', '2027-01-30 09:00', 90, false, [], 'Europe/Berlin');
+    $exp = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($twelve, Time::fromDb($twelve['start_utc'])->modify('-1 day'), Time::fromDb($twelve['start_utc'])->modify('+5 days')));
+    checkEq('C1: every 720 minutes is every 12 hours, in the window and in the model', [[smAt('2027-01-30 09:00', 'Europe/Berlin'), smAt('2027-01-30 21:00', 'Europe/Berlin'), smAt('2027-01-31 09:00', 'Europe/Berlin')], 3],
+        [$exp, count(array_unique(array_column(smPlan($twelve, [], ['columns' => ['title' => 'Sample shift']])['plan']['next'], 'start')))]);
+
+    // Cause 2: a gain at an edge is the image of an old pattern day outside the series, however far the member moved.
+    $mw = smSeries('Sample relay', 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4', '2027-01-04 18:00');
+    $p = smPlan($mw, [], smDrag($mw, '2027-01-11 18:00', '2027-02-01 18:00'), ['reading' => 'member']);
+    $skipDays = array_map(static fn(string $k): string => Time::fromDb($k)->setTimezone(Time::zone('America/Los_Angeles'))->format('Y-m-d'), $p['writes']['exdates']);
+    checkEq('C2: Mondays moved three weeks: the new Mondays and Wednesdays with no session behind them are left out, a week with no image included', [['without', 'add'], ['2027-01-11', '2027-01-18', '2027-01-20', '2027-01-27']],
+        [smOptions($p, 'edge'), $skipDays]);
+
+    // Cause 3: made all-day, a rule drops the clock parts it named.
+    $nine = smSeries('Sample standup', 'FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0', '2027-01-04 09:00');
+    $p = smPlan($nine, [], ['acted' => $nine['start_utc'], 'landed' => ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('C3: a BYHOUR rule made all-day is written without BYHOUR and BYMINUTE', 'FREQ=WEEKLY;BYDAY=MO', $p['writes']['master']['rrule'] ?? null);
+
+    // Cause 4: on Google, a new hour written into the rule changes its text, so it isn't offered.
+    $late = smSeries('Sample call', 'FREQ=WEEKLY;BYDAY=WE;BYHOUR=23;BYMINUTE=30', '2027-03-31 23:30', 60, false, [], 'Europe/Berlin');
+    $p = smPlan($late, [], smDrag($late, '2027-04-07 23:30', '2027-04-07 23:00'), [], ['google' => true]);
+    checkEq('C4: a Google series that names its hour refuses a time change', [true, 'google'], [$p['refused'], $p['plan']['refusals'][0]['code'] ?? null]);
+
+    // Cause 5: on Google no exception has an outcome, the day acted on included.
+    $daily = smSeries('Sample walk', 'FREQ=DAILY', '2027-01-30 21:15', 30, false, [], 'Asia/Kolkata');
+    $row = smEdited($daily, 2, '2027-02-09 21:15', ['title' => 'Sample walk, edited'], null, ['title']);
+    $p = smPlan($daily, [$row], smDrag($daily, '2027-02-09 21:15', '2027-02-19 21:15', ['rrule' => 'FREQ=DAILY;COUNT=2']), [], ['google' => true]);
+    checkEq('C5: a Google plan whose count ends before the day acted on claims nothing for it', [[], []],
+        [array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited')), $p['writes']['detach']]);
+
+    // Cause 6: a list sent back in another order is the same rule, so a day-set rule still refuses the drag.
+    $dayset = smSeries('Sample market', 'FREQ=WEEKLY;BYMONTH=1,2;BYDAY=MO,FR', '2027-01-04 09:00');
+    $p = smPlan($dayset, [], smDrag($dayset, '2027-01-08 09:00', '2027-01-12 09:00', ['rrule' => 'FREQ=WEEKLY;BYMONTH=2,1;BYDAY=FR,MO']));
+    checkEq('C6: the stored day-set rule sent back reordered is no new rule, and its drag is refused', [true, 'dayset'], [$p['refused'], $p['plan']['refusals'][0]['code'] ?? null]);
+    checkEq('C6: an nth list reordered compares equal', Rule::parse('FREQ=MONTHLY;BYDAY=1MO,3MO', 0)->comparable(), Rule::parse('FREQ=MONTHLY;BYDAY=3MO,1MO', 0)->comparable());
+
+    // Cause 7: the stored end sent back as a date with an all-day toggle is the same end.
+    $timed = smSeries('Sample lesson', 'FREQ=MONTHLY;UNTIL=20270415T170000Z', '2027-01-15 10:00');
+    $p = smPlan($timed, [], ['acted' => $timed['start_utc'], 'rrule' => 'FREQ=MONTHLY;UNTIL=20270415', 'landed' => ['start_utc' => '2027-01-15 00:00:00', 'end_utc' => '2027-01-16 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('C7: made all-day with its end sent as a date: no bound group, the end the same last day', [null, 'FREQ=MONTHLY;UNTIL=20270415'],
+        [smGroup($p, 'bound'), $p['writes']['master']['rrule'] ?? null]);
+
+    // Cause 8: under a new pattern the day acted on is an ordinary exception: off the rule, it is outside.
+    $tue = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00');
+    $moved = smEdited($tue, 2, '2027-01-19 19:00', ['title' => 'Sample choir, moved'], '2027-01-20 19:00', ['title', 'date']);
+    $p = smPlan($tue, [$moved], ['acted' => smAt('2027-01-19 19:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=FR', 'landed' => ['start_utc' => smAt('2027-01-20 19:00'), 'end_utc' => smAt('2027-01-20 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']], ['reading' => 'keep']);
+    checkEq('C8: the edited day acted on, its key off the new rule, gets the outside choice and is kept as its own event', [['keep', 'delete'], [2]],
+        [smOptions($p, 'outside'), array_keys($p['writes']['detach'])]);
+
+    // Cause 9: an occurrence is what the stored series' own expansion yields, a DAILY;BYDAY day after a gap included.
+    $after = BetterCal\Domain\Series\Calc::fromRow(smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO,WE,FR', '2027-03-01 02:30'));
+    checkEq('C9: the stored series yields 17 Mar at its carried 03:30', [smAt('2027-03-17 03:30')], $after->keysOn($after->dnOf(smAt('2027-03-17 03:30'))));
+
+    // Cause 10: a start in a repeated hour is expanded from the instant it is stored at.
+    $nz = smSeries('Sample swim', 'FREQ=WEEKLY;BYDAY=SU', '2027-04-04 02:30', 60, false, [], 'Pacific/Auckland');
+    $nz['start_utc'] = '2027-04-03 13:30:00';
+    $nz['end_utc'] = '2027-04-03 14:30:00';
+    $first = BetterCal\Domain\Recurrence::sabreExpand($nz, Time::fromDb('2027-04-01 00:00:00'), Time::fromDb('2027-04-20 00:00:00'))[0]['start'] ?? null;
+    checkEq('C10: 02:30 on 4 Apr in Auckland, stored as its first instant, is that instant in the window too', '2027-04-03 13:30:00', $first === null ? null : Time::toDb($first));
+
+    // Cause 11: next lists from where the request put the day when that is earlier than where it lands.
+    $three = smSeries('Sample class', 'FREQ=DAILY;COUNT=3', '2027-05-31', 1440, true);
+    $own = smEdited($three, 2, '2027-06-01', ['title' => 'Sample class, early'], '2027-05-29', ['title', 'date']);
+    $p = smPlan($three, [$own], ['acted' => '2027-06-01 00:00:00', 'landed' => ['start_utc' => '2027-05-27 00:00:00', 'end_utc' => '2027-05-28 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('C11: dragged from its own date two days earlier: next lists its day, then the series from the first', ['2027-05-27', '2027-05-29', '2027-05-31'], smNext($p));
+
+    // Cause 13: a 30th dragged by whole months stays the 30th, one reading.
+    $thirty = smSeries('Sample rent', 'FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30 09:00');
+    $p = smPlan($thirty, [], smDrag($thirty, '2027-04-30 09:00', '2027-05-30 09:00'));
+    checkEq('C13: every 30th moved a month is offered no clamp and stays as written', [[], 'FREQ=MONTHLY;BYMONTHDAY=30'], [smOptions($p, 'reading'), $p['plan']['rule']['after']]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

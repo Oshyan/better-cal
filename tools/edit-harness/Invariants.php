@@ -313,7 +313,9 @@ trait Invariants
                 $this->fail('c-readings', "the plan refuses a reading the design allows: $id", ['offered' => $offered]);
             }
         }
-        $chosenId = $choices['reading'] ?? null;
+        // A reading picked from an earlier preview names nothing when the final
+        // plan has no reading group (another zone option left one reading).
+        $chosenId = isset($groups['reading']) ? ($choices['reading'] ?? null) : null;
         if ($chosenId === null) {
             // No group: one reading, or readings with one plan (merged).
             $chosenId = Expect::preselected($readings);
@@ -539,7 +541,15 @@ trait Invariants
                 }
             }
             if ($r['inside']) {
+                // A day beyond the window the series was read over is looked for where it is (README, The Oracle).
                 $key = $byDay[$r['img']] ?? null;
+                if ($key === null && $r['img'] !== null && $after['through'] !== null) {
+                    foreach (Truth::keysFrom($after['row'], Days::date((int) $r['img'] - 1) . ' 00:00:00', 3) as $k) {
+                        if (Clock::dayOf($k, $tz1) === $r['img']) {
+                            $key = $k;
+                        }
+                    }
+                }
                 $this->check($inv . '-edited', $ov1 !== null && $key !== null && (string) $ov1['recurrence_instance_utc'] === $key, 'an edited day is keyed on its occurrence\'s image', ['row' => $id, 'was' => $ov0['recurrence_instance_utc'], 'image' => $r['img'] === null ? null : Days::date($r['img']), 'stored' => $ov1['recurrence_instance_utc'] ?? null]);
                 if ($ov1 !== null && !$r['acted']) {
                     $this->checkPlaced($x, $before, $ov0, $ov1, $key ?? (string) $ov1['recurrence_instance_utc'], $r['img'], $move);
@@ -561,7 +571,25 @@ trait Invariants
                 $this->check($inv . '-outside', $ov1 === null && $own === null, 'an edited day outside the new series is deleted', ['row' => $id, 'key' => $ov0['recurrence_instance_utc']]);
             }
         }
-        $this->check($inv . '-edited', count($after['overrides']) === count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])), 'the series has exactly the edited days the mapping keeps', ['expected' => count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])), 'stored' => count($after['overrides'])]);
+        // The day acted on with no row is an exception like any other: where its
+        // image's key isn't where it was put (a skipped hour, a carried clock),
+        // it owns its time and the plan creates its row (Mapping, Defined: its row).
+        $createdActed = 0;
+        $put = $edit['sent'];
+        if ($put !== null && $edit['fromRow'] === null && $x->kind !== 'newrule' && $out['actedInside'] && !$x->allDay1) {
+            $putAt = ($choices['zone'] ?? null) === 'moment' && $x->zoneGroup ? Clock::db($x->momentAt) : (string) $put['start'];
+            $k = $byDay[$x->landedDn] ?? null;
+            if ($k === null && $after['through'] !== null) {
+                foreach (Truth::keysFrom($after['row'], Days::date($x->landedDn - 1) . ' 00:00:00', 3) as $kk) {
+                    if (Clock::dayOf($kk, $tz1) === $x->landedDn) {
+                        $k = $kk;
+                    }
+                }
+            }
+            $createdActed = $k !== null && $k !== $putAt ? 1 : 0;
+        }
+        $keptRows = count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])) + $createdActed;
+        $this->check($inv . '-edited', count($after['overrides']) === $keptRows, 'the series has exactly the edited days the mapping keeps', ['expected' => $keptRows, 'stored' => count($after['overrides'])]);
         // (d) The day acted on shows where it was put.
         $sent = $edit['sent'];
         if ($sent !== null && $x->kind !== 'newrule' && $edit['boundSent'] === null) {

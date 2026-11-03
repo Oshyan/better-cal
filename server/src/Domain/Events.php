@@ -3158,25 +3158,17 @@ final class Events
             throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
         }
         Recurrence::validateRrule((string) $master['rrule']);
-        try {
-            $matches = $this->recurrence->expand(
-                $master,
-                [],
-                $instance,
-                $instance->add(new \DateInterval('PT1S')),
-                new ExpansionBudget(1, 4, 1.0),
-            );
-        } catch (WorkBudgetExceeded $e) {
-            throw new HttpError(
-                'recurrence_validation_limited',
-                'This occurrence could not be verified within the recurrence safety budget. Try a nearer occurrence.',
-                422
-            );
-        }
-        foreach ($matches as $match) {
-            if ((string) $match['instanceUtc'] === $key) {
-                return $key;
-            }
+        // An occurrence is a key the series' own expansion yields, from its
+        // stored start with its own clock (series-model.md, Correspondence
+        // by Member: one source for days and instants), the same reading the
+        // model maps keys with. A skipped day is no occurrence to act on.
+        // An all-day occurrence is its date, whatever zone its row names.
+        $calc = \BetterCal\Domain\Series\Calc::fromRow($master);
+        $allDay = (int) ($master['all_day'] ?? 0) === 1;
+        $dn = $allDay ? \BetterCal\Domain\Series\Cal::dnOf($instance->setTimezone(Time::zone((string) $master['tzid']))) : $calc->dnOf($key);
+        $on = $calc->expandable() ? $calc->keysOn($dn) : [];
+        if (($allDay ? $on !== [] : in_array($key, $on, true)) && !in_array($key, $this->decodeExdates($master), true)) {
+            return $key;
         }
         throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
     }

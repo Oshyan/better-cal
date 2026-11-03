@@ -209,7 +209,10 @@ final class Driver
     {
         foreach ($exceptions as $i => $ex) {
             $occ = $st['raw'][$ex['at']] ?? null;
-            if ($occ === null) {
+            // A raw occurrence already skipped is no event to act on: the stored
+            // day of a start in a skipped hour is one (series-model.md, Zones,
+            // DST and All-Day Days: it holds the clock and is never shown).
+            if ($occ === null || in_array($occ['key'], $st['exdates'], true)) {
                 continue;
             }
             $inst = $this->instanceArg($st, $occ['key']);

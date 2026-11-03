@@ -593,6 +593,25 @@ return static function (Db $db): void {
         checkEq('feed: its length put back to the series\' there: inherited, its time still its own', ['time'], $feedOwn('feed-length@example.test'));
     });
 
+    scenario('a day re-keyed onto the key of an edited day the plan deletes: the leaving row lets go of its key first', function () use ($d, $u, $db, $rows, $home): void {
+        $daily = (int) $d->events->create($u, eventAt($home, 'Sample walk', '2027-01-01', ['rrule' => 'FREQ=DAILY']))['eventId'];
+        // 4 Jan on a date of its own (6 Jan); 11 Jan renamed.
+        $d->events->patch($u, $daily, ['scope' => 'this', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'start' => '2027-01-06T18:00:00+00:00', 'end' => '2027-01-06T19:00:00+00:00']);
+        $d->events->patch($u, $daily, ['scope' => 'this', 'instanceStart' => '2027-01-11T18:00:00+00:00', 'title' => 'Sample walk, long']);
+        $before = $rows($daily);
+        // Every day a week later, nine of them: 4 Jan's occurrence goes to 11 Jan, the key 11 Jan's row holds until it is deleted.
+        planned($d->events, $u, $daily, ['scope' => 'all', 'instanceStart' => '2027-01-01T18:00:00+00:00', 'start' => '2027-01-08T18:00:00+00:00', 'end' => '2027-01-08T19:00:00+00:00', 'rrule' => 'FREQ=DAILY;COUNT=9'],
+            ['outside' => 'delete', 'movedDays' => 'move']);
+        checkEq('committed: nine days from 8 Jan, 4 Jan\'s row on the 11 Jan key, the renamed day past the end deleted', [
+            'FREQ=DAILY;COUNT=9', '2027-01-08 18:00:00', [['2027-01-11 18:00:00', '2027-01-13 18:00:00', 'Sample walk']],
+        ], [
+            $db->scalar('SELECT rrule FROM events WHERE id = ?', [$daily]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$daily]),
+            array_map(static fn(array $r): array => array_values($r), $db->all('SELECT recurrence_instance_utc, start_utc, title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$daily])),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('undone: every row of the series as before', $before, $rows($daily));
+    });
+
     scenario('a stale plan: tags, people and columns of the edited days all count', function () use ($d, $u, $db, $weekly, $answer): void {
         $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
         $peopleOf = static fn(int $id): array => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ? ORDER BY p.name', [$id]), 'name');

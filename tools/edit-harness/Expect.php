@@ -198,6 +198,20 @@ final class Expect
      */
     public function readings(): array
     {
+        // A reading that would leave no events (a new rule, or an end sent
+        // with the edit, before its start) is refused, and the rest of the
+        // plan stands (series-model.md, Bounds: nothing left; The Plan: a
+        // refused reading is a disabled row). Read under the preselected
+        // options, as the plan probes it.
+        $saved = $this->unoracled;
+        $out = array_map(fn(array $r): array => $r['enabled'] && !empty($this->outcome($r, [])['empty']) ? self::disabled($r, 'empty') : $r, $this->designReadings());
+        $this->unoracled = $saved;
+        return $out;
+    }
+
+    /** The readings by the drag table and the new-rule rows, before what each leaves is looked at. */
+    private function designReadings(): array
+    {
         if ($this->kind === 'newrule') {
             return $this->newRuleReadings();
         }
@@ -528,7 +542,7 @@ final class Expect
                 $x->landedDn = $to;
                 $x->delta = $to - $dn;
                 $x->kind = 'drag';
-                foreach ($x->readings() as $r) {
+                foreach ($x->designReadings() as $r) {
                     if (!$r['enabled'] || $r['T']['type'] === 'same') {
                         continue;
                     }

@@ -2255,7 +2255,9 @@ final class Model
             }
         }
         // Every key the expander gives from the first day listed (several on
-        // a day for a rule several times a day), up to one more than the
+        // a day for a rule several times a day; read from the series' start,
+        // as a rule's days follow from it, and yielded from that day on, so
+        // no cap counted from the start cuts it short), up to one more than the
         // list shows: the plain occurrences are in the order they show, so
         // with every row above beside them, the first five of these hold the
         // first five of all.
@@ -2426,14 +2428,23 @@ final class Model
         return Cal::date($this->old->dnOf($oldKey));
     }
 
-    /** A day of the series $calc names (old or new), a day number in that series' own zone: a date. */
+    /**
+     * A day of the series $calc names (old or new): a date. A labelling
+     * writer: the day number is already in that series' own zone, so $calc
+     * converts nothing; it names at each call site whose day this is, so a
+     * day of one series is never written as another's.
+     */
     private static function patternOut(Calc $calc, int $dn): string
     {
         unset($calc);
         return Cal::date($dn);
     }
 
-    /** A rule's UNTIL as the rule writes it: basic format, read in that rule's zone. */
+    /**
+     * A rule's UNTIL as the rule writes it: basic format, read in that rule's
+     * zone. A labelling writer: the text is already in its form, so it passes
+     * through unchanged and only marks the role.
+     */
     private static function boundOut(string $until): string
     {
         return $until;

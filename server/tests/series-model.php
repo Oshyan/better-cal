@@ -1911,6 +1911,27 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Notes: two clock changes in one year, two notes', [['overlap', '2027-04-04'], ['gap', '2027-09-26']],
         array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes']));
 
+    // A rule outside the drag table keeps its days through a zone or kind
+    // change, its edited days among them: each is about its day in the old
+    // zone and stays an edited day of the series on that day, as a drag
+    // table rule's does, never left on its own.
+    $friday13 = smSeries('Sample night', 'FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13', '2027-08-13 18:00');
+    $own = smEdited($friday13, 2, '2028-10-13 18:00', ['location' => 'Sample Hall'], null, ['location']);
+    $toNz = ['acted' => smAt('2027-08-13 18:00'), 'landed' => ['start_utc' => smAt('2027-08-13 18:00', 'Pacific/Auckland'), 'end_utc' => smAt('2027-08-13 19:00', 'Pacific/Auckland'), 'all_day' => 0, 'tzid' => 'Pacific/Auckland']];
+    $p = smPlan($friday13, [$own], $toNz);
+    $d = $edited($p);
+    checkEq('Outside the drag table: moved to Auckland at its clock, the Friday 13th edited day stays in the series on Fri 13 Oct there', [
+        'moves', '2028-10-13', [], smAt('2028-10-13 18:00', 'Pacific/Auckland'),
+    ], [$d['outcome'] ?? null, $d['day'] ?? null, $p['writes']['detach'], $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null]);
+    $kolkata = smSeries('Sample night', 'FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13', '2027-08-13 00:30', 60, false, [], 'Asia/Kolkata');
+    $ownK = smEdited($kolkata, 2, '2028-10-13 00:30', ['location' => 'Sample Hall'], null, ['location']);
+    $allDayK = ['acted' => smAt('2027-08-13 00:30', 'Asia/Kolkata'), 'landed' => ['start_utc' => '2027-08-13 00:00:00', 'end_utc' => '2027-08-14 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']];
+    $p = smPlan($kolkata, [$ownK], $allDayK);
+    $d = $edited($p);
+    checkEq('Outside the drag table: made all-day, a Kolkata edited day at 00:30 on Fri 13 Oct stays in the series on that date, not the UTC evening before', [
+        '2028-10-13', [], '2028-10-13 00:00:00',
+    ], [$d['day'] ?? null, $p['writes']['detach'], $p['writes']['overrides'][2]['start_utc'] ?? null]);
+
     // A refused change's plan gives the series' start by its kind: a date
     // for an all-day series, an instant in its zone for a timed one.
     $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);

@@ -228,7 +228,7 @@ trait PlanChecks
         'placement' => ['date', 'at', 'tz', 'kind'],
         'acted' => ['key', 'title', 'day', 'ownDate', 'before', 'shows', 'kept'],
         'losses[]' => ['date', 'words'],
-        'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'words'],
+        'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'fold', 'daylight', 'words'],
         'refusals[]' => ['group', 'option', 'code', 'words'],
         'fields[]' => ['field', 'words', 'was', 'now', 'mixed'],
     ];

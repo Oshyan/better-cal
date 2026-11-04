@@ -116,6 +116,14 @@ return [
         'cases' => ['note-a-clock-in-the-autumn-overlap', 'note-a-clock-in-the-spring-gap', 'note-a-half-hour-repeated-clock-on-lord-howe'],
     ],
     [
+        // At the plan's output, so it holds whatever the note code becomes: the overlap note's at put on the first of the
+        // wall clock's instants that day, its fold and daylight left as the model wrote them.
+        'id' => 'note-at-first-instant', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'an overlap note pinned to the first instant of the repeated clock, whichever the series is at',
+        'patch' => [["            'notes' => \$this->notes,\n", "            'notes' => array_map(static fn(array \$n): array => (\$n['kind'] === 'overlap' ? ['at' => self::inZoneOut(Calc::instantsAt(Cal::dn(...array_map('intval', explode('-', \$n['date']))), array_map('intval', explode(':', substr(\$n['at'], 11, 8))), \$n['tz'])[0], \$n['tz'])] : []) + \$n, \$this->notes),\n"]],
+        'cases' => ['note-a-clock-at-the-second-of-its-two-instants'],
+    ],
+    [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],
         'what' => 'an unrelated column (the icon) changed on the series',
         'patch' => [["                'master' => \$masterCols,", "                'master' => \$masterCols + ['icon' => 'sample'],"]],

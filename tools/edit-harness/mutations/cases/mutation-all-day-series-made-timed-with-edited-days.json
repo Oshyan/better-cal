@@ -1,0 +1,74 @@
+{
+    "n": 9,
+    "seed": 23,
+    "series": {
+        "family": "daily_byday",
+        "rrule": "FREQ=DAILY;BYDAY=TH,SU",
+        "import": false,
+        "bound": "until",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2026-11-30",
+        "length": 1
+    },
+    "exceptions": [
+        {
+            "at": 5,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 3,
+            "mins": -30,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 0,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 3,
+            "mins": -90,
+            "zone": "America/New_York",
+            "len": -15
+        },
+        {
+            "at": 8,
+            "kind": "skip"
+        }
+    ],
+    "acted": 9,
+    "from": "last",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": true,
+        "toZone": "Pacific/Auckland",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=SU",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "choices": {
+        "edit": {
+            "ownTitle": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

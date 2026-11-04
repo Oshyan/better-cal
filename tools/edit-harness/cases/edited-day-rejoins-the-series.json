@@ -1,0 +1,82 @@
+{
+    "n": 508,
+    "seed": 19,
+    "series": {
+        "family": "monthly_setpos_set",
+        "rrule": "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,3",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2026-10-12 09:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "people",
+                "date"
+            ],
+            "days": 2,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": -15
+        },
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "location"
+            ],
+            "days": 2,
+            "mins": -90,
+            "zone": "America/New_York",
+            "len": 60
+        },
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": 1,
+            "mins": -90,
+            "zone": "America/New_York",
+            "len": -15
+        }
+    ],
+    "acted": 2,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {
+            "location": "Sample Annex"
+        },
+        "rule": "same",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "choices": {
+        "edit": {
+            "ownLocation": "give"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

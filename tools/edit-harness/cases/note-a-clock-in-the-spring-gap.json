@@ -1,0 +1,68 @@
+{
+    "n": 166,
+    "seed": 19,
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,FR,SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 12,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-07-14 02:30",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 2,
+            "mins": 180,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 10,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": 1,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 60
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 7,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "choices": {
+        "edit": {
+            "reading": "member"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

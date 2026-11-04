@@ -1,0 +1,87 @@
+{
+    "n": 4,
+    "seed": 23,
+    "series": {
+        "family": "yearly_months",
+        "rrule": "FREQ=YEARLY;BYMONTH=1,7;BYDAY=-1SA",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 21:15",
+        "length": 30
+    },
+    "exceptions": [
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "people",
+                "time"
+            ],
+            "days": -2,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        },
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "title",
+                "time",
+                "zone"
+            ],
+            "days": -1,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "status",
+                "date"
+            ],
+            "days": 3,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": -15
+        },
+        {
+            "at": 4,
+            "kind": "skip"
+        }
+    ],
+    "acted": 3,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 3,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "url": "https://example.test/series"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=4",
+        "bound": null,
+        "via": "row"
+    },
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

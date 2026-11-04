@@ -14,19 +14,19 @@ return [
         'id' => 'placement-zone', 'file' => $model, 'checks' => ['c-shape', 'c-placement'],
         'what' => 'the wrong zone at one placement site: an edited day\'s after written in UTC',
         'patch' => [["return \$this->placementOut(\$after, \$this->displayZone()) + (\$all", "return \$this->placementOut(\$after, 'UTC') + (\$all"]],
-        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-timed-zone-change-with-edited-days'],
+        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-drag-with-edited-days-in-other-zones'],
     ],
     [
         'id' => 'to-from-pattern-day', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'a to from a pattern day (its new key\'s UTC date) beside an at from an instant',
         'patch' => [["\$out['to'] = \$out['after']['date'];", "\$out['to'] = substr((string) (\$after['recurrence_instance_utc'] ?? \$after['start_utc']), 0, 10);"]],
-        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-timed-zone-change-with-edited-days'],
+        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-drag-with-edited-days-in-other-zones'],
     ],
     [
         'id' => 'day-from-before', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'day taken from the before placement instead of the old key\'s day',
         'patch' => [["\$out = ['day' => \$this->identityOut((string) \$row['recurrence_instance_utc'])]", "\$out = ['day' => \$this->placementOut(\$row, \$this->displayZone())['date']]"]],
-        'cases' => ['next-edited-days-past-the-raw-end', 'mutation-timed-zone-change-with-edited-days'],
+        'cases' => ['next-edited-days-past-the-raw-end', 'mutation-drag-with-edited-days-in-other-zones'],
     ],
     [
         'id' => 'earlier-min-across-series', 'file' => $model, 'checks' => ['c-placement'],
@@ -81,7 +81,7 @@ return [
         'id' => 'outcome-from-dates', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'a kind change\'s outcome taken from dates',
         'patch' => [["'title' => (string) \$row['title'], 'outcome' => \$moved ? 'moves' : 'stays'] + \$sides", "'title' => (string) \$row['title'], 'outcome' => \$sides['before']['date'] !== (\$sides['after']['date'] ?? null) ? 'moves' : 'stays'] + \$sides"]],
-        'cases' => ['mutation-series-made-all-day-with-edited-days'],
+        'cases' => ['mutation-all-day-series-made-timed-with-edited-days'],
     ],
     [
         'id' => 'next-sorted-by-utc-midnight', 'file' => $model, 'checks' => ['c-next'],

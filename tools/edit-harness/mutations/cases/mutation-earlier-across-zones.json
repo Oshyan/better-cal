@@ -1,0 +1,46 @@
+{
+    "n": 9501,
+    "seed": 0,
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-05 23:30",
+        "import": false,
+        "bound": "none",
+        "boundAt": 3,
+        "untilForm": "dayend",
+        "length": 60
+    },
+    "exceptions": [],
+    "acted": 4,
+    "vector": {
+        "date": 1,
+        "clock": -82800,
+        "zone": "Pacific/Auckland",
+        "fields": [],
+        "scope": "all",
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 32400,
+        "trip": false,
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null,
+        "via": "master"
+    },
+    "choices": {
+        "edit": {
+            "zone": "clock",
+            "reading": "member"
+        }
+    },
+    "from": "first",
+    "stack": null,
+    "preselected": {
+        "edit": false
+    }
+}

@@ -372,6 +372,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Acceptance 6: renamed for all events, applied and direct', [true, ['title' => 'Holiday supper']], [$h['plan']['direct'], $h['writes']['master']]);
     $h = smPlan($holiday, [], ['rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3']);
     checkEq('Acceptance 6: ends after 3 refused with the reason', [true, Model::REASONS['unreadable']], [$h['refused'], $h['plan']['refusals'][0]['words'] ?? null]);
+    // Its bound is read from its text all the same: a COUNT or an UNTIL in
+    // a rule the expander can't read says it ends, so nothing more comes.
+    $h = smPlan($holiday, [], ['columns' => ['title' => 'Holiday supper']]);
+    checkEq('Acceptance 6: with no end, its bound is none and more comes after the empty list', ['none', [], true], [$h['plan']['bound']['kind'], $h['plan']['next'], $h['plan']['nextMore']]);
+    foreach (['COUNT=6' => ['count', 'count', 6], 'UNTIL=20300101T000000Z' => ['until', 'until', '20300101T000000Z']] as $part => [$kind, $field, $value]) {
+        $bounded = smSeries('Holiday dinner', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;' . $part, '2027-02-10 18:00');
+        $h = smPlan($bounded, [], ['columns' => ['title' => 'Holiday supper']]);
+        checkEq("Acceptance 6: with $part, its bound is $kind before and after, and nothing more comes", [$kind, $value, $kind, $value, [], false, true, $bounded['rrule']],
+            [$h['plan']['bound']['kind'], $h['plan']['bound'][$field] ?? null, $h['plan']['bound']['from']['kind'], $h['plan']['bound']['from'][$field] ?? null,
+                $h['plan']['next'], $h['plan']['nextMore'], $h['plan']['direct'], $h['writes']['master']['rrule'] ?? $bounded['rrule']]);
+    }
 
     // Acceptance 8 to 13, in a scope of their own.
     (static function (): void {
@@ -1636,8 +1647,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last']]);
     $first = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-01-01', 60, true);
     checkEq('Phantom UNTIL: an UNTIL on a 1st the rule gives is its last occurrence', ['2027-04-01', '2027-05-01', '2027-06-01'], array_slice(smShows($first, ['master' => []], '2027-06-30'), -3));
-    // The rule is that a monthly BYDAY or BYMONTHDAY rule yields only its
-    // months' own days; every day sabre lands on otherwise is one of them,
+    // A numbered weekday is counted in its month: an UNTIL on a 1st that is
+    // a Tuesday is no second Tuesday, so it is skipped too.
+    $secondTue = smSeries('Sample practice', 'FREQ=MONTHLY;BYDAY=2TU;UNTIL=20270601', '2027-01-12', 60, true);
+    checkEq('Phantom UNTIL: a second Tuesday ending on Tue 1 Jun shows no 1 Jun', ['2027-04-13', '2027-05-11'], array_slice(smShows($secondTue, ['master' => []], '2027-06-30'), -2));
+    $yearly = smSeries('Sample practice', 'FREQ=YEARLY;BYMONTH=6;BYDAY=-1FR;UNTIL=20300101', '2027-06-25', 60, true);
+    checkEq('Expander: the last Friday of June each year, counted in June', ['2027-06-25', '2028-06-30', '2029-06-29'], smShows($yearly, ['master' => []], '2030-12-31'));
+    // The rule is that a rule yields only its own days; every day sabre
+    // lands on otherwise is one of them,
     // a second Sunday at 02:30 Los Angeles shifted out of March's skipped
     // hour included, so with no UNTIL nothing is cut short.
     $take = static function (Sabre\VObject\Recur\RRuleIterator $it): array {
@@ -1844,6 +1861,86 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: started from the evening day of an all-day series: about Tue 12 Jan, shown at 20:00 in its own zone', [
         '2027-01-12', ['date' => '2027-01-12', 'at' => '2027-01-12T20:00:00-08:00', 'tz' => $la], '2027-01-12',
     ], [$p['plan']['acted']['day'] ?? null, $p['plan']['acted']['before'] ?? null, $p['plan']['acted']['shows'] ?? null]);
+
+    // Outcomes: a day's instant and kind compared, never its end. A longer
+    // series leaves every edited day where it starts, so each stays.
+    $weekly = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 20:00');
+    $named = smEdited($weekly, 2, '2027-01-12 20:00', ['title' => 'Sample practice, own'], null, ['title']);
+    $longer = smDrag($weekly, '2027-01-05 20:00', '2027-01-05 20:00');
+    $longer['landed']['end_utc'] = smAt('2027-01-05 21:30');
+    $p = smPlan($weekly, [$named], $longer);
+    $d = $edited($p);
+    checkEq('Outcomes: an edited day whose length alone changes stays, and says so', [
+        'stays', true, smAt('2027-01-12 21:30'),
+    ], [$d['outcome'] ?? null, str_starts_with((string) ($d['outcomeWords'] ?? ''), 'stays'), $p['writes']['overrides'][2]['end_utc'] ?? null]);
+    $allDayWeekly = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=MO', '2027-01-04', 0, true);
+    $namedAllDay = smEdited($allDayWeekly, 2, '2027-01-11', ['title' => 'Sample practice, own'], null, ['title']);
+    $twoDays = smDrag($allDayWeekly, '2027-01-04', '2027-01-04');
+    $twoDays['landed']['end_utc'] = '2027-01-06 00:00:00';
+    $d = $edited(smPlan($allDayWeekly, [$namedAllDay], $twoDays));
+    checkEq('Outcomes: an all-day edited day made two days long stays on its date', ['stays', ['date' => '2027-01-11']], [$d['outcome'] ?? null, $d['after'] ?? null]);
+
+    // A reading's dates run from where the day acted on landed, however far
+    // that is from the series' start: the readings are walked on past it.
+    $thuFri = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TH,FR', '2027-01-07 20:00');
+    $p = smPlan($thuFri, [], smDrag($thuFri, '2027-04-02 20:00', '2027-04-03 20:00'));
+    $datesOf = static function (array $p, string $id): array {
+        $o = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === $id))[0] ?? [];
+        return array_map(static fn(array $e): string => substr($e['start'], 0, 10), $o['dates'] ?? []);
+    };
+    checkEq('Readings: a Friday twelve weeks on dragged to Saturday, the member reading\'s dates start there and run three and more', [
+        ['2027-04-03', '2027-04-08', '2027-04-10'], ['2027-04-03', '2027-04-09', '2027-04-10'],
+    ], [$datesOf($p, 'member'), $datesOf($p, 'pattern')]);
+    // A reading's earlier day is found by instant: moved to Berlin, the
+    // member reading's first Tuesday is Tue 5 Jan 03:00 there, Mon 4 Jan
+    // 18:00 in Los Angeles, before the old Tue 5 Jan 18:00, though both are
+    // numbered 5 Jan in their own zones; days read as days in two zones are
+    // never compared.
+    $class = smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=TU,TH', '2027-01-05 18:00');
+    $toFriBerlin = ['acted' => smAt('2027-01-14 18:00'), 'landed' => ['start_utc' => smAt('2027-01-15 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-15 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']];
+    $p = smPlan($class, [], $toFriBerlin, ['zone' => 'moment']);
+    $member = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === 'member'))[0] ?? [];
+    checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
+        [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
+
+    // A refused change's plan gives the series' start by its kind: a date
+    // for an all-day series, an instant in its zone for a timed one.
+    $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);
+    $p = smPlan($fair, [], ['rrule' => 'RSCALE=GREGORIAN;FREQ=WEEKLY;COUNT=3']);
+    $p2 = smPlan($holiday, [], ['rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3']);
+    checkEq('Refused: an all-day series\' start is its date, a timed one\'s in its zone', [true, '2027-01-05', true, '2027-02-10T18:00:00-08:00'],
+        [$p['refused'], $p['plan']['start'], $p2['refused'], $p2['plan']['start']]);
+
+    // A clock that happens twice is found from the zone's transitions,
+    // whatever the repeated span: Lord Howe falls back half an hour, so
+    // 01:45 on Sun 4 Apr 2027 happens twice, the first at +11:00.
+    $lh = 'Australia/Lord_Howe';
+    $sunday = smSeries('Sample walk', 'FREQ=WEEKLY;BYDAY=SU', '2027-03-21 01:45', 60, false, [], $lh);
+    $p = smPlan($sunday, [], ['columns' => ['title' => 'Sample walk, renamed']]);
+    $overlapNote = array_values(array_filter($p['plan']['notes'], static fn(array $n): bool => $n['kind'] === 'overlap'))[0] ?? [];
+    checkEq('Notes: 01:45 on Lord Howe\'s half-hour fall-back is noted as happening twice, at its first instant', ['2027-04-04', '2027-04-04T01:45:00+11:00'],
+        [$overlapNote['date'] ?? null, $overlapNote['at'] ?? null]);
+    checkEq('Calc: a wall clock\'s instants from the zone\'s transitions: two in Lord Howe\'s repeated half hour, none in its gap, one otherwise', [2, 0, 1, 2],
+        [count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 4, 4), [1, 45, 0], $lh)),count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 10, 3), [2, 15, 0], $lh)),
+            count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 4, 4), [2, 15, 0], $lh)), count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 11, 7), [1, 30, 0], 'America/Los_Angeles'))]);
+    checkEq('Calc: a repeated half hour\'s wall clock is its first instant', '2027-04-03 14:45:00', Time::toDb(\BetterCal\Domain\Series\Calc::at(Cal::dn(2027, 4, 4), [1, 45, 0], $lh)));
+
+    // A new pattern keeps the keys on its days: a series twice a day made
+    // once a day at its later time keeps the later day's edited row on its
+    // own key; the earlier time, which the new rule no longer has, is the
+    // one that goes. Where the new day has no key the old one had, a key
+    // keeps its place among the day's keys, and the time it had is gone.
+    $twice = smSeries('Sample practice', 'FREQ=DAILY;BYHOUR=9,15;BYMINUTE=0', '2027-03-01 09:00');
+    $later = smEdited($twice, 2, '2027-03-02 15:00', ['location' => 'Sample Hall'], null, ['location']);
+    $earlier = smEdited($twice, 3, '2027-03-03 09:00', ['location' => 'Sample Room'], null, ['location']);
+    $at15 = ['acted' => smAt('2027-03-01 09:00'), 'rrule' => 'FREQ=DAILY', 'landed' => ['start_utc' => smAt('2027-03-01 15:00'), 'end_utc' => smAt('2027-03-01 16:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($twice, [$later, $earlier], $at15);
+    $byKey = array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), null, 'key');
+    $k15 = str_replace(' ', 'T', smAt('2027-03-02 15:00')) . 'Z';
+    $k09 = str_replace(' ', 'T', smAt('2027-03-03 09:00')) . 'Z';
+    checkEq('Keys: made once a day at 15:00, the 15:00 edited day stays on its key and the 09:00 one leaves the series', [
+        [$k15, 'stays'], 'separate',
+    ], [[$byKey[$k15]['newKey'] ?? 'missing', $byKey[$k15]['outcome'] ?? null], $byKey[$k09]['outcome'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

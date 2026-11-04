@@ -541,40 +541,43 @@ final class Model
             $selected = (int) array_key_first($seqs);
         }
         // The series as it is today, before the day acted on.
-        $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [])[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
+        $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [], $this->actedDn0)[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
         $out = [];
         foreach ($seqs as $oi => $s) {
             $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
-            $mine = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
-            $theirs = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
+            $onward = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
+            $refOnward = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
             $i = 0;
-            while ($i < count($mine) && $i < count($theirs) && $mine[$i] === $theirs[$i]) {
+            while ($i < count($onward) && $i < count($refOnward) && $onward[$i] === $refOnward[$i]) {
                 $i++;
             }
-            $differs = $i < count($mine) && ($i < count($theirs) || count($theirs) > 0);
-            $dates = array_slice($mine, 0, $differs ? max(3, $i + 1) : 3);
+            $differs = $i < count($onward) && ($i < count($refOnward) || count($refOnward) > 0);
+            $dates = array_slice($onward, 0, $differs ? max(3, $i + 1) : 3);
             $then = [];
             if ($differs && $i >= 4) {
-                $dates = array_slice($mine, 0, 3);
-                $then = array_slice($mine, $i - 1, 2);
+                $dates = array_slice($onward, 0, 3);
+                $then = array_slice($onward, $i - 1, 2);
             }
             // Against the series as it is today, for every reading: where the
             // two first differ, the one that comes first, a day of its own
-            // series (each day number is in its own series' zone, so the two
-            // are ordered by their instants, never compared as days).
+            // series. Each day number is in its own series' zone, so two days
+            // are the same only when they are the same instant of the same
+            // kind, and are ordered by their instants; only the day found is
+            // named, in its own series.
             $earlier = ['earlier' => null, 'earlierSeries' => null];
             $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
             $n = max(count($before), count($oldBefore));
             for ($j = 0; $j < $n; $j++) {
                 $mine = $before[$j] ?? null;
                 $was = $oldBefore[$j] ?? null;
-                if ($mine !== $was) {
-                    $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
-                    $earlier = $new
-                        ? ['earlier' => self::patternOut($s['calc'], $mine), 'earlierSeries' => 'new']
-                        : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
-                    break;
+                if ($mine !== null && $was !== null && $s['calc']->instant($mine) == $this->old->instant($was) && $s['calc']->allDay === $this->old->allDay) {
+                    continue;
                 }
+                $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
+                $earlier = $new
+                    ? ['earlier' => self::patternOut($s['calc'], $mine), 'earlierSeries' => 'new']
+                    : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
+                break;
             }
             $out[$oi] = [
                 'dates' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $dates),
@@ -975,7 +978,9 @@ final class Model
                 'rule' => ['before' => (string) $this->master['rrule'], 'after' => (string) $this->master['rrule'], 'wordsBefore' => $before, 'words' => $before,
                     'from' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0),
                     'to' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0)],
-                'start' => self::inZoneOut(Time::fromDb((string) $this->master['start_utc']), $this->tz0),
+                // The series' start as it stays, by its kind: a date for an
+                // all-day series, else in its zone.
+                'start' => self::inZoneOut(Time::fromDb((string) $this->master['start_utc']), $this->allDay0 ? null : $this->tz0),
                 'bound' => ['kind' => 'none', 'words' => '', 'events' => null, 'skipped' => 0, 'last' => null, 'separate' => 0],
                 'next' => [], 'nextMore' => false, 'counts' => ['events' => null, 'edited' => 0, 'skipped' => 0],
                 'groups' => [], 'days' => [], 'losses' => [], 'gains' => [],
@@ -1442,7 +1447,12 @@ final class Model
         // key on its image day, at its place among that day's keys (a rule
         // several times a day has several), as the expander gives it; null
         // when the new series has none there. In the same expansion on the
-        // same day, that is the key itself.
+        // same day, that is the key itself. A key the new series has on its
+        // image day is its own new key (a new pattern keeps the keys on its
+        // days), and a key at its place that another key of the old day
+        // keeps that way is that key's, so no two old keys share one: a
+        // rule several times a day replaced by one with fewer keys a day
+        // keeps every key the new one shares.
         $newKey = function (string $key, ?int $img) use ($calc1): ?string {
             if ($img === null) {
                 return null;
@@ -1455,8 +1465,13 @@ final class Model
             if ($on === []) {
                 return null;
             }
-            $at = array_search($key, $this->old->keysOn($odn), true);
-            return $on[$at === false ? 0 : $at] ?? null;
+            if (in_array($key, $on, true)) {
+                return $key;
+            }
+            $oldOn = $this->old->keysOn($odn);
+            $at = array_search($key, $oldOn, true);
+            $placed = $on[$at === false ? 0 : $at] ?? null;
+            return $placed !== null && in_array($placed, $oldOn, true) ? null : $placed;
         };
         // A generated skip past the new end needs nothing (Bounds, gains at the edges).
         $genSkips = array_values(array_filter($genSkips, $inside));
@@ -1767,8 +1782,10 @@ final class Model
             if ($cols !== []) {
                 $overrideWrites[$id] = $cols;
             }
-            // Its outcome is its instant and kind compared, never its dates.
-            $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'] || $allDay !== ((int) $row['all_day'] === 1);
+            // Its outcome is its instant and kind compared, never its dates
+            // and never its end: a day that keeps its start and kind and
+            // only grows or shrinks stays where it is.
+            $moved = Time::toDb($start) !== (string) $row['start_utc'] || $allDay !== ((int) $row['all_day'] === 1);
             // The days it showed on before and after, and where it shows after
             // as an instant, each a placement by the zone rule: a date and a
             // clock of the same instant in one zone.
@@ -1853,7 +1870,7 @@ final class Model
         // Words and the rest of the plan.
         $wordsBefore = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         $words = $this->ruleDelta === 'none' ? 'Does not repeat' : Words::rule($r1p, $this->allDay1 ? null : $clock1);
-        $walk = $this->readable ? $this->walk($calc1, $genSkips) : [null, []];
+        $walk = $this->readable ? $this->walk($calc1, $genSkips, $landedDn) : [null, []];
         $boundKey = [$r1->count, $r1->until];
         // Skipped days count toward COUNT (RFC 5545 3.8.5.3): the line counts
         // the series' scheduled occurrences (a skip this change generates is
@@ -2097,8 +2114,16 @@ final class Model
         return array_values(array_intersect($own, self::PLACEMENT));
     }
 
-    /** The occurrences a plan shows, for comparing readings past the bound (the walk). @return list<int> */
-    private function walk(Calc $calc, array $skips): array
+    /**
+     * The occurrences a plan shows, for comparing readings past the bound
+     * (the walk): from the series' start to the end of a span of periods
+     * past $through (the day acted on, or where it landed), so a day acted
+     * on long after the start is compared over as many periods as one near
+     * it, and every reading walked to the same day ends on the same day.
+     *
+     * @return list<int>
+     */
+    private function walk(Calc $calc, array $skips, ?int $through = null): array
     {
         $r = $calc->rule;
         if (!$r->supported()) {
@@ -2112,9 +2137,19 @@ final class Model
         };
         $out = [];
         $p = $r->periodOf($calc->startDn);
-        for ($i = 0; $i < $periods && $p <= ($r->kind === 'yearly' ? 9999 : PHP_INT_MAX); $i++) {
+        // Walked to a day, the same for every reading walked to the same
+        // one: the end of the span of periods after it. Counted from each
+        // reading's own start, two readings with different starts ended in
+        // different periods, and the longer one's last days read as a
+        // difference.
+        $limit = PHP_INT_MAX;
+        if ($through !== null) {
+            $limit = $r->periodFirst($r->periodPlus($r->periodOf(max($calc->startDn, $through)), $periods * $r->interval)) - 1;
+            $periods = PHP_INT_MAX;
+        }
+        for ($i = 0; $i < $periods && $p <= ($r->kind === 'yearly' ? 9999 : PHP_INT_MAX) && $r->periodFirst($p) <= $limit; $i++) {
             foreach ($r->periodDays($p) as [$d]) {
-                if ($d >= $calc->startDn && !in_array($d, $skips, true)) {
+                if ($d >= $calc->startDn && $d <= $limit && !in_array($d, $skips, true)) {
                     $out[] = $d;
                 }
             }
@@ -2218,7 +2253,9 @@ final class Model
             }
         }
         // Every key the expander gives from the first day listed (several on
-        // a day for a rule several times a day), up to one more than the
+        // a day for a rule several times a day; read from the series' start,
+        // as a rule's days follow from it, and yielded from that day on, so
+        // no cap counted from the start cuts it short), up to one more than the
         // list shows: the plain occurrences are in the order they show, so
         // with every row above beside them, the first five of these hold the
         // first five of all.
@@ -2261,13 +2298,16 @@ final class Model
             }
             $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$calc->clock);
             $at = new \DateTimeImmutable($wall, $tz);
-            if ($at->format('Y-m-d H:i:s') !== $wall) {
+            // Each instant the wall clock names that day, by the zone's
+            // transitions: none in a gap, two in a repeated span however
+            // long it is.
+            $twice = Calc::instantsAt($d, $calc->clock, $calc->tz);
+            if ($twice === []) {
                 $this->notes[] = ['kind' => 'gap', 'date' => self::patternOut($calc, $d), 'clock' => sprintf('%02d:%02d', $calc->clock[0], $calc->clock[1]), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('No %02d:%02d on %s in %s: that one is at %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), self::zoneName($calc->tz), $at->format('H:i'))];
                 return;
             }
-            $later = $at->modify('+1 hour');
-            if ($later->getOffset() !== $at->getOffset() && $later->modify('-1 hour')->format('H:i') === $at->format('H:i') && (new \DateTimeImmutable('@' . ($at->getTimestamp() + 3600)))->setTimezone($tz)->format('H:i:s') === $at->format('H:i:s')) {
-                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
+            if (count($twice) > 1) {
+                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($twice[0]->setTimezone($tz), $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
                 return;
             }
         }
@@ -2386,14 +2426,23 @@ final class Model
         return Cal::date($this->old->dnOf($oldKey));
     }
 
-    /** A day of the series $calc names (old or new), a day number in that series' own zone: a date. */
+    /**
+     * A day of the series $calc names (old or new): a date. A labelling
+     * writer: the day number is already in that series' own zone, so $calc
+     * converts nothing; it names at each call site whose day this is, so a
+     * day of one series is never written as another's.
+     */
     private static function patternOut(Calc $calc, int $dn): string
     {
         unset($calc);
         return Cal::date($dn);
     }
 
-    /** A rule's UNTIL as the rule writes it: basic format, read in that rule's zone. */
+    /**
+     * A rule's UNTIL as the rule writes it: basic format, read in that rule's
+     * zone. A labelling writer: the text is already in its form, so it passes
+     * through unchanged and only marks the role.
+     */
     private static function boundOut(string $until): string
     {
         return $until;

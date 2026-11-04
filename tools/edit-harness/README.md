@@ -88,7 +88,7 @@ The known list names code paths, never an invariant or an edit's name. The summa
 
 - **following-1.4.6**: "this and following", delete following and an answer from a day on stay on their 1.4.6 code until 1.5.1 moves them onto the model. The harness decides this from what it sent: the scope (following, delete following, attendance following) and a day acted on after the series' first. From the first day those edits are the whole series (`following@first` and the others), run on the model, and are checked as such; they are not under this path.
 
-sabre/vobject 4.6.1 yields a monthly rule's UNTIL as an occurrence when it falls on the first of a month the rule doesn't give, at the series' time (a date for an all-day series). The app's rule iterator ends the rule there instead, for the model and the window alike, so the harness reads the expander as it is and a phantom day would show as a disagreement with the oracle.
+sabre/vobject 4.6.1 yields a monthly rule's UNTIL as an occurrence when it falls on the first of a month the rule doesn't give, at the series' time (a date for an all-day series). The app's rule iterator skips it instead, as it skips any instant outside a rule's own days, for the model and the window alike, so the harness reads the expander as it is and a phantom day would show as a disagreement with the oracle.
 
 Every other failure is a finding about the application. A failure of a check of the plan's data (c-shape, c-placement, c-next, c-untouched) is never under a known path, on any path. Once 1.5.1 lands, delete `following-1.4.6` from `Known::PATHS` and from this list.
 

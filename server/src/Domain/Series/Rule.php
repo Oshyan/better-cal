@@ -67,16 +67,30 @@ final class Rule
     {
         $r = new self();
         $parts = [];
+        $malformed = false;
         foreach (explode(';', strtoupper(trim($rrule))) as $piece) {
             if ($piece === '') {
                 continue;
             }
             $kv = explode('=', $piece, 2);
             if (count($kv) !== 2 || array_key_exists(trim($kv[0]), $parts)) {
-                $r->kind = 'unreadable';
-                return $r;
+                $malformed = true;
+                continue;
             }
             $parts[trim($kv[0])] = trim($kv[1]);
+        }
+        // The bound is read from the text whatever else the rule holds: a
+        // COUNT or an UNTIL says how a rule ends even when its pattern is
+        // one the expander can't read.
+        if (isset($parts['COUNT'])) {
+            $r->count = ctype_digit($parts['COUNT']) ? (int) $parts['COUNT'] : null;
+        }
+        if (isset($parts['UNTIL'])) {
+            $r->until = $parts['UNTIL'];
+        }
+        if ($malformed) {
+            $r->kind = 'unreadable';
+            return $r;
         }
         $r->parts = $parts;
         $r->freq = $parts['FREQ'] ?? '';
@@ -92,12 +106,6 @@ final class Rule
             return $r;
         }
         $r->interval = isset($parts['INTERVAL']) && ctype_digit($parts['INTERVAL']) ? max(1, (int) $parts['INTERVAL']) : 1;
-        if (isset($parts['COUNT'])) {
-            $r->count = ctype_digit($parts['COUNT']) ? (int) $parts['COUNT'] : null;
-        }
-        if (isset($parts['UNTIL'])) {
-            $r->until = $parts['UNTIL'];
-        }
         if (isset($parts['WKST'])) {
             $r->wkst = Cal::wdOf($parts['WKST']);
         }

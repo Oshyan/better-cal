@@ -82,6 +82,7 @@ I'm keeping the higher bar rather than copying what other calendars do. Thunderb
 - Floating times, decided and built on the new model ([#167](https://github.com/Oshyan/better-cal/issues/167))
 - Undo for changes made on Google calendars, since Google series go through the same model ([#172](https://github.com/Oshyan/better-cal/issues/172))
 - The events window answers "unchanged" when nothing moved, which falls out of one idea of fresh ([#16](https://github.com/Oshyan/better-cal/issues/16))
+- **After 1.5.1 ships: an honest comparison with 1.3 and 1.4.0.** What was broken then, in which situations and actions, that now works, measured rather than argued: the same harness seeds and fixed cases run against a checkout of each old version through its own API (the driver speaks the plan API, so the old versions get a thin adapter that sends the same edits the old way), the same invented scenarios committed on dev installs of each version and their rows compared, and the issues the releases closed replayed on each. The report says what the dialog alone gained (the plan shown and a choice offered where there is one) apart from what the engine gained (occurrences that now land where the rule says, edited days that stay on their occurrence, Undo that puts back what was there), so the under-the-hood work is judged by results and not by its size. If the engine's column turns out thin, that is the finding.
 
 Each piece ships as its own release with an independent review before it, so nothing waits on everything.
 

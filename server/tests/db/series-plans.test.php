@@ -485,6 +485,30 @@ return static function (Db $db): void {
         checkEq('off from the edited day\'s own row with all events: no row is a trip', [0, 0], $flags($trip));
         planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => true]);
         checkEq('and on again from there', [1, 1], $flags($trip));
+        // Review R2: the flag differs by day and the request names the value
+        // the master already has. One value for the whole series: every row
+        // that differs takes it, in both directions, from either row.
+        $d->events->patch($u, $day, ['isContainer' => false]);
+        checkEq('the edited day alone turned off: the flags differ', [1, 0], $flags($trip));
+        $plan = $d->events->previewPatch($u, $trip, $on + ['preview' => true]);
+        checkEq('preview from the master, on for all events: not direct, the words say the days differed', [false, ['Trip: yes on some days, now yes for every event']], [$plan['direct'], array_column($plan['fields'], 'words')]);
+        planned($d->events, $u, $trip, $on);
+        checkEq('on for all events with the master already on: the edited day is a trip too', [1, 1], $flags($trip));
+        $d->undo->undoLatest($u);
+        checkEq('undone: the flags differ again', [1, 0], $flags($trip));
+        planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => true]);
+        checkEq('the same from the edited day\'s own row', [1, 1], $flags($trip));
+        planned($d->events, $u, $trip, ['scope' => 'all', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => false]);
+        $d->events->patch($u, $day, ['isContainer' => true]);
+        checkEq('the other way: only the edited day is a trip', [0, 1], $flags($trip));
+        planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => false]);
+        checkEq('off for all events from the edited day with the master already off: no row is a trip', [0, 0], $flags($trip));
+        $d->undo->undoLatest($u);
+        checkEq('undone: only the edited day is a trip again', [0, 1], $flags($trip));
+        planned($d->events, $u, $trip, ['scope' => 'all', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => false]);
+        checkEq('off for all events from the master: no row is a trip', [0, 0], $flags($trip));
+        planned($d->events, $u, $trip, $on);
+        checkEq('on again for every row', [1, 1], $flags($trip));
         // A member attached to the edited day: clearing is refused and nothing changes.
         $member = (int) $d->events->create($u, eventAt((int) $db->scalar('SELECT calendar_id FROM events WHERE id = ?', [$trip]), 'Ski rental pickup', '2027-01-16'))['eventId'];
         (new BetterCal\Domain\Trips($db, $d->undo))->attach($u, $day, $member);

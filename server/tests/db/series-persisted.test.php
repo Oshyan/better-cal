@@ -234,7 +234,7 @@ return static function (Db $db): void {
                 }
                 $target = $to === 'master' ? $id : $days[0];
                 $plan = $d->events->previewPatch($u, $target, $in + ['preview' => true]);
-                check("sent to $where: the plan isn't direct and says the edited days take it", !$plan['direct'] && str_contains(implode(' ', array_column($plan['fields'], 'words')), 'edited day'), json_encode([$plan['direct'], $plan['fields']]));
+                check("sent to $where: the plan isn't direct and says the days differed", !$plan['direct'] && str_contains(implode(' ', array_column($plan['fields'], 'words')), 'on some days, now'), json_encode([$plan['direct'], $plan['fields']]));
                 planned($d->events, $u, $target, $in);
                 checkEq("sent to $where with all events: every row takes " . (int) $dayFlag, array_fill(0, 3, (int) $dayFlag), $flags($id));
                 $d->undo->undoLatest($u);

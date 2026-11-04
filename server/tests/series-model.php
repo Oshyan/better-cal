@@ -426,8 +426,8 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
             'every Monday at 09:00 Berlin time; 00:00 in Los Angeles, 01:00 on 15 and 22 Mar and 1 Nov',
             'every Monday at 18:00 Berlin time; 09:00 in Los Angeles, 10:00 on 15 and 22 Mar and 1 Nov',
         ], [smOptions($clock, 'zone'), smGroup($clock, 'zone')['selected'] ?? null, smGroup($clock, 'zone')['options'][0]['words'] ?? null, smGroup($clock, 'zone')['options'][1]['words'] ?? null]);
-        checkEq('Acceptance 9, the clock time: the series at 09:00 Berlin; the own times stay in Los Angeles; the own-title day takes 09:00 Berlin', [
-            'Europe/Berlin', ['2027-01-11T09:00:00+01:00', '2027-01-18T11:00:00-08:00', '2027-01-25T09:00:00+01:00', '2027-02-01T09:00:00+01:00'],
+        checkEq('Acceptance 9, the clock time: the series at 09:00 Berlin; the own times stay in Los Angeles (listed in the plan\'s zone, Berlin); the own-title day takes 09:00 Berlin', [
+            'Europe/Berlin', ['2027-01-11T09:00:00+01:00', '2027-01-18T20:00:00+01:00', '2027-01-25T09:00:00+01:00', '2027-02-01T09:00:00+01:00'],
             smAt('2027-01-18 11:00'), smAt('2027-03-15 07:30'), [smAt('2027-02-01 09:00', 'Europe/Berlin'), 'Europe/Berlin'],
             'Mon 01:00', ['stays', 'stays', 'moves'],
         ], [$clock['writes']['master']['tzid'] ?? null, array_column($clock['plan']['next'], 'start'),
@@ -436,7 +436,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
             [$clock['writes']['overrides'][13]['start_utc'] ?? null, $clock['writes']['overrides'][13]['tzid'] ?? null],
             $at(smAt('2027-03-22 09:00', 'Europe/Berlin'), 'America/Los_Angeles'), array_column($clock['plan']['days'], 'outcome')]);
         checkEq('Acceptance 9, the same moment: the series at 18:00 Berlin (09:00 in Los Angeles, 10:00 between the two clock changes); the own times stay', [
-            'Europe/Berlin', null, ['2027-01-11T18:00:00+01:00', '2027-01-18T11:00:00-08:00', '2027-01-25T18:00:00+01:00', '2027-02-01T18:00:00+01:00'],
+            'Europe/Berlin', null, ['2027-01-11T18:00:00+01:00', '2027-01-18T20:00:00+01:00', '2027-01-25T18:00:00+01:00', '2027-02-01T18:00:00+01:00'],
             'Mon 10:00', 'Mon 09:00', $callRows[0]['start_utc'], $callRows[1]['start_utc'], 'Europe/Berlin',
         ], [$moment['writes']['master']['tzid'] ?? null, $moment['writes']['master']['start_utc'] ?? null, array_column($moment['plan']['next'], 'start'),
             $at(smAt('2027-03-22 18:00', 'Europe/Berlin'), 'America/Los_Angeles'), $at(smAt('2027-04-05 18:00', 'Europe/Berlin'), 'America/Los_Angeles'),
@@ -1518,6 +1518,58 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $a = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['7']]]);
     $b = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['8']]]);
     checkEq('F1: the hash covers the links naming the rows', true, $a['plan']['hash'] !== $b['plan']['hash']);
+
+    // Review R2: a series column (the trip flag) has one value for the whole
+    // series; the request names it for every row, so it changes when any row
+    // differs from it, the master's own value the same or not.
+    $walk = smSeries('Sample walk', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 18:00', 60, false, [], 'UTC');
+    $walk['is_container'] = 0;
+    $flagged = smEdited($walk, 2, '2027-01-12 18:00', ['title' => 'Sample walk, away', 'is_container' => 1], null, ['title']);
+    $p = smPlan($walk, [$flagged], ['columns' => ['is_container' => 0]]);
+    checkEq('R2: clearing the trip flag for all events clears an edited day\'s when the master\'s is already clear', [
+        false, ['is_container' => 0], [], 'Trip: no on some days, now no for every event',
+    ], [$p['plan']['direct'], array_intersect_key($p['writes']['overrides'][2] ?? [], ['is_container' => 1]), $p['writes']['master'], $p['plan']['fields'][0]['words'] ?? null]);
+    $trip = $walk;
+    $trip['is_container'] = 1;
+    $plain = smEdited($trip, 2, '2027-01-12 18:00', ['title' => 'Sample walk, away', 'is_container' => 0], null, ['title']);
+    $p = smPlan($trip, [$plain], ['columns' => ['is_container' => 1]]);
+    checkEq('R2: setting it for all events sets an edited day\'s when the master\'s is already set', [
+        false, ['is_container' => 1], [], 'Trip: yes on some days, now yes for every event',
+    ], [$p['plan']['direct'], array_intersect_key($p['writes']['overrides'][2] ?? [], ['is_container' => 1]), $p['writes']['master'], $p['plan']['fields'][0]['words'] ?? null]);
+    $p = smPlan($walk, [$flagged], ['columns' => ['is_container' => 1]]);
+    checkEq('R2: a value the master lacks and the edited day has: the master takes it, the day is unchanged, the words say the days differed', [
+        ['is_container' => 1], null, 'Trip: no on some days, now yes for every event',
+    ], [$p['writes']['master'], $p['writes']['overrides'][2] ?? null, $p['plan']['fields'][0]['words'] ?? null]);
+    $p = smPlan($walk, [smEdited($walk, 2, '2027-01-12 18:00', ['title' => 'Sample walk, away'], null, ['title'])], ['columns' => ['is_container' => 1]]);
+    checkEq('R2: one value everywhere: the change is direct and its words say before and after', [true, ['is_container' => 1], 'Trip: no, now yes'],
+        [$p['plan']['direct'], $p['writes']['master'], $p['plan']['fields'][0]['words'] ?? null]);
+    $p = smPlan($walk, [$flagged], ['columns' => ['is_container' => 0, 'title' => 'Sample walk']]);
+    checkEq('R2: a request with the series\' values for every field it sends still changes the day that differs', [['is_container' => 0]], [array_intersect_key($p['writes']['overrides'][2] ?? [], ['is_container' => 1])]);
+
+    // Review R1: every date and instant the plan writes is in one zone, the
+    // series' after the change, so a day's date and its clock describe one
+    // instant. A New York series moved to Los Angeles time keeping its clock:
+    // its day at its own 00:30 New York is Monday 21:30 in Los Angeles.
+    $ny = 'America/New_York';
+    $la = 'America/Los_Angeles';
+    $late = smSeries('Sample late call', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 01:30', 60, false, [], $ny);
+    $ownTime = smEdited($late, 2, '2027-01-12 01:30', [], '2027-01-12 00:30', ['time']);
+    $toLa = ['acted' => smAt('2027-01-05 01:30', $ny), 'landed' => ['start_utc' => smAt('2027-01-05 01:30', $la), 'end_utc' => smAt('2027-01-05 02:30', $la), 'all_day' => 0, 'tzid' => $la]];
+    $p = smPlan($late, [$ownTime], $toLa);
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('R1: the edited day keeps its instant; its dates and its instant are written in the series\' new zone, where it is Monday evening', [
+        'stays', '2027-01-11', '2027-01-11', '2027-01-11T21:30:00-08:00', '2027-01-12T09:30:00Z', $ownTime['start_utc'],
+    ], [$day['outcome'] ?? null, $day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null, $day['newKey'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? $ownTime['start_utc']]);
+    checkEq('R1: the coming-up list writes that day in the same zone', ['2027-01-05T01:30:00-08:00', '2027-01-11T21:30:00-08:00', '2027-01-19T01:30:00-08:00', '2027-01-26T01:30:00-08:00'], array_column($p['plan']['next'], 'start'));
+    $ownDate = smEdited($late, 3, '2027-01-19 01:30', [], '2027-01-20 00:30', ['date', 'time']);
+    $p = smPlan($late, [$ownDate], $toLa);
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('R1: a day at its own date and time the same way, before and after', ['2027-01-19', '2027-01-19', '2027-01-19T21:30:00-08:00'], [$day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null]);
+    $allDayLate = smSeries('Sample day', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05', 60, true);
+    $ownDay = smEdited($allDayLate, 2, '2027-01-12', [], '2027-01-13', ['date']);
+    $p = smPlan($allDayLate, [$ownDay], ['columns' => ['title' => 'Sample day out']]);
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('R1: an all-day day is a date, written as itself', ['2027-01-13', '2027-01-13', null], [$day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

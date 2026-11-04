@@ -13,9 +13,14 @@ namespace BetterCal\Domain\Series;
  * A rule is a walk over the periods of its FREQ, stepped by INTERVAL from
  * the start's own period: a year, a month, a week from WKST, a day, a wall
  * clock hour, or an elapsed minute or second. Each period's set is a pure
- * function of the rule, the start and the period's number (periodSet), so
- * the walk carries no state from where it began: a window that starts at
- * any period reads what the walk from the start reads there (jumpTo).
+ * function of the rule, the start and the period's number (periodCandidates),
+ * so the walk carries no state from where it began: a window that starts at
+ * any instant reads what the walk from the start reads there (jumpTo, which
+ * starts at the period holding the earliest wall clock that can name an
+ * instant in the window, seekPeriod). Nothing is expanded until the walk is
+ * stepped, and a period's set is produced as it is walked, so memory is one
+ * period's, never a year's (BYSETPOS holds the period's instants, that
+ * period only).
  *
  *  - A period's days are the days in it that every day part admits: an
  *    expand and a limit both keep the members that match, so the table's
@@ -36,10 +41,14 @@ namespace BetterCal\Domain\Series;
  *  - A wall clock is an instant by one rule (Wall::resolve): its earlier
  *    instant where it happens twice, and where it doesn't exist the same
  *    clock plus the gap, that day only; every other day is at its own clock
- *    (decisions.md, "A clock time the spring change skips"). Two wall clocks
- *    on one instant are one occurrence, in a period or across two (RFC 5545
- *    3.8.5.3: "Duplicate instances are ignored"; next). HOURLY steps its hours on the wall
- *    clock; MINUTELY and SECONDLY step elapsed time.
+ *    (decisions.md, "A clock time the spring change skips"). HOURLY steps
+ *    its hours on the wall clock; MINUTELY and SECONDLY step elapsed time.
+ *  - The occurrences are one stream, in time order and unique: a period's
+ *    instants are merged in time order with those of any period they can
+ *    reach (a gap or a skipped date resolves a clock into the next
+ *    period's span), and two wall clocks on one instant, in a period or
+ *    across periods, are one occurrence (RFC 5545 3.8.5.3: "Duplicate
+ *    instances are ignored"; pull). COUNT and UNTIL bound that stream.
  *  - BYSETPOS picks from each period's whole set, in time order, for every
  *    frequency.
  *  - The start is always the first occurrence and the first counted (RFC
@@ -107,15 +116,23 @@ class RuleIterator extends Walk
     /** No instant after the start can be generated: proven by the rule alone. */
     private bool $never = false;
 
-    /** The period the walk stands in. */
+    /** The period the candidate stream stands in. */
     private int $period = 0;
-    /** @var list<\DateTimeImmutable> the period's occurrences after the current one */
-    private array $pending = [];
     private bool $ended = false;
-    /** Periods since the last one that gave an occurrence. */
-    private int $quiet = 0;
     /** @var array{0:\DateTimeImmutable,1:string}|null for MINUTELY and SECONDLY, an empty period's last instant and the coarsest limit it failed */
     private ?array $fail = null;
+    /** @var ?\Generator<int,array{0:?int,1:int}> the candidates, period by period (candidates) */
+    private ?\Generator $stream = null;
+    /** The stream's current item has been read into the merge. */
+    private bool $taken = false;
+    /** @var \SplMinHeap<int> candidates read and not yet yielded */
+    private \SplMinHeap $merge;
+    /** No candidate still in the stream is before this instant. */
+    private int $floor = PHP_INT_MIN;
+    /** The instant last yielded (the start's at first). */
+    private int $last = 0;
+    /** @var array{0:int,1:int,2:int}|null [day, smallest offset, largest offset] for the last day asked (offsetsNear) */
+    private ?array $offsets = null;
 
     /** @param string|array<string,mixed> $rrule */
     public function __construct($rrule, \DateTimeInterface $start)
@@ -194,145 +211,263 @@ class RuleIterator extends Walk
     #[\ReturnTypeWillChange]
     public function rewind()
     {
-        $this->period = 0;
-        $this->quiet = 0;
-        $this->counter = 0;
-        $this->fail = null;
+        // Nothing is expanded here: the walk reads candidates only as it is
+        // stepped, so constructing an iterator (as validation does) reads the
+        // rule and no period.
         $this->ended = $this->never;
         $this->currentDate = $this->start;
-        $from = $this->start->getTimestamp();
-        $this->pending = $this->never ? [] : array_values(array_filter($this->periodSet(0), static fn(\DateTimeImmutable $t): bool => $t->getTimestamp() > $from));
+        $this->counter = 0;
+        $this->restart($this->never ? null : 0);
     }
 
     #[\ReturnTypeWillChange]
     public function next()
     {
         if ($this->currentDate !== null) {
-            // RFC 5545 3.8.5.3: "Duplicate instances are ignored." An instant
-            // equal to one the walk already yielded is no occurrence and is
-            // not counted. The walk yields in time order, so such an instant
-            // equals the last one yielded.
-            $last = $this->currentDate->getTimestamp();
-            do {
-                if ($this->pending === []) {
-                    $this->fill();
-                }
-                $this->currentDate = array_shift($this->pending);
-            } while ($this->currentDate !== null && $this->currentDate->getTimestamp() === $last);
-            if ($this->currentDate !== null && $this->currentDate->getTimestamp() > self::UPPER_LIMIT) {
-                // The date upper limit: no instant after year 9999.
+            $t = $this->pull();
+            if ($t === null || $t > self::UPPER_LIMIT) {
+                // The rule has no more, or the date upper limit: no instant
+                // after year 9999.
                 $this->currentDate = null;
-                $this->pending = [];
+                $this->restart(null);
                 $this->ended = true;
-            }
-            if ($this->currentDate !== null) {
-                $this->quiet = 0;
+            } else {
+                $this->currentDate = (new \DateTimeImmutable('@' . $t))->setTimezone($this->zone);
             }
         }
         ++$this->counter;
     }
 
     /**
-     * Moves the walk to its first occurrence at or after instant $ts. Every
-     * period's set is the rule's alone, so a rule with no COUNT starts at
-     * the period before the one holding $ts (an instant a gap moved on can
-     * cross into the next period) and reads on from there: the same days
-     * and keys as the walk from the start. A COUNT is of the occurrences
+     * Moves the walk to its first occurrence at or after instant $ts. A rule
+     * with no COUNT starts its stream at the period holding the earliest
+     * wall clock that can name an instant at or after $ts (seekPeriod), so
+     * every occurrence from $ts on is still ahead and a narrow window reads
+     * what a broad one reads in its range. A COUNT is of the occurrences
      * passed, so a rule with one walks on from where it stands.
      */
     public function jumpTo(int $ts): void
     {
-        $k = $this->count === null && $this->currentDate !== null && !$this->ended ? $this->periodAt($ts) - 1 : 0;
-        if ($k > $this->period) {
-            $this->period = $k;
-            $this->quiet = 0;
-            $this->fail = null;
-            $this->pending = array_values(array_filter($this->periodSet($k), static fn(\DateTimeImmutable $t): bool => $t->getTimestamp() >= $ts));
-            $this->next();
+        if ($this->count === null && $this->stream !== null && $this->currentDate !== null && $ts > $this->last) {
+            $k = $this->seekPeriod($ts);
+            if ($k > $this->period) {
+                // Every candidate of the periods before $k is before $ts, so
+                // none the merge holds is still to be read.
+                $this->restart($k);
+                $this->next();
+            }
         }
         while ($this->valid() && $this->currentDate->getTimestamp() < $ts) {
             $this->next();
         }
     }
 
-    /**
-     * Reads periods on until one gives an occurrence or the rule has ended
-     * (its UNTIL passed, year 9999 passed, or proven to have no more).
-     */
-    private function fill(): void
+    /** Starts the candidate stream at period $k with nothing merged, or ends it (null). */
+    private function restart(?int $k): void
     {
-        for ($tries = 0; $this->pending === [] && !$this->ended; $tries++) {
-            if ($tries >= self::MAX_TRIES) {
-                throw new WalkLimitReached('No occurrence in ' . self::MAX_TRIES . ' periods of a ' . $this->freq . ' rule from period ' . $this->period);
+        $this->merge = new \SplMinHeap();
+        $this->floor = PHP_INT_MIN;
+        $this->taken = false;
+        $this->fail = null;
+        $this->last = $this->currentDate?->getTimestamp() ?? 0;
+        $this->period = $k ?? $this->period;
+        $this->stream = $k === null ? null : $this->candidates($k);
+    }
+
+    /**
+     * The next occurrence: the earliest candidate after the last one
+     * yielded. RFC 5545 3.8.5.3: "Duplicate instances are ignored", and a
+     * generated instant before the start is no occurrence. The stream's
+     * candidates are in wall-clock order, which a gap or a skipped date
+     * makes differ from time order (a shifted 02:00 resolves after the
+     * 03:00 that follows it, and a skipped day's clocks onto the next day's
+     * instants), so candidates are merged in time order and one is yielded
+     * only once the stream proves nothing still in it comes before it (its
+     * floor). Yielded in time order, an instant at or before the last one
+     * is a duplicate or before the start, and is dropped before COUNT or
+     * UNTIL reads it: they bound the unique ordered stream.
+     */
+    private function pull(): ?int
+    {
+        for (;;) {
+            while (!$this->merge->isEmpty() && $this->merge->top() <= $this->last) {
+                $this->merge->extract();
             }
-            $next = $this->advance($this->period);
+            if (!$this->merge->isEmpty() && $this->merge->top() <= $this->floor) {
+                break;
+            }
+            if ($this->stream === null) {
+                break;
+            }
+            if ($this->taken) {
+                $this->stream->next();
+                $this->taken = false;
+            }
+            if (!$this->stream->valid()) {
+                $this->stream = null;
+                continue;
+            }
+            [$t, $floor] = $this->stream->current();
+            $this->taken = true;
+            $this->floor = max($this->floor, $floor);
+            if ($t !== null && $t > $this->last) {
+                $this->merge->insert($t);
+            }
+        }
+        if ($this->merge->isEmpty()) {
+            return null;
+        }
+        return $this->last = $this->merge->extract();
+    }
+
+    /**
+     * The candidates of period $k and every period after it, in wall-clock
+     * order, each as [instant, floor]: the floor an instant no candidate
+     * after it comes before; between periods [null, floor]. Read on until
+     * the rule has ended (its UNTIL passed, year 9999 passed, or proven to
+     * have no more).
+     *
+     * @return \Generator<int,array{0:?int,1:int}>
+     */
+    private function candidates(int $k): \Generator
+    {
+        $tries = 0;
+        $quiet = 0;
+        for (;;) {
+            $this->period = $k;
+            $any = false;
+            foreach ($this->periodCandidates($k) as $item) {
+                $any = true;
+                yield $item;
+            }
+            if ($any) {
+                $tries = 0;
+                $quiet = 0;
+            }
+            if (++$tries > self::MAX_TRIES) {
+                throw new WalkLimitReached('No occurrence in ' . self::MAX_TRIES . ' periods of a ' . $this->freq . ' rule from period ' . $k);
+            }
+            $next = $this->advance($k);
             if ($next === null) {
-                $this->ended = true;
-                break;
+                return;
             }
-            $this->quiet += $next - $this->period;
-            $this->period = $next;
-            $low = $this->periodLow($next);
-            if ($low > self::UPPER_LIMIT || ($this->until !== null && $low > $this->until->getTimestamp()) || ($this->cycle !== null && $this->quiet > $this->cycle)) {
-                $this->ended = true;
-                break;
+            $quiet += $next - $k;
+            $k = $next;
+            $low = $this->periodLow($k);
+            if ($low > self::UPPER_LIMIT || ($this->until !== null && $low > $this->until->getTimestamp()) || ($this->cycle !== null && $quiet > $this->cycle)) {
+                return;
             }
-            $this->pending = $this->periodSet($next);
+            yield [null, $low];
         }
     }
 
     // ---- one period --------------------------------------------------------
 
     /**
-     * Period $k's occurrences, in time order, BYSETPOS applied; the start is
-     * not filtered out here (rewind does that).
+     * Period $k's candidates, as candidates() yields them. A period's set is
+     * produced as it is walked, one wall clock at a time, so memory is a
+     * period's own clocks, never a year's instants: a day's clocks are in
+     * wall-clock order and each one's floor is its own wall clock read at
+     * the largest offset the zone has near it (no instant whose wall clock
+     * is at or after it is earlier). BYSETPOS picks from the period's whole
+     * set in time order, so with it the period's instants are held, that
+     * period's only, and yielded at the floor of its first wall clock. The
+     * start is not filtered out here (pull does that).
      *
-     * @return list<\DateTimeImmutable>
+     * @return iterable<array{0:int,1:int}>
      */
-    private function periodSet(int $k): array
+    private function periodCandidates(int $k): iterable
     {
-        $set = [];
         if ($this->freq === 'MINUTELY' || $this->freq === 'SECONDLY') {
-            $p = $this->origin + $k * $this->step();
-            $this->fail = null;
-            foreach ($this->freq === 'MINUTELY' ? $this->clocks[2] : [0] as $s) {
-                $t = (new \DateTimeImmutable('@' . ($p + $s)))->setTimezone($this->zone);
-                $failed = $this->fails($t);
-                if ($failed === null) {
-                    $set[$t->getTimestamp()] = $t;
-                } else {
-                    $this->fail = [$t, $failed];
-                }
+            // Elapsed periods hold their own instants, in order.
+            foreach ($this->elapsedSet($k) as $t) {
+                yield [$t, $t];
             }
-            if ($set !== []) {
-                $this->fail = null;
+            return;
+        }
+        if ($this->bySetPos === null) {
+            foreach ($this->periodClocks($k) as [$dn, $clock]) {
+                yield [Wall::resolve($dn, $clock, $this->zone)->getTimestamp(), $this->wallFloor($dn, $clock)];
             }
-        } elseif ($this->freq === 'HOURLY') {
+            return;
+        }
+        $set = [];
+        $floor = null;
+        foreach ($this->periodClocks($k) as [$dn, $clock]) {
+            $set[] = Wall::resolve($dn, $clock, $this->zone)->getTimestamp();
+            $floor ??= $this->wallFloor($dn, $clock);
+        }
+        // Two wall clocks on one instant are one member of the set.
+        sort($set);
+        $unique = [];
+        foreach ($set as $t) {
+            if ($unique === [] || $unique[count($unique) - 1] !== $t) {
+                $unique[] = $t;
+            }
+        }
+        unset($set);
+        foreach (self::setPositions($unique, $this->bySetPos) as $t) {
+            yield [$t, $floor];
+        }
+    }
+
+    /**
+     * The wall clocks of period $k (HOURLY to YEARLY), in order, as [day,
+     * clock].
+     *
+     * @return \Generator<int,array{0:int,1:array{0:int,1:int,2:int}}>
+     */
+    private function periodClocks(int $k): \Generator
+    {
+        if ($this->freq === 'HOURLY') {
             $h = $this->origin + $k * $this->interval;
             $dn = self::floorDiv($h, 24);
             $hour = $h - $dn * 24;
             if ($this->admits($dn) && ($this->byHour === null || in_array($hour, $this->byHour, true))) {
                 foreach ($this->clocks[1] as $m) {
                     foreach ($this->clocks[2] as $s) {
-                        $t = Wall::resolve($dn, [$hour, $m, $s], $this->zone);
-                        $set[$t->getTimestamp()] = $t;
+                        yield [$dn, [$hour, $m, $s]];
                     }
                 }
             }
-        } else {
-            foreach ($this->periodDays($k) as $dn) {
-                foreach ($this->clocks[0] as $h) {
-                    foreach ($this->clocks[1] as $m) {
-                        foreach ($this->clocks[2] as $s) {
-                            $t = Wall::resolve($dn, [$h, $m, $s], $this->zone);
-                            $set[$t->getTimestamp()] = $t;
-                        }
+            return;
+        }
+        foreach ($this->periodDays($k) as $dn) {
+            foreach ($this->clocks[0] as $h) {
+                foreach ($this->clocks[1] as $m) {
+                    foreach ($this->clocks[2] as $s) {
+                        yield [$dn, [$h, $m, $s]];
                     }
                 }
             }
         }
-        ksort($set);
-        return self::setPositions(array_values($set), $this->bySetPos);
+    }
+
+    /**
+     * A MINUTELY or SECONDLY period's occurrences, in order, BYSETPOS
+     * applied; an empty one leaves its last instant's failed limit for
+     * advance.
+     *
+     * @return list<int>
+     */
+    private function elapsedSet(int $k): array
+    {
+        $set = [];
+        $p = $this->origin + $k * $this->step();
+        $this->fail = null;
+        foreach ($this->freq === 'MINUTELY' ? $this->clocks[2] : [0] as $s) {
+            $t = (new \DateTimeImmutable('@' . ($p + $s)))->setTimezone($this->zone);
+            $failed = $this->fails($t);
+            if ($failed === null) {
+                $set[] = $p + $s;
+            } else {
+                $this->fail = [$t, $failed];
+            }
+        }
+        if ($set !== []) {
+            $this->fail = null;
+        }
+        return self::setPositions($set, $this->bySetPos);
     }
 
     /**
@@ -485,9 +620,9 @@ class RuleIterator extends Walk
      * BYSETPOS over a period's set in time order: the listed positions,
      * negative from its end, each once, in order. Without BYSETPOS, the set.
      *
-     * @param list<\DateTimeImmutable> $set
+     * @param list<int> $set instants
      * @param ?list<int> $positions
-     * @return list<\DateTimeImmutable>
+     * @return list<int>
      */
     private static function setPositions(array $set, ?array $positions): array
     {
@@ -584,42 +719,94 @@ class RuleIterator extends Walk
     }
 
     /**
-     * The period holding instant $ts, by the frequency's own scale read on
-     * the start's zone: its year, month, week, day or wall hour, or its
-     * elapsed minute or second.
+     * The period a seek to instant $ts starts at: the one holding the
+     * earliest wall clock that can name an instant at or after $ts. An
+     * instant is its wall clock less the offset it is read at, or in a gap
+     * the offset before it, so an instant at or after $ts has a wall clock
+     * at or after $ts read at the smallest offset the zone has near it; the
+     * periods before the one holding that clock have only earlier clocks,
+     * whose instants are all before $ts. Whatever a transition displaces (an
+     * hour, half an hour, two hours, a whole date) is in that offset, so no
+     * lookback is guessed. MINUTELY and SECONDLY periods are elapsed time:
+     * the period holding $ts.
      */
-    private function periodAt(int $ts): int
+    private function seekPeriod(int $ts): int
     {
-        $local = (new \DateTimeImmutable('@' . $ts))->setTimezone($this->zone);
-        $dn = Cal::dnOf($local);
+        if ($this->freq === 'MINUTELY' || $this->freq === 'SECONDLY') {
+            return self::floorDiv($ts - $this->origin, $this->step());
+        }
+        $wall = $ts + $this->offsetsNear(self::floorDiv($ts, 86400))[0];
+        $dn = self::floorDiv($wall, 86400);
         [$y, $m] = Cal::ymd($dn);
+        if ($this->freq === 'YEARLY' && $this->weekNos !== null) {
+            // BYWEEKNO's period is its numbering's year.
+            $y += $dn < $this->week1($y) ? -1 : ($dn >= $this->week1($y + 1) ? 1 : 0);
+        }
         return match ($this->freq) {
             'YEARLY' => self::floorDiv($y - $this->origin, $this->interval),
             'MONTHLY' => self::floorDiv(Cal::mi($y, $m) - $this->origin, $this->interval),
             'WEEKLY' => self::floorDiv($this->weekOf($dn) - $this->origin, 7 * $this->interval),
             'DAILY' => self::floorDiv($dn - $this->origin, $this->interval),
-            'HOURLY' => self::floorDiv($dn * 24 + (int) $local->format('G') - $this->origin, $this->interval),
-            default => self::floorDiv($ts - $this->origin, $this->step()),
+            default => self::floorDiv(self::floorDiv($wall, 3600) - $this->origin, $this->interval),
         };
     }
 
     /**
-     * An instant no occurrence of period $k comes before: its first local
-     * day's midnight read at the largest offset any zone has (14 hours), or
-     * for MINUTELY and SECONDLY the period's own first instant.
+     * An instant no candidate of period $k or after it comes before: the
+     * floor of the period's first wall clock (wallFloor), or for MINUTELY
+     * and SECONDLY the period's own first instant.
      */
     private function periodLow(int $k): int
     {
         $n = $k * $this->interval;
+        if ($this->freq === 'HOURLY') {
+            $h = $this->origin + $n;
+            $dn = self::floorDiv($h, 24);
+            return $this->wallFloor($dn, [$h - $dn * 24, 0, 0]);
+        }
         $dn = match ($this->freq) {
             'YEARLY' => $this->weekNos !== null ? min(Cal::dn($this->origin + $n, 1, 1), $this->week1($this->origin + $n)) : Cal::dn($this->origin + $n, 1, 1),
             'MONTHLY' => Cal::dn(...[...Cal::fromMi($this->origin + $n), 1]),
             'WEEKLY' => $this->origin + 7 * $n,
             'DAILY' => $this->origin + $n,
-            'HOURLY' => self::floorDiv($this->origin + $n, 24),
             default => null,
         };
-        return $dn === null ? $this->origin + $k * $this->step() : Wall::asUtc($dn, [0, 0, 0]) - 14 * 3600;
+        return $dn === null ? $this->origin + $k * $this->step() : $this->wallFloor($dn, [0, 0, 0]);
+    }
+
+    /**
+     * An instant no candidate at or after a wall clock comes before: the
+     * clock read at the largest offset the zone has near it. Every candidate
+     * of a later or equal wall clock is that clock less the offset it is
+     * read at, or in a gap less the smaller offset before it, and an offset
+     * within two days of the clock is one offsetsNear has.
+     *
+     * @param array{0:int,1:int,2:int} $clock
+     */
+    private function wallFloor(int $dn, array $clock): int
+    {
+        return Wall::asUtc($dn, $clock) - $this->offsetsNear($dn)[1];
+    }
+
+    /**
+     * The smallest and largest offsets the zone has from three days before
+     * day $dn (read as UTC) to three days after it, which holds every instant
+     * within two days of any clock on that day. One day is kept, since a
+     * walk asks for the same day clock after clock.
+     *
+     * @return array{0:int,1:int}
+     */
+    private function offsetsNear(int $dn): array
+    {
+        if ($this->offsets === null || $this->offsets[0] !== $dn) {
+            $day = $dn * 86400;
+            $offsets = array_map(static fn(array $t): int => (int) $t['offset'], $this->zone->getTransitions($day - 3 * 86400, $day + 4 * 86400) ?: []);
+            if ($offsets === []) {
+                $offsets = [$this->zone->getOffset(new \DateTimeImmutable('@' . $day))];
+            }
+            $this->offsets = [$dn, min($offsets), max($offsets)];
+        }
+        return [$this->offsets[1], $this->offsets[2]];
     }
 
     // ---- arithmetic --------------------------------------------------------

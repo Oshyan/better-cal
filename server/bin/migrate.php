@@ -28,6 +28,18 @@ if (!$held) {
     exit(1);
 }
 $migrator = new Migrator($db, dirname(__DIR__) . '/migrations');
+// --dry-run: say what each pending data migration would change, writing
+// nothing. A PHP migration that takes a second argument reads it as a dry
+// run (064 does); any other is named and left for the real run.
+if (in_array('--dry-run', $argv, true)) {
+    foreach ($migrator->pending() as $file) {
+        $name = basename($file);
+        $fn = str_ends_with($name, '.php') ? require $file : null;
+        $dry = $fn instanceof \Closure && (new \ReflectionFunction($fn))->getNumberOfParameters() >= 2;
+        echo $name, ': ', $dry ? $fn($db, true) : 'no dry run; it applies when migrating', "\n";
+    }
+    exit(0);
+}
 try {
     $ran = $migrator->run(static function (string $line): void {
         echo $line, "\n";

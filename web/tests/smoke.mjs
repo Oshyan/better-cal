@@ -4638,10 +4638,10 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: CHANGE names only what changes, the rest as context, the end part of it', v.change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
   const zoned = planView({ ...choir, groups: [{ id: 'zone', from: LA, to: 'Europe/Berlin', selected: 'clock', options: [
-    { id: 'clock', next: [{ start: '2027-03-10T19:00:00+01:00', allDay: false }, { start: '2027-03-12T00:00:00+00:00', allDay: true }] },
-    { id: 'moment', next: [{ start: '2027-03-11T03:00:00+01:00', allDay: false }] }] }] }, ctx());
-  eq('series panel: an option\'s list entries give its dates and its clocks, an all-day entry its date', zoned.readings[0].options.map((o) => [o.label, o.dates]), [
-    ['Keep the clock time: 7:00 PM in Berlin', 'Wed, Mar 10 · Fri, Mar 12'], ['Keep the same moment: 6:00 PM in Los Angeles, 3:00 AM in Berlin', 'Thu, Mar 11']]);
+    { id: 'clock', start: '2027-01-06T19:00:00+01:00', next: [{ start: '2027-03-10T19:00:00+01:00', allDay: false }, { start: '2027-03-12T00:00:00+00:00', allDay: true }] },
+    { id: 'moment', start: '2027-01-07T04:00:00+01:00', next: [{ start: '2027-03-11T03:00:00+01:00', allDay: false }] }] }] }, ctx());
+  eq('series panel: a zone option\'s list entries give its dates, an all-day entry its date, and its start its clocks', zoned.readings[0].options.map((o) => [o.label, o.dates]), [
+    ['Keep the clock time: 7:00 PM in Berlin', 'Wed, Mar 10 · Fri, Mar 12'], ['Keep the same moment: 7:00 PM in Los Angeles, 4:00 AM in Berlin', 'Thu, Mar 11']]);
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' on Tue, Mar 23 was moved earlier to Fri, Mar 26 and stays where it is.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
@@ -5142,12 +5142,23 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     // Notes, each clock read in the note's own zone.
     eq('verify: notes name their zone and read their clocks there', view(plan(LA, [], { notes: [
       { kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA },
-      { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: LA },
+      { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: LA, fold: 'first', daylight: true },
       { kind: 'gap', date: '2027-03-28', clock: '02:30', at: '2027-03-28T03:30:00+02:00', tz: 'Europe/Berlin' },
     ] })).notes, [
       'There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.',
       '1:30 AM happens twice on Sun, Nov 7 in Los Angeles; this is the first, in daylight time.',
       'There is no 2:30 AM on Sun, Mar 28 in Berlin, so that one is at 3:30 AM.',
+    ]);
+    // An overlap note's words come from which instant the series is at and
+    // whether that one is in daylight time; what the note doesn't say is left out.
+    eq('verify: an overlap note says which of the two the series is at, and its kind of time, only from its data', view(plan(LA, [], { notes: [
+      { kind: 'overlap', date: '2027-10-31', at: '2027-10-31T02:30:00+01:00', tz: 'Europe/Berlin', fold: 'second', daylight: false },
+      { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-08:00', tz: LA, fold: 'second', daylight: null },
+      { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: LA },
+    ] })).notes, [
+      '2:30 AM happens twice on Sun, Oct 31 in Berlin; this is the second, in standard time.',
+      '1:30 AM happens twice on Sun, Nov 7 in Los Angeles; this is the second.',
+      '1:30 AM happens twice on Sun, Nov 7 in Los Angeles.',
     ]);
 
     // A zone change: the zone choice's clocks in the zones it names, a reading's dates and Coming up in the plan's zone.
@@ -5156,8 +5167,8 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       next: [{ start: '2027-03-11T12:00:00+09:00', allDay: false }, { start: '2027-03-18T12:00:00+09:00', allDay: false }, { start: '2027-03-25T12:00:00+09:00', allDay: false }], nextMore: true,
       groups: [
         { id: 'zone', from: LA, to: TOKYO, selected: 'moment', options: [
-          { id: 'clock', next: [{ start: '2027-03-10T19:00:00+09:00', allDay: false }] },
-          { id: 'moment', next: [{ start: '2027-03-11T12:00:00+09:00', allDay: false }] }] },
+          { id: 'clock', start: '2027-01-06T19:00:00+09:00', next: [{ start: '2027-03-10T19:00:00+09:00', allDay: false }] },
+          { id: 'moment', start: '2027-01-07T12:00:00+09:00', next: [{ start: '2027-03-11T12:00:00+09:00', allDay: false }] }] },
         { id: 'reading', selected: 'member', options: [
           { id: 'member', rrule: 'FREQ=WEEKLY;BYDAY=TH', dates: [{ start: '2027-03-11T07:00:00+09:00', allDay: false }, { start: '2027-03-18T07:00:00+09:00', allDay: false }] },
           { id: 'pattern', rrule: 'FREQ=WEEKLY;BYDAY=TH', dates: [{ start: '2027-03-11T07:00:00+09:00', allDay: false }, { start: '2027-03-19T07:00:00+09:00', allDay: false }] }] },
@@ -5168,6 +5179,24 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       [['Keep the clock time: 7:00 PM in Tokyo', 'Wed, Mar 10'], ['Keep the same moment: 7:00 PM in Los Angeles, 12:00 PM in Tokyo', 'Thu, Mar 11']],
       [['Move every Wednesday to Thursday', 'Thu, Mar 11 · Thu, Mar 18'], ['Shift the whole weekly pattern', 'Thu, Mar 11 · Fri, Mar 19']],
     ], 'Thu, Mar 11 · Thu, Mar 18 · Thu, Mar 25 …']);
+
+    // A zone option's clocks are the series' start under it, never its next
+    // list: here a weekly Tuesday 1:30 AM New York series whose 12 Jan day was
+    // moved to 5 Jan at 3:30 AM lists that day first, at 12:30 AM in Los Angeles.
+    {
+      const NY = 'America/New_York';
+      const zoneGroup = (options) => view(plan(LA, [], { rule: { from: weekly(NY, 'TU', '01:30', '2027-01-05'), to: weekly(LA, 'TU', '01:30', '2027-01-05') },
+        groups: [{ id: 'zone', from: NY, to: LA, selected: 'clock', options }] })).readings[0].options.map((o) => [o.label, o.dates]);
+      eq('verify: a zone option\'s clocks are the series\' start under it, not an edited day listed first', zoneGroup([
+        { id: 'clock', start: '2027-01-05T01:30:00-08:00', next: [{ start: '2027-01-05T00:30:00-08:00', allDay: false }, { start: '2027-01-19T01:30:00-08:00', allDay: false }] },
+        { id: 'moment', start: '2027-01-04T22:30:00-08:00', next: [{ start: '2027-01-05T00:30:00-08:00', allDay: false }, { start: '2027-01-18T22:30:00-08:00', allDay: false }] }]), [
+        ['Keep the clock time: 1:30 AM in Los Angeles', 'Tue, Jan 5 · Tue, Jan 19'],
+        ['Keep the same moment: 1:30 AM in New York, 10:30 PM in Los Angeles', 'Tue, Jan 5 · Mon, Jan 18']]);
+      eq('verify: a zone option without a start (an older server) shows no clocks, its dates still from its list', zoneGroup([
+        { id: 'clock', next: [{ start: '2027-01-12T01:30:00-08:00', allDay: false }] },
+        { id: 'moment', next: [{ start: '2027-01-11T22:30:00-08:00', allDay: false }] }]), [
+        ['Keep the clock time', 'Tue, Jan 12'], ['Keep the same moment', 'Mon, Jan 11']]);
+    }
 
     // A clock that can't be said (in the app, a zone the browser can't read)
     // leaves out its clause, or the sentence, and never prints an empty or null clock.
@@ -5188,8 +5217,8 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       const marsRule = { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: MARS, allDay: false };
       const rule = [W2.ruleWords(marsRule), W2.changeSentence({ from: weekly(LA), to: marsRule }, noEnd, { refYear: 2027 })];
       const zone = view(plan(LA, [], { groups: [{ id: 'zone', from: LA, to: MARS, selected: 'moment', options: [
-        { id: 'clock', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] },
-        { id: 'moment', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] }] }] })).readings.map((c) => c.options.map((o) => o.label));
+        { id: 'clock', start: '2027-01-05T19:00:00-08:00', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] },
+        { id: 'moment', start: '2027-01-05T19:00:00-08:00', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] }] }] })).readings.map((c) => c.options.map((o) => o.label));
       W2.setStrictClocks(true);
       eq('verify: a clock that can\'t be said drops its clause: a day made timed, alone, moved and in a group', [one, moved, two, group], [
         ["'Sample practice 2' on Tue, Jan 12 is no longer all-day."],

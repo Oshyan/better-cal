@@ -625,12 +625,13 @@ export function choiceWords(g, ctx = {}) {
   }
   if (g.id === 'zone') {
     const fromTz = g.from, toTz = g.to;
-    // The option's first timed event, an entry ({start, allDay, tz?}; an
-    // all-day one has a date and no clock): its instant, read in each zone
-    // the label names, so a clock and its zone's name always go together.
-    const at = (x) => startOfNext((x.next || []).find((n) => n && !n.allDay));
-    // A clock that can't be said leaves out its zone's name with it.
-    const inZone = (x, tz) => { const c = fmtClock(at(x), tz); return c ? c + ' in ' + zoneName(tz) : ''; };
+    // The option's clocks are the series' start after the change under it
+    // (ISO in the plan's zone), read in each zone the label names, so a clock
+    // and its zone's name always go together. Never its next list, whose first
+    // timed entry can be an edited day at a clock of its own.
+    // A clock that can't be said, or an option without a timed start, leaves
+    // out its zone's name with it.
+    const inZone = (x, tz) => { const c = /T\d{2}:\d{2}/.test(x.start || '') ? fmtClock(x.start, tz) : ''; return c ? c + ' in ' + zoneName(tz) : ''; };
     const listed = (head, parts) => head + (parts.filter(Boolean).length ? ': ' + parts.filter(Boolean).join(', ') : '');
     return {
       lead: '',
@@ -744,8 +745,14 @@ export function noteWords(n, opts = {}) {
     return missing ? 'There is no ' + missing + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + (at ? ', so that one is at ' + at : '') + '.' : '';
   }
   if (n.kind === 'overlap') {
+    // Which of the two instants the series is at, and whether that one is in
+    // daylight time, come from the note: a note without them says neither.
     const at = fmtClock(n.at, n.tz);
-    return at ? at + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + '; this is the first, in daylight time.' : '';
+    if (!at) return '';
+    const fold = n.fold === 'first' || n.fold === 'second' ? n.fold : null;
+    const kind = n.daylight === true ? 'daylight' : n.daylight === false ? 'standard' : null;
+    const which = fold ? '; this is the ' + fold + (kind ? ', in ' + kind + ' time' : '') : '';
+    return at + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + which + '.';
   }
   return '';
 }

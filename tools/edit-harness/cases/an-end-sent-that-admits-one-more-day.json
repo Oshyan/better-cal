@@ -1,0 +1,75 @@
+{
+    "n": 1944,
+    "seed": 6,
+    "series": {
+        "family": "daily_byday",
+        "rrule": "FREQ=DAILY;BYDAY=TU,WE,SU",
+        "import": false,
+        "bound": "until",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-11-01 02:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 5,
+            "kind": "skip"
+        },
+        {
+            "at": 9,
+            "kind": "skip"
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": "America/Los_Angeles",
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 9000,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": {
+            "untilAt": 9
+        },
+        "via": "row"
+    },
+    "stack": {
+        "kind": "rename",
+        "days": 7,
+        "mins": 120
+    },
+    "choices": {
+        "edit": {
+            "zone": "clock",
+            "reading": "pattern",
+            "movedDays": "keep"
+        },
+        "stack": []
+    },
+    "preselected": {
+        "edit": false,
+        "stack": false
+    }
+}

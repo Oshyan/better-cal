@@ -762,13 +762,20 @@ final class Driver
         }
         $u = (string) $b['until'];
         $limit = strlen($u) === 8 ? substr($u, 0, 4) . '-' . substr($u, 4, 2) . '-' . substr($u, 6, 2) . ' 23:59:59' : Clock::db(\DateTimeImmutable::createFromFormat('Ymd\THis\Z', $u, Clock::utc()));
+        // The last raw occurrence at or before the sent end, read on the
+        // unbounded pattern: the stored series is already cut at its own
+        // UNTIL, so an end that admits one more day would read the same.
+        $stored = end($st['raw'])['key'];
+        $unbounded = ['rrule' => Shape::pattern((string) $st['row']['rrule'])] + $st['row'];
+        $from = min(Clock::parse($limit)->getTimestamp(), Clock::parse($stored)->getTimestamp()) - 400 * 86400;
+        $days = (int) ceil((max(Clock::parse($limit)->getTimestamp(), Clock::parse($stored)->getTimestamp()) - $from) / 86400) + 2;
         $last = null;
-        foreach ($st['raw'] as $o) {
-            if ($o['key'] <= $limit) {
-                $last = $o['key'];
+        foreach (Truth::keysFrom($unbounded, Clock::db((new \DateTimeImmutable('@' . max($from, Clock::parse((string) $st['row']['start_utc'])->getTimestamp())))), $days) as $k) {
+            if ($k <= $limit && $k >= (string) $st['row']['start_utc']) {
+                $last = $k;
             }
         }
-        return $last === end($st['raw'])['key'];
+        return $last === $stored;
     }
 
     private function boundOf(string $rrule): string

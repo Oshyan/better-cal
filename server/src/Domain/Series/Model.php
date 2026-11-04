@@ -1948,14 +1948,13 @@ final class Model
         $detachCount = count(array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited'));
         $ownership = null;
         if ($detachCount > 0) {
-            // Each named where it shows, as its day line names it.
-            $shownOf = [];
-            foreach ($this->rows as $row) {
-                $shownOf[(string) $row['recurrence_instance_utc']] = $this->shownDn($row);
-            }
-            $names = array_values(array_map(fn(array $d): string => "'" . ($d['title'] ?? '') . "' on "
-                . Words::dayMonth($separate && $d['key'] === $this->acted ? $landedDn : ($shownOf[(string) $d['key']] ?? $this->old->dnOf((string) $d['key'])), $this->thisYear),
-                array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited')));
+            // Each named by the day it is about, then where it goes when that
+            // is another day (its after placement, the standalone row).
+            $names = array_values(array_map(function (array $d): string {
+                $day = self::dayOf(['date' => $d['day']]);
+                $went = self::dayOf($d['after']);
+                return "'" . ($d['title'] ?? '') . "' on " . Words::dayMonth($day, $this->thisYear) . ($went !== $day ? ', moved to ' . Words::dayMonth($went, $this->thisYear) : '');
+            }, array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited')));
             $summary .= ' ' . ($detachCount === 1 ? 'One edited day became an event of its own: ' : Words::count($detachCount) . ' edited days became events of their own: ') . Words::andList($names) . '.';
             // The dialog's sentence (series-model.md, The Plan, line 7).
             $ownership = ($detachCount === 1 ? 'One edited day becomes an event of its own: ' : Words::count($detachCount) . ' edited days become events of their own: ') . Words::andList($names) . '.';

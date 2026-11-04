@@ -794,7 +794,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($rem, [], ['columns' => ['title' => 'Chorus', 'reminders_json' => json_encode([['minutes' => 30]])]]);
     checkEq('field lines give the values before and after', ['Title: Choir, now Chorus', 'Reminder: 1 hour before, now 30 minutes'], array_column($p['plan']['fields'], 'words'));
     $p = smPlan($choir, [smEdited($choir, 2, '2027-04-13 19:00', ['title' => 'Rehearsal'], '2027-04-16 19:00', ['date', 'title'])], ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,TH']);
-    checkEq('the ownership sentence names where the day shows', "One edited day becomes an event of its own: 'Rehearsal' on 16 Apr.", $p['plan']['ownership'] ?? null);
+    checkEq('the ownership sentence names the day by the day it is about, then where it shows', "One edited day becomes an event of its own: 'Rehearsal' on 13 Apr, moved to 16 Apr.", $p['plan']['ownership'] ?? null);
     checkEq('day names stay capitalized in the summary', true, str_contains($p['plan']['summary'], 'weekly on Tuesday at 19:00, now weekly on Monday and Thursday'));
     $created = BetterCal\Domain\Events::creationPlan(['rrule' => 'FREQ=WEEKLY;BYDAY=TU', 'start_utc' => smAt('2027-03-02 09:00'), 'end_utc' => smAt('2027-03-02 10:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'],
         ['start_utc' => smAt('2027-02-26 09:00')], 'America/Los_Angeles');
@@ -1822,6 +1822,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ['date' => '2027-02-12', 'at' => '2027-02-12T19:00:00+00:00'], 'This one, Fri 12 Feb',
     ], [$alone['outcome'] ?? null, $alone['day'] ?? null, $alone['before'] ?? null, $alone['after'] ?? null, $alone['to'] ?? null,
         $standalone === [] ? null : ['date' => substr($standalone['start_utc'], 0, 10), 'at' => Time::iso(Time::fromDb($standalone['start_utc']))], $alone['head'] ?? null]);
+    // The ownership sentence and the Activity entry name each day by the
+    // day it is about, then where it went when that is another day.
+    $p = smPlan($utcWeekly, [$concert], $toFri);
+    checkEq('Writers: the day becoming an event of its own is named by the day it is about, then where it went', [
+        "One edited day becomes an event of its own: 'Sample concert' on 9 Feb, moved to 12 Feb.", true,
+    ], [$p['plan']['ownership'] ?? null, str_contains($p['plan']['summary'], "One edited day became an event of its own: 'Sample concert' on 9 Feb, moved to 12 Feb.")]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

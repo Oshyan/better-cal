@@ -5003,6 +5003,21 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const quiet = [W2.fmtClock('2027-01-12T20:00:00-08:00'), planView({ ...evening, days: [{ ...evening.days[0], tz: undefined, after: { ...evening.days[0].after, tz: undefined } }] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
   W2.setStrictClocks(true);
   eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  // A zone name the browser can't read (an import's zone the server accepts
+  // and Intl doesn't) is no zone: no clock, never the device's under its name.
+  const MARS = 'Mars/Olympus_Mons';
+  const { fmtTimeInZone } = await import('../src/lib/dates.js');
+  let unreadable = null;
+  try { W2.fmtClock('2027-01-12T20:00:00-08:00', MARS); } catch (e) { unreadable = e.message; }
+  eq('zone rule: under test a clock in a zone the browser can\'t read throws', [unreadable, (() => { try { return W2.fmtClock({ at: '2027-01-12T20:00:00-08:00', tz: MARS }, LA); } catch (e) { return e.message; } })()],
+    ['fmtClock: unreadable zone ' + MARS + ' for 2027-01-12T20:00:00-08:00', 'fmtClock: unreadable zone ' + MARS + ' for 2027-01-12T20:00:00-08:00']);
+  W2.setStrictClocks(false);
+  const marsDay = { ...evening.days[0], tz: MARS, before: { ...evening.days[0].before, tz: MARS }, after: { ...evening.days[0].after, tz: MARS } };
+  const marsQuiet = [W2.fmtClock('2027-01-12T20:00:00-08:00', MARS), W2.clockOf(marsDay.after), planView({ ...evening, days: [marsDay] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
+  W2.setStrictClocks(true);
+  eq('zone rule: in the app a clock in a zone the browser can\'t read is left out, and so is the zone\'s name', marsQuiet, ['', '', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  eq('zone rule: a clock for its zone\'s name is null for a zone the browser can\'t read', [fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), MARS), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), null), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), LA)],
+    [null, null, '8:00 PM']);
 
   // The verification set of 1.5.0's sentences (workfolder plan, The
   // client): plans shaped as the server writes them, read by the real

@@ -11,7 +11,7 @@
 // this module only says them.
 
 import {
-  fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn,
+  fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn, fmtTimeInZone,
   dateOfDayKey, tzCity, untilDayKey,
 } from './dates.js';
 import { describeRepeat, ruleParts } from './repeat.js';
@@ -57,8 +57,9 @@ export function fmtDay(value, { weekday = true, prev = null, refYear = new Date(
 }
 
 // A clock with no zone to read it in is never guessed (series-model.md, One
-// zone): the smoke suite turns this on so such a call fails there; in the
-// app the clock is left out instead.
+// zone), and a zone the browser can't read is no zone: the smoke suite
+// turns this on so such a call fails there; in the app the clock is left
+// out instead.
 let strictClocks = false;
 export function setStrictClocks(on) { strictClocks = !!on; }
 
@@ -66,7 +67,8 @@ export function setStrictClocks(on) { strictClocks = !!on; }
  * A clock time, in the user's 12- or 24-hour setting, of "HH:MM" or of an
  * instant: an ISO string read in `tz` (the plan's zone), or a value of the
  * plan carrying its own zone ({at or start, tz}: a timed day in an all-day
- * plan), read in that zone. With no zone there is no clock.
+ * plan), read in that zone. With no zone, or one the browser can't read,
+ * there is no clock: never the device's in its place.
  */
 export function fmtClock(value, tz = null) {
   if (/^\d{2}:\d{2}$/.test(String(value))) {
@@ -76,12 +78,13 @@ export function fmtClock(value, tz = null) {
   const own = value && typeof value === 'object' ? value : null;
   const at = own ? own.at || own.start : value;
   const zone = (own && own.tz) || tz;
-  if (!zone) {
-    if (strictClocks) throw new Error('fmtClock: no zone for ' + at);
+  const d = new Date(at);
+  const clock = zone && !isNaN(d) ? fmtTimeInZone(d, zone) : '';
+  if (clock == null || !zone) {
+    if (strictClocks) throw new Error(zone ? 'fmtClock: unreadable zone ' + zone + ' for ' + at : 'fmtClock: no zone for ' + at);
     return '';
   }
-  const d = new Date(at);
-  return isNaN(d) ? '' : fmtTimeIn(d, zone);
+  return clock;
 }
 
 /** A zone as people name it: "Berlin". */

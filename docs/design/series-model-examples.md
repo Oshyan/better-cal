@@ -445,7 +445,7 @@ The harness's twelve open causes, each by the cell that settles it. Run at 976f4
 - **Cause 10, count-span.** `BYMONTHDAY=31;COUNT=6` from 31 Jan with 31 Oct edited, 31 Mar dragged to 1 Apr: every 1st, k = 1, start 1 Feb. Keep 6 events (preselected): ends 1 Jul, and the edited 31 Oct, outside, becomes an event of its own, "6 in the series + 1 separate". Keep the end: COUNT=10, the edit on 1 Nov (A Count, above).
 - **Cause 11, month-multiple.** `BYMONTHDAY=1;COUNT=11` from 1 Aug with 1 Aug moved to 31 Jul, 1 Feb dragged to 1 Mar: k = 1, start 1 Sep, the moved day keyed on 1 Sep and still showing on its own 31 Jul ("Keep 31 Jul"; with "Move to 31 Aug", there). `BYDAY=4SU;UNTIL=20270725`, 23 May dragged to 27 Jun: k = 1, every fourth Sunday from 28 Mar to 22 Aug, six occurrences as before.
 - **Cause 12, until-type.** An all-day `BYDAY=4TU;UNTIL=20271228` made timed at 10:00 Auckland: UNTIL becomes the last occurrence's instant, so 28 Dec 2027 10:00 is kept.
-- **Cause 13, until-first-phantom.** Every 2nd (all-day) split at 2 Jun 2028: the old part's UNTIL is 20280502, its last occurrence, and expands without the phantom 1 Jun (probed: `UNTIL=20270601` yields 1 Jun, `UNTIL=20270502` doesn't).
+- **Cause 13, until-first-phantom.** A monthly BYDAY or BYMONTHDAY rule yields only its months' own days, so every 2nd (all-day) with `UNTIL=20270601` ends on 2 May with no 1 Jun, the same days as `UNTIL=20270502`.
 
 ## The Reviewers' Cases
 

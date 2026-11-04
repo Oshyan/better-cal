@@ -372,8 +372,8 @@ trait PlanPlacement
      * from the day acted on through its first one that differs from the
      * other reading's (three at least, or the first three and `then`, the
      * last shared and the first different, when that is further on); and
-     * `earlier`, where its days before the day acted on first differ, index
-     * by index, from the series as it is today, the earlier of the two by
+     * `earlier`, where its events before the day acted on first differ, event
+     * by event by instant and kind, from the series as it is today, the earlier of the two by
      * instant, named by its series. The contract leaves three things open:
      * whether a reading's days are its rule unbounded or its series as
      * bounded, whether a gain at an edge (added, or left out as a generated skip) is one
@@ -403,8 +403,14 @@ trait PlanPlacement
         $entry = static fn(int $d): array => $x->allDay1
             ? ['start' => Days::date($d) . 'T00:00:00+00:00', 'allDay' => true]
             : ['start' => Clock::iso(Clock::at($d, $clock, $x->tz1)), 'allDay' => false];
-        $actedDn = Clock::dayOf($x->actedKey(), $ctx['tz0']);
-        $old = array_values(array_filter($before['raw'], static fn(array $o): bool => $o['dn'] < $actedDn));
+        // The series as it is today, before the day acted on: each event's instant, kind and day in the old zone.
+        $actedAt = Clock::parse($x->actedKey())->getTimestamp();
+        $old = [];
+        foreach ($before['raw'] as $o) {
+            if (Clock::parse($o['key'])->getTimestamp() < $actedAt) {
+                $old[] = ['ts' => Clock::parse($o['key'])->getTimestamp(), 'allDay' => $before['allDay'], 'date' => Days::date($o['dn'])];
+            }
+        }
         // Each enabled option's days, in each of the open readings.
         $seqs = [];
         foreach ($group['options'] ?? [] as $o) {
@@ -427,17 +433,26 @@ trait PlanPlacement
             if (!array_key_exists('earlier', $s['o'])) {
                 continue; // c-shape says where an option must carry it
             }
+            // Event by event, by instant and kind, never by day number (two
+            // zones' day numbers name different days): the first index where
+            // the reading's events before the day acted on and the series'
+            // today differ, the earlier of the two, named by its own series.
             $wants = [];
             foreach ($s['v'] as $days) {
-                foreach ([$actedDn, $x->landedDn] as $edge) {
-                    $mine = array_values(array_filter($days, static fn(int $d): bool => $d < $edge));
+                foreach ([$actedAt, $instant($x->landedDn)] as $edge) {
+                    $mine = [];
+                    foreach ($days as $d) {
+                        if ($instant($d) < $edge) {
+                            $mine[] = ['ts' => $instant($d), 'allDay' => $x->allDay1, 'date' => Days::date($d)];
+                        }
+                    }
                     $want = [null, null];
                     for ($j = 0, $n = max(count($mine), count($old)); $j < $n; $j++) {
                         $m = $mine[$j] ?? null;
                         $w = $old[$j] ?? null;
-                        if ($m !== ($w['dn'] ?? null)) {
-                            $newFirst = $m !== null && ($w === null || $instant($m) < Clock::parse($w['key'])->getTimestamp());
-                            $want = $newFirst ? [Days::date($m), 'new'] : [Days::date($w['dn']), 'old'];
+                        if ($m === null || $w === null || $m['ts'] !== $w['ts'] || $m['allDay'] !== $w['allDay']) {
+                            $newFirst = $m !== null && ($w === null || $m['ts'] < $w['ts']);
+                            $want = $newFirst ? [$m['date'], 'new'] : [$w['date'], 'old'];
                             break;
                         }
                     }
@@ -449,7 +464,7 @@ trait PlanPlacement
                 continue;
             }
             $o = $s['o'];
-            $this->expect('c-placement', 'a reading\'s earlier is where its days before the day acted on first differ from the series today, the earlier by instant, named by its series', 'reading earlier', reset($wants), [$o['earlier'] ?? null, $o['earlierSeries'] ?? null], ['option' => $id]);
+            $this->expect('c-placement', 'a reading\'s earlier is where its events before the day acted on first differ from the series today, by instant and kind, the earlier of the two, named by its own series', 'reading earlier', reset($wants), [$o['earlier'] ?? null, $o['earlierSeries'] ?? null], ['option' => $id]);
         }
         if (count($seqs) !== 2) {
             if (count($seqs) > 2) {

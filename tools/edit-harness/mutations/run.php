@@ -85,11 +85,18 @@ try {
     }
     $only = isset($opts['only']) ? explode(',', (string) $opts['only']) : null;
     $selected = array_values(array_filter($mutations, static fn(array $m): bool => $only === null || in_array($m['id'], $only, true)));
-    // Every case the harness mutations name, unmutated: clean.
+    // Every case the harness mutations name, unmutated: clean. A failure here
+    // is a finding about the tree, named; each mutation is then judged by the
+    // failures it adds to these, record by record.
     $cases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => $m['cases'] ?? [], $selected ?: [['cases' => []]]))));
+    $sig = static fn(array $r): string => ($r['spec']['fixed'] ?? (string) $r['n']) . '|' . json_encode([$r['invariant'], $r['what'], $r['detail']]);
+    $baseline = [];
     if ($cases !== []) {
         $base = $harness(null, ['--cases', '0', '--fixed=' . implode(',', $cases)]);
         $clean = $base['byCase'] === [];
+        foreach ($base['records'] as $rec) {
+            $baseline[$sig($rec)] = true;
+        }
         echo ($clean ? 'ok  ' : 'FAIL') . "  baseline: the mutations' " . count($cases) . " fixed cases pass unmutated" . ($clean ? '' : ': ' . json_encode($base['byCase'])) . "\n";
         $failed += $clean ? 0 : 1;
     }
@@ -106,13 +113,15 @@ try {
         $r = $harness($copy, ['--cases', '0', '--fixed=' . implode(',', $m['cases'])]);
         $tripped = [];
         $others = [];
-        foreach ($r['byCase'] as $inv) {
-            foreach ($inv as $name => $n) {
-                if (in_array($name, $m['checks'], true)) {
-                    $tripped[$name] = ($tripped[$name] ?? 0) + $n;
-                } else {
-                    $others[$name] = ($others[$name] ?? 0) + $n;
-                }
+        foreach ($r['records'] as $rec) {
+            if (isset($baseline[$sig($rec)])) {
+                continue; // fails unmutated too
+            }
+            $name = $rec['invariant'];
+            if (in_array($name, $m['checks'], true)) {
+                $tripped[$name] = ($tripped[$name] ?? 0) + 1;
+            } else {
+                $others[$name] = ($others[$name] ?? 0) + 1;
             }
         }
         $missing = array_values(array_diff($m['checks'], array_keys($tripped)));

@@ -30,9 +30,12 @@ return [
     ],
     [
         'id' => 'earlier-min-across-series', 'file' => $model, 'checks' => ['c-placement'],
-        'what' => 'earlier as a min across two series: day numbers of two zones compared as days',
-        'patch' => [["\$new = \$mine !== null && (\$was === null || \$s['calc']->instant(\$mine) < \$this->old->instant(\$was));", "\$new = \$mine !== null && (\$was === null || \$mine < \$was);"]],
-        'cases' => ['mutation-earlier-across-zones'],
+        // Both halves of a min across two series: where the readings differ (day numbers as days) and which comes first (the smaller day number).
+        // Today the model detects by day number (review D2), so reading-earlier-by-instant-across-zones fails unmutated; when the model compares
+        // instants this text is gone and the runner fails loudly until the first pair is retargeted at its detection.
+        'what' => 'earlier as a min across two series: two zones\' day numbers compared as days, to find where they differ and which comes first',
+        'patch' => [["                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$s['calc']->instant(\$mine) < \$this->old->instant(\$was));", "                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$mine < \$was);"]],
+        'cases' => ['mutation-earlier-across-zones', 'reading-earlier-by-instant-across-zones'],
     ],
     [
         'id' => 'next-drops-acted', 'file' => $model, 'checks' => ['c-next'],

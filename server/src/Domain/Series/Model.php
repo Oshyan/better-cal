@@ -1442,7 +1442,12 @@ final class Model
         // key on its image day, at its place among that day's keys (a rule
         // several times a day has several), as the expander gives it; null
         // when the new series has none there. In the same expansion on the
-        // same day, that is the key itself.
+        // same day, that is the key itself. A key the new series has on its
+        // image day is its own new key (a new pattern keeps the keys on its
+        // days), and a key at its place that another key of the old day
+        // keeps that way is that key's, so no two old keys share one: a
+        // rule several times a day replaced by one with fewer keys a day
+        // keeps every key the new one shares.
         $newKey = function (string $key, ?int $img) use ($calc1): ?string {
             if ($img === null) {
                 return null;
@@ -1455,8 +1460,13 @@ final class Model
             if ($on === []) {
                 return null;
             }
-            $at = array_search($key, $this->old->keysOn($odn), true);
-            return $on[$at === false ? 0 : $at] ?? null;
+            if (in_array($key, $on, true)) {
+                return $key;
+            }
+            $oldOn = $this->old->keysOn($odn);
+            $at = array_search($key, $oldOn, true);
+            $placed = $on[$at === false ? 0 : $at] ?? null;
+            return $placed !== null && in_array($placed, $oldOn, true) ? null : $placed;
         };
         // A generated skip past the new end needs nothing (Bounds, gains at the edges).
         $genSkips = array_values(array_filter($genSkips, $inside));

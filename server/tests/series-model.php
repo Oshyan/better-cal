@@ -1885,6 +1885,23 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Readings: a Friday twelve weeks on dragged to Saturday, the member reading\'s dates start there and run three and more', [
         ['2027-04-03', '2027-04-08', '2027-04-10'], ['2027-04-03', '2027-04-09', '2027-04-10'],
     ], [$datesOf($p, 'member'), $datesOf($p, 'pattern')]);
+
+    // A new pattern keeps the keys on its days: a series twice a day made
+    // once a day at its later time keeps the later day's edited row on its
+    // own key; the earlier time, which the new rule no longer has, is the
+    // one that goes. Where the new day has no key the old one had, a key
+    // keeps its place among the day's keys, and the time it had is gone.
+    $twice = smSeries('Sample practice', 'FREQ=DAILY;BYHOUR=9,15;BYMINUTE=0', '2027-03-01 09:00');
+    $later = smEdited($twice, 2, '2027-03-02 15:00', ['location' => 'Sample Hall'], null, ['location']);
+    $earlier = smEdited($twice, 3, '2027-03-03 09:00', ['location' => 'Sample Room'], null, ['location']);
+    $at15 = ['acted' => smAt('2027-03-01 09:00'), 'rrule' => 'FREQ=DAILY', 'landed' => ['start_utc' => smAt('2027-03-01 15:00'), 'end_utc' => smAt('2027-03-01 16:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($twice, [$later, $earlier], $at15);
+    $byKey = array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), null, 'key');
+    $k15 = str_replace(' ', 'T', smAt('2027-03-02 15:00')) . 'Z';
+    $k09 = str_replace(' ', 'T', smAt('2027-03-03 09:00')) . 'Z';
+    checkEq('Keys: made once a day at 15:00, the 15:00 edited day stays on its key and the 09:00 one leaves the series', [
+        [$k15, 'stays'], 'separate',
+    ], [[$byKey[$k15]['newKey'] ?? 'missing', $byKey[$k15]['outcome'] ?? null], $byKey[$k09]['outcome'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

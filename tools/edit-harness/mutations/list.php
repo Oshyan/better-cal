@@ -18,9 +18,9 @@ return [
     ],
     [
         'id' => 'to-from-pattern-day', 'file' => $model, 'checks' => ['c-placement'],
-        'what' => 'a to from a pattern day (its new key\'s UTC date) beside an at from an instant',
-        'patch' => [["\$out['to'] = \$out['after']['date'];", "\$out['to'] = substr((string) (\$after['recurrence_instance_utc'] ?? \$after['start_utc']), 0, 10);"]],
-        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-drag-with-edited-days-in-other-zones'],
+        'what' => 'an edited day\'s to from a pattern day (its image, a day of the new rule) beside an at from its instant',
+        'patch' => [["'title' => (string) \$row['title'], 'outcome' => \$moved ? 'moves' : 'stays'] + \$sides", "'title' => (string) \$row['title'], 'outcome' => \$moved ? 'moves' : 'stays', 'to' => self::patternOut(\$calc1, (int) \$img)] + \$sides"]],
+        'cases' => ['mutation-drag-with-edited-days-in-other-zones', 'mutation-drag-with-a-day-at-its-own-date'],
     ],
     [
         'id' => 'day-from-before', 'file' => $model, 'checks' => ['c-placement'],
@@ -111,9 +111,9 @@ return [
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [
-        'id' => 'untouched-control-event', 'file' => $model, 'checks' => ['c-untouched'],
-        'what' => 'a control event touched (the row made just before the series)',
-        'patch' => [["                'overrides' => \$overrideWrites,", "                'overrides' => \$overrideWrites + [((int) \$this->master['id']) - 1 => ['location' => 'Sample Annex']],"]],
+        'id' => 'untouched-control-event', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'a commit that writes the account\'s other events: every event of its own made before the series takes the new place',
+        'patch' => [["            if (\$w['master'] !== []) {\n", "            \$this->db->run(\"UPDATE events SET location = 'Sample Annex' WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL\", [\$userId, \$id]);\n            if (\$w['master'] !== []) {\n"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [

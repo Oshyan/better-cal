@@ -1844,6 +1844,24 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: started from the evening day of an all-day series: about Tue 12 Jan, shown at 20:00 in its own zone', [
         '2027-01-12', ['date' => '2027-01-12', 'at' => '2027-01-12T20:00:00-08:00', 'tz' => $la], '2027-01-12',
     ], [$p['plan']['acted']['day'] ?? null, $p['plan']['acted']['before'] ?? null, $p['plan']['acted']['shows'] ?? null]);
+
+    // Outcomes: a day's instant and kind compared, never its end. A longer
+    // series leaves every edited day where it starts, so each stays.
+    $weekly = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 20:00');
+    $named = smEdited($weekly, 2, '2027-01-12 20:00', ['title' => 'Sample practice, own'], null, ['title']);
+    $longer = smDrag($weekly, '2027-01-05 20:00', '2027-01-05 20:00');
+    $longer['landed']['end_utc'] = smAt('2027-01-05 21:30');
+    $p = smPlan($weekly, [$named], $longer);
+    $d = $edited($p);
+    checkEq('Outcomes: an edited day whose length alone changes stays, and says so', [
+        'stays', true, smAt('2027-01-12 21:30'),
+    ], [$d['outcome'] ?? null, str_starts_with((string) ($d['outcomeWords'] ?? ''), 'stays'), $p['writes']['overrides'][2]['end_utc'] ?? null]);
+    $allDayWeekly = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=MO', '2027-01-04', 0, true);
+    $namedAllDay = smEdited($allDayWeekly, 2, '2027-01-11', ['title' => 'Sample practice, own'], null, ['title']);
+    $twoDays = smDrag($allDayWeekly, '2027-01-04', '2027-01-04');
+    $twoDays['landed']['end_utc'] = '2027-01-06 00:00:00';
+    $d = $edited(smPlan($allDayWeekly, [$namedAllDay], $twoDays));
+    checkEq('Outcomes: an all-day edited day made two days long stays on its date', ['stays', ['date' => '2027-01-11']], [$d['outcome'] ?? null, $d['after'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

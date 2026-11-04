@@ -1767,8 +1767,10 @@ final class Model
             if ($cols !== []) {
                 $overrideWrites[$id] = $cols;
             }
-            // Its outcome is its instant and kind compared, never its dates.
-            $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'] || $allDay !== ((int) $row['all_day'] === 1);
+            // Its outcome is its instant and kind compared, never its dates
+            // and never its end: a day that keeps its start and kind and
+            // only grows or shrinks stays where it is.
+            $moved = Time::toDb($start) !== (string) $row['start_utc'] || $allDay !== ((int) $row['all_day'] === 1);
             // The days it showed on before and after, and where it shows after
             // as an instant, each a placement by the zone rule: a date and a
             // clock of the same instant in one zone.

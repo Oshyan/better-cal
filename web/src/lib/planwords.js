@@ -142,6 +142,15 @@ function ruleShape(part) {
 const everyDays = (s) => (s.weekly ? 'every ' + s.days : 'on ' + s.days + ' ' + s.period);
 
 /** A field the editor changed: "Title from 'Choir' to 'Chorus'.", "Reminder from 1 hour before to 30 minutes." */
+/**
+ * The trip flag's change from the plan's data: "no, now yes", or when the
+ * days differed, "no on some days, now yes for every event".
+ */
+export function tripWords(trip) {
+  const yn = (x) => (x ? 'yes' : 'no');
+  return trip.mixed ? yn(trip.was) + ' on some days, now ' + yn(trip.now) + ' for every event' : yn(trip.was) + ', now ' + yn(trip.now);
+}
+
 export function fieldSentence(f) {
   const m = /^(.*), now (.*)$/.exec(f.words || '');
   if (!m) return f.label + ': ' + f.words + '.';

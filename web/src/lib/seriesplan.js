@@ -153,7 +153,9 @@ export function planView(plan, ctx = {}) {
       }),
     };
   };
-  view.fields = (ctx.fields || []).map(W.fieldSentence);
+  // The editor's lines; the trip flag's says when the days differed, from the plan.
+  const trip = (plan.fields || []).find((f) => f && f.field === 'is_container');
+  view.fields = (ctx.fields || []).map((f) => W.fieldSentence(f.field === 'isContainer' && trip ? { ...f, words: W.tripWords(trip) } : f));
   view.refused = planRefusal(plan);
   view.change = view.refused ? '' : W.changeSentence(plan.rule, plan.bound, opts);
   view.comingUp = W.comingUp(plan.next, plan.nextMore, opts);

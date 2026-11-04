@@ -52,5 +52,8 @@ export function fieldLines(changed, was, ctx = {}) {
   if ('url' in changed) now('Link', was.url, changed.url);
   if ('status' in changed) lines.push({ label: 'For me', words: changed.status === 'tentative' ? 'now Maybe' : 'now Planned' });
   if ('description' in changed) lines.push({ label: 'Notes', words: changed.description ? 'changed' : 'removed' });
+  // The trip flag: the series' value for every event. The plan says when
+  // the days differed (seriesplan.js reads its `field`).
+  if ('isContainer' in changed) lines.push({ label: 'Trip', field: 'isContainer', words: (was.isContainer ? 'yes' : 'no') + ', now ' + (changed.isContainer ? 'yes' : 'no') });
   return lines;
 }

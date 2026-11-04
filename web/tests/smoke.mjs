@@ -5411,11 +5411,19 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   eq('editor payload: tags by value, not by reference', changedFields({ ...was, tagNames: ['music'] }, was), {});
   eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }),
     [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes before' }]);
+  eq('editor lines: the trip flag, before and now', fieldLines({ isContainer: false }, { ...was, isContainer: true }), [{ label: 'Trip', field: 'isContainer', words: 'yes, now no' }]);
   // Reminders reach the panel in the shapes the editor holds them: the form
   // as it opened has minutes, the save sends entries ({minutes}). One
   // normalization, then one formatter (1.5.0 review, F6).
   const { normalizeMinutesList, remindersWords } = await import('../src/lib/reminders.js');
   const { planView: panelOf } = await import('../src/lib/seriesplan.js');
+  // The trip flag's line says when the days differed, from the plan's data (review F4).
+  const tripLine = (plan) => panelOf({ hash: 't1', ...plan }, { kind: 'editor', fields: fieldLines({ isContainer: false }, { ...was, isContainer: true }) }).fields;
+  eq('series panel: the trip flag change is a line of its own; the plan says when the days differed', [
+    tripLine({ fields: [{ field: 'is_container', words: 'Trip: yes, now no', was: 1, now: 0, mixed: false }] }),
+    tripLine({ fields: [{ field: 'is_container', words: 'Trip: yes on some days, now no for every event', was: 1, now: 0, mixed: true }] }),
+    tripLine({}),
+  ], [['Trip from yes to no.'], ['Trip from yes on some days to no for every event.'], ['Trip from yes to no.']]);
   const reminderChange = (opened, now) => panelOf({ hash: 'r1' }, { kind: 'editor', fields: fieldLines({ reminders: normalizeMinutesList(now) }, { ...was, reminders: opened }) }).fields;
   eq('editor to panel: a reminder from 1 hour to 30 minutes before', reminderChange([60], [30]), ['Reminder from 1 hour before to 30 minutes before.']);
   eq('editor to panel: a reminder from 30 minutes to 1 hour before', reminderChange([30], [60]), ['Reminder from 30 minutes before to 1 hour before.']);

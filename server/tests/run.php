@@ -4751,7 +4751,14 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
         $legacyStarted = hrtime(true);
         $legacyOut = Recurrence::sabreExpand($legacy, Time::fromDb('2026-10-08 00:00:00'), Time::fromDb('2026-10-09 00:00:00'));
         $legacyElapsed = (hrtime(true) - $legacyStarted) / 1_000_000_000;
-        checkEq("recur an old $frequency series stops at the dependency work ceiling", [], $legacyOut);
+        if ($frequency === 'HOURLY') {
+            // An HOURLY walk reaches the window by the iterator's own jumps
+            // (SeriesIterator::fastForward), so the window has its 24 hours.
+            checkEq('recur an old HOURLY series jumps to the window: its 24 hours, 00:00 to 23:00', ['2026-10-08 00:00:00', '2026-10-08 23:00:00', 24],
+                [Time::toDb($legacyOut[0]['start'] ?? Time::nowUtc()), Time::toDb(end($legacyOut)['start'] ?? Time::nowUtc()), count($legacyOut)]);
+        } else {
+            checkEq("recur an old $frequency series stops at the dependency work ceiling", [], $legacyOut);
+        }
         check("recur an old $frequency series returns within one second", $legacyElapsed < 1.0, "took {$legacyElapsed}s");
     }
 }

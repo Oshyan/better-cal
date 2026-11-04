@@ -411,6 +411,47 @@ final class Recurrence
         }
     }
 
+    /**
+     * A rule in its series' own form (RFC 5545 3.3.10): UNTIL takes the
+     * start's form, a date for an all-day series and a UTC date-time for a
+     * timed one (a date there is the end of that day in the series' zone,
+     * as the expander reads it), and an all-day series, whose start is a
+     * date, has no clock parts (BYHOUR, BYMINUTE, BYSECOND). Every writer
+     * writes a rule this way, and an all-day series' rule is read this way,
+     * so one stored with clock parts is read with them left out. A rule
+     * already in its form comes back as written.
+     */
+    public static function inForm(string $rrule, bool $allDay, ?string $tzid): string
+    {
+        try {
+            $parts = self::rruleParts($rrule);
+        } catch (\Throwable) {
+            return $rrule;
+        }
+        $changed = false;
+        if ($allDay) {
+            foreach (['BYHOUR', 'BYMINUTE', 'BYSECOND'] as $k) {
+                if (isset($parts[$k])) {
+                    unset($parts[$k]);
+                    $changed = true;
+                }
+            }
+        }
+        $u = $parts['UNTIL'] ?? null;
+        if ($u !== null && $allDay && preg_match('/^(\d{8})T(\d{6})(Z?)$/', $u, $m) === 1) {
+            $at = $m[3] === 'Z' ? \DateTimeImmutable::createFromFormat('Ymd His', $m[1] . ' ' . $m[2], Time::utc()) : false;
+            $parts['UNTIL'] = $at !== false ? $at->setTimezone(Time::zone($tzid))->format('Ymd') : $m[1];
+            $changed = true;
+        } elseif ($u !== null && !$allDay && preg_match('/^\d{8}$/', $u) === 1) {
+            $end = \DateTimeImmutable::createFromFormat('Ymd H:i:s', $u . ' 23:59:59', Time::zone($tzid));
+            if ($end !== false) {
+                $parts['UNTIL'] = $end->setTimezone(Time::utc())->format('Ymd\THis\Z');
+                $changed = true;
+            }
+        }
+        return $changed ? self::joinParts($parts) : $rrule;
+    }
+
     private static function joinParts(array $parts): string
     {
         $out = [];
@@ -687,20 +728,10 @@ final class Recurrence
         $end = Time::fromDb((string) $master['end_utc'])->setTimezone($tz);
         $uid = (string) ($master['uid'] ?? 'bettercal-expand');
 
-        // Start the iterator near the window instead of at the series origin,
-        // where that is provably equivalent (see skippablePeriods). Both ends
-        // move together so the duration is untouched, and the arithmetic runs
-        // in the event's own zone so wall-clock time survives DST.
-        $rrule = (string) $master['rrule'];
-        $skip = self::skippablePeriods($rrule, $start, $winStart->setTimezone($tz));
-        if ($skip > 0) {
-            $freq = str_contains(strtoupper($rrule), 'FREQ=WEEKLY') ? 'WEEKLY' : 'DAILY';
-            preg_match('/INTERVAL=(\d+)/', strtoupper($rrule), $m);
-            $interval = max(1, (int) ($m[1] ?? 1));
-            $shift = new \DateInterval('P' . ($skip * $interval * ($freq === 'WEEKLY' ? 7 : 1)) . 'D');
-            $start = $start->add($shift);
-            $end = $end->add($shift);
-        }
+        // The walk starts at the series' own start, so a window reads the
+        // state the walk carries from it (a DAILY;BYDAY clock a skipped hour
+        // pushed on): the window is reached by the iterator's own jumps
+        // (SeriesIterator::fastForward), never by moving DTSTART near it.
 
         $vcal = new \Sabre\VObject\Component\VCalendar();
         $vevent = $vcal->add('VEVENT', ['UID' => $uid]);
@@ -711,7 +742,8 @@ final class Recurrence
             $vevent->add('DTSTART', $start);
             $vevent->add('DTEND', $end);
         }
-        $vevent->add('RRULE', (string) $master['rrule']);
+        // An all-day series is read in its own form, without clock parts.
+        $vevent->add('RRULE', $allDay ? self::inForm((string) $master['rrule'], true, 'UTC') : (string) $master['rrule']);
 
         $out = [];
         try {

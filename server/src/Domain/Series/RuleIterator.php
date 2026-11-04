@@ -75,9 +75,32 @@ class RuleIterator extends RRuleIterator
     private ?array $lastFail = null;
     private ?int $base = null;
 
+    /** The rule without BYSETPOS, COUNT and UNTIL, from a period before the start, whose periods' sets BYSETPOS limits (periodSet); null without BYSETPOS. */
+    private ?self $sets = null;
+    /** @var list<\DateTimeImmutable> the current period's picked occurrences after the current one (sets, or BYWEEKNO's years) */
+    private array $picked = [];
+    /** The next year a YEARLY rule with BYWEEKNO reads, null before the first. */
+    private ?int $weekYear = null;
+
     public function __construct($rrule, \DateTimeInterface $start)
     {
         parent::__construct($rrule, $start);
+        if (!$this->owned() && $this->bySetPos !== null && $this->byWeekNo === null) {
+            $parts = $this->setsRule($rrule);
+            $this->sets = new self(implode(';', array_map(static fn(string $k, string $v): string => $k . '=' . $v, array_keys($parts), $parts)), $this->setsStart());
+            $this->rewind();
+        }
+        // An UNTIL that is a date bounds the series through the end of that
+        // day in the start's zone (RFC 5545 3.3.10 gives UNTIL the start's
+        // form; a date on a timed series, written by older versions or
+        // other apps, still keeps its last day). sabre reads it as the day's
+        // first instant, which a timed series' last day comes after. An
+        // all-day series' days start at midnight, so it reads the same.
+        $untilText = is_array($rrule) ? (string) (array_change_key_case($rrule, CASE_UPPER)['UNTIL'] ?? '') : (preg_match('/(?:^|;)\s*UNTIL=([^;]*)/i', (string) $rrule, $m) === 1 ? trim($m[1]) : '');
+        if ($this->until !== null && preg_match('/^\d{8}$/', $untilText) === 1) {
+            $this->until = max(\DateTimeImmutable::createFromInterface($this->startDate),
+                \DateTimeImmutable::createFromFormat('!Ymd', $untilText, $this->startDate->getTimezone())->setTime(23, 59, 59));
+        }
         if (!$this->owned()) {
             return;
         }
@@ -103,11 +126,25 @@ class RuleIterator extends RRuleIterator
         $this->pending = null;
         $this->period = 0;
         $this->lastFail = null;
+        $this->picked = [];
+        $this->weekYear = null;
+        if ($this->sets !== null) {
+            // The walk of the sets reads from the start's own period, whole.
+            $this->sets->rewind();
+            $first = $this->periodOf($this->startDate);
+            while ($this->sets->valid() && $this->periodOf($this->sets->current()) < $first) {
+                $this->sets->next();
+            }
+        }
     }
 
     #[\ReturnTypeWillChange]
     public function next()
     {
+        if ($this->weekNumbered() || $this->sets !== null) {
+            $this->nextPicked();
+            return;
+        }
         if (!$this->owned()) {
             $from = $this->currentDate?->getTimestamp();
             parent::next();
@@ -160,6 +197,219 @@ class RuleIterator extends RRuleIterator
         }
         $this->currentDate = $found;
         ++$this->counter;
+    }
+
+    /** A YEARLY rule with BYWEEKNO, whose years the iterator reads itself (weekYearSet). */
+    private function weekNumbered(): bool
+    {
+        return $this->frequency === 'yearly' && $this->byWeekNo !== null;
+    }
+
+    /**
+     * The next occurrence of a rule whose periods' sets the iterator reads
+     * whole: BYSETPOS limits the set of each period (RFC 5545 3.3.10: the
+     * occurrences of one interval of the frequency, whatever the frequency),
+     * read from the rule without it (periodSet), and a YEARLY rule with
+     * BYWEEKNO is read a year at a time (weekYearSet). An occurrence is one
+     * after the start (the start is the first, yielded before any next()).
+     * The rule ends with its sets, or when a whole cycle of the walk has gone
+     * by without one (cycle()), the rule's own end.
+     */
+    private function nextPicked(): void
+    {
+        $from = $this->currentDate?->getTimestamp();
+        $start = $this->startDate->getTimestamp();
+        $found = null;
+        while ($this->currentDate !== null) {
+            if ($this->picked !== []) {
+                $found = array_shift($this->picked);
+                break;
+            }
+            $set = $this->weekNumbered() ? $this->weekYearSet() : $this->periodSet();
+            if ($set === null) {
+                break;
+            }
+            [$at, $set] = $set;
+            if ($at > self::dateUpperLimit || ($this->until !== null && $at > $this->until->getTimestamp()) || ($from !== null && $set === [] && $at - $from > $this->cycle())) {
+                break;
+            }
+            $this->picked = array_values(array_filter(self::setPositions($set, $this->bySetPos), static fn(\DateTimeImmutable $t): bool => $t->getTimestamp() > $start));
+        }
+        $this->currentDate = $found;
+        ++$this->counter;
+    }
+
+    /**
+     * The next period's whole set from the rule without BYSETPOS, and where
+     * it starts: its occurrences, in order, that share a period (periodOf).
+     * Null when that rule has no more.
+     *
+     * @return array{0:int,1:list<\DateTimeImmutable>}|null
+     */
+    private function periodSet(): ?array
+    {
+        if (!$this->sets->valid()) {
+            return null;
+        }
+        $key = $this->periodOf($this->sets->current());
+        $set = [];
+        while ($this->sets->valid() && $this->periodOf($this->sets->current()) === $key) {
+            $set[] = \DateTimeImmutable::createFromInterface($this->sets->current());
+            $this->sets->next();
+        }
+        return [$set[0]->getTimestamp(), $set];
+    }
+
+    /**
+     * The period an instant of a sabre-stepped frequency falls in, as a
+     * number that grows with time: its year, month, week (from WKST), day,
+     * or for HOURLY the instant itself (each step is its own period).
+     */
+    private function periodOf(\DateTimeInterface $t): int
+    {
+        $t = \DateTimeImmutable::createFromInterface($t);
+        $dn = Cal::dnOf($t);
+        return match ($this->frequency) {
+            'yearly' => (int) $t->format('Y'),
+            'monthly' => Cal::mi((int) $t->format('Y'), (int) $t->format('n')),
+            'weekly' => $dn - ((Cal::wd($dn) - (int) Cal::wdOf(strtoupper($this->weekStart)) + 7) % 7),
+            'daily' => $dn,
+            default => $t->getTimestamp(),
+        };
+    }
+
+    /**
+     * The rule the sets are read from: this one without BYSETPOS, COUNT and
+     * UNTIL (which limit what the sets give), and with the start's own day
+     * written out where the rule takes it from the start (RFC 5545 3.3.10: a
+     * weekly rule's weekday, a monthly rule's day of the month, a yearly
+     * rule's day, and month without BYMONTH), since its walk starts on
+     * another day (setsStart).
+     *
+     * @param string|array<string,mixed> $rrule
+     * @return array<string,string>
+     */
+    private function setsRule($rrule): array
+    {
+        $parts = [];
+        if (is_array($rrule)) {
+            foreach ($rrule as $k => $v) {
+                $parts[strtoupper((string) $k)] = is_array($v) ? implode(',', $v) : (string) $v;
+            }
+        } else {
+            foreach (explode(';', (string) $rrule) as $piece) {
+                $kv = explode('=', $piece, 2);
+                if (count($kv) === 2 && trim($kv[0]) !== '') {
+                    $parts[strtoupper(trim($kv[0]))] = trim($kv[1]);
+                }
+            }
+        }
+        unset($parts['BYSETPOS'], $parts['COUNT'], $parts['UNTIL']);
+        $s = \DateTimeImmutable::createFromInterface($this->startDate);
+        $named = isset($parts['BYDAY']) || isset($parts['BYMONTHDAY']) || isset($parts['BYYEARDAY']);
+        if ($this->frequency === 'weekly' && !isset($parts['BYDAY'])) {
+            $parts['BYDAY'] = Cal::code(Cal::wd(Cal::dnOf($s)));
+        } elseif (in_array($this->frequency, ['monthly', 'yearly'], true) && !$named) {
+            $parts['BYMONTHDAY'] = $s->format('j');
+            if ($this->frequency === 'yearly' && !isset($parts['BYMONTH'])) {
+                $parts['BYMONTH'] = $s->format('n');
+            }
+        }
+        return $parts;
+    }
+
+    /**
+     * Where the sets' walk starts: on the first day of the period INTERVAL
+     * periods before the start's (an hour, for HOURLY), at the start's clock,
+     * so its walk keeps the rule's phase and reaches the start's period from
+     * before it, whole.
+     */
+    private function setsStart(): \DateTimeImmutable
+    {
+        $s = \DateTimeImmutable::createFromInterface($this->startDate);
+        [$y, $m] = [(int) $s->format('Y'), (int) $s->format('n')];
+        $dn = Cal::dnOf($s);
+        $day = match ($this->frequency) {
+            'yearly' => Cal::dn($y - $this->interval, 1, 1),
+            'monthly' => Cal::dn(...[...Cal::fromMi(Cal::mi($y, $m) - $this->interval), 1]),
+            'weekly' => $this->periodOf($s) - 7 * $this->interval,
+            'daily' => $dn - $this->interval,
+            default => null,
+        };
+        if ($day === null) {
+            return $s->modify('-' . $this->interval . ' hours');
+        }
+        [$yy, $mm, $dd] = Cal::ymd($day);
+        return $s->setDate($yy, $mm, $dd);
+    }
+
+    /**
+     * The next year's set of a YEARLY rule with BYWEEKNO, and where it starts:
+     * the days of its listed weeks (week 1 the first week, from WKST, with at
+     * least four days in the year; a negative number from the year's last
+     * week), which the rule's other day parts admit, on the start's weekday
+     * where no part names a day, at the start's clock. Years step by INTERVAL
+     * from the start's.
+     *
+     * @return array{0:int,1:list<\DateTimeImmutable>}
+     */
+    private function weekYearSet(): array
+    {
+        $s = \DateTimeImmutable::createFromInterface($this->startDate);
+        $y = $this->weekYear ?? (int) $s->format('Y');
+        $this->weekYear = $y + $this->interval;
+        $w1 = $this->week1($y);
+        $weeks = intdiv($this->week1($y + 1) - $w1, 7);
+        $named = $this->byDay !== null || $this->byMonthDay !== null || $this->byYearDay !== null;
+        $wd = Cal::wd(Cal::dnOf($s));
+        $set = [];
+        foreach (array_map('intval', $this->byWeekNo) as $n) {
+            $week = $n > 0 ? $n : $weeks + $n + 1;
+            if ($week < 1 || $week > $weeks) {
+                continue;
+            }
+            for ($dn = $w1 + 7 * ($week - 1), $last = $dn + 6; $dn <= $last; $dn++) {
+                if ($this->admits($dn) && ($named || Cal::wd($dn) === $wd)) {
+                    [$yy, $mm, $dd] = Cal::ymd($dn);
+                    $at = $s->setDate($yy, $mm, $dd);
+                    $set[$at->getTimestamp()] = $at;
+                }
+            }
+        }
+        ksort($set);
+        return [$this->dayStart($w1), array_values($set)];
+    }
+
+    /** The first day of week 1 of year $y: the week, from WKST, holding at least four of the year's days. */
+    private function week1(int $y): int
+    {
+        $jan1 = Cal::dn($y, 1, 1);
+        $ws = $jan1 - ((Cal::wd($jan1) - (int) Cal::wdOf(strtoupper($this->weekStart)) + 7) % 7);
+        return $jan1 - $ws <= 3 ? $ws : $ws + 7;
+    }
+
+    /**
+     * BYSETPOS over a period's sorted set: the listed positions, negative
+     * from its end, each once, in order. Without BYSETPOS, the set.
+     *
+     * @template T
+     * @param list<T> $set
+     * @return list<T>
+     */
+    private static function setPositions(array $set, ?array $positions): array
+    {
+        if ($positions === null || $set === []) {
+            return $set;
+        }
+        $picked = [];
+        foreach (array_map('intval', $positions) as $pos) {
+            $at = $pos > 0 ? $pos - 1 : count($set) + $pos;
+            if ($pos !== 0 && isset($set[$at])) {
+                $picked[$at] = $set[$at];
+            }
+        }
+        ksort($picked);
+        return array_values($picked);
     }
 
     /**
@@ -304,13 +554,24 @@ class RuleIterator extends RRuleIterator
      */
     private function stepTowards(int $dn): void
     {
-        $unit = ['hourly' => 'hours', 'daily' => 'days', 'weekly' => 'weeks'][$this->frequency] ?? null;
+        $this->stepBefore($this->dayStart($dn));
+    }
+
+    /** The span sabre steps the walk by, as a modify unit, for the frequencies it steps by one (stepTowards). */
+    private function spanUnit(): ?string
+    {
+        return ['hourly' => 'hours', 'daily' => 'days', 'weekly' => 'weeks'][$this->frequency] ?? null;
+    }
+
+    /** stepTowards, before an instant. */
+    private function stepBefore(int $target): void
+    {
+        $unit = $this->spanUnit();
         if ($unit === null) {
             return;
         }
         $t = \DateTimeImmutable::createFromInterface($this->currentDate);
         $ts = $t->getTimestamp();
-        $target = $this->dayStart($dn);
         $transitions = $t->getTimezone()->getTransitions($ts + 1, $target);
         if (is_array($transitions) && count($transitions) > 1) {
             $target = min($target, (int) $transitions[1]['ts']);
@@ -321,6 +582,27 @@ class RuleIterator extends RRuleIterator
         $spans = (int) floor(($target - $ts - 1) / $span);
         if ($spans > 0) {
             $this->currentDate = $t->modify('+' . ($spans * $this->interval) . ' ' . $unit);
+        }
+    }
+
+    /**
+     * Moves the walk to its first occurrence at or after instant $ts by the
+     * walk's own jumps (stepTowards: whole spans, never across a zone
+     * transition, which sabre's own step crosses), so it holds the state the
+     * walk from the start holds there (a clock a skipped hour pushed on
+     * stays pushed): a window read from it is the walk from the start, read
+     * from there. A rule with COUNT walks on as it is (the count is of the
+     * occurrences passed), and so do the frequencies sabre doesn't step by
+     * one span (MONTHLY, YEARLY) and the iterator's own (MINUTELY, SECONDLY).
+     */
+    public function jumpTo(int $ts): void
+    {
+        if ($this->count !== null || $this->owned() || $this->sets !== null || $this->weekNumbered() || $this->spanUnit() === null) {
+            return;
+        }
+        while ($this->valid() && $this->currentDate->getTimestamp() < $ts) {
+            $this->stepBefore($ts);
+            $this->next();
         }
     }
 
@@ -410,17 +692,7 @@ class RuleIterator extends RRuleIterator
                 $last = [$t, $fails];
             }
         }
-        if ($this->bySetPos !== null && $set !== []) {
-            $picked = [];
-            foreach (array_map('intval', $this->bySetPos) as $pos) {
-                $at = $pos > 0 ? $pos - 1 : count($set) + $pos;
-                if ($pos !== 0 && isset($set[$at])) {
-                    $picked[$at] = $set[$at];
-                }
-            }
-            ksort($picked);
-            $set = array_values($picked);
-        }
+        $set = self::setPositions($set, $this->bySetPos);
         return [$set, $set === [] ? $last : null];
     }
 

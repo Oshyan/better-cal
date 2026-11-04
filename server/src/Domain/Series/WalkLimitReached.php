@@ -10,6 +10,6 @@ namespace BetterCal\Domain\Series;
  * of the rule, so it is never read as one: the expansion stops with this
  * error instead of a rule that seems to have ended.
  */
-final class WalkLimitReached extends \RuntimeException
+final class WalkLimitReached extends WalkIncomplete
 {
 }

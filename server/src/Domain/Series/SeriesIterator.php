@@ -34,4 +34,26 @@ final class SeriesIterator extends EventIterator
         $this->recurIterator = new RuleIterator($this->masterEvent->RRULE->getParts(), $this->startDate);
         $this->rewind();
     }
+
+    /**
+     * sabre's fastForward steps one occurrence at a time from the start.
+     * Here the rule iterator first jumps to the window (RuleIterator::jumpTo,
+     * the walk's own jumps from the start, so the window reads the state the
+     * walk carries from the start), then sabre's steps finish. With exceptions
+     * or overridden events in the calendar, sabre's walk is left as it is.
+     */
+    public function fastForward(\DateTimeInterface $dateTime)
+    {
+        if ($this->recurIterator instanceof RuleIterator && $this->exceptions === [] && $this->overriddenEvents === [] && $this->nextDate === null && $this->recurIterator->valid()) {
+            $target = $dateTime->getTimestamp() - (int) $this->eventDuration;
+            if ($this->recurIterator->current()->getTimestamp() < $target) {
+                // The rule iterator holds the occurrence after the current
+                // one; once it has jumped, the current one is the one before
+                // the window and the next step reads the first in it.
+                $this->recurIterator->jumpTo($target);
+                $this->next();
+            }
+        }
+        parent::fastForward($dateTime);
+    }
 }

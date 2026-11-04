@@ -50,6 +50,7 @@ class RuleIterator extends RRuleIterator
     private int $period = 0;
     /** @var array{0:\DateTimeImmutable,1:string}|null the current period's last instant and the limit it failed, when the period gave nothing */
     private ?array $lastFail = null;
+    private ?int $base = null;
 
     public function __construct($rrule, \DateTimeInterface $start)
     {
@@ -121,8 +122,11 @@ class RuleIterator extends RRuleIterator
     /** The first period's start: the start's own minute (MINUTELY) or second. */
     private function base(): int
     {
-        $start = $this->startDate->getTimestamp();
-        return $this->frequency === 'minutely' ? $start - (int) $this->local($start)->format('s') : $start;
+        if ($this->base === null) {
+            $start = $this->startDate->getTimestamp();
+            $this->base = $this->frequency === 'minutely' ? $start - (int) $this->local($start)->format('s') : $start;
+        }
+        return $this->base;
     }
 
     private function periodStart(int $n): int

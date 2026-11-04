@@ -2172,24 +2172,21 @@ final class Model
     {
         $skip = array_flip($exdates);
         $byKey = [];
-        // Each by the zone rule (an all-day row's start is a date; a timed
-        // one in an all-day plan is in its own zone, named beside it).
-        $entry = function (string $start, bool $allDay, string $tz, string $kind): array {
-            $local = Time::fromDb($start)->setTimezone($this->zoneFor($allDay, $tz));
-            return ['start' => Time::iso($local), 'kind' => $kind, 'dn' => Cal::dnOf($local)] + $this->tzBeside($allDay, $tz);
+        // Each where it shows after the change (placementEntryOut, by the
+        // zone rule), with the day it shows on.
+        $entry = function (array $row, string $kind): array {
+            $e = $this->placementEntryOut($row, $this->displayZone());
+            return $e + ['kind' => $kind, 'dn' => self::dayOf(['date' => substr($e['start'], 0, 10)])];
         };
         foreach ($createdRows as $c) {
-            $byKey[(string) $c['recurrence_instance_utc']] = $entry((string) $c['start_utc'], (int) $c['all_day'] === 1, (string) $c['tzid'], 'acted');
+            $byKey[(string) $c['recurrence_instance_utc']] = $entry($c, 'acted');
             $fromDn = min($fromDn, $byKey[(string) $c['recurrence_instance_utc']]['dn']);
         }
         foreach ($placeRows as $id => $img) {
             $row = $this->rows[$id];
-            $start = $overrideWrites[$id]['start_utc'] ?? $row['start_utc'];
-            $allDay = (int) ($overrideWrites[$id]['all_day'] ?? $row['all_day']) === 1;
-            $tz = (string) ($overrideWrites[$id]['tzid'] ?? $row['tzid']);
             $own = $this->ownOf($row);
             $key = (string) ($overrideWrites[$id]['recurrence_instance_utc'] ?? $row['recurrence_instance_utc']);
-            $byKey[$key] = $entry((string) $start, $allDay, $tz, 'edited')
+            $byKey[$key] = $entry(($overrideWrites[$id] ?? []) + $row, 'edited')
                 + (in_array('date', $own, true) && $img !== $actedDn ? ['words' => 'its own date'] : []);
             if ($id === $this->actedRowId) {
                 // The list starts where the day acted on shows, by the zone
@@ -2214,8 +2211,7 @@ final class Model
             if (isset($skip[$key]) || isset($byKey[$key])) {
                 continue;
             }
-            $item = ['start' => Time::iso(Time::fromDb($key)->setTimezone($this->zoneFor($this->allDay1, $this->tz1))), 'kind' => $d === $actedDn ? 'acted' : 'occurrence'];
-            $plain[] = $item;
+            $plain[] = $this->placementEntryOut(['start_utc' => $key, 'all_day' => $calc1->allDay ? 1 : 0, 'tzid' => $calc1->tz], $this->displayZone()) + ['kind' => $d === $actedDn ? 'acted' : 'occurrence'];
             if (count($plain) > self::NEXT_SHOWN) {
                 break;
             }
@@ -2223,9 +2219,7 @@ final class Model
         $out = array_merge($rows, $plain);
         if ($separate !== null) {
             // The day acted on, where it was put, on its own.
-            $sAll = (int) $separate['all_day'] === 1;
-            $out[] = ['start' => Time::iso(Time::fromDb((string) $separate['start_utc'])->setTimezone($this->zoneFor($sAll, (string) $separate['tzid']))), 'kind' => 'acted', 'words' => 'on its own']
-                + $this->tzBeside($sAll, (string) $separate['tzid']);
+            $out[] = $this->placementEntryOut($separate, $this->displayZone()) + ['kind' => 'acted', 'words' => 'on its own'];
         }
         usort($out, static fn(array $a, array $b): int => strcmp((string) Time::parseIso($a['start'])->format('U'), (string) Time::parseIso($b['start'])->format('U')) ?: 0);
         usort($out, static fn(array $a, array $b): int => Time::parseIso($a['start'])->getTimestamp() <=> Time::parseIso($b['start'])->getTimestamp());

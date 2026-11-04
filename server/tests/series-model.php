@@ -1728,6 +1728,19 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Zone: an all-day series moved to Wednesday, a day at its own Wed 13 Jan 20:00 in Los Angeles: keep and move name its days there', [
         ['keep', '2027-01-13'], ['move', '2027-01-14'],
     ], array_map(static fn(array $o): array => [$o['id'], $o['date'] ?? null], smGroup($p, 'movedDays')['options'] ?? []));
+
+    // ---- The writers: each value by its role (series-model.md, Dates) ------
+    $entries = static fn(array $p): array => array_map(static fn(array $n): array => [$n['start'], $n['allDay'] ?? 'missing', $n['tz'] ?? null], $p['plan']['next']);
+
+    // Coming up: each entry carries its kind, and its zone when that isn't the plan's.
+    $p = smPlan($timed, [$allDayRow], ['columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Writers: coming up in a timed series carries each entry\'s kind, the all-day day at its date', [
+        ['2027-01-05T20:00:00-08:00', false, null], ['2027-01-12T00:00:00+00:00', true, null], ['2027-01-19T20:00:00-08:00', false, null],
+    ], array_slice($entries($p), 0, 3));
+    $p = smPlan($practice, [$evening], ['columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Writers: coming up in an all-day series, the timed day in its own zone, named', [
+        ['2027-01-05T00:00:00+00:00', true, null], ['2027-01-12T20:00:00-08:00', false, $la], ['2027-01-19T00:00:00+00:00', true, null],
+    ], array_slice($entries($p), 0, 3));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

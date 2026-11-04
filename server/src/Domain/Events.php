@@ -475,6 +475,9 @@ final class Events
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
             $newMaster['rrule'] = (string) $in['rrule'];
         }
+        if (!empty($newMaster['rrule'])) {
+            $newMaster['rrule'] = Recurrence::inForm((string) $newMaster['rrule'], (int) $newMaster['all_day'] === 1, (int) $newMaster['all_day'] === 1 ? (string) $master['tzid'] : (string) $newMaster['tzid']);
+        }
         $created = $this->google()->insert($calendar, $newMaster, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, function () use ($calendar, $endOld, $created, $userId, $localFields, $in): void {
             $this->google()->apply($calendar, [$endOld, $created]);
@@ -1096,6 +1099,7 @@ final class Events
             ? Time::normalizeTzid((string) $in['tzid'])
             : $this->userTzid($userId);
         $allDay = filter_var($in['allDay'] ?? false, FILTER_VALIDATE_BOOL);
+        $writtenIn = $tzid;
         // All-day events are dates, stored one way (0.9.16): UTC midnights,
         // tzid UTC, as imports, Google and CalDAV store them.
         if ($allDay) {
@@ -1105,7 +1109,8 @@ final class Events
 
         $rrule = null;
         if (!empty($in['rrule'])) {
-            $rrule = Recurrence::validateRrule((string) $in['rrule']);
+            // In the series' own form (Recurrence::inForm).
+            $rrule = Recurrence::inForm(Recurrence::validateRrule((string) $in['rrule']), $allDay, $writtenIn);
         }
         $exdates = [];
         if ($rrule !== null && !empty($in['exdates']) && is_array($in['exdates'])) {
@@ -1823,7 +1828,9 @@ final class Events
         } catch (\Throwable) {
         }
         $moved = Time::fromDb($shift($last));
-        $value = $timed ? $moved->format('Ymd\THis\Z') : $moved->setTimezone(Time::zone((string) $after['tzid']))->format('Ymd');
+        // Written in the series' own form (Recurrence::inForm): a date for an
+        // all-day series, an instant for a timed one.
+        $value = (int) ($after['all_day'] ?? 0) !== 1 ? $moved->format('Ymd\THis\Z') : $moved->setTimezone(Time::zone((string) $after['tzid']))->format('Ymd');
         return str_replace($m[0], 'UNTIL=' . $value, $rrule);
     }
 
@@ -2211,6 +2218,11 @@ final class Events
             if (!$ownRule) {
                 $newMaster['rrule'] = self::movedUntil($rest, $newMaster, $shift);
             }
+        }
+        // The new series' rule in its own form (Recurrence::inForm), an UNTIL
+        // from the old series' clock read in its zone.
+        if (!empty($newMaster['rrule'])) {
+            $newMaster['rrule'] = Recurrence::inForm((string) $newMaster['rrule'], (int) $newMaster['all_day'] === 1, (int) $newMaster['all_day'] === 1 ? (string) $master['tzid'] : (string) $newMaster['tzid']);
         }
 
         $movedOverrides = $this->db->all(
@@ -3066,6 +3078,16 @@ final class Events
         if (array_key_exists('reminders', $in)) {
             $fields['reminders_json'] = self::encodeReminders(Reminders::validateEventReminders($in['reminders']));
         }
+        // A rule written, or a series changing kind, is in the series' own
+        // form (Recurrence::inForm): a timed UNTIL becoming all-day is read
+        // in the zone it was written in.
+        $rule = array_key_exists('rrule', $fields) ? $fields['rrule'] : ($current['rrule'] ?? null);
+        if (!$forOverride && $rule !== null && $rule !== '' && (array_key_exists('rrule', $fields) || isset($fields['all_day']))) {
+            $inForm = Recurrence::inForm((string) $rule, $allDay, $allDay ? (string) $current['tzid'] : $tzid);
+            if (array_key_exists('rrule', $fields) || $inForm !== (string) $current['rrule']) {
+                $fields['rrule'] = $inForm;
+            }
+        }
         return $fields;
     }
 
@@ -3207,7 +3229,13 @@ final class Events
         $calc = \BetterCal\Domain\Series\Calc::fromRow($master);
         $allDay = (int) ($master['all_day'] ?? 0) === 1;
         $dn = $allDay ? \BetterCal\Domain\Series\Cal::dnOf($instance->setTimezone(Time::zone((string) $master['tzid']))) : $calc->dnOf($key);
-        $on = $calc->expandable() ? $calc->keysOn($dn) : [];
+        // A walk that can't be completed reads as a rule the expander can't
+        // read, whose occurrences can't be named (Series\WalkIncomplete).
+        try {
+            $on = $calc->expandable() ? $calc->keysOn($dn) : [];
+        } catch (\BetterCal\Domain\Series\WalkIncomplete) {
+            $on = [];
+        }
         if (($allDay ? $on !== [] : in_array($key, $on, true)) && !in_array($key, $this->decodeExdates($master), true)) {
             return $key;
         }

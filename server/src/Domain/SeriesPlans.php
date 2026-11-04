@@ -175,12 +175,18 @@ trait SeriesPlans
         $dn = $calc->startDn;
         $clock = (int) $row['all_day'] === 1 ? null : $calc->clock;
         $year = (int) Time::nowUtc()->setTimezone(Time::zone($homeTz ?? $tz))->format('Y');
-        $first = $calc->occurrences(PHP_INT_MAX, 4);
-        $next = array_map(static fn(int $d): array => ['start' => Time::iso($calc->instant($d)->setTimezone(Time::zone($tz)))], $first);
-        $bound = 'No end';
-        if ($calc->bounded()) {
-            $all = $calc->all();
-            $bound = Words::events(count($all)) . ', ends ' . Words::dayMonth((int) end($all), $year);
+        // A walk that can't be completed shows no dates and no end, as a
+        // rule the expander can't read, never a series that ends.
+        try {
+            $first = $calc->occurrences(PHP_INT_MAX, 4);
+            $next = array_map(static fn(int $d): array => ['start' => Time::iso($calc->instant($d)->setTimezone(Time::zone($tz)))], $first);
+            $bound = 'No end';
+            if ($calc->bounded()) {
+                $all = $calc->all();
+                $bound = Words::events(count($all)) . ', ends ' . Words::dayMonth((int) end($all), $year);
+            }
+        } catch (\BetterCal\Domain\Series\WalkIncomplete) {
+            [$next, $bound] = [[], ''];
         }
         $askedDn = Cal::dnOf(Time::fromDb((string) $asked['start_utc'])->setTimezone(Time::zone($tz)));
         $plan = [
@@ -240,11 +246,15 @@ trait SeriesPlans
         }
         $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
         $length = Recurrence::durationSeconds($row);
-        $calc = new Calc($rule, $first, $tz, $allDay, $clock, $length);
-        if ($first === $dn && $calc->anchor === null) {
-            return [];
+        try {
+            $calc = new Calc($rule, $first, $tz, $allDay, $clock, $length);
+            if ($first === $dn && $calc->anchor === null) {
+                return [];
+            }
+            $at = $calc->storedStart();
+        } catch (\BetterCal\Domain\Series\WalkIncomplete) {
+            return []; // a walk that can't be completed: the rule as written
         }
-        $at = $calc->storedStart();
         $out = [
             'start_utc' => Time::toDb($at),
             'end_utc' => Time::toDb($allDay ? $at->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $at->modify('+' . $length . ' seconds')),

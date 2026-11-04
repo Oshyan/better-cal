@@ -101,7 +101,7 @@ final class Calc
         $dn = Cal::dnOf($start);
         $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
         $len = max(0, Time::fromDb((string) $row['end_utc'])->getTimestamp() - $start->getTimestamp());
-        $rule ??= Rule::parse((string) $row['rrule'], $dn);
+        $rule ??= Rule::parse($allDay ? \BetterCal\Domain\Recurrence::inForm((string) $row['rrule'], true, 'UTC') : (string) $row['rrule'], $dn);
         $calc = new self($rule, $dn, $tz, $allDay, $clock, $len, false, $start);
         try {
             $skips = \BetterCal\Domain\Recurrence::decodeExdates($row['exdates_json'] ?? null);
@@ -361,7 +361,7 @@ final class Calc
         return Cal::dnOf(Time::fromDb($dbUtc)->setTimezone($this->allDay ? Time::utc() : $this->zone()));
     }
 
-    /** UNTIL as an instant, read the way sabre reads it: a date is midnight in the series' zone. */
+    /** UNTIL as an instant, read the way the iterator reads it: a date is the end of that day in the series' zone. */
     public function untilInstant(): ?\DateTimeImmutable
     {
         $u = $this->rule->until;
@@ -372,7 +372,7 @@ final class Calc
             return null;
         }
         $tz = isset($m[7]) && $m[7] === 'Z' ? Time::utc() : ($this->allDay ? Time::utc() : $this->zone());
-        $text = sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00');
+        $text = isset($m[4]) && $m[4] !== '' ? sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4], $m[5], $m[6]) : sprintf('%s-%s-%s 23:59:59', $m[1], $m[2], $m[3]);
         return (new \DateTimeImmutable($text, $tz))->setTimezone(Time::utc());
     }
 
@@ -421,7 +421,8 @@ final class Calc
             $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
             try {
                 $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
-                $entry['it'] = new RuleIterator($rrule, $local);
+                // An all-day series is read in its own form: no clock parts.
+                $entry['it'] = new RuleIterator($allDay ? \BetterCal\Domain\Recurrence::inForm($rrule, true, 'UTC') : $rrule, $local);
             } catch (\Throwable) {
                 $entry['done'] = true;
                 $entry['ok'] = false;
@@ -429,20 +430,32 @@ final class Calc
             self::$cache[$ck] = $entry;
         }
         $e = &self::$cache[$ck];
+        // A walk that can't be completed (a limit of the walk, MAX_STEPS
+        // here or the iterator's own, or anything the iterator throws on
+        // the way) is never the series' end: the caller sees it as
+        // WalkIncomplete, and the stored form is from then on one the
+        // expander can't read (no keys, expandable() false), as a rule sabre
+        // refuses is, so the model reads it that way (Model::read).
         $zone = $allDay ? Time::utc() : Time::zone($tz);
         while (!$e['done'] && count($e['keys']) < $max && ($e['keys'] === [] || $e['keys'][count($e['keys']) - 1][0] <= $maxDn)) {
             try {
-                if (!$e['it']->valid() || count($e['keys']) >= self::MAX_STEPS) {
+                if (!$e['it']->valid()) {
                     $e['done'] = true;
                     break;
+                }
+                if (count($e['keys']) >= self::MAX_STEPS) {
+                    throw new WalkLimitReached('No series is walked further than ' . self::MAX_STEPS . ' occurrences');
                 }
                 $at = \DateTimeImmutable::createFromInterface($e['it']->current());
                 $dn = Cal::dnOf($at->setTimezone($zone));
                 $e['keys'][] = [$dn, $allDay ? Cal::date($dn) . ' 00:00:00' : Time::toDb($at)];
                 $e['it']->next();
-            } catch (\Throwable) {
+            } catch (\Throwable $thrown) {
                 $e['done'] = true;
-                $e['ok'] = $e['keys'] !== [];
+                $e['ok'] = false;
+                $e['keys'] = [];
+                unset($e);
+                throw $thrown instanceof WalkIncomplete ? $thrown : new WalkIncomplete('The walk stopped: ' . $thrown->getMessage(), 0, $thrown);
             }
         }
         $out = [];

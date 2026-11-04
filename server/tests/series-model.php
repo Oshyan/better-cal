@@ -2063,6 +2063,104 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Zone options: to Los Angeles, the clock option starts at 01:30 there and the moment option at 22:30 the evening before, though an edited day at 00:30 comes first', [
         ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
     ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
+
+    // A zone option's start is in the plan's zone even when its plan is refused.
+    $firstWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
+    $laAt = new DateTimeImmutable('2028-09-01 06:00', Time::zone('America/Los_Angeles'));
+    $p = smPlan($firstWeekday, [], ['acted' => smAt('2028-09-01 06:00', 'Australia/Lord_Howe'), 'landed' => ['start_utc' => Time::toDb($laAt), 'end_utc' => Time::toDb($laAt->modify('+90 minutes')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+    checkEq('Zone options: the first weekday of the month from Lord Howe to Los Angeles, the moment option (whose plan is refused) starts at the series\' stored start, 06:00 on 1 Mar 2028 there, written in Los Angeles', [
+        ['clock', '2028-03-01T06:00:00-08:00'], ['moment', '2028-02-29T11:00:00-08:00'],
+    ], array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? []));
+
+    // BYSETPOS limits each period's set, for every frequency.
+    checkEq('BYSETPOS: weekly on Mon, Wed and Fri, the last of each week, from Mon 4 Jan 2027: the start, then Fri 8 and Fri 15 Jan', ['2027-01-04 09:00', '2027-01-08 09:00', '2027-01-15 09:00'],
+        $walk('FREQ=WEEKLY;BYDAY=MO,WE,FR;BYSETPOS=-1;COUNT=3', '2027-01-04 09:00', 'UTC'));
+    checkEq('BYSETPOS: yearly on Mondays of January and February, the last of each year (not of each month): 22 Feb 2027, 28 Feb 2028, 26 Feb 2029', ['2027-02-22 09:00', '2028-02-28 09:00', '2029-02-26 09:00'],
+        $walk('FREQ=YEARLY;BYMONTH=1,2;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2027-02-22 09:00', 'UTC'));
+    $lastWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;UNTIL=20270301', '2027-01-29', 0, true);
+    checkEq('BYSETPOS: all-day on the last weekday of the month until Mon 1 Mar 2027: 29 Jan and 26 Feb, and no 1 Mar, which is a weekday but not the last', [
+        ['2027-01-29', '2027-02-26'], ['2027-01-29', '2027-02-26'],
+    ], [array_map([Cal::class, 'date'], BetterCal\Domain\Series\Calc::fromRow($lastWeekday)->occurrences(PHP_INT_MAX, 10)), smShows($lastWeekday, ['master' => []], '2027-03-31')]);
+    checkEq('BYSETPOS: daily at 09:00 and 17:00, the last of each day',['2027-01-05 09:00', '2027-01-05 17:00', '2027-01-06 17:00'],
+        $walk('FREQ=DAILY;BYHOUR=9,17;BYSETPOS=-1;COUNT=3', '2027-01-05 09:00', 'UTC'));
+
+    // BYWEEKNO: week 1 is the first week (from WKST) with four days of the year.
+    checkEq('BYWEEKNO: the Sunday of ISO week 27 is 9 Jul 2028, 8 Jul 2029 and 7 Jul 2030', ['2028-07-09 10:00', '2029-07-08 10:00', '2030-07-07 10:00'],
+        $walk('FREQ=YEARLY;BYWEEKNO=27;BYDAY=SU;COUNT=3', '2028-07-09 10:00', 'UTC'));
+    checkEq('BYWEEKNO: with weeks from Sunday, week 1\'s Sunday is 3 Jan 2027, 2 Jan 2028 and 31 Dec 2028', ['2027-01-03 09:00', '2028-01-02 09:00', '2028-12-31 09:00'],
+        $walk('FREQ=YEARLY;BYWEEKNO=1;WKST=SU;BYDAY=SU;COUNT=3', '2027-01-03 09:00', 'UTC'));
+
+    checkEq('BYYEARDAY: the 60th day of each year is 1 Mar 2027, 29 Feb 2028, 1 Mar 2029 and 1 Mar 2030', ['2027-03-01 21:15', '2028-02-29 21:15', '2029-03-01 21:15', '2030-03-01 21:15'],
+        $walk('FREQ=YEARLY;BYYEARDAY=60;COUNT=4', '2027-03-01 21:15', 'Pacific/Auckland'));
+
+    // The carried clock of DAILY;BYDAY: the daily iterator keeps the clock a
+    // skipped hour pushed on, on a day it steps to (every INTERVAL-th day
+    // from the start), and every window reads that same walk.
+    $carry = static fn(string $rrule, string $startLocal, string $from, string $to): array => array_map(
+        static fn(array $o): string => $o['start']->setTimezone(Time::zone('America/Los_Angeles'))->format('Y-m-d H:i'),
+        BetterCal\Domain\Recurrence::sabreExpand(['exdates_json' => null] + smSeries('Sample class', $rrule, $startLocal), new DateTimeImmutable($from, Time::utc()), new DateTimeImmutable($to, Time::utc())));
+    $weekdays = 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR';
+    checkEq('Carry: weekdays at 02:30 from 1 Mar 2027 are at 03:30 from Mon 15 Mar, after Sunday\'s gap, in a window from the start and in one in June alike', [
+        ['2027-03-12 02:30', '2027-03-15 03:30'], ['2027-06-01 03:30', '2027-06-02 03:30'], ['2027-06-01 03:30', '2027-06-02 03:30'],
+    ], [array_slice($carry($weekdays, '2027-03-01 02:30', '2027-03-01', '2027-03-16'), 9, 2), array_slice($carry($weekdays, '2027-03-01 02:30', '2027-03-01', '2027-06-03'), -2), $carry($weekdays, '2027-03-01 02:30', '2027-06-01', '2027-06-03')]);
+    $everyOther = 'FREQ=DAILY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR,SA,SU';
+    checkEq('Carry: every other day keeps 02:30 when its days step over 14 Mar (from 1 Mar), and moves to 03:30 when they land on it (from 2 Mar), in any window', [
+        ['2027-03-15 02:30'], ['2027-03-16 03:30'], ['2027-06-02 03:30'], ['2027-06-02 03:30'],
+    ], [$carry($everyOther, '2027-03-01 02:30', '2027-03-15', '2027-03-16'), $carry($everyOther, '2027-03-02 02:30', '2027-03-16', '2027-03-17'),
+        $carry($everyOther, '2027-03-02 02:30', '2027-06-01', '2027-06-04'), array_values(array_filter($carry($everyOther, '2027-03-02 02:30', '2027-03-02', '2027-06-04'), static fn(string $d): bool => $d >= '2027-06-01'))]);
+
+    // UNTIL takes the start's form; a date on a timed series keeps its last day.
+    checkEq('UNTIL: daily at 18:00 until the date 7 Jan 2027 has 7 Jan', ['2027-01-05 18:00', '2027-01-06 18:00', '2027-01-07 18:00'],
+        $walk('FREQ=DAILY;UNTIL=20270107', '2027-01-05 18:00', 'America/Los_Angeles'));
+    checkEq('UNTIL written in the series\' form: a date on a timed series is the end of that day there, a timed end on an all-day series its date there, and a rule already in form is as written', [
+        'FREQ=DAILY;UNTIL=20270108T075959Z', 'FREQ=DAILY;UNTIL=20270107', 'FREQ=DAILY;UNTIL=20270107T120000Z',
+    ], [BetterCal\Domain\Recurrence::inForm('FREQ=DAILY;UNTIL=20270107', false, 'America/Los_Angeles'), BetterCal\Domain\Recurrence::inForm('FREQ=DAILY;UNTIL=20270108T075959Z', true, 'America/Los_Angeles'),
+        BetterCal\Domain\Recurrence::inForm('FREQ=DAILY;UNTIL=20270107T120000Z', false, 'America/Los_Angeles')]);
+    $tues = smSeries('Sample class', 'FREQ=WEEKLY', '2027-01-05 18:00');
+    $p = smPlan($tues, [], ['rrule' => 'FREQ=WEEKLY;UNTIL=20270126']);
+    checkEq('UNTIL: a timed weekly series sent an end on the date 26 Jan 2027 writes it as that day\'s end, with 26 Jan its last of 4', [
+        'FREQ=WEEKLY;UNTIL=20270127T075959Z', 4, '2027-01-26',
+    ], [$p['writes']['master']['rrule'] ?? null, $p['plan']['bound']['events'], $p['plan']['bound']['last']]);
+
+    // An all-day series has no clock parts.
+    $nine = smSeries('Sample check', 'FREQ=DAILY;BYHOUR=9;COUNT=3', '2027-03-01 09:00');
+    $p = smPlan($nine, [], ['acted' => smAt('2027-03-01 09:00'), 'landed' => ['start_utc' => smAt('2027-03-01 00:00', 'UTC'), 'end_utc' => smAt('2027-03-02 00:00', 'UTC'), 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('All-day: daily at 09:00 made all-day writes its rule without BYHOUR, three days', ['FREQ=DAILY;COUNT=3', ['2027-03-01', '2027-03-02', '2027-03-03']],
+        [$p['writes']['master']['rrule'] ?? null, smNext($p)]);
+    $stored = smSeries('Sample check', 'FREQ=DAILY;BYHOUR=9,17;BYMINUTE=30;COUNT=3', '2027-03-01', 0, true);
+    checkEq('All-day: one stored with clock parts is read without them, one event a day, in the model and the window alike', [
+        ['2027-03-01', '2027-03-02', '2027-03-03'], ['2027-03-01', '2027-03-02', '2027-03-03'],
+    ], [array_map([Cal::class, 'date'], BetterCal\Domain\Series\Calc::fromRow($stored)->occurrences(PHP_INT_MAX, 10)), smShows($stored, ['master' => []], '2027-03-31')]);
+
+    // A walk that can't be completed is read as a rule the expander can't
+    // read, never as a series that ends: here every walk of the stored form
+    // after its first occurrence stops with the iterator's limit.
+    $limited = smSeries('Sample practice', 'FREQ=DAILY;COUNT=5', '2027-01-05 18:00');
+    $limitedNone = ['rrule' => 'FREQ=DAILY'] + $limited;
+    smPlan($limited, [], ['columns' => ['title' => 'Sample class']]);
+    smPlan($limitedNone, [], ['columns' => ['title' => 'Sample class']]);
+    $cache = new ReflectionProperty(BetterCal\Domain\Series\Calc::class, 'cache');
+    $entries = $cache->getValue();
+    foreach ($entries as $k => $entry) {
+        if (str_starts_with((string) $k, 'FREQ=DAILY') && $entry['it'] !== null) {
+            $stub = new class('FREQ=DAILY', new DateTimeImmutable('2027-01-05 18:00', Time::zone('America/Los_Angeles'))) extends BetterCal\Domain\Series\RuleIterator {
+                #[\ReturnTypeWillChange]
+                public function next()
+                {
+                    throw new BetterCal\Domain\Series\WalkLimitReached('a walk limit, for the test');
+                }
+            };
+            $entries[$k] = ['keys' => array_slice($entry['keys'], 0, 1), 'it' => $stub, 'done' => false, 'ok' => true];
+        }
+    }
+    $cache->setValue(null, $entries);
+    $p = smPlan($limited, [], ['columns' => ['title' => 'Sample class']]);
+    $q = smPlan($limitedNone, [], ['columns' => ['title' => 'Sample class']]);
+    checkEq('Walk limit: the plan is the one for a rule the expander can\'t read, its bound from the text (5 events; no end), never an end after one event', [
+        [[], false, 'count', 5, null, null], [[], true, 'none', null], 'Sample class',
+    ], [[$p['plan']['next'], $p['plan']['nextMore'], $p['plan']['bound']['kind'], $p['plan']['bound']['count'] ?? null, $p['plan']['bound']['events'], $p['plan']['bound']['last']],
+        [$q['plan']['next'], $q['plan']['nextMore'], $q['plan']['bound']['kind'], $q['plan']['bound']['events']], $p['writes']['master']['title'] ?? null]);
+    $cache->setValue(null, []);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

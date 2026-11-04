@@ -134,9 +134,12 @@ final class Model
         $startDn = Cal::dnOf($start);
         $this->clock0 = $this->allDay0 ? [0, 0, 0] : self::clockOf($start);
         $this->len0 = max(0, Time::fromDb((string) $master['end_utc'])->getTimestamp() - $start->getTimestamp());
-        $this->r0 = Rule::parse((string) $master['rrule'], $startDn);
+        // An all-day series' rule is read without clock parts (Recurrence::inForm).
+        $this->r0 = Rule::parse($this->allDay0 ? \BetterCal\Domain\Recurrence::inForm((string) $master['rrule'], true, 'UTC') : (string) $master['rrule'], $startDn);
         $this->rule0 = $this->r0;
-        $this->readable = $this->r0->kind !== 'unreadable' && Calc::sabreReads((string) $master['rrule']);
+        // A stored rule whose walk could not be completed (WalkIncomplete,
+        // see plan()) is read as one the expander can't read.
+        $this->readable = $this->r0->kind !== 'unreadable' && empty($opts['walkIncomplete']) && Calc::sabreReads((string) $master['rrule']);
         if (!$this->readable) {
             $this->r0->kind = 'unreadable';
         }
@@ -378,23 +381,35 @@ final class Model
      */
     public static function occurrence(array $master, array $rows, ?string $key): array
     {
-        $model = new self($master, $key === null ? [] : $rows, $key === null ? [] : ['acted' => $key], []);
+        $model = self::read(fn(array $opts): self => new self($master, $key === null ? [] : $rows, $key === null ? [] : ['acted' => $key], $opts), []);
         return self::occurrenceOf($master, $key === null ? [] : $rows, $model->acted, $model->len0);
     }
 
     /** The plan of a refusal for a series as it is (a split of a rule the expander can't read). */
     public static function refusedPlan(array $master, string $code, string $scope = 'all', array $opts = []): array
     {
-        $model = new self($master, [], [], $opts);
-        $plan = $model->refused($code)['plan'];
+        $plan = self::read(fn(array $o): array => (new self($master, [], [], $o))->refused($code)['plan'], $opts);
         $plan['scope'] = $scope;
         return $plan;
     }
 
     public static function plan(array $master, array $overrides, array $edit, array $choices = [], array $opts = []): array
     {
-        $model = new self($master, $overrides, $edit, $opts);
-        return $model->run($choices);
+        return self::read(fn(array $o): array => (new self($master, $overrides, $edit, $o))->run($choices), $opts);
+    }
+
+    /**
+     * Reads a series through $f. A walk that can't be completed is never a
+     * series that ends: it is read again as a rule the expander can't read
+     * (next empty, the bound read from the rule's text).
+     */
+    private static function read(\Closure $f, array $opts): mixed
+    {
+        try {
+            return $f($opts);
+        } catch (WalkIncomplete) {
+            return $f(['walkIncomplete' => true] + $opts);
+        }
     }
 
     private function run(array $choices): array
@@ -445,9 +460,20 @@ final class Model
                 }
                 // A zone option's label is the series' clock under it, never
                 // a day coming up (which can be an edited day at its own
-                // time): its series' start, as that plan's rule.to writes it.
+                // time): its series' start, written in this plan's zone as
+                // rule.to.start is (an option's plan writes its rule.to in
+                // its own series' zone, which a refused one keeps as it was).
                 if ($group['id'] === 'zone') {
-                    $plan['groups'][$gi]['options'][$oi]['start'] = $alt['plan']['rule']['to']['start'];
+                    $to = (string) $alt['plan']['rule']['to']['start'];
+                    $plan['groups'][$gi]['options'][$oi]['start'] = $plan['zone'] !== null && str_contains($to, 'T') ? self::inZoneOut(Time::parseIso($to), $plan['zone']) : $to;
+                }
+            }
+            // A disabled zone option has no series under it to start.
+            if ($group['id'] === 'zone') {
+                foreach ($group['options'] as $oi => $option) {
+                    if (!isset($alts[$oi])) {
+                        $plan['groups'][$gi]['options'][$oi]['start'] = null;
+                    }
                 }
             }
         }
@@ -1437,6 +1463,16 @@ final class Model
                 }
             }
         }
+        // A rule the change writes is in the series' own form after it
+        // (Recurrence::inForm): UNTIL in the start's form, and no clock parts
+        // on an all-day series. An UNTIL written on a timed series' clock is
+        // read in the zone it was written in when the series becomes all-day.
+        if (!$unchanged) {
+            $inForm = \BetterCal\Domain\Recurrence::inForm($r1->text(), $this->allDay1, $this->allDay1 ? $this->tz0 : $this->tz1);
+            if ($inForm !== $r1->text()) {
+                $r1 = Rule::parse($inForm, $newStart);
+            }
+        }
         $calc1 = $unchanged ? $this->old : new Calc($r1, $newStart, $this->tz1, $this->allDay1, $clock1, $this->len1, $anchor, $this->old->storedStart());
         if ($calc1 !== $this->old && $calc1->signature() === $this->old->signature()) {
             // The same stored series: the same expansion, so the same keys.
@@ -1666,6 +1702,9 @@ final class Model
             $stored->textKey() === $this->rule0->textKey() => $this->rule0->withBound($stored->count, $stored->until)->text(),
             default => $stored->text(),
         };
+        if ($newRruleText !== null) {
+            $newRruleText = \BetterCal\Domain\Recurrence::inForm($newRruleText, $this->allDay1, $this->allDay1 ? $this->tz0 : $this->tz1);
+        }
         $end1 = $this->endFrom($start1, $this->allDay1, $this->len1, $this->tz1);
         $set = function (string $col, mixed $value) use (&$masterCols): void {
             if ((string) ($this->master[$col] ?? '') !== (string) ($value ?? '') || ($value === null) !== ($this->master[$col] === null)) {

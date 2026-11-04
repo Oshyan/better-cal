@@ -36,9 +36,10 @@ use Sabre\VObject\Recur\RRuleIterator;
  * next transition, whichever comes first), so the walk jumps there rather
  * than stepping a second at a time.
  *
- * Every other frequency is sabre's own, but for where a monthly rule ends
- * (endsAtUntil). Every expansion in the app reads this iterator (Calc for
- * the model, SeriesIterator for the window), so there is one expander.
+ * Every other frequency is sabre's own, but for one rule a monthly rule
+ * keeps (outsideMonthDays). Every expansion in the app reads this iterator
+ * (Calc for the model, SeriesIterator for the window), so there is one
+ * expander.
  */
 class RuleIterator extends RRuleIterator
 {
@@ -87,7 +88,7 @@ class RuleIterator extends RRuleIterator
     {
         if (!$this->owned()) {
             parent::next();
-            if ($this->endsAtUntil()) {
+            if ($this->outsideMonthDays()) {
                 $this->currentDate = null;
             }
             return;
@@ -117,23 +118,19 @@ class RuleIterator extends RRuleIterator
     }
 
     /**
-     * Whether a monthly step stopped at UNTIL rather than at a day of the
-     * rule. sabre 4.6.1, finding no more days in a month of a BYMONTHDAY or
-     * BYDAY rule, moves to the first of the next month at the same clock and
-     * stops there once that reaches UNTIL, leaving it current; when UNTIL is
-     * exactly that instant, the bound admits it and it would be yielded as
-     * an occurrence. A first of the month that the month's own days don't
-     * include is no day of the rule, so the rule has ended there.
+     * Whether a monthly step of a BYMONTHDAY or BYDAY rule landed on a day
+     * that isn't one of its month's own days. Such a rule yields only those
+     * days, so a step that lands elsewhere has found no further day of the
+     * rule, and the iteration ends there. (sabre 4.6.1 lands so when it
+     * runs out of a month's days and stops at the next month's first because
+     * that is the UNTIL instant, which the bound would otherwise admit.)
      */
-    private function endsAtUntil(): bool
+    private function outsideMonthDays(): bool
     {
-        if ($this->frequency !== 'monthly' || $this->until === null || $this->currentDate === null || (!$this->byMonthDay && !$this->byDay)) {
+        if ($this->frequency !== 'monthly' || $this->currentDate === null || (!$this->byMonthDay && !$this->byDay)) {
             return false;
         }
-        if ($this->currentDate->getTimestamp() !== $this->until->getTimestamp() || (int) $this->currentDate->format('j') !== 1) {
-            return false;
-        }
-        return !in_array(1, array_map('intval', $this->getMonthlyOccurrences()), true);
+        return !in_array((int) $this->currentDate->format('j'), array_map('intval', $this->getMonthlyOccurrences()), true);
     }
 
     /** The step between periods, in seconds. */

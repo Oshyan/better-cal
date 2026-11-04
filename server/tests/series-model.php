@@ -1636,6 +1636,21 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last']]);
     $first = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-01-01', 60, true);
     checkEq('Phantom UNTIL: an UNTIL on a 1st the rule gives is its last occurrence', ['2027-04-01', '2027-05-01', '2027-06-01'], array_slice(smShows($first, ['master' => []], '2027-06-30'), -3));
+    // The rule is that a monthly BYDAY or BYMONTHDAY rule yields only its
+    // months' own days; every day sabre lands on otherwise is one of them,
+    // a second Sunday at 02:30 Los Angeles shifted out of March's skipped
+    // hour included, so with no UNTIL nothing is cut short.
+    $take = static function (Sabre\VObject\Recur\RRuleIterator $it): array {
+        $out = [];
+        for ($i = 0; $i < 30 && $it->valid(); $i++, $it->next()) {
+            $out[] = $it->current()->format('Y-m-d H:i T');
+        }
+        return $out;
+    };
+    $gapStart = new DateTimeImmutable('2027-01-10 02:30:00', Time::zone('America/Los_Angeles'));
+    $gapDays = $take(new BetterCal\Domain\Series\RuleIterator('FREQ=MONTHLY;BYDAY=2SU', $gapStart));
+    checkEq('Phantom UNTIL: an unbounded second Sunday at 02:30 keeps every day sabre gives, March\'s at 03:30',
+        [$take(new Sabre\VObject\Recur\RRuleIterator('FREQ=MONTHLY;BYDAY=2SU', $gapStart)), 30, '2027-03-14 03:30 PDT'], [$gapDays, count($gapDays), $gapDays[2] ?? null]);
 
     // The zone rule (One zone): the after side decides. A series timed after
     // the edit writes every timed value of both sides in its zone and every

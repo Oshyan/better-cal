@@ -36,8 +36,9 @@ use Sabre\VObject\Recur\RRuleIterator;
  * next transition, whichever comes first), so the walk jumps there rather
  * than stepping a second at a time.
  *
- * Every other frequency is sabre's own, but for one rule a monthly rule
- * keeps (outsideMonthDays). Every expansion in the app reads this iterator
+ * Every other frequency is sabre's own, but for one rule every frequency
+ * keeps: an instant outside the rule's own days is no occurrence, so it is
+ * skipped and the rule read on (outsideDays). Every expansion in the app reads this iterator
  * (Calc for the model, SeriesIterator for the window), so there is one
  * expander.
  */
@@ -45,6 +46,8 @@ class RuleIterator extends RRuleIterator
 {
     /** Periods looked at for one occurrence before the rule is taken as ended. */
     private const MAX_TRIES = 600000;
+    /** Instants outside the rule's days skipped in a row before the rule is taken as ended. */
+    private const MAX_SKIPS = 1000;
 
     /** @var list<\DateTimeImmutable>|null the current period's occurrences after the current one; null before the first period is read */
     private ?array $pending = null;
@@ -88,8 +91,15 @@ class RuleIterator extends RRuleIterator
     {
         if (!$this->owned()) {
             parent::next();
-            if ($this->outsideMonthDays()) {
-                $this->currentDate = null;
+            // An instant outside the rule's own days is no occurrence: it is
+            // skipped, not counted, and the rule read on from it.
+            for ($i = 0; $this->currentDate !== null && $this->outsideDays($this->currentDate); $i++) {
+                if ($i >= self::MAX_SKIPS) {
+                    $this->currentDate = null;
+                    break;
+                }
+                parent::next();
+                --$this->counter;
             }
             return;
         }
@@ -118,19 +128,40 @@ class RuleIterator extends RRuleIterator
     }
 
     /**
-     * Whether a monthly step of a BYMONTHDAY or BYDAY rule landed on a day
-     * that isn't one of its month's own days. Such a rule yields only those
-     * days, so a step that lands elsewhere has found no further day of the
-     * rule, and the iteration ends there. (sabre 4.6.1 lands so when it
-     * runs out of a month's days and stops at the next month's first because
-     * that is the UNTIL instant, which the bound would otherwise admit.)
+     * Whether an instant sabre stepped to lies outside the rule's own days:
+     * a month, a day of the year, a day of the month or a weekday its BY
+     * parts don't name, a numbered weekday ("2TU", "-1FR") counted in its
+     * month (MONTHLY, or YEARLY with BYMONTH) or its year. (sabre 4.6.1
+     * yields such an instant when it runs out of a month's days and stops
+     * at the next month's first because that is the UNTIL instant, which
+     * the bound would otherwise admit.) Its clock parts are not read here:
+     * for these frequencies sabre makes the hours and minutes, and they are
+     * its own.
      */
-    private function outsideMonthDays(): bool
+    private function outsideDays(\DateTimeInterface $t): bool
     {
-        if ($this->frequency !== 'monthly' || $this->currentDate === null || (!$this->byMonthDay && !$this->byDay)) {
+        $t = \DateTimeImmutable::createFromInterface($t);
+        if ($this->fails($t) === 'day') {
+            return true;
+        }
+        if ($this->byDay === null || !in_array($this->frequency, ['monthly', 'yearly'], true)) {
             return false;
         }
-        return !in_array((int) $this->currentDate->format('j'), array_map('intval', $this->getMonthlyOccurrences()), true);
+        $wd = strtoupper(substr($t->format('D'), 0, 2));
+        $inMonth = $this->frequency === 'monthly' || $this->byMonth !== null;
+        $pos = $inMonth ? (int) $t->format('j') : (int) $t->format('z') + 1;
+        $len = $inMonth ? (int) $t->format('t') : 365 + (int) $t->format('L');
+        foreach ($this->byDay as $day) {
+            $day = strtoupper((string) $day);
+            if (substr($day, -2) !== $wd) {
+                continue;
+            }
+            $n = (int) substr($day, 0, -2);
+            if ($n === 0 || ($n > 0 && intdiv($pos - 1, 7) + 1 === $n) || ($n < 0 && intdiv($len - $pos, 7) + 1 === -$n)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The step between periods, in seconds. */

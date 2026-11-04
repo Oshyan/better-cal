@@ -1647,8 +1647,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last']]);
     $first = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-01-01', 60, true);
     checkEq('Phantom UNTIL: an UNTIL on a 1st the rule gives is its last occurrence', ['2027-04-01', '2027-05-01', '2027-06-01'], array_slice(smShows($first, ['master' => []], '2027-06-30'), -3));
-    // The rule is that a monthly BYDAY or BYMONTHDAY rule yields only its
-    // months' own days; every day sabre lands on otherwise is one of them,
+    // A numbered weekday is counted in its month: an UNTIL on a 1st that is
+    // a Tuesday is no second Tuesday, so it is skipped too.
+    $secondTue = smSeries('Sample practice', 'FREQ=MONTHLY;BYDAY=2TU;UNTIL=20270601', '2027-01-12', 60, true);
+    checkEq('Phantom UNTIL: a second Tuesday ending on Tue 1 Jun shows no 1 Jun', ['2027-04-13', '2027-05-11'], array_slice(smShows($secondTue, ['master' => []], '2027-06-30'), -2));
+    $yearly = smSeries('Sample practice', 'FREQ=YEARLY;BYMONTH=6;BYDAY=-1FR;UNTIL=20300101', '2027-06-25', 60, true);
+    checkEq('Expander: the last Friday of June each year, counted in June', ['2027-06-25', '2028-06-30', '2029-06-29'], smShows($yearly, ['master' => []], '2030-12-31'));
+    // The rule is that a rule yields only its own days; every day sabre
+    // lands on otherwise is one of them,
     // a second Sunday at 02:30 Los Angeles shifted out of March's skipped
     // hour included, so with no UNTIL nothing is cut short.
     $take = static function (Sabre\VObject\Recur\RRuleIterator $it): array {

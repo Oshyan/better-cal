@@ -331,7 +331,7 @@ trait PlanChecks
     /**
      * c-shape: the plan by exact field path and role. $zone is the zone the
      * harness derived (never the plan's); a refused plan is checked by its
-     * own shape, in the old series' zone.
+     * own shape, in the old series' zone ($tz0, null for an all-day series, whose start is a date).
      */
     private function checkShape(array $plan, ?string $zone, bool $refused, ?string $tz0 = null, bool $anchored = false): void
     {
@@ -353,7 +353,10 @@ trait PlanChecks
             }
             $this->ran('c-shape', 'refused start');
             $start = $plan['start'] ?? null;
-            if (is_string($start) && preg_match(self::DATE_RE, $start) !== 1) {
+            if ($tz0 === null) {
+                // An all-day series' start is a bare date, in the refused plan too.
+                $this->role('date', 'plan.start', $start);
+            } else {
                 $this->isoIn('plan.start', $start, $tz0, 'refused start');
             }
         } else {

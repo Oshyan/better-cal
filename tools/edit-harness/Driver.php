@@ -897,7 +897,7 @@ final class Driver
                     $this->checkRefused($st, $edit, $plan, $choices, $e);
                     // A refusal of the whole change has its own shape (no zone, acted or bound.from), its start in the old zone.
                     if (array_filter($plan['refusals'] ?? [], static fn(array $r): bool => !isset($r['group'])) !== []) {
-                        $this->checkShape($plan, null, true, Truth::tzOf($st['row']));
+                        $this->checkShape($plan, null, true, $st['allDay'] ? null : Truth::tzOf($st['row']));
                     }
                 }
                 return null;

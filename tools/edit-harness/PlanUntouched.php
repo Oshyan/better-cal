@@ -106,17 +106,24 @@ trait PlanUntouched
 
     /**
      * The series' placement columns the oracle changes: none for a change of
-     * fields alone, the rule for a bound, and for a change of time, days or
+     * fields alone, the rule for a bound (and its skips where the oracle's differ), and for a change of time, days or
      * pattern the start, rule and skips, the end where the start or the
      * length moves, the all-day flag and zone where they change.
      *
      * @return list<string>
      */
-    private static function masterPlacement(array $before, Expect $x): array
+    private function masterPlacement(array $before, Expect $x, ?array $out): array
     {
+        // A bound drops the skips past the new end: the skips change where the oracle's differ from those stored.
+        $skips = array_map(static fn(string $k): int => Clock::dayOf($k, $before['tz']), $before['exdates']);
+        sort($skips);
+        if ($x->kind === 'bound' && $out === null) {
+            $this->unoracled[] = 'c-untouched: the skips of a bound change to a rule outside the drag table';
+        }
+        $skipsChange = $out === null || $out['skips'] !== $skips;
         $cols = match ($x->kind) {
             'fields' => [],
-            'bound' => ['rrule'],
+            'bound' => $skipsChange ? ['rrule', 'exdates_json'] : ['rrule'],
             default => ['start_utc', 'end_utc', 'rrule', 'exdates_json'],
         };
         if ($x->allDay1 !== $before['allDay']) {
@@ -221,7 +228,7 @@ trait PlanUntouched
             $r1 = $w1['events'][$id] ?? null;
             if ($id === $master) {
                 $role = 'master';
-                $allowed = array_merge($book, self::masterPlacement($before, $x), $edit['trip'] ? ['is_container'] : []);
+                $allowed = array_merge($book, $this->masterPlacement($before, $x, $out), $edit['trip'] ? ['is_container'] : []);
             } elseif (isset($fates[$id])) {
                 $role = 'edited row ' . $fates[$id];
                 [$placed, $ownPlacement] = $this->rowPlacement($id, $fates[$id], $before, $after, $edit, $choices, $ctx);

@@ -224,11 +224,16 @@ trait PlanPlacement
             return Days::date(end($st['raw'])['dn']);
         };
         $until = static fn(array $row): ?string => Shape::parts((string) $row['rrule'])['UNTIL'] ?? null;
-        if ($after['shape']->cap !== 'unreadable') {
-            $this->expect('c-placement', 'bound.last is the last stored occurrence\'s day', 'bound.last', $last($after), $b['last'] ?? null);
-        }
-        if ($before['shape']->cap !== 'unreadable') {
-            $this->expect('c-placement', 'bound.from.last is the last occurrence\'s day before the edit', 'bound.from.last', $last($before), $b['from']['last'] ?? null);
+        // A bounded series read only in part (more occurrences than the expander gives at once) has a last day the harness hasn't read.
+        foreach (['bound.last' => [$after, $b['last'] ?? null], 'bound.from.last' => [$before, $b['from']['last'] ?? null]] as $role => [$st, $got]) {
+            if ($st['shape']->cap === 'unreadable') {
+                continue;
+            }
+            if ($st['bounded'] && $st['through'] !== null) {
+                $this->unoracled[] = "c-placement: $role of a bounded series past the window read";
+                continue;
+            }
+            $this->expect('c-placement', "$role is the last occurrence's day of the series as stored " . ($role === 'bound.last' ? 'after' : 'before') . ' the edit', $role, $last($st), $got);
         }
         $this->expect('c-placement', 'bound.until is the stored rule\'s UNTIL', 'bound.until', $until($after['row']), $b['until'] ?? null);
         $this->expect('c-placement', 'bound.from.until is the rule\'s UNTIL before the edit', 'bound.from.until', $until($before['row']), $b['from']['until'] ?? null);

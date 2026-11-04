@@ -186,8 +186,10 @@ trait PlanUntouched
         // Insertions: the row created for the day acted on, the event of its own it became; nothing else.
         $createdActed = 0;
         $actedOwn = 0;
-        if ($edit['sent'] !== null && $edit['fromRow'] === null && $x->kind !== 'newrule' && $out !== null) {
-            if (!$out['actedInside']) {
+        if ($edit['sent'] !== null && $edit['fromRow'] === null && $x->kind !== 'newrule') {
+            // A rule outside the drag table keeps its days: the day acted on is inside while the stored series has its day.
+            $inside = $out === null ? self::isNewDay($after, $ctx, $x->landedDn) : $out['actedInside'];
+            if (!$inside) {
                 $actedOwn = 1;
             } elseif (!$x->allDay1) {
                 $k = $ctx['byDay'][$x->landedDn] ?? null;

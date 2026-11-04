@@ -491,8 +491,12 @@ trait PlanChecks
         foreach ($plan['days'] ?? [] as $i => $d) {
             $dp = "plan.days[$i]";
             $this->shapeKeys($dp, 'days[]', $d);
-            $generated = ($d['outcome'] ?? '') === 'generated';
-            $this->role('key', "$dp.key", $d['key'] ?? null, $generated);
+            // A skip the change writes (generated, or an anchor before a skipped hour) has no old occurrence: its key is null.
+            $generated = in_array($d['outcome'] ?? '', ['generated', 'anchor'], true);
+            if (($d["key"] ?? null) === null && !$generated) {
+                $this->shapeFail("$dp.key", "a day other than a skip the change writes is named by its key", array_diff_key($d, ["head" => 1, "outcomeWords" => 1, "words" => 1]));
+            }
+            $this->role("key", "$dp.key", $d["key"] ?? null, true);
             $this->role('key', "$dp.newKey", $d['newKey'] ?? null, true);
             foreach (['day', 'shows', 'to'] as $f) {
                 if (array_key_exists($f, $d)) {

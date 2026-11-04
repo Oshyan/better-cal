@@ -517,14 +517,23 @@ final class Model
     private function partingDates(array $alts): ?array
     {
         $seqs = [];
+        $tos = [];
         foreach ($alts as $oi => $alt) {
             $calc = $alt['meta']['calc'] ?? null;
             if (!$calc instanceof Calc) {
                 return null;
             }
             [$bounded, $periods] = $alt['walk'];
-            $days = $bounded ?? $periods;
-            $seqs[$oi] = ['days' => $days, 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
+            $seqs[$oi] = ['days' => $bounded ?? $periods, 'walked' => $bounded === null, 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
+            $tos[$oi] = (int) ($alt['walkTo'] ?? PHP_INT_MAX);
+        }
+        // Walked days compare through the days every walk read; past that
+        // is where a walk ended, never a difference.
+        $to = min($tos);
+        foreach ($seqs as $oi => $s) {
+            if ($s['walked']) {
+                $seqs[$oi]['days'] = array_values(array_filter($s['days'], static fn(int $d): bool => $d <= $to));
+            }
         }
         $after = [];
         foreach ($seqs as $oi => $s) {
@@ -571,7 +580,7 @@ final class Model
                 return [];
             }
             [, $periods] = $alt['walk'];
-            $seqs[$oi] = ['days' => array_values($periods ?? []), 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
+            $seqs[$oi] = ['days' => array_values($periods ?? []), 'calc' => $calc, 'landed' => (int) $alt['meta']['landed'], 'to' => (int) ($alt['walkTo'] ?? PHP_INT_MAX)];
         }
         if (!isset($seqs[$selected])) {
             $selected = (int) array_key_first($seqs);
@@ -581,8 +590,12 @@ final class Model
         $out = [];
         foreach ($seqs as $oi => $s) {
             $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
-            $onward = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
-            $refOnward = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
+            // Compared through the days both walks read: a day past the
+            // other's walk is where that walk ended (its cycle, year 9999),
+            // never a difference (decisions.md, A walk that can't complete).
+            $to = min($s['to'], $ref['to']);
+            $onward = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed'] && $d <= $to));
+            $refOnward = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed'] && $d <= $to));
             $i = 0;
             while ($i < count($onward) && $i < count($refOnward) && $onward[$i] === $refOnward[$i]) {
                 $i++;
@@ -1026,7 +1039,7 @@ final class Model
                 'refusals' => $this->refusals, 'notes' => $this->notes, 'fields' => [],
                 'summary' => 'Not changed: ' . ($words ?? self::REASONS[$code] ?? $code),
             ],
-            'writes' => null, 'selected' => [], 'nextDates' => [], 'walk' => [null, []],
+            'writes' => null, 'selected' => [], 'nextDates' => [], 'walk' => [null, []], 'walkTo' => PHP_INT_MAX,
         ];
     }
 
@@ -1931,7 +1944,8 @@ final class Model
         // Words and the rest of the plan.
         $wordsBefore = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         $words = $this->ruleDelta === 'none' ? 'Does not repeat' : Words::rule($r1p, $this->allDay1 ? null : $clock1);
-        $walk = $this->readable ? $this->walk($calc1, $genSkips, $landedDn) : [null, []];
+        [$walkBounded, $walkDays, $walkTo] = $this->readable ? $this->walk($calc1, $genSkips, $landedDn) : [null, [], PHP_INT_MAX];
+        $walk = [$walkBounded, $walkDays];
         $boundKey = [$r1->count, $r1->until];
         // Skipped days count toward COUNT (RFC 5545 3.8.5.3): the line counts
         // the series' scheduled occurrences (a skip this change generates is
@@ -2102,6 +2116,7 @@ final class Model
             'selected' => $selected,
             'nextDates' => $nextDates,
             'walk' => $walk,
+            'walkTo' => $walkTo,
             'boundKey' => $boundKey,
             // For the options' consequence words (optionWords).
             'meta' => [
@@ -2193,7 +2208,8 @@ final class Model
         if (!$r->supported()) {
             // A rule outside the drag table has one reading, so nothing is
             // compared: its first 60 days are what the plan lists of it.
-            return [null, array_slice($calc->occurrences(PHP_INT_MAX, 60), 0, 60)];
+            $first = array_slice($calc->occurrences(PHP_INT_MAX, 60), 0, 60);
+            return [null, $first, count($first) === 60 ? $first[59] : PHP_INT_MAX];
         }
         $unbounded = $calc->withoutBound();
         // Readings differ by member, the same in every daily or weekly
@@ -2225,7 +2241,10 @@ final class Model
             $p = $r->periodPlus($p, $r->interval);
         }
         unset($unbounded);
-        return [$calc->bounded() ? array_values(array_diff($calc->all(), $skips)) : null, $out];
+        // The last day the walk read: the day before the first period it
+        // didn't reach, or the limit it was walked to.
+        $reached = $p > 9999 && $r->kind === 'yearly' ? PHP_INT_MAX : $r->periodFirst($p) - 1;
+        return [$calc->bounded() ? array_values(array_diff($calc->all(), $skips)) : null, $out, min($limit, $reached)];
     }
 
     private static function gcd(int $a, int $b): int

@@ -1781,6 +1781,24 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: the created acted day is about Mon 8 Mar, showed there and was put on Mon 15 Mar at 02:30', [
         'moves', '2027-03-08', ['date' => '2027-03-08', 'at' => '2027-03-08T02:30:00-08:00'], ['date' => '2027-03-15', 'at' => '2027-03-15T02:30:00-07:00'], '2027-03-08', '2027-03-15',
     ], [$acted['outcome'] ?? null, $acted['day'] ?? null, $acted['before'] ?? null, $acted['after'] ?? null, $acted['shows'] ?? null, $acted['to'] ?? null]);
+    // An edited day's data: the day it is about, the date set on it in its
+    // own zone, where it shows before and after (by the zone rule), and the
+    // kind after when that changes. Here a day of a Los Angeles series at
+    // its own 00:30 in New York, a date of its own there, while the series
+    // moves to 19:00.
+    $practiceLa = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 20:00');
+    $nyOwn = smEdited($practiceLa, 2, '2027-01-12 20:00', ['tzid' => $ny, 'start_utc' => smAt('2027-01-13 00:30', $ny), 'end_utc' => smAt('2027-01-13 01:30', $ny)], null, ['date', 'time']);
+    $p = smPlan($practiceLa, [$nyOwn], smDrag($practiceLa, '2027-01-05 20:00', '2027-01-05 19:00'));
+    $d = $edited($p);
+    $there = ['date' => '2027-01-12', 'at' => '2027-01-12T21:30:00-08:00'];
+    checkEq('Writers: an own-date day at its own New York time in a Los Angeles series: about Tue 12 Jan, set on Wed 13 Jan in New York, shown at 21:30 in Los Angeles before and after', [
+        'stays', '2027-01-12', ['date' => '2027-01-13', 'at' => '2027-01-13T00:30:00-05:00', 'tz' => $ny], $there, $there, '2027-01-12', '2027-01-12',
+    ], [$d['outcome'] ?? null, $d['day'] ?? null, $d['ownDate'] ?? null, $d['before'] ?? null, $d['after'] ?? null, $d['shows'] ?? null, $d['to'] ?? null]);
+    $p = smPlan($timed, [$ownTime], $toAllDay);
+    $d = $edited($p);
+    checkEq('Writers: made all-day, a day at its own time shows timed in its own zone before and on its date after, its new kind named', [
+        'moves', '2027-01-12', false, ['date' => '2027-01-12', 'at' => '2027-01-12T21:30:00-08:00', 'tz' => $la], ['date' => '2027-01-12', 'kind' => 'all-day'],
+    ], [$d['outcome'] ?? null, $d['day'] ?? null, array_key_exists('ownDate', $d), $d['before'] ?? null, $d['after'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

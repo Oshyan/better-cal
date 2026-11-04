@@ -1757,10 +1757,10 @@ final class Model
                 $rejoined[$id] = true;
                 unset($tags[$id], $people[$id]);
                 $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
-                $shows = $this->planDn($start, $allDay, $tz);
+                $sides = $this->rowSides($row, self::rowOf($start, $allDay, $tz));
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
-                    'title' => (string) $row['title'], 'outcome' => 'rejoins', 'shows' => Cal::date($this->rowDn($row)), 'to' => Cal::date($shows)]
-                    + Words::dayParts($name . Words::date($odn, $this->thisYear), 'goes back to the series, on ' . Words::date($shows, $this->thisYear))
+                    'title' => (string) $row['title'], 'outcome' => 'rejoins'] + $sides
+                    + Words::dayParts($name . Words::date($odn, $this->thisYear), 'goes back to the series, on ' . Words::date(self::dayOf($sides['after']), $this->thisYear))
                     + ['kept' => [], 'takes' => OwnFields::normalize($edited)];
                 continue;
             }
@@ -1793,41 +1793,42 @@ final class Model
                 $keepsWords .= ', takes the new ' . Words::andList(array_map(static fn(string $f): string => self::OWN_WORDS[$f], $taken));
             }
             // The days it showed on before and after, and where it shows after
-            // as an instant, each by the zone rule (planDn): a date and a clock
-            // of the same instant in one zone.
-            $shownBefore = $this->rowDn($row);
-            $localStart = $start->setTimezone($this->zoneFor($allDay, $tz));
-            $newShown = Cal::dnOf($localStart);
+            // as an instant, each a placement by the zone rule: a date and a
+            // clock of the same instant in one zone.
+            $sides = $this->rowSides($row, self::rowOf($start, $allDay, $tz));
+            $shownBefore = self::dayOf($sides['before']);
+            $newShown = self::dayOf($sides['after']);
+            $newClock = substr((string) ($sides['after']['at'] ?? ''), 11, 5);
             if (in_array('date', $ownBefore, true) && $wasShown !== $odn) {
                 // Where it shows after: another day, the same day at another time, or unchanged.
                 $clockMoved = !$allDay && Time::toDb($start) !== (string) $row['start_utc'];
-                $where = $newShown !== $shownBefore ? 'moves to ' . Words::date($newShown, $this->thisYear) : ($clockMoved ? 'moves to ' . $localStart->format('H:i') : 'stays there');
+                $where = $newShown !== $shownBefore ? 'moves to ' . Words::date($newShown, $this->thisYear) : ($clockMoved ? 'moves to ' . $newClock : 'stays there');
                 $said = Words::dayParts($name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($shownBefore, $this->thisYear), $where . $keepsWords, ': ');
             } else {
                 // A day that keeps its date and changes its time says the time.
-                $to = $newShown === $shownBefore && !$allDay ? $localStart->format('H:i') : Words::date($newShown, $this->thisYear);
+                $to = $newShown === $shownBefore && !$allDay ? $newClock : Words::date($newShown, $this->thisYear);
                 $said = Words::dayParts($name . Words::date($odn, $this->thisYear), ($moved ? 'moves to ' . $to : 'stays') . $keepsWords);
             }
             // As data beside the words: the own fields it keeps, and the fields
             // this edit changes that it takes from the series.
             $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => $newKey, 'kind' => 'edited',
-                'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays',
-                'shows' => Cal::date($shownBefore), 'to' => Cal::date($newShown)]
-                // Where it shows after, as an instant (timed days): beside newKey, the series' own time
-                // there; in an all-day plan, in its own zone, named.
-                + ($allDay ? [] : ['at' => Time::iso($localStart)] + $this->tzBeside(false, $tz)) + $said + [
+                'title' => (string) $row['title'], 'outcome' => $moved ? 'moves' : 'stays'] + $sides
+                // Where it shows after, as an instant (timed days), as `after` gives it: beside newKey,
+                // the series' own time there; in an all-day plan, in its own zone, named.
+                + array_intersect_key($sides['after'], ['at' => true, 'tz' => true]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
         foreach ($outsideRows as $id => $img) {
             $row = $this->rows[$id];
-            $shown = $this->rowDn($row);
-            $label = "'" . (string) $row['title'] . "' " . Words::date($shown, $this->thisYear);
+            // Deleted, it has no after; detached as it is, its after is the row itself.
+            $sides = $this->rowSides($row, $outside === 'delete' ? null : $row);
+            $label = "'" . (string) $row['title'] . "' " . Words::date(self::dayOf($sides['before']), $this->thisYear);
             if ($outside === 'delete') {
                 $delete[] = $id;
-                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted', 'shows' => Cal::date($shown)] + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
+                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + $sides + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
             } else {
                 $detach[$id] = [];
-                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate', 'shows' => Cal::date($shown), 'to' => Cal::date($shown)] + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
+                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate'] + $sides + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
             }
             unset($img);
         }
@@ -2473,6 +2474,26 @@ final class Model
     {
         $all = (int) $after['all_day'] === 1;
         return $this->placementOut($after, $this->displayZone()) + ($all !== ((int) $before['all_day'] === 1) ? ['kind' => $all ? 'all-day' : 'timed'] : []);
+    }
+
+    /**
+     * An edited row's days and places (series-model.md, The Plan): `day`, the
+     * day it is about; `ownDate`, the date set on it in its own zone, when it
+     * owns its date before the change; `before` and `after` (null $after: it
+     * is deleted), where it shows; and `shows` and `to`, their dates, for API
+     * callers.
+     */
+    private function rowSides(array $row, ?array $after): array
+    {
+        $before = $this->placementOut($row, $this->displayZone());
+        $out = ['day' => $this->identityOut((string) $row['recurrence_instance_utc'])]
+            + (in_array('date', $this->ownOf($row), true) ? ['ownDate' => $this->placementOut($row, self::rowZone($row))] : [])
+            + ['before' => $before, 'shows' => $before['date']];
+        if ($after !== null) {
+            $out['after'] = $this->afterOut($row, $after);
+            $out['to'] = $out['after']['date'];
+        }
+        return $out;
     }
 
     /** A placement the plan writes, as a row: its start, kind and zone. */

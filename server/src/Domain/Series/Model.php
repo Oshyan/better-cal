@@ -2514,40 +2514,6 @@ final class Model
         return Cal::dn((int) substr($placement['date'], 0, 4), (int) substr($placement['date'], 5, 2), (int) substr($placement['date'], 8, 2));
     }
 
-    /**
-     * The zone a value is written in, by the zone rule: an all-day value is
-     * a date, read as itself; a timed one is in the plan's zone, or in an
-     * all-day plan in its own row's zone ($tz), which tzBeside names.
-     */
-    private function zoneFor(bool $allDay, string $tz): \DateTimeZone
-    {
-        return Time::zone($allDay ? 'UTC' : ($this->planZone() ?? $tz));
-    }
-
-    /** The zone written beside a timed value that isn't in the plan's zone: a timed day in an all-day plan. */
-    private function tzBeside(bool $allDay, string $tz): array
-    {
-        return !$allDay && $this->planZone() === null ? ['tz' => $tz] : [];
-    }
-
-    /** The day an instant of that kind and zone shows on (zoneFor). */
-    private function planDn(\DateTimeImmutable $instant, bool $allDay, string $tz): int
-    {
-        return Cal::dnOf($instant->setTimezone($this->zoneFor($allDay, $tz)));
-    }
-
-    /** The day a row's placement shows on (planDn): a stored row before the change, or where the request put one. */
-    private function rowDn(array $row): int
-    {
-        return $this->planDn(Time::fromDb((string) $row['start_utc']), (int) $row['all_day'] === 1, (string) $row['tzid']);
-    }
-
-    /** The local day an edited row shows on, in its own zone. */
-    private function shownDn(array $row): int
-    {
-        $tz = (int) $row['all_day'] === 1 ? 'UTC' : (string) $row['tzid'];
-        return Cal::dnOf(Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz)));
-    }
 
     /**
      * Where an edited row shows after the edit: its own date, time, length

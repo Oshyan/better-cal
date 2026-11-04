@@ -139,6 +139,25 @@ return [
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    [
+        'id' => 'untouched-extra-link', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        // Both flags stay false, so the link is dormant and the trip rule allows it; it is journaled, so Undo takes it away.
+        'what' => 'a commit that links the series, as a trip, to the account\'s latest event of its own made before it',
+        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$other = \$this->db->scalar('SELECT id FROM events WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL ORDER BY id DESC LIMIT 1', [\$userId, \$id]);\n            if (\$other !== null) {\n                \$this->db->run('INSERT IGNORE INTO event_links (container_id, event_id) VALUES (?, ?)', [\$id, (int) \$other]);\n            }\n            if (\$w['master'] !== []) {\n"]],
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'untouched-created-row-tags', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'the event of its own a commit creates for the day acted on made without the series\' tags',
+        'patch' => [["                \$created[] = \$newId;\n", "                \$this->db->run('DELETE FROM event_tags WHERE event_id = ?', [\$newId]);\n                \$created[] = \$newId;\n"]],
+        'cases' => ['mutation-acted-day-on-its-own-takes-the-series-tags'],
+    ],
+    [
+        'id' => 'untouched-extra-calendar', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'a commit that adds a calendar to the account',
+        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$this->db->insert('calendars', ['user_id' => \$userId, 'name' => 'Sample extra', 'color' => '#336699', 'kind' => 'local', 'position' => 999]);\n            if (\$w['master'] !== []) {\n"]],
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
     // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',

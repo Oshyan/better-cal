@@ -1,0 +1,51 @@
+{
+    "n": 305,
+    "seed": 3,
+    "series": {
+        "family": "monthly_nth",
+        "rrule": "FREQ=MONTHLY;BYDAY=2MO",
+        "import": false,
+        "bound": "until",
+        "boundAt": 7,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2026-12-12 09:30",
+        "length": 120
+    },
+    "exceptions": [],
+    "acted": 5,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 2,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 66600,
+        "trip": false,
+        "fields": {
+            "status": "tentative"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=MONTHLY;BYDAY=2WE",
+        "bound": {
+            "untilAt": 4
+        },
+        "via": "master"
+    },
+    "stack": {
+        "kind": "deleteThis",
+        "days": 7,
+        "mins": 60
+    },
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": false
+    }
+}

@@ -161,7 +161,7 @@ trait PlanChecks
     private function checkPlanData(array $plan, array $before, array $after, array $sent, Expect $x, ?array $out, array $choices): void
     {
         $ctx = $this->planContext($before, $after, $sent, $x, $out, $choices);
-        $this->checkShape($plan, $ctx['zone'], false, null, self::anchored($after));
+        $this->checkShape($plan, $ctx['zone'], false, null, self::anchored($after), [$after['shape']->cap === 'unreadable', $before['shape']->cap === 'unreadable']);
         $this->checkPlacement($plan, $before, $after, $sent['edit'], $choices, $ctx);
         $this->checkNext($plan, $before, $after, $sent['edit'], $ctx);
         if ($sent['kind'] === 'all' && $this->wide0 !== null) {
@@ -333,7 +333,7 @@ trait PlanChecks
      * harness derived (never the plan's); a refused plan is checked by its
      * own shape, in the old series' zone ($tz0, null for an all-day series, whose start is a date).
      */
-    private function checkShape(array $plan, ?string $zone, bool $refused, ?string $tz0 = null, bool $anchored = false): void
+    private function checkShape(array $plan, ?string $zone, bool $refused, ?string $tz0 = null, bool $anchored = false, array $unreadable = [false, false]): void
     {
         $this->ran('c-shape', $refused ? 'refused plan' : 'plan');
         $this->shapeKeys('plan', '', $plan);
@@ -415,10 +415,10 @@ trait PlanChecks
         $bound = $plan['bound'] ?? null;
         $this->shapeKeys('plan.bound', 'bound', $bound);
         if (is_array($bound)) {
-            $this->shapeBound('plan.bound', $bound);
+            $this->shapeBound('plan.bound', $bound, $unreadable[0]);
             if (isset($bound['from'])) {
                 $this->shapeKeys('plan.bound.from', 'bound.from', $bound['from']);
-                $this->shapeBound('plan.bound.from', $bound['from']);
+                $this->shapeBound('plan.bound.from', $bound['from'], $unreadable[1]);
             }
         }
         $this->shapeKeys('plan.counts', 'counts', $plan['counts'] ?? null);
@@ -566,8 +566,21 @@ trait PlanChecks
             && Clock::inGap($raw[1]['dn'], $st['clock'], $st['tz']);
     }
 
-    private function shapeBound(string $path, array $b): void
+    /**
+     * A bound: its kind, UNTIL and last day. Its events and last day are null
+     * with no end, and for a rule the expander can't read (its kind, count and
+     * UNTIL read from the text), which $unreadable says from the stored rule
+     * as the harness's own Shape reads it, never from the plan.
+     */
+    private function shapeBound(string $path, array $b, bool $unreadable = false): void
     {
+        $open = ($b['kind'] ?? '') === 'none' || $unreadable;
+        if (array_key_exists('events', $b)) {
+            $this->ran('c-shape', $unreadable ? 'bound events (unreadable)' : 'bound events');
+            if ($b['events'] === null ? !$open : !is_int($b['events'])) {
+                $this->shapeFail("$path.events", 'a bound\'s events are a number, null only with no end or for a rule the expander can\'t read', $b['events']);
+            }
+        }
         $this->ran('c-shape', 'bound kind');
         if (!in_array($b['kind'] ?? null, ['none', 'count', 'until'], true)) {
             $this->shapeFail("$path.kind", 'a bound is none, count or until', $b['kind'] ?? null);
@@ -576,7 +589,7 @@ trait PlanChecks
             $this->role('bound instant', "$path.until", $b['until']);
         }
         if (array_key_exists('last', $b)) {
-            $this->role('date', "$path.last", $b['last'], ($b['kind'] ?? '') === 'none');
+            $this->role('date', "$path.last", $b['last'], $open);
         }
     }
 }

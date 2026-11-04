@@ -1903,6 +1903,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
         [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
 
+    // Every day within the year whose clock is missing or doubled gets its
+    // note: Sundays at 02:30 in Auckland happen twice on 4 Apr and not at
+    // all on 26 Sep.
+    $nz = smSeries('Sample swim', 'FREQ=WEEKLY;BYDAY=SU', '2027-03-07 02:30', 60, false, [], 'Pacific/Auckland');
+    $p = smPlan($nz, [], ['columns' => ['title' => 'Sample swim, renamed']]);
+    checkEq('Notes: two clock changes in one year, two notes', [['overlap', '2027-04-04'], ['gap', '2027-09-26']],
+        array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes']));
+
     // A refused change's plan gives the series' start by its kind: a date
     // for an all-day series, an instant in its zone for a timed one.
     $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);

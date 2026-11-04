@@ -1,0 +1,94 @@
+{
+    "n": 70,
+    "seed": 23,
+    "series": {
+        "family": "monthly_bare",
+        "rrule": "FREQ=MONTHLY;INTERVAL=3",
+        "import": false,
+        "bound": "none",
+        "boundAt": 3,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2026-12-31 02:30",
+        "length": 90
+    },
+    "exceptions": [
+        {
+            "at": 0,
+            "kind": "edit",
+            "own": [
+                "title",
+                "tags",
+                "allDay"
+            ],
+            "days": 1,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 7,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": -2,
+            "mins": 180,
+            "zone": "Asia/Tokyo",
+            "len": 30
+        },
+        {
+            "at": 5,
+            "kind": "edit",
+            "own": [
+                "date",
+                "time"
+            ],
+            "days": -2,
+            "mins": -90,
+            "zone": "America/New_York",
+            "len": 60
+        },
+        {
+            "at": 1,
+            "kind": "skip"
+        }
+    ],
+    "acted": 7,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 8,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 66600,
+        "trip": false,
+        "fields": {
+            "status": "tentative"
+        },
+        "rule": "new",
+        "sameForm": "editor",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": {
+        "kind": "drag",
+        "days": -1,
+        "mins": -60
+    },
+    "choices": {
+        "edit": {
+            "outside": "keep"
+        },
+        "stack": []
+    },
+    "preselected": {
+        "edit": true,
+        "stack": true
+    }
+}

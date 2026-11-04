@@ -1921,14 +1921,15 @@ final class Model
         $putDn = $this->placed ? self::dayOf($this->placementOut($this->landedCols, $this->displayZone())) : $landedDn;
         // A rule the expander can't read lists nothing, and goes on past
         // that unless it has an end.
-        [$next, $nextMore] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none'];
+        [$next, $nextMore, $cutDn] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none', $landedDn];
         // An option's next events: the same entries, without what only the plan's list says.
         $nextDates = array_map(static fn(array $n): array => array_intersect_key($n, ['start' => true, 'allDay' => true, 'tz' => true]), $next);
         if ($this->google) {
             $this->notes[] = ['kind' => 'google', 'words' => self::GOOGLE_NOTE];
         }
         if ($this->readable) {
-            $this->clockNotes($calc1, $landedDn);
+            // From coming up's own cutoff, so every date it shows is scanned.
+            $this->clockNotes($calc1, $cutDn);
         }
         $fieldsWords = [];
         foreach ($this->changed as $field => $cols) {
@@ -2217,7 +2218,7 @@ final class Model
      * its key is, and the occurrences with no row at their keys. With them,
      * whether any event of those comes after the four.
      *
-     * @return array{0:list<array>,1:bool}
+     * @return array{0:list<array>,1:bool,2:int} the list, whether more come, and the day it starts from (the cutoff)
      */
     private function next(Calc $calc1, array $exdates, array $placeRows, array $overrideWrites, int $fromDn, ?array $separate, int $actedDn, array $createdRows = []): array
     {
@@ -2282,7 +2283,7 @@ final class Model
             unset($e['key']);
             return $e;
         }, array_slice($out, 0, self::NEXT_SHOWN));
-        return [$shown, count($out) > self::NEXT_SHOWN];
+        return [$shown, count($out) > self::NEXT_SHOWN, $fromDn];
     }
 
     /** Every day the plan shows, or within a year ahead, whose clock time is missing or doubled gets its note (Zones, DST and All-Day Days). */
@@ -2292,10 +2293,17 @@ final class Model
             return;
         }
         $tz = Time::zone($calc->tz);
-        foreach ($calc->occurrences($fromDn + 366, 400) as $d) {
-            if ($d < $fromDn) {
+        // The year from the cutoff, read from the cutoff: however many
+        // occurrences come before it, the scan is bounded by the year alone.
+        $seen = null;
+        foreach ($calc->keysFrom($fromDn) as [$d]) {
+            if ($d > $fromDn + 366) {
+                break;
+            }
+            if ($d === $seen) {
                 continue;
             }
+            $seen = $d;
             $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$calc->clock);
             $at = new \DateTimeImmutable($wall, $tz);
             // Each instant the wall clock names that day, by the zone's

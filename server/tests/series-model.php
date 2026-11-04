@@ -372,6 +372,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Acceptance 6: renamed for all events, applied and direct', [true, ['title' => 'Holiday supper']], [$h['plan']['direct'], $h['writes']['master']]);
     $h = smPlan($holiday, [], ['rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3']);
     checkEq('Acceptance 6: ends after 3 refused with the reason', [true, Model::REASONS['unreadable']], [$h['refused'], $h['plan']['refusals'][0]['words'] ?? null]);
+    // Its bound is read from its text all the same: a COUNT or an UNTIL in
+    // a rule the expander can't read says it ends, so nothing more comes.
+    $h = smPlan($holiday, [], ['columns' => ['title' => 'Holiday supper']]);
+    checkEq('Acceptance 6: with no end, its bound is none and more comes after the empty list', ['none', [], true], [$h['plan']['bound']['kind'], $h['plan']['next'], $h['plan']['nextMore']]);
+    foreach (['COUNT=6' => ['count', 'count', 6], 'UNTIL=20300101T000000Z' => ['until', 'until', '20300101T000000Z']] as $part => [$kind, $field, $value]) {
+        $bounded = smSeries('Holiday dinner', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;' . $part, '2027-02-10 18:00');
+        $h = smPlan($bounded, [], ['columns' => ['title' => 'Holiday supper']]);
+        checkEq("Acceptance 6: with $part, its bound is $kind before and after, and nothing more comes", [$kind, $value, $kind, $value, [], false, true, $bounded['rrule']],
+            [$h['plan']['bound']['kind'], $h['plan']['bound'][$field] ?? null, $h['plan']['bound']['from']['kind'], $h['plan']['bound']['from'][$field] ?? null,
+                $h['plan']['next'], $h['plan']['nextMore'], $h['plan']['direct'], $h['writes']['master']['rrule'] ?? $bounded['rrule']]);
+    }
 
     // Acceptance 8 to 13, in a scope of their own.
     (static function (): void {

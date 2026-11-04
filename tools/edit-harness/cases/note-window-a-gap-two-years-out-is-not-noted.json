@@ -1,0 +1,45 @@
+{
+    "n": 9805,
+    "seed": 0,
+    "series": {
+        "family": "monthly_day_late",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=31",
+        "import": false,
+        "bound": "none",
+        "boundAt": 3,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2028-08-31 02:30",
+        "length": 60
+    },
+    "exceptions": [],
+    "acted": 0,
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null,
+        "via": "master"
+    },
+    "from": "first",
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

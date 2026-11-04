@@ -38,6 +38,12 @@ return [
         'cases' => ['mutation-earlier-across-zones', 'reading-earlier-by-instant-across-zones'],
     ],
     [
+        'id' => 'start-as-key', 'file' => $model, 'checks' => ['c-shape'],
+        'what' => 'every series\' start written as a key, the form only an anchored series\' start has',
+        'patch' => [["\$startIso = \$calc1->anchor !== null ? self::keyOut(Time::toDb(\$start1)) : self::inZoneOut(\$start1, \$this->planZone());", "\$startIso = self::keyOut(Time::toDb(\$start1));"]],
+        'cases' => ['next-trailing-skipped-occurrences', 'acted-timed-day-of-an-all-day-series-from-its-row'],
+    ],
+    [
         'id' => 'next-drops-acted', 'file' => $model, 'checks' => ['c-next'],
         'what' => 'the acted occurrence dropped from coming up',
         'patch' => [["if (isset(\$skip[\$key]) || isset(\$byKey[\$key])) {\n                continue;\n            }\n            \$plain[]", "if (isset(\$skip[\$key]) || isset(\$byKey[\$key]) || \$d === \$actedDn) {\n                continue;\n            }\n            \$plain[]"]],

@@ -80,6 +80,7 @@ trait PlanPlacement
         $this->placeBound($plan, $before, $after);
         $this->placeStart($plan, $before, $after);
         if ($out !== null) {
+            $this->placeZoneStarts($plan, $before, $edit, $choices, $ctx);
             $this->placeLossesGains($plan, $before, $after, $edit, $ctx, $choices);
             $this->placeReadings($plan, $before, $choices, $ctx);
         }
@@ -259,6 +260,58 @@ trait PlanPlacement
         }
         $s = $plan['start'] ?? null;
         $this->expect('c-placement', 'plan.start is the stored master\'s start', 'plan.start', (string) $after['row']['start_utc'], is_string($s) ? self::dbKey($s) : null);
+    }
+
+    /**
+     * Each zone option's start: the series' start after the change under it.
+     * The option chosen is the plan's rule.to.start (checked against the
+     * stored master by placeStart); the other is the harness's own, the
+     * oracle's first day under that promise (Expect::withZone: the landed
+     * clock in the new zone for "clock", the moment's for "moment") at its
+     * clock in the new zone, under the same reading. A first day whose clock
+     * falls in a gap (stored a period earlier) or a reading that promise
+     * doesn't offer is counted as unoracled.
+     */
+    private function placeZoneStarts(array $plan, array $before, array $edit, array $choices, array $ctx): void
+    {
+        $group = null;
+        foreach ($plan['groups'] ?? [] as $g) {
+            if (($g['id'] ?? '') === 'zone') {
+                $group = $g;
+            }
+        }
+        if ($group === null) {
+            return;
+        }
+        $chosen = $choices['zone'] ?? $group['selected'] ?? 'clock';
+        $x0 = new Expect($before, $edit);
+        foreach ($group['options'] ?? [] as $o) {
+            $id = (string) ($o['id'] ?? '');
+            if (!empty($o['disabled'])) {
+                continue; // no series under it (c-shape: no start)
+            }
+            $got = is_string($o['start'] ?? null) ? self::dbKey($o['start']) : null;
+            if ($id === $chosen) {
+                $want = is_string($plan['rule']['to']['start'] ?? null) ? self::dbKey($plan['rule']['to']['start']) : null;
+                $this->expect('c-placement', 'the chosen zone option\'s start is the plan\'s rule.to.start', 'zone option start (chosen)', $want, $got, ['option' => $id]);
+                continue;
+            }
+            $xz = $x0->withZone($id);
+            $readings = array_values(array_filter($xz->readings(), static fn(array $r): bool => $r['enabled']));
+            $byId = array_column($readings, null, 'id');
+            $rid = $choices['reading'] ?? Expect::preselected($readings);
+            if ($rid === null || !isset($byId[$rid])) {
+                $this->unoracled[] = 'c-placement: a zone option\'s start under a reading that promise doesn\'t offer';
+                continue;
+            }
+            $out = $xz->outcome($byId[$rid], $choices);
+            if (!empty($out['empty']) || !isset($out['start']) || Clock::inGap((int) $out['start'], $xz->clock1, $xz->tz1)) {
+                $this->unoracled[] = 'c-placement: a zone option\'s start on a day whose clock falls in a gap, or with no days';
+                continue;
+            }
+            $want = Clock::db(Clock::at((int) $out['start'], $xz->clock1, $xz->tz1));
+            $this->expect('c-placement', 'the other zone option\'s start is the oracle\'s first day under that promise, at its clock in the new zone', 'zone option start (other)', $want, $got, ['option' => $id]);
+        }
     }
 
     /**
@@ -604,6 +657,9 @@ trait PlanPlacement
                         // Its place among the wall clock's instants that day, and whether it is in daylight time by tzdata:
                         // false when it isn't but the other instant is, null when neither is.
                         $pos = array_search($t, $at, true);
+                        if ($pos === false) {
+                            continue; // the series' instant that day is neither of the clock's (a clock carried elsewhere): nothing to note
+                        }
                         $other = $at[$pos === 0 ? 1 : 0];
                         $w['fold'] = match ($pos) {
                             0 => 'first',

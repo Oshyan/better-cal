@@ -94,7 +94,7 @@ try {
         $last = $now;
         if (!$quiet && $result['records'] !== []) {
             foreach ($result['records'] as $rec) {
-                $known = Known::cause(['invariant' => $rec['invariant'], 'path' => $result['path']]) !== null ? ' (known path)' : '';
+                $known = Known::cause($rec + ['path' => $result['path'], 'spec' => $result['spec']]) !== null ? ' (known cause)' : '';
                 echo "case $i: {$rec['invariant']} {$result['spec']['series']['family']} {$result['path']}$known: {$rec['what']}\n";
             }
         }

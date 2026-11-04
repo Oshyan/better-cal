@@ -21,8 +21,9 @@
 // naming its hour (BYHOUR), which has no occurrence there; a clock that
 // happens twice is its first instant, the stored start excepted (an instant
 // given stays that instant); a DAILY rule with BYDAY and INTERVAL 1 keeps
-// the shifted clock after a spring gap on every later day; HOURLY,
-// MINUTELY and SECONDLY periods are stepped in elapsed time from the start.
+// the shifted clock after a spring gap on every later day; HOURLY steps
+// its hours on the wall clock (a product rule, not an RFC one), MINUTELY
+// and SECONDLY in elapsed time from the start.
 declare(strict_types=1);
 
 namespace BetterCal\EditHarness;
@@ -259,6 +260,10 @@ final class Rfc
     /** An instant no occurrence of period $k comes before (its first day's local midnight, a day early for any zone). */
     private function periodFloor(int $k): int
     {
+        if ($this->freq === 'HOURLY') {
+            // Wall-clock hours: no zone is more than 14 hours ahead of UTC.
+            return $this->startDn * 86400 + $this->startSecs + $k * $this->interval * 3600 - 15 * 3600;
+        }
         if (isset(self::SUBDAILY[$this->freq])) {
             return $this->startTs + $k * $this->interval * self::SUBDAILY[$this->freq] - 3600;
         }
@@ -307,7 +312,8 @@ final class Rfc
         }
         $set = isset(self::SUBDAILY[$this->freq]) ? $this->subDailyPeriod($k) : $this->datePeriod($k);
         foreach ($set as $o) {
-            if ($o[0] <= $this->startTs) {
+            // After the start, and after the last read (two wall clocks resolving to one instant are one occurrence).
+            if ($o[0] <= end($this->occ)[0]) {
                 continue;
             }
             if (($this->untilTs !== null && $o[0] > $this->untilTs) || ($this->untilDn !== null && $o[1] > $this->untilDn)) {
@@ -568,16 +574,19 @@ final class Rfc
     // ---- frequencies under a day -------------------------------------------
 
     /**
-     * A period of HOURLY, MINUTELY or SECONDLY: INTERVAL hours, minutes or
-     * seconds of elapsed time from the start's own; BYMINUTE (HOURLY) and
-     * BYSECOND (HOURLY, MINUTELY) expand it into the listed minutes and
-     * seconds of its hour or minute (the start's where missing), and every
+     * A period of MINUTELY or SECONDLY (HOURLY is hourlyPeriod): INTERVAL minutes or
+     * seconds of elapsed time from the start's own; BYSECOND (MINUTELY)
+     * expands it into the listed
+     * seconds of its minute (the start's where missing), and every
      * other part limits its instants, read on the zone's wall clock.
      *
      * @return list<array{0:int,1:int,2:int}>
      */
     private function subDailyPeriod(int $k): array
     {
+        if ($this->freq === 'HOURLY') {
+            return $this->hourlyPeriod($k);
+        }
         $unit = self::SUBDAILY[$this->freq];
         $pk = $this->startTs + $k * $this->interval * $unit;
         $local = $this->localSecs($pk);
@@ -632,6 +641,64 @@ final class Rfc
             }
         }
         return $this->bySetPos($out);
+    }
+
+    /**
+     * A period of HOURLY, by the product rule (series-model.md, the product
+     * rules for frequencies under a day; RFC 5545 doesn't say): INTERVAL
+     * hours stepped on the zone's wall clock from the start's own, so an
+     * every-three-hours series keeps 00:00, 03:00, 06:00 after a clock
+     * change. BYMINUTE and BYSECOND expand the period's hour (the start's
+     * minute and second where missing); the date parts and BYHOUR limit it,
+     * read on that wall clock; a wall clock that doesn't exist resolves by
+     * the offset before the gap (3.3.5 for a DATE-TIME), one that happens
+     * twice is its first instant, and two times landing on one instant are
+     * one occurrence.
+     *
+     * @return list<array{0:int,1:int,2:int}>
+     */
+    private function hourlyPeriod(int $k): array
+    {
+        $wall = $this->startDn * 86400 + $this->startSecs + $k * $this->interval * 3600;
+        $hourStart = $wall - $wall % 3600;
+        $out = [];
+        foreach ($this->by['BYMINUTE'] ?? [intdiv($this->startSecs % 3600, 60)] as $mi) {
+            foreach ($this->by['BYSECOND'] ?? [$this->startSecs % 60] as $s) {
+                $w = $hourStart + $mi * 60 + $s;
+                $dn = intdiv($w, 86400);
+                $secs = $w % 86400;
+                $day = $this->byDayFilter($this->byMonthDay($this->byYearDay($this->byMonth([$dn]))));
+                if ($day === [] || (isset($this->by['BYHOUR']) && !in_array(intdiv($secs, 3600), $this->by['BYHOUR'], true))) {
+                    continue;
+                }
+                $ts = $this->wallInstant($dn, $secs);
+                $out[$ts] = [$ts, $this->localDn($ts), $this->localSecs($ts)];
+            }
+        }
+        ksort($out);
+        $out = array_values($out);
+        if ($k === 0) {
+            $this->startOnRule = in_array($this->startTs, array_column($this->bySetPos($out), 0), true);
+        }
+        // A period whose day the date parts rule out: the periods up to the next local midnight are ruled out with it.
+        if ($out === [] && !isset($this->by['BYHOUR'])) {
+            $skip = intdiv((intdiv($wall, 86400) + 1) * 86400 - $wall, $this->interval * 3600);
+            if ($skip > 1) {
+                $this->k += $skip - 1;
+            }
+        }
+        return $this->bySetPos($out);
+    }
+
+    /** A wall clock's instant: its first where it happens twice (the stored start's own where that is one of them), by the offset before the gap where it doesn't exist. */
+    private function wallInstant(int $dn, int $secs): int
+    {
+        $at = $this->wallInstants($dn, $secs);
+        if ($at === []) {
+            $wall = $dn * 86400 + $secs;
+            return $wall - $this->zone()->getOffset(new \DateTimeImmutable('@' . ($wall - 86400)));
+        }
+        return in_array($this->startTs, $at, true) ? $this->startTs : $at[0];
     }
 
     // ---- local time and tzdata ---------------------------------------------

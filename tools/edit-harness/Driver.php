@@ -125,8 +125,7 @@ final class Driver
         $sent = null;
         Prof::mark('edit');
         // A trip never contains another trip (Trips): the flag set for all
-        // events of a series with an edited day that is a stop can be
-        // refused ($nests), and is when that day would keep the flag.
+        // events of a series with an edited day that is a stop is refused.
         $stopAts = [];
         foreach ($spec['exceptions'] ?? [] as $i => $ex) {
             if (($this->tripsDrawn[$i] ?? null) === 'stop') {
@@ -153,14 +152,7 @@ final class Driver
             return $this->result($path);
         }
         if ($nests) {
-            // Not refused: what it left holds no trip inside a trip (the
-            // rule reads the end state), so each stop day left the series
-            // without the flag, as an event of its own or deleted.
-            foreach ($this->tripLinks as $link) {
-                $ends = $this->db->all('SELECT is_container, deleted_at FROM events WHERE id IN (?, ?)', [(int) $link['container_id'], (int) $link['event_id']]);
-                $nested = count($ends) === 2 && array_filter($ends, static fn(array $e): bool => (int) $e['is_container'] !== 1 || $e['deleted_at'] !== null) === [];
-                $this->check('b-trip', !$nested, 'the trip flag set on a series with a day in a trip is refused when that day keeps the flag', ['link' => $link]);
-            }
+            $this->fail('b-trip', 'the trip flag set on a series with a day in a trip was not refused');
         }
         if ($sent === null) {
             return $this->result($path); // refused, checked

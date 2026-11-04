@@ -1058,7 +1058,10 @@ final class Undo
      * Strict mode lets a caller wrap the whole group in one outer transaction:
      * the first non-undoable entry aborts instead of committing a partial undo.
      *
-     * @return array{undone:int,skipped:int}
+     * Not strict, an entry the trip rules refuse (undo_conflict) is listed
+     * in `refused` with its code and stays to undo; the rest go on.
+     *
+     * @return array{undone:int,skipped:int,refused:list<array{id:int,code:string,message:string}>}
      */
     public function undoRun(int $userId, string $runId, bool $strict = false, ?RequestAuthority $authority = null): array
     {
@@ -1074,6 +1077,7 @@ final class Undo
         }
         $undone = 0;
         $skipped = 0;
+        $refused = [];
         foreach ($rows as $row) {
             try {
                 $this->undoById($userId, (int) $row['id'], !$strict, $authority);
@@ -1083,10 +1087,14 @@ final class Undo
                 if ($strict || ($e instanceof HttpError && in_array($e->errorCode, ['session_revoked', 'token_revoked'], true))) {
                     throw $e;
                 }
+                if ($e instanceof HttpError && $e->errorCode === 'undo_conflict') {
+                    $refused[] = ['id' => (int) $row['id'], 'code' => $e->errorCode, 'message' => $e->getMessage()];
+                    continue;
+                }
                 $skipped++; // log-only entries and already-undone rows
             }
         }
-        return ['undone' => $undone, 'skipped' => $skipped];
+        return ['undone' => $undone, 'skipped' => $skipped, 'refused' => $refused];
     }
 
     /**

@@ -1,0 +1,66 @@
+{
+    "n": 2433,
+    "seed": 19,
+    "series": {
+        "family": "monthly_day_late",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=31",
+        "import": false,
+        "bound": "until",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2026-12-23 09:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "location",
+                "description",
+                "date",
+                "time"
+            ],
+            "days": 1,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": -15
+        },
+        {
+            "at": 8,
+            "kind": "edit",
+            "own": [
+                "url"
+            ],
+            "days": -1,
+            "mins": -90,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "following",
+        "date": 10,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed",
+            "description": "Bring the music folder."
+        },
+        "rule": "new",
+        "sameForm": "text",
+        "newRule": "FREQ=MONTHLY;BYMONTHDAY=7",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null
+}

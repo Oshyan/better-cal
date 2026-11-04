@@ -1368,8 +1368,31 @@ final class Events
                     }
                 }
             }
+            // The trip flag set or cleared: the trip rules (Trips::assertRules)
+            // over the state the edit leaves, on every row of the event's
+            // series, whichever row and scope it names. A link names a row
+            // and no edit moves one, so every link the edit can make live,
+            // or leave without its trip, touches these rows.
+            $tripRows = array_key_exists('isContainer', $in) ? $this->seriesRowIds($fresh) : [];
+            $flaggedBefore = Trips::flaggedAmong($this->db, $tripRows);
             $this->patchLocked($userId, $id, $in, $authority);
+            if ($tripRows !== []) {
+                Trips::assertRules($this->db, $tripRows, $flaggedBefore, Trips::BY_EDIT);
+            }
         });
+    }
+
+    /**
+     * The rows of $event's series, its master and every row that names
+     * the master, or the event alone when it is in no series.
+     *
+     * @return list<int>
+     */
+    private function seriesRowIds(array $event): array
+    {
+        $master = (int) (!empty($event['recurrence_parent_id']) ? $event['recurrence_parent_id'] : $event['id']);
+        $rows = array_map('intval', array_column($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ?', [$master]), 'id'));
+        return array_values(array_unique([(int) $event['id'], $master, ...$rows]));
     }
 
     /** A bulk time shift is a content write, not local relationship metadata. */
@@ -1415,46 +1438,6 @@ final class Events
         if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin' && $editKeys !== []
             && !str_starts_with(ActivityContext::get(), 'plugin:')) {
             throw HttpError::forbidden('plugin_readonly', 'Plugin events are read-only except attendance, tags and reminders');
-        }
-
-        // Clearing the trip flag requires an empty trip: members would
-        // otherwise dangle pointing at a non-container.
-        $wholeSeries = !empty($event['rrule']) && empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all';
-        if (
-            array_key_exists('isContainer', $in)
-            && !filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)
-            && ((int) ($event['is_container'] ?? 0) === 1 || $wholeSeries)
-        ) {
-            $members = (int) ($event['is_container'] ?? 0) === 1 ? $this->trips->liveMemberCount($id) : 0;
-            if ($wholeSeries) {
-                // For all events every edited day of the trip clears its flag
-                // too, the master's own flag clear or not.
-                foreach ($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL AND is_container = 1', [$id]) as $edited) {
-                    $members += $this->trips->liveMemberCount((int) $edited['id']);
-                }
-            }
-            Trips::assertClearable($members);
-        }
-        // Setting the trip flag requires every row it reaches to be in no
-        // trip: a trip never contains another trip (Trips).
-        if (array_key_exists('isContainer', $in) && filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)) {
-            // The rows the flag reaches: the event itself; on a series, every
-            // edited day for all events, those from the day on for this and
-            // following, the day's own row for this event.
-            $seriesScope = !empty($event['rrule']) && empty($event['recurrence_parent_id']) ? (string) ($in['scope'] ?? '') : '';
-            $reached = $seriesScope === 'this' || $seriesScope === 'following' ? [] : [$id];
-            if ($seriesScope === 'all') {
-                foreach ($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) as $edited) {
-                    $reached[] = (int) $edited['id'];
-                }
-            } elseif ($seriesScope === 'this' || $seriesScope === 'following') {
-                $instanceUtc = $this->requireInstance($in, $event);
-                $op = $seriesScope === 'this' ? '=' : '>=';
-                foreach ($this->db->all("SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc $op ? AND deleted_at IS NULL", [$id, $instanceUtc]) as $edited) {
-                    $reached[] = (int) $edited['id'];
-                }
-            }
-            Trips::assertNotInTrip($this->trips->containersFor($reached));
         }
 
         $isRecurringMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
@@ -3040,7 +3023,7 @@ final class Events
             $fields['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
         if (array_key_exists('isContainer', $in) && !$forOverride) {
-            // Clearing with live members is rejected in patch() before this runs.
+            // patch() refuses what this leaves against the trip rules (Trips::assertRules).
             $fields['is_container'] = filter_var($in['isContainer'], FILTER_VALIDATE_BOOL) ? 1 : 0;
         }
         if (array_key_exists('reminders', $in)) {

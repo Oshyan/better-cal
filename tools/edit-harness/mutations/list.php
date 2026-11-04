@@ -208,10 +208,55 @@ return [
         'cases' => ['mutation-occurrences-on-a-weekday-list'],
     ],
     [
+        // The evaluator's old date-frequency reading of BYSETPOS, a position taken among the nominal clocks before they
+        // resolve, as it shows on the gap day of DAILY;BYHOUR=2,3;BYMINUTE=0,30;BYSETPOS=3: the third clock (03:00) is an
+        // occurrence there though the day's four clocks are two instants. Emulated around next(): between two occurrences
+        // across a spring change, the instant the change lands on is one more occurrence, counted.
+        'id' => 'occurrences-set-position-among-clocks', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'BYSETPOS counted among the nominal clocks, not the period\'s instants: a position on the gap day that the merged clocks no longer have is an occurrence',
+        'patch' => $wrapNext('        if ($this->counter === 0) {
+            $this->mutHeld = null;
+        }
+        if ($this->mutHeld !== null) {
+            $this->currentDate = $this->mutHeld;
+            $this->mutHeld = null;
+            return;
+        }
+        $prev = $this->currentDate === null ? null : $this->currentDate->getTimestamp();
+        $this->nextUnmutated();
+        if ($prev !== null && $this->currentDate !== null) {
+            $was = null;
+            foreach ($this->currentDate->getTimezone()->getTransitions($prev, $this->currentDate->getTimestamp()) ?: [] as $i => $t) {
+                if ($i > 0 && $was !== null && $t[\'offset\'] > $was && $t[\'ts\'] > $prev && $t[\'ts\'] < $this->currentDate->getTimestamp()) {
+                    $this->mutHeld = $this->currentDate;
+                    $this->currentDate = (clone $this->currentDate)->setTimestamp($t[\'ts\']);
+                    ++$this->counter;
+                    break;
+                }
+                $was = $t[\'offset\'];
+            }
+        }', "    private mixed \$mutHeld = null;\n\n"),
+        'cases' => ['occurrences-a-set-position-the-gap-day-lacks'],
+    ],
+    [
         'id' => 'zone-option-start-from-the-plan', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'every zone option\'s start taken from the plan chosen, not from that option\'s own',
         'patch' => [["\$to = (string) \$alt['plan']['rule']['to']['start'];", "\$to = (string) \$plan['rule']['to']['start'];"]],
         'cases' => ['reading-earlier-by-instant-across-zones', 'mutation-earlier-across-zones'],
+    ],
+    [
+        // Where the other option's series starts at the clock its own rule names (a new rule with BYHOUR and BYMINUTE).
+        'id' => 'zone-option-start-an-hour-off', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'the zone option not chosen advertises a start an hour after the one its series is written with',
+        'patch' => [["? self::inZoneOut(Time::parseIso(\$to), \$plan['zone']) : \$to;", "? self::inZoneOut(Time::parseIso(\$to)->modify(\$option['id'] !== \$group['selected'] ? '+1 hour' : '+0 hours'), \$plan['zone']) : \$to;"]],
+        'cases' => ['zone-option-start-under-a-new-rule-with-its-own-clock'],
+    ],
+    [
+        // The window's expander alone, so only c-window sees it: a narrow window's walk starts too late.
+        'id' => 'window-narrow-seeks-from-its-end', 'file' => 'server/src/Domain/Recurrence.php', 'checks' => ['c-window'],
+        'what' => 'a window under an hour seeks from its end, so it misses an occurrence its whole read has',
+        'patch' => [["        \$it->jumpTo(\$from->getTimestamp() - \$length);", "        \$it->jumpTo(\$to->getTimestamp() - \$from->getTimestamp() < 3600 ? \$to->getTimestamp() : \$from->getTimestamp() - \$length);"]],
+        'cases' => ['occurrences-a-set-position-the-gap-day-lacks'],
     ],
     [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],

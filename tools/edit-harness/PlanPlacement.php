@@ -309,8 +309,18 @@ trait PlanPlacement
                 $this->unoracled[] = 'c-placement: a zone option\'s start on a day whose clock falls in a gap, or with no days';
                 continue;
             }
-            $want = Clock::db(Clock::at((int) $out['start'], $xz->clock1, $xz->tz1));
-            $this->expect('c-placement', 'the other zone option\'s start is the oracle\'s first day under that promise, at its clock in the new zone', 'zone option start (other)', $want, $got, ['option' => $id]);
+            $at = Clock::at((int) $out['start'], $xz->clock1, $xz->tz1);
+            if ($xz->kind === 'newrule' && isset($edit['ruleText'])) {
+                // The option writes the rule sent: its own clock parts set the start's clock on that day.
+                $first = Rfc::of((string) $edit['ruleText'], $at->getTimestamp(), $xz->allDay1 ? 'UTC' : $xz->tz1, $xz->allDay1)->firstOnStartDay();
+                if ($first === null || Clock::inGap((int) $out['start'], $first[1], $xz->tz1)) {
+                    $this->unoracled[] = 'c-placement: a zone option\'s start under a new rule the evaluator gives no clock on that day, or one in a gap';
+                    continue;
+                }
+                $at = new \DateTimeImmutable('@' . $first[0]);
+            }
+            $want = Clock::db($at);
+            $this->expect('c-placement', 'the other zone option\'s start is the start of the series that option writes: the oracle\'s first day under that promise, at the clock its rule gives there in the new zone', 'zone option start (other)', $want, $got, ['option' => $id]);
         }
     }
 

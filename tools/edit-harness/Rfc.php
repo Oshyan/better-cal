@@ -14,6 +14,13 @@
 // BYSETPOS last. On the set of a whole period an "expand" and a "limit"
 // both keep the members that match, so each part is a filter; the table's
 // N/A cells are rules this evaluator does not read (named in $unread).
+// A period's set is its instants, every local time resolved and duplicates
+// dropped (an occurrence is an instant, and 3.8.5.3 ignores duplicates), and
+// BYSETPOS counts positions among those instants, for every frequency.
+// Periods can overlap in time (a clock a gap moves lands among the next
+// period's), so their instants are merged in order: an instant is read once
+// no later period can give one before it. Day and clock are read from an
+// instant by floor division, so the same before 1970 as after.
 //
 // Where the product contract states a rule the RFC doesn't, the contract
 // decides (series-model.md, Zones, DST and All-Day Days; the drag table):
@@ -69,6 +76,8 @@ final class Rfc
     private int $startSecs;
     /** @var list<array{0:int,1:int,2:int}> the occurrences read so far: [instant, local day, local clock] */
     private array $occ = [];
+    /** @var array<int,array{0:int,1:int,2:int}> instants of the periods read that a later period could still come before, by instant */
+    private array $pending = [];
     private int $k = 0;
     private int $periods = 0;
 
@@ -167,6 +176,32 @@ final class Rfc
             $this->step();
         }
         return $this->occ;
+    }
+
+    /**
+     * Where a series written with this rule at this start begins on the
+     * start's local day: the first of the start period's instants on that
+     * day, by the rule's own clock parts (the start's clock where a part is
+     * missing), with the local clock that named it (a clock in a gap names
+     * a later instant). Null for a frequency under a day, a rule not read,
+     * or a day the rule doesn't have.
+     *
+     * @return ?array{0:int,1:int} [instant, nominal local clock]
+     */
+    public function firstOnStartDay(): ?array
+    {
+        if ($this->unread !== null || isset(self::SUBDAILY[$this->freq])) {
+            return null;
+        }
+        $picked = array_column(array_filter($this->datePeriod(0), fn(array $o): bool => $o[1] === $this->startDn), 0);
+        $best = null;
+        foreach ($this->clockParts([$this->startDn]) as [$dn, $secs]) {
+            $ts = $this->instant($dn, $secs);
+            if ($ts !== null && in_array($ts, $picked, true) && ($best === null || $ts < $best[0])) {
+                $best = [$ts, $secs];
+            }
+        }
+        return $best;
     }
 
     public function bounded(): bool
@@ -311,10 +346,29 @@ final class Rfc
         }
         $set = isset(self::SUBDAILY[$this->freq]) ? $this->subDailyPeriod($k) : $this->datePeriod($k);
         foreach ($set as $o) {
-            // After the start, and after the last read (two wall clocks resolving to one instant are one occurrence).
-            if ($o[0] <= end($this->occ)[0]) {
-                continue;
+            // After the start; an instant two periods give is one occurrence.
+            if ($o[0] > $this->startTs) {
+                $this->pending[$o[0]] ??= $o;
             }
+        }
+        // Every instant before the next period's floor is final: no later period gives one before it.
+        $this->release($this->periodFloor($this->k));
+        // With no occurrence left before UNTIL, the rule has ended once a period starts past it.
+        if (!$this->complete && (($this->untilTs !== null && $this->periodFloor($this->k) > $this->untilTs + 86400) || ($this->untilDn !== null && $this->periodFloor($this->k) > ($this->untilDn + 2) * 86400))) {
+            $this->release(PHP_INT_MAX);
+            $this->complete = true;
+        }
+    }
+
+    /** Read the pending instants before $below, in order, bounded by UNTIL and COUNT. */
+    private function release(int $below): void
+    {
+        ksort($this->pending);
+        foreach ($this->pending as $ts => $o) {
+            if ($ts >= $below) {
+                return;
+            }
+            unset($this->pending[$ts]);
             if (($this->untilTs !== null && $o[0] > $this->untilTs) || ($this->untilDn !== null && $o[1] > $this->untilDn)) {
                 $this->complete = true;
                 return;
@@ -325,16 +379,13 @@ final class Rfc
                 return;
             }
         }
-        // With no occurrence left before UNTIL, the rule has ended once a period starts past it.
-        if (($this->untilTs !== null && $this->periodFloor($this->k) > $this->untilTs + 86400) || ($this->untilDn !== null && $this->periodFloor($this->k) > ($this->untilDn + 2) * 86400)) {
-            $this->complete = true;
-        }
     }
 
     /**
      * A period of a frequency of days or longer: its days, each part's
-     * filter in order, the clock parts, BYSETPOS, then each local time's
-     * instant.
+     * filter in order, the clock parts, each local time's instant (two
+     * resolving to one instant are one member), then BYSETPOS among those
+     * instants.
      *
      * @return list<array{0:int,1:int,2:int}>
      */
@@ -347,19 +398,19 @@ final class Rfc
         $days = $this->byMonthDay($days);
         $days = $this->byDayFilter($days);
         $days = $this->startDay($days);
-        $times = $this->bySetPos($this->clockParts($days));
-        if ($k === 0) {
-            $this->startOnRule = in_array([$this->startDn, $this->startSecs], $times, true);
-        }
-        $out = [];
-        foreach ($times as [$dn, $secs]) {
+        $instants = [];
+        foreach ($this->clockParts($days) as [$dn, $secs]) {
             $ts = $this->instant($dn, $secs);
             if ($ts !== null) {
-                $out[$ts] = [$ts, $dn, $this->localSecs($ts)];
+                $instants[$ts] = $ts;
             }
         }
-        ksort($out);
-        return array_values($out);
+        ksort($instants);
+        $picked = $this->bySetPos(array_values($instants));
+        if ($k === 0) {
+            $this->startOnRule = in_array($this->startTs, $picked, true);
+        }
+        return array_map(fn(int $ts): array => [$ts, ...$this->localParts($ts)], $picked);
     }
 
     /** @return list<int> the days of period $k, before any part */
@@ -639,13 +690,13 @@ final class Rfc
     private function hourlyPeriod(int $k): array
     {
         $wall = $this->startDn * 86400 + $this->startSecs + $k * $this->interval * 3600;
-        $hourStart = $wall - $wall % 3600;
+        $hourStart = $wall - self::mod($wall, 3600);
         $out = [];
         foreach ($this->by['BYMINUTE'] ?? [intdiv($this->startSecs % 3600, 60)] as $mi) {
             foreach ($this->by['BYSECOND'] ?? [$this->startSecs % 60] as $s) {
                 $w = $hourStart + $mi * 60 + $s;
-                $dn = intdiv($w, 86400);
-                $secs = $w % 86400;
+                $dn = self::fdiv($w, 86400);
+                $secs = self::mod($w, 86400);
                 $day = $this->byDayFilter($this->byMonthDay($this->byYearDay($this->byMonth([$dn]))));
                 if ($day === [] || (isset($this->by['BYHOUR']) && !in_array(intdiv($secs, 3600), $this->by['BYHOUR'], true))) {
                     continue;
@@ -661,7 +712,7 @@ final class Rfc
         }
         // A period whose day the date parts rule out: the periods up to the next local midnight are ruled out with it.
         if ($out === [] && !isset($this->by['BYHOUR'])) {
-            $skip = intdiv((intdiv($wall, 86400) + 1) * 86400 - $wall, $this->interval * 3600);
+            $skip = intdiv((self::fdiv($wall, 86400) + 1) * 86400 - $wall, $this->interval * 3600);
             if ($skip > 1) {
                 $this->k += $skip - 1;
             }
@@ -739,5 +790,25 @@ final class Rfc
     {
         $l = (new \DateTimeImmutable('@' . $ts))->setTimezone($this->zone());
         return (int) $l->format('G') * 3600 + (int) $l->format('i') * 60 + (int) $l->format('s');
+    }
+
+    /** @return array{0:int,1:int} an instant's local day and clock in the series' zone */
+    private function localParts(int $ts): array
+    {
+        $l = (new \DateTimeImmutable('@' . $ts))->setTimezone($this->zone());
+        return [Days::dn((int) $l->format('Y'), (int) $l->format('n'), (int) $l->format('j')), (int) $l->format('G') * 3600 + (int) $l->format('i') * 60 + (int) $l->format('s')];
+    }
+
+    /** Floor division: the day of a wall clock before 1970 is the one it falls in, not the one after. */
+    private static function fdiv(int $a, int $b): int
+    {
+        $q = intdiv($a, $b);
+        return $a % $b !== 0 && ($a < 0) !== ($b < 0) ? $q - 1 : $q;
+    }
+
+    /** The non-negative remainder that goes with fdiv. */
+    private static function mod(int $a, int $b): int
+    {
+        return $a - self::fdiv($a, $b) * $b;
     }
 }

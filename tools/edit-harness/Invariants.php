@@ -141,6 +141,28 @@ trait Invariants
             $this->fail('c-window', 'the window\'s expander gives other instants in a part of its span read alone than read whole', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'tz' => $row['tzid'],
                 'onlyInParts' => array_slice(array_values(array_diff($parts, $wide)), 0, 6), 'onlyWhole' => array_slice(array_values(array_diff($wide, $parts)), 0, 6), 'counts' => [count($wide), count($parts)]]);
         }
+        // The same rule over narrow spans where a clock change moves an occurrence from its period's place: the first
+        // occurrence after each change of the zone's offset, from five minutes before it to fifteen after (the first four).
+        if (count($wide) >= Recurrence::MAX_INSTANCES || (int) ($row['all_day'] ?? 0) === 1) {
+            return;
+        }
+        $zone = new \DateTimeZone(Truth::tzOf($row));
+        $lastOffset = null;
+        $spans = 0;
+        foreach ($wide as $key) {
+            $t = Clock::parse($key)->getTimestamp();
+            $offset = $zone->getOffset(new \DateTimeImmutable('@' . $t));
+            if ($lastOffset !== null && $offset !== $lastOffset && $spans++ < 4) {
+                [$a, $b] = [$t - 300, $t + 900];
+                $alone = Truth::window($row, $a, $b);
+                $whole = array_values(array_filter($wide, static fn(string $k): bool => Clock::parse($k)->getTimestamp() >= $a && Clock::parse($k)->getTimestamp() < $b));
+                if ($alone !== $whole) {
+                    $this->fail('c-window', 'the window\'s expander gives other instants in a part of its span read alone than read whole', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'tz' => $row['tzid'],
+                        'span' => [gmdate('Y-m-d H:i:s', $a), gmdate('Y-m-d H:i:s', $b)], 'onlyInParts' => array_values(array_diff($alone, $whole)), 'onlyWhole' => array_values(array_diff($whole, $alone)), 'counts' => [count($whole), count($alone)]]);
+                }
+            }
+            $lastOffset = $offset;
+        }
     }
 
     /** (h) Every skipped day and edited day's key is a raw occurrence of its rule; none past a bounded series' end; one edited row per day. */

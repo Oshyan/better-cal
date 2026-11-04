@@ -1,0 +1,45 @@
+{
+    "n": 9101,
+    "seed": 0,
+    "series": {
+        "rrule": "FREQ=HOURLY;BYMINUTE=0,30",
+        "bound": "count",
+        "boundAt": 12,
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-03-13 23:30",
+        "family": "several",
+        "import": true,
+        "untilForm": "dayend",
+        "length": 10
+    },
+    "exceptions": [],
+    "acted": 0,
+    "vector": {
+        "via": "master",
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null
+    },
+    "from": "first",
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

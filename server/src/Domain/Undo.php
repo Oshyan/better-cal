@@ -1039,7 +1039,10 @@ final class Undo
             throw HttpError::badRequest('Already undone', 'already_undone');
         }
         if ($mutation['before_json'] === null && $mutation['after_json'] === null) {
-            throw HttpError::badRequest('This entry is log-only and cannot be undone (automated or older than the 7-day undo window)', 'not_undoable');
+            // Made log-only for a reason of its own (migration 064), it says so.
+            $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+            throw HttpError::badRequest(is_string($details['notUndoable'] ?? null) ? $details['notUndoable']
+                : 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)', 'not_undoable');
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.

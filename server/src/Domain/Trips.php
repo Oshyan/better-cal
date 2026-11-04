@@ -73,6 +73,65 @@ final class Trips
     }
 
     /**
+     * The trips among $eventIds as they are now, by id: what a restore
+     * starts from, for assertRestored.
+     *
+     * @param list<int> $eventIds
+     * @return array<int,true>
+     */
+    public static function flaggedAmong(Db $db, array $eventIds): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($eventIds)), 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            foreach ($db->all("SELECT id FROM events WHERE id IN $in AND is_container = 1", $params) as $row) {
+                $out[(int) $row['id']] = true;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The trip rules over what a restore left, read from the database: every
+     * link touching $eventIds whose two events are live. Refused: a trip
+     * that is a stop of a trip (a trip never contains another trip), a trip
+     * that is its own stop, and a trip whose flag the restore cleared
+     * ($flaggedBefore, from flaggedAmong) while it has a stop. A link
+     * whose trip's flag was already clear is dormant, as containersFor
+     * reads it, and stands.
+     *
+     * @param list<int> $eventIds the events the restore touched, as rows or as the ends of a link
+     * @param array<int,true> $flaggedBefore
+     */
+    public static function assertRestored(Db $db, array $eventIds, array $flaggedBefore): void
+    {
+        [$was, $wasParams] = Db::in(array_keys($flaggedBefore));
+        foreach (array_chunk(array_values(array_unique($eventIds)), 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            $row = $db->one(
+                "SELECT l.container_id, l.event_id, c.is_container AS trip_flag
+                 FROM event_links l JOIN events c ON c.id = l.container_id JOIN events m ON m.id = l.event_id
+                 WHERE (l.container_id IN $in OR l.event_id IN $in)
+                   AND c.deleted_at IS NULL AND m.deleted_at IS NULL
+                   AND ((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))
+                        OR (c.is_container = 0 AND c.id IN $was))
+                 ORDER BY l.id LIMIT 1",
+                [...$params, ...$params, ...$wasParams]
+            );
+            if ($row === null) {
+                continue;
+            }
+            $title = static fn(int $id): string => "'" . $db->scalar('SELECT title FROM events WHERE id = ?', [$id]) . "'";
+            [$trip, $stop] = [$title((int) $row['container_id']), $title((int) $row['event_id'])];
+            throw HttpError::badRequest(match (true) {
+                (int) $row['trip_flag'] === 0 => "Undoing this would turn off the trip $trip while $stop is in it; detach its events first.",
+                (int) $row['container_id'] === (int) $row['event_id'] => "Undoing this would put the trip $trip inside itself; a trip can't contain itself.",
+                default => "Undoing this would make $stop a trip inside the trip $trip; a trip can't contain another trip.",
+            }, 'undo_conflict');
+        }
+    }
+
+    /**
      * Fold link+container rows into the per-member serialization map:
      * eventId => [{eventId, title}, ...] (usually a single entry in v1).
      *

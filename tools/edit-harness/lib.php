@@ -52,7 +52,8 @@ final class Known
         $following = in_array($failure['path'] ?? '', self::PATHS, true);
         // The following path writing a part several times a day as all-day (MINUTELY, HOURLY on a date), which the evaluator
         // doesn't read: the legacy path until 1.5.1, under its cause.
-        if ($following && $failure['invariant'] === 'c-occurrences' && ($failure['detail']['why'] ?? '') === 'a clock part on an all-day series') {
+        $subDaily = preg_match('/(^|;)FREQ=(HOURLY|MINUTELY|SECONDLY)(;|$)/', strtoupper((string) ($d['rrule'] ?? ''))) === 1;
+        if ($following && $subDaily && $failure['invariant'] === 'c-occurrences' && ($d['why'] ?? '') === 'a clock part on an all-day series') {
             return self::FOLLOWING;
         }
         // Any other failure of a check of the plan's data or the occurrences is never excused (README, Known Code Paths).

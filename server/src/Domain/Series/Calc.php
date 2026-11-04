@@ -200,6 +200,35 @@ final class Calc
         return $out;
     }
 
+    /**
+     * Every raw occurrence on or after a local day, as [local day, key], in
+     * order, read on only as far as they are taken. The expander steps from
+     * the series' start, since a rule's days follow from its start and its
+     * count, so however many keys come before the day, every one from it on
+     * is there.
+     *
+     * @return \Generator<int, array{0:int,1:string}>
+     */
+    public function keysFrom(int $fromDn): \Generator
+    {
+        $i = 0;
+        $span = 400;
+        while (true) {
+            $this->extend($fromDn + $span, PHP_INT_MAX, false);
+            // Read through $readTo, every key on those days is in the list.
+            $through = $this->complete ? PHP_INT_MAX : (int) $this->readTo;
+            for (; $i < count($this->list) && $this->list[$i][0] <= $through; $i++) {
+                if ($this->list[$i][0] >= $fromDn) {
+                    yield $this->list[$i];
+                }
+            }
+            if ($this->complete) {
+                return;
+            }
+            $span *= 2;
+        }
+    }
+
     /** @var list<array{0:int,1:string}> the expansion read so far, the anchor day left out */
     private array $list = [];
     /** @var array<int,list<string>> the same, by local day */

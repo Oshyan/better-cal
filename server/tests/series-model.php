@@ -1593,6 +1593,34 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($allDayLate, [$ownDay], ['columns' => ['title' => 'Sample day out']]);
     $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
     checkEq('R1: an all-day day is a date, written as itself', ['2027-01-13', '2027-01-13', null], [$day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null]);
+
+    // Coming up is read from the day the list starts on, however far that
+    // is from the series' start, and nextMore says whether one more event
+    // than the list shows exists: every edited row, created row and day on
+    // its own counted with the occurrences, in the list's order.
+    $old = smSeries('Sample practice', 'FREQ=DAILY', '2015-01-05 18:00', 60, false, [], 'UTC');
+    $p = smPlan($old, [], ['acted' => smAt('2027-01-05 18:00', 'UTC'), 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Coming up: a daily series twelve years old lists the next four from the day acted on', [['2027-01-05', '2027-01-06', '2027-01-07', '2027-01-08'], true],
+        [smNext($p), $p['plan']['nextMore']]);
+    $hourly = smSeries('Sample check-in', 'FREQ=HOURLY', '2019-01-05 09:00', 15, false, [], 'UTC');
+    $p = smPlan($hourly, [], ['acted' => smAt('2027-01-05 00:00', 'UTC'), 'columns' => ['title' => 'Sample check-in, renamed']]);
+    checkEq('Coming up: an hourly rule eight years old lists the first four hours of the day acted on', [['2027-01-05T00:00:00+00:00', '2027-01-05T01:00:00+00:00', '2027-01-05T02:00:00+00:00', '2027-01-05T03:00:00+00:00'], true],
+        [array_column($p['plan']['next'], 'start'), $p['plan']['nextMore']]);
+    // Six Tuesdays; the last two at their own dates past the raw end.
+    $six = smSeries('Sample practice', 'FREQ=WEEKLY;COUNT=6', '2027-01-05 18:00', 60, false, [], 'UTC');
+    $late = [smEdited($six, 2, '2027-02-02 18:00', [], '2027-02-20 18:00', ['date']), smEdited($six, 3, '2027-02-09 18:00', [], '2027-02-25 18:00', ['date'])];
+    $rename = static fn(string $from): array => ['acted' => smAt($from . ' 18:00', 'UTC'), 'columns' => ['status' => 'tentative']];
+    $p = smPlan($six, $late, $rename('2027-01-12'));
+    checkEq('Coming up: edited days past the raw end are listed, and one is left after the four', [['2027-01-12', '2027-01-19', '2027-01-26', '2027-02-20'], true], [smNext($p), $p['plan']['nextMore']]);
+    $p = smPlan($six, $late, $rename('2027-01-19'));
+    checkEq('Coming up: from Jan 19 the last edited day is the fourth, and nothing is left', [['2027-01-19', '2027-01-26', '2027-02-20', '2027-02-25'], false], [smNext($p), $p['plan']['nextMore']]);
+    $skipped = smSeries('Sample practice', 'FREQ=WEEKLY;COUNT=6', '2027-01-05 18:00', 60, false, ['2027-02-02 18:00', '2027-02-09 18:00'], 'UTC');
+    $p = smPlan($skipped, [], $rename('2027-01-05'));
+    checkEq('Coming up: the occurrences after the four are skipped, so nothing more is coming', [['2027-01-05', '2027-01-12', '2027-01-19', '2027-01-26'], false], [smNext($p), $p['plan']['nextMore']]);
+    $p = smPlan($six, [], $rename('2027-01-19'));
+    checkEq('Coming up: exactly four events left, nothing more', [['2027-01-19', '2027-01-26', '2027-02-02', '2027-02-09'], false], [smNext($p), $p['plan']['nextMore']]);
+    $p = smPlan($six, [], $rename('2027-01-12'));
+    checkEq('Coming up: five events left, one more', [['2027-01-12', '2027-01-19', '2027-01-26', '2027-02-02'], true], [smNext($p), $p['plan']['nextMore']]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

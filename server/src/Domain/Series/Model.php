@@ -44,6 +44,9 @@ final class Model
     /** Columns of the series that no edited day owns: every row takes them (the trip flag). */
     public const SERIES_COLUMNS = ['is_container' => 'Trip'];
 
+    /** How many events the plan's coming-up list shows. */
+    private const NEXT_SHOWN = 4;
+
     /** The fields that place an occurrence: its day, clock with zone, length and all-day flag. */
     private const PLACEMENT = ['date', 'time', 'length', 'allDay'];
 
@@ -1886,7 +1889,9 @@ final class Model
         // where the request put it when that is earlier (an own date, or a
         // zone kept at its moment), so nothing between them goes unlisted.
         $putDn = $this->placed ? Cal::dnOf(Time::fromDb($this->landedCols['start_utc'])->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $this->tz1))) : $landedDn;
-        $next = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [];
+        // A rule the expander can't read lists nothing, and goes on past
+        // that unless it has an end.
+        [$next, $nextMore] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none'];
         $nextDates = array_map(static fn(array $n): string => $n['start'], $next);
         if ($this->google) {
             $this->notes[] = ['kind' => 'google', 'words' => self::GOOGLE_NOTE];
@@ -1952,7 +1957,6 @@ final class Model
             $selected[$g['id']] = $g['selected'];
         }
         $startIso = Time::iso($start1->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $this->tz1)));
-        $lastNext = $next === [] ? null : substr((string) $next[count($next) - 1]['start'], 0, 10);
         $plan = [
             'scope' => 'all',
             'direct' => $direct,
@@ -1966,7 +1970,7 @@ final class Model
             'acted' => $this->actedRowId !== null && $this->ownOf($this->rows[$this->actedRowId]) !== []
                 ? ['key' => $iso($this->acted), 'title' => (string) $this->rows[$this->actedRowId]['title'], 'shows' => Cal::date($this->planDn(Time::fromDb((string) $this->rows[$this->actedRowId]['start_utc']), (int) $this->rows[$this->actedRowId]['all_day'] === 1)), 'kept' => OwnFields::normalize($this->ownOf($this->rows[$this->actedRowId]))]
                 : null,
-            'nextMore' => $boundKind === 'none' || ($lastNext !== null && $boundData['last'] !== null && $lastNext < $boundData['last']),
+            'nextMore' => $nextMore,
             'counts' => [
                 'events' => $boundData['events'],
                 'edited' => count(array_filter($days, static fn(array $d): bool => $d['kind'] === 'edited')),
@@ -2156,7 +2160,10 @@ final class Model
     /**
      * The next four events as they will show, from the day acted on: every
      * edited day by the day it shows on (in the plan's zone), wherever its key is,
-     * and the occurrences with no row at their keys.
+     * and the occurrences with no row at their keys. With them, whether any
+     * event of those comes after the four.
+     *
+     * @return array{0:list<array>,1:bool}
      */
     private function next(Calc $calc1, array $exdates, array $placeRows, array $overrideWrites, int $fromDn, ?array $separate, int $actedDn, array $createdRows = []): array
     {
@@ -2192,27 +2199,20 @@ final class Model
                 $rows[] = $item;
             }
         }
+        // Every key the expander gives from the first day listed (several on
+        // a day for a rule several times a day), up to one more than the
+        // list shows: the plain occurrences are in the order they show, so
+        // with every row above beside them, the first five of these hold the
+        // first five of all.
         $plain = [];
-        $span = 400;
-        for ($tries = 0; $tries < 6 && count($plain) < 4; $tries++) {
-            $plain = [];
-            // Every key the expander gives (several on a day for a rule several
-            // times a day); a bounded series read to its end, so the edited
-            // days listed above never pass plain occurrences left unread.
-            $occ = $calc1->keys($calc1->bounded() ? PHP_INT_MAX : $fromDn + $span, 4000);
-            foreach ($occ as [$d, $key]) {
-                if ($d < $fromDn || isset($skip[$key]) || isset($byKey[$key])) {
-                    continue;
-                }
-                $tz = $this->allDay1 ? 'UTC' : $this->tz1;
-                $item = ['start' => Time::iso(Time::fromDb($key)->setTimezone(Time::zone($tz))), 'kind' => $d === $actedDn ? 'acted' : 'occurrence'];
-                $plain[] = $item;
-                if (count($plain) >= 4) {
-                    break;
-                }
+        foreach ($calc1->keysFrom($fromDn) as [$d, $key]) {
+            if (isset($skip[$key]) || isset($byKey[$key])) {
+                continue;
             }
-            $span *= 4;
-            if ($calc1->bounded()) {
+            $tz = $this->allDay1 ? 'UTC' : $this->tz1;
+            $item = ['start' => Time::iso(Time::fromDb($key)->setTimezone(Time::zone($tz))), 'kind' => $d === $actedDn ? 'acted' : 'occurrence'];
+            $plain[] = $item;
+            if (count($plain) > self::NEXT_SHOWN) {
                 break;
             }
         }
@@ -2223,7 +2223,7 @@ final class Model
         }
         usort($out, static fn(array $a, array $b): int => strcmp((string) Time::parseIso($a['start'])->format('U'), (string) Time::parseIso($b['start'])->format('U')) ?: 0);
         usort($out, static fn(array $a, array $b): int => Time::parseIso($a['start'])->getTimestamp() <=> Time::parseIso($b['start'])->getTimestamp());
-        return array_slice($out, 0, 4);
+        return [array_slice($out, 0, self::NEXT_SHOWN), count($out) > self::NEXT_SHOWN];
     }
 
     /** A clock time missing or doubled on a day the plan shows, or within a year (Zones, DST and All-Day Days). */

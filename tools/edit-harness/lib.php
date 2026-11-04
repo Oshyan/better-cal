@@ -58,7 +58,7 @@ final class Report
 {
     /** Categories of the plan's data checks a run must execute at least once (a full run draws them; the CI slice adds the fixed cases). */
     public const REQUIRED = [
-        'c-shape' => ['plan', 'refused plan', 'key', 'date', 'bound instant', 'zone-qualified', 'placement', 'all-day placement', 'timed entry', 'all-day entry', 'plan.zone', 'notes[].tz'],
+        'c-shape' => ['plan', 'refused plan', 'key', 'date', 'bound instant', 'zone-qualified', 'placement', 'all-day placement', 'timed entry', 'all-day entry', 'plan.zone', 'notes[].tz', 'plan.start (anchored)', 'plan.start (timed)', 'plan.start (all-day)'],
         'c-placement' => ['outcome (moves)', 'outcome (stays)', 'outcome (separate)', 'outcome (rejoins)', 'outcome (deleted)', 'outcome (acted row moves)', 'outcome (acted separate)',
             'ownDate (moves)', 'shows (skipped moves)', 'shows (skipped stays)', 'to (skipped moves)', 'to (generated)', 'movedDays chosen', 'movedDays other', 'plan.acted before',
             'losses member', 'losses complete', 'gains member', 'gains complete', 'bound.last', 'bound.from.last', 'bound.until', 'bound.from.until',

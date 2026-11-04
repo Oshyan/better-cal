@@ -4,6 +4,8 @@
 // tell. Pure, no DOM; EditorDrawer.js builds both sides with the same
 // mapping, from the form as it opened and the form as it is.
 
+import { remindersWords } from './reminders.js';
+
 // Fields that only mean something together: a new time is its start, end,
 // all-day flag and zone; a new place is its text and coordinates.
 const TOGETHER = [
@@ -34,7 +36,8 @@ export function changedFields(now, was, { rruleTouched = false } = {}) {
 /**
  * The editor save's lines in the series dialog, one per changed field:
  * [{label, words}] as "Title  Choir, now Chorus". ctx: calendarName(id),
- * reminderWords(list), personName(id), timeWords(was, now).
+ * personName(id), timeWords(was, now). Reminders come in either shape the
+ * editor holds them (lib/reminders.js remindersWords).
  */
 export function fieldLines(changed, was, ctx = {}) {
   const lines = [];
@@ -43,7 +46,7 @@ export function fieldLines(changed, was, ctx = {}) {
   if ('title' in changed) now('Title', was.title, changed.title);
   if ('calendarId' in changed && ctx.calendarName) now('Calendar', ctx.calendarName(was.calendarId), ctx.calendarName(changed.calendarId));
   if ('location' in changed) now('Place', was.location, changed.location);
-  if ('reminders' in changed && ctx.reminderWords) now('Reminder', ctx.reminderWords(was.reminders), ctx.reminderWords(changed.reminders));
+  if ('reminders' in changed) now('Reminder', remindersWords(was.reminders), remindersWords(changed.reminders));
   if ('tagNames' in changed) now('Tags', (was.tagNames || []).join(', '), (changed.tagNames || []).join(', '));
   if ('personIds' in changed && ctx.personName) now('People', (was.personIds || []).map(ctx.personName).join(', '), (changed.personIds || []).map(ctx.personName).join(', '));
   if ('url' in changed) now('Link', was.url, changed.url);

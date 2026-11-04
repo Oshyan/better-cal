@@ -1,11 +1,12 @@
 // The series change panel (docs/design/series-model.md, Preview and
 // Confirm): what a change to all events of a series will do, from its plan,
-// with its readings as choices, before anything is written. One docked
-// panel for every plan, from a drag or from the editor: bottom right of the
-// calendar on a desktop (beside the editor drawer or the event panel when
-// one is open), a bottom sheet on a phone. Where it sits and how tall it
-// may be are app.css's alone (.bc-sd): this component writes no layout and
-// measures nothing. The blocks come from lib/seriesplan.js and every
+// with its readings as choices, before anything is written. One panel for
+// every plan, from a drag or from the editor, in its lane (.bc-sd-lane: the
+// window less the editor drawer or the event panel beside it): docked at
+// the lane's bottom right where the lane holds it at its full width, else
+// the bottom sheet, on a phone and beside the drawer in a narrow window
+// alike. Where it sits and how tall it may be are app.css's alone: this
+// component writes no layout and measures nothing. The blocks come from lib/seriesplan.js and every
 // sentence in them from lib/planwords.js; the flow is serieschange.js.
 // Enter confirms, Esc or Cancel cancels, a press outside only dismisses
 // (ui/outside.js). The action stays disabled until the plan is there: the
@@ -45,7 +46,7 @@ function SeriesPanel({ sc }) {
   // Every sentence is the client's (lib/planwords.js), in the user's format.
   const view = planView(sc.plan, {
     kind: sc.kind, title: sc.title, calendar: calendar ? calendar.name : '', scope: sc.scope, choices: sc.choices,
-    tz: sc.tz, fields: sc.fields, edits: Object.keys(sc.body || {}), newTitle: (sc.body && sc.body.title) || '',
+    fields: sc.fields, edits: Object.keys(sc.body || {}), newTitle: (sc.body && sc.body.title) || '',
     changed: sc.changed, refYear: new Date().getFullYear(),
   });
   const busy = sc.status === 'loading' || sc.status === 'refreshing' || sc.status === 'committing';
@@ -81,7 +82,7 @@ function SeriesPanel({ sc }) {
     return attachScrollRail(el);
   }, []);
 
-  return html`<div class="bc-sd" ref=${rootRef} role="dialog" aria-label=${view.heading} tabIndex="-1">
+  return html`<div class="bc-sd-lane"><div class="bc-sd" ref=${rootRef} role="dialog" aria-label=${view.heading} tabIndex="-1">
     <div class="bc-sd-head">
       <div class="bc-sd-head-row">
         <span class="bc-sd-title">${view.title}</span>
@@ -105,7 +106,7 @@ function SeriesPanel({ sc }) {
         ? html`<button type="button" class="bc-btn bc-btn-primary" onClick=${() => onlyThisOne()}>${view.onlyThis}</button>`
         : html`<button type="button" class="bc-btn bc-btn-primary" disabled=${!canConfirm} onClick=${() => confirmSeriesChange()}>${view.action}</button>`}
     </div>
-  </div>`;
+  </div></div>`;
 }
 
 // A block: its label in the left column, its content in the right one.
@@ -134,16 +135,16 @@ function Choice({ choice }) {
   </div>`;
 }
 
-// A row: its sentence, what it keeps or takes, its choice. A group of days
-// has its dates and a button that opens its days under it, as rows of the
-// same shape.
+// A row: its sentence, then every choice about it, each by its own id. A
+// row of several days has their dates and a button that opens the days
+// under it, as rows of the same shape.
 function Row({ row, open = false, onToggle = null }) {
   return html`<div class="bc-sd-row">
     ${row.line1 && html`<div class="bc-sd-r1">${row.line1}</div>`}
     ${row.line2 && html`<div class="bc-sd-r2">${row.line2}</div>`}
     ${row.days && html`<div class="bc-sd-r2 bc-sd-range">${row.range} · <button type="button" class="bc-btn bc-sd-small bc-sd-toggle"
       aria-expanded=${open ? 'true' : 'false'} onClick=${onToggle}>${row.toggle(open)}</button></div>`}
-    ${row.choice && html`<${Choice} choice=${row.choice} />`}
+    ${(row.choices || []).map((c) => html`<${Choice} key=${c.id} choice=${c} />`)}
     ${row.days && open && html`<div class="bc-sd-days">${row.days.map((x) => html`<${Row} key=${x.key} row=${x} />`)}</div>`}
   </div>`;
 }

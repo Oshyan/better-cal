@@ -337,6 +337,12 @@ export function dayLines(d, opts = {}) {
   }
 }
 
+/** A row of several days: their dates ("Nov 3 to Jan 19, 2027") and the button that shows them. */
+export function daysSpan(count, first, last, opts = {}) {
+  const range = first === last ? fmtDay(first, { weekday: false, ...opts }) : fmtDay(first, { weekday: false, ...opts }) + ' to ' + fmtDay(last, { weekday: false, ...opts, prev: first });
+  return { range, toggle: (open) => (open ? 'Hide' : 'Show ' + count + ' days') };
+}
+
 /**
  * A group of days with the same outcome: "10 days that were changed
  * earlier move to Wednesday." then "Nov 3 to Jan 19, 2027".
@@ -349,20 +355,42 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
     else if (clock) does = 'move to ' + clock;
     else does = 'move with their events';
   }
-  const range = first === last ? fmtDay(first, { weekday: false, ...opts }) : fmtDay(first, { weekday: false, ...opts }) + ' to ' + fmtDay(last, { weekday: false, ...opts, prev: first });
-  return { line1: count + ' days that were changed earlier ' + does + '.', range, toggle: (open) => (open ? 'Hide' : 'Show ' + count + ' days') };
+  return { line1: count + ' days that were changed earlier ' + does + '.', ...daysSpan(count, first, last, opts) };
 }
 
-/** A group row's sentence when a choice is about its days: "2 days that were changed earlier have their own title." */
-export function sharedLine(g, count, titles = []) {
-  if (/^own[A-Z]/.test(g.id || '')) {
-    const noun = FIELD_NOUNS[g.field] || 'value';
-    const names = g.field === 'title' && titles.length
-      ? ' (' + titles.slice(0, 3).map(quoted).join(', ') + (titles.length > 3 ? ' and ' + (titles.length - 3) + ' more' : '') + ')' : '';
-    return count + ' days have their own ' + (/s$|people/.test(noun) ? noun : noun + 's') + names + '.';
-  }
-  if (g.id === 'outside') return count + ' days that were changed earlier fall after the new end.';
-  if (g.id === 'movedDays') return count + ' days were moved earlier to dates of their own.';
+const isOwn = (g) => /^own[A-Z]/.test(g.id || '');
+const pluralNoun = (noun) => (/s$|people/.test(noun) ? noun : noun + 's');
+
+/**
+ * A day's row when choices are about it alone: what they are about.
+ * "'Sample practice' on Tue, Jan 12 has its own title, 'Sample practice',
+ * and its own location." / "... falls after the new end." Other choices
+ * (a date of its own) keep the day's own sentence.
+ */
+export function choiceDayLine(d, groups, opts = {}) {
+  const on = ' on ' + fmtDay(d.shows, opts);
+  if (groups.some((g) => g.id === 'outside')) return dayName(d, opts.series) + on + ' falls after the new end.';
+  const fields = groups.filter(isOwn).map((g) => g.field);
+  if (!fields.length) return dayLines(d, opts).line1;
+  const rest = fields.filter((f) => f !== 'title').map(fieldNoun);
+  const title = fields.includes('title') ? 'title, ' + quoted(d.title) : '';
+  const has = title ? title + (rest.length ? ', and its own ' + andList(rest) : '') : andList(rest);
+  return dayName({ ...d, kept: ['title'] }) + on + ' has its own ' + has + '.';
+}
+
+/**
+ * The row of days choices are about together: "2 days have their own
+ * titles ('Choir 1', 'Choir 2') and locations." `titles` are the days'.
+ */
+export function togetherLine(groups, count, titles = []) {
+  if (groups.some((g) => g.id === 'outside')) return count + ' days that were changed earlier fall after the new end.';
+  const own = groups.filter(isOwn).map((g) => {
+    const noun = pluralNoun(FIELD_NOUNS[g.field] || 'value');
+    return g.field === 'title' && titles.length
+      ? noun + ' (' + titles.slice(0, 3).map(quoted).join(', ') + (titles.length > 3 ? ' and ' + (titles.length - 3) + ' more' : '') + ')' : noun;
+  });
+  if (own.length) return count + ' days have their own ' + andList(own) + '.';
+  if (groups.some((g) => g.id === 'movedDays')) return count + ' days were moved earlier to dates of their own.';
   return count + ' days that were changed earlier.';
 }
 

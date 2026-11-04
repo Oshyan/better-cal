@@ -11,7 +11,7 @@
 
 import { state, set, toast, patchOccurrence, restoreOccurrence, localSaved, invalidateRecords } from './store.js';
 import { api, entriesOf, refreshWindow } from './api.js';
-import { commitPlan, chosen, planRefusal, calendarZone } from '../lib/seriesplan.js';
+import { commitPlan, chosen, planRefusal } from '../lib/seriesplan.js';
 
 let seq = 0;      // the newest request; an older answer is dropped
 let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
@@ -45,11 +45,6 @@ function current(id) {
   return sc && sc.id === id ? sc : null;
 }
 
-function update(id, patch) {
-  const sc = current(id);
-  if (sc) set({ seriesChange: { ...sc, ...patch } });
-}
-
 // The request for this change: its fields with the scope and the day acted on.
 function requestBody(sc, extra) {
   return { ...sc.body, scope: 'all', instanceStart: sc.occ.start, ...extra };
@@ -62,8 +57,10 @@ function requestBody(sc, extra) {
  * apply(scope): the old path for 'this' and 'following', resolving true
  * when it worked. rescope(): back to the scope chooser ("Change scope":
  * the drop chip again after a drag, the editor's Apply to select). onDone():
- * after a commit. quiet: open only once the plan says it isn't direct (the
- * editor: a rename no edited day owns saves at once).
+ * after a commit. quiet: the panel stays hidden while the plan needs no one
+ * (the editor: a rename no edited day owns saves at once); see receivePlan.
+ * Every date and time in the panel is in the plan's zone (planZone), never
+ * the occurrence's.
  */
 export function openSeriesChange({ kind, occ, body, pending = null, apply = null, rescope = null, onDone = null, fields = [], quiet = false }) {
   if (!occ || !seriesPlans()) return null;
@@ -75,10 +72,6 @@ export function openSeriesChange({ kind, occ, body, pending = null, apply = null
       // The series' name, also when the change is made from an edited day
       // with a title of its own (its occurrence names its series).
       title: occ.seriesTitle || occ.title || 'Untitled event',
-      // Every date the panel derives from a key is read in this zone: the
-      // series' own, else the one the calendar is drawn in (the window's
-      // occurrences carry none). Never the key's UTC date.
-      tz: occ.tzid || calendarZone(),
       google: google(occ),
       scope: 'all',
       plan: null,
@@ -108,14 +101,22 @@ async function requestPlan(id) {
   }
   if (my !== seq || !current(id)) return;
   if (!plan) { fail(id, new Error('No plan came back')); return; }
+  receivePlan(id, plan);
+}
+
+/** Whether a plan asks something of the person: it isn't direct, it has a choice, or it refuses something. */
+const needsAttention = (plan) => !plan.direct || (plan.groups || []).length > 0 || (plan.refusals || []).length > 0;
+
+// Every plan that arrives, from a preview or as a commit's 409 or 422, the
+// same way: a quiet change stays hidden only while its plan needs no one,
+// and is then committed; any plan that needs someone shows the panel, which
+// stays shown from then on.
+function receivePlan(id, plan, patch = {}) {
   const now = current(id);
-  // A field change nothing else depends on: no question to ask.
-  if (now.hidden && plan.direct && !(plan.groups || []).length && !planRefusal(plan)) {
-    set({ seriesChange: { ...now, plan, status: 'ready' } });
-    confirmSeriesChange();
-    return;
-  }
-  set({ seriesChange: { ...now, plan, status: 'ready', hidden: false } });
+  if (!now) return;
+  const hidden = now.hidden && !needsAttention(plan);
+  set({ seriesChange: { ...now, ...patch, plan, status: 'ready', hidden } });
+  if (hidden) confirmSeriesChange();
 }
 
 // The change can't be made or previewed: the block goes back, the error shows.
@@ -184,11 +185,11 @@ export async function confirmSeriesChange() {
     if (next && (e.code === 'series_plan_changed' || e.code === 'series_plan_required')) {
       // The series changed since the plan was made (another tab, a sync):
       // the new plan, asked again.
-      update(id, { plan: next, status: 'ready', changed: true, choices: chosenStill(next, current(id).choices) });
+      receivePlan(id, next, { changed: true, choices: chosenStill(next, current(id).choices) });
       return false;
     }
     if (next && e.code === 'series_refused') {
-      update(id, { plan: next, status: 'ready' });
+      receivePlan(id, next);
       return false;
     }
     fail(id, e);

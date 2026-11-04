@@ -82,6 +82,21 @@ export function fmtReminder(entry) {
   return '';
 }
 
+// A reminder as the app holds it, either shape: minutes before (a number,
+// as the editor's form keeps them) or an entry ({minutes} or {daysBefore,
+// time}, as saves and records carry them), as an entry.
+export function reminderEntry(x) {
+  return x != null && typeof x === 'object' ? x : { minutes: Math.max(0, Number(x) || 0) };
+}
+
+// A list of reminders in words, each through reminderEntry, then
+// fmtReminder: "30 minutes before, 1 hour before"; "none" for an empty
+// list, "default" for none of its own (null).
+export function remindersWords(list) {
+  if (list == null) return 'default';
+  return list.length ? list.map((x) => fmtReminder(reminderEntry(x))).join(', ') : 'none';
+}
+
 // One line for a pair of default lists: "10 minutes before; all-day: Day
 // before at 18:00", or "none" when both are empty.
 export function summarizeDefaults(timed, allDay) {

@@ -545,18 +545,18 @@ final class Model
         $out = [];
         foreach ($seqs as $oi => $s) {
             $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
-            $mine = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
-            $theirs = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
+            $onward = array_values(array_filter($s['days'], static fn(int $d): bool => $d >= $s['landed']));
+            $refOnward = array_values(array_filter($ref['days'], static fn(int $d): bool => $d >= $ref['landed']));
             $i = 0;
-            while ($i < count($mine) && $i < count($theirs) && $mine[$i] === $theirs[$i]) {
+            while ($i < count($onward) && $i < count($refOnward) && $onward[$i] === $refOnward[$i]) {
                 $i++;
             }
-            $differs = $i < count($mine) && ($i < count($theirs) || count($theirs) > 0);
-            $dates = array_slice($mine, 0, $differs ? max(3, $i + 1) : 3);
+            $differs = $i < count($onward) && ($i < count($refOnward) || count($refOnward) > 0);
+            $dates = array_slice($onward, 0, $differs ? max(3, $i + 1) : 3);
             $then = [];
             if ($differs && $i >= 4) {
-                $dates = array_slice($mine, 0, 3);
-                $then = array_slice($mine, $i - 1, 2);
+                $dates = array_slice($onward, 0, 3);
+                $then = array_slice($onward, $i - 1, 2);
             }
             // Against the series as it is today, for every reading: where the
             // two first differ, the one that comes first, a day of its own
@@ -568,16 +568,14 @@ final class Model
             $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
             $n = max(count($before), count($oldBefore));
             for ($j = 0; $j < $n; $j++) {
-                $day = $before[$j] ?? null;
+                $mine = $before[$j] ?? null;
                 $was = $oldBefore[$j] ?? null;
-                $at = $day === null ? null : $s['calc']->instant($day);
-                $wasAt = $was === null ? null : $this->old->instant($was);
-                if ($at == $wasAt && $s['calc']->allDay === $this->old->allDay) {
+                if ($mine !== null && $was !== null && $s['calc']->instant($mine) == $this->old->instant($was) && $s['calc']->allDay === $this->old->allDay) {
                     continue;
                 }
-                $new = $at !== null && ($wasAt === null || $at < $wasAt);
+                $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
                 $earlier = $new
-                    ? ['earlier' => self::patternOut($s['calc'], (int) $day), 'earlierSeries' => 'new']
+                    ? ['earlier' => self::patternOut($s['calc'], $mine), 'earlierSeries' => 'new']
                     : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
                 break;
             }

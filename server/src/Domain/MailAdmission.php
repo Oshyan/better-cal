@@ -261,47 +261,19 @@ final class MailAdmission
         $tz = Time::zone($master['tzid'] ?? null);
         $start = Time::fromDb((string) $master['start_utc'])->setTimezone($tz);
         $end = Time::fromDb((string) $master['end_utc'])->setTimezone($tz);
+        // Each occurrence lasts what the stored event does on its own clock,
+        // an all-day event crossing a clock change in its zone included.
         $duration = $start->diff($end);
-        $simple = array_diff(array_keys($parts), ['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST']) === [];
-        // Sabre accepts SECONDLY/MINUTELY but its iterator cannot advance
-        // those frequencies. Simple sub-hourly rules need no selector engine.
-        if ($simple && in_array($parts['FREQ'], ['SECONDLY', 'MINUTELY'], true)) {
-            $step = max(1, (int) ($parts['INTERVAL'] ?? 1)) * ($parts['FREQ'] === 'MINUTELY' ? 60 : 1);
-            $until = isset($parts['UNTIL']) ? \Sabre\VObject\DateTimeParser::parse($parts['UNTIL'], $tz) : null;
-            $index = max(0, intdiv(max(0, $now->getTimestamp() - $end->getTimestamp()), $step));
-            $occurrence = $start->add(new \DateInterval('PT' . ($index * $step) . 'S'));
-            while ((!isset($parts['COUNT']) || $index < (int) $parts['COUNT']) && ($until === null || $occurrence <= $until)) {
-                $budget->occurrence();
-                if ($occurrence->add($duration) > $now && !isset($skip[Time::toDb($occurrence)])) return true;
-                $index++;
-                $occurrence = $occurrence->add(new \DateInterval('PT' . $step . 'S'));
-            }
-            return false;
-        }
-        if (isset($parts['UNTIL']) && !isset($parts['COUNT'])) {
-            $until = \Sabre\VObject\DateTimeParser::parse($parts['UNTIL'], $tz);
-            // Include the last occurrence's duration, including an all-day
-            // event crossing a clock change in its own time zone.
-            if ($until->add($duration) <= $now) return false;
-        }
-        $iterator = new \Sabre\VObject\Recur\RRuleIterator($rule, $start);
-        // COUNT is bounded by validateRrule. UNTIL-only rules can begin far
-        // in the past; jump near now for the simple daily/weekly forms.
-        if (!isset($parts['COUNT'])) {
-            $periods = Recurrence::skippablePeriods($rule, $start, $now->sub($duration)->setTimezone($tz));
-            if ($periods > 0) {
-                $days = $periods * (int) ($parts['INTERVAL'] ?? 1) * ($parts['FREQ'] === 'WEEKLY' ? 7 : 1);
-                $iterator = new \Sabre\VObject\Recur\RRuleIterator($rule, $start->add(new \DateInterval('P' . $days . 'D')));
-            }
-        }
+        // The app's expander, as the calendar reads the series. A COUNT is
+        // walked from the start (bounded by validateRrule); a rule without
+        // one jumps to the day before the earliest occurrence still running.
+        $iterator = Recurrence::iterator(['rrule' => $rule] + $master);
+        $iterator->jumpTo($now->getTimestamp() - Recurrence::durationSeconds($master) - 86400);
         while ($iterator->valid()) {
             $budget->occurrence();
-            $occurrence = \DateTimeImmutable::createFromInterface($iterator->current());
+            $occurrence = $iterator->current()->setTimezone($tz);
             if ($occurrence->add($duration) > $now && !isset($skip[Time::toDb($occurrence)])) return true;
             $iterator->next();
-            if ($iterator->valid() && $iterator->current() <= $occurrence) {
-                throw new \RuntimeException('The recurrence iterator did not advance');
-            }
         }
         return false;
     }

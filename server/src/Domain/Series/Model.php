@@ -139,14 +139,18 @@ final class Model
         $this->rule0 = $this->r0;
         // A stored rule whose walk could not be completed (WalkIncomplete,
         // see plan()) is read as one the expander can't read.
-        $this->readable = $this->r0->kind !== 'unreadable' && empty($opts['walkIncomplete']) && Calc::sabreReads((string) $master['rrule']);
-        if (!$this->readable) {
-            $this->r0->kind = 'unreadable';
-        }
+        // A skip list quarantined over its limit (decodeExdates refuses it)
+        // takes the same path, never a series read with no skips.
         try {
             $this->exdates = \BetterCal\Domain\Recurrence::decodeExdates($master['exdates_json'] ?? null);
-        } catch (\Throwable) {
+            $skipsRead = true;
+        } catch (\InvalidArgumentException) {
             $this->exdates = [];
+            $skipsRead = false;
+        }
+        $this->readable = $skipsRead && $this->r0->kind !== 'unreadable' && empty($opts['walkIncomplete']) && Calc::reads((string) $master['rrule']);
+        if (!$this->readable) {
+            $this->r0->kind = 'unreadable';
         }
         sort($this->exdates);
         // The series as stored, expanded as stored. One stored from the
@@ -837,7 +841,10 @@ final class Model
         $oldZone = Time::zone($this->tz0);
         $byClock = [];
         $sameDay = true;
-        foreach ($calc->occurrences($from + 366, 120) as $d) {
+        // A year of days from where it landed: the zone's changes repeat
+        // yearly, so every day whose instant differs is among them, however
+        // many occurrences that is.
+        foreach ($calc->occurrences($from + 366) as $d) {
             if ($d < $from) {
                 continue;
             }
@@ -1198,11 +1205,16 @@ final class Model
         return $out;
     }
 
-    /** The first day on or after $from that a supported rule gives, counted from $from's period. */
+    /**
+     * The first day on or after $from that a supported rule gives, counted
+     * from $from's period, searched through the rule's cycle (Rule::cycle);
+     * a rule with no day in it has none ever, and its series is its start
+     * alone, which is $from (the start is always the first occurrence).
+     */
     private static function firstOn(Rule $rule, int $from): int
     {
         $p = $rule->periodOf($from);
-        for ($i = 0; $i < 4800; $i++) {
+        for ($i = 0, $n = $rule->cycle(); $i < $n; $i++) {
             foreach ($rule->periodDays($p) as [$d]) {
                 if ($d >= $from) {
                     return $d;
@@ -1302,7 +1314,8 @@ final class Model
 
         // The old raw occurrences this needs: all of a bounded series; of an
         // unbounded one, through its last exception and the day acted on, and
-        // a few periods on.
+        // a few periods on: the plan's own horizon, gains looked for only up
+        // to it (Gains at the edges), never an end of the series.
         $exDns = array_map(fn(string $k): int => $this->old->dnOf($k), array_merge($this->exdates, array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $this->rows)));
         $span = match ($this->r0->kind) {
             'daily' => 3 * $this->r0->interval + 14,
@@ -1314,7 +1327,9 @@ final class Model
         $horizon = max([$this->actedDn0, $this->old->startDn, ...$exDns]) + $span;
         $oldOcc = !$this->readable ? [] : ($this->old->bounded() ? $this->old->all() : $this->old->occurrences($horizon));
         if (!$newRule && !$unchanged && !$this->old->bounded() && $this->r0->supported()) {
-            // Sparse losses: keep walking until an image turns up.
+            // Sparse losses: keep walking until an image turns up, through
+            // the calendar's 400-year cycle past the horizon, past which the
+            // old occurrences only repeat.
             $extra = $horizon;
             $step = $span * 4;
             while (count(array_filter(array_map($imageOf, $oldOcc), static fn($x): bool => $x !== null)) === 0 && $extra < $horizon + 400 * 366) {
@@ -1437,6 +1452,7 @@ final class Model
         } elseif (isset($kept)) {
             $toLatest = $calcP->occurrences((int) $latest);
             $endCount = count($toLatest);
+            // N without a COUNT is the bounded series' own occurrences (its UNTIL's).
             $wantN = $this->r0->count ?? count($oldOcc);
             // Keeping N: N shown, the generated skips not counted.
             $rawN = $this->rawCount($calcP, $wantN, $genSkips);
@@ -2175,9 +2191,14 @@ final class Model
     {
         $r = $calc->rule;
         if (!$r->supported()) {
+            // A rule outside the drag table has one reading, so nothing is
+            // compared: its first 60 days are what the plan lists of it.
             return [null, array_slice($calc->occurrences(PHP_INT_MAX, 60), 0, 60)];
         }
         $unbounded = $calc->withoutBound();
+        // Readings differ by member, the same in every daily or weekly
+        // period, so a few periods show any difference; months and years
+        // differ by length and first weekday, so their whole cycle.
         $periods = match ($r->kind) {
             'monthly' => intdiv(4800, self::gcd($r->interval, 4800)),
             'yearly' => intdiv(400, self::gcd($r->interval, 400)),
@@ -2725,9 +2746,11 @@ final class Model
     /** The skipped days as stored, sorted. @return list<string> */
     private function storedSkips(): array
     {
+        // A quarantined list is never written: its series reads as one the
+        // expander can't read (the constructor), whose plan writes no skips.
         try {
             $skips = \BetterCal\Domain\Recurrence::decodeExdates($this->master['exdates_json'] ?? null);
-        } catch (\Throwable) {
+        } catch (\InvalidArgumentException) {
             $skips = [];
         }
         sort($skips);

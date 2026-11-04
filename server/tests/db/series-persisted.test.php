@@ -77,25 +77,25 @@ return static function (Db $db): void {
 
     scenario('series persisted: a rename keeps DAILY with BYDAY on the expander\'s keys after a spring change (R2)', function () use ($d, $u, $db, $rows, $keys, $skips, $create): void {
         $run = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', 'America/Los_Angeles');
-        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'title' => 'Sample race']);
-        $d->events->deleteEvent($u, $run, 'this', '2027-03-19T03:30:00-07:00');
+        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-15T02:30:00-07:00', 'title' => 'Sample race']);
+        $d->events->deleteEvent($u, $run, 'this', '2027-03-19T02:30:00-07:00');
         $before = $rows($run);
         $was = $keys($run);
         $plan = planned($d->events, $u, $run, ['scope' => 'all', 'title' => 'Sample jog'], ['ownTitle' => 'keep']);
         $master = $db->one('SELECT * FROM events WHERE id = ?', [$run]);
         $occ = array_map(static fn(array $o): string => Time::toDb($o['start']), Recurrence::sabreExpand($master, Time::fromDb('2027-03-14 00:00:00'), Time::fromDb('2027-03-16 23:00:00')));
-        checkEq('the 03:30 exception keeps its key and time, the skip its key; the rule as it was, so 15 Mar shows once', [
-            $was, ['2027-03-19 10:30:00'], 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', ['2027-03-15 10:30:00'], '12 scheduled occurrences, 1 skipped, ends 26 Mar',
+        checkEq('the exception keeps its key and time, the skip its key; the rule as it was, so 15 Mar shows once', [
+            $was, ['2027-03-19 09:30:00'], 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', ['2027-03-15 09:30:00'], '12 scheduled occurrences, 1 skipped, ends 26 Mar',
         ], [$keys($run), $skips($run), $master['rrule'], $occ, preg_replace('/ \d{4}$/', '', (string) ($plan['bound']['words'] ?? ''))]);
         $d->undo->undoLatest($u);
         checkEq('undone, every row is as before', $before, $rows($run));
     });
 
-    scenario('series persisted: an occurrence is what the stored series yields, its carried clock and its minute step included (causes 1, 9)', function () use ($d, $u, $db, $keys, $create): void {
-        // DAILY with BYDAY after a spring gap: sabre's daily iterator carries 03:30.
+    scenario('series persisted: an occurrence is what the stored series yields, a day after a spring gap and its minute step included (causes 1, 9)', function () use ($d, $u, $db, $keys, $create): void {
+        // DAILY with BYDAY after a spring gap: every later day is at its own 02:30.
         $run = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR', 'America/Los_Angeles');
-        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T03:30:00-07:00', 'title' => 'Sample race']);
-        checkEq('a "this event" rename of 17 Mar at its carried 03:30 is accepted, keyed there', ['2027-03-17 10:30:00'], array_column($keys($run), 'recurrence_instance_utc'));
+        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T02:30:00-07:00', 'title' => 'Sample race']);
+        checkEq('a "this event" rename of 17 Mar at its own 02:30 is accepted, keyed there', ['2027-03-17 09:30:00'], array_column($keys($run), 'recurrence_instance_utc'));
         // Every 720 minutes: the second occurrence is twelve hours on.
         $watch = $create('Sample watch', '2027-01-30T09:00:00+01:00', '2027-01-30T10:30:00+01:00', 'FREQ=MINUTELY;INTERVAL=720;COUNT=3', 'Europe/Berlin');
         $d->events->patch($u, $watch, ['scope' => 'this', 'instanceStart' => '2027-01-30T21:00:00+01:00', 'title' => 'Sample night watch']);
@@ -103,13 +103,15 @@ return static function (Db $db): void {
     });
 
     scenario('series persisted: a dragged day that keeps where it was put becomes an edited day, and Undo removes it (cause 12)', function () use ($d, $u, $db, $rows, $keys, $create): void {
-        // Mondays at 02:30 from 1 Mar: from 15 Mar on, the expander shows 03:30.
-        $wk = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO', 'America/Los_Angeles');
+        // Yearly at 02:30 in Berlin from 21 Oct 2026: 21 Oct 2027 dragged to
+        // 31 Oct at the second of that day's two 02:30s, where its image (a
+        // wall clock with no instant given) is the first.
+        $wk = $create('Sample run', '2026-10-21T02:30:00+02:00', '2026-10-21T03:30:00+02:00', 'FREQ=YEARLY;COUNT=3', 'Europe/Berlin');
         $before = $rows($wk);
-        $plan = planned($d->events, $u, $wk, ['scope' => 'all', 'instanceStart' => '2027-03-08T02:30:00-08:00', 'start' => '2027-03-15T02:30:00-07:00', 'end' => '2027-03-15T03:30:00-07:00']);
+        $plan = planned($d->events, $u, $wk, ['scope' => 'all', 'instanceStart' => '2027-10-21T02:30:00+02:00', 'start' => '2027-10-31T02:30:00+01:00', 'end' => '2027-10-31T03:30:00+01:00']);
         $row = $db->one('SELECT * FROM events WHERE recurrence_parent_id = ?', [$wk]);
-        checkEq('dragged a week to 15 Mar at 02:30: its row keyed on the 03:30 occurrence shows at 02:30, its own time', [
-            '2027-03-15 10:30:00', '2027-03-15 09:30:00', '["time"]', '2027-03-15T02:30:00-07:00',
+        checkEq('dragged to 31 Oct at the second 02:30: its row keyed on the first shows at the second, its own time', [
+            '2027-10-31 00:30:00', '2027-10-31 01:30:00', '["time"]', '2027-10-31T02:30:00+01:00',
         ], [$row['recurrence_instance_utc'] ?? null, $row['start_utc'] ?? null, $row['override_fields'] ?? null, $plan['next'][0]['start'] ?? null]);
         $d->undo->undoLatest($u);
         checkEq('undone, the series is as before and the created row is gone', $before, $rows($wk));
@@ -193,15 +195,15 @@ return static function (Db $db): void {
     scenario('series persisted: a length-only edit of DAILY with BYDAY after a spring change keeps earlier days at their time (F2)', function () use ($d, $u, $db, $create, $lengthOnly, $expanded): void {
         $run = $create('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', 'America/Los_Angeles');
         $before = $expanded($run, 0, 12);
-        $lengthOnly('15 Mar 03:30 to 05:30', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
-        planned($d->events, $u, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
+        $lengthOnly('15 Mar 02:30 to 04:30', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T02:30:00-07:00', 'start' => '2027-03-15T02:30:00-07:00', 'end' => '2027-03-15T04:30:00-07:00']);
+        planned($d->events, $u, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T02:30:00-07:00', 'start' => '2027-03-15T02:30:00-07:00', 'end' => '2027-03-15T04:30:00-07:00']);
         checkEq('committed: 1 Mar at 02:30 and every day shown where it was', ['2027-03-01 10:30:00', $before], [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$run]), $expanded($run, 0, 12)]);
         $d->undo->undoLatest($u);
-        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T03:30:00-07:00', 'title' => 'Sample race']);
-        $d->events->deleteEvent($u, $run, 'this', '2027-03-19T03:30:00-07:00');
-        $lengthOnly('with an edited day and a skip, from 15 Mar', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T03:30:00-07:00', 'start' => '2027-03-15T03:30:00-07:00', 'end' => '2027-03-15T05:30:00-07:00']);
+        $d->events->patch($u, $run, ['scope' => 'this', 'instanceStart' => '2027-03-17T02:30:00-07:00', 'title' => 'Sample race']);
+        $d->events->deleteEvent($u, $run, 'this', '2027-03-19T02:30:00-07:00');
+        $lengthOnly('with an edited day and a skip, from 15 Mar', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-15T02:30:00-07:00', 'start' => '2027-03-15T02:30:00-07:00', 'end' => '2027-03-15T04:30:00-07:00']);
         $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$run]);
-        $lengthOnly('from the edited day\'s own row', $run, $day, ['scope' => 'all', 'start' => '2027-03-17T03:30:00-07:00', 'end' => '2027-03-17T05:30:00-07:00']);
+        $lengthOnly('from the edited day\'s own row', $run, $day, ['scope' => 'all', 'start' => '2027-03-17T02:30:00-07:00', 'end' => '2027-03-17T04:30:00-07:00']);
         $lengthOnly('from the first day', $run, $run, ['scope' => 'all', 'instanceStart' => '2027-03-01T02:30:00-08:00', 'start' => '2027-03-01T02:30:00-08:00', 'end' => '2027-03-01T04:30:00-08:00']);
     });
 

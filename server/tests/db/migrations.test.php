@@ -144,4 +144,46 @@ return static function (Db $db): void {
     $migration('062_mutation_rows.php')($db);
     checkEq('migration 062: rows_json is LONGTEXT, a MEDIUMTEXT one from a development build is widened, and run again nothing changes',
         [['longtext', 'NO'], ['longtext', 'NO'], ['longtext', 'NO']], [$fresh, $widened, $rowsType()]);
+
+    // 064: keys the library's readings wrote, moved onto the app's own
+    // expander. Rows made the way 1.4 made them: a weekday list at 02:30 in
+    // Los Angeles kept the spring gap's 03:30 from 15 Mar 2027 on (10:30Z,
+    // now 09:30Z), and a yearly 02:30 in Berlin read 31 Oct 2027's repeated
+    // clock at its second instant (01:30Z, now 00:30Z).
+    $u = freshUser($db);
+    $d = domains($db);
+    $home = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$u]);
+    $series = static fn(string $title, string $start, string $end, string $rrule, string $tz): int => (int) $d->events->create($u, ['calendarId' => $home, 'title' => $title, 'start' => $start, 'end' => $end, 'allDay' => false, 'tzid' => $tz, 'rrule' => $rrule])['eventId'];
+    $old = static function (int $master, string $newKey, string $oldKey, ?string $start = null, string $own = '["title"]') use ($d, $db, $u): int {
+        $d->events->patch($u, $master, ['scope' => 'this', 'instanceStart' => str_replace(' ', 'T', $newKey) . 'Z', 'title' => 'Sample, edited']);
+        $id = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$master, $newKey]);
+        $start ??= $oldKey;
+        $db->run('UPDATE events SET recurrence_instance_utc = ?, start_utc = ?, end_utc = ?, override_fields = ? WHERE id = ?',
+            [$oldKey, $start, \BetterCal\Support\Time::toDb(\BetterCal\Support\Time::fromDb($start)->modify('+1 hour')), $own, $id]);
+        return $id;
+    };
+    $run = $series('Sample run', '2027-03-01T02:30:00-08:00', '2027-03-01T03:30:00-08:00', 'FREQ=DAILY;BYDAY=MO,WE,FR', 'America/Los_Angeles');
+    $inherits = $old($run, '2027-03-17 09:30:00', '2027-03-17 10:30:00');
+    $owns = $old($run, '2027-03-24 09:30:00', '2027-03-24 10:30:00', '2027-03-24 16:00:00', '["time","title"]');
+    $stray = $old($run, '2027-03-29 09:30:00', '2027-03-29 12:00:00', null, '["time","title"]');
+    $db->run('UPDATE events SET exdates_json = ? WHERE id = ?', [json_encode(['2027-03-19 10:30:00', '2027-03-01 10:30:00']), $run]);
+    $fold = $series('Sample fold', '2026-10-31T02:30:00+01:00', '2026-10-31T03:30:00+01:00', 'FREQ=YEARLY;COUNT=3', 'Europe/Berlin');
+    $foldRow = $old($fold, '2027-10-31 00:30:00', '2027-10-31 01:30:00');
+    $row = static fn(int $id): array => array_values($db->one('SELECT recurrence_instance_utc, start_utc FROM events WHERE id = ?', [$id]));
+    $before = [$row($inherits), $row($owns), $row($stray), $row($foldRow), $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$run])];
+    $dry = $migration('064_series_keys_one_expander.php')($db, true);
+    checkEq('migration 064: the dry run counts what it would move and writes nothing', [true, $before],
+        [str_contains($dry, 'dry run: 2 series, 3 edited-day keys and 1 skip would move'), [$row($inherits), $row($owns), $row($stray), $row($foldRow), $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$run])]]);
+    $said = $migration('064_series_keys_one_expander.php')($db);
+    checkEq('migration 064: each old key moves to its day\'s occurrence, an inherited time with it, an own time and a stray key staying, the skip moved and the series\' own skip kept', [
+        ['2027-03-17 09:30:00', '2027-03-17 09:30:00'], ['2027-03-24 09:30:00', '2027-03-24 16:00:00'], ['2027-03-29 12:00:00', '2027-03-29 12:00:00'],
+        ['2027-10-31 00:30:00', '2027-10-31 00:30:00'], ['2027-03-19 09:30:00', '2027-03-01 10:30:00'], true,
+    ], [$row($inherits), $row($owns), $row($stray), $row($foldRow), json_decode((string) $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$run]), true),
+        // Other accounts' series in this database add to what is left, never to what moves.
+        str_contains($said, '2 series, 3 edited-day keys and 1 skip moved; ')]);
+    $again = $migration('064_series_keys_one_expander.php')($db, true);
+    checkEq('migration 064: run again, nothing is left to move', true, str_contains($again, 'dry run: 0 series, 0 edited-day keys and 0 skips would move'));
+    $shown = array_column((new \BetterCal\Domain\Recurrence())->expand($db->one('SELECT * FROM events WHERE id = ?', [$run]), $db->all('SELECT * FROM events WHERE recurrence_parent_id = ?', [$run]),
+        \BetterCal\Support\Time::fromDb('2027-03-16 00:00:00'), \BetterCal\Support\Time::fromDb('2027-03-20 00:00:00')), 'instanceUtc');
+    checkEq('migration 064: the edited day shows once, in place of its occurrence, and the skip skips', ['2027-03-17 09:30:00'], $shown);
 };

@@ -811,14 +811,15 @@ return static function (Db $db): void {
         checkEq('variant A: renamed from 7 Nov, the edited day keeps its instant, 01:30Z', ['start_utc' => '2027-10-31 01:30:00', 'end_utc' => '2027-10-31 02:30:00', 'override_fields' => '["title"]'], $at($walk, '2027-10-31 01:30:00'));
         $d->undo->undoLatest($u);
         checkEq('variant A undone: byte-identical', $before, $rows($walk));
-        // Variant B: the 2027 day put on the first instant where its image's key is the second.
+        // Variant B: the 2027 day put on the second instant where its image's
+        // key is the first (a wall clock with no instant given).
         $landing = (int) $d->events->create($u, $berlin('2026-10-21T02:30:00+02:00', '2026-10-21T03:30:00+02:00', ['rrule' => 'FREQ=YEARLY;UNTIL=20281021T003000Z']))['eventId'];
         $before = $rows($landing);
-        planned($d->events, $u, $landing, ['scope' => 'all', 'instanceStart' => '2027-10-21T02:30:00+02:00', 'start' => '2027-10-31T02:30:00+02:00', 'end' => '2027-10-31T02:15:00+01:00', 'status' => 'tentative']);
+        planned($d->events, $u, $landing, ['scope' => 'all', 'instanceStart' => '2027-10-21T02:30:00+02:00', 'start' => '2027-10-31T02:30:00+01:00', 'end' => '2027-10-31T03:15:00+01:00', 'status' => 'tentative']);
         $master = $db->one('SELECT start_utc, end_utc FROM events WHERE id = ?', [$landing]);
-        checkEq('variant B: the day shows at 00:30Z for its 45 minutes, its time its own, keyed on its image; the series 45 minutes long', [
-            ['start_utc' => '2027-10-31 00:30:00', 'end_utc' => '2027-10-31 01:15:00', 'override_fields' => '["time"]'], 2700,
-        ], [$at($landing, '2027-10-31 01:30:00'), strtotime($master['end_utc'] . ' UTC') - strtotime($master['start_utc'] . ' UTC')]);
+        checkEq('variant B: the day shows at 01:30Z for its 45 minutes, its time its own, keyed on its image; the series 45 minutes long', [
+            ['start_utc' => '2027-10-31 01:30:00', 'end_utc' => '2027-10-31 02:15:00', 'override_fields' => '["time"]'], 2700,
+        ], [$at($landing, '2027-10-31 00:30:00'), strtotime($master['end_utc'] . ' UTC') - strtotime($master['start_utc'] . ' UTC')]);
         $d->undo->undoLatest($u);
         checkEq('variant B undone: byte-identical, no edited row left', $before, $rows($landing));
         // "Use series value" for the time puts a day back on its key, never the other instant.

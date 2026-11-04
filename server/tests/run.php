@@ -4737,11 +4737,12 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
     $dOcc = $dRec->expand(['id' => 78, 'uid' => 'daily', 'rrule' => 'FREQ=DAILY'] + $hourly, [], Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2027-12-31 00:00:00'));
     checkEq('recur a daily series across two years is complete and not reported', [729, []], [count($dOcc), $dRec->capped()]);
 
-    // The pinned iterator has its own 3,500-generation ceiling before our
-    // output loop. Lock that dependency-bound safety property in: a legacy
-    // sub-daily series from years ago must terminate promptly, not walk from
-    // its origin to the requested window. This preserves recent, legitimate
-    // hourly recurrences while guarding a future dependency change.
+    // A sub-daily series from years ago reaches the window by the
+    // expander's own jump (RuleIterator::jumpTo) and returns promptly with
+    // the window's occurrences, never walking from its origin and never
+    // empty: each 30 minutes long, the window shows those that end after
+    // its start, up to the cap.
+    $legacyFirst = ['SECONDLY' => '2026-10-07 23:30:01', 'MINUTELY' => '2026-10-07 23:31:00'];
     foreach (['SECONDLY', 'MINUTELY', 'HOURLY'] as $frequency) {
         $legacy = [
             'id' => 79, 'uid' => 'legacy-' . strtolower($frequency), 'all_day' => 0, 'tzid' => 'UTC',
@@ -4752,12 +4753,11 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
         $legacyOut = Recurrence::sabreExpand($legacy, Time::fromDb('2026-10-08 00:00:00'), Time::fromDb('2026-10-09 00:00:00'));
         $legacyElapsed = (hrtime(true) - $legacyStarted) / 1_000_000_000;
         if ($frequency === 'HOURLY') {
-            // An HOURLY walk reaches the window by the iterator's own jumps
-            // (SeriesIterator::fastForward), so the window has its 24 hours.
             checkEq('recur an old HOURLY series jumps to the window: its 24 hours, 00:00 to 23:00', ['2026-10-08 00:00:00', '2026-10-08 23:00:00', 24],
                 [Time::toDb($legacyOut[0]['start'] ?? Time::nowUtc()), Time::toDb(end($legacyOut)['start'] ?? Time::nowUtc()), count($legacyOut)]);
         } else {
-            checkEq("recur an old $frequency series stops at the dependency work ceiling", [], $legacyOut);
+            checkEq("recur an old $frequency series jumps to the window: from the one running at its start, through the cap", [$legacyFirst[$frequency], Recurrence::MAX_INSTANCES + 1],
+                [Time::toDb($legacyOut[0]['start'] ?? Time::nowUtc()), count($legacyOut)]);
         }
         check("recur an old $frequency series returns within one second", $legacyElapsed < 1.0, "took {$legacyElapsed}s");
     }
@@ -5431,101 +5431,70 @@ foreach ([[91, 0], [-91, 0], [0, 181], [0, -181], ['1e999', 0]] as [$lat, $lng])
     }
 }
 
-// --- DTSTART skip-ahead (GH #10) -------------------------------------------
-// The optimisation is only sound if the instants are IDENTICAL with and
-// without it, so the real test is differential: expand each rule both ways
-// through the same sabre iterator and require the same list back. Eligibility
-// mistakes are caught by the checks further down; a wrong TIME would only ever
-// be caught here.
-if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
-    $expandBoth = static function (string $rrule, string $startDb, string $tzid, bool $allDay,
-                                   string $winStartDb, string $winEndDb): array {
-        $mk = static function (bool $useSkip) use ($rrule, $startDb, $tzid, $allDay, $winStartDb, $winEndDb): array {
-            $tz = Time::zone($tzid);
-            $s = Time::fromDb($startDb)->setTimezone($tz);
-            $e = $s->add(new DateInterval('PT1H'));
-            $winStart = Time::fromDb($winStartDb);
-            $winEnd = Time::fromDb($winEndDb);
-            if ($useSkip) {
-                $skip = Recurrence::skippablePeriods($rrule, $s, $winStart->setTimezone($tz));
-                if ($skip > 0) {
-                    preg_match('/INTERVAL=(\d+)/', strtoupper($rrule), $mm);
-                    $iv = max(1, (int) ($mm[1] ?? 1));
-                    $per = str_contains(strtoupper($rrule), 'FREQ=WEEKLY') ? 7 : 1;
-                    $shift = new DateInterval('P' . ($skip * $iv * $per) . 'D');
-                    $s = $s->add($shift);
-                    $e = $e->add($shift);
-                }
-            }
-            $vcal = new \Sabre\VObject\Component\VCalendar();
-            $ve = $vcal->add('VEVENT', ['UID' => 'diff']);
-            if ($allDay) {
-                $ve->add('DTSTART', $s->format('Ymd'), ['VALUE' => 'DATE']);
-                $ve->add('DTEND', $e->format('Ymd'), ['VALUE' => 'DATE']);
-            } else {
-                $ve->add('DTSTART', $s);
-                $ve->add('DTEND', $e);
-            }
-            $ve->add('RRULE', $rrule);
-            $it = new \Sabre\VObject\Recur\EventIterator($vcal, 'diff', Time::utc());
-            $it->fastForward(\DateTime::createFromImmutable($winStart));
-            $out = [];
-            $n = 0;
-            while ($it->valid() && $n < 400) {
-                $os = \DateTimeImmutable::createFromInterface($it->getDtStart())->setTimezone(Time::utc());
-                if ($os >= $winEnd) {
-                    break;
-                }
-                $out[] = $os->format('Y-m-d H:i:s');
-                $n++;
-                $it->next();
-            }
-            return $out;
-        };
-        return [$mk(false), $mk(true)];
-    };
-
-    // Seven-year-old series are the case that motivated this. Windows include
-    // one straddling each DST transition in the event's own zone, since the
-    // shift is done in local time precisely so wall clock survives them.
-    $skipCases = [
-        ['FREQ=DAILY;INTERVAL=1', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
-        ['FREQ=DAILY;INTERVAL=3', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
-        ['FREQ=WEEKLY;INTERVAL=1;BYDAY=FR', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
-        ['FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
-        ['FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TU,WE,TH,FR', '2019-03-04 17:00:00', 'America/New_York', false],
-        ['FREQ=DAILY;INTERVAL=1', '2019-03-04 00:00:00', 'America/Los_Angeles', true],
-        ['FREQ=WEEKLY;INTERVAL=1;BYDAY=SU', '2019-03-04 00:00:00', 'America/Los_Angeles', true],
-        ['FREQ=DAILY;INTERVAL=1;UNTIL=20261015T000000Z', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
-        ['FREQ=DAILY;INTERVAL=1', '2019-03-04 09:30:00', 'America/Los_Angeles', false],
-    ];
-    $skipWindows = [
-        ['2026-08-01 00:00:00', '2027-01-01 00:00:00'],
-        ['2026-03-01 00:00:00', '2026-04-01 00:00:00'],
-        ['2026-10-25 00:00:00', '2026-11-08 00:00:00'],
-    ];
-    foreach ($skipCases as [$rr, $sd, $tzid, $ad]) {
-        foreach ($skipWindows as [$ws, $we]) {
-            [$plain, $skipped] = $expandBoth($rr, $sd, $tzid, $ad, $ws, $we);
-            checkEq("skip-ahead identical: $rr @ $ws", $plain, $skipped);
-            // A rule whose UNTIL precedes the window legitimately yields
-            // nothing; everywhere else an empty list would mean the skip ate
-            // the series, so assert non-empty only where output is expected.
-            preg_match('/UNTIL=(\d{8})/', $rr, $um);
-            $endsBeforeWindow = isset($um[1]) && $um[1] < str_replace('-', '', substr($ws, 0, 10));
-            if (!$endsBeforeWindow) {
-                check("skip-ahead still yields occurrences: $rr @ $ws", count($plain) > 0);
-            }
+// --- The window's jump (GH #10) --------------------------------------------
+// A window is reached by the expander's own jump (RuleIterator::jumpTo):
+// every period's set is the rule's alone, so the window from any day reads
+// what the walk from the start reads there. Differential: each rule read
+// through a window equals the walk from the start, filtered to it; with
+// hand-listed first instants for the old series that motivated the jump.
+$walkWindow = static function (string $rrule, string $startDb, string $tzid, bool $allDay, string $winStartDb, string $winEndDb): array {
+    $row = ['id' => 1, 'rrule' => $rrule, 'start_utc' => $startDb, 'end_utc' => Time::toDb(Time::fromDb($startDb)->modify('+1 hour')), 'all_day' => $allDay ? 1 : 0, 'tzid' => $tzid];
+    $jumped = array_map(static fn(array $o): string => Time::toDb($o['start']), Recurrence::sabreExpand($row, Time::fromDb($winStartDb), Time::fromDb($winEndDb)));
+    $walked = [];
+    $from = Time::fromDb($winStartDb)->getTimestamp() - 3600;
+    $to = Time::fromDb($winEndDb)->getTimestamp();
+    foreach (Recurrence::iterator($row) as $t) {
+        if ($t->getTimestamp() >= $to) {
+            break;
+        }
+        if ($t->getTimestamp() > $from) {
+            $walked[] = Time::toDb($t);
+        }
+    }
+    return [$walked, $jumped];
+};
+$skipCases = [
+    ['FREQ=DAILY;INTERVAL=1', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=DAILY;INTERVAL=3', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=WEEKLY;INTERVAL=1;BYDAY=FR', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TU,WE,TH,FR', '2019-03-04 17:00:00', 'America/New_York', false],
+    ['FREQ=DAILY;INTERVAL=1', '2019-03-04 00:00:00', 'America/Los_Angeles', true],
+    ['FREQ=WEEKLY;INTERVAL=1;BYDAY=SU', '2019-03-04 00:00:00', 'America/Los_Angeles', true],
+    ['FREQ=DAILY;INTERVAL=1;UNTIL=20261015T000000Z', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=DAILY;INTERVAL=1', '2019-03-04 09:30:00', 'America/Los_Angeles', false],
+    ['FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR,SA,SU', '2019-03-04 10:30:00', 'America/Los_Angeles', false],
+    ['FREQ=DAILY;BYHOUR=2;BYMINUTE=30', '2019-03-04 10:30:00', 'America/Los_Angeles', false],
+    ['FREQ=MONTHLY;BYDAY=2SU', '2019-03-10 10:30:00', 'America/Los_Angeles', false],
+    ['FREQ=HOURLY;INTERVAL=5', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+    ['FREQ=MINUTELY;INTERVAL=7;BYHOUR=9', '2019-03-04 17:00:00', 'America/Los_Angeles', false],
+];
+$skipWindows = [
+    ['2026-08-01 00:00:00', '2027-01-01 00:00:00'],
+    ['2026-03-01 00:00:00', '2026-04-01 00:00:00'],
+    ['2026-10-25 00:00:00', '2026-11-09 00:00:00'],
+];
+foreach ($skipCases as [$rr, $sd, $tzid, $ad]) {
+    foreach ($skipWindows as [$ws, $we]) {
+        [$walked, $jumped] = $walkWindow($rr, $sd, $tzid, $ad, $ws, $we);
+        checkEq("window jump reads the walk from the start: $rr @ $ws", array_slice($walked, 0, Recurrence::MAX_INSTANCES + 1), $jumped);
+        preg_match('/UNTIL=(\d{8})/', $rr, $um);
+        $endsBeforeWindow = isset($um[1]) && $um[1] < str_replace('-', '', substr($ws, 0, 10));
+        if (!$endsBeforeWindow) {
+            check("window jump still yields occurrences: $rr @ $ws", count($jumped) > 0);
         }
     }
 }
+// Hand-listed: a daily 02:30 series begun years before, read over the 2026
+// spring change in Los Angeles (8 March): 7 March at 02:30 PST, 8 March at
+// 03:30 PDT, 9 March back at 02:30 PDT, whichever window reads it.
+$old0230 = ['id' => 1, 'rrule' => 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR,SA,SU', 'start_utc' => '2019-03-04 10:30:00', 'end_utc' => '2019-03-04 11:30:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles'];
+foreach (['2026-03-07 00:00:00', '2026-01-01 00:00:00', '2025-06-01 00:00:00'] as $ws) {
+    $got = array_values(array_filter(array_map(static fn(array $o): string => Time::toDb($o['start']), Recurrence::sabreExpand($old0230, Time::fromDb($ws), Time::fromDb('2026-03-10 00:00:00'))), static fn(string $k): bool => $k >= '2026-03-07'));
+    checkEq("window jump: an old weekday-list series keeps only the gap day shifted, read from $ws", ['2026-03-07 10:30:00', '2026-03-08 10:30:00', '2026-03-09 09:30:00'], $got);
+}
 
-// Eligibility: only DAILY/WEEKLY, never COUNT, never backwards.
-$farStart = Time::fromDb('2019-03-04 17:00:00');
-$skipTarget = Time::fromDb('2026-08-01 00:00:00');
-check('skip: old daily series skips thousands', Recurrence::skippablePeriods('FREQ=DAILY', $farStart, $skipTarget) > 2000);
-// F3/F4 (scan 2026-09-23): an absurd INTERVAL is refused at the door and
-// survives expansion if it was stored before that.
+// F3/F4 (scan 2026-09-23): an absurd INTERVAL is refused at the door.
 checkEq('safeRrule: ordinary rule passes, uppercased', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO', Recurrence::safeRrule('freq=weekly;interval=2;byday=MO'));
 checkEq('safeRrule: absurd INTERVAL drops the recurrence', null, Recurrence::safeRrule('FREQ=WEEKLY;INTERVAL=99999999999999999999'));
 checkEq('safeRrule: INTERVAL over the cap drops it', null, Recurrence::safeRrule('FREQ=DAILY;INTERVAL=1001'));
@@ -5541,24 +5510,22 @@ checkEq('safeRrule: selector cross-product over the work limit drops the rule', 
 ));
 checkEq('safeRrule: oversized text drops the rule', null, Recurrence::safeRrule('FREQ=YEARLY;BYDAY=' . str_repeat('MO,', 1000) . 'TU'));
 checkEq('safeRrule: empty is no rule', null, Recurrence::safeRrule('  '));
-checkEq('skip: a stored absurd INTERVAL skips nothing and does not throw', 0, Recurrence::skippablePeriods('FREQ=WEEKLY;INTERVAL=99999999999999999999', $farStart, $skipTarget));
+checkEq('safeRrule: a part the table marks N/A drops the rule', null, Recurrence::safeRrule('FREQ=WEEKLY;BYMONTHDAY=3'));
 {
-    $boom = new Recurrence(static function (): array { throw new \TypeError('intdiv(): Argument #2 must be of type int, float given'); });
+    // A walk that can't be completed takes the window's unreadable-rule
+    // path, the stored event alone; any other failure is a defect and
+    // fails the request rather than showing a shorter series.
     $m = ['id' => 9, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2026-09-21 10:00:00', 'end_utc' => '2026-09-21 11:00:00'];
-    $got = $boom->expand($m, [], new DateTimeImmutable('2026-09-20', new DateTimeZone('UTC')), new DateTimeImmutable('2026-09-27', new DateTimeZone('UTC')));
-    checkEq('expand: an expander that throws yields the first occurrence, not a failed window', 1, count($got));
+    $limit = new Recurrence(static function (): array { throw new \BetterCal\Domain\Series\WalkLimitReached('a walk limit, for the test'); });
+    checkEq('expand: a walk that reaches its limit shows the stored event alone', 1, count($limit->expand($m, [], new DateTimeImmutable('2026-09-20', new DateTimeZone('UTC')), new DateTimeImmutable('2026-09-27', new DateTimeZone('UTC')))));
+    $boom = new Recurrence(static function (): array { throw new \TypeError('intdiv(): Argument #2 must be of type int, float given'); });
+    try {
+        $boom->expand($m, [], new DateTimeImmutable('2026-09-20', new DateTimeZone('UTC')), new DateTimeImmutable('2026-09-27', new DateTimeZone('UTC')));
+        check('expand: a defect in the expander propagates, never a shorter series', false);
+    } catch (\TypeError) {
+        check('expand: a defect in the expander propagates, never a shorter series', true);
+    }
 }
-check('skip: old weekly series skips hundreds', Recurrence::skippablePeriods('FREQ=WEEKLY;BYDAY=MO', $farStart, $skipTarget) > 300);
-checkEq('skip: COUNT is never moved', 0, Recurrence::skippablePeriods('FREQ=DAILY;COUNT=10', $farStart, $skipTarget));
-checkEq('skip: MONTHLY is left alone', 0, Recurrence::skippablePeriods('FREQ=MONTHLY', $farStart, $skipTarget));
-checkEq('skip: YEARLY is left alone', 0, Recurrence::skippablePeriods('FREQ=YEARLY', $farStart, $skipTarget));
-checkEq('skip: target before start does nothing', 0, Recurrence::skippablePeriods('FREQ=DAILY', $skipTarget, $farStart));
-checkEq('skip: interval divides the distance', 2,
-    Recurrence::skippablePeriods('FREQ=DAILY;INTERVAL=10', Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2026-02-01 00:00:00')));
-$skipS0 = Time::fromDb('2026-01-01 09:00:00');
-$skipT0 = Time::fromDb('2026-03-01 09:00:00');
-check('skip: lands at or before the target, never past it',
-    $skipS0->add(new DateInterval('P' . Recurrence::skippablePeriods('FREQ=DAILY', $skipS0, $skipT0) . 'D')) <= $skipT0);
 
 // RRULE helpers.
 checkEq('setUntil replaces COUNT', 'FREQ=WEEKLY;UNTIL=20260201T000000Z', Recurrence::setUntil('FREQ=WEEKLY;COUNT=10', Time::fromDb('2026-02-01 00:00:00'), false));
@@ -13569,6 +13536,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 }
 
 require __DIR__ . '/series-model.php';
+require __DIR__ . '/expander.php';
 require __DIR__ . '/files-security.php';
 require __DIR__ . '/credentials-security.php';
 require __DIR__ . '/mail-security.php';

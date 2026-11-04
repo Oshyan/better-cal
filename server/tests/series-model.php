@@ -1897,6 +1897,20 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
         [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
 
+    // A clock that happens twice is found from the zone's transitions,
+    // whatever the repeated span: Lord Howe falls back half an hour, so
+    // 01:45 on Sun 4 Apr 2027 happens twice, the first at +11:00.
+    $lh = 'Australia/Lord_Howe';
+    $sunday = smSeries('Sample walk', 'FREQ=WEEKLY;BYDAY=SU', '2027-03-21 01:45', 60, false, [], $lh);
+    $p = smPlan($sunday, [], ['columns' => ['title' => 'Sample walk, renamed']]);
+    $overlapNote = array_values(array_filter($p['plan']['notes'], static fn(array $n): bool => $n['kind'] === 'overlap'))[0] ?? [];
+    checkEq('Notes: 01:45 on Lord Howe\'s half-hour fall-back is noted as happening twice, at its first instant', ['2027-04-04', '2027-04-04T01:45:00+11:00'],
+        [$overlapNote['date'] ?? null, $overlapNote['at'] ?? null]);
+    checkEq('Calc: a wall clock\'s instants from the zone\'s transitions: two in Lord Howe\'s repeated half hour, none in its gap, one otherwise', [2, 0, 1, 2],
+        [count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 4, 4), [1, 45, 0], $lh)),count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 10, 3), [2, 15, 0], $lh)),
+            count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 4, 4), [2, 15, 0], $lh)), count(\BetterCal\Domain\Series\Calc::instantsAt(Cal::dn(2027, 11, 7), [1, 30, 0], 'America/Los_Angeles'))]);
+    checkEq('Calc: a repeated half hour\'s wall clock is its first instant', '2027-04-03 14:45:00', Time::toDb(\BetterCal\Domain\Series\Calc::at(Cal::dn(2027, 4, 4), [1, 45, 0], $lh)));
+
     // A new pattern keeps the keys on its days: a series twice a day made
     // once a day at its later time keeps the later day's edited row on its
     // own key; the earlier time, which the new rule no longer has, is the

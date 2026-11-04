@@ -474,19 +474,44 @@ final class Calc
         if ($given !== null && $given->setTimezone($zone)->format('Y-m-d H:i:s') === $wall) {
             return $given->setTimezone(Time::utc());
         }
-        $at = new \DateTimeImmutable($wall, $zone);
         // A clock time that happens twice is the first, in daylight time, as
-        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second. The
-        // repeated span is the zone's own fall-back: an hour mostly, half an
-        // hour on Lord Howe Island, two hours where a zone once fell back so.
-        foreach ([7200, 3600, 1800] as $back) {
-            $earlier = (new \DateTimeImmutable('@' . ($at->getTimestamp() - $back)))->setTimezone($zone);
-            if ($earlier->format('Y-m-d H:i:s') === $wall) {
-                $at = $earlier;
-                break;
+        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second. One in
+        // a gap is where PHP puts it, the clock moved on by the gap.
+        $all = self::instantsAt($dn, $clock, $tz);
+        return ($all[0] ?? new \DateTimeImmutable($wall, $zone))->setTimezone(Time::utc());
+    }
+
+    /**
+     * Every instant a wall clock names on a local day in a zone, in order,
+     * from the zone's own transitions: none in a spring-forward gap, two
+     * in a repeated span (an hour mostly, half an hour on Lord Howe
+     * Island), one otherwise.
+     *
+     * @param array{0:int,1:int,2:int} $clock
+     * @return list<\DateTimeImmutable>
+     */
+    public static function instantsAt(int $dn, array $clock, string $tz): array
+    {
+        $wall = sprintf('%s %02d:%02d:%02d', Cal::date($dn), $clock[0], $clock[1], $clock[2]);
+        $zone = Time::zone($tz);
+        $asUtc = (new \DateTimeImmutable($wall, Time::utc()))->getTimestamp();
+        // Every offset the zone has within two days of the wall clock.
+        $offsets = [];
+        foreach ($zone->getTransitions($asUtc - 2 * 86400, $asUtc + 2 * 86400) ?: [] as $t) {
+            $offsets[(int) $t['offset']] = true;
+        }
+        if ($offsets === []) {
+            $offsets[$zone->getOffset(new \DateTimeImmutable('@' . $asUtc))] = true;
+        }
+        $out = [];
+        foreach (array_keys($offsets) as $offset) {
+            $at = (new \DateTimeImmutable('@' . ($asUtc - $offset)))->setTimezone($zone);
+            if ($at->format('Y-m-d H:i:s') === $wall) {
+                $out[$at->getTimestamp()] = $at;
             }
         }
-        return $at->setTimezone(Time::utc());
+        ksort($out);
+        return array_values($out);
     }
 
     /** Whether a clock time doesn't exist on a local day (a spring-forward gap). */

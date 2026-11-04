@@ -2296,13 +2296,16 @@ final class Model
             }
             $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$calc->clock);
             $at = new \DateTimeImmutable($wall, $tz);
-            if ($at->format('Y-m-d H:i:s') !== $wall) {
+            // Each instant the wall clock names that day, by the zone's
+            // transitions: none in a gap, two in a repeated span however
+            // long it is.
+            $twice = Calc::instantsAt($d, $calc->clock, $calc->tz);
+            if ($twice === []) {
                 $this->notes[] = ['kind' => 'gap', 'date' => self::patternOut($calc, $d), 'clock' => sprintf('%02d:%02d', $calc->clock[0], $calc->clock[1]), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('No %02d:%02d on %s in %s: that one is at %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), self::zoneName($calc->tz), $at->format('H:i'))];
                 return;
             }
-            $later = $at->modify('+1 hour');
-            if ($later->getOffset() !== $at->getOffset() && $later->modify('-1 hour')->format('H:i') === $at->format('H:i') && (new \DateTimeImmutable('@' . ($at->getTimestamp() + 3600)))->setTimezone($tz)->format('H:i:s') === $at->format('H:i:s')) {
-                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
+            if (count($twice) > 1) {
+                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($twice[0]->setTimezone($tz), $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
                 return;
             }
         }

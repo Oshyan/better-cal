@@ -1932,6 +1932,24 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         '2028-10-13', [], '2028-10-13 00:00:00',
     ], [$d['day'] ?? null, $p['writes']['detach'], $p['writes']['overrides'][2]['start_utc'] ?? null]);
 
+    // The notes scan the year from the cutoff however far into the series
+    // it is: three times a week from March 2027, acted on in March 2030,
+    // past the 400th occurrence.
+    $thrice = smSeries('Sample swim', 'FREQ=WEEKLY;BYDAY=MO,WE,SU', '2027-03-01 02:30', 60, false, [], 'Pacific/Auckland');
+    $p = smPlan($thrice, [], ['acted' => smAt('2030-03-03 02:30', 'Pacific/Auckland'), 'columns' => ['title' => 'Sample swim, renamed']]);
+    checkEq('Notes: past the 400th occurrence, the year from the cutoff still gets its overlap and gap', [['overlap', '2030-04-07'], ['gap', '2030-09-29']],
+        array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes']));
+
+    // And from coming up's own cutoff: a new rule sent from an edited day
+    // lists that day where it shows, before where the request put it, so
+    // its gap is noted too.
+    $berlin = smSeries('Sample swim', 'FREQ=WEEKLY;BYDAY=SU', '2027-01-03 02:30', 60, false, [], 'Europe/Berlin');
+    $gapRow = smEdited($berlin, 2, '2027-03-28 02:30', ['title' => 'Sample swim, own'], null, ['title']);
+    $p = smPlan($berlin, [$gapRow], ['acted' => $gapRow['recurrence_instance_utc'], 'rrule' => 'FREQ=WEEKLY;BYDAY=SU,WE',
+        'landed' => ['start_utc' => smAt('2027-04-04 03:30', 'Europe/Berlin'), 'end_utc' => smAt('2027-04-04 04:30', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']]);
+    checkEq('Notes: from coming up\'s cutoff, the edited day shown on Sun 28 Mar has its gap noted', ['2027-03-28', ['gap', '2027-03-28']],
+        [substr($p['plan']['next'][0]['start'] ?? '', 0, 10), array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes'])[0] ?? null]);
+
     // A refused change's plan gives the series' start by its kind: a date
     // for an all-day series, an instant in its zone for a timed one.
     $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);

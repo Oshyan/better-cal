@@ -2285,7 +2285,7 @@ final class Model
         return [$shown, count($out) > self::NEXT_SHOWN];
     }
 
-    /** A clock time missing or doubled on a day the plan shows, or within a year (Zones, DST and All-Day Days). */
+    /** Every day the plan shows, or within a year ahead, whose clock time is missing or doubled gets its note (Zones, DST and All-Day Days). */
     private function clockNotes(Calc $calc, int $fromDn): void
     {
         if ($this->allDay1 || $calc->tz === 'UTC') {
@@ -2304,11 +2304,11 @@ final class Model
             $twice = Calc::instantsAt($d, $calc->clock, $calc->tz);
             if ($twice === []) {
                 $this->notes[] = ['kind' => 'gap', 'date' => self::patternOut($calc, $d), 'clock' => sprintf('%02d:%02d', $calc->clock[0], $calc->clock[1]), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('No %02d:%02d on %s in %s: that one is at %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), self::zoneName($calc->tz), $at->format('H:i'))];
-                return;
+                continue;
             }
             if (count($twice) > 1) {
                 $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($twice[0]->setTimezone($tz), $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
-                return;
+                continue;
             }
         }
     }

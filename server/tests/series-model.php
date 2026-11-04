@@ -1996,6 +1996,73 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Keys: made once a day at 15:00, the 15:00 edited day stays on its key and the 09:00 one leaves the series', [
         [$k15, 'stays'], 'separate',
     ], [[$byKey[$k15]['newKey'] ?? 'missing', $byKey[$k15]['outcome'] ?? null], $byKey[$k09]['outcome'] ?? null]);
+
+    // The iterator's walk: an instant outside the rule's days rules out its
+    // day, and the walk goes on to the next day the rule admits however far
+    // it is; only the calendar ends a rule, never a count of skips.
+    $walk = static function (string $rrule, string $startLocal, string $tz, int $max = 10): array {
+        $out = [];
+        foreach (new BetterCal\Domain\Series\RuleIterator($rrule, new DateTimeImmutable($startLocal, Time::zone($tz))) as $t) {
+            $out[] = $t->format('Y-m-d H:i');
+            if (count($out) >= $max) {
+                break;
+            }
+        }
+        return $out;
+    };
+    $leap = smSeries('Sample leap day', 'FREQ=DAILY;BYMONTH=2;BYMONTHDAY=29;COUNT=3', '2028-02-29 09:00', 60, false, [], 'UTC');
+    $p = smPlan($leap, [], ['columns' => ['title' => 'Sample practice']]);
+    checkEq('Walk: daily on 29 February, three times, is 29 Feb 2028, 2032 and 2036, ending 29 Feb 2036 with nothing after', [
+        ['2028-02-29T09:00:00+00:00', '2032-02-29T09:00:00+00:00', '2036-02-29T09:00:00+00:00'], false, 3, 3, '2036-02-29',
+    ], [array_column($p['plan']['next'], 'start'), $p['plan']['nextMore'], $p['plan']['bound']['events'], $p['plan']['bound']['from']['events'], $p['plan']['bound']['last']]);
+    checkEq('Walk: hourly in January goes on from the last hour of January 2028 to the first of January 2029', ['2028-01-31 22:00', '2028-01-31 23:00', '2029-01-01 00:00', '2029-01-01 01:00'],
+        $walk('FREQ=HOURLY;BYMONTH=1;COUNT=4', '2028-01-31 22:00', 'UTC'));
+    checkEq('Walk: every 3 hours in January in New York keeps its hours from the start across the year between', ['2028-01-31 18:00', '2028-01-31 21:00', '2029-01-01 00:00', '2029-01-01 03:00'],
+        $walk('FREQ=HOURLY;INTERVAL=3;BYMONTH=1;COUNT=4', '2028-01-31 18:00', 'America/New_York'));
+    checkEq('Walk: every other day on 29 February keeps its parity from the start: 2028, then 2036 (2032\'s is an odd day on)', ['2028-02-29 09:00', '2036-02-29 09:00', '2044-02-29 09:00'],
+        $walk('FREQ=DAILY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29;COUNT=3', '2028-02-29 09:00', 'UTC'));
+    $unbounded = ['rrule' => 'FREQ=DAILY;BYMONTH=2;BYMONTHDAY=29'] + $leap;
+    $leapDays = static fn(string $from, string $to): array => array_map(static fn(array $o): string => $o['start']->format('Y-m-d'),
+        BetterCal\Domain\Recurrence::sabreExpand($unbounded, new DateTimeImmutable($from, Time::utc()), new DateTimeImmutable($to, Time::utc())));
+    $century = $leapDays('2028-01-01', '2128-03-01');
+    checkEq('Walk: daily on 29 February with no end, a wide window and a narrow one inside it give the same days there', [
+        ['2032-02-29', '2036-02-29'], ['2032-02-29', '2036-02-29'], 25, '2128-02-29', false,
+    ], [$leapDays('2032-01-01', '2037-01-01'), array_values(array_filter($century, static fn(string $d): bool => $d >= '2032-01-01' && $d < '2037-01-01')), count($century), end($century), in_array('2100-02-29', $century, true)]);
+    checkEq('Walk: 30 February is a rule (none refuses it) whose days never come, so it ends at its start for every frequency', [
+        'other', ['2028-02-01 09:00'], ['2028-02-01 09:00'], ['2028-02-01 09:00'], ['2028-02-01 09:00'],
+    ], [Rule::parse('FREQ=DAILY;BYMONTH=2;BYMONTHDAY=30', Cal::dn(2028, 2, 1))->kind, $walk('FREQ=DAILY;BYMONTH=2;BYMONTHDAY=30', '2028-02-01 09:00', 'UTC'),
+        $walk('FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=30', '2028-02-01 09:00', 'UTC'), $walk('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30', '2028-02-01 09:00', 'UTC'),
+        $walk('FREQ=MINUTELY;BYMONTH=2;BYMONTHDAY=30', '2028-02-01 09:00', 'UTC')]);
+    checkEq('Walk: every 168 hours on Mondays from a Tuesday lands on Tuesdays only, so after a whole cycle of the calendar it ends', ['2028-02-01 09:00'],
+        $walk('FREQ=HOURLY;INTERVAL=168;BYDAY=MO', '2028-02-01 09:00', 'UTC'));
+    checkEq('Walk: every 30 minutes at 09:00 on 29 February goes from 2028 to 2032', ['2028-02-29 09:00', '2028-02-29 09:30', '2032-02-29 09:00'],
+        $walk('FREQ=MINUTELY;INTERVAL=30;BYMONTH=2;BYMONTHDAY=29;BYHOUR=9;COUNT=3', '2028-02-29 09:00', 'America/Los_Angeles'));
+
+    // The overlap note names the series' own instant of a repeated clock,
+    // and what tzdata says of it.
+    $overlap = static function (string $startIso): array {
+        $start = Time::toDb(new DateTimeImmutable($startIso));
+        $s = ['rrule' => 'FREQ=WEEKLY;COUNT=3', 'start_utc' => $start, 'end_utc' => Time::toDb(Time::fromDb($start)->modify('+1 hour')), 'tzid' => 'Europe/Berlin'] + smSeries('Sample class', 'FREQ=WEEKLY', '2027-10-31 02:30');
+        $p = Model::plan($s, [], ['columns' => ['title' => 'Sample practice']], [], ['today' => '2027-10-01']);
+        $n = array_values(array_filter($p['plan']['notes'], static fn(array $n): bool => $n['kind'] === 'overlap'))[0] ?? [];
+        return [$p['plan']['rule']['to']['start'], $n['at'] ?? null, $n['fold'] ?? null, $n['daylight'] ?? 'missing', $n['words'] ?? null];
+    };
+    checkEq('Notes: a Berlin series at the second 02:30 of 31 Oct 2027 is noted at that instant, the second, in standard time', [
+        '2027-10-31T02:30:00+01:00', '2027-10-31T02:30:00+01:00', 'second', false, '02:30 happens twice on 31 Oct: this is the second, in standard time',
+    ], $overlap('2027-10-31T02:30:00+01:00'));
+    checkEq('Notes: a Berlin series at the first 02:30 of 31 Oct 2027 is noted at that instant, the first, in daylight time', [
+        '2027-10-31T02:30:00+02:00', '2027-10-31T02:30:00+02:00', 'first', true, '02:30 happens twice on 31 Oct: this is the first, in daylight time',
+    ], $overlap('2027-10-31T02:30:00+02:00'));
+
+    // A zone option carries its series' start, so its label is the series'
+    // clock, never an edited day's that comes first.
+    $tue = smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 01:30', 60, false, [], 'America/New_York');
+    $early = smEdited($tue, 2, '2027-01-12 01:30', [], '2027-01-05 03:30', ['date', 'time']);
+    $la = new DateTimeImmutable('2027-01-05 01:30', Time::zone('America/Los_Angeles'));
+    $p = smPlan($tue, [$early], ['acted' => smAt('2027-01-05 01:30', 'America/New_York'), 'landed' => ['start_utc' => Time::toDb($la), 'end_utc' => Time::toDb($la->modify('+1 hour')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+    checkEq('Zone options: to Los Angeles, the clock option starts at 01:30 there and the moment option at 22:30 the evening before, though an edited day at 00:30 comes first', [
+        ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
+    ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

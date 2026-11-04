@@ -31,23 +31,42 @@ use Sabre\VObject\Recur\RRuleIterator;
  * YEARLY rule may carry, and a BYDAY with a number, which only MONTHLY and
  * YEARLY may.
  *
- * A period that a limit rules out from a day, an hour or a minute on rules
- * out every period until the next local day, hour or minute (or the zone's
- * next transition, whichever comes first), so the walk jumps there rather
- * than stepping a second at a time.
+ * A period that a limit rules out from an hour or a minute on rules out
+ * every period until the next local hour or minute (or the zone's next
+ * transition, whichever comes first), and one ruled out by its day every
+ * period until the next day the rule's days admit (nextDay), so the walk
+ * jumps there rather than stepping a second at a time.
  *
  * Every other frequency is sabre's own, but for one rule every frequency
  * keeps: an instant outside the rule's own days is no occurrence, so it is
  * skipped and the rule read on (outsideDays). Every expansion in the app reads this iterator
  * (Calc for the model, SeriesIterator for the window), so there is one
  * expander.
+ *
+ * How a rule ends is the rule's own bound (COUNT, UNTIL) or the calendar's,
+ * never a number of instants looked at: the Gregorian calendar repeats every
+ * 400 years, so a rule whose days admit none in 400 years admits none ever,
+ * and a walk that comes round to the same place in the calendar and in its
+ * own steps without an occurrence would repeat itself forever (cycle). sabre's
+ * dateUpperLimit (the end of year 9999) ends every walk. The one limit of
+ * the walk left, MAX_TRIES, is an error when reached, never an end.
  */
 class RuleIterator extends RRuleIterator
 {
-    /** Periods looked at for one occurrence before the rule is taken as ended. */
+    /**
+     * Periods looked at for one MINUTELY or SECONDLY occurrence before the
+     * walk stops with WalkLimitReached, an error and never the rule's end.
+     * Days are jumped by the calendar (nextDay), so this is only reached
+     * inside admitted days, where a clock limit no step lands on
+     * (SECONDLY;INTERVAL=2;BYSECOND=31 from an even second) would otherwise
+     * be read period by period through the 400-year cycle.
+     */
     private const MAX_TRIES = 600000;
-    /** Instants outside the rule's days skipped in a row before the rule is taken as ended. */
-    private const MAX_SKIPS = 1000;
+    /** Days in the Gregorian calendar's 400-year cycle. */
+    private const CYCLE_DAYS = 146097;
+
+    /** @var array{months:?list<int>,yearDays:?list<int>,monthDays:?list<int>,days:?list<array{0:int,1:int}>,inMonth:bool}|null the rule's day parts, read once */
+    private ?array $dayParts = null;
 
     /** @var list<\DateTimeImmutable>|null the current period's occurrences after the current one; null before the first period is read */
     private ?array $pending = null;
@@ -90,14 +109,23 @@ class RuleIterator extends RRuleIterator
     public function next()
     {
         if (!$this->owned()) {
+            $from = $this->currentDate?->getTimestamp();
             parent::next();
             // An instant outside the rule's own days is no occurrence: it is
-            // skipped, not counted, and the rule read on from it.
-            for ($i = 0; $this->currentDate !== null && $this->outsideDays($this->currentDate); $i++) {
-                if ($i >= self::MAX_SKIPS) {
+            // skipped, not counted, and rules out its whole day, so the walk
+            // goes on to the next day the rule's days admit (stepTowards) and
+            // reads sabre's steps from there. It ends where the calendar says
+            // the rule has no more: no admitted day in a 400-year cycle, or a
+            // whole cycle of the walk gone by without one, or the year 9999.
+            // Past UNTIL there is nothing to find (valid() ends it there).
+            while ($this->currentDate !== null && ($this->until === null || $this->currentDate <= $this->until) && $this->outsideDays($this->currentDate)) {
+                $ts = $this->currentDate->getTimestamp();
+                $day = $this->nextDay($this->currentDate);
+                if ($day === null || $ts > self::dateUpperLimit || ($from !== null && $ts - $from > $this->cycle())) {
                     $this->currentDate = null;
                     break;
                 }
+                $this->stepTowards($day);
                 parent::next();
                 --$this->counter;
             }
@@ -113,8 +141,15 @@ class RuleIterator extends RRuleIterator
                 $this->pending = array_values(array_filter($set, static fn(\DateTimeImmutable $t): bool => $t->getTimestamp() > $start));
             }
             $until = $this->until?->getTimestamp();
-            for ($i = 0; $i < self::MAX_TRIES && $this->pending === []; $i++) {
-                $this->period = $this->nextPeriod($this->period, $this->lastFail);
+            for ($i = 0; $this->pending === []; $i++) {
+                if ($i >= self::MAX_TRIES) {
+                    throw new WalkLimitReached('No occurrence in ' . self::MAX_TRIES . ' periods of ' . $this->frequency . ' rule after ' . (new \DateTimeImmutable('@' . $this->periodStart($this->period)))->format('c'));
+                }
+                $period = $this->nextPeriod($this->period, $this->lastFail);
+                if ($period === null) {
+                    break;
+                }
+                $this->period = $period;
                 $at = $this->periodStart($this->period);
                 if ($at > self::dateUpperLimit || ($until !== null && $at > $until)) {
                     break;
@@ -140,28 +175,186 @@ class RuleIterator extends RRuleIterator
      */
     private function outsideDays(\DateTimeInterface $t): bool
     {
-        $t = \DateTimeImmutable::createFromInterface($t);
-        if ($this->fails($t) === 'day') {
-            return true;
+        return !$this->admits(Cal::dnOf(\DateTimeImmutable::createFromInterface($t)));
+    }
+
+    /**
+     * The rule's day parts, read once: BYMONTH, BYYEARDAY and BYMONTHDAY as
+     * numbers, BYDAY as [count, weekday] (a count only for MONTHLY and
+     * YEARLY, the frequencies it counts in; 0 for any such weekday), and
+     * whether a count is in the month (MONTHLY, or YEARLY with BYMONTH) or
+     * the year.
+     *
+     * @return array{months:?list<int>,yearDays:?list<int>,monthDays:?list<int>,days:?list<array{0:int,1:int}>,inMonth:bool}
+     */
+    private function dayParts(): array
+    {
+        if ($this->dayParts === null) {
+            $ints = static fn(?array $list): ?array => $list === null ? null : array_map('intval', $list);
+            $counted = in_array($this->frequency, ['monthly', 'yearly'], true);
+            $days = null;
+            foreach ($this->byDay ?? [] as $day) {
+                $day = strtoupper((string) $day);
+                $days[] = [$counted ? (int) substr($day, 0, -2) : 0, (int) Cal::wdOf(substr($day, -2))];
+            }
+            $this->dayParts = [
+                'months' => $ints($this->byMonth), 'yearDays' => $ints($this->byYearDay), 'monthDays' => $ints($this->byMonthDay),
+                'days' => $days, 'inMonth' => $this->frequency === 'monthly' || $this->byMonth !== null,
+            ];
         }
-        if ($this->byDay === null || !in_array($this->frequency, ['monthly', 'yearly'], true)) {
+        return $this->dayParts;
+    }
+
+    /**
+     * Whether the rule's day parts admit a local day: its month, its day of
+     * the year and of the month (counted from the end when negative), its
+     * weekday, and a numbered weekday's place in its month or year.
+     */
+    private function admits(int $dn): bool
+    {
+        $p = $this->dayParts();
+        [$y, $m, $d] = Cal::ymd($dn);
+        $listed = static function (array $list, int $v, int $len): bool {
+            foreach ($list as $n) {
+                if ($n === $v || ($n < 0 && $len + $n + 1 === $v)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if ($p['months'] !== null && !in_array($m, $p['months'], true)) {
             return false;
         }
-        $wd = strtoupper(substr($t->format('D'), 0, 2));
-        $inMonth = $this->frequency === 'monthly' || $this->byMonth !== null;
-        $pos = $inMonth ? (int) $t->format('j') : (int) $t->format('z') + 1;
-        $len = $inMonth ? (int) $t->format('t') : 365 + (int) $t->format('L');
-        foreach ($this->byDay as $day) {
-            $day = strtoupper((string) $day);
-            if (substr($day, -2) !== $wd) {
-                continue;
-            }
-            $n = (int) substr($day, 0, -2);
-            if ($n === 0 || ($n > 0 && intdiv($pos - 1, 7) + 1 === $n) || ($n < 0 && intdiv($len - $pos, 7) + 1 === -$n)) {
-                return false;
+        $monthLen = Cal::monthLen($y, $m);
+        if ($p['monthDays'] !== null && !$listed($p['monthDays'], $d, $monthLen)) {
+            return false;
+        }
+        $yearDay = $dn - Cal::dn($y, 1, 1) + 1;
+        $yearLen = Cal::leap($y) ? 366 : 365;
+        if ($p['yearDays'] !== null && !$listed($p['yearDays'], $yearDay, $yearLen)) {
+            return false;
+        }
+        if ($p['days'] === null) {
+            return true;
+        }
+        $wd = Cal::wd($dn);
+        [$pos, $len] = $p['inMonth'] ? [$d, $monthLen] : [$yearDay, $yearLen];
+        foreach ($p['days'] as [$n, $code]) {
+            if ($code === $wd && ($n === 0 || ($n > 0 && intdiv($pos - 1, 7) + 1 === $n) || ($n < 0 && intdiv($len - $pos, 7) + 1 === -$n))) {
+                return true;
             }
         }
-        return true;
+        return false;
+    }
+
+    /**
+     * The first local day after $t's that the rule's days admit, as a day
+     * number, or null when none does in the 400 years after it: the
+     * calendar repeats every 400 years, so such a rule admits none ever.
+     * Months BYMONTH leaves out are passed over whole, and in a month only
+     * the days BYMONTHDAY names are read.
+     */
+    private function nextDay(\DateTimeInterface $t): ?int
+    {
+        $p = $this->dayParts();
+        $from = Cal::dnOf(\DateTimeImmutable::createFromInterface($t)) + 1;
+        $last = $from + self::CYCLE_DAYS - 1;
+        for ($mi = Cal::miOf($from); ; $mi++) {
+            [$y, $m] = Cal::fromMi($mi);
+            $first = Cal::dn($y, $m, 1);
+            if ($first > $last) {
+                return null;
+            }
+            if ($p['months'] !== null && !in_array($m, $p['months'], true)) {
+                continue;
+            }
+            $len = Cal::monthLen($y, $m);
+            $days = range(1, $len);
+            if ($p['monthDays'] !== null) {
+                $days = array_unique(array_map(static fn(int $n): int => $n < 0 ? $len + $n + 1 : $n, $p['monthDays']));
+                sort($days);
+            }
+            foreach ($days as $d) {
+                $dn = $first + $d - 1;
+                if ($d < 1 || $d > $len || $dn < $from) {
+                    continue;
+                }
+                if ($dn > $last) {
+                    return null;
+                }
+                if ($this->admits($dn)) {
+                    return $dn;
+                }
+            }
+        }
+    }
+
+    /**
+     * Moves the walk on, for a frequency sabre steps by a fixed span of the
+     * wall clock (INTERVAL hours, days or weeks: every step of an HOURLY
+     * rule, and the days or weeks a DAILY or WEEKLY rule visits, its BYHOUR
+     * and BYDAY read inside them), by the whole spans that keep it before
+     * day $dn, or before the zone's next transition when that comes first,
+     * in one modify. Up to a transition the wall clock moves with time, so
+     * k spans at once land where k of sabre's steps would and the interval
+     * keeps its phase from the start; across one, sabre's own step does
+     * what it does there (a clock a gap pushed on stays pushed, as its steps
+     * carry it), and the walk jumps again after it. MONTHLY and YEARLY are
+     * left to sabre's steps, a dozen a year.
+     */
+    private function stepTowards(int $dn): void
+    {
+        $unit = ['hourly' => 'hours', 'daily' => 'days', 'weekly' => 'weeks'][$this->frequency] ?? null;
+        if ($unit === null) {
+            return;
+        }
+        $t = \DateTimeImmutable::createFromInterface($this->currentDate);
+        $ts = $t->getTimestamp();
+        $target = $this->dayStart($dn);
+        $transitions = $t->getTimezone()->getTransitions($ts + 1, $target);
+        if (is_array($transitions) && count($transitions) > 1) {
+            $target = min($target, (int) $transitions[1]['ts']);
+        }
+        // Divided as a float: a stored INTERVAL too large for a span in
+        // seconds (rows from before Recurrence::safeRrule) jumps nothing.
+        $span = $this->interval * ['hours' => 3600, 'days' => 86400, 'weeks' => 604800][$unit];
+        $spans = (int) floor(($target - $ts - 1) / $span);
+        if ($spans > 0) {
+            $this->currentDate = $t->modify('+' . ($spans * $this->interval) . ' ' . $unit);
+        }
+    }
+
+    /** The first instant of a local day in the start's zone. */
+    private function dayStart(int $dn): int
+    {
+        [$y, $m, $d] = Cal::ymd($dn);
+        return (new \DateTimeImmutable('now', $this->startDate->getTimezone()))->setDate($y, $m, $d)->setTime(0, 0)->getTimestamp();
+    }
+
+    /**
+     * How far the walk can go from an occurrence without finding the next
+     * before it would only repeat itself, in seconds. This is the rule's own
+     * end, not a search limit: the walk's place is its place in the calendar,
+     * which repeats every 400 years, and in its steps, INTERVAL of the
+     * frequency's unit, so it is back where it was, and repeats what it did,
+     * after INTERVAL / gcd(c, INTERVAL) cycles, c being the cycle in that
+     * unit (146097 days, its hours, 20871 weeks, 4800 months or 400 years).
+     * A walk that found nothing in that time never will.
+     */
+    private function cycle(): int|float
+    {
+        $c = match ($this->frequency) {
+            'hourly' => self::CYCLE_DAYS * 24,
+            'daily' => self::CYCLE_DAYS,
+            'weekly' => intdiv(self::CYCLE_DAYS, 7),
+            'monthly' => 4800,
+            default => 400,
+        };
+        [$a, $b] = [$c, $this->interval];
+        while ($b !== 0) {
+            [$a, $b] = [$b, $a % $b];
+        }
+        return intdiv($this->interval, $a) * self::CYCLE_DAYS * 86400;
     }
 
     /** The step between periods, in seconds. */
@@ -238,24 +431,8 @@ class RuleIterator extends RRuleIterator
     private function fails(\DateTimeImmutable $t): ?string
     {
         $in = static fn(?array $list, int $v): bool => $list === null || in_array($v, array_map('intval', $list), true);
-        $fromEnd = static function (?array $list, int $v, int $len): bool {
-            if ($list === null) {
-                return true;
-            }
-            foreach (array_map('intval', $list) as $n) {
-                if ($n === $v || ($n < 0 && $len + $n + 1 === $v)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        $days = static fn(?array $list, string $code): bool => $list === null
-            || in_array($code, array_map(static fn($d): string => strtoupper(substr((string) $d, -2)), $list), true);
         return match (true) {
-            !$in($this->byMonth, (int) $t->format('n')),
-            !$fromEnd($this->byYearDay, (int) $t->format('z') + 1, 365 + (int) $t->format('L')),
-            !$fromEnd($this->byMonthDay, (int) $t->format('j'), (int) $t->format('t')),
-            !$days($this->byDay, strtoupper(substr($t->format('D'), 0, 2))) => 'day',
+            !$this->admits(Cal::dnOf($t)) => 'day',
             !$in($this->byHour, (int) $t->format('G')) => 'hour',
             !$in($this->byMinute, (int) $t->format('i')) => 'minute',
             $this->frequency === 'secondly' && !$in($this->bySecond, (int) $t->format('s')) => 'second',
@@ -267,25 +444,30 @@ class RuleIterator extends RRuleIterator
      * The next period worth reading after $n: the one after it, or, when $n
      * gave nothing because its last instant fails a limit from a day, an
      * hour or a minute on, the period holding the first instant that limit
-     * can allow (the next local day, hour or minute, or the zone's next
-     * transition if that comes first, since the wall clock jumps there).
+     * can allow (the start of the next day the rule's days admit, or the
+     * next local hour or minute; or the zone's next transition if that comes
+     * first, since the wall clock jumps there). Null when no day ever is
+     * admitted again (nextDay).
      *
      * @param array{0:\DateTimeImmutable,1:string}|null $last
      */
-    private function nextPeriod(int $n, ?array $last): int
+    private function nextPeriod(int $n, ?array $last): ?int
     {
         if ($last === null || $last[1] === 'second') {
             return $n + 1;
         }
         [$t, $level] = $last;
-        $into = (int) $t->format('s') + match ($level) {
-            'day' => (int) $t->format('G') * 3600 + (int) $t->format('i') * 60,
-            'hour' => (int) $t->format('i') * 60,
-            default => 0,
-        };
-        $span = ['day' => 86400, 'hour' => 3600, 'minute' => 60][$level];
         $ts = $t->getTimestamp();
-        $target = $ts + $span - $into;
+        if ($level === 'day') {
+            $day = $this->nextDay($t);
+            if ($day === null) {
+                return null;
+            }
+            $target = $this->dayStart($day);
+        } else {
+            $into = (int) $t->format('s') + ($level === 'hour' ? (int) $t->format('i') * 60 : 0);
+            $target = $ts + ($level === 'hour' ? 3600 : 60) - $into;
+        }
         $transitions = $this->startDate->getTimezone()->getTransitions($ts + 1, $target);
         if (is_array($transitions) && count($transitions) > 1) {
             $target = min($target, (int) $transitions[1]['ts']);

@@ -57,6 +57,28 @@ $harness = static function (?string $model, array $args) use ($exec, $root, $tmp
     return ['byCase' => $byCase, 'misuses' => $f['journalMisuses'] ?? [], 'records' => $f['records']];
 };
 
+/**
+ * One database test file, with $preload loaded in place of the tree's class: its failing assertion labels, and why the
+ * run broke (null when it ran to the end with no throw): the file didn't run, didn't finish, or a block threw.
+ */
+$dbtest = static function (string $test, ?string $preload) use ($exec, $root, $tmp): array {
+    $report = "$tmp/dbtest-" . bin2hex(random_bytes(3)) . '.json';
+    [$code, $out] = $exec([PHP_BINARY, $root . '/server/tests/db/run.php'], ['BC_TEST_ONLY' => $test, 'BC_TEST_REPORT' => $report] + ($preload === null ? [] : ['BC_TEST_PRELOAD' => $preload]));
+    $r = is_file($report) ? json_decode((string) file_get_contents($report), true) : null;
+    if (!is_array($r)) {
+        return ['failing' => [], 'broke' => "no report (exit $code): " . substr(trim($out), -300)];
+    }
+    $failing = array_values(array_unique(array_map(static fn(array $c): string => $c['name'], array_filter($r['checks'], static fn(array $c): bool => !$c['pass']))));
+    $threw = array_values(array_filter($r['checks'], static fn(array $c): bool => !$c['pass'] && $c['threw']));
+    $broke = match (true) {
+        !isset($r['files']["$test.test.php"]) => "$test.test.php did not run",
+        $r['files']["$test.test.php"] !== true => "$test.test.php did not run to the end",
+        $threw !== [] => count($threw) . ' block(s) threw, first ' . $threw[0]['name'] . ': ' . $threw[0]['detail'],
+        default => null,
+    };
+    return ['failing' => $failing, 'broke' => $broke];
+};
+
 $failed = 0;
 try {
     if (isset($opts['search'])) {
@@ -100,6 +122,16 @@ try {
         echo ($clean ? 'ok  ' : 'FAIL') . "  baseline: the mutations' " . count($cases) . " fixed cases pass unmutated" . ($clean ? '' : ': ' . json_encode($base['byCase'])) . "\n";
         $failed += $clean ? 0 : 1;
     }
+    // Each database test a mutation names, unmutated: it must run to the end with no failure, and its failures, if any,
+    // are the baseline the mutation's are judged against.
+    $dbBase = [];
+    foreach (array_unique(array_filter(array_map(static fn(array $m): ?string => $m['dbtest'] ?? null, $selected))) as $test) {
+        $dbBase[$test] = $dbtest($test, null);
+        $clean = $dbBase[$test]['failing'] === [] && $dbBase[$test]['broke'] === null;
+        echo ($clean ? 'ok  ' : 'FAIL') . "  baseline: $test.test.php passes unmutated"
+            . ($clean ? '' : ': ' . ($dbBase[$test]['broke'] ?? '') . ' ' . json_encode($dbBase[$test]['failing'])) . "\n";
+        $failed += $clean ? 0 : 1;
+    }
     foreach ($selected as $m) {
         try {
             $copy = $apply($m);
@@ -110,10 +142,23 @@ try {
             continue;
         }
         if (isset($m['dbtest'])) {
-            [$code, $out] = $exec([PHP_BINARY, $root . '/server/tests/db/run.php'], ['BC_TEST_ONLY' => $m['dbtest'], 'BC_TEST_PRELOAD' => $copy]);
-            preg_match('/(\d+) passed, (\d+) failed/', $out, $t);
-            $ok = $code !== 0 && (int) ($t[2] ?? 0) > 0;
-            echo ($ok ? 'ok  ' : 'FAIL') . "  {$m['id']}: {$m['what']}: " . ($ok ? "{$m['dbtest']}.test.php fails ({$t[2]} of " . ((int) $t[1] + (int) $t[2]) . ')' : "{$m['dbtest']}.test.php did not fail") . "\n";
+            // Judged as the harness branch is: by the assertions it adds to the unmutated run, by label. It must fail every
+            // named one and no other; a throw (caught by scenario() or by run.php), a crash, or the file not running to the end
+            // fails the mutation run whatever it adds.
+            if (($m['checks'] ?? []) === []) {
+                echo "FAIL  {$m['id']}: names no assertions it must fail\n";
+                $failed++;
+                continue;
+            }
+            $r = $dbtest($m['dbtest'], $copy);
+            $added = array_values(array_diff($r['failing'], $dbBase[$m['dbtest']]['failing']));
+            $missing = array_values(array_diff($m['checks'], $added));
+            $others = array_values(array_diff($added, $m['checks']));
+            $broke = $r['broke'];
+            $ok = $missing === [] && $others === [] && $broke === null;
+            echo ($ok ? 'ok  ' : 'FAIL') . "  {$m['id']}: {$m['what']}: {$m['dbtest']}.test.php fails " . (count($m['checks']) - count($missing)) . ' of its ' . count($m['checks']) . ' named assertions'
+                . ($missing === [] ? '' : '; did not fail ' . json_encode($missing)) . ($others === [] ? '' : '; other assertions failed ' . json_encode($others))
+                . ($broke === null ? '' : "; the run broke: $broke") . "\n";
             $failed += $ok ? 0 : 1;
             continue;
         }

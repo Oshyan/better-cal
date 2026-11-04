@@ -9,6 +9,15 @@ declare(strict_types=1);
 
 $model = 'server/src/Domain/Series/Model.php';
 
+// The assertion labels of undo-trips.test.php a trip-rule mutation must fail: for one of its undo cases, the refusal on
+// every undo path, the undo once the conflict is gone on the paths given, and the refusal's words (checked on undoById).
+$undoPaths = ['undoLatest', 'undoById', 'undoById force', 'undoRun strict', 'undoRun'];
+$undoCase = static fn(string $case, array $undoes): array => array_merge(
+    array_map(static fn(string $p): string => "$case ($p): refused with undo_conflict, nothing written (every row, link and entry as before), the entry still to undo", $undoPaths),
+    array_map(static fn(string $p): string => "$case ($p): once the conflict is gone, the entry undoes", $undoes),
+    ["$case: the refusal names the rows and the rule"],
+);
+
 return [
     [
         'id' => 'placement-zone', 'file' => $model, 'checks' => ['c-shape', 'c-placement'],
@@ -135,10 +144,35 @@ return [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
         'what' => 'the shared trip rule (Trips::assertRules) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],
+        'checks' => array_merge(
+            $undoCase('flag set, then a stop added', $undoPaths),
+            $undoCase('the series made a trip for all events, then a stop added to a day', $undoPaths),
+            ['turned off with a stop in it: 400 trip_has_members, naming both, nothing written'],
+        ),
     ],
     [
         'id' => 'undo-gate-nesting', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
         'what' => 'the shared trip rule (Trips::assertRules) lets a link with both ends flagged stand',
         'patch' => [["((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))", "((c.is_container = 1 AND (1 = 0 OR l.container_id = l.event_id))"]],
+        // "Detach, then flag the stop" under "undo the last change": the undo goes through, so the check of what it put back fails instead.
+        'checks' => array_merge(
+            $undoCase('detach, then flag the stop', array_slice($undoPaths, 1)),
+            ['detach, then flag the stop: undone, the stop is back in its trip and no trip itself'],
+            $undoCase('flag cleared, then put in a trip', $undoPaths),
+            $undoCase('the series turned off for all events, then a day put in a trip', $undoPaths),
+            [
+                'its old trip made a trip again: 400 trip_nested, naming both and the rule, nothing written',
+                'the refusal names the rows and the rule',
+                'then its stop made a trip: 400 trip_nested, nothing written',
+                'the refusal reads the same from either end',
+                'the series made a trip from the master for all events: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip from the edited day\'s own row for all events: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip the edited day alone: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip this and following from the first day: 400 trip_nested, naming the day and its stop, nothing written',
+                'a trip attached to a trip, and a trip to itself: 400 trip_invalid each, naming the rule, nothing written',
+                'a stop on a Google calendar renamed and made a trip: 400 trip_nested, no call to Google, nothing written',
+                'out of its trip, the same edit: sent to Google once, renamed and a trip',
+            ],
+        ),
     ],
 ];

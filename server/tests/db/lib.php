@@ -21,9 +21,15 @@ use BetterCal\Infra\Setup;
 
 $GLOBALS['__pass'] = 0;
 $GLOBALS['__fail'] = 0;
+// Every check by its label, in order, for the report run.php writes when
+// BC_TEST_REPORT names a file (the edit harness's mutation runner judges a
+// mutation by which assertions it fails). `threw` marks a failure that is a
+// throw caught by scenario() or by run.php, not an assertion.
+$GLOBALS['__checks'] = [];
 
-function check(string $name, bool $cond, string $detail = ''): void
+function check(string $name, bool $cond, string $detail = '', bool $threw = false): void
 {
+    $GLOBALS['__checks'][] = ['name' => $name, 'pass' => $cond] + ($cond ? [] : ['detail' => $detail, 'threw' => $threw]);
     if ($cond) {
         $GLOBALS['__pass']++;
         return;
@@ -48,7 +54,7 @@ function scenario(string $name, callable $fn): void
     try {
         $fn();
     } catch (\Throwable $e) {
-        check($name, false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
+        check($name, false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
     }
 }
 

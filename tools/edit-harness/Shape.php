@@ -3,7 +3,7 @@
 // Imported Rules, by Capability): its family, its capability and its
 // members, and an evaluator of the days a pattern names in each period.
 // Written from RFC 5545 and the design, with no call into Domain/Series;
-// the expander (Truth) checks it on every series the harness makes.
+// its days are checked against the evaluator (Rfc) on every series it reads.
 declare(strict_types=1);
 
 namespace BetterCal\EditHarness;

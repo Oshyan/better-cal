@@ -203,6 +203,18 @@ trait PlanUntouched
         return null;
     }
 
+    /** The ids of the account's tags or people by name, sorted as wide() lists a row's. */
+    private function labelIds(string $table, array $names): array
+    {
+        if ($names === []) {
+            return [];
+        }
+        [$in, $params] = Db::in(array_values(array_unique(array_map('strval', $names))));
+        $ids = array_map('intval', array_column($this->db->all("SELECT id FROM $table WHERE user_id = ? AND name IN $in", array_merge([$this->userId], $params)), 'id'));
+        sort($ids);
+        return $ids;
+    }
+
     private function untouchedFail(string $what, array $detail): void
     {
         $this->records[] = ['invariant' => 'c-untouched', 'what' => $what, 'detail' => $detail];
@@ -285,6 +297,12 @@ trait PlanUntouched
                 $this->untouchedFail('a link the edit has no reason to change changed', ['link' => $l, 'now' => $w1['event_links'][$lid] ?? null]);
             }
         }
+        // A link present only afterwards is an insertion, and no whole-series commit makes a link: the rows it creates
+        // (the day acted on's own row, the event of its own it became) are in no trip, and only Trips writes links.
+        $this->ran('c-untouched', 'links inserted');
+        foreach (array_diff_key($w1['event_links'], $w0['event_links']) as $l) {
+            $this->untouchedFail('a link was inserted, and no series edit makes one', ['link' => $l]);
+        }
         // Insertions: the row created for the day acted on, the event of its own it became; nothing else.
         $createdActed = 0;
         $actedOwn = 0;
@@ -311,6 +329,13 @@ trait PlanUntouched
                 continue;
             }
             $this->ran('c-untouched', 'insertion');
+            // A created row takes the series' tags and people: the ones the request sent, else the series' own before the edit.
+            foreach (['event_tags' => ['tags', 'tags'], 'event_people' => ['people', 'people']] as $table => [$f, $names]) {
+                $want = isset($edit['fields'][$f]) ? $this->labelIds($names, $edit['fields'][$f]) : ($w0[$table][$master] ?? []);
+                if (($w1[$table][$id] ?? []) !== $want) {
+                    $this->untouchedFail("an inserted row's $f are not the series'", ['row' => $id, 'want' => $want, 'now' => $w1[$table][$id] ?? []]);
+                }
+            }
             if ((int) ($r1['recurrence_parent_id'] ?? 0) === $master) {
                 $new['override']++;
             } elseif ($r1['recurrence_parent_id'] === null && $r1['rrule'] === null) {
@@ -337,6 +362,9 @@ trait PlanUntouched
                     $this->untouchedFail("a calendar's $col changed", ['calendar' => $cid, 'was' => $v, 'now' => $c1[$col] ?? null]);
                 }
             }
+        }
+        foreach (array_diff_key($w1['calendars'], $w0['calendars']) as $cid => $c1) {
+            $this->untouchedFail('a calendar was inserted', ['calendar' => $cid]);
         }
         $this->ran('c-untouched', 'label names');
         foreach (['tags', 'people'] as $f) {

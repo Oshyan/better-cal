@@ -15,7 +15,7 @@ trait PlanChecks
     /** @var array<string,array<string,int>> executions of each new check, by role and outcome */
     private array $runs = [];
     /** The new checks: a failure of one is never under a known cause. */
-    public const NEW_CHECKS = ['c-shape', 'c-placement', 'c-next', 'c-untouched'];
+    public const NEW_CHECKS = ['c-shape', 'c-placement', 'c-next', 'c-untouched', 'c-occurrences', 'c-window'];
     /** How many events coming up lists, and so where nextMore starts counting (the model's tests: "the next four"). */
     private const NEXT_LIMIT = 4;
 
@@ -228,7 +228,7 @@ trait PlanChecks
         'placement' => ['date', 'at', 'tz', 'kind'],
         'acted' => ['key', 'title', 'day', 'ownDate', 'before', 'shows', 'kept'],
         'losses[]' => ['date', 'words'],
-        'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'words'],
+        'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'fold', 'daylight', 'words'],
         'refusals[]' => ['group', 'option', 'code', 'words'],
         'fields[]' => ['field', 'words', 'was', 'now', 'mixed'],
     ];

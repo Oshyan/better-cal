@@ -14,6 +14,7 @@ use BetterCal\Infra\Db;
 
 require_once __DIR__ . '/Base.php';
 require_once __DIR__ . '/Shape.php';
+require_once __DIR__ . '/Rfc.php';
 require_once __DIR__ . '/Truth.php';
 require_once __DIR__ . '/Space.php';
 require_once __DIR__ . '/Delta.php';
@@ -182,6 +183,11 @@ final class Runner
 
     public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed)
     {
+        // The evaluator every check reads must give its hand-listed examples first (rfc-examples.php): a run on a wrong oracle stops.
+        $bad = Rfc::examples();
+        if ($bad !== []) {
+            throw new \RuntimeException('the harness\'s rule evaluator disagrees with ' . count($bad) . ' of its hand-listed examples: ' . json_encode($bad[0], JSON_UNESCAPED_SLASHES));
+        }
     }
 
     /** A fresh account every $perUser cases keeps the journal short. */

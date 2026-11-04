@@ -9,6 +9,24 @@ declare(strict_types=1);
 
 $model = 'server/src/Domain/Series/Model.php';
 
+// The assertion labels of undo-trips.test.php a trip-rule mutation must fail: for one of its undo cases, the refusal on
+// every undo path, the undo once the conflict is gone on the paths given, and the refusal's words (checked on undoById).
+// The occurrence mutations wrap the app's rule iterator (every expansion reads it: the model's and the window's), so
+// they hold whatever its own stepping becomes: the iterator's next() is renamed and a new one calls it, then breaks
+// what it yields one way. $extra adds members beside it.
+$iterator = 'server/src/Domain/Series/RuleIterator.php';
+$wrapNext = static fn(string $body, string $extra = ''): array => [[
+    "    #[\\ReturnTypeWillChange]\n    public function next()\n    {\n",
+    $extra . "    #[\\ReturnTypeWillChange]\n    public function next()\n    {\n" . $body . "\n    }\n\n    private function nextUnmutated()\n    {\n",
+]];
+
+$undoPaths = ['undoLatest', 'undoById', 'undoById force', 'undoRun strict', 'undoRun'];
+$undoCase = static fn(string $case, array $undoes): array => array_merge(
+    array_map(static fn(string $p): string => "$case ($p): refused with undo_conflict, nothing written (every row, link and entry as before), the entry still to undo", $undoPaths),
+    array_map(static fn(string $p): string => "$case ($p): once the conflict is gone, the entry undoes", $undoes),
+    ["$case: the refusal names the rows and the rule"],
+);
+
 return [
     [
         'id' => 'placement-zone', 'file' => $model, 'checks' => ['c-shape', 'c-placement'],
@@ -107,6 +125,89 @@ return [
         'cases' => ['note-a-clock-in-the-autumn-overlap', 'note-a-clock-in-the-spring-gap', 'note-a-half-hour-repeated-clock-on-lord-howe'],
     ],
     [
+        // At the plan's output, so it holds whatever the note code becomes: the overlap note's at put on the first of the
+        // wall clock's instants that day, its fold and daylight left as the model wrote them.
+        'id' => 'note-at-first-instant', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'an overlap note pinned to the first instant of the repeated clock, whichever the series is at',
+        'patch' => [["            'notes' => \$this->notes,\n", "            'notes' => array_map(static fn(array \$n): array => (\$n['kind'] === 'overlap' ? ['at' => self::inZoneOut(Calc::instantsAt(Cal::dn(...array_map('intval', explode('-', \$n['date']))), array_map('intval', explode(':', substr(\$n['at'], 11, 8))), \$n['tz'])[0], \$n['tz'])] : []) + \$n, \$this->notes),\n"]],
+        'cases' => ['note-a-clock-at-the-second-of-its-two-instants'],
+    ],
+    // The occurrence checks: c-occurrences (the window's expansion against the harness's own evaluator) and, since the
+    // model reads the same iterator, the model's comparisons against it (c-next's coming up, c-placement's bound.last).
+    [
+        // The window's expander alone (the model reads Calc, not this), so only the window's checks see it.
+        'id' => 'window-truncated-by-its-start', 'file' => 'server/src/Domain/Recurrence.php', 'checks' => ['c-occurrences', 'c-window'],
+        'what' => 'the window\'s expansion ends 400 days after the window\'s own start, so a wide window shows less than its parts',
+        'patch' => [["                if (\$occStart >= \$winEnd) {\n                    break;\n                }", "                if (\$occStart >= \$winEnd || \$occStart->getTimestamp() - \$winStart->getTimestamp() > 400 * 86400) {\n                    break;\n                }"]],
+        'cases' => ['mutation-occurrences-months-apart'],
+    ],
+    [
+        'id' => 'occurrences-count-cap', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'premature termination: the walk ends when the next occurrence is more than 100 days on',
+        'patch' => $wrapNext('        $prev = $this->currentDate === null ? null : $this->currentDate->getTimestamp();
+        $this->nextUnmutated();
+        if ($prev !== null && $this->currentDate !== null && $this->currentDate->getTimestamp() - $prev > 100 * 86400) {
+            $this->currentDate = null;
+        }'),
+        'cases' => ['mutation-occurrences-months-apart'],
+    ],
+    [
+        'id' => 'occurrences-missing', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'a missing occurrence: the third is stepped over and not counted',
+        'patch' => $wrapNext('        $this->nextUnmutated();
+        if ($this->counter === 2) {
+            $this->nextUnmutated();
+            --$this->counter;
+        }'),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-extra', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'an extra occurrence: an hour before the second, not counted',
+        'patch' => $wrapNext('        if ($this->counter === 0) {
+            $this->mutHeld = null;
+        }
+        if ($this->mutHeld !== null) {
+            $this->currentDate = $this->mutHeld;
+            $this->mutHeld = null;
+            return;
+        }
+        $this->nextUnmutated();
+        if ($this->counter === 1 && $this->currentDate !== null) {
+            $this->mutHeld = $this->currentDate;
+            $this->currentDate = (clone $this->currentDate)->setTimestamp($this->currentDate->getTimestamp() - 3600);
+        }', "    private mixed \$mutHeld = null;\n\n"),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-count-off-by-one', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'COUNT read as one more than it says',
+        'patch' => $wrapNext('        $this->nextUnmutated();', "    #[\\ReturnTypeWillChange]\n    public function valid()\n    {\n        if (\$this->count === null) {\n            return parent::valid();\n        }\n        \$this->count++;\n        \$v = parent::valid();\n        \$this->count--;\n        return \$v;\n    }\n\n"),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-second-instant', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'an occurrence in a repeated hour put at its second instant',
+        'patch' => $wrapNext('        $this->nextUnmutated();
+        if ($this->currentDate !== null) {
+            foreach ([3600, 1800] as $d) {
+                $t = (clone $this->currentDate)->setTimestamp($this->currentDate->getTimestamp() + $d);
+                if ($t->format(\'Y-m-d H:i:s\') === $this->currentDate->format(\'Y-m-d H:i:s\')) {
+                    $this->currentDate = $t;
+                    break;
+                }
+            }
+        }'),
+        'cases' => ['mutation-occurrences-in-a-repeated-hour'],
+    ],
+    [
+        // In sabre's own weekly step (vendor, never changed: the copy is loaded in its place).
+        'id' => 'occurrences-weekly-byday-unread', 'file' => 'server/vendor/sabre/vobject/lib/Recur/RRuleIterator.php', 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'one part\'s evaluation removed: a weekly rule\'s BYDAY, so it repeats on its start\'s weekday alone',
+        'patch' => [["        if (!\$this->byHour && !\$this->byDay) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');", "        if (!\$this->byHour) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');"]],
+        'cases' => ['mutation-occurrences-on-a-weekday-list'],
+    ],
+    [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],
         'what' => 'an unrelated column (the icon) changed on the series',
         'patch' => [["                'master' => \$masterCols,", "                'master' => \$masterCols + ['icon' => 'sample'],"]],
@@ -130,15 +231,59 @@ return [
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    [
+        'id' => 'untouched-extra-link', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        // Both flags stay false, so the link is dormant and the trip rule allows it; it is journaled, so Undo takes it away.
+        'what' => 'a commit that links the series, as a trip, to the account\'s latest event of its own made before it',
+        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$other = \$this->db->scalar('SELECT id FROM events WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL ORDER BY id DESC LIMIT 1', [\$userId, \$id]);\n            if (\$other !== null) {\n                \$this->db->run('INSERT IGNORE INTO event_links (container_id, event_id) VALUES (?, ?)', [\$id, (int) \$other]);\n            }\n            if (\$w['master'] !== []) {\n"]],
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'untouched-created-row-tags', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'the event of its own a commit creates for the day acted on made without the series\' tags',
+        'patch' => [["                \$created[] = \$newId;\n", "                \$this->db->run('DELETE FROM event_tags WHERE event_id = ?', [\$newId]);\n                \$created[] = \$newId;\n"]],
+        'cases' => ['mutation-acted-day-on-its-own-takes-the-series-tags'],
+    ],
+    [
+        'id' => 'untouched-extra-calendar', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'a commit that adds a calendar to the account',
+        'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$this->db->insert('calendars', ['user_id' => \$userId, 'name' => 'Sample extra', 'color' => '#336699', 'kind' => 'local', 'position' => 999]);\n            if (\$w['master'] !== []) {\n"]],
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
     // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
         'what' => 'the shared trip rule (Trips::assertRules) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],
+        'checks' => array_merge(
+            $undoCase('flag set, then a stop added', $undoPaths),
+            $undoCase('the series made a trip for all events, then a stop added to a day', $undoPaths),
+            ['turned off with a stop in it: 400 trip_has_members, naming both, nothing written'],
+        ),
     ],
     [
         'id' => 'undo-gate-nesting', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
         'what' => 'the shared trip rule (Trips::assertRules) lets a link with both ends flagged stand',
         'patch' => [["((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))", "((c.is_container = 1 AND (1 = 0 OR l.container_id = l.event_id))"]],
+        // "Detach, then flag the stop" under "undo the last change": the undo goes through, so the check of what it put back fails instead.
+        'checks' => array_merge(
+            $undoCase('detach, then flag the stop', array_slice($undoPaths, 1)),
+            ['detach, then flag the stop: undone, the stop is back in its trip and no trip itself'],
+            $undoCase('flag cleared, then put in a trip', $undoPaths),
+            $undoCase('the series turned off for all events, then a day put in a trip', $undoPaths),
+            [
+                'its old trip made a trip again: 400 trip_nested, naming both and the rule, nothing written',
+                'the refusal names the rows and the rule',
+                'then its stop made a trip: 400 trip_nested, nothing written',
+                'the refusal reads the same from either end',
+                'the series made a trip from the master for all events: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip from the edited day\'s own row for all events: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip the edited day alone: 400 trip_nested, naming the day and its stop, nothing written',
+                'the series made a trip this and following from the first day: 400 trip_nested, naming the day and its stop, nothing written',
+                'a trip attached to a trip, and a trip to itself: 400 trip_invalid each, naming the rule, nothing written',
+                'a stop on a Google calendar renamed and made a trip: 400 trip_nested, no call to Google, nothing written',
+                'out of its trip, the same edit: sent to Google once, renamed and a trip',
+            ],
+        ),
     ],
 ];

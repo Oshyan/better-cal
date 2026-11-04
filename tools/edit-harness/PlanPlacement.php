@@ -558,8 +558,10 @@ trait PlanPlacement
      * from the cutoff through a year (series-model.md, the clock-notes
      * sentence) on whose clock
      * names no instant (gap) or two (overlap) must have its note, and every
-     * note must be such a day, at that occurrence's instant (an overlap's
-     * first), in the series' zone.
+     * note must be such a day, at that occurrence's own instant (its key, for
+     * a gap and an overlap alike), in the series' zone. An overlap note
+     * carries `fold` (the instant's place among the wall clock's instants)
+     * and `daylight` (by tzdata), each checked on its own.
      */
     private function placeNotes(array $plan, array $after, array $edit, array $ctx): void
     {
@@ -594,16 +596,38 @@ trait PlanPlacement
                     default => 'overlap',
                 };
                 if ($kind !== null) {
-                    $first = $kind === 'overlap' ? $at[0] : Clock::parse($k)->getTimestamp();
-                    $want[$kind . ' ' . Days::date($dn)] = Clock::iso((new \DateTimeImmutable('@' . $first))->setTimezone(Clock::zone($tz)));
+                    // The series' own instant on that day, the key the expander yields, for a gap and an overlap alike.
+                    $t = Clock::parse($k)->getTimestamp();
+                    $local = static fn(int $i): \DateTimeImmutable => (new \DateTimeImmutable('@' . $i))->setTimezone(Clock::zone($tz));
+                    $w = ['at' => Clock::iso($local($t))];
+                    if ($kind === 'overlap') {
+                        // Its place among the wall clock's instants that day, and whether it is in daylight time by tzdata:
+                        // false when it isn't but the other instant is, null when neither is.
+                        $pos = array_search($t, $at, true);
+                        $other = $at[$pos === 0 ? 1 : 0];
+                        $w['fold'] = match ($pos) {
+                            0 => 'first',
+                            1 => 'second',
+                            default => null,
+                        };
+                        $w['daylight'] = $local($t)->format('I') === '1' ? true : ($local($other)->format('I') === '1' ? false : null);
+                    }
+                    $want[$kind . ' ' . Days::date($dn)] = $w;
                 }
             }
         }
-        foreach ($want as $id => $at) {
+        foreach ($want as $id => $w) {
             $kind = strstr($id, ' ', true);
             $this->expect('c-placement', "a day of the stored series whose clock " . ($kind === 'gap' ? 'doesn\'t exist' : 'happens twice') . ' there has its note', "notes ($kind) present", true, isset($listed[$id]), ['day' => $id, 'cutoff' => Days::date($cut), 'listed' => array_keys($listed)]);
-            if (isset($listed[$id])) {
-                $this->expect('c-placement', 'a note\'s at is the series\' instant on that day (an overlap\'s first)', "notes at ($kind)", $at, self::norm($listed[$id], ['at'])['at'] ?? null, ['note' => $listed[$id]]);
+            if (!isset($listed[$id])) {
+                continue;
+            }
+            $n = $listed[$id];
+            $this->expect('c-placement', 'a note\'s at is the series\' own instant on that day, the key the expander yields', "notes at ($kind)", $w['at'], self::norm($n, ['at'])['at'] ?? null, ['note' => $n]);
+            if ($kind === 'overlap') {
+                $this->expect('c-placement', 'an overlap note carries fold and daylight', 'notes (overlap) fold and daylight', true, array_key_exists('fold', $n) && array_key_exists('daylight', $n), ['note' => $n]);
+                $this->expect('c-placement', 'an overlap note\'s fold is the instant\'s place among the wall clock\'s instants that day, by tzdata', 'notes (overlap) fold', $w['fold'], $n['fold'] ?? null, ['note' => $n]);
+                $this->expect('c-placement', 'an overlap note\'s daylight says whether its instant is in daylight time by tzdata (false when only the other is, null when neither)', 'notes (overlap) daylight', $w['daylight'], $n['daylight'] ?? null, ['note' => $n]);
             }
         }
         foreach ($listed as $id => $n) {

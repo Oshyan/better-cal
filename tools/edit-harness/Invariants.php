@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 namespace BetterCal\EditHarness;
 
+use BetterCal\Domain\Recurrence;
 use BetterCal\Http\HttpError;
 
 trait Invariants
@@ -70,6 +71,7 @@ trait Invariants
         if ($st['shape']->cap === 'unreadable') {
             return;
         }
+        $this->checkOccurrences($st);
         $this->check($inv, $raw !== [] && $raw[0]['key'] === (string) $row['start_utc'], 'the stored start is the first raw occurrence', ['start' => $row['start_utc'], 'first' => $raw[0]['key'] ?? null, 'rrule' => $row['rrule']]);
         $shape = $st['shape'];
         if (!$shape->supported() || $raw === []) {
@@ -90,6 +92,54 @@ trait Invariants
         }
         if ($mine !== $theirs) {
             $this->fail('H-evaluator', 'the harness reads the rule\'s days differently from the expander', ['rrule' => $row['rrule'], 'start' => $row['start_utc']] + self::firstDiff($mine, $theirs, true));
+        }
+    }
+
+    /**
+     * c-occurrences: the window's expansion of a stored series equals the
+     * harness's own evaluator (Rfc) over the whole bound, instant by instant:
+     * all of a bounded series (and a year past its last occurrence, where an
+     * extra one would show), an unbounded one through its window. An
+     * evaluation that stops short (its horizon, a part it doesn't read) is a
+     * failure, never an end. c-window: the window's expander gives the same
+     * instants inside each quarter of that span read alone as read whole.
+     * Which part combinations and bounds were oracled is tallied by role.
+     */
+    private function checkOccurrences(array $st): void
+    {
+        $row = $st['row'];
+        $ev = Rfc::ofRow($row);
+        $combo = $ev->combination();
+        $occ = $ev->bounded() ? $ev->all() : $ev->through(Truth::windowEnd($row) - 1);
+        $this->ran('c-occurrences', $combo);
+        if ($ev->unread !== null || $ev->incomplete !== null) {
+            $this->fail('c-occurrences', 'the harness\'s evaluator could not read the series through its bound (an incomplete evaluation)', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'why' => $ev->unread ?? $ev->incomplete, 'read' => count($occ)]);
+            return;
+        }
+        $from = Clock::parse((string) $row['start_utc'])->getTimestamp();
+        $to = $ev->bounded() ? ((end($occ)[0] ?? $from) + 366 * 86400) : Truth::windowEnd($row);
+        $mine = array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), array_filter($occ, static fn(array $o): bool => $o[0] < $to));
+        $mine = array_values($mine);
+        $wide = Truth::window($row, $from, $to);
+        if (count($wide) > Recurrence::MAX_INSTANCES) {
+            // The window shows at most its cap at once: compared through the last it shows.
+            $wide = array_slice($wide, 0, Recurrence::MAX_INSTANCES);
+            $mine = array_values(array_filter($mine, static fn(string $k): bool => $k <= end($wide)));
+        }
+        if ($mine !== $wide) {
+            $this->fail('c-occurrences', 'the window\'s expansion differs from the harness\'s reading of the rule', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'tz' => $row['tzid'], 'combination' => $combo,
+                'missing' => array_slice(array_values(array_diff($mine, $wide)), 0, 6), 'extra' => array_slice(array_values(array_diff($wide, $mine)), 0, 6), 'counts' => [count($mine), count($wide)]]);
+        }
+        $this->ran('c-window', $combo);
+        $parts = [];
+        for ($i = 0; $i < 4; $i++) {
+            $a = $from + intdiv(($to - $from) * $i, 4);
+            $b = $i === 3 ? $to : $from + intdiv(($to - $from) * ($i + 1), 4);
+            $parts = array_merge($parts, Truth::window($row, $a, $b));
+        }
+        if (count($wide) < Recurrence::MAX_INSTANCES && $parts !== $wide) {
+            $this->fail('c-window', 'the window\'s expander gives other instants in a part of its span read alone than read whole', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'tz' => $row['tzid'],
+                'onlyInParts' => array_slice(array_values(array_diff($parts, $wide)), 0, 6), 'onlyWhole' => array_slice(array_values(array_diff($wide, $parts)), 0, 6), 'counts' => [count($wide), count($parts)]]);
         }
     }
 

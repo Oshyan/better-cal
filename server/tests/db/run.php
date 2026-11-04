@@ -48,6 +48,7 @@ putenv('BC_TEST_DSN=' . "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb
 putenv("BC_TEST_DB_USER=$user");
 putenv("BC_TEST_DB_PASS=$password");
 
+$files = [];
 try {
     $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
     $migrator = new Migrator($db, dirname(__DIR__, 2) . '/migrations');
@@ -55,13 +56,15 @@ try {
     });
     checkEq('schema: every migration applies to an empty database', [], $migrator->pending());
     foreach (glob(__DIR__ . '/' . (getenv('BC_TEST_ONLY') ?: '*') . '.test.php') as $file) {
+        $files[basename($file)] = false;
         try {
             (require $file)($db);
+            $files[basename($file)] = true;
         } catch (\Throwable $e) {
             // One failure for the throw; the rest of that file is skipped
             // (a block wrapped in scenario() keeps a throw to itself), and
             // the other files still run.
-            check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine());
+            check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
         }
     }
     check('every change to undoable data was journaled in Undo::write', BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
@@ -71,5 +74,9 @@ try {
 
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
+// The checks by label, for the mutation runner: which files ran (and to the end), every check, pass or fail.
+if (getenv('BC_TEST_REPORT') !== false) {
+    file_put_contents((string) getenv('BC_TEST_REPORT'), json_encode(['files' => $files, 'checks' => $GLOBALS['__checks'], 'passed' => $pass, 'failed' => $fail]));
+}
 echo "\n$pass passed, $fail failed\n";
 exit($fail === 0 ? 0 : 1);

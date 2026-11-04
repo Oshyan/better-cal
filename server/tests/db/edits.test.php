@@ -70,6 +70,6 @@ return static function (Db $db): void {
         $runner->runFixed([dirname(__DIR__, 3) . '/tools/edit-harness/cases/limitations/legacy-all-day-series-at-local-midnights.json']);
         $got = array_values(array_unique(array_column($runner->failures, 'invariant')));
         sort($got);
-        checkEq('edit harness: the legacy case fails as documented (its start read a day early, off its rule, and the occurrence asked for not found)', ['H-evaluator', 'api-crash', 'g-created'], $got);
+        checkEq('edit harness: the legacy case fails as documented (its start read a day early and off its rule, the evaluator\'s days not the window\'s, and the rename rewriting the row in UTC)', ['a-time', 'c-days', 'c-occurrences', 'c-placement', 'c-untouched', 'g', 'g-created'], $got);
     });
 };

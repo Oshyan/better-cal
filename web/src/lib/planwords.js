@@ -223,7 +223,7 @@ function ownFieldsAside(days) {
   const counts = new Map();
   for (const d of days || []) {
     if (d.kind !== 'edited') continue;
-    for (const f of d.kept || []) counts.set(f, (counts.get(f) || 0) + 1);
+    for (const f of d.kept || []) if (f !== 'trip') counts.set(f, (counts.get(f) || 0) + 1);
   }
   const fields = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || OWN_ORDER.indexOf(a) - OWN_ORDER.indexOf(b));
   if (!fields.length) return '';
@@ -278,10 +278,14 @@ export function changesWords(d, opts = {}) {
 }
 
 // What a day has of its own, said after its name only when it is more
-// than its title: ", with its own title and location,".
+// than its title: ", with its own title and location,", ", in a trip,",
+// ", with its own location and in a trip,".
 function ownAside(d) {
   const own = contentOf(d.kept);
-  return own.some((f) => f !== 'title') ? ', with its own ' + fieldList(own) + ',' : '';
+  if (!own.some((f) => f !== 'title')) return '';
+  const fields = own.filter((f) => f !== 'trip');
+  const parts = [fields.length ? 'with its own ' + fieldList(fields) : '', own.includes('trip') ? 'in a trip' : ''].filter(Boolean);
+  return ', ' + parts.join(' and ') + ',';
 }
 
 /**

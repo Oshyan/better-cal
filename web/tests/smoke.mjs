@@ -4617,6 +4617,9 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
+  const inTrip = (kept) => planView({ ...choir, days: [{ ...choir.days[0], kept }, choir.days[1], choir.days[2]] }, ctx());
+  eq('series panel: a day in a trip says so beside its name, and the trip is no field in the count', [inTrip(['title', 'trip']).edited[1].line1, inTrip(['title', 'location', 'trip']).edited[1].line1, inTrip(['title', 'trip']).affects], [
+    "'Rehearsal', with its own title and in a trip, on Tue, Apr 13 moves to Wed, Apr 14.", "'Rehearsal', with its own title and location and in a trip, on Tue, Apr 13 moves to Wed, Apr 14.", 'All events, with no end. 2 were changed earlier (title and date), 1 was removed.']);
   eq('series panel: a removed day that moves with the series, in one sentence with its consequence', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier, so no event is added on Wed, Mar 31."]);
   eq('series panel: no count, so the button says all events', [v.action, v.canConfirm, v.refused], ['Move all events', true, null]);
   eq('series panel: the commit is the doc\'s', commitPlan(choir, {}), { hash: '9f2c41d07a', choices: { movedDays: 'keep' } });

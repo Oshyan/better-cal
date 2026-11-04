@@ -310,7 +310,7 @@ trait Invariants
         $plan = $sent['_plan'];
         $choices = $sent['_choices'] ?? [];
         if (!$before['shape']->supported()) {
-            $this->checkUnsupported($before, $after, $edit, $choices, $plan);
+            $this->checkUnsupported($before, $after, $sent, $choices, $plan);
             return;
         }
         $x0 = new Expect($before, $edit);
@@ -434,6 +434,7 @@ trait Invariants
         $this->checkFieldsReach($before, $after, $edit, $out, $choices);
         if ($plan !== null) {
             $this->checkPlan($plan, $after, $before, $x);
+            $this->checkPlanData($plan, $before, $after, $sent, $x, $out, $choices);
             if (($sent['_google'] ?? null) !== null) {
                 $this->checkGoogle($before, $plan, $sent['_google'], $choices, $x);
             }
@@ -449,8 +450,9 @@ trait Invariants
      * the bound sent or the one it had, read by the expander; every edited
      * and skipped day stays on its day.
      */
-    private function checkUnsupported(array $before, array $after, array $edit, array $choices, ?array $plan): void
+    private function checkUnsupported(array $before, array $after, array $sent, array $choices, ?array $plan): void
     {
+        $edit = $sent['edit'];
         $x = new Expect($before, $edit);
         $why = $x->refusal();
         if ($why !== null) {
@@ -460,6 +462,7 @@ trait Invariants
         $this->checkFieldsReach($before, $after, $edit, null, $choices);
         if ($plan !== null) {
             $this->checkPlan($plan, $after, $before, $x);
+            $this->checkPlanData($plan, $before, $after, $sent, $x, null, $choices);
         }
         if ($before['shape']->cap === 'unreadable' || $x->kind === 'newrule') {
             return;
@@ -712,6 +715,24 @@ trait Invariants
     private function checkPlaced(Expect $x, array $before, array $ov0, array $ov1, string $key, int $img, bool $move): void
     {
         $own = $before['own'][(int) $ov0['id']] ?? [];
+        [$start, $len, $allDay, , $kindChanged] = self::placeExpected($x, $before, $ov0, $key, $img, $move);
+        $this->check('b-placed', (string) $ov1['start_utc'] === $start, 'an edited day shows as its own fields say (own date, time, all-day kept; the rest follows the series)', ['row' => (int) $ov0['id'], 'own' => $own, 'was' => $ov0['start_utc'], 'expected' => $start, 'stored' => $ov1['start_utc'], 'key' => $key, 'move' => $move]);
+        $len1 = Clock::parse((string) $ov1['end_utc'])->getTimestamp() - Clock::parse((string) $ov1['start_utc'])->getTimestamp();
+        $this->check('b-placed', $len1 === $len || $kindChanged, 'an edited day keeps its own length, or takes the series\'', ['row' => (int) $ov0['id'], 'own' => $own, 'expected' => $len, 'stored' => $len1]);
+        $this->check('b-placed', (int) $ov1['all_day'] === ($allDay ? 1 : 0), 'an edited day keeps its own all-day flag, or takes the series\'', ['row' => (int) $ov0['id'], 'own' => $own]);
+    }
+
+    /**
+     * Where an edited day that stays is placed by its own fields (the
+     * harness's place()): its start, length, all-day flag, zone, and whether
+     * its kind changed with the series'.
+     *
+     * @return array{0:string,1:int,2:bool,3:string,4:bool}
+     */
+    private static function placeExpected(Expect $x, array $before, array $ov0, string $key, int $img, bool $move): array
+    {
+        $own = $before['own'][(int) $ov0['id']] ?? [];
+        $kindChanged = false;
         $ownDate = in_array('date', $own, true);
         $ownTime = in_array('time', $own, true);
         $ownLen = in_array('length', $own, true);
@@ -729,7 +750,9 @@ trait Invariants
             $ownLen = false;
         }
         $len = $ownLen || $ownAllDay ? $len0 : $x->len1;
+        $zone = $x->tz1;
         if ($allDay) {
+            $zone = 'UTC';
             $start = Days::date($day) . ' 00:00:00';
             if (!$ownLen && !$ownAllDay && !$x->allDay1) {
                 $len = $len0;
@@ -751,10 +774,7 @@ trait Invariants
             $was = Clock::local((string) $ov0['start_utc'], $zone);
             $start = Clock::dnOf($was) === $day && Clock::secsOf($was) === $clock ? (string) $ov0['start_utc'] : Clock::db(Clock::at($day, $clock, $zone));
         }
-        $this->check('b-placed', (string) $ov1['start_utc'] === $start, 'an edited day shows as its own fields say (own date, time, all-day kept; the rest follows the series)', ['row' => (int) $ov0['id'], 'own' => $own, 'was' => $ov0['start_utc'], 'expected' => $start, 'stored' => $ov1['start_utc'], 'key' => $key, 'move' => $move]);
-        $len1 = Clock::parse((string) $ov1['end_utc'])->getTimestamp() - Clock::parse((string) $ov1['start_utc'])->getTimestamp();
-        $this->check('b-placed', $len1 === $len || !empty($kindChanged), 'an edited day keeps its own length, or takes the series\'', ['row' => (int) $ov0['id'], 'own' => $own, 'expected' => $len, 'stored' => $len1]);
-        $this->check('b-placed', (int) $ov1['all_day'] === ($allDay ? 1 : 0), 'an edited day keeps its own all-day flag, or takes the series\'', ['row' => (int) $ov0['id'], 'own' => $own]);
+        return [$start, $len, $allDay, $zone, $kindChanged];
     }
 
     /**
@@ -909,55 +929,6 @@ trait Invariants
         sort($storedKeys);
         sort($planKeys);
         $this->check('c-plan', $storedKeys === $planKeys, 'every stored edited day is one the plan names', ['plan' => $planKeys, 'stored' => $storedKeys]);
-        // The next dates are what the persisted series shows, in a row, in the order of their occurrences.
-        $byKey = [];
-        $over = [];
-        $overDn = [];
-        // Every day of the plan is read in one zone, the series' after the
-        // change (an all-day row's start is a date): the day an edited row
-        // shows on, and the day the list starts from, which is the day the
-        // acted day shows on when that is earlier than where it landed.
-        $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
-        $planDay = static fn(array $row): int => Clock::dayOf((string) $row['start_utc'], (int) $row['all_day'] === 1 ? 'UTC' : $tz1);
-        $from = $x->fromDn();
-        $actedRow = $x->fromRow() !== null ? ($after['overrides'][$x->fromRow()] ?? null) : null;
-        if ($actedRow !== null) {
-            $from = min($from, $planDay($actedRow));
-        }
-        foreach ($after['overrides'] as $ov) {
-            $over[(string) $ov['recurrence_instance_utc']] = (string) $ov['start_utc'];
-            $overDn[(string) $ov['recurrence_instance_utc']] = $planDay($ov);
-        }
-        $next = array_map(static fn(array $n): string => (string) self::dbKey($n['start']), $plan['next'] ?? []);
-        $keys = array_column($after['raw'], 'key');
-        if ($next !== [] && $after['through'] !== null && max($next) >= $after['through']) {
-            // Next dates past the window the series was read over: read them where they are.
-            $span = (int) ((Clock::parse(max($next))->getTimestamp() - Clock::parse(min($next))->getTimestamp()) / 86400);
-            $keys = Truth::keysFrom($after['row'], Clock::db(Clock::parse(min($next))->modify('-400 days')), $span + 800);
-        }
-        // From the day acted on (where it landed), the events as they show:
-        // an occurrence at its key, an edited day on the day it shows on,
-        // wherever its key is (The Plan, 4: the next events as they will show).
-        foreach (array_unique(array_merge($keys, array_keys($over))) as $k) {
-            $dn = $overDn[$k] ?? Clock::dayOf($k, $tz1);
-            if (!isset($exdates[$k]) && $dn >= $from) {
-                $byKey[$k . ' 0'] = $over[$k] ?? $k;
-            }
-        }
-        foreach ($this->standalones() as $s) {
-            if ($planDay($s) >= $from && in_array((string) $s['start_utc'], $next, true)) {
-                $byKey[(string) $s['start_utc'] . ' 1'] = (string) $s['start_utc'];
-            }
-        }
-        // In the order they show (an edited day keyed later may show earlier, on its own date).
-        $shown = array_values($byKey);
-        sort($shown);
-        $shown = array_slice($shown, 0, count($next));
-        $sortedNext = $next;
-        sort($sortedNext);
-        if ($next !== [] && $x->kind !== 'newrule') {
-            $this->check('c-next', $shown === $sortedNext, 'the plan\'s next dates are the next events the series shows from the day acted on', ['plan' => $next, 'shown' => $shown, 'from' => Days::date($from)]);
-        }
     }
 
     /**

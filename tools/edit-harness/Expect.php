@@ -571,6 +571,30 @@ final class Expect
         return min($this->landedDn, $put);
     }
 
+    /** The clock a rule naming its hour (one BYHOUR and BYMINUTE) gives its days, the new rule's or the old one's, or the series' new clock. */
+    public function ruleClock(): int
+    {
+        $p = Shape::parts((string) ($this->e['ruleText'] ?? $this->o['row']['rrule'] ?? ''));
+        if (isset($p['BYHOUR']) && !str_contains($p['BYHOUR'], ',') && !str_contains($p['BYMINUTE'] ?? '0', ',')) {
+            return (int) $p['BYHOUR'] * 3600 + (int) ($p['BYMINUTE'] ?? 0) * 60;
+        }
+        return $this->clock1;
+    }
+
+    /** The key of the occurrence the edit acted on. */
+    public function actedKey(): string
+    {
+        return (string) $this->e['actedKey'];
+    }
+
+    /** A reading's rule's days from $from on, unbounded, as its walk gives them (its pattern instants' days). */
+    public function readingDays(array $reading, int $from, bool $far = false): array
+    {
+        // 60 periods, or a whole Gregorian cycle (400 years, where every calendar repeats): a first difference can lie that far on.
+        $span = max(1, $this->s0->periodSpan() * $this->s0->interval);
+        return array_keys($this->walk($reading['T'], $from, max($from, $this->landedDn) + ($far ? 146097 : 60 * $span + 400)));
+    }
+
     /** The edited row the request came through, when it did. */
     public function fromRow(): ?int
     {

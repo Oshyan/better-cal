@@ -14,6 +14,10 @@ use BetterCal\Infra\Db;
 final class Driver
 {
     use Invariants;
+    use PlanChecks;
+    use PlanPlacement;
+    use PlanNext;
+    use PlanUntouched;
 
     /** @var list<array> */
     private array $records = [];
@@ -35,6 +39,7 @@ final class Driver
         private readonly Undo $undo,
         private readonly int $userId,
         private readonly int $calendarId,
+        private readonly int $otherCalendarId = 0,
     ) {
     }
 
@@ -48,8 +53,11 @@ final class Driver
     {
         $this->records = [];
         $this->unoracled = [];
+        $this->runs = [];
+        $this->wide0 = null;
         $this->spec = $spec;
         $this->rng = $r;
+        $this->controls = $this->makeControls();
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->fixtures = [];
         $this->tripLinks = [];
@@ -70,7 +78,12 @@ final class Driver
             $this->spec = $spec + $this->spec;
         }
         $spec = $this->spec;
-        if ($st['raw'] === [] || !isset($st['raw'][$spec['acted']])) {
+        // A fixed case may act on the stored start itself (a rule the expander can't read has no occurrences to pick from).
+        $atStart = !empty($spec['actedStart']);
+        if (!$atStart && ($st['raw'] === [] || !isset($st['raw'][$spec['acted']]))) {
+            return $this->result('none');
+        }
+        if (isset($spec['actedAt']) && $this->occurrenceFrom($st['row'], (string) $spec['actedAt']) === null) {
             return $this->result('none');
         }
         Prof::mark('exceptions');
@@ -93,7 +106,11 @@ final class Driver
         $s0 = $this->snapshot();
         $v = $spec['vector'];
         $scope = $v['scope'];
-        $acted = $before['raw'][$spec['acted']] ?? $before['raw'][0];
+        $acted = match (true) {
+            $atStart => ['key' => (string) $before['row']['start_utc'], 'dn' => $before['startDn'], 'secs' => $before['clock']],
+            isset($spec['actedAt']) => $this->occurrenceFrom($before['row'], (string) $spec['actedAt']),
+            default => $before['raw'][$spec['acted']] ?? $before['raw'][0],
+        };
         $first = $acted['key'] === (string) $before['row']['start_utc'];
         // The code path, decided from what was sent: "this and following",
         // delete following and attendance following from a day after the
@@ -120,6 +137,9 @@ final class Driver
             'following' => array_filter($stopAts, static fn(int $at): bool => $at >= (int) $spec['acted']) !== [],
             default => false,
         };
+        if ($scope === 'all') {
+            $this->wide0 = $this->wide();
+        }
         try {
             $sent = $this->applyEdit($id, $before, $acted, $v, $s0, 'edit');
         } catch (\Throwable $e) {
@@ -165,7 +185,34 @@ final class Driver
     private function result(string $path): array
     {
         Prof::mark('');
-        return ['spec' => $this->spec, 'records' => $this->records, 'path' => $path, 'unoracled' => $this->unoracled];
+        return ['spec' => $this->spec, 'records' => $this->records, 'path' => $path, 'unoracled' => $this->unoracled, 'runs' => $this->runs];
+    }
+
+    /** The occurrence on or after a local date (a fixed case acting on a day past the window the oracle reads). */
+    private function occurrenceFrom(array $row, string $date): ?array
+    {
+        $tz = Truth::tzOf($row);
+        foreach (Truth::keysFrom($row, $date . ' 00:00:00', 40) as $k) {
+            $local = Clock::local($k, $tz);
+            return ['key' => $k, 'dn' => Clock::dnOf($local), 'secs' => Clock::secsOf($local)];
+        }
+        return null;
+    }
+
+    /**
+     * Control events for c-untouched, one in the case's calendar and one in
+     * another, made before the case's own rows so nothing of the case's
+     * reaches them by id.
+     */
+    private function makeControls(): array
+    {
+        $ids = [];
+        foreach (array_filter([$this->calendarId, $this->otherCalendarId]) as $i => $cal) {
+            $ids[] = (int) $this->events->create($this->userId, ['calendarId' => $cal, 'title' => 'Sample control ' . ($i + 1), 'location' => 'Sample Hall',
+                'start' => '2091-03-0' . ($i + 1) . 'T10:00:00+00:00', 'end' => '2091-03-0' . ($i + 1) . 'T11:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC',
+                'tagNames' => ['control'], 'personNames' => ['Alex Example']])['eventId'];
+        }
+        return $ids;
     }
 
     // ---- building the case -----------------------------------------------
@@ -201,6 +248,13 @@ final class Driver
             return $id;
         }
         $id = (int) $this->events->create($this->userId, $in + ['rrule' => $s['rrule']])['eventId'];
+        if ($s['allDay'] && isset($s['legacyZone'])) {
+            // An all-day series stored the old way (before 0.9.16): local midnights of its days in a zone of its own
+            // (README, Known, Accepted Differences: legacy all-day rows).
+            $row = $this->row($id);
+            $midnight = static fn(string $db): string => Clock::db(new \DateTimeImmutable(substr($db, 0, 10) . ' 00:00:00', Clock::zone((string) $s['legacyZone'])));
+            $this->db->run('UPDATE events SET tzid = ?, start_utc = ?, end_utc = ? WHERE id = ?', [$s['legacyZone'], $midnight((string) $row['start_utc']), $midnight((string) $row['end_utc']), $id]);
+        }
         if ($s['bound'] !== 'none') {
             // The bound is written as the editor writes it, read from the rule as stored (its aligned start).
             $row = $this->row($id);
@@ -840,6 +894,10 @@ final class Driver
                 $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
                 if ($slot === 'edit') {
                     $this->checkRefused($st, $edit, $plan, $choices, $e);
+                    // A refusal of the whole change has its own shape (no zone, acted or bound.from), its start in the old zone.
+                    if (array_filter($plan['refusals'] ?? [], static fn(array $r): bool => !isset($r['group'])) !== []) {
+                        $this->checkShape($plan, null, true, Truth::tzOf($st['row']));
+                    }
                 }
                 return null;
             }

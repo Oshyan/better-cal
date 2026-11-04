@@ -573,7 +573,8 @@ trait PlanPlacement
             $tz = (string) $m1['tzid'];
             $clock = Clock::secsOf(Clock::local((string) $m1['start_utc'], $tz));
             $cut = self::cutoff($after, $edit, $ctx);
-            foreach (Truth::keysFrom($m1, Days::date($cut) . ' 00:00:00', 367) as $k) {
+            // From two days before the cutoff's UTC midnight: a zone east of UTC starts its day the evening before.
+            foreach (Truth::keysFrom($m1, Days::date($cut - 2) . ' 00:00:00', 370) as $k) {
                 $dn = Clock::dayOf($k, $tz);
                 if ($dn < $cut || $dn > $cut + 366) {
                     continue;
@@ -592,13 +593,13 @@ trait PlanPlacement
         }
         foreach ($want as $id => $at) {
             $kind = strstr($id, ' ', true);
-            $this->expect('c-placement', "a day of the stored series whose clock " . ($kind === 'gap' ? 'doesn\'t exist' : 'happens twice') . ' there has its note', "notes ($kind) present", true, isset($listed[$id]), ['day' => $id]);
+            $this->expect('c-placement', "a day of the stored series whose clock " . ($kind === 'gap' ? 'doesn\'t exist' : 'happens twice') . ' there has its note', "notes ($kind) present", true, isset($listed[$id]), ['day' => $id, 'cutoff' => Days::date($cut), 'listed' => array_keys($listed)]);
             if (isset($listed[$id])) {
                 $this->expect('c-placement', 'a note\'s at is the series\' instant on that day (an overlap\'s first)', "notes at ($kind)", $at, self::norm($listed[$id], ['at'])['at'] ?? null, ['note' => $listed[$id]]);
             }
         }
         foreach ($listed as $id => $n) {
-            $this->expect('c-placement', 'a note names a day of the stored series whose clock doesn\'t exist or happens twice there, by tzdata', 'notes (' . $n['kind'] . ')', true, isset($want[$id]), ['note' => $n]);
+            $this->expect('c-placement', 'a note names a day of the stored series whose clock doesn\'t exist or happens twice there, by tzdata', 'notes (' . $n['kind'] . ')', true, isset($want[$id]), ['note' => $n, 'cutoff' => $cut === null ? null : Days::date($cut), 'derived' => $want]);
         }
     }
 }

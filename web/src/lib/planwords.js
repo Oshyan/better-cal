@@ -218,7 +218,7 @@ export function startedLine(acted, opts = {}) {
 
 // The fields changed days have of their own, most common first: " (title,
 // location and 2 others)". Ties keep the editor's order.
-const OWN_ORDER = ['title', 'location', 'description', 'date', 'time', 'length', 'reminders', 'status', 'tags', 'people', 'url', 'icon', 'attendance', 'allDay'];
+const OWN_ORDER = ['title', 'location', 'description', 'date', 'time', 'length', 'reminders', 'status', 'tags', 'people', 'url', 'icon', 'attendance', 'allDay', 'trip'];
 function ownFieldsAside(days) {
   const counts = new Map();
   for (const d of days || []) {
@@ -252,7 +252,7 @@ export const seriesLine = (name, calendar) => quoted(name || 'Untitled event') +
 const FIELD_NOUNS = {
   date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location',
   description: 'notes', url: 'link', reminders: 'reminders', status: 'status', attendance: 'answer',
-  tags: 'tags', people: 'people', icon: 'icon',
+  tags: 'tags', people: 'people', icon: 'icon', trip: 'trip',
 };
 const fieldList = (fields) => andList(fields.map((f) => FIELD_NOUNS[f] || f));
 const contentOf = (list) => (list || []).filter((f) => f !== 'date' && f !== 'time');

@@ -6,7 +6,7 @@
 // expected starts as local ISO]. Dates were listed by hand from a calendar
 // and RFC 5545 3.8.5.3's own examples; the product rules (the clock plus
 // the gap, the first of two instants, the DAILY;BYDAY carried clock, the
-// hour-naming rule's lost gap day, elapsed time under a day) are
+// hour-naming rule's lost gap day, HOURLY on the wall clock, MINUTELY in elapsed time) are
 // series-model.md's. The run stops when the evaluator disagrees with one.
 declare(strict_types=1);
 
@@ -56,6 +56,9 @@ return [
     // Several times a day: an hour list, HOURLY, MINUTELY in elapsed time
     ['FREQ=DAILY;BYHOUR=9,15;BYMINUTE=0;COUNT=4', '2027-01-05 09:00', 'Europe/Berlin', false, null, ['2027-01-05T09:00:00+01:00', '2027-01-05T15:00:00+01:00', '2027-01-06T09:00:00+01:00', '2027-01-06T15:00:00+01:00']],
     ['FREQ=HOURLY;INTERVAL=6;COUNT=4', '2027-01-05 09:00', 'UTC', false, null, ['2027-01-05T09:00:00+00:00', '2027-01-05T15:00:00+00:00', '2027-01-05T21:00:00+00:00', '2027-01-06T03:00:00+00:00']],
+    // HOURLY on the wall clock (the product rule): the pattern holds across a skipped hour, a skipped clock resolves by the offset before the gap
+    ['FREQ=HOURLY;INTERVAL=3;COUNT=5', '2027-03-13 21:00', 'America/Los_Angeles', false, null, ['2027-03-13T21:00:00-08:00', '2027-03-14T00:00:00-08:00', '2027-03-14T03:00:00-07:00', '2027-03-14T06:00:00-07:00', '2027-03-14T09:00:00-07:00']],
+    ['FREQ=HOURLY;COUNT=4', '2027-03-14 00:00', 'America/Los_Angeles', false, null, ['2027-03-14T00:00:00-08:00', '2027-03-14T01:00:00-08:00', '2027-03-14T03:00:00-07:00', '2027-03-14T04:00:00-07:00']],
     ['FREQ=MINUTELY;INTERVAL=720;COUNT=3', '2027-03-13 15:00', 'America/Los_Angeles', false, null, ['2027-03-13T15:00:00-08:00', '2027-03-14T04:00:00-07:00', '2027-03-14T16:00:00-07:00']],
     // Clocks that don't exist or happen twice (series-model.md, Zones, DST and All-Day Days)
     ['FREQ=WEEKLY;BYDAY=SU;COUNT=3', '2027-03-07 02:30', 'America/Los_Angeles', false, null, ['2027-03-07T02:30:00-08:00', '2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00']],

@@ -186,7 +186,7 @@ return [
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [
-        'id' => 'occurrences-second-instant', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'id' => 'occurrences-second-instant', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next', 'c-placement'],
         'what' => 'an occurrence in a repeated hour put at its second instant',
         'patch' => $wrapNext('        $this->nextUnmutated();
         if ($this->currentDate !== null) {
@@ -206,6 +206,12 @@ return [
         'what' => 'one part\'s evaluation removed: a weekly rule\'s BYDAY, so it repeats on its start\'s weekday alone',
         'patch' => [["        if (!\$this->byHour && !\$this->byDay) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');", "        if (!\$this->byHour) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');"]],
         'cases' => ['mutation-occurrences-on-a-weekday-list'],
+    ],
+    [
+        'id' => 'zone-option-start-from-the-plan', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'every zone option\'s start taken from the plan chosen, not from that option\'s own',
+        'patch' => [["\$plan['groups'][\$gi]['options'][\$oi]['start'] = \$alt['plan']['rule']['to']['start'];", "\$plan['groups'][\$gi]['options'][\$oi]['start'] = \$plan['rule']['to']['start'];"]],
+        'cases' => ['reading-earlier-by-instant-across-zones', 'mutation-earlier-across-zones'],
     ],
     [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],

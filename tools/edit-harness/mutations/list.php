@@ -66,7 +66,7 @@ return [
     [
         'id' => 'next-empty', 'file' => $model, 'checks' => ['c-next'],
         'what' => 'an empty coming-up list',
-        'patch' => [["return [\$shown, count(\$out) > self::NEXT_SHOWN];", "return [[], count(\$out) > self::NEXT_SHOWN];"]],
+        'patch' => [["return [\$shown, count(\$out) > self::NEXT_SHOWN, \$fromDn];", "return [[], count(\$out) > self::NEXT_SHOWN, \$fromDn];"]],
         'cases' => ['next-trailing-skipped-occurrences', 'next-several-occurrences-on-one-day'],
     ],
     [

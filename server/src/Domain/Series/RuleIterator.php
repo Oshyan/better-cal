@@ -211,6 +211,12 @@ class RuleIterator extends Walk
                 $this->fill();
             }
             $this->currentDate = array_shift($this->pending);
+            if ($this->currentDate !== null && $this->currentDate->getTimestamp() > self::UPPER_LIMIT) {
+                // The date upper limit: no instant after year 9999.
+                $this->currentDate = null;
+                $this->pending = [];
+                $this->ended = true;
+            }
             if ($this->currentDate !== null) {
                 $this->quiet = 0;
             }

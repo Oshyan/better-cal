@@ -227,6 +227,9 @@ final class Recurrence
             // propagates.
             try {
                 $exdates = array_fill_keys(self::decodeExdates($master['exdates_json'] ?? null), true);
+                if (!\BetterCal\Domain\Series\Calc::reads((string) $master['rrule'])) {
+                    throw new \BetterCal\Domain\Series\RuleNotReadable('the expander can\'t read the rule');
+                }
                 $raw = ($this->expander)($master, $winStart, $winEnd, $budget);
             } catch (\InvalidArgumentException|\BetterCal\Domain\Series\WalkIncomplete $e) {
                 error_log('recurrence: event ' . ($master['id'] ?? '?') . ' could not be expanded: ' . $e->getMessage());
@@ -644,7 +647,10 @@ final class Recurrence
     /**
      * The calendar's window over a series: occurrences() through the window,
      * at most one past MAX_INSTANCES, so expand() can tell a series that has
-     * more and report it. The edit harness reads the window by this name.
+     * more and report it. A rule the expander can't read names no
+     * occurrence, as in the model (Series\Calc gives it no keys); expand()
+     * shows such a row as its stored event. The edit harness reads the
+     * window by this name.
      *
      * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
      */
@@ -655,7 +661,11 @@ final class Recurrence
         ?ExpansionBudget $budget = null,
     ): array
     {
-        return self::occurrences($master, $winStart, $winEnd, $budget, self::MAX_INSTANCES + 1);
+        try {
+            return self::occurrences($master, $winStart, $winEnd, $budget, self::MAX_INSTANCES + 1);
+        } catch (\BetterCal\Domain\Series\RuleNotReadable) {
+            return [];
+        }
     }
 
     /**

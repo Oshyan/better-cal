@@ -138,9 +138,19 @@ final class OwnFields
             $own[] = 'allDay';
         }
         if (!$rAllDay) {
+            // Its time is the series' when it shows at the instant the series
+            // gives it there: on its occurrence's day its key, on a day of its
+            // own the series' clock there. Compared as instants, since an
+            // equal day, clock and zone are two instants where the hour
+            // repeats (the first, when no instant names it).
             $mStart = Time::fromDb((string) $master['start_utc'])->setTimezone($tzM);
-            if ($mAllDay || $start->setTimezone($tzR)->format('H:i:s') !== $mStart->format('H:i:s')
-                || Time::normalizeTzid((string) $row['tzid']) !== Time::normalizeTzid((string) $master['tzid'])) {
+            $sameZone = Time::normalizeTzid((string) $row['tzid']) === Time::normalizeTzid((string) $master['tzid']);
+            $series = null;
+            if (!$mAllDay && $sameZone) {
+                $series = $key !== '' && !in_array('date', $own, true) ? Time::fromDb($key)
+                    : Calc::at(Cal::dnOf($start->setTimezone($tzR)), [(int) $mStart->format('G'), (int) $mStart->format('i'), (int) $mStart->format('s')], (string) $master['tzid']);
+            }
+            if ($series === null || $series->getTimestamp() !== $start->getTimestamp()) {
                 $own[] = 'time';
             }
         }
@@ -239,7 +249,10 @@ final class OwnFields
             if (self::shownDay($a) !== self::shownDay($b)) {
                 $out[] = 'date';
             }
-            if (self::clock($a) !== self::clock($b)) {
+            // On one day, the same clock and zone at another instant is the
+            // other of a repeated hour's two instants: a new time too.
+            if (self::clock($a) !== self::clock($b)
+                || (self::shownDay($a) === self::shownDay($b) && (int) ($a['all_day'] ?? 0) === 0 && Time::fromDb((string) $a['start_utc'])->getTimestamp() !== Time::fromDb((string) $b['start_utc'])->getTimestamp())) {
                 $out[] = 'time';
             }
             if (self::seconds($a) !== self::seconds($b)) {

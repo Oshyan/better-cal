@@ -753,6 +753,37 @@ return static function (Db $db): void {
         checkEq('the fresh plan commits', 'Proposed series notes', $db->scalar('SELECT description FROM events WHERE id = ?', [$day]));
     });
 
+    // Review F7: an instant given stays that instant. 02:30 on 31 Oct 2027
+    // in Berlin is 00:30Z and again 01:30Z; written, committed and undone.
+    scenario('a repeated hour: edited days keep their instant, the day acted on lands on the one it was put on (review F7)', function () use ($d, $u, $db, $rows, $home): void {
+        $berlin = static fn(string $start, string $end, array $more = []): array => ['calendarId' => $home, 'title' => 'Sample fold walk', 'start' => $start, 'end' => $end, 'allDay' => false, 'tzid' => 'Europe/Berlin'] + $more;
+        $at = static fn(int $id, string $key): ?array => $db->one('SELECT start_utc, end_utc, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$id, $key]);
+        // Variant A: the series stored at the second instant, its first day's own title; a rename leaves the day there.
+        $walk = (int) $d->events->create($u, $berlin('2027-10-31T02:30:00+01:00', '2027-10-31T03:30:00+01:00', ['rrule' => 'FREQ=WEEKLY;COUNT=3']))['eventId'];
+        $d->events->patch($u, $walk, ['scope' => 'this', 'instanceStart' => '2027-10-31T01:30:00Z', 'title' => 'Sample fold walk, own']);
+        $before = $rows($walk);
+        planned($d->events, $u, $walk, ['scope' => 'all', 'instanceStart' => '2027-11-07T01:30:00Z', 'title' => 'Sample fold walk, renamed'], ['ownTitle' => 'keep']);
+        checkEq('variant A: renamed from 7 Nov, the edited day keeps its instant, 01:30Z', ['start_utc' => '2027-10-31 01:30:00', 'end_utc' => '2027-10-31 02:30:00', 'override_fields' => '["title"]'], $at($walk, '2027-10-31 01:30:00'));
+        $d->undo->undoLatest($u);
+        checkEq('variant A undone: byte-identical', $before, $rows($walk));
+        // Variant B: the 2027 day put on the first instant where its image's key is the second.
+        $landing = (int) $d->events->create($u, $berlin('2026-10-21T02:30:00+02:00', '2026-10-21T03:30:00+02:00', ['rrule' => 'FREQ=YEARLY;UNTIL=20281021T003000Z']))['eventId'];
+        $before = $rows($landing);
+        planned($d->events, $u, $landing, ['scope' => 'all', 'instanceStart' => '2027-10-21T02:30:00+02:00', 'start' => '2027-10-31T02:30:00+02:00', 'end' => '2027-10-31T02:15:00+01:00', 'status' => 'tentative']);
+        $master = $db->one('SELECT start_utc, end_utc FROM events WHERE id = ?', [$landing]);
+        checkEq('variant B: the day shows at 00:30Z for its 45 minutes, its time its own, keyed on its image; the series 45 minutes long', [
+            ['start_utc' => '2027-10-31 00:30:00', 'end_utc' => '2027-10-31 01:15:00', 'override_fields' => '["time"]'], 2700,
+        ], [$at($landing, '2027-10-31 01:30:00'), strtotime($master['end_utc'] . ' UTC') - strtotime($master['start_utc'] . ' UTC')]);
+        $d->undo->undoLatest($u);
+        checkEq('variant B undone: byte-identical, no edited row left', $before, $rows($landing));
+        // "Use series value" for the time puts a day back on its key, never the other instant.
+        $first = (int) $d->events->create($u, $berlin('2027-10-31T02:30:00+02:00', '2027-10-31T03:30:00+02:00', ['rrule' => 'FREQ=WEEKLY;COUNT=3']))['eventId'];
+        $d->events->patch($u, $first, ['scope' => 'this', 'instanceStart' => '2027-10-31T00:30:00Z', 'title' => 'Sample fold walk, own', 'start' => '2027-10-31T02:30:00+01:00', 'end' => '2027-10-31T03:30:00+01:00']);
+        checkEq('a day moved to the second instant of its repeated hour owns its time', ['start_utc' => '2027-10-31 01:30:00', 'end_utc' => '2027-10-31 02:30:00', 'override_fields' => '["time","title"]'], $at($first, '2027-10-31 00:30:00'));
+        $d->events->patch($u, $first, ['scope' => 'this', 'instanceStart' => '2027-10-31T00:30:00Z', 'useSeries' => ['time']]);
+        checkEq('"Use series value" for its time: back on its key, 00:30Z', ['start_utc' => '2027-10-31 00:30:00', 'end_utc' => '2027-10-31 01:30:00', 'override_fields' => '["title"]'], $at($first, '2027-10-31 00:30:00'));
+    });
+
     // Review F1: a row also exists for what refers to it. An edited day in a
     // trip (a trip's own day with a stop in it, or a day that is a stop of
     // another trip) owns its trip, so taking the series' title leaves it a

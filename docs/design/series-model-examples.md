@@ -288,6 +288,8 @@ From elsewhere, the same series on a calendar another app also writes. Each row 
 | The 2 Feb title changed there from "Choir" to the master's "Chorus" | `title` own | `title` inherited | Put back to the series' value there |
 | A new edited day, Tue 27 Apr at 19:30, made in the other app | new row | `time` | Never seen: by equality, as the backfill |
 
+In a trip: "Sample club", weekly on Tuesday, its 12 Jan with its own title "Sample club, away" and a stop of the trip "Sample trip". Renamed "Sample club night" with "Give it the new title too": the day owns nothing else, but the trip link names it, so it keeps its row and the link, and its line says "stays, keeps its trip, takes 'Sample club night'". Its own list is `[]`; the trip is read from the link, never stored. Taken out of the trip first, the same rename sends it back to the series. A day that is a trip with stops in it is kept the same way.
+
 All-day: "Open studio", all-day, weekly on Saturday, with Sat 13 Mar made a timed 09:00 to 12:00 "Sample Hall visit". The series made timed at 10:00: every inherited Saturday at 10:00, and the plan says "1 edited day keeps its own time: 'Sample Hall visit' on 13 Mar at 09:00". Made all-day again: the visit stays timed.
 
 ## Bounds and Days Outside
@@ -341,6 +343,7 @@ A split past the cap: "Stretch", daily from 1 Jan 2027, 1,500 events (to 8 Feb 2
 - `FREQ=DAILY;BYHOUR=2,3;BYMINUTE=30` in Los Angeles: on 14 Mar sabre yields one occurrence, 03:30 PDT, where 13 and 15 Mar have two (probed), because the 02:30 moves forward onto the 03:30. A drag or zone change: "This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can't be moved or given another zone as a series. Move one event, or change its other details." `FREQ=HOURLY` steps by elapsed time and has no collision (probed: 01:30 PST, then 03:30 PDT), but refuses the same edits.
 - `FREQ=MONTHLY;BYDAY=4MO,-1MO` from another app: its fourth and last Monday are one day in a month with four Mondays (probed: 22 Feb 2027 once, 22 and 29 Mar both), so it's outside the nth-list row and a drag that moves days is refused ("Its fourth and last Monday are the same day in some months, so its days can't follow a drag"). `1MO,3TU,-1FR`, which no month can merge, is the nth-list row with every edit.
 - `RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L` from another app: sabre refuses it ("Not supported: RSCALE", probed; an X- part gets the same answer). Renamed for all events: accepted, and `direct` for an agent. Ends changed, "this and following" or delete following: refused, "This repeat came from another app in a form Better-Cal can't read, so only its details can change here." Delete all: accepted.
+- `FREQ=MINUTELY;BYSECOND=30,45;COUNT=4` from 09:00:30: 09:00:30, 09:00:45, 09:01:30, 09:01:45 (BYSECOND expands each minute, RFC 5545 3.3.10). `FREQ=MINUTELY;INTERVAL=60;BYYEARDAY=1;COUNT=2` from 1 Jan 2027 23:00: that, then 1 Jan 2028 00:00 (BYYEARDAY limits). `FREQ=MINUTELY;INTERVAL=20;BYHOUR=9,10,11,12,13,14,15,16` from 09:00: every 20 minutes from 09:00 to 16:40 each day, the RFC's own example. `FREQ=MINUTELY;BYWEEKNO=1` or `FREQ=SECONDLY;BYDAY=1MO`, which the RFC doesn't allow at those frequencies: refused when written (400 `invalid_rrule`), and stored from elsewhere they take field changes only, with the unreadable rule's reason.
 - On a Google calendar until 1.5.2, the reason for anything unavailable reads: "On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events."
 - Several times a day, the refusal reads: "This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can't be moved or given another zone as a series. Move one event, or change its other details."
 
@@ -354,6 +357,8 @@ A split past the cap: "Stretch", daily from 1 Jan 2027, 1,500 events (to 8 Feb 2
 ```
 
 Probed for the second: 03:00 Berlin time is 02:00 UTC through 23 Mar and 01:00 UTC from 30 Mar, while Los Angeles moved its clock on 14 Mar.
+
+A repeated hour, in Berlin: 02:30 on 31 Oct 2027 is 00:30 UTC (+02:00) and again 01:30 UTC (+01:00). "Sample fold walk", weekly from 02:30+01:00 that day, its first day with its own title: renamed from 7 Nov, the day stays at 02:30+01:00. A yearly series on 21 Oct, its 2027 day dragged to 31 Oct at 02:30+02:00 for 45 minutes, where the new series' key that day is 02:30+01:00: the day shows at 02:30+02:00 until 02:15+01:00, an edited day owning its time, and the series is 45 minutes long. Put on 02:30+01:00 where the key is 02:30+02:00, the same the other way round.
 
 A gap: "Night shift", weekly on Sunday at 02:30 from 7 Mar. Its plan notes "No 02:30 on 14 Mar in Los Angeles: that one is at 03:30" (probed: 03:30 PDT). An overlap: weekly on Sunday at 01:30 from 31 Oct notes "01:30 happens twice on 7 Nov: this is the first, in daylight time" (probed: 01:30 PDT, 08:30 UTC).
 

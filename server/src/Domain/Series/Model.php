@@ -1597,7 +1597,7 @@ final class Model
         // The series as stored: a first day in a skipped hour is stored from
         // the day before it, skipped, so the start keeps the clock (Calc).
         $stored = $calc1->storedRule();
-        $start1 = $this->ruleDelta === 'none' ? Calc::at($newStart, $clock1, $this->allDay1 ? 'UTC' : $this->tz1) : $calc1->storedStart();
+        $start1 = $this->ruleDelta === 'none' ? Calc::at($newStart, $clock1, $this->allDay1 ? 'UTC' : $this->tz1, Time::fromDb($this->landedCols['start_utc'])) : $calc1->storedStart();
         if ($calc1->anchor !== null && $calc1 !== $this->old) {
             $newExdates[] = Time::toDb($start1);
             sort($newExdates);
@@ -2336,6 +2336,11 @@ final class Model
             $len = in_array('length', $own, true) || !$this->allDay1 ? $rowLen : $this->len1;
             return [$start, $this->endFrom($start, true, $len, 'UTC'), true, 'UTC'];
         }
+        // The instant it shows at now, or for an inherited time on its
+        // occurrence's day the new key's: an instant given stays that
+        // instant wherever the day, clock and zone come out the same, so
+        // neither of the two instants of a repeated hour becomes the other.
+        $given = $shown;
         if (in_array('time', $own, true) && !$rowAllDay) {
             // Its own clock in its own zone, on its own local day, moved with
             // its occurrence's days.
@@ -2364,14 +2369,15 @@ final class Model
                 $date += $carry;
                 $clock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
             } else {
-                $clock = self::clockOf(Time::fromDb($newKey)->setTimezone(Time::zone($this->tz1)));
+                $given = Time::fromDb($newKey);
+                $clock = self::clockOf($given->setTimezone(Time::zone($this->tz1)));
             }
         }
         $len = in_array('length', $own, true) || $this->allDay1 ? $rowLen : $this->len1;
         if ($rowAllDay && !in_array('length', $own, true)) {
             $len = $this->allDay1 ? $rowLen : $this->len1;
         }
-        $start = Calc::at($date, $clock, $tz);
+        $start = Calc::at($date, $clock, $tz, $given);
         return [$start, $this->endFrom($start, false, $len, $tz), false, $tz];
     }
 

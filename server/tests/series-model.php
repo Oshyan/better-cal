@@ -1435,6 +1435,67 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ], [BetterCal\Domain\Series\Calc::sabreReads($rrule), $code, $drag['plan']['refusals'][0]['code'] ?? null, $drag['plan']['refusals'][0]['words'] ?? null, $rename['writes']['master'] ?? null]);
     }
 
+    // Review F7: an instant given stays that instant. On 31 Oct 2027 Berlin's
+    // 02:30 happens twice, 00:30Z (+02:00) and 01:30Z (+01:00); equal day,
+    // clock and zone are not equal instants there, in placement and in
+    // ownership alike, in both directions, for owned and inherited times.
+    $berlin = 'Europe/Berlin';
+    $foldSeries = static function (string $startUtc, string $rrule) use ($berlin): array {
+        $s = smSeries('Sample fold walk', $rrule, '2027-10-31 02:30', 60, false, [], $berlin);
+        $s['start_utc'] = $startUtc;
+        $s['end_utc'] = Time::toDb(Time::fromDb($startUtc)->modify('+1 hour'));
+        return $s;
+    };
+    $foldRow = static function (array $master, string $key, string $startUtc, array $own) use ($berlin): array {
+        return array_merge($master, ['id' => 2, 'rrule' => null, 'exdates_json' => null, 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $key,
+            'start_utc' => $startUtc, 'end_utc' => Time::toDb(Time::fromDb($startUtc)->modify('+1 hour')), 'title' => 'Sample fold walk, own',
+            'override_fields' => json_encode($own), 'tzid' => $berlin]);
+    };
+    $shownAt = static fn(array $p, array $row): string => (string) ($p['writes']['overrides'][2]['start_utc'] ?? (in_array(2, $p['writes']['delete'], true) ? 'deleted' : $row['start_utc']));
+    foreach ([
+        'variant A: the key is the second instant, the time inherited' => ['2027-10-31 01:30:00', '2027-10-31 01:30:00', ['title']],
+        'the key is the first instant, the time inherited' => ['2027-10-31 00:30:00', '2027-10-31 00:30:00', ['title']],
+        'the key is the first instant, its own time the second' => ['2027-10-31 00:30:00', '2027-10-31 01:30:00', ['time', 'title']],
+        'the key is the second instant, its own time the first' => ['2027-10-31 01:30:00', '2027-10-31 00:30:00', ['time', 'title']],
+    ] as $name => [$keyUtc, $shownUtc, $own]) {
+        $s = $foldSeries($keyUtc, 'FREQ=WEEKLY;COUNT=3');
+        $row = $foldRow($s, $keyUtc, $shownUtc, $own);
+        $p = smPlan($s, [$row], ['acted' => Time::toDb(Time::fromDb($keyUtc)->modify('+7 days')), 'columns' => ['title' => 'Sample fold walk, renamed']], ['ownTitle' => 'keep']);
+        checkEq("F7 $name: a rename leaves the edited day at its instant, its own list as it was", [$shownUtc, $own], [$shownAt($p, $row), json_decode((string) ($p['writes']['overrides'][2]['override_fields'] ?? $row['override_fields']), true)]);
+        // A later clock for the series: an own time stays at its instant, an inherited one moves with the series.
+        $p = smPlan($s, [$row], smDrag($s, '2027-11-07 02:30', '2027-11-07 03:00'), ['ownTitle' => 'keep']);
+        // 03:00 on 31 Oct is after the repeated hour: one instant, 02:00Z.
+        $moved = in_array('time', $own, true) ? $shownUtc : '2027-10-31 02:00:00';
+        checkEq("F7 $name: the series moved to 03:00, the day " . (in_array('time', $own, true) ? 'keeps its own instant' : 'at the series\' 03:00'), $moved, $shownAt($p, $row));
+    }
+    // Variant B, both directions: the day acted on put on one of the two
+    // instants where its image's key is the other owns its time, at the
+    // instant it was put, for the elapsed length it was given (45 minutes).
+    foreach ([
+        'variant B: put on the first instant, the key the second' => [
+            smSeries('Sample fold landing', 'FREQ=YEARLY;UNTIL=20281021T003000Z', '2026-10-21 02:30', 60, false, [], $berlin), '2027-10-21 00:30:00',
+            '2027-10-31 00:30:00', '2027-10-31 01:30:00'],
+        'put on the second instant, the key the first' => [
+            smSeries('Sample fold landing', 'FREQ=WEEKLY;COUNT=4', '2027-10-17 02:30', 60, false, [], $berlin), '2027-10-24 00:30:00',
+            '2027-10-31 01:30:00', '2027-10-31 00:30:00'],
+    ] as $name => [$s, $acted, $putUtc, $imageKey]) {
+        $p = smPlan($s, [], ['acted' => $acted, 'landed' => ['start_utc' => $putUtc, 'end_utc' => Time::toDb(Time::fromDb($putUtc)->modify('+45 minutes')), 'all_day' => 0, 'tzid' => $berlin], 'columns' => ['status' => 'tentative']]);
+        $created = $p['writes']['createEdited'][0] ?? [];
+        checkEq("F7 $name: the day shows where it was put, its time its own, 45 minutes long, keyed on its image", [
+            $imageKey, $putUtc, Time::toDb(Time::fromDb($putUtc)->modify('+45 minutes')), ['time'], Time::iso(Time::fromDb($putUtc)->setTimezone(Time::zone($berlin))),
+        ], [
+            $created['recurrence_instance_utc'] ?? null, $created['start_utc'] ?? null, $created['end_utc'] ?? null, json_decode((string) ($created['override_fields'] ?? 'null'), true),
+            array_values(array_filter($p['plan']['next'], static fn(array $x): bool => substr($x['start'], 0, 10) === '2027-10-31'))[0]['start'] ?? null,
+        ]);
+    }
+    // Ownership inference reads instants too: a row on its key's day at the
+    // other instant of the repeated hour owns its time; at its key, not.
+    $s = $foldSeries('2027-10-31 00:30:00', 'FREQ=WEEKLY;COUNT=3');
+    checkEq('F7: inferred ownership tells the two instants apart', [['time'], []], [
+        array_values(array_intersect(OwnFields::infer($foldRow($s, '2027-10-31 00:30:00', '2027-10-31 01:30:00', []), $s), ['time'])),
+        array_values(array_intersect(OwnFields::infer($foldRow($s, '2027-10-31 00:30:00', '2027-10-31 00:30:00', []), $s), ['time'])),
+    ]);
+
     // Review F1: a row exists for its own fields and for what refers to it.
     // A day whose only own field is its title, in a trip, given the series'
     // new title keeps its row and its trip; out of the trip, it rejoins.

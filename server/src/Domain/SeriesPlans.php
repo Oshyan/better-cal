@@ -654,7 +654,11 @@ trait SeriesPlans
             // Its own time is its clock in its own zone; otherwise the series' (Own Fields).
             $clock = $allDay ? '00:00:00' : ($ownTime ? $shown->format('H:i:s') : $key->setTimezone($tz)->format('H:i:s'));
             $zone = $allDay ? Time::utc() : ($ownTime ? $rowTz : $tz);
-            $start = new \DateTimeImmutable($day . ' ' . $clock, $zone);
+            // The instant it came from stays that instant (its own time's, or
+            // its key's for the series' time): a repeated hour's wall clock
+            // never turns into the other of its two instants.
+            [$h, $m, $sec] = array_map('intval', explode(':', $clock));
+            $start = Calc::at(Cal::dnOf(new \DateTimeImmutable($day, Time::utc())), [$h, $m, $sec], $zone->getName(), $ownTime ? $shown : $key);
             // The series' length, unless it's the day's own or the day isn't of the series' kind (all-day or timed).
             $length = in_array('length', $left, true) || $allDay !== ((int) $master['all_day'] === 1) ? Recurrence::durationSeconds($row) : $len;
             $set['start_utc'] = Time::toDb($start);

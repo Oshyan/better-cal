@@ -429,11 +429,22 @@ final class Calc
 
     // ---- wall clocks -------------------------------------------------------
 
-    /** @param array{0:int,1:int,2:int} $clock */
-    public static function at(int $dn, array $clock, string $tz): \DateTimeImmutable
+    /**
+     * The instant a wall clock names on a local day in a zone. An instant
+     * given stays that instant: when $given is that wall clock (one of the
+     * two a repeated hour names), it is the answer, so a day, clock and zone
+     * read back from an instant never become the other instant. With none
+     * given, a repeated wall clock is its first instant.
+     *
+     * @param array{0:int,1:int,2:int} $clock
+     */
+    public static function at(int $dn, array $clock, string $tz, ?\DateTimeImmutable $given = null): \DateTimeImmutable
     {
         $wall = sprintf('%s %02d:%02d:%02d', Cal::date($dn), $clock[0], $clock[1], $clock[2]);
         $zone = Time::zone($tz);
+        if ($given !== null && $given->setTimezone($zone)->format('Y-m-d H:i:s') === $wall) {
+            return $given->setTimezone(Time::utc());
+        }
         $at = new \DateTimeImmutable($wall, $zone);
         // A clock time that happens twice is the first, in daylight time, as
         // sabre has it (RFC 5545 3.3.5); PHP alone takes the second. The

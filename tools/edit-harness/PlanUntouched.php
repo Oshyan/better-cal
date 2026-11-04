@@ -144,7 +144,8 @@ trait PlanUntouched
                     $allowed[] = $col;
                 }
             }
-            if (isset($fates[$id]) && array_filter($fields, static fn(string $f): bool => $takes($id, $f)) !== []) {
+            // The own list may change where an entry of it may (checked entry by entry below).
+            if (isset($fates[$id]) && ($timeEdit || $id === $edit['fromRow'] || array_filter($fields, static fn(string $f): bool => $takes($id, $f)) !== [])) {
                 $allowed[] = 'override_fields';
             }
             if ($r1 === null || $r1['deleted_at'] !== null && $r0['deleted_at'] === null) {

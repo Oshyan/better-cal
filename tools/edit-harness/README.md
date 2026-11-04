@@ -10,7 +10,7 @@ It needs PHP with `server/vendor` installed and a MariaDB or MySQL server it may
 
 A seeded slice of 200 cases (seed 7) and the fixed cases run with the database suite on every push (`server/tests/db/edits.test.php`). It fails on any failure outside the known code paths below and lists each one with its signature and the case to replay, and it fails when the slice and the fixed cases together leave a required category of the plan's data checks unrun. The mutation runner follows it in CI (Mutations).
 
-`--fixed` runs the fixed cases after the drawn ones (`--cases 0 --fixed` for them alone, `--fixed=name,...` for some), `--save-spec DIR` writes each case's complete spec as a fixed case is written (`--case N` to save one), `--findings FILE` names the findings file, `--model FILE` loads the series model from a copy instead of the tree (the mutation runner's), and `--find 'check|role'` names each case that ran a category of the plan-data checks, to pick a fixed case from.
+`--fixed` runs the fixed cases after the drawn ones (`--cases 0 --fixed` for them alone, `--fixed=name,...` for some; a full run of 1,000 cases or more takes them all), `--save-spec DIR` writes each case's complete spec as a fixed case is written (`--case N` to save one), `--findings FILE` names the findings file, `--model FILE` loads the series model from a copy instead of the tree (the mutation runner's), and `--find 'check|role'` names each case that ran a category of the plan-data checks, to pick a fixed case from.
 
 ## Files
 

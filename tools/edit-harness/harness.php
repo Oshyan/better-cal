@@ -8,7 +8,8 @@
 //       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE]
 //
 // --fixed runs the fixed cases (cases/*.json, or the files named) after the
-// drawn ones (--cases 0 for the fixed ones alone); --save-spec writes each
+// drawn ones (--cases 0 for the fixed ones alone; a full run of 1,000 cases or
+// more takes them all); --save-spec writes each
 // case's complete spec to DIR, as a fixed case is written; --findings names
 // the findings file; --model loads the series model from FILE instead of the
 // tree (the mutation runner's patched copy, mutations/run.php); --find names
@@ -103,6 +104,9 @@ try {
     });
     if ($fixed !== null) {
         $runner->runFixed($fixed);
+    } elseif ($onlyFamily === null && $onlyCase === null && $cases >= 1000) {
+        // A full run takes the fixed cases too: some required categories (a rule the expander can't read) are never drawn.
+        $runner->runFixed();
     }
     $casesSeconds = round(microtime(true) - $started, 1);
     $misuses = BetterCal\Domain\Undo::misuses();

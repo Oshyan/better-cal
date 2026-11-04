@@ -371,7 +371,7 @@ trait PlanPlacement
      * by index, from the series as it is today, the earlier of the two by
      * instant, named by its series. The contract leaves three things open:
      * whether a reading's days are its rule unbounded or its series as
-     * bounded, whether a gain left out at an edge (a generated skip) is one
+     * bounded, whether a gain at an edge (added, or left out as a generated skip) is one
      * of them, and whether "before the day acted on" is before its old day
      * or before where it landed. Every reading of those is worked out, and
      * a value is asserted only where they all agree; elsewhere the case is
@@ -411,11 +411,12 @@ trait PlanPlacement
             if (!empty($outR['empty'])) {
                 continue;
             }
-            $gen = array_fill_keys($outR['gen'], true);
+            // A gain at an edge, added or left out (a generated skip), is one of its days or not: the contract leaves it open.
+            $gen = array_fill_keys(array_merge($outR['gen'], $outR['edge']), true);
             $walk = $x->readingDays($r, (int) $outR['start']);
             $noGen = static fn(array $l): array => array_values(array_filter($l, static fn(int $d): bool => !isset($gen[$d])));
             $seqs[$o['id']] = ['o' => $o, 'r' => $r, 'start' => (int) $outR['start'], 'noGen' => $noGen,
-                'v' => ['rule' => $walk, 'rule without edge skips' => $noGen($walk), 'series' => $outR['days'], 'series without edge skips' => $noGen($outR['days'])]];
+                'v' => ['rule' => $walk, 'rule without edge gains' => $noGen($walk), 'series' => $outR['days'], 'series without edge gains' => $noGen($outR['days'])]];
         }
         foreach ($seqs as $id => $s) {
             if (!array_key_exists('earlier', $s['o'])) {

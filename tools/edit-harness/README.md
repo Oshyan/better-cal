@@ -61,10 +61,11 @@ Every invariant is universal over the delta vector; none is keyed by an edit's n
 
 ## Known Code Paths
 
-The known list names code paths and one library quirk, never an invariant or an edit's name. The summary ends with `Clean: every failure is under a known code path.` when nothing falls outside them.
+The known list names code paths, never an invariant or an edit's name. The summary ends with `Clean: every failure is under a known code path.` when nothing falls outside them.
 
 - **following-1.4.6**: "this and following", delete following and an answer from a day on stay on their 1.4.6 code until 1.5.1 moves them onto the model. The harness decides this from what it sent: the scope (following, delete following, attendance following) and a day acted on after the series' first. From the first day those edits are the whole series (`following@first` and the others), run on the model, and are checked as such; they are not under this path.
-- **until-first-phantom**: the expander (sabre/vobject 4.6.1) yields a monthly rule's UNTIL as an occurrence when it falls on the first of a month at the series' time (a date for an all-day series). Matched by that exact condition (the last occurrence is the UNTIL itself, on a 1st, and the rule doesn't name the day), recorded as `quirk-until-phantom` and taken out of the occurrences and of the plan's next dates (the plan reads the expander), so the other checks see the rule's days.
+
+sabre/vobject 4.6.1 yields a monthly rule's UNTIL as an occurrence when it falls on the first of a month the rule doesn't give, at the series' time (a date for an all-day series). The app's rule iterator ends the rule there instead, for the model and the window alike, so the harness reads the expander as it is and a phantom day would show as a disagreement with the oracle.
 
 Every other failure is a finding about the application. Once 1.5.1 lands, delete `following-1.4.6` from `Known::PATHS` and from this list.
 

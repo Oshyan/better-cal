@@ -67,9 +67,6 @@ trait Invariants
         }
         $row = $st['row'];
         $raw = $st['raw'];
-        if ($st['phantom'] !== null) {
-            $this->fail('quirk-until-phantom', 'the expander yields the UNTIL as an occurrence (sabre/vobject 4.6.1, a 1st of a month)', ['until' => $st['phantom'], 'rrule' => $row['rrule']]);
-        }
         if ($st['shape']->cap === 'unreadable') {
             return;
         }
@@ -932,11 +929,6 @@ trait Invariants
             $overDn[(string) $ov['recurrence_instance_utc']] = $planDay($ov);
         }
         $next = array_map(static fn(array $n): string => (string) self::dbKey($n['start']), $plan['next'] ?? []);
-        if (($after['phantom'] ?? null) !== null) {
-            // The plan reads the expander, which yields the phantom UNTIL; it is
-            // taken out here as from the occurrences (README, Known Code Paths).
-            $next = array_values(array_diff($next, [$after['phantom']]));
-        }
         $keys = array_column($after['raw'], 'key');
         if ($next !== [] && $after['through'] !== null && max($next) >= $after['through']) {
             // Next dates past the window the series was read over: read them where they are.

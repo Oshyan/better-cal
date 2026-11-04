@@ -14,11 +14,10 @@ final class Truth
     public const WINDOW_DAYS = 740;
 
     /**
-     * @return array{occ:list<array{key:string,dn:int,secs:int}>,through:?string,phantom:?string}
+     * @return array{occ:list<array{key:string,dn:int,secs:int}>,through:?string}
      *  occ: the raw occurrences, each with its local day and clock in the
      *  series' zone; through: null when occ is the whole series, else the
-     *  key before which it holds every occurrence; phantom: the UNTIL the
-     *  expander yielded as an occurrence (the one library quirk), taken out.
+     *  key before which it holds every occurrence.
      */
     public static function expand(array $row, ?int $limit = null): array
     {
@@ -59,23 +58,7 @@ final class Truth
                 break;
             }
         }
-        $phantom = null;
-        if ($through === null && $out !== [] && $freq === 'MONTHLY' && isset($p['UNTIL'])) {
-            // sabre/vobject 4.6.1 yields a monthly rule's UNTIL as an
-            // occurrence when it falls on the first of a month at the
-            // series' time (a date for an all-day series). The exact
-            // condition: the last occurrence is the UNTIL itself, on a 1st,
-            // and the rule doesn't name that day.
-            $last = end($out);
-            $u = (string) $p['UNTIL'];
-            $isUntil = strlen($u) === 8 ? str_replace('-', '', substr($last['key'], 0, 10)) === $u : Clock::parse($last['key'])->format('Ymd\THis\Z') === $u;
-            $shape = Shape::parse((string) $row['rrule'], $out[0]['dn']);
-            if ($isUntil && Days::ymd($last['dn'])[2] === 1 && $shape->supported() && !$shape->has($last['dn'], $out[0]['dn'])) {
-                $phantom = $last['key'];
-                array_pop($out);
-            }
-        }
-        return ['occ' => $out, 'through' => $through, 'phantom' => $phantom];
+        return ['occ' => $out, 'through' => $through];
     }
 
     /** The zone a series' days are read in (UTC for an all-day series). */

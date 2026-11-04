@@ -22,8 +22,8 @@ require_once __DIR__ . '/Invariants.php';
 require_once __DIR__ . '/Driver.php';
 
 /**
- * What is known, by code path and by library quirk, never by invariant
- * name or edit signature (README, Known Code Paths).
+ * What is known, by code path, never by invariant name or edit signature
+ * (README, Known Code Paths).
  */
 final class Known
 {
@@ -32,9 +32,6 @@ final class Known
 
     public static function cause(array $failure): ?string
     {
-        if ($failure['invariant'] === 'quirk-until-phantom') {
-            return 'until-first-phantom (sabre/vobject 4.6.1)';
-        }
         if (in_array($failure['path'], self::PATHS, true)) {
             return 'following-1.4.6 (the 1.4.6 following or delete-following path)';
         }

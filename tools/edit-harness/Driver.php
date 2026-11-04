@@ -410,7 +410,7 @@ final class Driver
         $row = $this->row($id);
         $tz = Truth::tzOf($row);
         $live = $row !== [] && $row['deleted_at'] === null && $row['rrule'] !== null;
-        $exp = $live ? Truth::expand($row) : ['occ' => [], 'through' => null, 'phantom' => null];
+        $exp = $live ? Truth::expand($row) : ['occ' => [], 'through' => null];
         $start = $row === [] ? null : Clock::local((string) $row['start_utc'], $tz);
         $startDn = $start === null ? 0 : Clock::dnOf($start);
         $overrides = [];
@@ -451,7 +451,6 @@ final class Driver
             'len' => $row === [] ? 0 : Clock::parse((string) $row['end_utc'])->getTimestamp() - Clock::parse((string) $row['start_utc'])->getTimestamp(),
             'raw' => $occ,
             'through' => $exp['through'],
-            'phantom' => $exp['phantom'],
             'exp' => $exp,
             'bounded' => $shape->count !== null || $shape->until !== null,
             'lastDn' => $occ === [] ? null : end($occ)['dn'],

@@ -4651,6 +4651,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     bound({ kind: 'count', count: 6, events: 6, last: '2027-07-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
     bound({ kind: 'count', count: 10, events: 10, last: '2027-11-01', from: { kind: 'count', count: 6 } }).change.replace(/^.*7:00 PM, /, ''),
   ], ['with no end (was 6 events).', 'ending Jan 20, 2028, as before.', 'ending Nov 1 (was Oct 31).', 'for 6 events, as before.', 'for 10 events (was 6).']);
+  eq('series panel: an UNTIL with no last day is read in its rule\'s zone, never the device\'s', bound({ kind: 'until', until: '20271102T060000Z', events: 13, from: { kind: 'none' } }).change.replace(/^.*7:00 PM, /, ''), 'ending Nov 1.');
   const until = planView({ ...choir, bound: { kind: 'until', events: 13, last: '2028-01-20', from: { kind: 'until', last: '2028-01-20' } }, counts: { events: 13, edited: 11, skipped: 1 }, next: choir.next.slice(0, 3), nextMore: false }, ctx());
   eq('series panel: an end date, its count on Affects and the button, no ellipsis when the series ends with the list', [until.affects, until.action, until.comingUp.endsWith('…')],
     ['13 events, ending Jan 20, 2028. 11 were changed earlier (title, location and 1 other), 1 was removed.', 'Move 13 events', false]);

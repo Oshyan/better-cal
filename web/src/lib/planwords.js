@@ -101,12 +101,17 @@ export function ruleWords(part) {
   return lowerFirst(words) + clock;
 }
 
+// The day a bound's UNTIL names, read in its rule's zone (an all-day rule's
+// dates are UTC), never the device's: `rule` is the plan's rule.to.
+const untilDay = (until, rule) => (until ? untilDayKey(until, rule ? rule.tz || 'UTC' : null) : null);
+
 /**
  * The bound as the Change sentence ends: "with no end, as before", "with no
  * end (was 6 events)", "ending Nov 1, as before", "ending Nov 1 (was Oct 31)",
- * "for 6 events, as before", "for 10 events (was 6)".
+ * "for 6 events, as before", "for 10 events (was 6)". `rule` is the plan's
+ * rule, whose `to` zone its UNTIL is read in.
  */
-export function boundPhrase(bound, opts = {}) {
+export function boundPhrase(bound, opts = {}, rule = null) {
   const from = (bound && bound.from) || { kind: 'none' };
   const kind = bound ? bound.kind : 'none';
   if (kind === 'none') {
@@ -119,7 +124,7 @@ export function boundPhrase(bound, opts = {}) {
     if (from.kind === 'count') return 'for ' + plural(n, 'event', 'events') + (from.count === n ? ', as before' : ' (was ' + from.count + ')');
     return 'for ' + plural(n, 'event', 'events');
   }
-  const last = bound.last || (bound.until ? untilDayKey(bound.until) : null);
+  const last = bound.last || untilDay(bound.until, rule && rule.to);
   const ending = 'ending ' + fmtDay(last, { weekday: false, ...opts });
   if (from.kind === 'until') return ending + (from.last === last ? ', as before' : ' (was ' + fmtDay(from.last, { weekday: false, ...opts }) + ')');
   return ending;
@@ -129,7 +134,7 @@ export function boundPhrase(bound, opts = {}) {
 export function changeSentence(rule, bound, opts = {}) {
   const from = ruleWords(rule && rule.from);
   const to = ruleWords(rule && rule.to);
-  const end = boundPhrase(bound, opts);
+  const end = boundPhrase(bound, opts, rule);
   if (!from && !to) return upperFirst(end) + '.';
   const fromDay = dayKeyOf(rule && rule.from && rule.from.start), toDay = dayKeyOf(rule && rule.to && rule.to.start);
   if (from === to || !to) {
@@ -209,7 +214,7 @@ export function comingUp(next, more, opts = {}) {
  */
 export function affects(counts, bound, opts = {}, days = [], rule = null) {
   const c = counts || {};
-  const last = bound && (bound.last || (bound.until ? untilDayKey(bound.until) : null));
+  const last = bound && (bound.last || untilDay(bound.until, rule && rule.to));
   const first = endChange(bound, rule, opts) || (c.events == null
     ? 'All events, with no end.'
     : plural(c.events, 'event', 'events') + (last ? ', ending ' + fmtDay(last, { weekday: false, ...opts }) : '') + '.');

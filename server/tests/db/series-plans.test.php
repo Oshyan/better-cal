@@ -155,9 +155,9 @@ return static function (Db $db): void {
         checkEq('reading dates: from the day acted on, three, then the last shared date and the first that differs; both change earlier days from 30 Jan, against the series as it is today', [
             '2027-03-30', 3, ['2028-01-30', '2028-03-30'], ['2028-01-30', '2028-02-29'], '2027-01-30', '2027-01-30',
         ], [
-            substr((string) ($opts['skip']['dates'][0] ?? ''), 0, 10), count($opts['skip']['dates'] ?? []),
-            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['skip']['then'] ?? []),
-            array_map(static fn(string $x): string => substr($x, 0, 10), $opts['clamp']['then'] ?? []),
+            substr((string) ($opts['skip']['dates'][0]['start'] ?? ''), 0, 10), count($opts['skip']['dates'] ?? []),
+            array_map(static fn(array $x): string => substr($x['start'], 0, 10), $opts['skip']['then'] ?? []),
+            array_map(static fn(array $x): string => substr($x['start'], 0, 10), $opts['clamp']['then'] ?? []),
             array_key_exists('earlier', $opts['skip'] ?? []) ? $opts['skip']['earlier'] : 'missing', $opts['clamp']['earlier'] ?? null,
         ]);
         [$code] = $answer(fn() => $d->events->patch($u, $gym, $edit + ['preview' => true]));

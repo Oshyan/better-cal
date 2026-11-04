@@ -4,7 +4,9 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.5.0 (2026-11-04)
+
+One engine under repeating events: every whole-series change goes through one model that says what it will do before it does it, and a harness that generates thousands of series and edits measures it on every push ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
 
 - **Every change to all events of a series says what it will do first** ([series edits](docs/series-edits.md)): the rule before and after in words, the next dates, the end, and what happens to each edited and skipped day. Where a change can mean more than one thing, the readings are choices with their own dates: "Move every Wednesday to Thursday" or "Shift the whole weekly pattern", "On the 30th, or the last day in shorter months" or "skipping months without one", "Keep 6 events" or "Keep the end". Nothing is lost or added without the plan naming it, and a series that changed since you looked asks again. "This and following" and deletes keep their old behavior until 1.5.1 moves them onto the same model.
 - **Edited days keep what you set and take the series' other fields:** rename a series and a day you renamed keeps its name (with "Give it the new title too" when you want it); move the series to 20:00 and a day you only moved to Thursday goes to 20:00 too. An edited day's own fields show in the editor, each with "Use series value". Changing all events from an edited day moves the series the same way and keeps that day's own fields ([#189](https://github.com/Oshyan/better-cal/issues/189)); the choice to make that day's date or time the series' own comes in 1.5.1.
@@ -17,10 +19,13 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **A very frequent repeating event stays whole after a save** ([#190](https://github.com/Oshyan/better-cal/issues/190)): an hourly series, say, was cut short by any change, leaving its later days empty. Changes that arrive while events are loading now cost one more fetch rather than several, and a load that fails is tried again with the next check for changes (within 30 seconds, or at once with Retry now). An event dragged again before its first move saved no longer jumps back for a moment, and one whose saves fail goes back to where it was.
 - An emailed cancellation that is older than an invitation waiting in Review no longer closes it (since 1.4.6, a delayed cancellation could close a newer invitation); only one at least as new as the invitation closes it.
 - A repeating event no longer shows an extra event on its end date when that date isn't one of its days (the 1st of a month for "every 2nd Tuesday", say), and a day like that never cuts the rest of the series short.
-- Undo refuses to restore a trip inside a trip or clear a trip that has stops; it says what it would break and leaves the entry for later.
+- **A trip never contains a trip, however you get there:** making a stop a trip, or a series with a stop among its days, is refused and names the trip it is in; clearing a trip's flag while it has stops is refused; and Undo refuses to bring back a state that would break either, says what it would break and leaves the entry for later. A refused change touches nothing, a Google calendar included.
+- A rule that names its hour at a clock the spring change skips keeps its last day, and renaming or moving such a series no longer makes that day an event of its own ([#200](https://github.com/Oshyan/better-cal/issues/200)).
 - **Update checks:** a malformed signature entry stops the check and names the release even when it names a key your copy doesn't list, instead of being stepped around as a key change. A slow check no longer brings back the notice for a release withdrawn while it ran.
 
 Operators: two database changes (the journal's side table for large entries; migration 063, each edited day's own fields, filled once from what differs from its series), applied automatically by `update.php` or the database update page.
+
+Maintainers: the series harness (`tools/edit-harness`) now checks every value of a plan against the stored rows, its own oracle and the zone data (shape, placements, coming up, untouched rows), and a set of mutations proves each check catches the fault it names; both run with the database tests on every push. Its first-run causes are all closed; "this and following" stays an accepted path until 1.5.1.
 
 ## 1.4.6 (2026-11-01)
 

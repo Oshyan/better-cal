@@ -128,14 +128,16 @@ return [
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    // The trip rule's two mutations patch today's query (Trips::assertRestored, which Undo calls); when the shared rule lands as
+    // Trips::assertRules for every writer, retarget both at it: the runner fails until then, the text being gone.
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'Undo\'s gate lets a trip\'s flag be cleared while it has members',
+        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],
     ],
     [
         'id' => 'undo-gate-nesting', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'Undo\'s gate lets a link that nests a trip be restored',
+        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a link with both ends flagged stand',
         'patch' => [["((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))", "((c.is_container = 1 AND (1 = 0 OR l.container_id = l.event_id))"]],
     ],
 ];

@@ -138,7 +138,7 @@ return [
         // The window's expander alone (the model reads Calc, not this), so only the window's checks see it.
         'id' => 'window-truncated-by-its-start', 'file' => 'server/src/Domain/Recurrence.php', 'checks' => ['c-occurrences', 'c-window'],
         'what' => 'the window\'s expansion ends 400 days after the window\'s own start, so a wide window shows less than its parts',
-        'patch' => [["                if (\$occStart >= \$winEnd) {\n                    break;\n                }", "                if (\$occStart >= \$winEnd || \$occStart->getTimestamp() - \$winStart->getTimestamp() > 400 * 86400) {\n                    break;\n                }"]],
+        'patch' => [["            if (\$at >= \$to->getTimestamp()) {\n                break;\n            }", "            if (\$at >= \$to->getTimestamp() || \$at - \$from->getTimestamp() > 400 * 86400) {\n                break;\n            }"]],
         'cases' => ['mutation-occurrences-months-apart'],
     ],
     [
@@ -201,10 +201,10 @@ return [
         'cases' => ['mutation-occurrences-in-a-repeated-hour'],
     ],
     [
-        // In sabre's own weekly step (vendor, never changed: the copy is loaded in its place).
-        'id' => 'occurrences-weekly-byday-unread', 'file' => 'server/vendor/sabre/vobject/lib/Recur/RRuleIterator.php', 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
-        'what' => 'one part\'s evaluation removed: a weekly rule\'s BYDAY, so it repeats on its start\'s weekday alone',
-        'patch' => [["        if (!\$this->byHour && !\$this->byDay) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');", "        if (!\$this->byHour) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');"]],
+        // In the expander's weekly period: the week's days BYDAY admits, cut to the first.
+        'id' => 'occurrences-weekly-byday-unread', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'one part\'s evaluation removed: a weekly rule\'s BYDAY list, so it repeats on the first of its weekdays alone',
+        'patch' => [["                return \$out;\n            case 'MONTHLY':", "                return array_slice(\$out, 0, 1);\n            case 'MONTHLY':"]],
         'cases' => ['mutation-occurrences-on-a-weekday-list'],
     ],
     [

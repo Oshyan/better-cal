@@ -1828,6 +1828,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: the day becoming an event of its own is named by the day it is about, then where it went', [
         "One edited day becomes an event of its own: 'Sample concert' on 9 Feb, moved to 12 Feb.", true,
     ], [$p['plan']['ownership'] ?? null, str_contains($p['plan']['summary'], "One edited day became an event of its own: 'Sample concert' on 9 Feb, moved to 12 Feb.")]);
+    // The series' start: an all-day series' is a date, a timed one's in its
+    // zone, and an anchored one's the stored start, a key.
+    $p = smPlan($practice, [], ['columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Writers: an all-day series starts on a date, its rule\'s starts dates too', ['2027-01-05', '2027-01-05', '2027-01-05'],
+        [$p['plan']['start'], $p['plan']['rule']['from']['start'], $p['plan']['rule']['to']['start']]);
+    $p = smPlan($timed, [], ['columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Writers: a timed series starts in its zone', ['2027-01-05T20:00:00-08:00', '2027-01-05T20:00:00-08:00'], [$p['plan']['start'], $p['plan']['rule']['to']['start']]);
+    $nightly = smSeries('Night shift', 'FREQ=MONTHLY', '2027-03-13 02:30');
+    $p = smPlan($nightly, [], smDrag($nightly, '2027-05-13 02:30', '2027-05-14 02:30'));
+    checkEq('Writers: a series anchored on the day before a skipped hour starts at its stored start, a key', smAt('2027-02-14 02:30'), str_replace(['T', 'Z'], [' ', ''], (string) $p['plan']['start']));
+    checkEq('Writers: that start is written as a key', true, str_ends_with((string) $p['plan']['start'], 'Z'));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

@@ -943,12 +943,14 @@ final class Model
     }
 
     /**
-     * A rule as data for the client's sentences: its text, its start (ISO,
-     * in its zone), its zone and whether it is all-day.
+     * A rule as data for the client's sentences: its text, its start (ISO in
+     * its zone, or a date for an all-day rule, which has none), its zone and
+     * whether it is all-day.
      */
     private function ruleData(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay): array
     {
-        return ['rrule' => $rrule, 'start' => Time::iso($start->setTimezone(Time::zone($allDay ? 'UTC' : $tz))), 'tz' => $allDay ? null : $tz, 'allDay' => $allDay];
+        $zone = $allDay ? null : $tz;
+        return ['rrule' => $rrule, 'start' => self::inZoneOut($start, $zone), 'tz' => $zone, 'allDay' => $allDay];
     }
 
     /** The bound before the change as data: its kind, count or until, its last day and its events. */
@@ -1967,7 +1969,10 @@ final class Model
         foreach ($groupsOut as $g) {
             $selected[$g['id']] = $g['selected'];
         }
-        $startIso = Time::iso($start1->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $this->tz1)));
+        // The series' start: an anchored series' is its stored start, no
+        // occurrence of it, so a key; any other's in the plan's zone (a date
+        // for an all-day series).
+        $startIso = $calc1->anchor !== null ? self::keyOut(Time::toDb($start1)) : self::inZoneOut($start1, $this->planZone());
         $plan = [
             'scope' => 'all',
             'direct' => $direct,

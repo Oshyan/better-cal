@@ -1,0 +1,45 @@
+{
+    "n": 9102,
+    "seed": 0,
+    "series": {
+        "rrule": "FREQ=HOURLY;BYHOUR=2,3",
+        "bound": "count",
+        "boundAt": 6,
+        "allDay": false,
+        "tzid": "Antarctica/Troll",
+        "start": "2027-03-26 03:00",
+        "family": "several",
+        "import": true,
+        "untilForm": "dayend",
+        "length": 10
+    },
+    "exceptions": [],
+    "acted": 0,
+    "vector": {
+        "via": "master",
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null
+    },
+    "from": "first",
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

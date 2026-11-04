@@ -1,0 +1,93 @@
+{
+    "n": 17,
+    "seed": 41,
+    "series": {
+        "family": "onehour",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;BYHOUR=13;BYMINUTE=0",
+        "import": false,
+        "bound": "count",
+        "boundAt": 9,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-06-08 13:00",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 7,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": -2,
+            "mins": -90,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        },
+        {
+            "at": 5,
+            "kind": "edit",
+            "own": [
+                "title",
+                "location",
+                "reminders",
+                "status"
+            ],
+            "days": 2,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 8,
+            "kind": "edit",
+            "own": [
+                "title",
+                "status",
+                "time",
+                "zone"
+            ],
+            "days": 3,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 30
+        }
+    ],
+    "acted": 6,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": "America/Los_Angeles",
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "location": "Sample Annex",
+            "reminders": [
+                45
+            ]
+        },
+        "rule": "new",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TH;BYHOUR=13;BYMINUTE=0",
+        "bound": null,
+        "via": "row"
+    },
+    "stack": null,
+    "choices": {
+        "edit": {
+            "zone": "clock",
+            "reading": "map",
+            "ownLocation": "keep",
+            "ownReminders": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

@@ -247,10 +247,14 @@ function endChange(bound, rule, opts) {
   return '';
 }
 
-/** Header line 3, when the edit started from a day with something of its own: "Started from 'Sample practice 6' on Fri, Dec 11." */
+/**
+ * Header line 3, when the edit started from a day with something of its
+ * own: "Started from 'Sample practice 6' on Fri, Dec 11.", the date being
+ * where that day showed (its `before` placement), where the person started.
+ */
 export function startedLine(acted, opts = {}) {
   if (!acted || !(acted.kept || []).length) return '';
-  return 'Started from ' + dayName(acted, opts.series) + ' on ' + fmtDay(acted.shows, opts) + '.';
+  return 'Started from ' + dayName(acted, opts.series) + ' on ' + fmtDay(acted.before && acted.before.date, opts) + '.';
 }
 
 // The fields changed days have of their own, most common first: " (title,
@@ -304,15 +308,20 @@ export function dayName(d, series = '') {
 export const fieldNoun = (f) => FIELD_NOUNS[f] || f;
 
 /**
- * What changes on a day besides its date: "is renamed to 'Chorus'", "takes
- * the new reminders". What it keeps is never said; only what changes.
+ * What changes on a day besides where it goes: "is renamed to 'Chorus'",
+ * "takes the new reminders". Its date, time and all-day setting are said by
+ * its outcome, so they are never among these. What it keeps is never said;
+ * only what changes.
  */
 export function changesWords(d, opts = {}) {
-  const takes = contentOf(d.takes);
+  const takes = (d.takes || []).filter((f) => !PLACE_FIELDS.includes(f));
   const renamed = takes.includes('title') && opts.newTitle ? 'is renamed to ' + quoted(opts.newTitle) : '';
   const rest = takes.filter((f) => !(renamed && f === 'title'));
   return [renamed, rest.length ? 'takes the new ' + fieldList(rest) : ''].filter(Boolean).join(' and ');
 }
+const PLACE_FIELDS = ['date', 'time', 'allDay'];
+const CLOCK_FIELDS = ['time', 'allDay'];
+const hasAny = (list, fields) => (list || []).some((f) => fields.includes(f));
 
 // What a day has of its own, said after its name only when it is more
 // than its title: ", with its own title and location,", ", in a trip,",
@@ -326,63 +335,89 @@ function ownAside(d) {
 }
 
 /**
- * The time a day shows at after the change when it isn't the series' new
- * time there (its own time kept): "1:00 PM", else "". That time is its
- * outcome, so its row states it; a time equal to the series' is never said.
- * An all-day plan (no zone) has no series time: a timed day there always
- * says its clock, in its own zone, named: "8:00 PM in Los Angeles".
+ * Whether a day's row says the clock it shows at after the change: it is
+ * timed there (its `after` has `at`) and the clock is news, not the series'
+ * time the Change sentence already gives: the day's own (it keeps its time
+ * or its all-day setting), one this change gives it (it takes them), or one
+ * in a zone other than the plan's (its `after` names `tz`: a timed day in an
+ * all-day plan), which is always said with the zone's name.
  */
-export function ownClock(d, opts = {}) {
-  if (!d || !d.at || !d.newKey) return '';
-  if (!opts.tz) {
-    const at = fmtClock(d);
-    return at && at + ' in ' + zoneName(d.tz);
-  }
-  const at = fmtClock(d, opts.tz);
-  return at && at !== fmtClock(d.newKey, opts.tz) ? at : '';
-}
-
-// Where a day goes: its new date, or its new time on the same day (a time
-// of the series, so only in a plan with a zone).
-function goes(d, opts) {
-  if (d.to && d.shows && d.to !== d.shows) return 'moves to ' + fmtDay(d.to, { ...opts, prev: d.shows });
-  if (opts.tz && d.newKey && (d.takes || []).includes('time')) return 'moves to ' + fmtClock(d.newKey, opts.tz);
-  return 'stays where it is';
+export function saysClock(d) {
+  const a = d && d.after;
+  return !!(a && a.at) && (hasAny(d.kept, CLOCK_FIELDS) || hasAny(d.takes, CLOCK_FIELDS) || !!a.tz);
 }
 
 /**
- * An edited day's row, by its outcome: what was done to it earlier, what
- * happens to it now, and what changes on it (never what it keeps).
+ * Whether that clock is the day's alone, so its row is its own: its own
+ * time, or a clock in another zone. A clock it takes from the series is
+ * the same for every day that takes it, so those days can share a row.
+ */
+export function ownClock(d) {
+  const a = d && d.after;
+  return !!(a && a.at) && (hasAny(d.kept, CLOCK_FIELDS) || !!a.tz);
+}
+
+/**
+ * A placement's clock as a row says it: "8:00 PM", read in its own zone
+ * when it names one, else the plan's (`opts.tz`), and then with that zone's
+ * name: "8:00 PM in Los Angeles". With no zone there is no clock ("").
+ */
+export function clockOf(place, opts = {}) {
+  const clock = place && place.at ? fmtClock(place, opts.tz) : '';
+  return clock && place.tz ? clock + ' in ' + zoneName(place.tz) : clock;
+}
+
+// Where a day shows after the change, as its row says it: its date, left
+// out when the sentence has just said that date (`prev`, a day key), and
+// its clock when the row says one (saysClock). `full` is its date always.
+function placeOf(d, prev, opts) {
+  const a = d.after || {};
+  const full = fmtDay(a.date, { ...opts, prev });
+  return { date: a.date && a.date !== prev ? full : '', clock: saysClock(d) ? clockOf(a, opts) : '', full };
+}
+// "at 9:30 PM on Mon, Jan 11", "at 9:30 PM", "on Mon, Jan 11" or "".
+const atOn = (p) => (p.clock ? 'at ' + p.clock + (p.date ? ' on ' + p.date : '') : p.date ? 'on ' + p.date : '');
+const spaced = (s) => (s ? ' ' + s : '');
+
+// What happens to a day now, by its outcome, and for a day that moves, by
+// the kind its `after` names when the change gives it another one. Each
+// says the placement after the change, never a date compared with another.
+const OUTCOMES = {
+  // "moves to Wed, Jan 13 at 1:30 AM", "moves to 8:00 PM", "moves to Wed, Jan 13".
+  moves: (p) => 'moves to ' + (p.date && p.clock ? p.date + ' at ' + p.clock : p.date || p.clock || p.full),
+  'all-day': (p) => 'becomes all-day' + spaced(atOn(p)),
+  timed: (p) => 'becomes timed' + (atOn(p) ? ', ' + atOn(p) : ''),
+  stays: (p) => 'stays ' + (atOn(p) || 'where it is'),
+  separate: (p) => 'becomes an event of its own' + spaced(atOn(p)),
+  deleted: () => 'is deleted',
+  rejoins: () => 'goes back to the series; nothing of its own is left',
+};
+// Outcomes that say all that happens to a day: a deleted day has nothing
+// left to change, and a day going back to the series takes everything.
+const SAYS_ALL = new Set(['deleted', 'rejoins']);
+/** The name of what happens to a day: its outcome, or the kind a day that moves becomes. */
+export const outcomeOf = (d) => (d.outcome === 'moves' && d.after && d.after.kind) || d.outcome;
+
+/**
+ * An edited day's row, in three parts: the day it is about (its name and
+ * its day: "'Sample practice' on Tue, Jan 12"), what was done to it earlier
+ * when it has a date of its own ("was moved earlier to Wed, Jan 13", with
+ * its zone when that date is in another), and what happens to it now (its
+ * outcome, from its placement after the change), then what changes on it.
+ * Never what it keeps. The day acted on, leaving the series, is named as
+ * the day you moved.
  */
 export function dayLines(d, opts = {}) {
-  const name = dayName(d, opts.series) + ownAside(d);
-  const on = d.shows ? ' on ' + fmtDay(d.shows, opts) : '';
-  const changes = changesWords(d, opts);
-  if (d.kind === 'acted') {
-    return d.outcome === 'separate'
-      ? { line1: 'The day you moved becomes an event of its own on ' + fmtDay(d.to, opts) + '.', line2: '' }
-      : { line1: 'The day you moved stays where you put it, on ' + fmtDay(d.to, opts) + '.', line2: '' };
-  }
-  const clock = (d.outcome === 'moves' || d.outcome === 'stays') ? ownClock(d, opts) : '';
-  const day = d.to || d.shows;
-  if ((d.kept || []).includes('date')) {
-    if (clock) return { line1: dayName(d, opts.series) + (day !== d.shows ? ' moves to ' : ' stays on ') + fmtDay(day, opts) + ' at ' + clock + (changes ? ', and ' + changes : '') + '.', line2: '' };
-    return { line1: dayName(d, opts.series) + ' was moved earlier to ' + fmtDay(d.shows, opts) + (changes ? ', and ' + changes : '') + '.', line2: '' };
-  }
-  switch (d.outcome) {
-    case 'moves':
-    case 'stays':
-      if (clock) return { line1: name + on + (day !== d.shows ? ' moves to ' + fmtDay(day, { ...opts, prev: d.shows }) + ' at ' : ' stays at ') + clock + (changes ? ' and ' + changes : '') + '.', line2: '' };
-      return { line1: name + on + ' ' + goes(d, opts) + (changes ? ' and ' + changes : '') + '.', line2: '' };
-    case 'separate':
-      return { line1: name + on + ' becomes an event of its own on ' + fmtDay(d.to || d.shows, { ...opts, prev: d.shows }) + '.', line2: '' };
-    case 'deleted':
-      return { line1: name + on + ' is deleted.', line2: '' };
-    case 'rejoins':
-      return { line1: name + on + ' goes back to the series; nothing of its own is left.', line2: '' };
-    default:
-      return { line1: name + on + '.', line2: '' };
-  }
+  const acted = d.kind === 'acted';
+  const name = acted ? 'The day you moved' : dayName(d, opts.series) + ownAside(d) + (d.day ? ' on ' + fmtDay(d.day, opts) : '');
+  const own = d.ownDate
+    ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + (d.ownDate.tz ? ' in ' + zoneName(d.ownDate.tz) : '') : '';
+  const said = d.ownDate ? d.ownDate.date : acted ? null : d.day;
+  const say = OUTCOMES[outcomeOf(d)];
+  const now = say ? say(placeOf(d, said, opts)) : '';
+  const changes = SAYS_ALL.has(d.outcome) ? '' : changesWords(d, opts);
+  const line1 = name + spaced([own, now].filter(Boolean).join(' and ')) + (changes ? (own ? ', and ' : ' and ') + changes : '') + '.';
+  return { line1, line2: '' };
 }
 
 /** A row of several days: their dates ("Nov 3 to Jan 19, 2027") and the button that shows them. */
@@ -392,17 +427,19 @@ export function daysSpan(count, first, last, opts = {}) {
 }
 
 /**
- * A group of days with the same outcome: "10 days that were changed
- * earlier move to Wednesday." then "Nov 3 to Jan 19, 2027".
+ * A group of days with the same outcome (outcomeOf): "10 days that were
+ * changed earlier move to Wednesday." then "Nov 3 to Jan 19, 2027".
  */
 export function groupLines({ count, outcome, weekday = null, shift = null, clock = null, first, last }, opts = {}) {
-  let does = 'stay where they are';
-  if (outcome === 'moves') {
-    if (weekday != null) does = 'move to ' + WEEKDAY_NAMES[weekday];
-    else if (shift) does = 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier');
-    else if (clock) does = 'move to ' + clock;
-    else does = 'move with their events';
-  }
+  const GROUPS = {
+    moves: () => (weekday != null ? 'move to ' + WEEKDAY_NAMES[weekday]
+      : shift ? 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier')
+        : clock ? 'move to ' + clock : 'move with their events'),
+    'all-day': () => 'become all-day',
+    timed: () => 'become timed' + (clock ? ', at ' + clock : ''),
+    stays: () => 'stay where they are',
+  };
+  const does = (GROUPS[outcome] || GROUPS.stays)();
   return { line1: count + ' days that were changed earlier ' + does + '.', ...daysSpan(count, first, last, opts) };
 }
 
@@ -416,7 +453,7 @@ const pluralNoun = (noun) => (/s$|people/.test(noun) ? noun : noun + 's');
  * (a date of its own) keep the day's own sentence.
  */
 export function choiceDayLine(d, groups, opts = {}) {
-  const on = ' on ' + fmtDay(d.shows, opts);
+  const on = d.day ? ' on ' + fmtDay(d.day, opts) : '';
   if (groups.some((g) => g.id === 'outside')) return dayName(d, opts.series) + on + ' falls after the new end.';
   const fields = groups.filter(isOwn).map((g) => g.field);
   if (!fields.length) return dayLines(d, opts).line1;
@@ -539,14 +576,18 @@ export function choiceWords(g, ctx = {}) {
   }
   if (g.id === 'zone') {
     const fromTz = g.from, toTz = g.to;
-    // The option's first event, an entry: its instant, read in each zone named.
-    const first = (x) => startOfNext((x.next || [])[0]);
+    // The option's first timed event, an entry ({start, allDay, tz?}; an
+    // all-day one has a date and no clock): its instant, read in each zone
+    // the label names, so a clock and its zone's name always go together.
+    const at = (x) => startOfNext((x.next || []).find((n) => n && !n.allDay));
+    const inTo = (x) => fmtClock(at(x), toTz);
+    const inFrom = (x) => fmtClock(at(x), fromTz);
     return {
       lead: '',
       reason: 'The series moves to ' + zoneName(toTz) + ' time. Keep the clock time, or the same moment?',
       options: label((x) => (x.id === 'clock'
-        ? 'Keep the clock time: ' + fmtClock(first(x), toTz) + ' in ' + zoneName(toTz)
-        : 'Keep the same moment: ' + fmtClock(first(x), fromTz) + ' in ' + zoneName(fromTz) + ', ' + fmtClock(first(x), toTz) + ' in ' + zoneName(toTz))),
+        ? 'Keep the clock time: ' + inTo(x) + ' in ' + zoneName(toTz)
+        : 'Keep the same moment: ' + inFrom(x) + ' in ' + zoneName(fromTz) + ', ' + inTo(x) + ' in ' + zoneName(toTz))),
     };
   }
   // The readings of the rule.
@@ -648,7 +689,7 @@ export function noteWords(n, opts = {}) {
   if (!n) return '';
   if (n.kind === 'google') return 'Google decides what happens to edited days, and Better-Cal hasn’t checked what it does yet. This can’t be undone.';
   if (n.kind === 'gap') return 'There is no ' + fmtClock(n.clock) + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + ', so that one is at ' + fmtClock(n.at, n.tz) + '.';
-  if (n.kind === 'overlap') return fmtClock(n.at, n.tz) + ' happens twice on ' + fmtDay(n.date, opts) + '; this is the first, in daylight time.';
+  if (n.kind === 'overlap') return fmtClock(n.at, n.tz) + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + '; this is the first, in daylight time.';
   return '';
 }
 

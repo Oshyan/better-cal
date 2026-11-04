@@ -192,43 +192,47 @@ export function planView(plan, ctx = {}) {
   // choice is about together are its row. The rest that go with their
   // events the same way are one row, by their outcome alone (what they keep
   // or take never splits it). The day acted on is in Coming up.
-  const list = (x) => (Array.isArray(x) ? x : []);
   const together = new Set([...onDays.keys()].flatMap((k) => k.split(' ')));
   const plainRow = (d) => ({ key: d.key, ...W.dayLines(d, opts), choices: [] });
   const rows = [];
   const outcomes = new Map();
   for (const d of rowDays) {
     const gs = onDay.get(d.key) || [];
-    const ownOutcome = !(d.outcome === 'moves' || d.outcome === 'stays') || list(d.kept).includes('date') || !!W.ownClock(d, opts);
+    // A day of its own: an outcome no other day shares, a date of its own, or a clock of its own.
+    const ownOutcome = !(d.outcome === 'moves' || d.outcome === 'stays') || !!d.ownDate || W.ownClock(d);
     if (gs.length) rows.push({ key: d.key, line1: W.choiceDayLine(d, gs, opts), line2: '', choices: gs.map((g) => choice(g, { oldTitle: d.title })) });
     else if (ownOutcome) rows.push(plainRow(d));
-    else if (!together.has(d.key)) push(outcomes, d.outcome, d);
+    else if (!together.has(d.key)) push(outcomes, W.outcomeOf(d), d);
   }
-  const byShown = (a, b) => String(a.shows || a.key).localeCompare(String(b.shows || b.key));
+  // Days in order of the day each is about, the date its row names first.
+  const byDay = (a, b) => String(a.day || a.key).localeCompare(String(b.day || b.key)) || String(a.key).localeCompare(String(b.key));
   // The row of days a choice is about together: what they have, their dates, the choices, and the days under it.
   const togetherRows = [...onDays].map(([k, gs]) => {
-    const sorted = k.split(' ').map((key) => byKey.get(key)).sort(byShown);
-    const span = W.daysSpan(sorted.length, sorted[0].shows, sorted[sorted.length - 1].shows, opts);
+    const sorted = k.split(' ').map((key) => byKey.get(key)).sort(byDay);
+    const span = W.daysSpan(sorted.length, sorted[0].day, sorted[sorted.length - 1].day, opts);
     return {
       key: 'days:' + k, line1: W.togetherLine(gs, sorted.length, sorted.map((d) => d.title).filter(Boolean)), ...span,
       choices: gs.map((g) => choice(g, { onRow: true })), days: sorted.map(plainRow),
     };
   });
+  // Days that go the same way, by what happens to them (outcomeOf): how far
+  // each moves is its date after less its date before, both where it shows;
+  // the clock they move to is their placement's, said when each row says it.
+  const placed = (d, side) => (d[side] && d[side].date) || null;
   const outcomeRows = [...outcomes].map(([outcome, ds]) => {
     if (ds.length === 1) return plainRow(ds[0]);
-    const sorted = [...ds].sort(byShown);
-    const shifts = new Set(sorted.map((d) => (d.to && d.shows ? dayNumber(d.to) - dayNumber(d.shows) : null)));
-    const weekdays = new Set(sorted.map((d) => (d.to ? new Date(dayNumber(d.to) * 86400000).getUTCDay() : null)));
-    // A new key's clock is the series' time, which only a plan with a zone has.
-    const clocks = new Set(sorted.map((d) => (d.newKey && opts.tz ? W.fmtClock(d.newKey, opts.tz) : null)));
+    const sorted = [...ds].sort(byDay);
+    const shifts = new Set(sorted.map((d) => (placed(d, 'after') && placed(d, 'before') ? dayNumber(placed(d, 'after')) - dayNumber(placed(d, 'before')) : null)));
+    const weekdays = new Set(sorted.map((d) => (placed(d, 'after') ? new Date(dayNumber(placed(d, 'after')) * 86400000).getUTCDay() : null)));
+    const clocks = new Set(sorted.map((d) => (W.saysClock(d) ? W.clockOf(d.after, opts) || null : null)));
     const [shift] = shifts, [weekday] = weekdays, [clock] = clocks;
     const moved = outcome === 'moves' && shifts.size >= 1 && !shifts.has(null) && !shifts.has(0);
     const words = W.groupLines({
       count: sorted.length, outcome,
       weekday: moved && weekdays.size === 1 ? weekday : null,
       shift: moved && shifts.size === 1 ? shift : null,
-      clock: outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((d) => list(d.takes).includes('time')) ? clock : null,
-      first: sorted[0].shows, last: sorted[sorted.length - 1].shows,
+      clock: !moved && clocks.size === 1 && !clocks.has(null) ? clock : null,
+      first: sorted[0].day, last: sorted[sorted.length - 1].day,
     }, opts);
     return { key: 'group:' + sorted[0].key, line1: words.line1, range: words.range, toggle: words.toggle, choices: [], days: sorted.map(plainRow) };
   });

@@ -139,7 +139,7 @@ final class Model
         $this->rule0 = $this->r0;
         // A stored rule whose walk could not be completed (WalkIncomplete,
         // see plan()) is read as one the expander can't read.
-        $this->readable = $this->r0->kind !== 'unreadable' && empty($opts['walkIncomplete']) && Calc::sabreReads((string) $master['rrule']);
+        $this->readable = $this->r0->kind !== 'unreadable' && empty($opts['walkIncomplete']) && Calc::reads((string) $master['rrule']);
         if (!$this->readable) {
             $this->r0->kind = 'unreadable';
         }

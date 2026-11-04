@@ -228,6 +228,110 @@ final class Rule
         return $r;
     }
 
+    /**
+     * The rule's parts as RFC 5545 3.3.10's table reads them, for the
+     * expander (RuleIterator): FREQ, INTERVAL, COUNT, UNTIL, each BY list as
+     * numbers (BYDAY as [ordinal, weekday], ordinal 0 when none) and WKST.
+     * A rule outside the grammar (a value out of its range, COUNT and UNTIL
+     * together, which 3.3.10 says MUST NOT occur in one rule) or with a part
+     * the table marks N/A for its frequency is one the expander can't read:
+     * reading it with the part dropped would mean something the person
+     * didn't write (decisions.md, "A rule part invalid for its frequency").
+     *
+     * @return array{freq:string,interval:int,count:?int,until:?string,BYSECOND:?list<int>,BYMINUTE:?list<int>,BYHOUR:?list<int>,BYDAY:?list<array{0:int,1:int}>,BYMONTHDAY:?list<int>,BYYEARDAY:?list<int>,BYWEEKNO:?list<int>,BYMONTH:?list<int>,BYSETPOS:?list<int>,wkst:int}
+     */
+    public function table(): array
+    {
+        if ($this->kind === 'unreadable') {
+            throw new RuleNotReadable('The rule has a part RFC 5545 does not define, or a part written twice');
+        }
+        $p = $this->parts;
+        $freq = $this->freq;
+        $whole = static function (string $key, string $v, int $min, int $max): int {
+            if (preg_match('/^[+-]?\d{1,3}$/', $v) !== 1 || (int) $v < $min || (int) $v > $max) {
+                throw new RuleNotReadable("$key value $v is outside RFC 5545's range");
+            }
+            return (int) $v;
+        };
+        $out = ['freq' => $freq, 'interval' => 1, 'count' => null, 'until' => null, 'wkst' => 0];
+        if (isset($p['INTERVAL'])) {
+            if (!ctype_digit($p['INTERVAL']) || (int) $p['INTERVAL'] < 1) {
+                throw new RuleNotReadable('INTERVAL must be a positive integer');
+            }
+            $out['interval'] = (int) $p['INTERVAL'];
+        }
+        if (isset($p['COUNT'], $p['UNTIL'])) {
+            throw new RuleNotReadable('COUNT and UNTIL MUST NOT occur in the same rule (RFC 5545 3.3.10)');
+        }
+        if (isset($p['COUNT'])) {
+            if (!ctype_digit($p['COUNT']) || (int) $p['COUNT'] < 1) {
+                throw new RuleNotReadable('COUNT must be a positive integer');
+            }
+            $out['count'] = (int) $p['COUNT'];
+        }
+        if (isset($p['UNTIL'])) {
+            if (preg_match('/^\d{8}(T\d{6}Z?)?$/', $p['UNTIL']) !== 1) {
+                throw new RuleNotReadable('UNTIL must be a date or a date-time');
+            }
+            $out['until'] = $p['UNTIL'];
+        }
+        if (isset($p['WKST'])) {
+            if (Cal::wdOf($p['WKST']) === null) {
+                throw new RuleNotReadable('WKST must be a weekday');
+            }
+            $out['wkst'] = (int) Cal::wdOf($p['WKST']);
+        }
+        // RFC 5545 3.3.10's value ranges; 0 is no day, week, month or position.
+        $ranges = ['BYSECOND' => [0, 60], 'BYMINUTE' => [0, 59], 'BYHOUR' => [0, 23], 'BYMONTHDAY' => [-31, 31],
+            'BYYEARDAY' => [-366, 366], 'BYWEEKNO' => [-53, 53], 'BYMONTH' => [1, 12], 'BYSETPOS' => [-366, 366]];
+        foreach ($ranges as $key => [$min, $max]) {
+            $out[$key] = null;
+            if (!isset($p[$key])) {
+                continue;
+            }
+            $list = [];
+            foreach (explode(',', $p[$key]) as $v) {
+                $n = $whole($key, trim($v), $min, $max);
+                if ($n === 0 && $min < 0) {
+                    throw new RuleNotReadable("$key value 0 names nothing");
+                }
+                $list[$n] = $n;
+            }
+            $out[$key] = array_values($list);
+        }
+        $out['BYDAY'] = null;
+        if (isset($p['BYDAY'])) {
+            foreach (explode(',', $p['BYDAY']) as $v) {
+                if (preg_match('/^([+-]?\d{1,2})?(MO|TU|WE|TH|FR|SA|SU)$/', trim($v), $m) !== 1 || (($m[1] ?? '') !== '' && ((int) $m[1] === 0 || abs((int) $m[1]) > 53))) {
+                    throw new RuleNotReadable("BYDAY value $v is outside RFC 5545's grammar");
+                }
+                $day = [($m[1] ?? '') === '' ? 0 : (int) $m[1], (int) Cal::wdOf($m[2])];
+                $out['BYDAY'][implode(':', $day)] = $day;
+            }
+            $out['BYDAY'] = array_values($out['BYDAY']);
+        }
+        // The table's N/A cells, and BYDAY's two restrictions on a number.
+        $na = [
+            'BYWEEKNO' => ['SECONDLY', 'MINUTELY', 'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'],
+            'BYYEARDAY' => ['DAILY', 'WEEKLY', 'MONTHLY'],
+            'BYMONTHDAY' => ['WEEKLY'],
+        ];
+        foreach ($na as $key => $freqs) {
+            if ($out[$key] !== null && in_array($freq, $freqs, true)) {
+                throw new RuleNotReadable("$key is not valid in a $freq rule (RFC 5545 3.3.10)");
+            }
+        }
+        foreach ($out['BYDAY'] ?? [] as [$n]) {
+            if ($n !== 0 && !in_array($freq, ['MONTHLY', 'YEARLY'], true)) {
+                throw new RuleNotReadable('BYDAY with a number is only valid in a MONTHLY or YEARLY rule (RFC 5545 3.3.10)');
+            }
+            if ($n !== 0 && $out['BYWEEKNO'] !== null) {
+                throw new RuleNotReadable('BYDAY with a number is not valid with BYWEEKNO (RFC 5545 3.3.10)');
+            }
+        }
+        return $out;
+    }
+
     private function other(string $why): self
     {
         $this->kind = 'other';

@@ -11,15 +11,18 @@ use BetterCal\Support\Time;
 use BetterCal\Support\WorkBudgetExceeded;
 
 /**
- * The single recurrence expansion engine. Expansion happens in the event's
- * tzid (wall-clock stable across DST) via sabre/vobject's EventIterator,
- * then converts to UTC. Hard-capped at MAX_INSTANCES per event per query.
+ * The calendar's recurrence window: a series' occurrences in a window, read
+ * from the app's one expander (Series\RuleIterator) in the event's zone,
+ * with its skips and edited days applied, and the rule checks every writer
+ * runs (validateRrule, inForm).
  */
 final class Recurrence
 {
-    // Per series per query. 1,000 covers a daily series across the widest
-    // window the API allows (two years), so the app's own requests never hit
-    // it; a series that does (hourly, say) is reported, not cut silently (#23).
+    // A response-size guard, per series per query: 1,000 covers a daily
+    // series across the widest window the API allows (two years), so the
+    // app's own requests never hit it; a series that does (hourly, say) is
+    // reported to the client (capped()), which asks for the rest, never cut
+    // silently (#23). Counting paths read occurrences(), which has no cap.
     public const MAX_INSTANCES = 1000;
     public const MAX_RRULE_BYTES = 2048;
     public const MAX_RRULE_PARTS = 16;
@@ -214,14 +217,18 @@ final class Recurrence
             }
         } else {
             $exdates = [];
-            // One unexpandable row must never fail the whole window (or the
-            // reminder scan): it shows as its first occurrence and is logged.
+            // A row the expander can't read (Series\RuleNotReadable), whose
+            // walk can't be completed (Series\WalkIncomplete) or whose skips
+            // are quarantined over their limit (an InvalidArgumentException
+            // from decodeExdates) takes the window's path for a rule it
+            // can't read: the stored event alone, as safeRrule makes such a
+            // rule on the way in, logged, so it never fails the whole window
+            // or the reminder scan. Any other failure is a defect and
+            // propagates.
             try {
                 $exdates = array_fill_keys(self::decodeExdates($master['exdates_json'] ?? null), true);
                 $raw = ($this->expander)($master, $winStart, $winEnd, $budget);
-            } catch (WorkBudgetExceeded $e) {
-                throw $e;
-            } catch (\Throwable $e) {
+            } catch (\InvalidArgumentException|\BetterCal\Domain\Series\WalkIncomplete $e) {
                 error_log('recurrence: event ' . ($master['id'] ?? '?') . ' could not be expanded: ' . $e->getMessage());
                 $s0 = Time::fromDb((string) $master['start_utc']);
                 $e0 = Time::fromDb((string) $master['end_utc']);
@@ -311,14 +318,12 @@ final class Recurrence
         }
         self::validatePartValues($parts);
         $normalized = self::joinParts($parts);
-        if (class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
-            try {
-                // The app's expander: sabre's, with MINUTELY and SECONDLY,
-                // which refuses what RFC 5545 doesn't allow there.
-                new \BetterCal\Domain\Series\RuleIterator($normalized, new \DateTimeImmutable('2026-01-01', Time::utc()));
-            } catch (\Throwable $e) {
-                throw HttpError::badRequest('Invalid RRULE: ' . $e->getMessage(), 'invalid_rrule');
-            }
+        try {
+            // The expander's own reading (Rule::table): what RFC 5545's table
+            // marks N/A for the frequency is refused, never ignored.
+            new \BetterCal\Domain\Series\RuleIterator($normalized, new \DateTimeImmutable('2026-01-01', Time::utc()));
+        } catch (\BetterCal\Domain\Series\RuleNotReadable $e) {
+            throw HttpError::badRequest('Invalid RRULE: ' . $e->getMessage(), 'invalid_rrule');
         }
         return $normalized;
     }
@@ -615,44 +620,13 @@ final class Recurrence
     }
 
     /**
-     * How many whole rule periods DTSTART can move forward without leaving the
-     * window's first occurrence behind — or 0 when the rule is not one we can
-     * safely skip through.
-     *
-     * sabre's EventIterator only walks forward: fastForward() steps one
-     * occurrence at a time from DTSTART until it reaches the target. For a
-     * daily series begun years ago that is thousands of iterations on every
-     * request, and it grows by one a day forever. Measured on real data, that
-     * walk was 86% of expansion time and expansion was 87% of the whole events
-     * query.
-     *
-     * Moving DTSTART by a WHOLE multiple of the rule's period preserves the
-     * rule's phase exactly, so the instants sabre then generates are identical
-     * — this trades no correctness for the speedup. Deliberately conservative:
-     *
-     *  - Only DAILY and WEEKLY. MONTHLY/YEARLY iterate at most ~12 times a
-     *    year, so their walk is already cheap (measured: about a hundred
-     *    monthly masters cost tens of milliseconds in all), and month
-     *    arithmetic has end-of-month traps.
-     *  - Never with COUNT: the rule means "N occurrences from DTSTART", so
-     *    moving DTSTART would silently change which instances exist. UNTIL is
-     *    an absolute bound and is unaffected.
-     *  - WEEKLY moves in whole INTERVAL-week blocks, which keeps every BYDAY
-     *    position and the WKST-relative phase intact.
-     *  - Lands at or BEFORE the target, never past it, and leaves the last
-     *    partial period for sabre. Being approximately close is enough; the
-     *    remaining walk is a handful of steps.
-     *
-     * @return int periods to advance (0 = leave DTSTART alone)
-     */
-    /**
      * An RRULE from a feed, an import, CalDAV, Google or mail, made safe to
      * store and expand: null (no recurrence, so the event stays as a single
-     * occurrence) when INTERVAL or COUNT is not a small positive integer.
-     * An absurd INTERVAL used to overflow to a float in skippablePeriods and
-     * throw on every events request, blanking the calendar (scan
-     * 2026-09-23, F3/F4). Tolerant by design: one bad event in a feed must
-     * not stop the rest syncing, so this never throws.
+     * occurrence) when validateRrule refuses it, an INTERVAL or COUNT that
+     * is not a small positive integer among them (scan 2026-09-23, F3/F4).
+     * Tolerant by design: one bad event in a feed must not stop the rest
+     * syncing, so a refused rule (HttpError, validateRrule's only refusal)
+     * is no rule, and anything else is a defect that propagates.
      */
     public static function safeRrule(?string $rrule): ?string
     {
@@ -662,53 +636,15 @@ final class Recurrence
         }
         try {
             return self::validateRrule($rrule);
-        } catch (\Throwable) {
+        } catch (HttpError) {
             return null;
         }
     }
 
-    public static function skippablePeriods(string $rrule, \DateTimeImmutable $dtStart, \DateTimeImmutable $target): int
-    {
-        if ($target <= $dtStart) {
-            return 0;
-        }
-        $parts = [];
-        foreach (explode(';', strtoupper($rrule)) as $bit) {
-            $kv = explode('=', $bit, 2);
-            if (count($kv) === 2) {
-                $parts[$kv[0]] = $kv[1];
-            }
-        }
-        if (isset($parts['COUNT'])) {
-            return 0;
-        }
-        $freq = $parts['FREQ'] ?? '';
-        if ($freq !== 'DAILY' && $freq !== 'WEEKLY') {
-            return 0;
-        }
-        $rawInterval = $parts['INTERVAL'] ?? '1';
-        if (!ctype_digit($rawInterval) || strlen($rawInterval) > 6) {
-            return 0;
-        }
-        $interval = max(1, (int) $rawInterval);
-        if ($interval > self::MAX_INTERVAL) {
-            return 0; // rows stored before safeRrule existed: no skipping, never overflow
-        }
-        $daysPerPeriod = ($freq === 'WEEKLY' ? 7 : 1) * $interval;
-
-        // Whole days between the two, floored — computed on calendar dates so
-        // a DST shift inside the span cannot round the count down by one.
-        $days = (int) $dtStart->setTime(0, 0)->diff($target->setTime(0, 0))->format('%a');
-        $periods = intdiv($days, $daysPerPeriod);
-        // Give back one period as slack, so rounding can never overshoot the
-        // first in-window occurrence.
-        return max(0, $periods - 1);
-    }
-
     /**
-     * Default expander: sabre/vobject's EventIterator over the app's rule
-     * iterator (Series\RuleIterator, which also steps MINUTELY and
-     * SECONDLY), DTSTART in the event tzid.
+     * The calendar's window over a series: occurrences() through the window,
+     * at most one past MAX_INSTANCES, so expand() can tell a series that has
+     * more and report it. The edit harness reads the window by this name.
      *
      * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
      */
@@ -719,63 +655,63 @@ final class Recurrence
         ?ExpansionBudget $budget = null,
     ): array
     {
-        if (!class_exists(\Sabre\VObject\Component\VCalendar::class)) {
-            throw new \RuntimeException('sabre/vobject is not installed');
+        return self::occurrences($master, $winStart, $winEnd, $budget, self::MAX_INSTANCES + 1);
+    }
+
+    /**
+     * Every raw occurrence of a stored series (no skips applied) that
+     * overlaps [$from, $to), in order, at most $max: the expander's
+     * (Series\RuleIterator) from the series' stored start, which reaches
+     * $from by its own jump, so any window reads the days and keys the walk
+     * from the start reads there. A rule the expander can't read throws
+     * Series\RuleNotReadable and a walk that can't be completed
+     * Series\WalkIncomplete; neither is ever a shorter series.
+     *
+     * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
+     */
+    public static function occurrences(
+        array $master,
+        \DateTimeImmutable $from,
+        \DateTimeImmutable $to,
+        ?ExpansionBudget $budget = null,
+        int $max = PHP_INT_MAX,
+    ): array
+    {
+        $it = self::iterator($master);
+        $length = self::durationSeconds($master);
+        // An occurrence overlaps the window when it ends after its start.
+        $it->jumpTo($from->getTimestamp() - $length);
+        $budget?->checkpoint();
+        $out = [];
+        while ($it->valid() && count($out) < $max) {
+            $at = $it->current()->getTimestamp();
+            if ($at >= $to->getTimestamp()) {
+                break;
+            }
+            if ($at + $length > $from->getTimestamp()) {
+                $out[] = ['start' => new \DateTimeImmutable('@' . $at), 'end' => new \DateTimeImmutable('@' . ($at + $length))];
+            }
+            $budget?->checkpoint();
+            $it->next();
         }
+        return $out;
+    }
+
+    /**
+     * The expander over a stored series row: a timed series from the
+     * instant it is stored at (a start in a repeated hour keeps its
+     * instant), in its zone; an all-day series from its date at midnight in
+     * its row's zone, as it is stored (Time::parseAllDay), its rule in its
+     * own form, without clock parts.
+     */
+    public static function iterator(array $master): \BetterCal\Domain\Series\RuleIterator
+    {
         $allDay = (int) ($master['all_day'] ?? 0) === 1;
         $tz = Time::zone($master['tzid'] ?? null);
         $start = Time::fromDb((string) $master['start_utc'])->setTimezone($tz);
-        $end = Time::fromDb((string) $master['end_utc'])->setTimezone($tz);
-        $uid = (string) ($master['uid'] ?? 'bettercal-expand');
-
-        // The walk starts at the series' own start, so a window reads the
-        // state the walk carries from it (a DAILY;BYDAY clock a skipped hour
-        // pushed on): the window is reached by the iterator's own jumps
-        // (SeriesIterator::fastForward), never by moving DTSTART near it.
-
-        $vcal = new \Sabre\VObject\Component\VCalendar();
-        $vevent = $vcal->add('VEVENT', ['UID' => $uid]);
         if ($allDay) {
-            $vevent->add('DTSTART', $start->format('Ymd'), ['VALUE' => 'DATE']);
-            $vevent->add('DTEND', $end->format('Ymd'), ['VALUE' => 'DATE']);
-        } else {
-            $vevent->add('DTSTART', $start);
-            $vevent->add('DTEND', $end);
+            return new \BetterCal\Domain\Series\RuleIterator(self::inForm((string) $master['rrule'], true, 'UTC'), new \DateTimeImmutable($start->format('Y-m-d') . ' 00:00:00', $tz));
         }
-        // An all-day series is read in its own form, without clock parts.
-        $vevent->add('RRULE', $allDay ? self::inForm((string) $master['rrule'], true, 'UTC') : (string) $master['rrule']);
-
-        $out = [];
-        try {
-            // All-day dates are midnights in the event's own zone, as they are
-            // stored (Time::parseAllDay). Read in UTC, a series in a zone west
-            // of UTC came out a day early: midnight UTC is the evening before.
-            // A UTC-zoned series, as imports and CalDAV store them, is unchanged.
-            // A timed series iterates from its stored instant, so a start in a
-            // repeated hour keeps the instant it is stored at (SeriesIterator).
-            $it = $allDay
-                ? new \BetterCal\Domain\Series\SeriesIterator($vcal, $uid, $tz)
-                : new \BetterCal\Domain\Series\SeriesIterator($vcal, $uid, Time::utc(), $start, $end);
-            $it->fastForward(\DateTime::createFromImmutable($winStart));
-            $budget?->checkpoint();
-            $count = 0;
-            // One past the cap, so expand() can tell a series that has more.
-            while ($it->valid() && $count <= self::MAX_INSTANCES) {
-                $occStart = \DateTimeImmutable::createFromInterface($it->getDtStart())->setTimezone(Time::utc());
-                if ($occStart >= $winEnd) {
-                    break;
-                }
-                $occEnd = \DateTimeImmutable::createFromInterface($it->getDtEnd())->setTimezone(Time::utc());
-                $out[] = ['start' => $occStart, 'end' => $occEnd];
-                $count++;
-                $budget?->checkpoint();
-                $it->next();
-            }
-        } catch (WorkBudgetExceeded $e) {
-            throw $e;
-        } catch (\Throwable $e) {
-            error_log('recurrence expansion failed for event ' . ($master['id'] ?? '?') . ': ' . $e->getMessage());
-        }
-        return $out;
+        return new \BetterCal\Domain\Series\RuleIterator((string) $master['rrule'], $start);
     }
 }

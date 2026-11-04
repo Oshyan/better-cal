@@ -960,16 +960,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('R1: a bound that ends before the 17:00 exception and the skip leaves both outside, by their keys', [['keep', 'delete'], [2], []],
         [smOptions($p, 'outside'), array_keys($p['writes']['detach']), $p['writes']['exdates']]);
 
-    // R2: DAILY with BYDAY, 02:30 in Los Angeles from Mon 1 Mar 2027. Sabre's
-    // daily iterator keeps the gap-shifted 03:30 after 14 Mar; the model's
-    // keys follow it, and a rename keeps them as stored.
-    $mwf = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', '2027-03-01 02:30', 60, false, ['2027-03-19 03:30']);
-    $p = smPlan($mwf, [], ['acted' => smAt('2027-03-15 03:30')] + ['columns' => ['title' => 'Sample jog']]);
-    checkEq('R2: the plan reads its days as sabre does: 02:30 before the change, 03:30 after', ['2027-03-15T03:30:00-07:00', '2027-03-17T03:30:00-07:00', '2027-03-22T03:30:00-07:00', '2027-03-24T03:30:00-07:00'],
+    // R2: DAILY with BYDAY, 02:30 in Los Angeles from Mon 1 Mar 2027. The
+    // spring change (Sun 14 Mar) is no day of the rule, and every day is at
+    // its own clock, 02:30 before the change and after it (no carried
+    // clock); a rename keeps the keys as stored.
+    $mwf = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=12', '2027-03-01 02:30', 60, false, ['2027-03-19 02:30']);
+    $p = smPlan($mwf, [], ['acted' => smAt('2027-03-15 02:30')] + ['columns' => ['title' => 'Sample jog']]);
+    checkEq('R2: the plan reads its days at their own 02:30 after the change', ['2027-03-15T02:30:00-07:00', '2027-03-17T02:30:00-07:00', '2027-03-22T02:30:00-07:00', '2027-03-24T02:30:00-07:00'],
         array_column($p['plan']['next'], 'start'));
-    $own = smEdited($mwf, 2, '2027-03-15 03:30', ['title' => 'Sample race'], null, ['title']);
+    $own = smEdited($mwf, 2, '2027-03-15 02:30', ['title' => 'Sample race'], null, ['title']);
     $p = smPlan($mwf, [$own], ['columns' => ['title' => 'Sample jog']], ['ownTitle' => 'keep']);
-    checkEq('R2: renamed, its 03:30 exception keeps its key and time, the skip its key; 12 events', [[], smAt('2027-03-15 03:30'), [smAt('2027-03-19 03:30')], '12 scheduled occurrences, 1 skipped, ends 26 Mar', ['title' => 'Sample jog']],
+    checkEq('R2: renamed, its exception keeps its key and time, the skip its key; 12 events', [[], smAt('2027-03-15 02:30'), [smAt('2027-03-19 02:30')], '12 scheduled occurrences, 1 skipped, ends 26 Mar', ['title' => 'Sample jog']],
         [$p['writes']['overrides'], str_replace(['T', 'Z'], [' ', ''], (string) ($p['plan']['days'][1]['newKey'] ?? '')), $p['writes']['exdates'], $p['plan']['bound']['words'], $p['writes']['master']]);
     // A new clock rewrites the rule and keeps it daily: the plan's next and
     // the stored series agree, the exception follows to its new key.
@@ -987,12 +988,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($wkday, [], smDrag($wkday, '2027-03-08 02:30', '2027-03-15 02:30'));
     $m1 = $stored($wkday, $p['writes']);
     [$want, $got] = $agrees($p, $m1);
-    // Its first day after the gap, 15 Mar, shows at 03:30 in the expansion
-    // (sabre's daily clock carried past 14 Mar); the dragged day was put at
-    // 02:30 there, so it owns its time and the plan creates its row.
-    checkEq('R2: one day dragged a whole week stays daily as written, and agrees with its expansion after the dragged day', ['FREQ=DAILY;BYDAY=MO', array_slice($want, 1)], [$m1['rrule'], array_slice($got, 1)]);
-    checkEq('R2: the dragged day keeps 02:30 where it was put, an edited day of its own time', [[smAt('2027-03-15 02:30')], '["time"]', '2027-03-15T02:30:00-07:00'],
-        [array_column($p['writes']['createEdited'], 'start_utc'), $p['writes']['createEdited'][0]['override_fields'] ?? null, $p['plan']['next'][0]['start'] ?? null]);
+    // Its first day after the gap, 15 Mar, is at its own 02:30 in the
+    // expansion, where the dragged day was put: it lands on its image, so
+    // the series moves a week and no row is created.
+    checkEq('R2: one day dragged a whole week stays daily as written, and agrees with its expansion', ['FREQ=DAILY;BYDAY=MO', $want], [$m1['rrule'], $got]);
+    checkEq('R2: the dragged day lands on its image at 02:30, the series from 8 Mar, no edited day', [[], smAt('2027-03-08 02:30'), '2027-03-15T02:30:00-07:00'],
+        [array_column($p['writes']['createEdited'], 'start_utc'), $p['writes']['master']['start_utc'] ?? null, $p['plan']['next'][0]['start'] ?? null]);
 
     // R2's differential: the model's keys for DAILY with BYDAY against the
     // expander the app persists with, across northern, southern and
@@ -1158,13 +1159,15 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         [], ['masterTags' => ['sample'], 'rowTags' => [2 => ['extra']]]);
     checkEq('F4: the same for tags: the day takes the series\' tags and goes back to the series', [false, [2], null], [$p['plan']['direct'], $p['writes']['delete'], $p['writes']['tags'][2] ?? null]);
 
-    // F5: a rule naming its hour in a zone with a spring change: the
-    // model's days are the expander's (sabre steps hours and yields no 14 Mar).
+    // F5: a rule naming its hour in a zone with a spring change: the gap
+    // day is kept at the clock plus the gap, as for every spelling of the
+    // rule, and counted, so eight events end on 18 Mar.
     $f5 = smSeries('Sample night watch', 'FREQ=DAILY;BYHOUR=2;BYMINUTE=30;COUNT=8', '2027-03-11 02:30');
     $f5row = smEdited($f5, 2, '2027-03-15 02:30', ['title' => 'Sample night watch, inspection'], null, ['title']);
     $p = smPlan($f5, [$f5row], ['columns' => ['title' => 'Sample late watch']]);
     $f5next = array_map(static fn(array $n): string => substr($n['start'], 0, 16), smPlan($f5, [$f5row], ['acted' => smAt('2027-03-12 02:30'), 'columns' => ['title' => 'Sample late watch']])['plan']['next']);
-    checkEq('F5: a rename says 8 events ending 19 Mar and lists no 14 Mar', [true, false], [str_starts_with($p['plan']['bound']['words'], '8 events, ends 19 Mar'), in_array('2027-03-14T03:30', $f5next, true)]);
+    checkEq('F5: a rename says 8 events ending 18 Mar and lists 14 Mar at 03:30', [true, ['2027-03-12T02:30', '2027-03-13T02:30', '2027-03-14T03:30', '2027-03-15T02:30']],
+        [str_starts_with($p['plan']['bound']['words'], '8 events, ends 18 Mar'), array_slice($f5next, 0, 4)]);
     $p = smPlan($f5, [$f5row], smDrag($f5, '2027-03-12 02:30', '2027-03-11 02:30'));
     $m1 = $stored($f5, $p['writes']);
     $sabreKeys = array_map(static fn(array $o): string => Time::toDb($o['start']), BetterCal\Domain\Recurrence::sabreExpand($m1, Time::fromDb($m1['start_utc'])->modify('-1 day'), Time::fromDb($m1['start_utc'])->modify('+60 days')));
@@ -1281,7 +1284,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
 
     // Cause 9: an occurrence is what the stored series' own expansion yields, a DAILY;BYDAY day after a gap included.
     $after = BetterCal\Domain\Series\Calc::fromRow(smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO,WE,FR', '2027-03-01 02:30'));
-    checkEq('C9: the stored series yields 17 Mar at its carried 03:30', [smAt('2027-03-17 03:30')], $after->keysOn($after->dnOf(smAt('2027-03-17 03:30'))));
+    checkEq('C9: the stored series yields 17 Mar at its own 02:30, no clock carried past the gap', [smAt('2027-03-17 02:30')], $after->keysOn($after->dnOf(smAt('2027-03-17 02:30'))));
 
     // Cause 10: a start in a repeated hour is expanded from the instant it is stored at.
     $nz = smSeries('Sample swim', 'FREQ=WEEKLY;BYDAY=SU', '2027-04-04 02:30', 60, false, [], 'Pacific/Auckland');
@@ -1443,7 +1446,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         $rename = smPlan($stored, [], ['columns' => ['title' => 'Sample timer, renamed']]);
         checkEq("F3: $rrule is refused: unreadable, 400 invalid_rrule when written, a drag refused saying so, a rename taken", [
             false, 'invalid_rrule', 'unreadable', Model::REASONS['unreadable'], ['title' => 'Sample timer, renamed'],
-        ], [BetterCal\Domain\Series\Calc::sabreReads($rrule), $code, $drag['plan']['refusals'][0]['code'] ?? null, $drag['plan']['refusals'][0]['words'] ?? null, $rename['writes']['master'] ?? null]);
+        ], [BetterCal\Domain\Series\Calc::reads($rrule), $code, $drag['plan']['refusals'][0]['code'] ?? null, $drag['plan']['refusals'][0]['words'] ?? null, $rename['writes']['master'] ?? null]);
     }
 
     // Review F7: an instant given stays that instant. On 31 Oct 2027 Berlin's
@@ -1483,8 +1486,10 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     // instants where its image's key is the other owns its time, at the
     // instant it was put, for the elapsed length it was given (45 minutes).
     foreach ([
+        // The key is the second only where it is given: a series stored at
+        // the second instant, its start put on the first.
         'variant B: put on the first instant, the key the second' => [
-            smSeries('Sample fold landing', 'FREQ=YEARLY;UNTIL=20281021T003000Z', '2026-10-21 02:30', 60, false, [], $berlin), '2027-10-21 00:30:00',
+            $foldSeries('2027-10-31 01:30:00', 'FREQ=WEEKLY;COUNT=3'), '2027-10-31 01:30:00',
             '2027-10-31 00:30:00', '2027-10-31 01:30:00'],
         'put on the second instant, the key the first' => [
             smSeries('Sample fold landing', 'FREQ=WEEKLY;COUNT=4', '2027-10-17 02:30', 60, false, [], $berlin), '2027-10-24 00:30:00',
@@ -1653,11 +1658,10 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Phantom UNTIL: a second Tuesday ending on Tue 1 Jun shows no 1 Jun', ['2027-04-13', '2027-05-11'], array_slice(smShows($secondTue, ['master' => []], '2027-06-30'), -2));
     $yearly = smSeries('Sample practice', 'FREQ=YEARLY;BYMONTH=6;BYDAY=-1FR;UNTIL=20300101', '2027-06-25', 60, true);
     checkEq('Expander: the last Friday of June each year, counted in June', ['2027-06-25', '2028-06-30', '2029-06-29'], smShows($yearly, ['master' => []], '2030-12-31'));
-    // The rule is that a rule yields only its own days; every day sabre
-    // lands on otherwise is one of them,
-    // a second Sunday at 02:30 Los Angeles shifted out of March's skipped
-    // hour included, so with no UNTIL nothing is cut short.
-    $take = static function (Sabre\VObject\Recur\RRuleIterator $it): array {
+    // A rule yields only its own days, a second Sunday at 02:30 Los Angeles
+    // shifted out of March's skipped hour included, that day only, so with
+    // no UNTIL nothing is cut short.
+    $take = static function (BetterCal\Domain\Series\RuleIterator $it): array {
         $out = [];
         for ($i = 0; $i < 30 && $it->valid(); $i++, $it->next()) {
             $out[] = $it->current()->format('Y-m-d H:i T');
@@ -1666,8 +1670,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     };
     $gapStart = new DateTimeImmutable('2027-01-10 02:30:00', Time::zone('America/Los_Angeles'));
     $gapDays = $take(new BetterCal\Domain\Series\RuleIterator('FREQ=MONTHLY;BYDAY=2SU', $gapStart));
-    checkEq('Phantom UNTIL: an unbounded second Sunday at 02:30 keeps every day sabre gives, March\'s at 03:30',
-        [$take(new Sabre\VObject\Recur\RRuleIterator('FREQ=MONTHLY;BYDAY=2SU', $gapStart)), 30, '2027-03-14 03:30 PDT'], [$gapDays, count($gapDays), $gapDays[2] ?? null]);
+    checkEq('Phantom UNTIL: an unbounded second Sunday at 02:30 keeps every month, March\'s at 03:30 and April\'s back at 02:30',
+        [30, ['2027-01-10 02:30 PST', '2027-02-14 02:30 PST', '2027-03-14 03:30 PDT', '2027-04-11 02:30 PDT', '2027-05-09 02:30 PDT'], '2029-06-10 02:30 PDT'],
+        [count($gapDays), array_slice($gapDays, 0, 5), $gapDays[29] ?? null]);
 
     // The zone rule (One zone): the after side decides. A series timed after
     // the edit writes every timed value of both sides in its zone and every
@@ -1791,12 +1796,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: Thursday 21 Jan dragged to Wednesday, it is the reading\'s own Wed 6 Jan', ['2027-01-06', 'new'],
         $earlierOf(smPlan($tueThu, [], smDrag($tueThu, '2027-01-21 20:00', '2027-01-20 20:00'))));
     // The day acted on, made an edited day by a drag: its day, where it
-    // showed (the occurrence at its old key) and where it was put (the row created).
-    $run = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO', '2027-03-01 02:30');
-    $p = smPlan($run, [], smDrag($run, '2027-03-08 02:30', '2027-03-15 02:30'));
+    // showed (the occurrence at its old key) and where it was put (the row
+    // created). A yearly 02:30 in Berlin, its 21 Oct 2027 put on 31 Oct at
+    // the second of that day's two 02:30s, where its image is the first.
+    $run = smSeries('Sample run', 'FREQ=YEARLY;UNTIL=20281021T003000Z', '2026-10-21 02:30', 60, false, [], 'Europe/Berlin');
+    $p = smPlan($run, [], ['acted' => '2027-10-21 00:30:00', 'landed' => ['start_utc' => '2027-10-31 01:30:00', 'end_utc' => '2027-10-31 02:30:00', 'all_day' => 0, 'tzid' => 'Europe/Berlin']]);
     $acted = array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'acted'))[0] ?? [];
-    checkEq('Writers: the created acted day is about Mon 8 Mar, showed there and was put on Mon 15 Mar at 02:30', [
-        'moves', '2027-03-08', ['date' => '2027-03-08', 'at' => '2027-03-08T02:30:00-08:00'], ['date' => '2027-03-15', 'at' => '2027-03-15T02:30:00-07:00'], '2027-03-08', '2027-03-15',
+    checkEq('Writers: the created acted day is about 21 Oct, showed there and was put on 31 Oct at 02:30 in standard time', [
+        'moves', '2027-10-21', ['date' => '2027-10-21', 'at' => '2027-10-21T02:30:00+02:00'], ['date' => '2027-10-31', 'at' => '2027-10-31T02:30:00+01:00'], '2027-10-21', '2027-10-31',
     ], [$acted['outcome'] ?? null, $acted['day'] ?? null, $acted['before'] ?? null, $acted['after'] ?? null, $acted['shows'] ?? null, $acted['to'] ?? null]);
     // An edited day's data: the day it is about, the date set on it in its
     // own zone, where it shows before and after (by the zone rule), and the
@@ -2093,20 +2100,20 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('BYYEARDAY: the 60th day of each year is 1 Mar 2027, 29 Feb 2028, 1 Mar 2029 and 1 Mar 2030', ['2027-03-01 21:15', '2028-02-29 21:15', '2029-03-01 21:15', '2030-03-01 21:15'],
         $walk('FREQ=YEARLY;BYYEARDAY=60;COUNT=4', '2027-03-01 21:15', 'Pacific/Auckland'));
 
-    // The carried clock of DAILY;BYDAY: the daily iterator keeps the clock a
-    // skipped hour pushed on, on a day it steps to (every INTERVAL-th day
-    // from the start), and every window reads that same walk.
+    // No carried clock (decisions.md, "A clock time the spring change
+    // skips"): a weekday list's gap day is at the clock plus the gap and
+    // every later day at its own, for any interval, in any window.
     $carry = static fn(string $rrule, string $startLocal, string $from, string $to): array => array_map(
         static fn(array $o): string => $o['start']->setTimezone(Time::zone('America/Los_Angeles'))->format('Y-m-d H:i'),
         BetterCal\Domain\Recurrence::sabreExpand(['exdates_json' => null] + smSeries('Sample class', $rrule, $startLocal), new DateTimeImmutable($from, Time::utc()), new DateTimeImmutable($to, Time::utc())));
     $weekdays = 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR';
-    checkEq('Carry: weekdays at 02:30 from 1 Mar 2027 are at 03:30 from Mon 15 Mar, after Sunday\'s gap, in a window from the start and in one in June alike', [
-        ['2027-03-12 02:30', '2027-03-15 03:30'], ['2027-06-01 03:30', '2027-06-02 03:30'], ['2027-06-01 03:30', '2027-06-02 03:30'],
+    checkEq('No carry: weekdays at 02:30 from 1 Mar 2027 stay at 02:30 after Sunday\'s gap, in a window from the start and in one in June alike', [
+        ['2027-03-12 02:30', '2027-03-15 02:30'], ['2027-06-01 02:30', '2027-06-02 02:30'], ['2027-06-01 02:30', '2027-06-02 02:30'],
     ], [array_slice($carry($weekdays, '2027-03-01 02:30', '2027-03-01', '2027-03-16'), 9, 2), array_slice($carry($weekdays, '2027-03-01 02:30', '2027-03-01', '2027-06-03'), -2), $carry($weekdays, '2027-03-01 02:30', '2027-06-01', '2027-06-03')]);
     $everyOther = 'FREQ=DAILY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR,SA,SU';
-    checkEq('Carry: every other day keeps 02:30 when its days step over 14 Mar (from 1 Mar), and moves to 03:30 when they land on it (from 2 Mar), in any window', [
-        ['2027-03-15 02:30'], ['2027-03-16 03:30'], ['2027-06-02 03:30'], ['2027-06-02 03:30'],
-    ], [$carry($everyOther, '2027-03-01 02:30', '2027-03-15', '2027-03-16'), $carry($everyOther, '2027-03-02 02:30', '2027-03-16', '2027-03-17'),
+    checkEq('No carry: every other day from 2 Mar lands on 14 Mar at 03:30 and is back at 02:30 on 16 Mar; from 1 Mar it steps over the gap at 02:30; any window reads the same', [
+        ['2027-03-15 02:30'], ['2027-03-14 03:30', '2027-03-16 02:30'], ['2027-06-02 02:30'], ['2027-06-02 02:30'],
+    ], [$carry($everyOther, '2027-03-01 02:30', '2027-03-15', '2027-03-16'), $carry($everyOther, '2027-03-02 02:30', '2027-03-14', '2027-03-17'),
         $carry($everyOther, '2027-03-02 02:30', '2027-06-01', '2027-06-04'), array_values(array_filter($carry($everyOther, '2027-03-02 02:30', '2027-03-02', '2027-06-04'), static fn(string $d): bool => $d >= '2027-06-01'))]);
 
     // UNTIL takes the start's form; a date on a timed series keeps its last day.

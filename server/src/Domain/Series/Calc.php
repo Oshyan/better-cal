@@ -8,12 +8,10 @@ use BetterCal\Support\Time;
 
 /**
  * A series' raw occurrences (no skips applied), read from the expander the
- * app persists and shows (sabre/vobject's RRuleIterator), without the
- * display cap: every day and key here is one sabre yields for the series as
- * it is stored. Nothing in the model computes an occurrence's instant by
- * itself, so the app's quirks of the expander (a clock carried past a
- * skipped hour, a day an hour-stepping rule leaves out) are the model's
- * too, with no list of them to keep.
+ * app persists and shows (RuleIterator), without the display cap: every day
+ * and key here is one the expander yields for the series as it is stored.
+ * Nothing in the model computes an occurrence's instant by itself, so the
+ * model and the calendar never differ on a key.
  *
  * What Calc adds is the storage rule for a first day in a skipped hour
  * (Zones, DST and All-Day Days): the series is stored from its rule's
@@ -27,7 +25,12 @@ use BetterCal\Support\Time;
  */
 final class Calc
 {
-    /** No series is walked further than this many occurrences. */
+    /**
+     * No series is walked further than this many occurrences: a memory guard
+     * on the keys kept per stored form, reached only by a rule several times
+     * a day read for decades. Reaching it is WalkLimitReached, never the
+     * series' end.
+     */
     public const MAX_STEPS = 400000;
 
     /** @var array{0:int,1:int,2:int} the series' clock time (BYHOUR and BYMINUTE win) */
@@ -103,9 +106,12 @@ final class Calc
         $len = max(0, Time::fromDb((string) $row['end_utc'])->getTimestamp() - $start->getTimestamp());
         $rule ??= Rule::parse($allDay ? \BetterCal\Domain\Recurrence::inForm((string) $row['rrule'], true, 'UTC') : (string) $row['rrule'], $dn);
         $calc = new self($rule, $dn, $tz, $allDay, $clock, $len, false, $start);
+        // Only to find an anchored start: a skip list quarantined over its
+        // limit (decodeExdates refuses it) is read as none here, and every
+        // path that writes or acts on it refuses it (Events::decodeExdates).
         try {
             $skips = \BetterCal\Domain\Recurrence::decodeExdates($row['exdates_json'] ?? null);
-        } catch (\Throwable) {
+        } catch (\InvalidArgumentException) {
             $skips = [];
         }
         if (!$allDay && $rule->supported() && in_array((string) $row['start_utc'], $skips, true)) {
@@ -405,9 +411,10 @@ final class Calc
     }
 
     /**
-     * sabre's raw occurrences of a stored rule from a stored start, as [local
-     * day, key], through $maxDn and at most $max, extended on demand and
-     * kept per stored form. A rule sabre can't read gives none.
+     * The expander's raw occurrences of a stored rule from a stored start, as
+     * [local day, key], through $maxDn and at most $max, extended on demand
+     * and kept per stored form. A rule the expander can't read
+     * (RuleNotReadable) gives none and reads as not expandable.
      *
      * @return list<array{0:int,1:string}>
      */
@@ -423,7 +430,7 @@ final class Calc
                 $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
                 // An all-day series is read in its own form: no clock parts.
                 $entry['it'] = new RuleIterator($allDay ? \BetterCal\Domain\Recurrence::inForm($rrule, true, 'UTC') : $rrule, $local);
-            } catch (\Throwable) {
+            } catch (RuleNotReadable) {
                 $entry['done'] = true;
                 $entry['ok'] = false;
             }
@@ -431,11 +438,11 @@ final class Calc
         }
         $e = &self::$cache[$ck];
         // A walk that can't be completed (a limit of the walk, MAX_STEPS
-        // here or the iterator's own, or anything the iterator throws on
-        // the way) is never the series' end: the caller sees it as
-        // WalkIncomplete, and the stored form is from then on one the
-        // expander can't read (no keys, expandable() false), as a rule sabre
-        // refuses is, so the model reads it that way (Model::read).
+        // here or the iterator's own) is never the series' end: the caller
+        // sees it as WalkIncomplete, and the stored form is from then on one
+        // the expander can't read (no keys, expandable() false), as a rule
+        // it refuses is, so the model reads it that way (Model::read). Any
+        // other failure is a defect and propagates as itself.
         $zone = $allDay ? Time::utc() : Time::zone($tz);
         while (!$e['done'] && count($e['keys']) < $max && ($e['keys'] === [] || $e['keys'][count($e['keys']) - 1][0] <= $maxDn)) {
             try {
@@ -450,12 +457,12 @@ final class Calc
                 $dn = Cal::dnOf($at->setTimezone($zone));
                 $e['keys'][] = [$dn, $allDay ? Cal::date($dn) . ' 00:00:00' : Time::toDb($at)];
                 $e['it']->next();
-            } catch (\Throwable $thrown) {
+            } catch (WalkIncomplete $thrown) {
                 $e['done'] = true;
                 $e['ok'] = false;
                 $e['keys'] = [];
                 unset($e);
-                throw $thrown instanceof WalkIncomplete ? $thrown : new WalkIncomplete('The walk stopped: ' . $thrown->getMessage(), 0, $thrown);
+                throw $thrown;
             }
         }
         $out = [];
@@ -487,11 +494,10 @@ final class Calc
         if ($given !== null && $given->setTimezone($zone)->format('Y-m-d H:i:s') === $wall) {
             return $given->setTimezone(Time::utc());
         }
-        // A clock time that happens twice is the first, in daylight time, as
-        // sabre has it (RFC 5545 3.3.5); PHP alone takes the second. One in
-        // a gap is where PHP puts it, the clock moved on by the gap.
-        $all = self::instantsAt($dn, $clock, $tz);
-        return ($all[0] ?? new \DateTimeImmutable($wall, $zone))->setTimezone(Time::utc());
+        // The expander's one rule for a wall clock (Wall::resolve): a clock
+        // that happens twice is the first (RFC 5545 3.3.5; PHP alone takes
+        // the second), one in a gap the clock plus the gap.
+        return Wall::resolve($dn, $clock, $zone)->setTimezone(Time::utc());
     }
 
     /**
@@ -505,26 +511,7 @@ final class Calc
      */
     public static function instantsAt(int $dn, array $clock, string $tz): array
     {
-        $wall = sprintf('%s %02d:%02d:%02d', Cal::date($dn), $clock[0], $clock[1], $clock[2]);
-        $zone = Time::zone($tz);
-        $asUtc = (new \DateTimeImmutable($wall, Time::utc()))->getTimestamp();
-        // Every offset the zone has within two days of the wall clock.
-        $offsets = [];
-        foreach ($zone->getTransitions($asUtc - 2 * 86400, $asUtc + 2 * 86400) ?: [] as $t) {
-            $offsets[(int) $t['offset']] = true;
-        }
-        if ($offsets === []) {
-            $offsets[$zone->getOffset(new \DateTimeImmutable('@' . $asUtc))] = true;
-        }
-        $out = [];
-        foreach (array_keys($offsets) as $offset) {
-            $at = (new \DateTimeImmutable('@' . ($asUtc - $offset)))->setTimezone($zone);
-            if ($at->format('Y-m-d H:i:s') === $wall) {
-                $out[$at->getTimestamp()] = $at;
-            }
-        }
-        ksort($out);
-        return array_values($out);
+        return Wall::instants($dn, $clock, Time::zone($tz));
     }
 
     /** Whether a clock time doesn't exist on a local day (a spring-forward gap). */
@@ -534,19 +521,17 @@ final class Calc
     }
 
     /**
-     * Whether the expander can read the rule at all: sabre refuses RSCALE
-     * and X- parts, and RuleIterator what RFC 5545 doesn't allow in a
-     * MINUTELY or SECONDLY rule.
+     * Whether the expander can read the rule at all (Rule::table): a part
+     * RFC 5545 doesn't define (RSCALE, an X- part), a value outside its
+     * grammar or a part its table marks N/A for the frequency is a rule it
+     * can't read.
      */
-    public static function sabreReads(string $rrule): bool
+    public static function reads(string $rrule): bool
     {
-        if (!class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
-            return true;
-        }
         try {
             new RuleIterator($rrule, new \DateTimeImmutable('2026-01-01', Time::utc()));
             return true;
-        } catch (\Throwable) {
+        } catch (RuleNotReadable) {
             return false;
         }
     }

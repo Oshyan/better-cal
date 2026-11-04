@@ -1753,8 +1753,7 @@ final class Events
         $freq = RepeatParser::ruleParts((string) ($after['rrule'] ?? ''))['FREQ'] ?? '';
         if ($days === 0 // the same days, at another time or in another zone
             || !in_array($freq, ['MONTHLY', 'YEARLY'], true)
-            || $freq !== (RepeatParser::ruleParts((string) ($before['rrule'] ?? ''))['FREQ'] ?? '')
-            || !class_exists(\Sabre\VObject\Component\VCalendar::class)) {
+            || $freq !== (RepeatParser::ruleParts((string) ($before['rrule'] ?? ''))['FREQ'] ?? '')) {
             return $byDays;
         }
         $unit = $freq === 'MONTHLY' ? 'month' : 'year';
@@ -1778,8 +1777,9 @@ final class Events
     }
 
     /**
-     * The instance keys of a series' occurrences in the month or year (local
-     * to $tz) that holds $day, in order.
+     * The instance keys of a series' occurrences that start in the month or
+     * year (local to $tz) that holds $day, in order: every one of them (no
+     * display cap), and none that only runs into it.
      *
      * @return list<string>
      */
@@ -1787,10 +1787,9 @@ final class Events
     {
         $from = new \DateTimeImmutable($day->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $tz);
         $to = $from->modify('+1 ' . $unit);
-        return array_map(
-            static fn(array $occ): string => Time::toDb($occ['start']),
-            Recurrence::sabreExpand($master, $from->setTimezone(Time::utc()), $to->setTimezone(Time::utc()))
-        );
+        $starts = array_map(static fn(array $occ): string => Time::toDb($occ['start']), Recurrence::occurrences($master, $from->setTimezone(Time::utc()), $to->setTimezone(Time::utc())));
+        $first = Time::toDb($from->setTimezone(Time::utc()));
+        return array_values(array_filter($starts, static fn(string $s): bool => $s >= $first));
     }
 
     /**
@@ -1818,14 +1817,18 @@ final class Events
             return $rrule;
         }
         $until = $until->setTimezone(Time::utc());
-        // The series' last day, skipped or not (a skip moves on its own).
+        // The series' last day, skipped or not (a skip moves on its own),
+        // read whole (no display cap). A rule the expander can't read, or
+        // whose walk can't be completed, takes the unreadable-rule path: its
+        // UNTIL as the text says (decisions.md, "A rule the expander can't
+        // read"), moved the same way.
         $last = Time::toDb($until);
         try {
-            $occurrences = Recurrence::sabreExpand(['exdates_json' => null] + $before, Time::fromDb((string) $before['start_utc']), $until->modify('+1 second'));
+            $occurrences = Recurrence::occurrences(['exdates_json' => null] + $before, Time::fromDb((string) $before['start_utc']), $until->modify('+1 second'));
             if ($occurrences !== []) {
                 $last = Time::toDb(end($occurrences)['start']);
             }
-        } catch (\Throwable) {
+        } catch (\BetterCal\Domain\Series\RuleNotReadable|\BetterCal\Domain\Series\WalkIncomplete) {
         }
         $moved = Time::fromDb($shift($last));
         // Written in the series' own form (Recurrence::inForm): a date for an
@@ -3295,10 +3298,15 @@ final class Events
         if (!isset($parts['COUNT'])) {
             return $rrule;
         }
-        try {
-            $before = count(Recurrence::sabreExpand(['exdates_json' => null] + $master, Time::fromDb((string) $master['start_utc']), Time::fromDb($instanceUtc)));
-        } catch (\Throwable) {
-            $before = 0;
+        // Every generated occurrence that starts before the split, counted
+        // by the expander with no display cap. The split's day was checked
+        // as an occurrence first (instanceKey), so the rule reads and its
+        // walk completes there; a failure here is a defect and propagates,
+        // never a count of 0 that would restart the whole COUNT.
+        $at = Time::fromDb($instanceUtc)->getTimestamp();
+        $before = 0;
+        for ($it = Recurrence::iterator($master); $it->valid() && $it->current()->getTimestamp() < $at; $it->next()) {
+            $before++;
         }
         $parts['COUNT'] = (string) max(1, (int) $parts['COUNT'] - $before);
         $out = [];

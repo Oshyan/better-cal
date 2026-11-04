@@ -71,7 +71,7 @@ trait SeriesPlans
      */
     private static function validatedSeriesRule(array $event, string $rrule, bool $wholeSeries): string
     {
-        if ($wholeSeries && !empty($event['rrule']) && !Calc::sabreReads((string) $event['rrule'])) {
+        if ($wholeSeries && !empty($event['rrule']) && !Calc::reads((string) $event['rrule'])) {
             try {
                 return Recurrence::validateRrule($rrule);
             } catch (\Throwable) {
@@ -84,7 +84,7 @@ trait SeriesPlans
     /** "This and following" and delete following on a rule the expander can't read: refused, saying so. */
     private static function refuseUnreadableSplit(array $event): void
     {
-        if (!empty($event['rrule']) && !Calc::sabreReads((string) $event['rrule'])) {
+        if (!empty($event['rrule']) && !Calc::reads((string) $event['rrule'])) {
             throw new HttpError('series_refused', Model::REASONS['unreadable'], 422, [
                 'plan' => Model::refusedPlan($event, 'unreadable', 'following'),
             ]);

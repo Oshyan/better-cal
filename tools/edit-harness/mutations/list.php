@@ -11,6 +11,15 @@ $model = 'server/src/Domain/Series/Model.php';
 
 // The assertion labels of undo-trips.test.php a trip-rule mutation must fail: for one of its undo cases, the refusal on
 // every undo path, the undo once the conflict is gone on the paths given, and the refusal's words (checked on undoById).
+// The occurrence mutations wrap the app's rule iterator (every expansion reads it: the model's and the window's), so
+// they hold whatever its own stepping becomes: the iterator's next() is renamed and a new one calls it, then breaks
+// what it yields one way. $extra adds members beside it.
+$iterator = 'server/src/Domain/Series/RuleIterator.php';
+$wrapNext = static fn(string $body, string $extra = ''): array => [[
+    "    #[\\ReturnTypeWillChange]\n    public function next()\n    {\n",
+    $extra . "    #[\\ReturnTypeWillChange]\n    public function next()\n    {\n" . $body . "\n    }\n\n    private function nextUnmutated()\n    {\n",
+]];
+
 $undoPaths = ['undoLatest', 'undoById', 'undoById force', 'undoRun strict', 'undoRun'];
 $undoCase = static fn(string $case, array $undoes): array => array_merge(
     array_map(static fn(string $p): string => "$case ($p): refused with undo_conflict, nothing written (every row, link and entry as before), the entry still to undo", $undoPaths),
@@ -122,6 +131,81 @@ return [
         'what' => 'an overlap note pinned to the first instant of the repeated clock, whichever the series is at',
         'patch' => [["            'notes' => \$this->notes,\n", "            'notes' => array_map(static fn(array \$n): array => (\$n['kind'] === 'overlap' ? ['at' => self::inZoneOut(Calc::instantsAt(Cal::dn(...array_map('intval', explode('-', \$n['date']))), array_map('intval', explode(':', substr(\$n['at'], 11, 8))), \$n['tz'])[0], \$n['tz'])] : []) + \$n, \$this->notes),\n"]],
         'cases' => ['note-a-clock-at-the-second-of-its-two-instants'],
+    ],
+    // The occurrence checks: c-occurrences (the window's expansion against the harness's own evaluator) and, since the
+    // model reads the same iterator, the model's comparisons against it (c-next's coming up, c-placement's bound.last).
+    [
+        // The window's expander alone (the model reads Calc, not this), so only the window's checks see it.
+        'id' => 'window-truncated-by-its-start', 'file' => 'server/src/Domain/Recurrence.php', 'checks' => ['c-occurrences', 'c-window'],
+        'what' => 'the window\'s expansion ends 400 days after the window\'s own start, so a wide window shows less than its parts',
+        'patch' => [["                if (\$occStart >= \$winEnd) {\n                    break;\n                }", "                if (\$occStart >= \$winEnd || \$occStart->getTimestamp() - \$winStart->getTimestamp() > 400 * 86400) {\n                    break;\n                }"]],
+        'cases' => ['mutation-occurrences-months-apart'],
+    ],
+    [
+        'id' => 'occurrences-count-cap', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'premature termination: the walk ends when the next occurrence is more than 100 days on',
+        'patch' => $wrapNext('        $prev = $this->currentDate === null ? null : $this->currentDate->getTimestamp();
+        $this->nextUnmutated();
+        if ($prev !== null && $this->currentDate !== null && $this->currentDate->getTimestamp() - $prev > 100 * 86400) {
+            $this->currentDate = null;
+        }'),
+        'cases' => ['mutation-occurrences-months-apart'],
+    ],
+    [
+        'id' => 'occurrences-missing', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'a missing occurrence: the third is stepped over and not counted',
+        'patch' => $wrapNext('        $this->nextUnmutated();
+        if ($this->counter === 2) {
+            $this->nextUnmutated();
+            --$this->counter;
+        }'),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-extra', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'an extra occurrence: an hour before the second, not counted',
+        'patch' => $wrapNext('        if ($this->counter === 0) {
+            $this->mutHeld = null;
+        }
+        if ($this->mutHeld !== null) {
+            $this->currentDate = $this->mutHeld;
+            $this->mutHeld = null;
+            return;
+        }
+        $this->nextUnmutated();
+        if ($this->counter === 1 && $this->currentDate !== null) {
+            $this->mutHeld = $this->currentDate;
+            $this->currentDate = (clone $this->currentDate)->setTimestamp($this->currentDate->getTimestamp() - 3600);
+        }', "    private mixed \$mutHeld = null;\n\n"),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-count-off-by-one', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'COUNT read as one more than it says',
+        'patch' => $wrapNext('        $this->nextUnmutated();', "    #[\\ReturnTypeWillChange]\n    public function valid()\n    {\n        if (\$this->count === null) {\n            return parent::valid();\n        }\n        \$this->count++;\n        \$v = parent::valid();\n        \$this->count--;\n        return \$v;\n    }\n\n"),
+        'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'occurrences-second-instant', 'file' => $iterator, 'checks' => ['c-occurrences', 'c-next'],
+        'what' => 'an occurrence in a repeated hour put at its second instant',
+        'patch' => $wrapNext('        $this->nextUnmutated();
+        if ($this->currentDate !== null) {
+            foreach ([3600, 1800] as $d) {
+                $t = (clone $this->currentDate)->setTimestamp($this->currentDate->getTimestamp() + $d);
+                if ($t->format(\'Y-m-d H:i:s\') === $this->currentDate->format(\'Y-m-d H:i:s\')) {
+                    $this->currentDate = $t;
+                    break;
+                }
+            }
+        }'),
+        'cases' => ['mutation-occurrences-in-a-repeated-hour'],
+    ],
+    [
+        // In sabre's own weekly step (vendor, never changed: the copy is loaded in its place).
+        'id' => 'occurrences-weekly-byday-unread', 'file' => 'server/vendor/sabre/vobject/lib/Recur/RRuleIterator.php', 'checks' => ['c-occurrences', 'c-placement', 'c-next'],
+        'what' => 'one part\'s evaluation removed: a weekly rule\'s BYDAY, so it repeats on its start\'s weekday alone',
+        'patch' => [["        if (!\$this->byHour && !\$this->byDay) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');", "        if (!\$this->byHour) {\n            \$this->advanceTheDate('+'.\$this->interval.' weeks');"]],
+        'cases' => ['mutation-occurrences-on-a-weekday-list'],
     ],
     [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],

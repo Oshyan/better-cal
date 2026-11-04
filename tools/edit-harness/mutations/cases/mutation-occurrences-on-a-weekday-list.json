@@ -1,0 +1,45 @@
+{
+    "n": 9008,
+    "seed": 0,
+    "series": {
+        "rrule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": "count",
+        "boundAt": 6,
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-05 18:00",
+        "family": "weekly_list",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60
+    },
+    "exceptions": [],
+    "acted": 0,
+    "vector": {
+        "via": "master",
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null
+    },
+    "from": "first",
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

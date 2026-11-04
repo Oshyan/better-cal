@@ -1,0 +1,49 @@
+{
+    "n": 635,
+    "seed": 19,
+    "series": {
+        "family": "monthly_nth",
+        "rrule": "FREQ=MONTHLY;BYDAY=1SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2026-08-18 01:30",
+        "length": 60
+    },
+    "exceptions": [],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 9000,
+        "trip": true,
+        "fields": [],
+        "rule": "same",
+        "sameForm": "editor",
+        "newRule": "FREQ=MONTHLY;BYDAY=2WE",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": {
+        "kind": "rename",
+        "days": 7,
+        "mins": -60
+    },
+    "choices": {
+        "edit": [],
+        "stack": []
+    },
+    "preselected": {
+        "edit": true,
+        "stack": true
+    }
+}

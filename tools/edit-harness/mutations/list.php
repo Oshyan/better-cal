@@ -99,6 +99,12 @@ return [
         'cases' => ['mutation-all-day-day-in-a-daily-evening-series'],
     ],
     [
+        'id' => 'notes-dropped', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'every note on a clock that doesn\'t exist or happens twice dropped',
+        'patch' => [["        if (\$this->allDay1 || \$calc->tz === 'UTC') {\n            return;\n        }\n        \$tz = Time::zone(\$calc->tz);", "        if (true || \$this->allDay1 || \$calc->tz === 'UTC') {\n            return;\n        }\n        \$tz = Time::zone(\$calc->tz);"]],
+        'cases' => ['note-a-clock-in-the-autumn-overlap', 'note-a-clock-in-the-spring-gap', 'note-a-half-hour-repeated-clock-on-lord-howe'],
+    ],
+    [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],
         'what' => 'an unrelated column (the icon) changed on the series',
         'patch' => [["                'master' => \$masterCols,", "                'master' => \$masterCols + ['icon' => 'sample'],"]],

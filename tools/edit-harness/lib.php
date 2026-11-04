@@ -62,7 +62,7 @@ final class Report
         'c-placement' => ['outcome (moves)', 'outcome (stays)', 'outcome (separate)', 'outcome (rejoins)', 'outcome (deleted)', 'outcome (acted row moves)', 'outcome (acted separate)',
             'ownDate (moves)', 'shows (skipped moves)', 'shows (skipped stays)', 'to (skipped moves)', 'to (generated)', 'movedDays chosen', 'movedDays other', 'plan.acted before',
             'losses member', 'losses complete', 'gains member', 'gains complete', 'bound.last', 'bound.from.last', 'bound.until', 'bound.from.until',
-            'reading earlier', 'reading dates', 'notes (overlap)', 'notes (gap)', 'plan.start', 'rule.to.start', 'rule.from.start'],
+            'reading earlier', 'reading dates', 'notes (overlap)', 'notes (gap)', 'notes (overlap) present', 'notes (gap) present', 'plan.start', 'rule.to.start', 'rule.from.start'],
         'c-next' => ['next (timed plan)', 'next (all-day plan)', 'next (timed plan, new rule)', 'nextMore true', 'nextMore false', 'unreadable next',
             'entry occurrence', 'entry edited', 'entry acted', 'entry edited, own zone', 'chosen reading next'],
         'c-untouched' => ['master', 'edited row stays', 'edited row leaves', 'edited row goes', 'control, same calendar', 'control, another calendar', 'insertion', 'calendar', 'link'],

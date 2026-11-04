@@ -1799,6 +1799,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: made all-day, a day at its own time shows timed in its own zone before and on its date after, its new kind named', [
         'moves', '2027-01-12', false, ['date' => '2027-01-12', 'at' => '2027-01-12T21:30:00-08:00', 'tz' => $la], ['date' => '2027-01-12', 'kind' => 'all-day'],
     ], [$d['outcome'] ?? null, $d['day'] ?? null, array_key_exists('ownDate', $d), $d['before'] ?? null, $d['after'] ?? null]);
+    // Its words: the day it is about, the date set on it, and the time it
+    // keeps as it shows after the change.
+    $p = smPlan($practiceLa, [$nyOwn], smDrag($practiceLa, '2027-01-05 20:00', '2027-01-05 19:00'));
+    $d = $edited($p);
+    checkEq('Writers: the New York day is named by the day it is about and the date set on it, and keeps its time as it shows, 21:30', [
+        'Tue 12 Jan, moved to Wed 13 Jan', 'stays there, keeps its own time at 21:30',
+    ], [$d['head'] ?? null, $d['outcomeWords'] ?? null]);
+    $choirOwn = smEdited($choir, 2, '2027-04-13 19:00', ['title' => 'Rehearsal'], '2027-04-16 19:00', ['date', 'title']);
+    $p = smPlan($choir, [$choirOwn], ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,TH']);
+    checkEq('Writers: a day outside the new series is named by the day it is about', "'Rehearsal' Tue 13 Apr", $edited($p)['head'] ?? null);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

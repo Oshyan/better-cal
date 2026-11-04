@@ -1769,20 +1769,24 @@ final class Model
             }
             // Its outcome is its instant and kind compared, never its dates.
             $moved = Time::toDb($start) !== (string) $row['start_utc'] || Time::toDb($end) !== (string) $row['end_utc'] || $allDay !== ((int) $row['all_day'] === 1);
+            // The days it showed on before and after, and where it shows after
+            // as an instant, each a placement by the zone rule: a date and a
+            // clock of the same instant in one zone.
+            $sides = $this->rowSides($row, self::rowOf($start, $allDay, $tz));
+            $shownBefore = self::dayOf($sides['before']);
+            $newShown = self::dayOf($sides['after']);
+            $newClock = substr((string) ($sides['after']['at'] ?? ''), 11, 5);
             $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
             $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance', 'trip'], $ownAfter));
             $keepWords = array_map(static fn(string $f): string => self::OWN_WORDS[$f], $keeps);
             // A timed day at its own time while the series' time changes says
             // the time it keeps ("keeps its own time at 09:00", the examples' all-day case).
-            if ($seriesTime && !$allDay && (int) $row['all_day'] === 0 && array_intersect(['time', 'allDay'], $own) !== []) {
-                $rowLocal = Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone((string) $row['tzid']));
-                $newLocal = $start->setTimezone(Time::zone($tz));
-                if ($rowLocal->format('H:i') === $newLocal->format('H:i')) {
-                    $keepWords[] = 'own time at ' . $newLocal->format('H:i');
-                }
+            // The clock is the one it shows at, before and after (its placements).
+            if ($seriesTime && !$allDay && (int) $row['all_day'] === 0 && array_intersect(['time', 'allDay'], $own) !== []
+                && substr((string) $sides['before']['at'], 11, 5) === $newClock) {
+                $keepWords[] = 'own time at ' . $newClock;
             }
             $keepsWords = $keepWords === [] ? '' : ', keeps its ' . Words::andList($keepWords);
-            $wasShown = $this->shownDn($row);
             // A field it owned that it takes now (from its own row, or "Give it the new title too").
             $taken = array_values(array_intersect(array_keys($this->changed), array_diff($ownBefore, $ownAfter)));
             if (in_array('title', $taken, true)) {
@@ -1792,18 +1796,12 @@ final class Model
             if ($taken !== []) {
                 $keepsWords .= ', takes the new ' . Words::andList(array_map(static fn(string $f): string => self::OWN_WORDS[$f], $taken));
             }
-            // The days it showed on before and after, and where it shows after
-            // as an instant, each a placement by the zone rule: a date and a
-            // clock of the same instant in one zone.
-            $sides = $this->rowSides($row, self::rowOf($start, $allDay, $tz));
-            $shownBefore = self::dayOf($sides['before']);
-            $newShown = self::dayOf($sides['after']);
-            $newClock = substr((string) ($sides['after']['at'] ?? ''), 11, 5);
-            if (in_array('date', $ownBefore, true) && $wasShown !== $odn) {
+            // Named by the day it is about, and, on a date of its own, the date set on it.
+            if (isset($sides['ownDate']) && self::dayOf($sides['ownDate']) !== $odn) {
                 // Where it shows after: another day, the same day at another time, or unchanged.
                 $clockMoved = !$allDay && Time::toDb($start) !== (string) $row['start_utc'];
                 $where = $newShown !== $shownBefore ? 'moves to ' . Words::date($newShown, $this->thisYear) : ($clockMoved ? 'moves to ' . $newClock : 'stays there');
-                $said = Words::dayParts($name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date($shownBefore, $this->thisYear), $where . $keepsWords, ': ');
+                $said = Words::dayParts($name . Words::date($odn, $this->thisYear) . ', moved to ' . Words::date(self::dayOf($sides['ownDate']), $this->thisYear), $where . $keepsWords, ': ');
             } else {
                 // A day that keeps its date and changes its time says the time.
                 $to = $newShown === $shownBefore && !$allDay ? $newClock : Words::date($newShown, $this->thisYear);
@@ -1822,7 +1820,7 @@ final class Model
             $row = $this->rows[$id];
             // Deleted, it has no after; detached as it is, its after is the row itself.
             $sides = $this->rowSides($row, $outside === 'delete' ? null : $row);
-            $label = "'" . (string) $row['title'] . "' " . Words::date(self::dayOf($sides['before']), $this->thisYear);
+            $label = "'" . (string) $row['title'] . "' " . Words::date($this->old->dnOf((string) $row['recurrence_instance_utc']), $this->thisYear);
             if ($outside === 'delete') {
                 $delete[] = $id;
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + $sides + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];

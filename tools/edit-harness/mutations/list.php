@@ -210,7 +210,7 @@ return [
     [
         'id' => 'zone-option-start-from-the-plan', 'file' => $model, 'checks' => ['c-placement'],
         'what' => 'every zone option\'s start taken from the plan chosen, not from that option\'s own',
-        'patch' => [["\$plan['groups'][\$gi]['options'][\$oi]['start'] = \$alt['plan']['rule']['to']['start'];", "\$plan['groups'][\$gi]['options'][\$oi]['start'] = \$plan['rule']['to']['start'];"]],
+        'patch' => [["\$to = (string) \$alt['plan']['rule']['to']['start'];", "\$to = (string) \$plan['rule']['to']['start'];"]],
         'cases' => ['reading-earlier-by-instant-across-zones', 'mutation-earlier-across-zones'],
     ],
     [

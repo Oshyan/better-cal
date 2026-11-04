@@ -5,9 +5,9 @@
 // all-day, how many to read (null: every one of a bounded rule), the
 // expected starts as local ISO]. Dates were listed by hand from a calendar
 // and RFC 5545 3.8.5.3's own examples; the product rules (the clock plus
-// the gap, the first of two instants, the DAILY;BYDAY carried clock, the
-// hour-naming rule's lost gap day, HOURLY on the wall clock, MINUTELY in elapsed time) are
-// series-model.md's. The run stops when the evaluator disagrees with one.
+// the gap on the skipped day alone, for every spelling of the rule; the
+// first of two instants; HOURLY on the wall clock; MINUTELY in elapsed
+// time) are decisions.md's. The run stops when the evaluator disagrees with one.
 declare(strict_types=1);
 
 return [
@@ -62,9 +62,10 @@ return [
     ['FREQ=MINUTELY;INTERVAL=720;COUNT=3', '2027-03-13 15:00', 'America/Los_Angeles', false, null, ['2027-03-13T15:00:00-08:00', '2027-03-14T04:00:00-07:00', '2027-03-14T16:00:00-07:00']],
     // Clocks that don't exist or happen twice (series-model.md, Zones, DST and All-Day Days)
     ['FREQ=WEEKLY;BYDAY=SU;COUNT=3', '2027-03-07 02:30', 'America/Los_Angeles', false, null, ['2027-03-07T02:30:00-08:00', '2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00']],
-    ['FREQ=WEEKLY;BYDAY=SU;BYHOUR=2;BYMINUTE=30;COUNT=3', '2027-03-07 02:30', 'America/Los_Angeles', false, null, ['2027-03-07T02:30:00-08:00', '2027-03-21T02:30:00-07:00', '2027-03-28T02:30:00-07:00']],
+    ['FREQ=WEEKLY;BYDAY=SU;BYHOUR=2;BYMINUTE=30;COUNT=3', '2027-03-07 02:30', 'America/Los_Angeles', false, null, ['2027-03-07T02:30:00-08:00', '2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00']],
     ['FREQ=DAILY;BYHOUR=2,3;BYMINUTE=30;COUNT=3', '2027-03-13 02:30', 'America/Los_Angeles', false, null, ['2027-03-13T02:30:00-08:00', '2027-03-13T03:30:00-08:00', '2027-03-14T03:30:00-07:00']],
-    ['FREQ=DAILY;BYDAY=MO,WE,SA;COUNT=4', '2027-03-10 02:30', 'America/Los_Angeles', false, null, ['2027-03-10T02:30:00-08:00', '2027-03-13T02:30:00-08:00', '2027-03-15T03:30:00-07:00', '2027-03-17T03:30:00-07:00']],
+    ['FREQ=DAILY;BYDAY=MO,WE,SA;COUNT=4', '2027-03-10 02:30', 'America/Los_Angeles', false, null, ['2027-03-10T02:30:00-08:00', '2027-03-13T02:30:00-08:00', '2027-03-15T02:30:00-07:00', '2027-03-17T02:30:00-07:00']],
+    ['FREQ=DAILY;BYDAY=SA,SU,MO;COUNT=4', '2027-03-13 02:30', 'America/Los_Angeles', false, null, ['2027-03-13T02:30:00-08:00', '2027-03-14T03:30:00-07:00', '2027-03-15T02:30:00-07:00', '2027-03-20T02:30:00-07:00']],
     ['FREQ=DAILY;COUNT=3', '2027-10-02 02:15', 'Australia/Lord_Howe', false, null, ['2027-10-02T02:15:00+10:30', '2027-10-03T02:45:00+11:00', '2027-10-04T02:15:00+11:00']],
     ['FREQ=DAILY;COUNT=3', '2027-11-06 01:30', 'America/Los_Angeles', false, null, ['2027-11-06T01:30:00-07:00', '2027-11-07T01:30:00-07:00', '2027-11-08T01:30:00-08:00']],
     ['FREQ=WEEKLY;COUNT=3', '2027-10-31T02:30:00+01:00', 'Europe/Berlin', false, null, ['2027-10-31T02:30:00+01:00', '2027-11-07T02:30:00+01:00', '2027-11-14T02:30:00+01:00']],

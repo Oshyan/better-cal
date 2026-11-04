@@ -36,18 +36,29 @@ final class Known
     public const PATHS = ['following', 'deleteFollowing', 'attendFollowing'];
 
     /** The accepted causes beside the paths, each decided until it is fixed (README, Known Code Paths). */
-    public const LORD_HOWE_BYHOUR = 'lord-howe-byhour (the expander\'s hour-by-hour stepping in a zone whose clocks move by half an hour, #202, until 1.5.1)';
+    public const CLOCK_PARTS = 'inherited-clock-parts (sabre\'s clock parts: a BYHOUR rule that never reads BYMINUTE when its start\'s minute differs, and its half-hour drift in Lord Howe, #202; until the own expander)';
+    public const GAP_READING = 'inherited-gap-reading (the expander\'s spring-gap readings: a BYHOUR rule leaves the gap day out, a weekday-list rule carries the shifted clock, #201; until the own expander)';
     public const FOLLOWING = 'following-1.4.6 (the 1.4.6 following or delete-following path)';
 
     public static function cause(array $failure): ?string
     {
+        // Each inherited cause is read from the series as drawn, and, for an occurrence check, from the series it compared
+        // (an edit can bring a series to a rule or a zone the draw didn't have).
         $series = $failure['spec']['series'] ?? [];
-        // A series in Lord Howe naming its hour: the expander's BYHOUR clock drifts half an hour after the zone's change, deferred to 1.5.1 (#202).
-        // Read from the series as drawn, or, for an occurrence check, from the series it compared (an edit can bring a series there).
         $d = $failure['detail'] ?? [];
-        $lordHowe = static fn(?string $tz, ?string $rule): bool => $tz === 'Australia/Lord_Howe' && str_contains(strtoupper((string) $rule), 'BYHOUR');
-        if (($lordHowe($series['tzid'] ?? null, $series['rrule'] ?? null) && !($series['allDay'] ?? false)) || $lordHowe($d['tz'] ?? null, $d['rrule'] ?? null)) {
-            return self::LORD_HOWE_BYHOUR;
+        $drawn = !($series['allDay'] ?? false) && isset($series['rrule'], $series['tzid'], $series['start'])
+            ? [(string) $series['rrule'], (string) $series['tzid'], Clock::secsOf(new \DateTimeImmutable((string) $series['start'], Clock::zone((string) $series['tzid'])))] : null;
+        $compared = isset($d['rrule'], $d['tz'], $d['start']) && is_string($d['tz']) && is_string($d['rrule']) && is_string($d['start']) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $d['start']) === 1
+            ? [(string) $d['rrule'], $d['tz'], Clock::secsOf(Clock::local((string) $d['start'], $d['tz']))] : null;
+        foreach ([$drawn, $compared] as $s) {
+            if ($s !== null && self::inheritedClockParts(...$s)) {
+                return self::CLOCK_PARTS;
+            }
+        }
+        foreach ([$drawn, $compared] as $s) {
+            if ($s !== null && self::inheritedGapReading(...$s)) {
+                return self::GAP_READING;
+            }
         }
         $following = in_array($failure['path'] ?? '', self::PATHS, true);
         // The following path writing a part several times a day as all-day (MINUTELY, HOURLY on a date), which the evaluator
@@ -61,6 +72,40 @@ final class Known
             return null;
         }
         return $following ? self::FOLLOWING : null;
+    }
+
+    /** A rule naming its hour read through sabre's clock parts: in Lord Howe, or with a BYMINUTE its start's minute isn't. */
+    private static function inheritedClockParts(string $rrule, string $tz, int $secs): bool
+    {
+        $p = Shape::parts($rrule);
+        if (!isset($p['BYHOUR'])) {
+            return false;
+        }
+        if ($tz === 'Australia/Lord_Howe') {
+            return true;
+        }
+        return isset($p['BYMINUTE']) && !in_array(intdiv($secs % 3600, 60), array_map('intval', explode(',', $p['BYMINUTE'])), true);
+    }
+
+    /** A rule the expander reads its own way across a spring gap (one naming its hour, one listing plain weekdays) whose clock some spring change of its zone skips. */
+    private static function inheritedGapReading(string $rrule, string $tz, int $secs): bool
+    {
+        $p = Shape::parts($rrule);
+        $listsWeekdays = isset($p['BYDAY']) && in_array($p['FREQ'] ?? '', ['DAILY', 'WEEKLY'], true) && preg_match('/\d/', $p['BYDAY']) !== 1;
+        if (!isset($p['BYHOUR']) && !$listsWeekdays) {
+            return false;
+        }
+        $zone = Clock::zone($tz);
+        foreach ($zone->getTransitions(gmmktime(0, 0, 0, 1, 1, 2026), gmmktime(0, 0, 0, 1, 1, 2032)) ?: [] as $i => $t) {
+            if ($i === 0) {
+                continue;
+            }
+            $dn = Clock::dnOf((new \DateTimeImmutable('@' . (int) $t['ts']))->setTimezone($zone));
+            if (Clock::inGap($dn, $secs, $tz)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

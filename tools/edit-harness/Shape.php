@@ -36,35 +36,21 @@ final class Shape
     public ?string $until = null;
     public array $parts = [];
     public bool $bare = false;
-    /** A rule naming its hour, read in its zone: the zone and the clock it names (inZone). */
-    private ?string $gapTz = null;
-    private int $gapSecs = 0;
-
     /**
-     * The pattern read in a series' zone at its clock. A rule naming its hour
-     * (BYHOUR) is stepped hour by hour by the expander and has no occurrence
-     * on a day whose clock falls in a spring-forward gap (series-model.md,
-     * Zones, DST and All-Day Days), so such a day is no day of it. Any other
-     * rule keeps a gap day, at the clock plus the gap.
+     * The pattern read in a series' zone at its clock. A day whose clock the
+     * spring change skips is still a day of every rule, at the clock plus
+     * the gap, whatever its spelling (decisions.md, "A clock time the spring
+     * change skips"): no day of a pattern is left out for its clock.
      */
     public function inZone(string $tz, int $clockSecs, bool $allDay, bool $clockFromRule = true): self
     {
-        $this->gapTz = null;
-        if (!$allDay && isset($this->parts['BYHOUR']) && !str_contains($this->parts['BYHOUR'], ',')) {
-            $this->gapTz = $tz;
-            // The clock the rule names, or $clockSecs for a rule about to be
-            // written at that clock (a drag writes the new hour and minute).
-            $this->gapSecs = !$clockFromRule ? $clockSecs : (int) $this->parts['BYHOUR'] * 3600
-                + (isset($this->parts['BYMINUTE']) ? (int) $this->parts['BYMINUTE'] : intdiv($clockSecs % 3600, 60)) * 60
-                + (isset($this->parts['BYSECOND']) ? (int) $this->parts['BYSECOND'] : $clockSecs % 60);
-        }
         return $this;
     }
 
-    /** Whether the expander leaves $dn, a day of the pattern, out for its clock (inZone): no occurrence there. */
+    /** Whether a day of the pattern has no occurrence for its clock: never, by the decided gap rule. */
     public function skipsForGap(int $dn): bool
     {
-        return $this->gapTz !== null && Clock::inGap($dn, $this->gapSecs, $this->gapTz);
+        return false;
     }
 
     /** @return array<string,string> */

@@ -17,11 +17,12 @@
 //
 // Where the product contract states a rule the RFC doesn't, the contract
 // decides (series-model.md, Zones, DST and All-Day Days; the drag table):
-// a clock that doesn't exist is the clock plus the gap, except in a rule
-// naming its hour (BYHOUR), which has no occurrence there; a clock that
-// happens twice is its first instant, the stored start excepted (an instant
-// given stays that instant); a DAILY rule with BYDAY and INTERVAL 1 keeps
-// the shifted clock after a spring gap on every later day; HOURLY steps
+// a clock the spring change skips is that day's clock plus the gap, the
+// offset before the gap read as 3.3.5 says, and the next day is at its own
+// clock, for every spelling and interval (a plain rule, one naming its hour
+// in BYHOUR, one listing weekdays; decisions.md, "A clock time the spring
+// change skips"); a clock that happens twice is its first instant, the
+// stored start excepted (an instant given stays that instant); HOURLY steps
 // its hours on the wall clock (a product rule, not an RFC one), MINUTELY
 // and SECONDLY in elapsed time from the start.
 declare(strict_types=1);
@@ -70,8 +71,6 @@ final class Rfc
     private array $occ = [];
     private int $k = 0;
     private int $periods = 0;
-    /** The DAILY;BYDAY clock carried past a spring gap (product rule), in seconds. */
-    private int $carry = 0;
 
     /** @var array<string,self> */
     private static array $cache = [];
@@ -342,9 +341,6 @@ final class Rfc
     private function datePeriod(int $k): array
     {
         $days = $this->periodDays($k);
-        if ($this->freq === 'DAILY') {
-            $this->carryGap($days[0]);
-        }
         $days = $this->byMonth($days);
         $days = $this->byWeekNo($days, $k);
         $days = $this->byYearDay($days);
@@ -513,7 +509,7 @@ final class Rfc
      */
     private function clockParts(array $days): array
     {
-        $base = $this->startSecs + $this->carry;
+        $base = $this->startSecs;
         $hours = $this->by['BYHOUR'] ?? [intdiv($base, 3600)];
         $minutes = $this->by['BYMINUTE'] ?? [intdiv($base % 3600, 60)];
         $seconds = $this->by['BYSECOND'] ?? [$base % 60];
@@ -552,23 +548,6 @@ final class Rfc
         }
         ksort($out);
         return array_values($out);
-    }
-
-    /**
-     * A DAILY rule with BYDAY and INTERVAL 1 keeps the clock its day's
-     * spring gap shifted it to on every later day (the drag table's DAILY
-     * with BYDAY row: its clock follows the daily iterator), whether or not
-     * the gap day is one of its days.
-     */
-    private function carryGap(int $dn): void
-    {
-        if (!$this->hasByDay || $this->interval !== 1 || isset($this->by['BYHOUR']) || $this->allDay || $dn <= $this->startDn) {
-            return;
-        }
-        $secs = $this->startSecs + $this->carry;
-        if ($this->wallInstants($dn, $secs) === []) {
-            $this->carry += $this->gapSize($dn, $secs);
-        }
     }
 
     // ---- frequencies under a day -------------------------------------------
@@ -707,7 +686,7 @@ final class Rfc
      * The instant of a local day and clock in the series' zone: one where
      * the clock names one; the first where it names two (the stored start
      * excepted: an instant given stays that instant); where it names none, the
-     * clock plus the gap, or none at all in a rule naming its hour.
+     * clock plus the gap (by the offset before it), whatever the rule's spelling.
      */
     private function instant(int $dn, int $secs): ?int
     {
@@ -720,9 +699,6 @@ final class Rfc
         }
         if (count($at) > 1) {
             return $dn === $this->startDn && $secs === $this->startSecs && in_array($this->startTs, $at, true) ? $this->startTs : $at[0];
-        }
-        if (isset($this->by['BYHOUR'])) {
-            return null;
         }
         // The offset in force before the gap: the wall clock read on it lands the gap's size later.
         $wall = $dn * 86400 + $secs;
@@ -746,14 +722,6 @@ final class Rfc
         }
         sort($out);
         return array_values(array_unique($out));
-    }
-
-    /** How far a gap moves a clock that falls in it: the offsets after and before it differ by that much. */
-    private function gapSize(int $dn, int $secs): int
-    {
-        $zone = $this->zone();
-        $wall = $dn * 86400 + $secs;
-        return $zone->getOffset(new \DateTimeImmutable('@' . ($wall + 86400))) - $zone->getOffset(new \DateTimeImmutable('@' . ($wall - 86400)));
     }
 
     private function localDn(int $ts): int

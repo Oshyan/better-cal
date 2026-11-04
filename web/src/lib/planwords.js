@@ -410,11 +410,14 @@ export const outcomeOf = (d) => (d.outcome === 'moves' && d.after && d.after.kin
 export function dayLines(d, opts = {}) {
   const acted = d.kind === 'acted';
   const name = acted ? 'The day you moved' : dayName(d, opts.series) + ownAside(d) + (d.day ? ' on ' + fmtDay(d.day, opts) : '');
-  const own = d.ownDate
-    ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + (d.ownDate.tz ? ' in ' + zoneName(d.ownDate.tz) : '') : '';
   const said = d.ownDate ? d.ownDate.date : acted ? null : d.day;
+  const place = placeOf(d, said, opts);
+  // The date set on it, with its zone when that isn't the plan's, named
+  // once: not again when the clock after it is in the same zone and says so.
+  const ownZone = d.ownDate && d.ownDate.tz && !(place.clock && d.after.tz === d.ownDate.tz) ? ' in ' + zoneName(d.ownDate.tz) : '';
+  const own = d.ownDate ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + ownZone : '';
   const say = OUTCOMES[outcomeOf(d)];
-  const now = say ? say(placeOf(d, said, opts)) : '';
+  const now = say ? say(place) : '';
   const changes = SAYS_ALL.has(d.outcome) ? '' : changesWords(d, opts);
   const line1 = name + spaced([own, now].filter(Boolean).join(' and ')) + (changes ? (own ? ', and ' : ' and ') + changes : '') + '.';
   return { line1, line2: '' };

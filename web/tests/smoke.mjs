@@ -5004,6 +5004,200 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   W2.setStrictClocks(true);
   eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays where it is."]]);
 
+  // The verification set of 1.5.0's sentences (workfolder plan, The
+  // client): plans shaped as the server writes them, read by the real
+  // planView, each row's sentence asserted whole. Under test a clock with no
+  // zone throws (setStrictClocks), so every check in an all-day plan below
+  // also proves no clock was formatted without one.
+  {
+    const NY = 'America/New_York', TOKYO = 'Asia/Tokyo';
+    const allDayPart = (rrule, start) => ({ rrule, start, tz: null, allDay: true });
+    const timedPart = (rrule, start, tz) => ({ rrule, start, tz, allDay: false });
+    const weekly = (tz, day = 'TU', clock = '19:00', start = '2027-01-05') => (tz ? timedPart('FREQ=WEEKLY;BYDAY=' + day, wallAt(start, clock, tz), tz) : allDayPart('FREQ=WEEKLY;BYDAY=' + day, start));
+    // A plan of edited days in `zone` (null: all-day after the change), as the server sends it.
+    const plan = (zone, days, extra = {}) => ({
+      hash: 'verify', scope: 'all', direct: false, zone, rule: { from: weekly(zone), to: weekly(zone) }, bound: noEnd,
+      next: [], nextMore: false, counts: { events: null, edited: days.length, skipped: 0 }, groups: [], refusals: [], notes: [], days, ...extra,
+    });
+    const view = (p, extra = {}) => planView(p, ctx({ kind: 'editor', title: 'Sample practice', refYear: 2027, ...extra }));
+    const rows = (p, extra) => view(p, extra).edited.map((r) => r.line1);
+    // An edited day about Tue, Jan 12 (its identity), keyed by the series' old 19:00 in Los Angeles.
+    const day = (extra) => ({ key: '2027-01-13T03:00:00Z', newKey: '2027-01-13T03:00:00Z', kind: 'edited', title: 'Sample practice', day: '2027-01-12', kept: [], takes: [], ...extra });
+    const at = (date, clock, tz, named = false) => timedPlace(date, clock, tz, named);
+    const ad = (date, kind) => ({ ...datePlace(date), ...(kind ? { kind } : {}) });
+
+    // A timed day in an all-day series: its clock in its own zone, named, whether it stays or moves.
+    eq('verify: a timed day in an all-day series stays at its own clock, in its own zone, named', rows(plan(null, [
+      day({ outcome: 'stays', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-12', '20:00', LA, true), kept: ['allDay', 'time'] })])),
+    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]);
+    eq('verify: a timed day in an all-day series moved a day says its new date and its own clock, named', rows(plan(null, [
+      day({ outcome: 'moves', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-13', '20:00', LA, true), kept: ['allDay', 'time'], takes: ['date'] })])),
+    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 moves to Wed, Jan 13 at 8:00 PM in Los Angeles."]);
+
+    // An all-day day in a timed series: a date, never a clock.
+    eq('verify: an all-day day in a timed series moves to a date', rows(plan(LA, [
+      day({ outcome: 'moves', before: ad('2027-01-12'), after: ad('2027-01-13'), kept: ['allDay'], takes: ['date'] })])),
+    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 moves to Wed, Jan 13."]);
+
+    // A series made all-day: a plain edited day and a day at its own time each become all-day.
+    const madeAllDay = (extra) => day({ outcome: 'moves', before: at('2027-01-12', '19:00', LA, true), after: ad('2027-01-12', 'all-day'), takes: ['allDay'], ...extra });
+    eq('verify: a series made all-day, a plain edited day becomes all-day', rows(plan(null, [madeAllDay({ title: 'Sample practice 2', kept: ['title'] })])),
+      ["'Sample practice 2' on Tue, Jan 12 becomes all-day."]);
+    eq('verify: a series made all-day, a day at its own time becomes all-day too', rows(plan(null, [
+      madeAllDay({ before: at('2027-01-12', '21:30', LA, true), kept: ['location'] })])),
+    ["'Sample practice', with its own location, on Tue, Jan 12 becomes all-day."]);
+    eq('verify: a series made all-day and moved, the day says the date it becomes all-day on', rows(plan(null, [
+      madeAllDay({ title: 'Sample practice 2', kept: ['title'], after: ad('2027-01-13', 'all-day'), takes: ['allDay', 'date'] })])),
+    ["'Sample practice 2' on Tue, Jan 12 becomes all-day on Wed, Jan 13."]);
+    const twoAllDay = view(plan(null, [madeAllDay({ title: 'Sample practice 2', kept: ['title'] }),
+      madeAllDay({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: at('2027-01-19', '21:30', LA, true), after: ad('2027-01-19', 'all-day'), kept: ['location'] })]));
+    eq('verify: days that become all-day share a row that says so', [twoAllDay.edited.map((r) => [r.line1, r.range]), twoAllDay.edited[0].days.map((r) => r.line1)], [
+      [['2 days that were changed earlier become all-day.', 'Jan 12 to Jan 19']],
+      ["'Sample practice 2' on Tue, Jan 12 becomes all-day.", "'Sample practice', with its own location, on Tue, Jan 19 becomes all-day."]]);
+
+    // A series made timed: a day with its own all-day setting stays a date; a day timed inside it keeps its instant.
+    eq('verify: a series made timed, a day with its own all-day setting stays where it is', rows(plan(LA, [
+      day({ outcome: 'stays', before: ad('2027-01-12'), after: ad('2027-01-12'), kept: ['allDay'] })])),
+    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays where it is."]);
+    eq('verify: a series made timed in Tokyo, a day at its own time inside it stays at its instant, on its Tokyo date', rows(plan(TOKYO, [
+      day({ outcome: 'stays', before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-13', '13:00', TOKYO), kept: ['time'] })])),
+    ["'Sample practice' on Tue, Jan 12 stays at 1:00 PM on Wed, Jan 13."]);
+    const madeTimed = (extra) => day({ outcome: 'moves', title: 'Sample practice 2', kept: ['title'], before: ad('2027-01-12'), after: { ...at('2027-01-12', '18:00', LA), kind: 'timed' }, takes: ['allDay'], ...extra });
+    eq('verify: a series made timed, a plain all-day day becomes timed at the series\' new time', rows(plan(LA, [madeTimed()])),
+      ["'Sample practice 2' on Tue, Jan 12 becomes timed, at 6:00 PM."]);
+    const twoTimed = view(plan(LA, [madeTimed(), madeTimed({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: ad('2027-01-19'), after: { ...at('2027-01-19', '18:00', LA), kind: 'timed' } })]));
+    eq('verify: days that become timed share a row with their time', twoTimed.edited.map((r) => r.line1), ['2 days that were changed earlier become timed, at 6:00 PM.']);
+
+    // Midnight each way: a New York day at its own time under a Los Angeles series, and the reverse.
+    eq('verify: a New York day at its own 00:30 under a Los Angeles series stays at its Los Angeles clock, on the evening before', rows(plan(LA, [
+      day({ outcome: 'stays', before: at('2027-01-11', '21:30', LA), after: at('2027-01-11', '21:30', LA), kept: ['time'] })])),
+    ["'Sample practice' on Tue, Jan 12 stays at 9:30 PM on Mon, Jan 11."]);
+    eq('verify: a Los Angeles day at its own 22:00 under a New York series moves past midnight there', rows(plan(NY, [
+      day({ key: '2027-01-13T01:00:00Z', outcome: 'moves', before: at('2027-01-13', '01:00', NY), after: at('2027-01-14', '01:00', NY), kept: ['time'], takes: ['date'] })])),
+    ["'Sample practice' on Tue, Jan 12 moves to Thu, Jan 14 at 1:00 AM."]);
+    eq('verify: a date set in another zone is named with that zone', rows(plan(LA, [
+      day({ outcome: 'stays', ownDate: { date: '2027-01-14', at: '2027-01-14T00:30:00-05:00', tz: NY }, before: at('2027-01-13', '21:30', LA), after: at('2027-01-13', '21:30', LA), kept: ['date', 'time'] })])),
+    ["'Sample practice' on Tue, Jan 12 was moved earlier to Thu, Jan 14 in New York and stays at 9:30 PM on Wed, Jan 13."]);
+
+    // The day acted on, leaving the series: its after placement is the standalone row written.
+    eq('verify: the day you moved, becoming an event of its own, is where the row is written', rows(plan(LA, [
+      day({ kind: 'acted', newKey: null, title: undefined, outcome: 'separate', before: at('2027-01-12', '19:00', LA), after: at('2027-01-14', '18:00', LA) })])),
+    ['The day you moved becomes an event of its own on Thu, Jan 14.']);
+    eq('verify: an edited day acted on, becoming an event of its own, is named by its day', rows(plan(LA, [
+      day({ newKey: null, title: 'Sample practice 3', kept: ['title'], outcome: 'separate', before: at('2027-01-12', '19:00', LA), after: at('2027-01-14', '18:00', LA) })])),
+    ["'Sample practice 3' on Tue, Jan 12 becomes an event of its own on Thu, Jan 14."]);
+
+    // Notes, each clock read in the note's own zone.
+    eq('verify: notes name their zone and read their clocks there', view(plan(LA, [], { notes: [
+      { kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA },
+      { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: LA },
+      { kind: 'gap', date: '2027-03-28', clock: '02:30', at: '2027-03-28T03:30:00+02:00', tz: 'Europe/Berlin' },
+    ] })).notes, [
+      'There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.',
+      '1:30 AM happens twice on Sun, Nov 7 in Los Angeles; this is the first, in daylight time.',
+      'There is no 2:30 AM on Sun, Mar 28 in Berlin, so that one is at 3:30 AM.',
+    ]);
+
+    // A zone change: the zone choice's clocks in the zones it names, a reading's dates and Coming up in the plan's zone.
+    const tokyo = view(plan(TOKYO, [], {
+      rule: { from: weekly(LA, 'WE', '19:00', '2027-01-06'), to: weekly(TOKYO, 'TH', '12:00', '2027-01-07') },
+      next: [{ start: '2027-03-11T12:00:00+09:00', allDay: false }, { start: '2027-03-18T12:00:00+09:00', allDay: false }, { start: '2027-03-25T12:00:00+09:00', allDay: false }], nextMore: true,
+      groups: [
+        { id: 'zone', from: LA, to: TOKYO, selected: 'moment', options: [
+          { id: 'clock', next: [{ start: '2027-03-10T19:00:00+09:00', allDay: false }] },
+          { id: 'moment', next: [{ start: '2027-03-11T12:00:00+09:00', allDay: false }] }] },
+        { id: 'reading', selected: 'member', options: [
+          { id: 'member', rrule: 'FREQ=WEEKLY;BYDAY=TH', dates: [{ start: '2027-03-11T07:00:00+09:00', allDay: false }, { start: '2027-03-18T07:00:00+09:00', allDay: false }] },
+          { id: 'pattern', rrule: 'FREQ=WEEKLY;BYDAY=TH', dates: [{ start: '2027-03-11T07:00:00+09:00', allDay: false }, { start: '2027-03-19T07:00:00+09:00', allDay: false }] }] },
+      ],
+    }));
+    eq('verify: a zone change, its choice\'s clocks in the zones it names, a reading\'s dates and Coming up on their Tokyo dates', [
+      tokyo.readings.map((c) => c.options.map((o) => [o.label, o.dates])), tokyo.comingUp], [[
+      [['Keep the clock time: 7:00 PM in Tokyo', 'Wed, Mar 10'], ['Keep the same moment: 7:00 PM in Los Angeles, 12:00 PM in Tokyo', 'Thu, Mar 11']],
+      [['Move every Wednesday to Thursday', 'Thu, Mar 11 · Thu, Mar 18'], ['Shift the whole weekly pattern', 'Thu, Mar 11 · Fri, Mar 19']],
+    ], 'Thu, Mar 11 · Thu, Mar 18 · Thu, Mar 25 …']);
+
+    // A group other than the zone, whose options agree at first and then diverge, in an all-day plan.
+    const entry = (date) => ({ start: date + 'T00:00:00+00:00', allDay: true });
+    const diverge = view(plan(null, [], { rule: { from: allDayPart('FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30'), to: allDayPart('FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30') }, groups: [{ id: 'reading', selected: 'skip', options: [
+      { id: 'skip', rrule: 'FREQ=MONTHLY;BYMONTHDAY=30', dates: ['2027-03-30', '2027-04-30', '2027-05-30'].map(entry), then: ['2028-01-30', '2028-03-30'].map(entry), earlier: null },
+      { id: 'clamped', rrule: 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1', dates: ['2027-03-30', '2027-04-30', '2027-05-30'].map(entry), then: ['2028-01-30', '2028-02-29'].map(entry), earlier: '2027-02-28', earlierSeries: 'new' },
+    ] }] }));
+    eq('verify: options that agree at first and then differ list their dates to where they part, in an all-day plan', diverge.readings[0].options.map((o) => [o.label, o.dates, o.note]), [
+      ['Monthly on the 30th, skipping months without one', 'Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Thu, Mar 30', ''],
+      ['Monthly on the 30th, or the last day in shorter months', 'Tue, Mar 30 · Fri, Apr 30 · Sun, May 30 … Sun, Jan 30, 2028 · Tue, Feb 29', 'also changes earlier days, from Sun, Feb 28'],
+    ]);
+
+    // Clocks the zone rules bend: a day in the spring gap, and both instants of the repeated hour.
+    const sunday = (after) => day({ key: '2027-03-14T10:30:00Z', day: '2027-03-14', outcome: 'stays', before: after, after, kept: ['time'] });
+    eq('verify: a day at its own 2:30 on the spring-forward day shows at 3:30', rows(plan(LA, [sunday({ date: '2027-03-14', at: '2027-03-14T03:30:00-07:00' })])),
+      ["'Sample practice' on Sun, Mar 14 stays at 3:30 AM."]);
+    const fold = (offset) => rows(plan(LA, [{ ...sunday({ date: '2027-11-07', at: '2027-11-07T01:30:00' + offset }), day: '2027-11-07' }]));
+    eq('verify: both instants of the repeated hour read 1:30, the daylight one and the standard one', [fold('-07:00'), fold('-08:00')],
+      [["'Sample practice' on Sun, Nov 7 stays at 1:30 AM."], ["'Sample practice' on Sun, Nov 7 stays at 1:30 AM."]]);
+
+    // A timed plan's group of days taking the series' new time says that time.
+    const newTime = (key, date) => day({ key, day: date, outcome: 'moves', kept: ['location'], takes: ['time'], before: at(date, '19:00', LA), after: at(date, '20:00', LA) });
+    eq('verify: days taking the series\' new time share a row that names it', rows(plan(LA, [newTime('2027-01-13T03:00:00Z', '2027-01-12'), newTime('2027-01-20T03:00:00Z', '2027-01-19')])),
+      ['2 days that were changed earlier move to 8:00 PM.']);
+
+    // Every sentence path in an all-day plan, so none of them formats a clock without a zone.
+    const outsideGroup = (key) => ({ id: 'outside', day: key, selected: 'keep', count: 1, options: [{ id: 'keep' }, { id: 'delete' }] });
+    const paths = [
+      ['an edited day that moves', [day({ outcome: 'moves', before: ad('2027-01-12'), after: ad('2027-01-13'), kept: ['location'], takes: ['date'] })], {},
+        ["'Sample practice', with its own location, on Tue, Jan 12 moves to Wed, Jan 13."]],
+      ['an edited day that stays and takes a change', [day({ outcome: 'stays', before: ad('2027-01-12'), after: ad('2027-01-12'), kept: ['location'], takes: ['title', 'reminders'] })], { newTitle: 'Sample rehearsal' },
+        ["'Sample practice', with its own location, on Tue, Jan 12 stays where it is and is renamed to 'Sample rehearsal' and takes the new reminders."]],
+      ['a day with a date of its own that stays', [day({ outcome: 'stays', ownDate: ad('2027-01-15'), before: ad('2027-01-15'), after: ad('2027-01-15'), kept: ['date'] })], {},
+        ["'Sample practice' on Tue, Jan 12 was moved earlier to Fri, Jan 15 and stays where it is."]],
+      ['a day with a date of its own that moves and takes a change', [day({ outcome: 'moves', ownDate: ad('2027-01-15'), before: ad('2027-01-15'), after: ad('2027-01-16'), kept: ['date'], takes: ['reminders'] })], {},
+        ["'Sample practice' on Tue, Jan 12 was moved earlier to Fri, Jan 15 and moves to Sat, Jan 16, and takes the new reminders."]],
+      ['a timed day that stays', [day({ outcome: 'stays', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-12', '20:00', LA, true), kept: ['allDay', 'time'] })], {},
+        ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]],
+      ['a timed day with a date of its own', [day({ outcome: 'stays', ownDate: at('2027-01-14', '20:00', LA, true), before: at('2027-01-14', '20:00', LA, true), after: at('2027-01-14', '20:00', LA, true), kept: ['date', 'allDay', 'time'] })], {},
+        ["'Sample practice', with its own all-day setting, on Tue, Jan 12 was moved earlier to Thu, Jan 14 and stays at 8:00 PM in Los Angeles."]],
+      ['a day that becomes all-day', [madeAllDay({ title: 'Sample practice 2', kept: ['title'] })], {}, ["'Sample practice 2' on Tue, Jan 12 becomes all-day."]],
+      ['a day that becomes an event of its own', [day({ title: 'Sample practice 4', kept: ['title'], newKey: null, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-12') })], {},
+        ["'Sample practice 4' on Tue, Jan 12 becomes an event of its own."]],
+      ['a deleted day', [day({ title: 'Sample practice 5', kept: ['title'], newKey: null, outcome: 'deleted', before: ad('2027-01-12') })], {}, ["'Sample practice 5' on Tue, Jan 12 is deleted."]],
+      ['a day going back to the series', [day({ outcome: 'rejoins', before: ad('2027-01-12'), after: ad('2027-01-13'), takes: ['title'] })], {},
+        ["'Sample practice' on Tue, Jan 12 goes back to the series; nothing of its own is left."]],
+      ['the day you moved, leaving the series', [day({ kind: 'acted', newKey: null, title: undefined, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-14') })], {},
+        ['The day you moved becomes an event of its own on Thu, Jan 14.']],
+      ['a day after the new end, with its choice', [day({ title: 'Sample practice 4', kept: ['title'], newKey: null, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-12') })],
+        { groups: [outsideGroup('2027-01-13T03:00:00Z')] }, ["'Sample practice 4' on Tue, Jan 12 falls after the new end."]],
+      ['a day with its own title, with its choice', [day({ title: 'Sample practice 6', kept: ['title'], outcome: 'stays', before: ad('2027-01-12'), after: ad('2027-01-12') })],
+        { groups: [{ id: 'ownTitle', field: 'title', count: 1, days: ['2027-01-13T03:00:00Z'], value: 'Sample rehearsal', selected: 'keep', options: [{ id: 'keep' }, { id: 'give' }] }] },
+        ["'Sample practice 6' on Tue, Jan 12 has its own title, 'Sample practice 6'."]],
+      ['days that move together', ['2027-01-12', '2027-01-19'].map((d, i) => day({ key: 'k' + i, day: d, outcome: 'moves', before: ad(d), after: ad(d.slice(0, 8) + String(Number(d.slice(8)) + 1)), kept: ['location'], takes: ['date'] })), {},
+        ['2 days that were changed earlier move to Wednesday.']],
+      ['days that stay together', ['2027-01-12', '2027-01-19'].map((d, i) => day({ key: 'k' + i, day: d, outcome: 'stays', before: ad(d), after: ad(d), kept: ['location'] })), {},
+        ['2 days that were changed earlier stay where they are.']],
+      ['days a choice is about together', ['2027-01-12', '2027-01-19'].map((d, i) => day({ key: 'k' + i, day: d, title: 'Sample practice ' + (7 + i), outcome: 'stays', before: ad(d), after: ad(d), kept: ['title'] })),
+        { groups: [{ id: 'ownTitle', field: 'title', count: 2, days: ['k0', 'k1'], value: 'Sample rehearsal', selected: 'keep', options: [{ id: 'keep' }, { id: 'give' }] }] },
+        ["2 days have their own titles ('Sample practice 7', 'Sample practice 8')."]],
+    ];
+    for (const [name, days, extra, expected] of paths) {
+      const { newTitle, ...rest } = extra;
+      eq('verify, all-day plan: ' + name, rows(plan(null, days, rest), newTitle ? { newTitle } : {}), expected);
+    }
+    const whole = view(plan(null, [day({ outcome: 'moves', ownDate: ad('2027-01-15'), before: ad('2027-01-15'), after: ad('2027-01-16'), kept: ['date'] })], {
+      rule: { from: allDayPart('FREQ=WEEKLY;BYDAY=TU', '2027-01-05'), to: allDayPart('FREQ=WEEKLY;BYDAY=WE', '2027-01-06') },
+      bound: { kind: 'until', until: '20270331', events: 12, from: { kind: 'none' } }, counts: { events: 12, edited: 1, skipped: 1 },
+      next: [entry('2027-01-13'), { start: '2027-01-13T20:00:00-08:00', allDay: false, tz: LA }, entry('2027-01-20')], nextMore: true,
+      acted: { key: '2027-01-13T03:00:00Z', title: 'Sample practice 6', day: '2027-01-12', ownDate: ad('2027-01-15'), before: ad('2027-01-15'), shows: '2027-01-15', kept: ['date', 'title'] },
+      groups: [{ id: 'movedDays', day: '2027-01-13T03:00:00Z', selected: 'move', count: 1, options: [{ id: 'keep', date: '2027-01-15' }, { id: 'move', date: '2027-01-16' }] }],
+    }));
+    eq('verify, all-day plan: the change, coming up, affects, where the edit started and a day\'s choice, with no clock', [whole.change, whole.comingUp, whole.affects, whole.started,
+      whole.edited.map((r) => [r.line1, r.choices[0].reason, r.choices[0].options.map((o) => o.label)])], [
+      'From Tuesday to Wednesday each week, ending Mar 31.', 'Wed, Jan 13 · Wed, Jan 13 · Wed, Jan 20 …', '12 events, ending Mar 31. 1 was changed earlier (date), 1 was removed.',
+      "Started from 'Sample practice 6' on Fri, Jan 15.",
+      [["'Sample practice' on Tue, Jan 12 was moved earlier to Fri, Jan 15 and moves to Sat, Jan 16.", 'Keep it there, or move it with the rest?', ['Keep it on Fri, Jan 15', 'Move it to Sat, Jan 16']]],
+    ]);
+    eq('verify, all-day plan: a removed day leads with its day', view(plan(null, [{ key: '2027-01-26T00:00:00Z', newKey: '2027-01-27T00:00:00Z', kind: 'skipped', outcome: 'moves', shows: '2027-01-26', to: '2027-01-27', kept: [], takes: [] }])).skipped.map((r) => r.line1),
+      ["'Sample practice' on Tue, Jan 26 was removed earlier, so no event is added on Wed, Jan 27."]);
+  }
+
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
   eq('creation line: the rule, the first three dates, the bound', creationLine(created, { typedStart: '2027-01-30', refYear: 2027 }), { line: 'Monthly on the 30th, or the last day · Sat 30 Jan, Sun 28 Feb, Tue 30 Mar · 6 events', moved: '' });

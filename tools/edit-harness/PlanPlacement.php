@@ -287,6 +287,9 @@ trait PlanPlacement
         $x0 = new Expect($before, $edit);
         foreach ($group['options'] ?? [] as $o) {
             $id = (string) ($o['id'] ?? '');
+            if (!empty($o['disabled'])) {
+                continue; // no series under it (c-shape: no start)
+            }
             $got = is_string($o['start'] ?? null) ? self::dbKey($o['start']) : null;
             if ($id === $chosen) {
                 $want = is_string($plan['rule']['to']['start'] ?? null) ? self::dbKey($plan['rule']['to']['start']) : null;

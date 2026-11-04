@@ -505,7 +505,13 @@ trait PlanChecks
                 }
                 $this->shapeKeys($op, 'options[]', $o);
                 // A zone option's start is the series' start under it, written as rule.to.start is (the plan's zone); only a zone option has one.
-                if (($g['id'] ?? '') === 'zone') {
+                // A disabled one gives no series, so it has none (null).
+                if (($g['id'] ?? '') === 'zone' && !empty($o['disabled'])) {
+                    $this->ran('c-shape', 'zone option start (disabled)');
+                    if (($o['start'] ?? null) !== null) {
+                        $this->shapeFail("$op.start", 'a disabled zone option gives no series and has no start', $o['start']);
+                    }
+                } elseif (($g['id'] ?? '') === 'zone') {
                     $this->isoIn("$op.start", $o['start'] ?? null, $zone, 'zone option start');
                 } elseif (array_key_exists('start', $o)) {
                     $this->shapeFail("$op.start", 'only a zone option carries a start', $o['start']);

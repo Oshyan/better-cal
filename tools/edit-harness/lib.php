@@ -43,7 +43,10 @@ final class Known
     {
         $series = $failure['spec']['series'] ?? [];
         // A series in Lord Howe naming its hour: the expander's BYHOUR clock drifts half an hour after the zone's change, deferred to 1.5.1 (#202).
-        if (($series['tzid'] ?? '') === 'Australia/Lord_Howe' && !($series['allDay'] ?? false) && str_contains(strtoupper((string) ($series['rrule'] ?? '')), 'BYHOUR')) {
+        // Read from the series as drawn, or, for an occurrence check, from the series it compared (an edit can bring a series there).
+        $d = $failure['detail'] ?? [];
+        $lordHowe = static fn(?string $tz, ?string $rule): bool => $tz === 'Australia/Lord_Howe' && str_contains(strtoupper((string) $rule), 'BYHOUR');
+        if (($lordHowe($series['tzid'] ?? null, $series['rrule'] ?? null) && !($series['allDay'] ?? false)) || $lordHowe($d['tz'] ?? null, $d['rrule'] ?? null)) {
             return self::LORD_HOWE_BYHOUR;
         }
         $following = in_array($failure['path'] ?? '', self::PATHS, true);

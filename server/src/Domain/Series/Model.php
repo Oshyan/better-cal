@@ -2318,7 +2318,31 @@ final class Model
                 continue;
             }
             if (count($twice) > 1) {
-                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($twice[0]->setTimezone($tz), $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
+                // The note is about the series' own instant that day, which an
+                // instant given keeps (the stored start on its day, the
+                // expander's key on later ones): its place among the clock's
+                // instants (`fold`), and what tzdata says of it (`daylight`:
+                // true in daylight time, false when only the other one is,
+                // null when neither is, a plain change of offset). A day with
+                // no key at this clock has nothing here to note.
+                $keys = array_map(static fn(string $k): int => Time::fromDb($k)->getTimestamp(), $calc->keysOn($d));
+                $fold = null;
+                foreach ($twice as $i => $t) {
+                    if (in_array($t->getTimestamp(), $keys, true)) {
+                        $fold = $i;
+                        break;
+                    }
+                }
+                if ($fold === null) {
+                    continue;
+                }
+                $own = $twice[$fold];
+                $otherDaylight = array_filter($twice, static fn(\DateTimeImmutable $t): bool => $t->getTimestamp() !== $own->getTimestamp() && $t->format('I') === '1') !== [];
+                $daylight = $own->format('I') === '1' ? true : ($otherDaylight ? false : null);
+                $foldName = $fold === 0 ? 'first' : 'second';
+                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($own->setTimezone($tz), $calc->tz), 'tz' => $calc->tz, 'fold' => $foldName, 'daylight' => $daylight,
+                    'words' => sprintf('%02d:%02d happens twice on %s: this is the %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), $foldName)
+                        . ($daylight === null ? '' : ', in ' . ($daylight ? 'daylight' : 'standard') . ' time')];
                 continue;
             }
         }

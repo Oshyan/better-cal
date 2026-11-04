@@ -2037,6 +2037,22 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         $walk('FREQ=HOURLY;INTERVAL=168;BYDAY=MO', '2028-02-01 09:00', 'UTC'));
     checkEq('Walk: every 30 minutes at 09:00 on 29 February goes from 2028 to 2032', ['2028-02-29 09:00', '2028-02-29 09:30', '2032-02-29 09:00'],
         $walk('FREQ=MINUTELY;INTERVAL=30;BYMONTH=2;BYMONTHDAY=29;BYHOUR=9;COUNT=3', '2028-02-29 09:00', 'America/Los_Angeles'));
+
+    // The overlap note names the series' own instant of a repeated clock,
+    // and what tzdata says of it.
+    $overlap = static function (string $startIso): array {
+        $start = Time::toDb(new DateTimeImmutable($startIso));
+        $s = ['rrule' => 'FREQ=WEEKLY;COUNT=3', 'start_utc' => $start, 'end_utc' => Time::toDb(Time::fromDb($start)->modify('+1 hour')), 'tzid' => 'Europe/Berlin'] + smSeries('Sample class', 'FREQ=WEEKLY', '2027-10-31 02:30');
+        $p = Model::plan($s, [], ['columns' => ['title' => 'Sample practice']], [], ['today' => '2027-10-01']);
+        $n = array_values(array_filter($p['plan']['notes'], static fn(array $n): bool => $n['kind'] === 'overlap'))[0] ?? [];
+        return [$p['plan']['rule']['to']['start'], $n['at'] ?? null, $n['fold'] ?? null, $n['daylight'] ?? 'missing', $n['words'] ?? null];
+    };
+    checkEq('Notes: a Berlin series at the second 02:30 of 31 Oct 2027 is noted at that instant, the second, in standard time', [
+        '2027-10-31T02:30:00+01:00', '2027-10-31T02:30:00+01:00', 'second', false, '02:30 happens twice on 31 Oct: this is the second, in standard time',
+    ], $overlap('2027-10-31T02:30:00+01:00'));
+    checkEq('Notes: a Berlin series at the first 02:30 of 31 Oct 2027 is noted at that instant, the first, in daylight time', [
+        '2027-10-31T02:30:00+02:00', '2027-10-31T02:30:00+02:00', 'first', true, '02:30 happens twice on 31 Oct: this is the first, in daylight time',
+    ], $overlap('2027-10-31T02:30:00+02:00'));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

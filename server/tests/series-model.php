@@ -1773,6 +1773,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         $earlierOf(smPlan($tueThu, [], smDrag($tueThu, '2027-01-19 20:00', '2027-01-20 20:00'))));
     checkEq('Writers: Thursday 21 Jan dragged to Wednesday, it is the reading\'s own Wed 6 Jan', ['2027-01-06', 'new'],
         $earlierOf(smPlan($tueThu, [], smDrag($tueThu, '2027-01-21 20:00', '2027-01-20 20:00'))));
+    // The day acted on, made an edited day by a drag: its day, where it
+    // showed (the occurrence at its old key) and where it was put (the row created).
+    $run = smSeries('Sample run', 'FREQ=DAILY;BYDAY=MO', '2027-03-01 02:30');
+    $p = smPlan($run, [], smDrag($run, '2027-03-08 02:30', '2027-03-15 02:30'));
+    $acted = array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'acted'))[0] ?? [];
+    checkEq('Writers: the created acted day is about Mon 8 Mar, showed there and was put on Mon 15 Mar at 02:30', [
+        'moves', '2027-03-08', ['date' => '2027-03-08', 'at' => '2027-03-08T02:30:00-08:00'], ['date' => '2027-03-15', 'at' => '2027-03-15T02:30:00-07:00'], '2027-03-08', '2027-03-15',
+    ], [$acted['outcome'] ?? null, $acted['day'] ?? null, $acted['before'] ?? null, $acted['after'] ?? null, $acted['shows'] ?? null, $acted['to'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

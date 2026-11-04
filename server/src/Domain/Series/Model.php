@@ -1554,9 +1554,12 @@ final class Model
                     'recurrence_instance_utc' => $nk, 'start_utc' => Time::toDb($cs), 'end_utc' => Time::toDb($ce),
                     'all_day' => $cAll ? 1 : 0, 'tzid' => $cTz, 'override_fields' => OwnFields::encode($own),
                 ];
-                $putAt = $this->planDn($cs, $cAll, $cTz);
-                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => [], 'shows' => Cal::date($putAt), 'to' => Cal::date($putAt)]
-                    + Words::dayParts('This one, ' . Words::date($putAt, $this->thisYear), 'keeps where it was put', ', ');
+                // Where it showed, the occurrence at its old key; where it was put, the row created.
+                $before = $this->placementOut($occ, $this->displayZone());
+                $after = $this->afterOut($occ, $createEdited);
+                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => [],
+                    'day' => $this->identityOut($this->acted), 'before' => $before, 'after' => $after, 'shows' => $before['date'], 'to' => $after['date']]
+                    + Words::dayParts('This one, ' . Words::date(self::dayOf($after), $this->thisYear), 'keeps where it was put', ', ');
             }
         }
         $outside = 'keep';
@@ -2460,6 +2463,16 @@ final class Model
     private function patternInstantOut(Calc $calc, int $dn): array
     {
         return $this->placementEntryOut(['start_utc' => $calc->key($dn), 'all_day' => $calc->allDay ? 1 : 0, 'tzid' => $calc->tz], $calc->tz);
+    }
+
+    /**
+     * Where a row is after the change, as it shows (placementOut), with its
+     * `kind` when that isn't what it was before: "all-day" or "timed".
+     */
+    private function afterOut(array $before, array $after): array
+    {
+        $all = (int) $after['all_day'] === 1;
+        return $this->placementOut($after, $this->displayZone()) + ($all !== ((int) $before['all_day'] === 1) ? ['kind' => $all ? 'all-day' : 'timed'] : []);
     }
 
     /** A placement the plan writes, as a row: its start, kind and zone. */

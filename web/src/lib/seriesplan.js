@@ -28,6 +28,16 @@ export function planZone(plan) {
   return (to && to.tz) || null;
 }
 
+/**
+ * The zone a day's `day` (the day it is about, its old key's day) is read
+ * in: the series' before the change, null when it was all-day (its days are
+ * dates).
+ */
+export function dayZone(plan) {
+  const from = plan && plan.rule && plan.rule.from;
+  return from && !from.allDay ? from.tz || null : null;
+}
+
 // The wall date an ISO value names: its own date when it carries an offset
 // (the plan writes occurrences on the series' clock), the date in `tz` for
 // a UTC key ("...Z", an occurrence's RECURRENCE-ID), a bare date as itself.
@@ -108,7 +118,7 @@ const dayNumber = (key) => (key ? Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 
 export function planView(plan, ctx = {}) {
   const verb = W.verbOf(ctx.kind, ctx.edits || []);
   const title = W.titleWords(verb, ctx.scope);
-  const opts = { refYear: ctx.refYear, tz: planZone(plan), series: ctx.title || '', newTitle: ctx.newTitle || '' };
+  const opts = { refYear: ctx.refYear, tz: planZone(plan), dayTz: dayZone(plan), series: ctx.title || '', newTitle: ctx.newTitle || '' };
   const view = {
     heading: title + (ctx.title ? ' · ' + ctx.title : ''),
     title,
@@ -219,7 +229,8 @@ export function planView(plan, ctx = {}) {
   // Days that go the same way, by what happens to them (outcomeOf): how far
   // each moves is its date after less its date before, both where it shows;
   // the clock they move to is their placement's, said when each row says it.
-  const placed = (d, side) => (d[side] && d[side].date) || null;
+  // Two dates are subtracted only when they are read in the same zone.
+  const placed = (d, side) => (d[side] && d[side].date && W.sameZone(W.placeZone(d.before, opts.tz), W.placeZone(d.after, opts.tz)) ? d[side].date : null);
   const outcomeRows = [...outcomes].map(([, ds]) => {
     if (ds.length === 1) return plainRow(ds[0]);
     const outcome = W.outcomeOf(ds[0]);

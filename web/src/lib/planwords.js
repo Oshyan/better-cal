@@ -378,20 +378,35 @@ export function ownClock(d) {
 /**
  * A placement's clock as a row says it: "8:00 PM", read in its own zone
  * when it names one, else the plan's (`opts.tz`), and then with that zone's
- * name: "8:00 PM in Los Angeles". With no zone there is no clock ("").
+ * name: "8:00 PM in Los Angeles". `named` names the plan's zone too, for a
+ * clock that follows a sentence naming another. With no zone there is no
+ * clock ("").
  */
-export function clockOf(place, opts = {}) {
+export function clockOf(place, opts = {}, named = false) {
   const clock = place && place.at ? fmtClock(place, opts.tz) : '';
-  return clock && place.tz ? clock + ' in ' + zoneName(place.tz) : clock;
+  return clock && (place.tz || named) ? clock + ' in ' + zoneName(place.tz || opts.tz) : clock;
 }
 
+/**
+ * The zone a placement's date is read in: a timed one's own (`tz`), else
+ * the plan's (`tz` here); an all-day date is itself, in no zone (null).
+ */
+export const placeZone = (place, tz = null) => (place && place.at ? place.tz || tz || null : null);
+/**
+ * Whether two dates may be compared, one repeated or left out against the
+ * other: only when they are read in the same zone. A date in no zone (an
+ * all-day one) is itself in any.
+ */
+export const sameZone = (a, b) => !a || !b || a === b;
+
 // Where a day shows after the change, as its row says it: its date, left
-// out when the sentence has just said that date (`prev`, a day key), and
-// its clock when the row says one (saysClock). `full` is its date always.
-function placeOf(d, prev, opts) {
+// out when the sentence has just said that date in the same zone (`prev`, a
+// day key, and `same`), and its clock when the row says one (saysClock).
+// `full` is its date always.
+function placeOf(d, prev, opts, same = true) {
   const a = d.after || {};
   const full = fmtDay(a.date, { ...opts, prev });
-  return { date: a.date && a.date !== prev ? full : '', clock: saysClock(d) ? clockOf(a, opts) : '', full };
+  return { date: a.date && !(same && a.date === prev) ? full : '', clock: saysClock(d) ? clockOf(a, opts) : '', full };
 }
 // "at 9:30 PM on Mon, Jan 11", "at 9:30 PM", "on Mon, Jan 11" or "".
 const atOn = (p) => (p.clock ? 'at ' + p.clock + (p.date ? ' on ' + p.date : '') : p.date ? 'on ' + p.date : '');
@@ -430,11 +445,18 @@ export const outcomeOf = (d) => (d.outcome === 'moves' && d.after && d.after.kin
 export function dayLines(d, opts = {}) {
   const acted = d.kind === 'acted';
   const name = acted ? 'The day you moved' : dayName(d, opts.series) + ownAside(d) + (d.day ? ' on ' + fmtDay(d.day, opts) : '');
+  // The date the sentence has just said and the zone it is read in: the
+  // date set on it, in its own zone, or the day it is about, in the old
+  // series' (`opts.dayTz`). Where it goes is left out against it only in
+  // the same zone.
   const said = d.ownDate ? d.ownDate.date : acted ? null : d.day;
-  const place = placeOf(d, said, opts);
+  const saidTz = d.ownDate ? placeZone(d.ownDate, opts.tz) : opts.dayTz || null;
+  const place = placeOf(d, said, opts, sameZone(saidTz, placeZone(d.after, opts.tz)));
   // The date set on it, with its zone when that isn't the plan's, named
   // once: not again when the clock after it is in the same zone and says so.
   const ownZone = d.ownDate && d.ownDate.tz && !(place.clock && d.after.tz === d.ownDate.tz) ? ' in ' + zoneName(d.ownDate.tz) : '';
+  // A clock after a date named in another zone names its own.
+  if (ownZone && place.clock) place.clock = clockOf(d.after, opts, true);
   const own = d.ownDate ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + ownZone : '';
   const say = OUTCOMES[outcomeOf(d)];
   const now = say ? say(place) : '';

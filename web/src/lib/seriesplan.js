@@ -202,7 +202,8 @@ export function planView(plan, ctx = {}) {
     const ownOutcome = !(d.outcome === 'moves' || d.outcome === 'stays') || !!d.ownDate || W.ownClock(d);
     if (gs.length) rows.push({ key: d.key, line1: W.choiceDayLine(d, gs, opts), line2: '', choices: gs.map((g) => choice(g, { oldTitle: d.title })) });
     else if (ownOutcome) rows.push(plainRow(d));
-    else if (!together.has(d.key)) push(outcomes, W.outcomeOf(d), d);
+    // Days share a row when their rows say the same happens: the same outcome, and the same clock when they say one.
+    else if (!together.has(d.key)) push(outcomes, W.outcomeOf(d) + (W.saysClock(d) ? ' ' + W.clockOf(d.after, opts) : ''), d);
   }
   // Days in order of the day each is about, the date its row names first.
   const byDay = (a, b) => String(a.day || a.key).localeCompare(String(b.day || b.key)) || String(a.key).localeCompare(String(b.key));
@@ -219,8 +220,9 @@ export function planView(plan, ctx = {}) {
   // each moves is its date after less its date before, both where it shows;
   // the clock they move to is their placement's, said when each row says it.
   const placed = (d, side) => (d[side] && d[side].date) || null;
-  const outcomeRows = [...outcomes].map(([outcome, ds]) => {
+  const outcomeRows = [...outcomes].map(([, ds]) => {
     if (ds.length === 1) return plainRow(ds[0]);
+    const outcome = W.outcomeOf(ds[0]);
     const sorted = [...ds].sort(byDay);
     const shifts = new Set(sorted.map((d) => (placed(d, 'after') && placed(d, 'before') ? dayNumber(placed(d, 'after')) - dayNumber(placed(d, 'before')) : null)));
     const weekdays = new Set(sorted.map((d) => (placed(d, 'after') ? new Date(dayNumber(placed(d, 'after')) * 86400000).getUTCDay() : null)));

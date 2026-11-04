@@ -4993,7 +4993,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   };
   const ev = planView(evening, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 });
   eq('zone rule: an all-day plan\'s timed day says its clock in its own zone, named, and coming up has its date there', [ev.edited.map((r) => r.line1), ev.comingUp], [
-    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."], 'Tue, Jan 5 · Tue, Jan 12 · Tue, Jan 19 …']);
+    ["'Sample practice', with a time of its own, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."], 'Tue, Jan 5 · Tue, Jan 12 · Tue, Jan 19 …']);
   eq('zone rule: a value with its own zone is read there, before the plan\'s', [W2.fmtClock(evening.days[0]), W2.fmtClock(evening.days[0], 'Asia/Tokyo'), W2.fmtClock('2027-01-12T20:00:00-08:00', 'Asia/Tokyo')],
     ['8:00 PM', '8:00 PM', '1:00 PM']);
   let threw = null;
@@ -5002,7 +5002,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   W2.setStrictClocks(false);
   const quiet = [W2.fmtClock('2027-01-12T20:00:00-08:00'), planView({ ...evening, days: [{ ...evening.days[0], tz: undefined, after: { ...evening.days[0].after, tz: undefined } }] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
   W2.setStrictClocks(true);
-  eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays where it is."]]);
+  eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
 
   // The verification set of 1.5.0's sentences (workfolder plan, The
   // client): plans shaped as the server writes them, read by the real
@@ -5029,15 +5029,15 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     // A timed day in an all-day series: its clock in its own zone, named, whether it stays or moves.
     eq('verify: a timed day in an all-day series stays at its own clock, in its own zone, named', rows(plan(null, [
       day({ outcome: 'stays', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-12', '20:00', LA, true), kept: ['allDay', 'time'] })])),
-    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]);
+    ["'Sample practice', with a time of its own, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]);
     eq('verify: a timed day in an all-day series moved a day says its new date and its own clock, named', rows(plan(null, [
       day({ outcome: 'moves', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-13', '20:00', LA, true), kept: ['allDay', 'time'], takes: ['date'] })])),
-    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 moves to Wed, Jan 13 at 8:00 PM in Los Angeles."]);
+    ["'Sample practice', with a time of its own, on Tue, Jan 12 moves to Wed, Jan 13 at 8:00 PM in Los Angeles."]);
 
     // An all-day day in a timed series: a date, never a clock.
     eq('verify: an all-day day in a timed series moves to a date', rows(plan(LA, [
       day({ outcome: 'moves', before: ad('2027-01-12'), after: ad('2027-01-13'), kept: ['allDay'], takes: ['date'] })])),
-    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 moves to Wed, Jan 13."]);
+    ["'Sample practice', all-day, on Tue, Jan 12 moves to Wed, Jan 13."]);
 
     // A series made all-day: a plain edited day and a day at its own time each become all-day.
     const madeAllDay = (extra) => day({ outcome: 'moves', before: at('2027-01-12', '19:00', LA, true), after: ad('2027-01-12', 'all-day'), takes: ['allDay'], ...extra });
@@ -5055,18 +5055,30 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       [['2 days that were changed earlier become all-day.', 'Jan 12 to Jan 19']],
       ["'Sample practice 2' on Tue, Jan 12 becomes all-day.", "'Sample practice', with its own location, on Tue, Jan 19 becomes all-day."]]);
 
-    // A series made timed: a day with its own all-day setting stays a date; a day timed inside it keeps its instant.
-    eq('verify: a series made timed, a day with its own all-day setting stays where it is', rows(plan(LA, [
+    // A series made timed: a day all-day on its own stays a date; a day timed inside it keeps its instant.
+    eq('verify: a series made timed, a day all-day on its own stays where it is', rows(plan(LA, [
       day({ outcome: 'stays', before: ad('2027-01-12'), after: ad('2027-01-12'), kept: ['allDay'] })])),
-    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays where it is."]);
+    ["'Sample practice', all-day, on Tue, Jan 12 stays where it is."]);
     eq('verify: a series made timed in Tokyo, a day at its own time inside it stays at its instant, on its Tokyo date', rows(plan(TOKYO, [
       day({ outcome: 'stays', before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-13', '13:00', TOKYO), kept: ['time'] })])),
     ["'Sample practice' on Tue, Jan 12 stays at 1:00 PM on Wed, Jan 13."]);
     const madeTimed = (extra) => day({ outcome: 'moves', title: 'Sample practice 2', kept: ['title'], before: ad('2027-01-12'), after: { ...at('2027-01-12', '18:00', LA), kind: 'timed' }, takes: ['allDay'], ...extra });
-    eq('verify: a series made timed, a plain all-day day becomes timed at the series\' new time', rows(plan(LA, [madeTimed()])),
-      ["'Sample practice 2' on Tue, Jan 12 becomes timed, at 6:00 PM."]);
+    eq('verify: a series made timed, a plain all-day day now starts at the series\' new time', rows(plan(LA, [madeTimed()])),
+      ["'Sample practice 2' on Tue, Jan 12 now starts at 6:00 PM."]);
     const twoTimed = view(plan(LA, [madeTimed(), madeTimed({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: ad('2027-01-19'), after: { ...at('2027-01-19', '18:00', LA), kind: 'timed' } })]));
-    eq('verify: days that become timed share a row with their time', twoTimed.edited.map((r) => r.line1), ['2 days that were changed earlier become timed, at 6:00 PM.']);
+    eq('verify: days made timed share a row that says when they now start', twoTimed.edited.map((r) => r.line1), ['2 days that were changed earlier now start at 6:00 PM.']);
+    eq('verify: a made-timed day moved as well says its date too', rows(plan(LA, [madeTimed({ after: { ...at('2027-01-13', '18:00', LA), kind: 'timed' }, takes: ['allDay', 'date'] })])),
+      ["'Sample practice 2' on Tue, Jan 12 now starts at 6:00 PM on Wed, Jan 13."]);
+    // An all-day setting of its own reads by the day's kind, joined with the rest of what it has.
+    eq('verify: an own all-day setting beside other own fields, timed and all-day, and with a trip', [
+      rows(plan(null, [day({ outcome: 'stays', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-12', '20:00', LA, true), kept: ['allDay', 'time', 'location'] })])),
+      rows(plan(LA, [day({ outcome: 'moves', before: ad('2027-01-12'), after: ad('2027-01-13'), kept: ['allDay', 'location'], takes: ['date'] })])),
+      rows(plan(LA, [day({ outcome: 'moves', before: ad('2027-01-12'), after: ad('2027-01-13'), kept: ['allDay', 'location', 'trip'], takes: ['date'] })])),
+    ], [
+      ["'Sample practice', with its own location and a time of its own, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."],
+      ["'Sample practice', all-day and with its own location, on Tue, Jan 12 moves to Wed, Jan 13."],
+      ["'Sample practice', all-day and with its own location and in a trip, on Tue, Jan 12 moves to Wed, Jan 13."],
+    ]);
 
     // Midnight each way: a New York day at its own time under a Los Angeles series, and the reverse.
     eq('verify: a New York day at its own 00:30 under a Los Angeles series stays at its Los Angeles clock, on the evening before', rows(plan(LA, [
@@ -5153,9 +5165,9 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       ['a day with a date of its own that moves and takes a change', [day({ outcome: 'moves', ownDate: ad('2027-01-15'), before: ad('2027-01-15'), after: ad('2027-01-16'), kept: ['date'], takes: ['reminders'] })], {},
         ["'Sample practice' on Tue, Jan 12 was moved earlier to Fri, Jan 15 and moves to Sat, Jan 16, and takes the new reminders."]],
       ['a timed day that stays', [day({ outcome: 'stays', before: at('2027-01-12', '20:00', LA, true), after: at('2027-01-12', '20:00', LA, true), kept: ['allDay', 'time'] })], {},
-        ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]],
+        ["'Sample practice', with a time of its own, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."]],
       ['a timed day with a date of its own', [day({ outcome: 'stays', ownDate: at('2027-01-14', '20:00', LA, true), before: at('2027-01-14', '20:00', LA, true), after: at('2027-01-14', '20:00', LA, true), kept: ['date', 'allDay', 'time'] })], {},
-        ["'Sample practice', with its own all-day setting, on Tue, Jan 12 was moved earlier to Thu, Jan 14 and stays at 8:00 PM in Los Angeles."]],
+        ["'Sample practice', with a time of its own, on Tue, Jan 12 was moved earlier to Thu, Jan 14 and stays at 8:00 PM in Los Angeles."]],
       ['a day that becomes all-day', [madeAllDay({ title: 'Sample practice 2', kept: ['title'] })], {}, ["'Sample practice 2' on Tue, Jan 12 becomes all-day."]],
       ['a day that becomes an event of its own', [day({ title: 'Sample practice 4', kept: ['title'], newKey: null, outcome: 'separate', before: ad('2027-01-12'), after: ad('2027-01-12') })], {},
         ["'Sample practice 4' on Tue, Jan 12 becomes an event of its own."]],

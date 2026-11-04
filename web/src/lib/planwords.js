@@ -325,12 +325,22 @@ const hasAny = (list, fields) => (list || []).some((f) => fields.includes(f));
 
 // What a day has of its own, said after its name only when it is more
 // than its title: ", with its own title and location,", ", in a trip,",
-// ", with its own location and in a trip,".
+// ", with its own location and in a trip,". Its own all-day setting reads
+// by the day's kind (its placement, after the change or else before): an
+// all-day day is ", all-day,", a timed one ", with a time of its own,",
+// joined with the rest: ", all-day and with its own location,", ", with
+// its own location and a time of its own,".
 function ownAside(d) {
   const own = contentOf(d.kept);
   if (!own.some((f) => f !== 'title')) return '';
-  const fields = own.filter((f) => f !== 'trip');
-  const parts = [fields.length ? 'with its own ' + fieldList(fields) : '', own.includes('trip') ? 'in a trip' : ''].filter(Boolean);
+  const fields = own.filter((f) => f !== 'trip' && f !== 'allDay');
+  const kind = own.includes('allDay') ? ((d.after || d.before || {}).at ? 'timed' : 'all-day') : null;
+  const ownTime = kind === 'timed' ? (fields.length ? ' and a time of its own' : 'with a time of its own') : '';
+  const parts = [
+    kind === 'all-day' ? 'all-day' : '',
+    (fields.length ? 'with its own ' + fieldList(fields) : '') + ownTime,
+    own.includes('trip') ? 'in a trip' : '',
+  ].filter(Boolean);
   return ', ' + parts.join(' and ') + ',';
 }
 
@@ -338,13 +348,14 @@ function ownAside(d) {
  * Whether a day's row says the clock it shows at after the change: it is
  * timed there (its `after` has `at`) and the clock is news, not the series'
  * time the Change sentence already gives: the day's own (it keeps its time
- * or its all-day setting), one this change gives it (it takes them), or one
- * in a zone other than the plan's (its `after` names `tz`: a timed day in an
- * all-day plan), which is always said with the zone's name.
+ * or its all-day setting), one this change gives it (it takes them, or it
+ * becomes timed: its `after` names a new `kind`), or one in a zone other
+ * than the plan's (its `after` names `tz`: a timed day in an all-day plan),
+ * which is always said with the zone's name.
  */
 export function saysClock(d) {
   const a = d && d.after;
-  return !!(a && a.at) && (hasAny(d.kept, CLOCK_FIELDS) || hasAny(d.takes, CLOCK_FIELDS) || !!a.tz);
+  return !!(a && a.at) && (hasAny(d.kept, CLOCK_FIELDS) || hasAny(d.takes, CLOCK_FIELDS) || !!a.kind || !!a.tz);
 }
 
 /**
@@ -386,7 +397,8 @@ const OUTCOMES = {
   // "moves to Wed, Jan 13 at 1:30 AM", "moves to 8:00 PM", "moves to Wed, Jan 13".
   moves: (p) => 'moves to ' + (p.date && p.clock ? p.date + ' at ' + p.clock : p.date || p.clock || p.full),
   'all-day': (p) => 'becomes all-day' + spaced(atOn(p)),
-  timed: (p) => 'becomes timed' + (atOn(p) ? ', ' + atOn(p) : ''),
+  // "now starts at 6:00 PM[ on Wed, Jan 13]": a timed placement has a clock, and a new kind is news (saysClock).
+  timed: (p) => 'now starts ' + atOn(p),
   stays: (p) => 'stays ' + (atOn(p) || 'where it is'),
   separate: (p) => 'becomes an event of its own' + spaced(atOn(p)),
   deleted: () => 'is deleted',
@@ -439,7 +451,7 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
       : shift ? 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier')
         : clock ? 'move to ' + clock : 'move with their events'),
     'all-day': () => 'become all-day',
-    timed: () => 'become timed' + (clock ? ', at ' + clock : ''),
+    timed: () => 'now start at ' + clock,
     stays: () => 'stay where they are',
   };
   const does = (GROUPS[outcome] || GROUPS.stays)();

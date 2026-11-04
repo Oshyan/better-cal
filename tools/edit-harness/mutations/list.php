@@ -111,6 +111,12 @@ return [
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [
+        'id' => 'untouched-own-placement-entry', 'file' => $model, 'checks' => ['c-untouched'],
+        'what' => 'an edited day\'s own date dropped from its own list under a drag that keeps its placement (allowed when c-untouched went by edit kind)',
+        'patch' => [["\$encoded = OwnFields::encode(\$ownAfter);", "\$encoded = OwnFields::encode(array_values(array_diff(\$ownAfter, ['date'])));"]],
+        'cases' => ['mutation-drag-with-a-day-at-its-own-date'],
+    ],
+    [
         'id' => 'untouched-insertion', 'file' => $model, 'checks' => ['c-untouched'],
         'what' => 'an event inserted outside the set',
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],

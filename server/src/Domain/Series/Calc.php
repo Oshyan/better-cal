@@ -166,9 +166,14 @@ final class Calc
         if (!$r->supported()) {
             return null;
         }
+        // A confirmation of what the rule's structure guarantees, not a
+        // bound: the day found is a day of the rule's members in the start's
+        // phase, so the pattern from it is the start's; its first 40
+        // occurrences check the arithmetic against the expander.
         $want = array_column(self::expansion($r->text(), self::at($this->startDn, $this->clock, $this->tz), $this->tz, false, PHP_INT_MAX, 40), 0);
         $p = $r->periodOf($this->startDn);
-        for ($i = 0; $i < 60; $i++) {
+        // Back through the rule's cycle (Rule::cycle): none there is none ever.
+        for ($i = 0, $n = $r->cycle(); $i < $n; $i++) {
             foreach (array_reverse($r->periodDays($p)) as [$d]) {
                 if ($d >= $this->startDn) {
                     continue;
@@ -334,6 +339,9 @@ final class Calc
     {
         $on = $this->keysOn($dn);
         if ($on !== []) {
+            // A day's one key; a rule several times a day is refused every
+            // series-wide move that reads a day's instant, and "this event"
+            // reads its keys (Several times a day can collide).
             return Time::fromDb($on[0]);
         }
         return $this->allDay ? self::at($dn, [0, 0, 0], 'UTC') : self::at($dn, $this->clock, $this->tz);
@@ -422,6 +430,8 @@ final class Calc
     {
         $ck = self::cacheKey($rrule, $start, $tz, $allDay);
         if (!isset(self::$cache[$ck])) {
+            // A memory guard on the cache: an evicted form is expanded again,
+            // the same days, never fewer.
             if (count(self::$cache) > 256) {
                 self::$cache = array_slice(self::$cache, -128, null, true);
             }

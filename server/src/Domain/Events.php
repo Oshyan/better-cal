@@ -208,6 +208,8 @@ final class Events
             // as undoing the move reads it (Undo::undoPluginEdit).
             [$startUtc, $endUtc, $isAllDay] = PluginHost::spanToUtc($span, Time::zone(Settings::homeTzid($this->db, $userId)));
         } catch (\Throwable) {
+            // Converted to a refusal naming the plugin, before anything is
+            // written: whatever a plugin's code throws, the write doesn't happen.
             throw new HttpError('plugin_edit_failed', $name . ' gave back a time Better-Cal could not read', 502);
         }
         $this->undo->write($userId, function () use ($userId, $event, $startUtc, $endUtc, $isAllDay, $authority, $name, $pluginId, $span, $before): void {
@@ -1772,6 +1774,9 @@ final class Events
             }
             $target = (new \DateTimeImmutable($local->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $newTz))
                 ->modify(($periods >= 0 ? '+' : '') . $periods . ' ' . $unit);
+            // The 1.4.6 following path's reading, which 1.5.1 moves onto the
+            // model (decisions.md, "This and following"): the nth of the new
+            // period, or the day shift where it has fewer.
             return self::occurrencesIn($newRule, $target, $unit, $newTz)[$n] ?? $byDays($key);
         };
     }

@@ -984,7 +984,8 @@ final class Undo
                     $start = $start->setTimezone(Time::displayZone((string) ($row['tzid'] ?? 'UTC'), $homeTzid));
                 }
                 $line .= ' (' . $start->format('M j') . ')';
-            } catch (\Exception) {
+            } catch (\DateMalformedStringException) {
+                // A label: a start PHP can't read leaves the line without its date.
             }
         }
         return $line;
@@ -1082,7 +1083,9 @@ final class Undo
             try {
                 $this->undoById($userId, (int) $row['id'], !$strict, $authority);
                 $undone++;
-            } catch (\Throwable $e) {
+            } catch (HttpError $e) {
+                // An entry's own refusal (HttpError) is counted; any other
+                // failure is the run's and propagates, never a silent skip.
                 // A revoked credential stops the whole run, not just one entry.
                 if ($strict || ($e instanceof HttpError && in_array($e->errorCode, ['session_revoked', 'token_revoked'], true))) {
                     throw $e;

@@ -149,6 +149,8 @@ final class Readings
      */
     private static function weekStartHolding(Rule $r0, Rule $member, callable $image, int $startDn): ?int
     {
+        // Every period of a weekly rule holds the same members, so eight
+        // periods show what all of them do: a sample by the rule's structure.
         $sample = [];
         $old = new Calc($r0->withBound(null, null), $startDn, 'UTC', true, [0, 0, 0], 86400);
         foreach ($old->occurrences($startDn + 7 * $r0->interval * 8, 40) as $dn) {
@@ -461,6 +463,8 @@ final class Readings
         [$y0, $mo0, $a0] = Cal::ymd($actedDn);
         [$y1, $mo1, $d1] = Cal::ymd($landedDn);
         $k = $y1 - $y0;
+        // A start off its rule (an import's; RFC 5545 3.8.5.3 leaves it
+        // undefined) has no member: it counts as the first, the rule's first day.
         $j = $r0->memberOf($actedDn) ?? 0;
         $dm = $mo1 - (int) $r0->months[$j];
         $old = $r0->members[0];

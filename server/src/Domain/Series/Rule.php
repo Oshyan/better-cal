@@ -572,6 +572,23 @@ final class Rule
         return intdiv($p - $p0, $this->unit());
     }
 
+    /**
+     * The periods, stepped by INTERVAL, after which the pattern repeats: the
+     * Gregorian calendar's 400-year cycle in the kind's period (146097
+     * days, 20871 weeks, 4800 months, 400 years) divided by its common
+     * factor with INTERVAL. A search of the rule's days that finds none in
+     * this many steps finds none ever: the rule's own end, not a budget.
+     */
+    public function cycle(): int
+    {
+        $units = ['daily' => 146097, 'weekly' => 20871, 'monthly' => 4800, 'yearly' => 400][$this->kind] ?? 146097;
+        [$a, $b] = [$units, $this->interval];
+        while ($b !== 0) {
+            [$a, $b] = [$b, $a % $b];
+        }
+        return intdiv($units, $a);
+    }
+
     public function counted(int $p, int $p0): bool
     {
         $n = $this->periodsBetween($p0, $p);

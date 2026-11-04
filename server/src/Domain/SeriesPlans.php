@@ -72,9 +72,12 @@ trait SeriesPlans
     private static function validatedSeriesRule(array $event, string $rrule, bool $wholeSeries): string
     {
         if ($wholeSeries && !empty($event['rrule']) && !Calc::reads((string) $event['rrule'])) {
+            // A stored rule the expander can't read keeps its text for a field
+            // change (Imported Rules: field changes only); validateRrule's one
+            // refusal is HttpError, anything else is a defect.
             try {
                 return Recurrence::validateRrule($rrule);
-            } catch (\Throwable) {
+            } catch (HttpError) {
                 return trim($rrule);
             }
         }
@@ -233,7 +236,9 @@ trait SeriesPlans
         if (!$rule->bare) {
             $p = $rule->periodOf($dn);
             $found = null;
-            for ($i = 0; $i < 4800 && $found === null; $i++) {
+            // Through the rule's cycle (Rule::cycle); with no day in it the
+            // series is its start alone (the start is the first occurrence).
+            for ($i = 0, $n = $rule->cycle(); $i < $n && $found === null; $i++) {
                 foreach ($rule->periodDays($p) as [$d]) {
                     if ($d >= $dn) {
                         $found = $d;

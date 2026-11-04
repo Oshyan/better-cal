@@ -431,9 +431,11 @@ final class Recurrence
      */
     public static function inForm(string $rrule, bool $allDay, ?string $tzid): string
     {
+        // A rule outside the grammar (rruleParts' HttpError) is left as
+        // written; every reader refuses it as one it can't read.
         try {
             $parts = self::rruleParts($rrule);
-        } catch (\Throwable) {
+        } catch (HttpError) {
             return $rrule;
         }
         $changed = false;

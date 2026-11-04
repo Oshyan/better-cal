@@ -622,7 +622,8 @@ final class Driver
         $viaRow = $fromRow !== null && $scope === 'all' && ($v['via'] ?? 'row') === 'row';
         $target = $viaRow ? $fromRow : (int) $master['id'];
         $in = ['scope' => $scope];
-        if (!$viaRow) {
+        if (!$viaRow && empty($this->spec['actedStart'])) {
+            // (A fixed case acting on the stored start names no occurrence: the series' own values at its first one.)
             $in['instanceStart'] = $this->instanceArg($st, $acted['key']);
         }
         $from = $shown ?? ['start' => $acted['key'], 'end' => Clock::db(Clock::parse($acted['key'])->modify('+' . $st['len'] . ' seconds')), 'tz' => $st['tz'], 'allDay' => $st['allDay']];

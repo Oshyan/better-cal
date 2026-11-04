@@ -5,26 +5,28 @@
 //
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/harness.php [--cases N] [--seed S]
 //       [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]]
-//       [--save-spec DIR] [--findings FILE] [--model FILE]
+//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE]
 //
 // --fixed runs the fixed cases (cases/*.json, or the files named) after the
 // drawn ones (--cases 0 for the fixed ones alone); --save-spec writes each
 // case's complete spec to DIR, as a fixed case is written; --findings names
 // the findings file; --model loads the series model from FILE instead of the
-// tree (the mutation runner's patched copy, mutations/run.php).
+// tree (the mutation runner's patched copy, mutations/run.php); --find names
+// each case that ran a category of the plan-data checks (to pick fixed cases).
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     http_response_code(404);
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE]\n";
     exit(0);
 }
 $fixed = !array_key_exists('fixed', $opts) ? null : ($opts['fixed'] === false ? [] : explode(',', (string) $opts['fixed']));
 $saveSpec = isset($opts['save-spec']) ? (string) $opts['save-spec'] : null;
+$find = isset($opts['find']) ? (string) $opts['find'] : null;
 $findingsFile = isset($opts['findings']) ? (string) $opts['findings'] : __DIR__ . '/findings.json';
 $cases = (int) ($opts['cases'] ?? 3000);
 $seed = (int) ($opts['seed'] ?? 1);
@@ -69,7 +71,14 @@ try {
     (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
     });
     $runner = new Runner($db, domains($db), $seed);
-    $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec): void {
+    $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec, $find): void {
+        if ($find !== null) {
+            // --find 'check|role': the cases that ran a category, to pick one as a fixed case.
+            [$fc, $fr] = explode('|', $find, 2) + [1 => ''];
+            if (($result['runs'][$fc][$fr] ?? 0) > 0) {
+                echo "case $i ran $find\n";
+            }
+        }
         if ($saveSpec !== null && isset($result['spec']['vector'])) {
             // The complete spec, as a fixed case is written (what the run recorded of the request is left out).
             $spec = array_diff_key($result['spec'], ['request' => 1, 'create' => 1, 'path' => 1]);

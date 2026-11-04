@@ -140,6 +140,7 @@ trait PlanPlacement
         $this->expect('c-placement', 'an edited day is about its old key\'s day in the old zone', "day ($role)", $identity((string) $row0['recurrence_instance_utc']), $d['day'] ?? null);
         $this->expect('c-placement', 'an edited day that owned its date carries it, in its own zone', "ownDate ($role)", $own ? self::ownPlaced($row0, $zone) : null, self::norm($d['ownDate'] ?? null, self::PLACEMENT_KEYS));
         $this->expect('c-placement', 'an edited day shows before where its row was, by the zone rule', "before ($role)", self::placed($row0, $zone), self::norm($d['before'] ?? null, self::PLACEMENT_KEYS));
+        $this->expect('c-placement', 'an edited day\'s shows is the date it showed on before', "shows ($role)", self::placed($row0, $zone)['date'], $d['shows'] ?? null);
         if ($fate === 'deleted') {
             $this->expect('c-placement', 'a deleted day has no after', "after ($role)", null, $d['after'] ?? null);
             return;
@@ -150,6 +151,7 @@ trait PlanPlacement
         }
         $placedAfter = self::placedAfter($where, $row0, $zone);
         $this->expect('c-placement', 'an edited day shows after where the commit put it, by the zone rule', "after ($role)", $placedAfter, self::norm($d['after'] ?? null, self::PLACEMENT_KEYS), ['stored' => $where['start_utc']]);
+        $this->expect('c-placement', 'an edited day\'s to is the date it shows on after', "to ($role)", $placedAfter['date'], $d['to'] ?? null);
         if (in_array($fate, ['stays', 'moves'], true) && isset($placedAfter['at'])) {
             $this->expect('c-placement', 'a timed edited day that stays or moves has at (and its zone) where it shows after', "at ($role)", [$placedAfter['at'], $placedAfter['tz'] ?? null], [self::norm($d, ['at'])['at'] ?? null, $d['tz'] ?? null]);
         }
@@ -168,8 +170,10 @@ trait PlanPlacement
         $this->expect('c-placement', 'the day acted on\'s outcome is the comparison of its instant and kind', "outcome ($role)", $fate, $d['outcome'] ?? null);
         $this->expect('c-placement', 'the day acted on is about its old key\'s day in the old zone', "day ($role)", $identity($actedKey), $d['day'] ?? null);
         $this->expect('c-placement', 'the day acted on showed at its occurrence', "before ($role)", self::placed($was, $zone), self::norm($d['before'] ?? null, self::PLACEMENT_KEYS));
+        $this->expect('c-placement', 'the day acted on\'s shows is the date its occurrence showed on', "shows ($role)", self::placed($was, $zone)['date'], $d['shows'] ?? null);
         if ($made !== null) {
             $this->expect('c-placement', 'the day acted on shows after at the row the commit wrote', "after ($role)", self::placedAfter($made, $was, $zone), self::norm($d['after'] ?? null, self::PLACEMENT_KEYS));
+            $this->expect('c-placement', 'the day acted on\'s to is the date the row the commit wrote shows on', "to ($role)", self::placed($made, $zone)['date'], $d['to'] ?? null);
         }
     }
 

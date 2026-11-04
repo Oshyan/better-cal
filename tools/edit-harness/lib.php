@@ -216,6 +216,11 @@ final class Runner
         $files = $files !== [] ? $files : self::fixedFiles();
         $driver = $this->driver();
         foreach ($files as $file) {
+            // A case is named by its path, or by its name under cases/.
+            if (!is_file($file)) {
+                $name = preg_replace('/\.json$/', '', $file);
+                $file = is_file(__DIR__ . "/cases/$name.json") ? __DIR__ . "/cases/$name.json" : __DIR__ . "/mutations/cases/$name.json";
+            }
             $spec = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             $spec['fixed'] = basename($file, '.json');
             $result = $driver->run($spec, new Rng(0));

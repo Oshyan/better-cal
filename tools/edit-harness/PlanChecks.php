@@ -510,12 +510,6 @@ trait PlanChecks
             if (isset($d['at'])) {
                 $this->isoIn("$dp.at", $d['at'], $d['tz'] ?? $zone, 'day at');
             }
-            if (in_array($d['kind'] ?? '', ['edited', 'acted'], true) && isset($d['before'])) {
-                $this->ran('c-shape', 'shows and to are the placements\' dates');
-                if (($d['shows'] ?? null) !== ($d['before']['date'] ?? null) || (isset($d['after']) && ($d['to'] ?? null) !== ($d['after']['date'] ?? null))) {
-                    $this->shapeFail($dp, 'shows and to are before.date and after.date', $d);
-                }
-            }
         }
         foreach (['losses', 'gains'] as $list) {
             foreach ($plan[$list] ?? [] as $i => $l) {

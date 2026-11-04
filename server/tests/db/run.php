@@ -21,6 +21,11 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
 putenv('BETTERCAL_STRICT_JOURNAL=1');
 
 require dirname(__DIR__, 2) . '/src/bootstrap.php';
+// The edit harness's mutation runner (tools/edit-harness/mutations) loads a
+// patched copy of one class in place of the tree's, and runs one file.
+if (getenv('BC_TEST_PRELOAD') !== false) {
+    require (string) getenv('BC_TEST_PRELOAD');
+}
 require __DIR__ . '/lib.php';
 
 // The app as installed: repeating events need Composer's libraries.
@@ -49,7 +54,7 @@ try {
     $migrator->run(static function (string $line): void {
     });
     checkEq('schema: every migration applies to an empty database', [], $migrator->pending());
-    foreach (glob(__DIR__ . '/*.test.php') as $file) {
+    foreach (glob(__DIR__ . '/' . (getenv('BC_TEST_ONLY') ?: '*') . '.test.php') as $file) {
         try {
             (require $file)($db);
         } catch (\Throwable $e) {

@@ -2170,6 +2170,32 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $cache->setValue(null, []);
 }
 
+// Reading dates: two readings differ only where their days differ, through
+// the days both walks read; a walk's end (its cycle, its periods past the day
+// acted on) is no parting, so it gives no `then` (Finding the Readings).
+{
+    $then = static function (array $p): array {
+        $out = [];
+        foreach (smGroup($p, 'reading')['options'] ?? [] as $o) {
+            $out[$o['id']] = array_map(static fn(array $e): string => substr($e['start'], 0, 10), $o['then'] ?? []);
+        }
+        return $out;
+    };
+    $late = smSeries('Sample review', 'FREQ=MONTHLY;BYMONTHDAY=31', '2026-12-31 09:30', 120, false, [], 'UTC');
+    $p = smPlan($late, [], smDrag($late, '2026-12-31 09:30', '2027-01-10 09:30', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=7']));
+    checkEq('Reading dates: every 31st made every 7th, both readings the same days through a whole cycle, no then (not the walk\'s end four hundred years out)',
+        ['map' => [], 'keep' => []], $then($p));
+    $hour = smSeries('Sample night', 'FREQ=WEEKLY;BYDAY=SA;BYHOUR=23;BYMINUTE=30', '2027-01-30 23:30', 120, false, [], 'Asia/Kolkata');
+    $p = smPlan($hour, [], ['acted' => smAt('2027-01-30 23:30', 'Asia/Kolkata'), 'rrule' => 'FREQ=WEEKLY;BYDAY=WE',
+        'landed' => ['start_utc' => smAt('2027-01-30 00:00', 'UTC'), 'end_utc' => smAt('2027-01-31 00:00', 'UTC'), 'all_day' => 1, 'tzid' => 'UTC']]);
+    checkEq('Reading dates: a one-hour weekly rule made all-day on Wednesdays, both readings the same days across the March clock change, no then',
+        ['map' => [], 'keep' => []], $then($p));
+    $circle = smSeries('Sample circle', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-15 19:00');
+    $p = smPlan($circle, [], smDrag($circle, '2027-03-15 19:00', '2027-03-30 19:00'));
+    checkEq('Reading dates: the 15th dragged to the 30th, the readings part in February 2028: the last shared date and each one\'s first different one',
+        ['clamp' => ['2028-01-30', '2028-02-29'], 'skip' => ['2028-01-30', '2028-03-30']], $then($p));
+}
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

@@ -744,21 +744,25 @@ export const refusalWords = (code) => REFUSALS[code] || 'This change can’t be 
 export function noteWords(n, opts = {}) {
   if (!n) return '';
   if (n.kind === 'google') return 'Google decides what happens to edited days, and Better-Cal hasn’t checked what it does yet. This can’t be undone.';
-  // A note's clocks are its point: one that can't be said shows as unavailable
-  // in its place; a note with no instant at all has nothing to say.
+  // A note's clocks are its point. Its subject is its clock when that can be
+  // said, and "a clock time" with its time unavailable when its zone can't be
+  // read (never the device's clock); a note with no instant says what it can.
+  const at = fmtClock(n.at, n.tz);
+  const unavailable = at === CLOCK_UNAVAILABLE;
+  const where = (date) => ' on ' + fmtDay(date, opts) + ' in ' + zoneName(n.tz);
   if (n.kind === 'gap') {
-    const missing = fmtClock(n.clock), at = fmtClock(n.at, n.tz);
-    return missing ? 'There is no ' + missing + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + (at ? ', so that one is at ' + at : '') + '.' : '';
+    if (unavailable) return 'A clock time is skipped' + where(n.date) + '; its time is unavailable.';
+    const missing = fmtClock(n.clock);
+    return missing ? 'There is no ' + missing + where(n.date) + (at ? ', so that one is at ' + at : '') + '.' : '';
   }
   if (n.kind === 'overlap') {
+    if (!at) return '';
     // Which of the two instants the series is at, and whether that one is in
     // daylight time, come from the note: a note without them says neither.
-    const at = fmtClock(n.at, n.tz);
-    if (!at) return '';
     const fold = n.fold === 'first' || n.fold === 'second' ? n.fold : null;
     const kind = n.daylight === true ? 'daylight' : n.daylight === false ? 'standard' : null;
     const which = fold ? '; this is the ' + fold + (kind ? ', in ' + kind + ' time' : '') : '';
-    return upperFirst(at) + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + which + '.';
+    return (unavailable ? 'A clock time' : at) + ' happens twice' + where(n.date) + (unavailable ? '; its time is unavailable' : '') + which + '.';
   }
   return '';
 }

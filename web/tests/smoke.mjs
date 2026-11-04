@@ -5229,7 +5229,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
         ['2 days that were changed earlier now start at time unavailable.'],
         '2 days that were changed earlier are no longer all-day.']);
       eq('verify: a clock that can\'t be said shows as unavailable: notes, the rule and the zone choice, beside the zone\'s name', [notes, rule, zone], [
-        ['There is no 2:30 AM on Sun, Mar 14 in Olympus Mons, so that one is at time unavailable.', 'Time unavailable happens twice on Sun, Nov 7 in Olympus Mons; this is the first, in daylight time.'],
+        ['A clock time is skipped on Sun, Mar 14 in Olympus Mons; its time is unavailable.', 'A clock time happens twice on Sun, Nov 7 in Olympus Mons; its time is unavailable; this is the first, in daylight time.'],
         ['weekly on Tuesday at time unavailable', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday at time unavailable, with no end, as before.'],
         [['Keep the clock time: time unavailable in Olympus Mons', 'Keep the same moment: 7:00 PM in Los Angeles, time unavailable in Olympus Mons']]]);
     }

@@ -517,7 +517,7 @@ return static function (Db $db): void {
         $dr = domains($db);
         $cal = (int) $dr->calendars->create($r, ['name' => "Caf\u{E9} \u{65E5}\u{672C} \u{1F389}"])['id'];
         $event = (int) $dr->events->create($r, eventAt($cal, "Caf\u{E9} \u{4F1A}\u{8B70} \u{1F389} a/b", '2026-12-08', ['description' => "Notes \u{2713} https://example.test/a/b"]))['eventId'];
-        $row = static fn(): array => [$db->one('SELECT * FROM events WHERE id = ?', [$event]), $db->scalar('SELECT name FROM calendars WHERE id = ?', [$cal])];
+        $row = static fn(): array => [$db->one('SELECT * FROM events WHERE id = ?', [$event]) ?? [], $db->scalar('SELECT name FROM calendars WHERE id = ?', [$cal])];
         $was = $row();
         $escape = static fn(string $json): string => (string) json_encode(json_decode($json, true), JSON_INVALID_UTF8_SUBSTITUTE);
 
@@ -526,14 +526,14 @@ return static function (Db $db): void {
         $stored = (string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry]);
         check('undo: an entry keeps its text as itself', str_contains($stored, "\u{4F1A}\u{8B70} \u{1F389} a/b") && str_contains($stored, 'https://example.test/a/b') && !str_contains($stored, '\\u'), $stored);
         $dr->undo->undoById($r, $entry);
-        checkEq('undo: undone, the event is back as it was', $was, $row());
+        checkRestored('undo: undone, the event is back as it was', $was, $row());
 
         $dr->events->deleteEvent($r, $event, null, null);
         $entry = lastEntry($db, $r);
         $db->run('UPDATE mutations SET before_json = ? WHERE id = ?', [$escape((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry])), $entry]);
         check('undo: (an entry written escaped, as before)', str_contains((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry]), '\\ud83c\\udf89'));
         $dr->undo->undoById($r, $entry);
-        checkEq('undo: an entry written escaped undoes the same', $was, $row());
+        checkRestored('undo: an entry written escaped undoes the same', $was, $row());
 
         // Its calendar deleted: the event in a piece, the calendar in the entry.
         $dr->calendars->delete($r, $cal);
@@ -543,7 +543,7 @@ return static function (Db $db): void {
         $db->run("UPDATE mutation_rows SET rows_json = ? WHERE mutation_id = ? AND table_name = 'events'", [$escape($piece), $entry]);
         $db->run('UPDATE mutations SET before_json = ? WHERE id = ?', [$escape((string) $db->scalar('SELECT before_json FROM mutations WHERE id = ?', [$entry])), $entry]);
         $dr->undo->undoById($r, $entry);
-        checkEq('undo: a calendar delete whose entry and piece were written escaped undoes the same', $was, $row());
+        checkRestored('undo: a calendar delete whose entry and piece were written escaped undoes the same', $was, $row());
         checkEq('undo: (each step its own entry, all undone)', 0, $count('SELECT COUNT(*) FROM mutations WHERE user_id = ? AND undone = 0 AND op = ?', [$r, 'delete']));
     });
 

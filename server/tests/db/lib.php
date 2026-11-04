@@ -58,6 +58,53 @@ function scenario(string $name, callable $fn): void
     }
 }
 
+/**
+ * Rows put back by a later write (an undo, say) against the rows as they
+ * were: their content equal, and each updated_at at or after the
+ * original's. The write stamps a row it puts back with its own time, which
+ * is right (sync clients read updated_at to see a row changed), so no
+ * check compares that wall-clock column for equality across two writes.
+ * $was and $now may nest rows at any depth; an updated_at holding a list
+ * (stamps gathered from many rows) is compared entry by entry.
+ */
+function checkRestored(string $name, array $was, array $now): void
+{
+    $split = static function (array $value, string $path, array &$stamps) use (&$split): array {
+        $out = [];
+        foreach ($value as $key => $item) {
+            if ($key === 'updated_at') {
+                $leaves = static function (mixed $v, string $at) use (&$leaves, &$stamps): void {
+                    if (!is_array($v)) {
+                        $stamps[$at] = $v;
+                        return;
+                    }
+                    foreach ($v as $i => $w) {
+                        $leaves($w, "$at/$i");
+                    }
+                };
+                $leaves($item, "$path/updated_at");
+                continue;
+            }
+            $out[$key] = is_array($item) ? $split($item, "$path/$key", $stamps) : $item;
+        }
+        return $out;
+    };
+    [$stampsWas, $stampsNow] = [[], []];
+    $contentWas = $split($was, '', $stampsWas);
+    $contentNow = $split($now, '', $stampsNow);
+    $earlier = [];
+    foreach ($stampsWas + $stampsNow as $path => $_) {
+        [$a, $b] = [$stampsWas[$path] ?? null, $stampsNow[$path] ?? null];
+        if ($a === null || $b === null || (string) $b < (string) $a) {
+            $earlier[] = "$path: " . var_export($a, true) . ' then ' . var_export($b, true);
+        }
+    }
+    $detail = $contentWas !== $contentNow
+        ? substr('content expected ' . var_export($contentWas, true) . ', got ' . var_export($contentNow, true), 0, 4000)
+        : 'updated_at missing or earlier than the original: ' . implode('; ', array_slice($earlier, 0, 12));
+    check($name, $contentWas === $contentNow && $earlier === [], $detail);
+}
+
 /** A second connection to the test database, for a transaction of its own next to the suite's. */
 function otherConnection(): Db
 {
@@ -259,7 +306,10 @@ function oldSource(string $revision): string
             throw new \RuntimeException(implode(' ', $cmd) . ': ' . trim($said));
         }
     };
-    $run([getenv('BC_TEST_GIT') ?: 'git', '-C', dirname(__DIR__, 3), 'archive', '--format=tar', '-o', $tar, $revision, 'server/src']);
+    // Named safe for this one command: a container's checkout may belong to
+    // another user than the test process, and git refuses it otherwise.
+    $repo = dirname(__DIR__, 3);
+    $run([getenv('BC_TEST_GIT') ?: 'git', '-c', 'safe.directory=' . $repo, '-C', $repo, 'archive', '--format=tar', '-o', $tar, $revision, 'server/src']);
     $run(['tar', '-xf', $tar, '-C', $dir]);
     unlink($tar);
     return $dir;

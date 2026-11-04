@@ -95,7 +95,13 @@ return static function (Db $suiteDb): void {
                 } elseif ($page !== []) {
                     $after = (int) $page[count($page) - 1][$cursor];
                 }
+                // A row's updated_at is kept apart, in order, for
+                // checkRestored to compare as a stamp, not as content.
                 foreach ($page as $row) {
+                    if (array_key_exists('updated_at', $row)) {
+                        $out['updated_at'][$table][] = $row['updated_at'];
+                        unset($row['updated_at']);
+                    }
                     hash_update($ctx, json_encode($row) . "\n");
                     $rows++;
                 }
@@ -134,7 +140,7 @@ return static function (Db $suiteDb): void {
         $d->undo->undoById($u, (int) $entry['id']);
         $undoMb = (memory_get_peak_usage() - $base) / 1048576;
         $undoSeconds = microtime(true) - $started;
-        checkEq('large calendar: undone, every event, tag, person and trip link is back as it was', $was, $digest());
+        checkRestored('large calendar: undone, every event, tag, person and trip link is back as it was', $was, $digest());
         checkEq('large calendar: undone, it is where new events go again', $settingsWere, $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$u]));
         // A phone syncing it hears of every event once, each change with a
         // token of its own, and the calendar's token past the last.
@@ -198,7 +204,15 @@ return static function (Db $suiteDb): void {
         $wide = (int) $d->calendars->create($u, ['name' => 'Wide sample'])['id'];
         $event = (int) $d->events->create($u, eventAt($wide, 'Wide sample event'))['eventId'];
         $db->run('UPDATE events SET description = ? WHERE id = ?', [str_repeat("\u{1F389}", 1500000), $event]);
-        $was = md5(serialize($db->one('SELECT * FROM events WHERE id = ?', [$event])));
+        // The row with its 6 MB of notes read as their digest.
+        $wideRow = static function () use ($db, $event): array {
+            $row = $db->one('SELECT * FROM events WHERE id = ?', [$event]) ?? [];
+            if (isset($row['description'])) {
+                $row['description'] = md5((string) $row['description']);
+            }
+            return $row;
+        };
+        $was = $wideRow();
         $started = microtime(true);
         $d->calendars->delete($u, $wide);
         $deleteSeconds = microtime(true) - $started;
@@ -208,7 +222,7 @@ return static function (Db $suiteDb): void {
         $started = microtime(true);
         $d->undo->undoById($u, $entry);
         $undoSeconds = microtime(true) - $started;
-        checkEq('large calendar: undone, the wide event is back as it was', $was, md5(serialize($db->one('SELECT * FROM events WHERE id = ?', [$event]))));
+        checkRestored('large calendar: undone, the wide event is back as it was', $was, $wideRow());
         if (getenv('BC_TEST_VERBOSE') === '1') {
             printf("large calendar: 6 MB of emoji notes, piece %d bytes, delete %.2f s, undo %.2f s\n", $piece, $deleteSeconds, $undoSeconds);
         }

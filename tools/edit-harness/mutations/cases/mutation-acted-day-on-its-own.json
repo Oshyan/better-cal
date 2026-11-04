@@ -1,0 +1,96 @@
+{
+    "n": 119,
+    "seed": 23,
+    "series": {
+        "family": "monthly_nth_setpos",
+        "rrule": "FREQ=MONTHLY;BYDAY=SU;BYSETPOS=1",
+        "import": false,
+        "bound": "none",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2027-05-31 18:00",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 11,
+            "kind": "edit",
+            "own": [
+                "tags"
+            ],
+            "days": 2,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": 30
+        },
+        {
+            "at": 13,
+            "kind": "edit",
+            "own": [
+                "tags",
+                "time",
+                "length"
+            ],
+            "days": 2,
+            "mins": -240,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 21,
+            "kind": "skip"
+        },
+        {
+            "at": 12,
+            "kind": "edit",
+            "own": [
+                "title",
+                "tags"
+            ],
+            "days": -1,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        }
+    ],
+    "acted": 12,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 5400,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "status": "tentative"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=FR",
+        "bound": {
+            "count": 2
+        },
+        "via": "master"
+    },
+    "stack": {
+        "kind": "rename",
+        "days": 1,
+        "mins": 120
+    },
+    "choices": {
+        "edit": {
+            "outside": "keep"
+        },
+        "stack": []
+    },
+    "preselected": {
+        "edit": false,
+        "stack": false
+    }
+}

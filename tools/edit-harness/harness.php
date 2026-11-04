@@ -4,18 +4,31 @@
 // cases and drops it. See README.md.
 //
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/harness.php [--cases N] [--seed S]
-//       [--family F] [--case N] [--no-shrink] [--quiet]
+//       [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]]
+//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE]
+//
+// --fixed runs the fixed cases (cases/*.json, or the files named) after the
+// drawn ones (--cases 0 for the fixed ones alone; a full run of 1,000 cases or
+// more takes them all); --save-spec writes each
+// case's complete spec to DIR, as a fixed case is written; --findings names
+// the findings file; --model loads the series model from FILE instead of the
+// tree (the mutation runner's patched copy, mutations/run.php); --find names
+// each case that ran a category of the plan-data checks (to pick fixed cases).
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     http_response_code(404);
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE]\n";
     exit(0);
 }
+$fixed = !array_key_exists('fixed', $opts) ? null : ($opts['fixed'] === false ? [] : explode(',', (string) $opts['fixed']));
+$saveSpec = isset($opts['save-spec']) ? (string) $opts['save-spec'] : null;
+$find = isset($opts['find']) ? (string) $opts['find'] : null;
+$findingsFile = isset($opts['findings']) ? (string) $opts['findings'] : __DIR__ . '/findings.json';
 $cases = (int) ($opts['cases'] ?? 3000);
 $seed = (int) ($opts['seed'] ?? 1);
 $onlyFamily = isset($opts['family']) ? (string) $opts['family'] : null;
@@ -33,6 +46,10 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
 }
 putenv('BETTERCAL_STRICT_JOURNAL=1');
 require $root . '/server/src/bootstrap.php';
+if (isset($opts['model'])) {
+    // Declared before anything autoloads the tree's, so this copy is the model every call reaches.
+    require (string) $opts['model'];
+}
 require $root . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
 
@@ -55,7 +72,19 @@ try {
     (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
     });
     $runner = new Runner($db, domains($db), $seed);
-    $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases): void {
+    $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec, $find): void {
+        if ($find !== null) {
+            // --find 'check|role': the cases that ran a category, to pick one as a fixed case.
+            [$fc, $fr] = explode('|', $find, 2) + [1 => ''];
+            if (($result['runs'][$fc][$fr] ?? 0) > 0) {
+                echo "case $i ran $find\n";
+            }
+        }
+        if ($saveSpec !== null && isset($result['spec']['vector'])) {
+            // The complete spec, as a fixed case is written (what the run recorded of the request is left out).
+            $spec = array_diff_key($result['spec'], ['request' => 1, 'create' => 1, 'path' => 1]);
+            file_put_contents($saveSpec . '/seed' . $result['spec']['seed'] . '-case' . $i . '.json', json_encode($spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        }
         // HARNESS_SLOW=seconds names each case that took longer.
         static $last = null;
         $now = microtime(true);
@@ -73,6 +102,12 @@ try {
             fwrite(STDERR, "$i of $cases\n");
         }
     });
+    if ($fixed !== null) {
+        $runner->runFixed($fixed);
+    } elseif ($onlyFamily === null && $onlyCase === null && $cases >= 1000) {
+        // A full run takes the fixed cases too: some required categories (a rule the expander can't read) are never drawn.
+        $runner->runFixed();
+    }
     $casesSeconds = round(microtime(true) - $started, 1);
     $misuses = BetterCal\Domain\Undo::misuses();
 
@@ -111,8 +146,13 @@ try {
         'minimal' => $minimal,
         'records' => $runner->failures,
         'journalMisuses' => $misuses,
+        'revision' => BetterCal\EditHarness\Revision::get(),
+        'tally' => BetterCal\EditHarness\Report::tally($runner),
     ];
-    file_put_contents(__DIR__ . '/findings.json', json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR));
+    // A full run must execute every required category; a slice or one family needn't.
+    $full = $onlyFamily === null && $onlyCase === null && $cases >= 1000;
+    $missingFails = $full && $out['tally']['missing'] !== [];
+    file_put_contents($findingsFile, json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR));
 
     echo "\n{$runner->counts['cases']} cases in {$casesSeconds}s, {$elapsed}s with shrinking (seed $seed)\n";
     ksort($runner->counts['byFamily']);
@@ -146,9 +186,13 @@ try {
             echo sprintf("  %-18s %6.1fs\n", $phase, $s);
         }
     }
-    echo "\n" . ($new === 0 && $misuses === [] ? 'Clean: every failure is under a known code path.' : "$new signature(s) outside the known code paths.") . "\n";
+    // The executions table first, then the tallies, so the last lines of the output are the verdict.
+    echo "\n" . BetterCal\EditHarness\Report::runsText($out['tally']);
+    echo "\n" . BetterCal\EditHarness\Report::summaryText($out['tally']);
+    echo "Revision {$out['revision']}\n";
+    echo ($new === 0 && $misuses === [] && !$missingFails ? 'Clean: every failure is under a known code path.' : ($new > 0 ? "$new signature(s) outside the known code paths." : ($missingFails ? 'Not clean: a required category never ran.' : 'Not clean: journal misuses.'))) . "\n";
     echo "findings.json has every record" . ($shrink ? ' and a shrunk reproduction per finding' : '') . ".\n";
 } finally {
     $server->exec("DROP DATABASE IF EXISTS `$name`");
 }
-exit(($out['unknownSignatures'] ?? 1) === 0 && $misuses === [] ? 0 : 1);
+exit(($out['unknownSignatures'] ?? 1) === 0 && $misuses === [] && !($missingFails ?? true) ? 0 : 1);

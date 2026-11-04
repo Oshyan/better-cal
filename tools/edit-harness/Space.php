@@ -10,8 +10,8 @@ namespace BetterCal\EditHarness;
 
 final class Space
 {
-    /** Northern DST (two different weeks), southern DST, a half-hour zone, UTC; all-day series are UTC dates. */
-    public const ZONES = ['America/Los_Angeles', 'Europe/Berlin', 'Pacific/Auckland', 'Asia/Kolkata', 'UTC'];
+    /** Northern DST (two different weeks), southern DST, a half-hour zone, a zone whose clocks move by half an hour (Lord Howe), UTC; all-day series are UTC dates. */
+    public const ZONES = ['America/Los_Angeles', 'Europe/Berlin', 'Pacific/Auckland', 'Asia/Kolkata', 'Australia/Lord_Howe', 'UTC'];
     public const TIMES = ['06:00', '09:30', '13:00', '18:00', '21:15', '23:30', '00:30', '02:30', '01:30'];
 
     /** Rows of the drag table (weights), then the capability table's other rows. */
@@ -118,6 +118,7 @@ final class Space
                 'America/Los_Angeles' => ['2027-03-14', '2027-11-07', '2026-11-01'],
                 'Europe/Berlin' => ['2027-03-28', '2027-10-31', '2026-10-25'],
                 'Pacific/Auckland' => ['2027-04-04', '2027-09-26', '2026-09-27'],
+                'Australia/Lord_Howe' => ['2027-04-04', '2027-10-03', '2026-10-04'],
             ][$tz];
             return Days::date(Days::ofDate($r->pick($changes)) + $r->int(-16, 2));
         }

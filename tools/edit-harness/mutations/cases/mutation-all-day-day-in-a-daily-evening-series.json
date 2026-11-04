@@ -1,0 +1,57 @@
+{
+    "n": 9500,
+    "seed": 0,
+    "series": {
+        "rrule": "FREQ=DAILY",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-11 20:00",
+        "family": "daily",
+        "import": false,
+        "bound": "none",
+        "boundAt": 3,
+        "untilForm": "dayend",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "allDay"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        }
+    ],
+    "acted": 0,
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "title": "Sample series, renamed"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "",
+        "bound": null,
+        "via": "master"
+    },
+    "from": "first",
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

@@ -93,6 +93,13 @@ jobs:
         env:
           BC_TEST_DB: mariadb:3306
         run: php server/tests/db/run.php
+      # Each mutation (tools/edit-harness/mutations) patches a copy of the
+      # series model, or of the Undo gate, and must trip the check it names
+      # while every other check passes.
+      - name: Edit harness mutations
+        env:
+          BC_TEST_DB: mariadb:3306
+        run: php tools/edit-harness/mutations/run.php
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

@@ -241,3 +241,50 @@ function removeTree(string $dir): void
     }
     rmdir($dir);
 }
+
+/**
+ * An older version's server/src, from the repository's history (git
+ * archive), in a directory under the system temp dir the caller removes
+ * (removeTree). Throws when the history doesn't have it (a shallow clone).
+ */
+function oldSource(string $revision): string
+{
+    $dir = realpath(sys_get_temp_dir()) . '/bc-old-src-' . bin2hex(random_bytes(4));
+    mkdir($dir, 0700);
+    $tar = $dir . '/src.tar';
+    $run = static function (array $cmd): void {
+        $p = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $said = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        if (proc_close($p) !== 0) {
+            throw new \RuntimeException(implode(' ', $cmd) . ': ' . trim($said));
+        }
+    };
+    $run([getenv('BC_TEST_GIT') ?: 'git', '-C', dirname(__DIR__, 3), 'archive', '--format=tar', '-o', $tar, $revision, 'server/src']);
+    $run(['tar', '-xf', $tar, '-C', $dir]);
+    unlink($tar);
+    return $dir;
+}
+
+/**
+ * Run $steps (old-version.php says how they read) through the domain
+ * methods of the older version in $source (oldSource), in a process of its
+ * own on this suite's database. Returns what they made, by name.
+ *
+ * @return array{user:int,calendar:int,series:array<string,int>,entries:array<string,int>,from:string}
+ */
+function oldVersion(string $source, array $steps): array
+{
+    $stepsFile = $source . '/steps-' . bin2hex(random_bytes(4)) . '.json';
+    $outFile = $stepsFile . '.out';
+    file_put_contents($stepsFile, json_encode($steps));
+    $p = proc_open([PHP_BINARY, __DIR__ . '/old-version.php', $source . '/server/src', $stepsFile, $outFile], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $said = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+    $status = proc_close($p);
+    $out = is_file($outFile) ? json_decode((string) file_get_contents($outFile), true) : null;
+    @unlink($stepsFile);
+    @unlink($outFile);
+    if ($status !== 0 || !is_array($out)) {
+        throw new \RuntimeException('the older version stopped: ' . trim($said));
+    }
+    return $out;
+}

@@ -5,8 +5,6 @@ declare(strict_types=1);
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Series\Cal;
-use BetterCal\Domain\Series\RuleNotReadable;
-use BetterCal\Domain\Series\WalkIncomplete;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
 
@@ -25,19 +23,34 @@ use BetterCal\Support\Time;
  * The rule: a key that is an occurrence of the old reading (sabre's stepping
  * from the stored start, for the frequencies the old expander left to it)
  * and not of the new one, on a local day where the new expansion has
- * exactly one occurrence, moves to that occurrence. An edited day whose
- * time is inherited (not one of its own fields) moves with its key, so it
- * shows where the series does that day; one that owns its time stays where
- * it shows. Every other key is left as it is: one of the new expansion, a
- * day the new one gives several occurrences or none (counted as left), or a
- * key no expander gave. Timed series only: an all-day series' keys are its
- * UTC dates, which no clock rule moves.
+ * exactly one occurrence, moves to that occurrence. Every key a series
+ * stores is a candidate, its first and last occurrences included; the old
+ * reading is walked from the start to the last of them, and no further than
+ * the series' own COUNT or UNTIL. An edited day whose time is inherited (not
+ * one of its own fields) moves with its key, so it shows where the series
+ * does that day; one that owns its time stays where it shows. Two keys
+ * moving to one: an edited day stays where it is (two rows can't share a
+ * key), a skip is the same skip once. Every other key is left as it is: one
+ * of the new expansion, an old one on a day the new one gives several
+ * occurrences or none (stranded), or a key no expander gave. Timed series
+ * only: an all-day series' keys are its UTC dates, which no clock rule moves.
  *
- * Idempotent: a moved key is an occurrence of the new expansion, so a second
- * run finds nothing to move. With $dryRun nothing is written and the summary
- * says how many rows it would change.
+ * The keys are rewritten wherever they are stored: the live rows, and the
+ * undo journal's snapshots of them (an entry's before and after, and the
+ * rows it keeps in pieces), by the same mapping, in the series' own
+ * transaction, so an undo puts back keys of the new reading. A snapshot's
+ * keys are read by its own series row on the same side when it has one (a
+ * rule since changed reads by the rule it had), else by the live one. An
+ * entry with a stranded key in a snapshot is made log-only, saying why: its
+ * undo would put back an identity no occurrence has.
+ *
+ * Idempotent and restartable: a moved key is an occurrence of the new
+ * expansion, so a run again (after a full run, or one cut off after some
+ * series) moves nothing it moved already. With $dryRun nothing is written
+ * and the summary says how many rows it would change. $afterSeries (a test
+ * seam) is called with each series id once its transaction commits.
  */
-return static function (Db $db, bool $dryRun = false): string {
+return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = null): string {
     $driver = (string) $db->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
     $hasTable = static fn(string $t): bool => $driver === 'sqlite'
         ? (int) $db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [$t]) > 0
@@ -45,11 +58,30 @@ return static function (Db $db, bool $dryRun = false): string {
     if (!$hasTable('events') || !class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
         return 'nothing to read';
     }
+    $hasJournal = $hasTable('mutations');
+    $hasPieces = $hasTable('mutation_rows');
+    $jsonFlags = JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
+
+    // A series row: a timed master with a rule. Its keys: its skips.
+    $isSeries = static fn(array $row): bool => empty($row['recurrence_parent_id']) && trim((string) ($row['rrule'] ?? '')) !== ''
+        && (int) ($row['all_day'] ?? 0) === 0 && isset($row['id'], $row['start_utc']);
+    $skipsOf = static function (array $row): array {
+        try {
+            return Recurrence::decodeExdates($row['exdates_json'] ?? null);
+        } catch (\InvalidArgumentException) {
+            return []; // quarantined over its limit: no path reads it
+        }
+    };
+    $readingKey = static fn(array $m): string => json_encode([(string) $m['start_utc'], (string) ($m['tzid'] ?? ''), (string) $m['rrule']]);
 
     // The old reading, for the frequencies the old expander left to sabre:
     // not MINUTELY or SECONDLY (its own steps, the new expander's), not a
     // rule with BYSETPOS or a yearly one naming its days by number (read a
-    // period at a time, as the new one does). Null: no old reading to undo.
+    // period at a time, as the new one does). Walked from the start to
+    // $through and no further than the rule's own COUNT (UNTIL ends sabre's
+    // walk itself), never asking for an occurrence after the last one
+    // wanted: sabre searches on far where a rule has no further day. Null:
+    // no old reading to undo.
     $oldKeys = static function (array $master, string $through): ?array {
         $parts = Recurrence::rruleParts((string) $master['rrule']);
         $freq = $parts['FREQ'] ?? '';
@@ -57,34 +89,387 @@ return static function (Db $db, bool $dryRun = false): string {
             || ($freq === 'YEARLY' && (isset($parts['BYWEEKNO']) || isset($parts['BYYEARDAY'])))) {
             return null;
         }
+        $count = isset($parts['COUNT']) ? max(1, (int) $parts['COUNT']) : null;
         $start = Time::fromDb((string) $master['start_utc'])->setTimezone(Time::zone((string) $master['tzid']));
+        $it = new \Sabre\VObject\Recur\RRuleIterator((string) $master['rrule'], $start);
         $out = [];
-        foreach (new \Sabre\VObject\Recur\RRuleIterator((string) $master['rrule'], $start) as $t) {
-            $key = Time::toDb(\DateTimeImmutable::createFromInterface($t));
+        for ($it->rewind(), $n = 1; $it->valid(); $it->next(), $n++) {
+            $key = Time::toDb(\DateTimeImmutable::createFromInterface($it->current()));
             if ($key > $through) {
                 break;
             }
             $out[$key] = true;
+            if ($key === $through || ($count !== null && $n >= $count)) {
+                break;
+            }
         }
         return $out;
     };
-    // The new expansion through a key, by local day in the series' zone, and
-    // the local day of its first occurrence after that, if it has one.
-    $newByDay = static function (array $master, string $through): array {
-        $zone = Time::zone((string) $master['tzid']);
-        $out = [];
-        $end = Time::fromDb($through)->getTimestamp();
-        foreach (Recurrence::iterator($master) as $t) {
-            $dn = Cal::dnOf($t->setTimezone($zone));
-            if ($t->getTimestamp() > $end) {
-                return [$out, $dn];
-            }
-            $out[$dn][] = Time::toDb($t);
+
+    // The reading of a series over the keys it stores: where each key goes.
+    // ['to' => key => the occurrence it moves to, 'stranded' => key => true
+    // for an old one with no single new occurrence on its day, 'isNew' =>
+    // key => true]. Null: a rule neither expander reads, which names no key
+    // to move.
+    $reading = static function (array $master, array $keys) use ($oldKeys): ?array {
+        $keys = array_values(array_unique($keys));
+        if ($keys === []) {
+            return ['to' => [], 'stranded' => [], 'isNew' => []];
         }
-        return [$out, null];
+        $zone = Time::zone((string) $master['tzid']);
+        $dayOf = static fn(string $key): int => Cal::dnOf(Time::fromDb($key)->setTimezone($zone));
+        // The new expansion, by local day, through two days past the last
+        // key, so its day is whole.
+        $end = Time::fromDb(max($keys))->modify('+2 days')->getTimestamp();
+        $byDay = [];
+        $isNew = [];
+        try {
+            foreach (Recurrence::iterator($master) as $t) {
+                if ($t->getTimestamp() > $end) {
+                    break;
+                }
+                $k = Time::toDb($t);
+                $byDay[Cal::dnOf($t->setTimezone($zone))][] = $k;
+                $isNew[$k] = true;
+            }
+        } catch (\Throwable) {
+            return null; // RuleNotReadable, WalkIncomplete, a rule over its limits
+        }
+        $others = array_values(array_filter($keys, static fn(string $k): bool => !isset($isNew[$k])));
+        $to = [];
+        $stranded = [];
+        if ($others !== []) {
+            try {
+                $old = $oldKeys($master, max($others));
+            } catch (\Throwable) {
+                $old = null;
+            }
+            foreach ($others as $k) {
+                if ($old === null || !isset($old[$k])) {
+                    continue; // no expander gave it: not an identity this rewrites
+                }
+                $day = $byDay[$dayOf($k)] ?? [];
+                if (count($day) === 1) {
+                    $to[$k] = $day[0];
+                } else {
+                    $stranded[$k] = true;
+                }
+            }
+        }
+        return ['to' => $to, 'stranded' => $stranded, 'isNew' => $isNew];
     };
 
-    $series = $keysMoved = $skipsMoved = $left = $unread = 0;
+    // The one mapping both paths apply: a series' edited-day rows and skips
+    // as the reading moves them. Rows (each with id, recurrence_instance_utc,
+    // start_utc, end_utc, override_fields) come back changed, by id; skips
+    // come back as a list when they changed, else null. 'stranded': old keys
+    // left on no occurrence. 'left': keys on no new occurrence, left as they
+    // are. Pure.
+    $move = static function (array $reading, array $rows, array $skips): array {
+        $to = $reading['to'];
+        $changedRows = [];
+        $stranded = [];
+        $left = 0;
+        $taken = array_fill_keys(array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $rows), true);
+        foreach ($rows as $row) {
+            $key = (string) $row['recurrence_instance_utc'];
+            $target = $to[$key] ?? null;
+            if ($target === null || isset($taken[$target])) {
+                if (!isset($reading['isNew'][$key])) {
+                    $left++;
+                    if ($target !== null || isset($reading['stranded'][$key])) {
+                        $stranded[] = $key;
+                    }
+                }
+                continue;
+            }
+            unset($taken[$key]);
+            $taken[$target] = true;
+            $own = json_decode((string) ($row['override_fields'] ?? ''), true);
+            // An inherited time follows its key; an own one stays. With no
+            // list (rows older than 063), a row at its key inherits.
+            $inherits = is_array($own) ? !in_array('time', $own, true) && !in_array('date', $own, true) : (string) $row['start_utc'] === $key;
+            $shift = $inherits ? Time::fromDb($target)->getTimestamp() - Time::fromDb($key)->getTimestamp() : 0;
+            $by = ($shift >= 0 ? '+' : '') . $shift . ' seconds';
+            $changedRows[$row['id']] = ['recurrence_instance_utc' => $target,
+                'start_utc' => Time::toDb(Time::fromDb((string) $row['start_utc'])->modify($by)),
+                'end_utc' => Time::toDb(Time::fromDb((string) $row['end_utc'])->modify($by))] + $row;
+        }
+        $newSkips = [];
+        $skipsMoved = 0;
+        foreach ($skips as $key) {
+            $target = $to[$key] ?? $key;
+            if ($target !== $key) {
+                $skipsMoved++;
+            } elseif (!isset($reading['isNew'][$key])) {
+                $left++;
+                if (isset($reading['stranded'][$key])) {
+                    $stranded[] = $key;
+                }
+            }
+            if (!in_array($target, $newSkips, true)) {
+                $newSkips[] = $target; // the same skip once
+            }
+        }
+        return ['rows' => $changedRows, 'skips' => $newSkips === $skips ? null : $newSkips, 'skipsMoved' => $skipsMoved, 'stranded' => $stranded, 'left' => $left];
+    };
+
+    // An entry's event rows, a chunk at a time: its before and after, and
+    // each piece it keeps apart. $fn(side, chunk id, rows) returns the
+    // chunk's rows changed, or null.
+    $chunks = static function (array $entry, callable $fn) use ($db, $hasPieces): array {
+        $changed = [];
+        foreach (['before' => 'before_json', 'after' => 'after_json'] as $side => $col) {
+            $tables = json_decode((string) ($entry[$col] ?? ''), true);
+            if (is_array($tables['tables']['events'] ?? null)) {
+                $rows = $fn($side, $col, $tables['tables']['events']);
+                if ($rows !== null) {
+                    $tables['tables']['events'] = $rows;
+                    $changed[$col] = $tables;
+                }
+            }
+        }
+        if ($hasPieces) {
+            foreach ($db->all("SELECT seq, side FROM mutation_rows WHERE mutation_id = ? AND table_name = 'events' ORDER BY seq", [(int) $entry['id']]) as $piece) {
+                $rows = json_decode((string) $db->scalar('SELECT rows_json FROM mutation_rows WHERE mutation_id = ? AND seq = ?', [(int) $entry['id'], (int) $piece['seq']]), true);
+                if (is_array($rows)) {
+                    $out = $fn((string) $piece['side'], (int) $piece['seq'], $rows);
+                    if ($out !== null) {
+                        $changed[(int) $piece['seq']] = $out;
+                    }
+                }
+            }
+        }
+        return $changed;
+    };
+
+    // The series rows an entry keeps, by side and id: what its snapshots'
+    // keys are read by.
+    $entryMasters = static function (array $entry) use ($chunks, $isSeries): array {
+        $masters = ['before' => [], 'after' => []];
+        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$masters, $isSeries): ?array {
+            foreach ($rows as $row) {
+                if (is_array($row) && $isSeries($row)) {
+                    $masters[$side][(int) $row['id']] = $row;
+                }
+            }
+            return null;
+        });
+        return $masters;
+    };
+
+    $liveMaster = static function (int $id) use ($db, $isSeries): ?array {
+        $row = $db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        return $row !== null && $isSeries($row) ? $row : null;
+    };
+
+    // Series $id's keys in an entry, each with the series row it reads by:
+    // [reading key => [series row, keys]].
+    $entryKeys = static function (array $entry, int $id, array $masters, ?array $live) use ($chunks, $skipsOf, $readingKey): array {
+        $out = [];
+        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$out, $id, $masters, $live, $skipsOf, $readingKey): ?array {
+            $by = $masters[$side][$id] ?? $live;
+            if ($by === null) {
+                return null;
+            }
+            foreach ($rows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $keys = (int) ($row['id'] ?? 0) === $id && isset($masters[$side][$id]) ? $skipsOf($row)
+                    : ((int) ($row['recurrence_parent_id'] ?? 0) === $id && !empty($row['recurrence_instance_utc']) ? [(string) $row['recurrence_instance_utc']] : []);
+                if ($keys !== []) {
+                    $k = $readingKey($by);
+                    $out[$k][0] = $by;
+                    $out[$k][1] = array_merge($out[$k][1] ?? [], $keys);
+                }
+            }
+            return null;
+        });
+        return $out;
+    };
+
+    // The journal's undoable entries that keep a key of a series, by series
+    // id. Read once, a page at a time.
+    $journal = [];
+    if ($hasJournal) {
+        $afterId = 0;
+        while (true) {
+            $page = $db->all('SELECT id, before_json, after_json FROM mutations WHERE id > ? AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id LIMIT 200', [$afterId]);
+            if ($page === []) {
+                break;
+            }
+            $afterId = (int) end($page)['id'];
+            foreach ($page as $entry) {
+                $masters = $entryMasters($entry);
+                $chunks($entry, static function (string $side, $chunk, array $rows) use (&$journal, $entry, $masters): ?array {
+                    foreach ($rows as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+                        if (isset($masters[$side][(int) ($row['id'] ?? 0)])) {
+                            $journal[(int) $row['id']][(int) $entry['id']] = true;
+                        } elseif (!empty($row['recurrence_parent_id']) && !empty($row['recurrence_instance_utc'])) {
+                            $journal[(int) $row['recurrence_parent_id']][(int) $entry['id']] = true;
+                        }
+                    }
+                    return null;
+                });
+            }
+        }
+    }
+
+    $series = $keysMoved = $skipsMoved = $left = $unread = $entriesKept = $entriesClosed = 0;
+    $seen = [];
+    $process = static function (int $id, ?array $master) use (
+        $db, $dryRun, $afterSeries, $jsonFlags, &$journal, &$series, &$keysMoved, &$skipsMoved, &$left, &$unread, &$entriesKept, &$entriesClosed,
+        $skipsOf, $readingKey, $reading, $move, $chunks, $entryMasters, $entryKeys
+    ): void {
+        $entryIds = array_keys($journal[$id] ?? []);
+        $edited = $master === null ? [] : $db->all('SELECT id, recurrence_instance_utc, start_utc, end_utc, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc IS NOT NULL', [$id]);
+        $skips = $master === null ? [] : $skipsOf($master);
+        if ($edited === [] && $skips === [] && $entryIds === []) {
+            return;
+        }
+        // Every key the series stores, live and in the journal, by the
+        // series row each is read by: one reading for each.
+        $groups = [];
+        if ($master !== null) {
+            $groups[$readingKey($master)] = [$master, array_merge(array_column($edited, 'recurrence_instance_utc'), $skips)];
+        }
+        $entries = [];
+        foreach ($entryIds as $entryId) {
+            $entry = $db->one('SELECT id, before_json, after_json, details_json FROM mutations WHERE id = ? AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL)', [$entryId]);
+            if ($entry === null) {
+                continue;
+            }
+            $masters = $entryMasters($entry);
+            $entries[] = [$entry, $masters];
+            foreach ($entryKeys($entry, $id, $masters, $master) as $k => [$by, $keys]) {
+                $groups[$k][0] = $by;
+                $groups[$k][1] = array_merge($groups[$k][1] ?? [], $keys);
+            }
+        }
+        $readings = [];
+        foreach ($groups as $k => [$by, $keys]) {
+            $readings[$k] = $reading($by, $keys);
+        }
+
+        $writes = [];
+        $liveChanged = false;
+        if ($master !== null) {
+            $r = $readings[$readingKey($master)] ?? null;
+            if ($r === null) {
+                $unread++;
+            } else {
+                $m = $move($r, $edited, $skips);
+                foreach ($m['rows'] as $rowId => $row) {
+                    $writes[] = ['UPDATE events SET recurrence_instance_utc = ?, start_utc = ?, end_utc = ? WHERE id = ?', [$row['recurrence_instance_utc'], $row['start_utc'], $row['end_utc'], (int) $rowId]];
+                }
+                if ($m['skips'] !== null) {
+                    $writes[] = ['UPDATE events SET exdates_json = ? WHERE id = ?', [json_encode($m['skips']), $id]];
+                }
+                $keysMoved += count($m['rows']);
+                $skipsMoved += $m['skipsMoved'];
+                $left += $m['left'];
+                $liveChanged = $writes !== [];
+            }
+        }
+
+        // The journal, by the same mapping: each side's rows of this series
+        // together (two edited days can't take one key), then put back into
+        // the chunk each came from.
+        foreach ($entries as [$entry, $masters]) {
+            $bySide = ['before' => [], 'after' => []];
+            $skipRows = [];
+            $chunks($entry, static function (string $side, $chunk, array $rows) use (&$bySide, &$skipRows, $id, $masters): ?array {
+                foreach ($rows as $i => $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    if ((int) ($row['id'] ?? 0) === $id && isset($masters[$side][$id])) {
+                        $skipRows[$side] = [$chunk, $i];
+                    } elseif ((int) ($row['recurrence_parent_id'] ?? 0) === $id && !empty($row['recurrence_instance_utc'])) {
+                        $bySide[$side][] = $row;
+                    }
+                }
+                return null;
+            });
+            $changedRows = [];
+            $changedSkips = [];
+            $stranded = false;
+            $any = false;
+            foreach (['before', 'after'] as $side) {
+                $by = $masters[$side][$id] ?? $master;
+                $r = $by === null ? null : ($readings[$readingKey($by)] ?? null);
+                if ($r === null) {
+                    continue;
+                }
+                $m = $move($r, $bySide[$side], isset($masters[$side][$id]) ? $skipsOf($masters[$side][$id]) : []);
+                $stranded = $stranded || $m['stranded'] !== [];
+                $changedRows[$side] = $m['rows'];
+                if ($m['skips'] !== null) {
+                    $changedSkips[$side] = json_encode($m['skips']);
+                }
+                $any = $any || $m['rows'] !== [] || $m['skips'] !== null;
+            }
+            if ($stranded) {
+                $entriesClosed++;
+                $details = json_decode((string) ($entry['details_json'] ?? ''), true);
+                $details = is_array($details) ? $details : [];
+                $details['notUndoable'] = "This change can't be undone: the upgrade to 1.5.0 reads this series' dates anew, and a date it kept has no occurrence now";
+                $writes[] = ['UPDATE mutations SET before_json = NULL, after_json = NULL, details_json = ? WHERE id = ?', [json_encode($details, $jsonFlags), (int) $entry['id']]];
+                $writes[] = ['DELETE FROM mutation_rows WHERE mutation_id = ?', [(int) $entry['id']]];
+                continue;
+            }
+            if (!$any) {
+                continue;
+            }
+            $entriesKept++;
+            $out = $chunks($entry, static function (string $side, $chunk, array $rows) use ($id, $changedRows, $changedSkips, $skipRows): ?array {
+                $changed = false;
+                foreach ($rows as $i => $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    if ((int) ($row['recurrence_parent_id'] ?? 0) === $id && isset($changedRows[$side][$row['id'] ?? ''])) {
+                        $rows[$i] = $changedRows[$side][$row['id']];
+                        $changed = true;
+                    } elseif (isset($changedSkips[$side]) && ($skipRows[$side] ?? null) === [$chunk, $i]) {
+                        $rows[$i]['exdates_json'] = $changedSkips[$side];
+                        $changed = true;
+                    }
+                }
+                return $changed ? $rows : null;
+            });
+            foreach ($out as $chunk => $value) {
+                $writes[] = is_string($chunk)
+                    ? ["UPDATE mutations SET $chunk = ? WHERE id = ?", [json_encode($value, $jsonFlags), (int) $entry['id']]]
+                    : ['UPDATE mutation_rows SET rows_json = ? WHERE mutation_id = ? AND seq = ?', [json_encode($value, $jsonFlags), (int) $entry['id'], $chunk]];
+            }
+        }
+        if ($writes === []) {
+            return;
+        }
+        $series++;
+        if ($dryRun) {
+            return;
+        }
+        $db->tx(static function () use ($db, $writes): void {
+            foreach ($writes as [$sql, $params]) {
+                $db->run($sql, $params);
+            }
+        });
+        if ($liveChanged) {
+            // CalDAV clients and open tabs fetch the series again.
+            ChangeLog::record($db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+            ChangeLog::touchAccount($db, (int) $master['user_id']);
+        }
+        if ($afterSeries !== null) {
+            $afterSeries($id);
+        }
+    };
+
     $after = 0;
     while (true) {
         $masters = $db->all("SELECT * FROM events WHERE id > ? AND rrule IS NOT NULL AND rrule <> '' AND recurrence_parent_id IS NULL AND all_day = 0 ORDER BY id LIMIT 200", [$after]);
@@ -93,107 +478,19 @@ return static function (Db $db, bool $dryRun = false): string {
         }
         $after = (int) end($masters)['id'];
         foreach ($masters as $master) {
-            $id = (int) $master['id'];
-            $edited = $db->all('SELECT id, recurrence_instance_utc, start_utc, end_utc, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc IS NOT NULL', [$id]);
-            try {
-                $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
-            } catch (\InvalidArgumentException) {
-                $skips = []; // quarantined over its limit: no path reads it
-            }
-            $stored = array_merge(array_column($edited, 'recurrence_instance_utc'), $skips);
-            if ($stored === []) {
-                continue;
-            }
-            $through = Time::toDb(Time::fromDb(max($stored))->modify('+2 days'));
-            try {
-                [$new, $later] = $newByDay($master, $through);
-            } catch (RuleNotReadable|WalkIncomplete) {
-                $unread++;
-                continue; // a rule the expander can't read names no key to move
-            }
-            $isNew = [];
-            foreach ($new as $keys) {
-                foreach ($keys as $k) {
-                    $isNew[$k] = true;
-                }
-            }
-            $zone = Time::zone((string) $master['tzid']);
-            $dayOf = static fn(string $key): int => Cal::dnOf(Time::fromDb($key)->setTimezone($zone));
-            // A key that could move: no new occurrence, one on its day, and a
-            // later day with one, so the old reading's walk to it ends (sabre
-            // searches on forever where a rule has no further day).
-            $lastDay = $later ?? ($new === [] ? PHP_INT_MIN : max(array_keys($new)));
-            $candidates = array_values(array_filter(array_unique($stored), static fn(string $k): bool => !isset($isNew[$k]) && count($new[$dayOf($k)] ?? []) === 1 && $dayOf($k) < $lastDay));
-            if ($candidates === []) {
-                $left += count(array_filter($stored, static fn(string $k): bool => !isset($isNew[$k])));
-                continue;
-            }
-            try {
-                $old = $oldKeys($master, max($candidates));
-            } catch (\Sabre\VObject\InvalidDataException) {
-                $old = null;
-            }
-            // Where a key moves: the one new occurrence on its day, when the
-            // old reading gave it and the new one doesn't; else null.
-            $target = static function (string $key) use ($new, $old, $candidates, $dayOf): ?string {
-                return $old !== null && isset($old[$key]) && in_array($key, $candidates, true) ? $new[$dayOf($key)][0] : null;
-            };
-            $taken = array_fill_keys(array_column($edited, 'recurrence_instance_utc'), true);
-            $writes = [];
-            foreach ($edited as $row) {
-                $key = (string) $row['recurrence_instance_utc'];
-                $to = $target($key);
-                if ($to === null || isset($taken[$to])) {
-                    $left += isset($isNew[$key]) ? 0 : 1;
-                    continue;
-                }
-                unset($taken[$key]);
-                $taken[$to] = true;
-                $own = json_decode((string) ($row['override_fields'] ?? ''), true);
-                // An inherited time follows its key; an own one stays. With no
-                // list (rows older than 063), a row at its key inherits.
-                $inherits = is_array($own) ? !in_array('time', $own, true) && !in_array('date', $own, true) : (string) $row['start_utc'] === $key;
-                $shift = $inherits ? Time::fromDb($to)->getTimestamp() - Time::fromDb($key)->getTimestamp() : 0;
-                $writes[] = ['UPDATE events SET recurrence_instance_utc = ?, start_utc = ?, end_utc = ? WHERE id = ?', [
-                    $to, Time::toDb(Time::fromDb((string) $row['start_utc'])->modify(($shift >= 0 ? '+' : '') . $shift . ' seconds')),
-                    Time::toDb(Time::fromDb((string) $row['end_utc'])->modify(($shift >= 0 ? '+' : '') . $shift . ' seconds')), (int) $row['id'],
-                ]];
-                $keysMoved++;
-            }
-            $newSkips = [];
-            $changed = false;
-            foreach ($skips as $key) {
-                $to = $target($key);
-                if ($to === null || in_array($to, $skips, true) || in_array($to, $newSkips, true)) {
-                    $left += isset($isNew[$key]) ? 0 : 1;
-                    $newSkips[] = $key;
-                    continue;
-                }
-                $newSkips[] = $to;
-                $changed = true;
-                $skipsMoved++;
-            }
-            if ($changed) {
-                $writes[] = ['UPDATE events SET exdates_json = ? WHERE id = ?', [json_encode($newSkips), $id]];
-            }
-            if ($writes === []) {
-                continue;
-            }
-            $series++;
-            if ($dryRun) {
-                continue;
-            }
-            $db->tx(static function () use ($db, $writes): void {
-                foreach ($writes as [$sql, $params]) {
-                    $db->run($sql, $params);
-                }
-            });
-            // CalDAV clients and open tabs fetch the series again.
-            ChangeLog::record($db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
-            ChangeLog::touchAccount($db, (int) $master['user_id']);
+            $seen[(int) $master['id']] = true;
+            $process((int) $master['id'], $master);
         }
     }
-    return sprintf('%s%d series, %d edited-day key%s and %d skip%s %s; %d key%s left on no occurrence; %d series unread',
+    // Series the journal keeps that are no timed series now (gone, or made
+    // all-day since): their snapshots read by their own series rows.
+    foreach (array_keys($journal) as $id) {
+        if (!isset($seen[$id])) {
+            $process($id, $liveMaster($id));
+        }
+    }
+    return sprintf('%s%d series, %d edited-day key%s and %d skip%s %s; %d key%s left on no occurrence; %d series unread; %d undo entr%s %s, %d made log-only',
         $dryRun ? 'dry run: ' : '', $series, $keysMoved, $keysMoved === 1 ? '' : 's', $skipsMoved, $skipsMoved === 1 ? '' : 's',
-        $dryRun ? 'would move' : 'moved', $left, $left === 1 ? '' : 's', $unread);
+        $dryRun ? 'would move' : 'moved', $left, $left === 1 ? '' : 's', $unread,
+        $entriesKept, $entriesKept === 1 ? 'y' : 'ies', $dryRun ? 'would be rewritten' : 'rewritten', $entriesClosed);
 };

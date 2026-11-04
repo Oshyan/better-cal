@@ -1,6 +1,6 @@
 # The Series Model
 
-Where every occurrence of a repeating series goes when the series is edited, and what the person sees before it happens. Written before the 1.5 rewrite starts: first draft 2026-11-02, revised four times the same day, after each of four outside design reviews and my direction on them. This is the table the roadmap's "Decisions to make first" asks for. Every example is invented. The long worked examples, the full grid, the harness cases and the prediction cases are in [series-model-examples.md](series-model-examples.md).
+Where every occurrence of a repeating series goes when the series is edited, and what the person sees before it happens. The calls made here where more than one reading was defensible are listed, with what each decided against, in [decisions.md](decisions.md). Written before the 1.5 rewrite starts: first draft 2026-11-02, revised four times the same day, after each of four outside design reviews and my direction on them. This is the table the roadmap's "Decisions to make first" asks for. Every example is invented. The long worked examples, the full grid, the harness cases and the prediction cases are in [series-model-examples.md](series-model-examples.md).
 
 ## What This Is
 

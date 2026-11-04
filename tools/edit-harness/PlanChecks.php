@@ -222,7 +222,7 @@ trait PlanChecks
         'next[]' => ['start', 'allDay', 'tz', 'kind', 'words'],
         'counts' => ['events', 'edited', 'skipped'],
         'groups[]' => ['id', 'label', 'selected', 'day', 'days', 'count', 'field', 'value', 'dates', 'side', 'splits', 'counted', 'from', 'to', 'options'],
-        'options[]' => ['id', 'label', 'rrule', 'date', 'next', 'dates', 'then', 'earlier', 'earlierSeries', 'bound', 'differs', 'words', 'disabled', 'reason'],
+        'options[]' => ['id', 'label', 'rrule', 'date', 'start', 'next', 'dates', 'then', 'earlier', 'earlierSeries', 'bound', 'differs', 'words', 'disabled', 'reason'],
         'entry' => ['start', 'allDay', 'tz'],
         'days[]' => ['key', 'newKey', 'kind', 'title', 'day', 'ownDate', 'before', 'after', 'shows', 'to', 'at', 'tz', 'why', 'side', 'outcome', 'head', 'outcomeWords', 'words', 'kept', 'takes'],
         'placement' => ['date', 'at', 'tz', 'kind'],
@@ -504,6 +504,18 @@ trait PlanChecks
                     }
                 }
                 $this->shapeKeys($op, 'options[]', $o);
+                // A zone option's start is the series' start under it, written as rule.to.start is (the plan's zone); only a zone option has one.
+                // A disabled one gives no series, so it has none (null).
+                if (($g['id'] ?? '') === 'zone' && !empty($o['disabled'])) {
+                    $this->ran('c-shape', 'zone option start (disabled)');
+                    if (($o['start'] ?? null) !== null) {
+                        $this->shapeFail("$op.start", 'a disabled zone option gives no series and has no start', $o['start']);
+                    }
+                } elseif (($g['id'] ?? '') === 'zone') {
+                    $this->isoIn("$op.start", $o['start'] ?? null, $zone, 'zone option start');
+                } elseif (array_key_exists('start', $o)) {
+                    $this->shapeFail("$op.start", 'only a zone option carries a start', $o['start']);
+                }
                 if (array_key_exists('date', $o)) {
                     $this->role('date', "$op.date", $o['date']);
                 }

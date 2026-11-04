@@ -35,16 +35,32 @@ final class Known
     /** The paths that stay on their 1.4.6 code until 1.5.1, decided from what the case sent (scope, and a day after the first). */
     public const PATHS = ['following', 'deleteFollowing', 'attendFollowing'];
 
+    /** The accepted causes beside the paths, each decided until it is fixed (README, Known Code Paths). */
+    public const LORD_HOWE_BYHOUR = 'lord-howe-byhour (the expander\'s hour-by-hour stepping in a zone whose clocks move by half an hour, #202, until 1.5.1)';
+    public const FOLLOWING = 'following-1.4.6 (the 1.4.6 following or delete-following path)';
+
     public static function cause(array $failure): ?string
     {
-        // A failure of a check of the plan's data is never excused (README, Known Code Paths).
+        $series = $failure['spec']['series'] ?? [];
+        // A series in Lord Howe naming its hour: the expander's BYHOUR clock drifts half an hour after the zone's change, deferred to 1.5.1 (#202).
+        // Read from the series as drawn, or, for an occurrence check, from the series it compared (an edit can bring a series there).
+        $d = $failure['detail'] ?? [];
+        $lordHowe = static fn(?string $tz, ?string $rule): bool => $tz === 'Australia/Lord_Howe' && str_contains(strtoupper((string) $rule), 'BYHOUR');
+        if (($lordHowe($series['tzid'] ?? null, $series['rrule'] ?? null) && !($series['allDay'] ?? false)) || $lordHowe($d['tz'] ?? null, $d['rrule'] ?? null)) {
+            return self::LORD_HOWE_BYHOUR;
+        }
+        $following = in_array($failure['path'] ?? '', self::PATHS, true);
+        // The following path writing a part several times a day as all-day (MINUTELY, HOURLY on a date), which the evaluator
+        // doesn't read: the legacy path until 1.5.1, under its cause.
+        $subDaily = preg_match('/(^|;)FREQ=(HOURLY|MINUTELY|SECONDLY)(;|$)/', strtoupper((string) ($d['rrule'] ?? ''))) === 1;
+        if ($following && $subDaily && $failure['invariant'] === 'c-occurrences' && ($d['why'] ?? '') === 'a clock part on an all-day series') {
+            return self::FOLLOWING;
+        }
+        // Any other failure of a check of the plan's data or the occurrences is never excused (README, Known Code Paths).
         if (in_array($failure['invariant'], Driver::NEW_CHECKS, true)) {
             return null;
         }
-        if (in_array($failure['path'], self::PATHS, true)) {
-            return 'following-1.4.6 (the 1.4.6 following or delete-following path)';
-        }
-        return null;
+        return $following ? self::FOLLOWING : null;
     }
 }
 
@@ -81,7 +97,7 @@ final class Report
             } else {
                 $byCause[$cause] = ($byCause[$cause] ?? 0) + 1;
             }
-            if (in_array($f['invariant'], Driver::NEW_CHECKS, true) && in_array($f['path'], Known::PATHS, true)) {
+            if ($cause === null && in_array($f['invariant'], Driver::NEW_CHECKS, true) && in_array($f['path'], Known::PATHS, true)) {
                 $newOnKnown++;
             }
         }

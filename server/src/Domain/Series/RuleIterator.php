@@ -44,9 +44,9 @@ namespace BetterCal\Domain\Series;
  *  - The start is always the first occurrence and the first counted (RFC
  *    5545 3.3.10: DTSTART "always counts as the first occurrence"); a
  *    generated instant before it is no occurrence. COUNT bounds the
- *    generated set, before any exclusion; UNTIL bounds every instance,
- *    inclusive, a date UNTIL read as the end of that day in the start's
- *    zone.
+ *    generated set, before any exclusion; UNTIL bounds every generated
+ *    instance, inclusive, a date UNTIL read as the end of that day in the
+ *    start's zone (Walk::valid).
  *
  * A rule ends only by its COUNT, its UNTIL, the end of year 9999, or a walk
  * that proves it has no more: no day the day parts admit in the calendar's

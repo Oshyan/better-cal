@@ -229,6 +229,8 @@ $skipped = (new Recurrence())->expand(['id' => 5, 'rrule' => 'FREQ=DAILY;COUNT=3
 checkEq('COUNT: a skip is one of the three, so the series shows 1 and 3 Jan, never a 4th', ['2027-01-01 09:00:00', '2027-01-03 09:00:00'], array_column($skipped, 'instanceUtc'));
 checkEq('UNTIL: inclusive, a date UNTIL the end of that day in the start\'s zone', [['2027-01-05 18:00:00', '2027-01-06 18:00:00', '2027-01-07 18:00:00'], ['2027-01-05 18:00:00', '2027-01-06 18:00:00']],
     [exWalk('FREQ=DAILY;UNTIL=20270107', '2027-01-05 18:00', 'America/Los_Angeles'), exWalk('FREQ=DAILY;UNTIL=20270107T020000Z', '2027-01-05 18:00', 'America/Los_Angeles')]);
+checkEq('UNTIL: one before the start bounds what the rule generates; the start is still the first occurrence', ['2027-12-16 09:00:00'],
+    exWalk('FREQ=DAILY;BYDAY=MO,TU,WE;UNTIL=20271117T075959Z', '2027-12-16 09:00', 'America/Los_Angeles'));
 
 // A rule ends only by COUNT, UNTIL, the end of 9999 or a whole cycle without
 // an occurrence; any other limit is WalkLimitReached, never an end.

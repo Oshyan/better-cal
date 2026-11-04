@@ -7,8 +7,8 @@ namespace BetterCal\Domain\Series;
 /**
  * An iterator over a rule's occurrences, in order, with the rule's two
  * bounds (RFC 5545 3.3.10): COUNT bounds the generated set, the start the
- * first of it, and UNTIL bounds every instance, inclusive. RuleIterator
- * steps it; this class reads where it stands.
+ * first of it, and UNTIL bounds every generated instance, inclusive.
+ * RuleIterator steps it; this class reads where it stands.
  */
 abstract class Walk implements \Iterator
 {
@@ -40,6 +40,9 @@ abstract class Walk implements \Iterator
         if ($this->count !== null && $this->counter >= $this->count) {
             return false;
         }
-        return $this->until === null || $this->currentDate <= $this->until;
+        // The start is always the set's first member (RFC 5545 3.8.5.3: the
+        // set is generated from DTSTART with the rule), so an UNTIL before it
+        // bounds only what the rule generates.
+        return $this->counter === 0 || $this->until === null || $this->currentDate <= $this->until;
     }
 }

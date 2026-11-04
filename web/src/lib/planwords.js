@@ -29,9 +29,14 @@ const DAY_CODE = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
 // ---- dates and times -----------------------------------------------------
 
-/** The wall date an ISO value or a day key names, as a day key ("2026-11-11"). */
+/**
+ * The wall date an ISO value or a day key names, as a day key ("2026-11-11"):
+ * of a list entry ({start, allDay, tz?}) its start, of a placement ({date,
+ * at?, tz?}) its date.
+ */
 export function dayKeyOf(value) {
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ''));
+  const v = value && typeof value === 'object' ? value.start || value.date : value;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v || ''));
   return m ? m[1] : null;
 }
 const yearOf = (key) => Number(String(key).slice(0, 4));
@@ -529,7 +534,8 @@ export function choiceWords(g, ctx = {}) {
   }
   if (g.id === 'zone') {
     const fromTz = g.from, toTz = g.to;
-    const first = (x) => (x.next || [])[0];
+    // The option's first event, an entry: its instant, read in each zone named.
+    const first = (x) => startOfNext((x.next || [])[0]);
     return {
       lead: '',
       reason: 'The series moves to ' + zoneName(toTz) + ' time. Keep the clock time, or the same moment?',

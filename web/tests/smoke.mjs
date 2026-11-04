@@ -4616,6 +4616,11 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: the title states the action and the scope; the series on its calendar under it', [v.title, v.series], ['Move all events', "'Choir' on Sample"]);
   eq('series panel: CHANGE names only what changes, the rest as context, the end part of it', v.change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
+  const zoned = planView({ ...choir, groups: [{ id: 'zone', from: LA, to: 'Europe/Berlin', selected: 'clock', options: [
+    { id: 'clock', next: [{ start: '2027-03-10T19:00:00+01:00', allDay: false }, { start: '2027-03-12T00:00:00+00:00', allDay: true }] },
+    { id: 'moment', next: [{ start: '2027-03-11T03:00:00+01:00', allDay: false }] }] }] }, ctx());
+  eq('series panel: an option\'s list entries give its dates and its clocks, an all-day entry its date', zoned.readings[0].options.map((o) => [o.label, o.dates]), [
+    ['Keep the clock time: 7:00 PM in Berlin', 'Wed, Mar 10 · Fri, Mar 12'], ['Keep the same moment: 6:00 PM in Los Angeles, 3:00 AM in Berlin', 'Thu, Mar 11']]);
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);

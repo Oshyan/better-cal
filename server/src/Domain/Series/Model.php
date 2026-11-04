@@ -476,7 +476,7 @@ final class Model
      * those agree.
      *
      * @param array<int,array> $alts
-     * @return array<int,list<string>>|null
+     * @return array<int,list<array{start:string,allDay:bool,tz?:string}>>|null
      */
     private function partingDates(array $alts): ?array
     {
@@ -490,7 +490,6 @@ final class Model
             $days = $bounded ?? $periods;
             $seqs[$oi] = ['days' => $days, 'calc' => $calc, 'landed' => (int) $alt['meta']['landed']];
         }
-        $iso = fn(Calc $c, int $d): string => Time::iso($c->instant($d)->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $c->tz)));
         $after = [];
         foreach ($seqs as $oi => $s) {
             $after[$oi] = array_values(array_filter($s['days'], static fn(int $d): bool => $d > $s['landed']));
@@ -502,7 +501,7 @@ final class Model
             if (count(array_unique(array_map('json_encode', $col))) > 1) {
                 $out = [];
                 foreach ($after as $oi => $a) {
-                    $out[$oi] = array_map(fn(int $d): string => $iso($seqs[$oi]['calc'], $d), array_slice($a, $i, 3));
+                    $out[$oi] = array_map(fn(int $d): array => $this->patternInstantOut($seqs[$oi]['calc'], $d), array_slice($a, $i, 3));
                 }
                 return $out;
             }
@@ -510,7 +509,7 @@ final class Model
         unset($first);
         $ends = [];
         foreach ($seqs as $oi => $s) {
-            $ends[$oi] = array_map(fn(int $d): string => $iso($s['calc'], $d), array_slice($s['days'], -3));
+            $ends[$oi] = array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), array_slice($s['days'], -3));
         }
         return count(array_unique(array_map('json_encode', $ends))) > 1 ? $ends : null;
     }
@@ -525,7 +524,7 @@ final class Model
      * included).
      *
      * @param array<int, array> $alts
-     * @return array<int, array{dates: list<string>, then: list<string>, earlier: ?string}>
+     * @return array<int, array{dates: list<array>, then: list<array>, earlier: ?string}>
      */
     private function readingApart(array $alts, int $selected): array
     {
@@ -541,7 +540,6 @@ final class Model
         if (!isset($seqs[$selected])) {
             $selected = (int) array_key_first($seqs);
         }
-        $iso = fn(Calc $c, int $d): string => Time::iso($c->instant($d)->setTimezone(Time::zone($this->allDay1 ? 'UTC' : $c->tz)));
         // The series as it is today, before the day acted on.
         $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [])[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
         $out = [];
@@ -571,8 +569,8 @@ final class Model
                 }
             }
             $out[$oi] = [
-                'dates' => array_map(fn(int $d): string => $iso($s['calc'], $d), $dates),
-                'then' => array_map(fn(int $d): string => $iso($s['calc'], $d), $then),
+                'dates' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $dates),
+                'then' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $then),
                 'earlier' => $earlier,
             ];
         }
@@ -1894,7 +1892,8 @@ final class Model
         // A rule the expander can't read lists nothing, and goes on past
         // that unless it has an end.
         [$next, $nextMore] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none'];
-        $nextDates = array_map(static fn(array $n): string => $n['start'], $next);
+        // An option's next events: the same entries, without what only the plan's list says.
+        $nextDates = array_map(static fn(array $n): array => array_intersect_key($n, ['start' => true, 'allDay' => true, 'tz' => true]), $next);
         if ($this->google) {
             $this->notes[] = ['kind' => 'google', 'words' => self::GOOGLE_NOTE];
         }

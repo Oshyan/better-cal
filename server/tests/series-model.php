@@ -261,7 +261,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $swap = smSeries('Book swap', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3', '2027-03-15 19:00');
     $p = smPlan($swap, [], smDrag($swap, '2027-03-15 19:00', '2027-03-30 19:00'));
     checkEq('Book swap (3 events): the clamped and skipping 30th give the same 3 dates, so both are offered', [['clamp', 'skip'], ['2027-03-30', '2027-04-30', '2027-05-30']],
-        [smOptions($p, 'reading'), array_map(static fn(string $s): string => substr($s, 0, 10), smGroup($p, 'reading')['options'][1]['next'] ?? [])]);
+        [smOptions($p, 'reading'), array_map(static fn(array $e): string => substr($e['start'], 0, 10), smGroup($p, 'reading')['options'][1]['next'] ?? [])]);
 
     // ---- A count -----------------------------------------------------------
     $piano = smSeries('Piano lesson with Alex Example', 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', '2027-01-31 16:00');
@@ -772,7 +772,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     // P2-6: bound options told apart by their dates; gains respect the chosen end.
     $cello = smSeries('Cello lesson', 'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=6', '2027-01-31 16:00');
     $p = smPlan($cello, [], smDrag($cello, '2027-10-31 16:00', '2027-11-01 16:00'));
-    $nexts = array_map(static fn(array $o): array => array_map(static fn(string $s): string => substr($s, 0, 10), $o['next'] ?? []), smGroup($p, 'bound')['options'] ?? []);
+    $nexts = array_map(static fn(array $o): array => array_map(static fn(array $e): string => substr($e['start'], 0, 10), $o['next'] ?? []), smGroup($p, 'bound')['options'] ?? []);
     checkEq('Cello lesson: keep the end and keep 6 show their ends, not the same 1 Nov', [['2027-09-01', '2027-10-01', '2027-11-01'], ['2027-05-01', '2027-06-01', '2027-07-01']], $nexts);
     $six = smPlan($cello, [], smDrag($cello, '2027-10-31 16:00', '2027-11-01 16:00'), ['bound' => 'count']);
     checkEq('Cello lesson, keep 6: no gain past its end (1 Oct is no gain of a series ending 1 Jul)', ['2027-03-01', '2027-05-01', '2027-07-01'], array_column($six['plan']['gains'], 'date'));
@@ -1751,6 +1751,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: coming up sorts by the day shown, the all-day day before the evening on the same day', [
         '2027-01-11T20:00:00-08:00', '2027-01-12T00:00:00+00:00', '2027-01-12T20:00:00-08:00', '2027-01-13T20:00:00-08:00',
     ], array_column($p['plan']['next'], 'start'));
+    // An option's lists are entries of the same form, each with its kind.
+    $tueThu = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU,TH', '2027-01-05 20:00');
+    $wholeThu = smEdited($tueThu, 2, '2027-01-07 20:00', ['all_day' => 1, 'tzid' => 'UTC', 'start_utc' => '2027-01-07 00:00:00', 'end_utc' => '2027-01-08 00:00:00'], null, ['allDay']);
+    $p = smPlan($tueThu, [$wholeThu], smDrag($tueThu, '2027-01-05 20:00', '2027-01-06 20:00'));
+    $member = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === 'member'))[0] ?? [];
+    checkEq('Writers: a reading\'s next events are entries, the all-day day among them at its date', [
+        ['start' => '2027-01-06T20:00:00-08:00', 'allDay' => false], ['start' => '2027-01-07T00:00:00+00:00', 'allDay' => true], ['start' => '2027-01-13T20:00:00-08:00', 'allDay' => false],
+    ], $member['next'] ?? null);
+    checkEq('Writers: a reading\'s dates are entries of its rule, in its zone and kind', [
+        ['start' => '2027-01-06T20:00:00-08:00', 'allDay' => false], ['start' => '2027-01-07T20:00:00-08:00', 'allDay' => false], ['start' => '2027-01-13T20:00:00-08:00', 'allDay' => false],
+    ], $member['dates'] ?? null);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

@@ -554,7 +554,9 @@ trait PlanPlacement
 
     /**
      * Notes on a clock that doesn't exist or happens twice, by tzdata: every
-     * day of the stored series from the cutoff through a year on whose clock
+     * day of the stored series among the dates the plan shows (coming up) or
+     * from the cutoff through a year (series-model.md, the clock-notes
+     * sentence) on whose clock
      * names no instant (gap) or two (overlap) must have its note, and every
      * note must be such a day, at that occurrence's instant (an overlap's
      * first), in the series' zone.
@@ -573,10 +575,16 @@ trait PlanPlacement
             $tz = (string) $m1['tzid'];
             $clock = Clock::secsOf(Clock::local((string) $m1['start_utc'], $tz));
             $cut = self::cutoff($after, $edit, $ctx);
+            // The design's window: the dates the plan shows (coming up, as c-next assembles it from the stored rows) and a year from the cutoff.
+            $shown = [];
+            foreach (array_slice($this->eligible($after, $edit, $ctx, $cut), 0, self::NEXT_LIMIT) as $item) {
+                $shown[$item['dn']] = true;
+            }
+            $to = max([$cut + 366, ...array_keys($shown)]);
             // From two days before the cutoff's UTC midnight: a zone east of UTC starts its day the evening before.
-            foreach (Truth::keysFrom($m1, Days::date($cut - 2) . ' 00:00:00', 370) as $k) {
+            foreach (Truth::keysFrom($m1, Days::date($cut - 2) . ' 00:00:00', $to - $cut + 4) as $k) {
                 $dn = Clock::dayOf($k, $tz);
-                if ($dn < $cut || $dn > $cut + 366) {
+                if ($dn < $cut || ($dn > $cut + 366 && !isset($shown[$dn]))) {
                     continue;
                 }
                 $at = self::wallInstants($dn, $clock, $tz);

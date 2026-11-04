@@ -95,12 +95,17 @@ trait PlanPlacement
             $this->expect('c-placement', 'a generated skip is a stored skipped day on its day', 'to (generated)', true, in_array($d['to'] ?? null, $days, true), ['to' => $d['to'] ?? null]);
             return;
         }
-        if (!in_array($outcome, ['moves', 'stays'], true) || $key === null) {
-            return;
+        if ($outcome === 'anchor' || $key === null) {
+            return; // an anchor is no day of the old series (c-shape names its key)
         }
         $this->expect('c-placement', 'a skipped day shows on its identity day', "shows (skipped $outcome)", $identity($key), $d['shows'] ?? null, ['key' => $key]);
+        if (!in_array($outcome, ['moves', 'stays'], true)) {
+            return; // dropped: no day in the new series to go to
+        }
         $img = $ctx['out']['images'][$key] ?? null;
-        if ($ctx['out'] !== null && $img !== null) {
+        if ($ctx['out'] === null || $img === null) {
+            $this->unoracled[] = 'c-placement: a skipped day\'s to where the oracle has no image for it';
+        } else {
             $this->expect('c-placement', 'a skipped day goes to its image\'s day', "to (skipped $outcome)", Days::date((int) $img), $d['to'] ?? null, ['key' => $key]);
         }
     }
@@ -183,7 +188,12 @@ trait PlanPlacement
         $x = $ctx['x'];
         $zone = $ctx['zone'];
         foreach ($plan['groups'] ?? [] as $g) {
-            if (($g['id'] ?? '') !== 'movedDays' || !isset($g['day'])) {
+            if (($g['id'] ?? '') !== 'movedDays') {
+                continue;
+            }
+            if (!isset($g['day'])) {
+                // A choice about several days names no day, and its options no date to check.
+                $this->unoracled[] = 'c-placement: a moved-day choice about several days (no day, no dates)';
                 continue;
             }
             $id = $rowsByKey[self::dbKey((string) $g['day'])] ?? null;
@@ -204,6 +214,7 @@ trait PlanPlacement
                     continue;
                 }
                 if ($ctx['out'] === null || $img === null || $key === null) {
+                    $this->unoracled[] = 'c-placement: a moved-day option other than the chosen one, where the oracle has no image for its day';
                     continue;
                 }
                 [$start, , $allDay, $tz] = self::placeExpected($x, $before, $row0, $key, (int) $img, ($o['id'] ?? '') === 'move');

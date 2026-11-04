@@ -5120,9 +5120,13 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ["'Sample practice' on Wed, Jan 13 was moved earlier to Thu, Jan 14 and moves to 8:00 PM."]);
     // The day a row is about is the old series' day: under a series moved to
     // Tokyo, a Tuesday in Los Angeles is not compared with a Tuesday in Tokyo.
-    eq('verify: in a zone change the day\'s date in the new zone is said, even when it reads the same', rows(plan(TOKYO, [
+    // When it reads the same, the zone is why it is said, so its clock names the zone.
+    eq('verify: in a zone change the day\'s date in the new zone is said, even when it reads the same, its clock naming the zone', rows(plan(TOKYO, [
       day({ outcome: 'moves', kept: ['time'], before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-12', '20:00', TOKYO) })], { rule: { from: weekly(LA), to: weekly(TOKYO) } })),
-    ["'Sample practice' on Tue, Jan 12 moves to Tue, Jan 12 at 8:00 PM."]);
+    ["'Sample practice' on Tue, Jan 12 moves to Tue, Jan 12 at 8:00 PM in Tokyo."]);
+    eq('verify: in a zone change a day whose date changes there says its clock unlabelled', rows(plan(TOKYO, [
+      day({ outcome: 'moves', kept: ['time'], before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-13', '20:00', TOKYO) })], { rule: { from: weekly(LA), to: weekly(TOKYO) } })),
+    ["'Sample practice' on Tue, Jan 12 moves to Wed, Jan 13 at 8:00 PM."]);
     eq('verify: a date in no zone (all-day) is compared with any: a series made timed leaves the day\'s date out', rows(plan(LA, [
       madeTimed()], { rule: { from: weekly(null), to: weekly(LA) } })),
     ["'Sample practice 2' on Tue, Jan 12 now starts at 6:00 PM."]);

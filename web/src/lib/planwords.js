@@ -451,12 +451,16 @@ export function dayLines(d, opts = {}) {
   // the same zone.
   const said = d.ownDate ? d.ownDate.date : acted ? null : d.day;
   const saidTz = d.ownDate ? placeZone(d.ownDate, opts.tz) : opts.dayTz || null;
-  const place = placeOf(d, said, opts, sameZone(saidTz, placeZone(d.after, opts.tz)));
+  const same = sameZone(saidTz, placeZone(d.after, opts.tz));
+  const place = placeOf(d, said, opts, same);
   // The date set on it, with its zone when that isn't the plan's, named
   // once: not again when the clock after it is in the same zone and says so.
   const ownZone = d.ownDate && d.ownDate.tz && !(place.clock && d.after.tz === d.ownDate.tz) ? ' in ' + zoneName(d.ownDate.tz) : '';
-  // A clock after a date named in another zone names its own.
-  if (ownZone && place.clock) place.clock = clockOf(d.after, opts, true);
+  // A clock after a date named in another zone names its own, and so does
+  // one whose date is said again only because the date named before it is
+  // in another zone: the zone is why it is said.
+  const repeated = !same && !!place.date && (d.after || {}).date === said;
+  if ((ownZone || repeated) && place.clock) place.clock = clockOf(d.after, opts, true);
   const own = d.ownDate ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + ownZone : '';
   const say = OUTCOMES[outcomeOf(d)];
   const now = say ? say(place) : '';

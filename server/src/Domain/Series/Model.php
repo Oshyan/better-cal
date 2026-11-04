@@ -560,21 +560,26 @@ final class Model
             }
             // Against the series as it is today, for every reading: where the
             // two first differ, the one that comes first, a day of its own
-            // series (each day number is in its own series' zone, so the two
-            // are ordered by their instants, never compared as days).
+            // series. Each day number is in its own series' zone, so two days
+            // are the same only when they are the same instant of the same
+            // kind, and are ordered by their instants; only the day found is
+            // named, in its own series.
             $earlier = ['earlier' => null, 'earlierSeries' => null];
             $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
             $n = max(count($before), count($oldBefore));
             for ($j = 0; $j < $n; $j++) {
-                $mine = $before[$j] ?? null;
+                $day = $before[$j] ?? null;
                 $was = $oldBefore[$j] ?? null;
-                if ($mine !== $was) {
-                    $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
-                    $earlier = $new
-                        ? ['earlier' => self::patternOut($s['calc'], $mine), 'earlierSeries' => 'new']
-                        : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
-                    break;
+                $at = $day === null ? null : $s['calc']->instant($day);
+                $wasAt = $was === null ? null : $this->old->instant($was);
+                if ($at == $wasAt && $s['calc']->allDay === $this->old->allDay) {
+                    continue;
                 }
+                $new = $at !== null && ($wasAt === null || $at < $wasAt);
+                $earlier = $new
+                    ? ['earlier' => self::patternOut($s['calc'], (int) $day), 'earlierSeries' => 'new']
+                    : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
+                break;
             }
             $out[$oi] = [
                 'dates' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $dates),

@@ -1885,6 +1885,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Readings: a Friday twelve weeks on dragged to Saturday, the member reading\'s dates start there and run three and more', [
         ['2027-04-03', '2027-04-08', '2027-04-10'], ['2027-04-03', '2027-04-09', '2027-04-10'],
     ], [$datesOf($p, 'member'), $datesOf($p, 'pattern')]);
+    // A reading's earlier day is found by instant: moved to Berlin, the
+    // member reading's first Tuesday is Tue 5 Jan 03:00 there, Mon 4 Jan
+    // 18:00 in Los Angeles, before the old Tue 5 Jan 18:00, though both are
+    // numbered 5 Jan in their own zones; days read as days in two zones are
+    // never compared.
+    $class = smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=TU,TH', '2027-01-05 18:00');
+    $toFriBerlin = ['acted' => smAt('2027-01-14 18:00'), 'landed' => ['start_utc' => smAt('2027-01-15 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-15 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']];
+    $p = smPlan($class, [], $toFriBerlin, ['zone' => 'moment']);
+    $member = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === 'member'))[0] ?? [];
+    checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
+        [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
 
     // A new pattern keeps the keys on its days: a series twice a day made
     // once a day at its later time keeps the later day's edited row on its

@@ -1862,6 +1862,18 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $twoDays['landed']['end_utc'] = '2027-01-06 00:00:00';
     $d = $edited(smPlan($allDayWeekly, [$namedAllDay], $twoDays));
     checkEq('Outcomes: an all-day edited day made two days long stays on its date', ['stays', ['date' => '2027-01-11']], [$d['outcome'] ?? null, $d['after'] ?? null]);
+
+    // A reading's dates run from where the day acted on landed, however far
+    // that is from the series' start: the readings are walked on past it.
+    $thuFri = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TH,FR', '2027-01-07 20:00');
+    $p = smPlan($thuFri, [], smDrag($thuFri, '2027-04-02 20:00', '2027-04-03 20:00'));
+    $datesOf = static function (array $p, string $id): array {
+        $o = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === $id))[0] ?? [];
+        return array_map(static fn(array $e): string => substr($e['start'], 0, 10), $o['dates'] ?? []);
+    };
+    checkEq('Readings: a Friday twelve weeks on dragged to Saturday, the member reading\'s dates start there and run three and more', [
+        ['2027-04-03', '2027-04-08', '2027-04-10'], ['2027-04-03', '2027-04-09', '2027-04-10'],
+    ], [$datesOf($p, 'member'), $datesOf($p, 'pattern')]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

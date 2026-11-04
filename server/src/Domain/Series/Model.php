@@ -541,7 +541,7 @@ final class Model
             $selected = (int) array_key_first($seqs);
         }
         // The series as it is today, before the day acted on.
-        $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [])[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
+        $oldBefore = $this->readable ? array_values(array_filter($this->walk($this->old, [], $this->actedDn0)[1], fn(int $d): bool => $d < $this->actedDn0)) : [];
         $out = [];
         foreach ($seqs as $oi => $s) {
             $ref = $oi === $selected ? $seqs[array_key_first(array_diff_key($seqs, [$selected => 1]))] : $seqs[$selected];
@@ -1855,7 +1855,7 @@ final class Model
         // Words and the rest of the plan.
         $wordsBefore = Words::rule($this->r0, $this->allDay0 ? null : $this->clock0);
         $words = $this->ruleDelta === 'none' ? 'Does not repeat' : Words::rule($r1p, $this->allDay1 ? null : $clock1);
-        $walk = $this->readable ? $this->walk($calc1, $genSkips) : [null, []];
+        $walk = $this->readable ? $this->walk($calc1, $genSkips, $landedDn) : [null, []];
         $boundKey = [$r1->count, $r1->until];
         // Skipped days count toward COUNT (RFC 5545 3.8.5.3): the line counts
         // the series' scheduled occurrences (a skip this change generates is
@@ -2099,8 +2099,15 @@ final class Model
         return array_values(array_intersect($own, self::PLACEMENT));
     }
 
-    /** The occurrences a plan shows, for comparing readings past the bound (the walk). @return list<int> */
-    private function walk(Calc $calc, array $skips): array
+    /**
+     * The occurrences a plan shows, for comparing readings past the bound
+     * (the walk): from the series' start through a span of periods past
+     * $through (the day acted on, or where it landed), so a day acted on
+     * long after the start is compared over as many periods as one near it.
+     *
+     * @return list<int>
+     */
+    private function walk(Calc $calc, array $skips, ?int $through = null): array
     {
         $r = $calc->rule;
         if (!$r->supported()) {
@@ -2114,6 +2121,9 @@ final class Model
         };
         $out = [];
         $p = $r->periodOf($calc->startDn);
+        if ($through !== null && $through > $calc->startDn) {
+            $periods += intdiv($r->periodsBetween($p, $r->periodOf($through)), max(1, $r->interval)) + 1;
+        }
         for ($i = 0; $i < $periods && $p <= ($r->kind === 'yearly' ? 9999 : PHP_INT_MAX); $i++) {
             foreach ($r->periodDays($p) as [$d]) {
                 if ($d >= $calc->startDn && !in_array($d, $skips, true)) {

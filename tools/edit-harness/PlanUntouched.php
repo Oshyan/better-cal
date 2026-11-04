@@ -84,13 +84,13 @@ trait PlanUntouched
         $fates = [];
         foreach ($before['overrides'] as $id => $ov) {
             if ($out === null) {
-                // A rule outside the drag table keeps its days (c-days): a row stays on its day while the series has it.
-                $day = Clock::dayOf((string) $ov['recurrence_instance_utc'], $ctx['tz1']);
-                if (!self::isNewDay($after, $ctx, $day)) {
+                // A rule outside the drag table keeps its days (c-days): a row stays while its key has a new key (newKeyByPlace).
+                $k = self::newKeyByPlace($before, $after, $ctx, (string) $ov['recurrence_instance_utc']);
+                if ($k === null) {
                     $fates[$id] = ($choices['outside'] ?? 'keep') === 'keep' ? 'leaves' : 'goes';
                     continue;
                 }
-                $fates[$id] = self::ownAfter($id, $before, $edit, $choices, ['key' => $keyOn($day)] + $placedAt) === [] ? 'goes' : 'stays';
+                $fates[$id] = self::ownAfter($id, $before, $edit, $choices, ['key' => $k] + $placedAt) === [] ? 'goes' : 'stays';
                 continue;
             }
             $r = $out['rows'][$id] ?? null;

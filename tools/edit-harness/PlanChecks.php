@@ -157,6 +157,41 @@ trait PlanChecks
         ];
     }
 
+    /**
+     * An old key's new key under a rule outside the drag table, which keeps
+     * its days (series-model.md, Mapping, Defined): the key itself when the
+     * new series has it on that day, else the new day's key at the old key's
+     * place among its own day's keys, unless another key of the old day keeps
+     * that key as itself (no two old keys share one); null when there is none,
+     * and the day is outside.
+     */
+    private static function newKeyByPlace(array $before, array $after, array $ctx, string $oldKey): ?string
+    {
+        $dn = Clock::dayOf($oldKey, $ctx['tz0']);
+        $old = [];
+        foreach ($before['raw'] as $o) {
+            if ($o['dn'] === $dn) {
+                $old[] = $o['key'];
+            }
+        }
+        $new = [];
+        $keys = $after['through'] !== null && $dn >= Clock::dayOf($after['through'], $ctx['tz1']) - 1
+            ? Truth::keysFrom($after['row'], Days::date($dn - 1) . ' 00:00:00', 3) : array_column($after['raw'], 'key');
+        foreach ($keys as $k) {
+            if (Clock::dayOf($k, $ctx['tz1']) === $dn) {
+                $new[] = $k;
+            }
+        }
+        sort($old);
+        sort($new);
+        if (in_array($oldKey, $new, true)) {
+            return $oldKey;
+        }
+        $i = array_search($oldKey, $old, true);
+        $k = $i === false ? null : ($new[$i] ?? null);
+        return $k !== null && !in_array($k, $old, true) ? $k : null;
+    }
+
     /** The new checks for a committed whole-series plan. */
     private function checkPlanData(array $plan, array $before, array $after, array $sent, Expect $x, ?array $out, array $choices): void
     {

@@ -1,0 +1,71 @@
+{
+    "n": 1596,
+    "seed": 6,
+    "series": {
+        "family": "several",
+        "rrule": "FREQ=DAILY;BYHOUR=9,15;BYMINUTE=0",
+        "import": true,
+        "bound": "count",
+        "boundAt": 4,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-31 03:00",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "url",
+                "reminders",
+                "people",
+                "date"
+            ],
+            "days": -1,
+            "mins": -240,
+            "zone": "America/New_York",
+            "len": -15
+        }
+    ],
+    "acted": 3,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": -1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {
+            "people": [
+                "Alex Example",
+                "Sam Sample"
+            ]
+        },
+        "rule": "new",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": {
+        "kind": "time",
+        "days": -1,
+        "mins": 60
+    },
+    "choices": {
+        "edit": {
+            "outside": "keep"
+        },
+        "stack": []
+    },
+    "preselected": {
+        "edit": true,
+        "stack": false
+    }
+}

@@ -1571,11 +1571,19 @@ final class Model
         $moveOwnDates = false;
         if ($movedRows !== []) {
             $one = count($movedRows) === 1 ? $this->rows[$movedRows[0]] : null;
-            $shownDn = $one !== null ? $this->shownDn($one) : 0;
-            $toDn = $one !== null ? $shownDn + $placeRows[$movedRows[0]] - $this->old->dnOf((string) $one['recurrence_instance_utc']) : 0;
+            // Each choice's date is where the day comes out, placed as the
+            // commit places it (kept or moved), read in the plan's zone.
+            $dates = [];
+            if ($one !== null) {
+                $oneId = $movedRows[0];
+                foreach (['keep' => false, 'move' => true] as $choice => $move) {
+                    [$s, , $all] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $this->old->dnOf((string) $one['recurrence_instance_utc']), $clock1, $this->clock0);
+                    $dates[$choice] = $this->planDn($s, $all);
+                }
+            }
             $moveOwnDates = $this->pick('movedDays', 'Days moved on their own', [
-                ['id' => 'keep', 'label' => $one !== null ? 'Keep ' . Words::date($shownDn, $this->thisYear) : 'Keep their dates'] + ($one !== null ? ['date' => Cal::date($shownDn)] : []),
-                ['id' => 'move', 'label' => $one !== null ? 'Move to ' . Words::date($toDn, $this->thisYear) : 'Move them with their events'] + ($one !== null ? ['date' => Cal::date($toDn)] : []),
+                ['id' => 'keep', 'label' => $one !== null ? 'Keep ' . Words::date($dates['keep'], $this->thisYear) : 'Keep their dates'] + ($one !== null ? ['date' => Cal::date($dates['keep'])] : []),
+                ['id' => 'move', 'label' => $one !== null ? 'Move to ' . Words::date($dates['move'], $this->thisYear) : 'Move them with their events'] + ($one !== null ? ['date' => Cal::date($dates['move'])] : []),
             ], 'keep', ['count' => count($movedRows)] + ($one !== null ? ['day' => str_replace(' ', 'T', (string) $one['recurrence_instance_utc']) . 'Z'] : [])) === 'move';
         }
 
@@ -1899,8 +1907,11 @@ final class Model
             $was = (string) ($this->master[$col] ?? '');
             $differ = array_filter($this->rows, static fn(array $r): bool => (string) ($r[$col] ?? '') !== $was);
             $mixed = $mixed || $differ !== [];
-            // Before: one value for every row, or one that differs by day.
-            $fieldsWords[] = ['field' => $col, 'words' => self::SERIES_COLUMNS[$col] . ': ' . ($differ !== [] ? $yesNo($was) . ' on some days, now ' . $yesNo($v) . ' for every event' : $yesNo($was) . ', now ' . $yesNo($v))];
+            // Before: one value for every row, or one that differs by day. As
+            // data beside the words: the master's value, the new one, and
+            // whether the rows differed, for the client's own sentence.
+            $fieldsWords[] = ['field' => $col, 'words' => self::SERIES_COLUMNS[$col] . ': ' . ($differ !== [] ? $yesNo($was) . ' on some days, now ' . $yesNo($v) . ' for every event' : $yesNo($was) . ', now ' . $yesNo($v)),
+                'was' => (int) $was === 1 ? 1 : 0, 'now' => (int) $v === 1 ? 1 : 0, 'mixed' => $differ !== []];
         }
         $groupsOut = $this->groups;
         // Direct (The API): field-only, nothing placed, no group, and no

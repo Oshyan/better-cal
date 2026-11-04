@@ -1435,6 +1435,27 @@ final class Events
             }
             Trips::assertClearable($members);
         }
+        // Setting the trip flag requires every row it reaches to be in no
+        // trip: a trip never contains another trip (Trips).
+        if (array_key_exists('isContainer', $in) && filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)) {
+            // The rows the flag reaches: the event itself; on a series, every
+            // edited day for all events, those from the day on for this and
+            // following, the day's own row for this event.
+            $seriesScope = !empty($event['rrule']) && empty($event['recurrence_parent_id']) ? (string) ($in['scope'] ?? '') : '';
+            $reached = $seriesScope === 'this' || $seriesScope === 'following' ? [] : [$id];
+            if ($seriesScope === 'all') {
+                foreach ($this->db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) as $edited) {
+                    $reached[] = (int) $edited['id'];
+                }
+            } elseif ($seriesScope === 'this' || $seriesScope === 'following') {
+                $instanceUtc = $this->requireInstance($in, $event);
+                $op = $seriesScope === 'this' ? '=' : '>=';
+                foreach ($this->db->all("SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc $op ? AND deleted_at IS NULL", [$id, $instanceUtc]) as $edited) {
+                    $reached[] = (int) $edited['id'];
+                }
+            }
+            Trips::assertNotInTrip($this->trips->containersFor($reached));
+        }
 
         $isRecurringMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
         $scope = isset($in['scope']) ? (string) $in['scope'] : null;

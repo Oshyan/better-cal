@@ -49,6 +49,21 @@ final class Trips
         }
     }
 
+    /**
+     * Setting is_container is refused on an event that is in a trip: a trip
+     * never contains another trip, and the link would make one.
+     *
+     * @param array<int,list<array{eventId:int,title:string}>> $containers Trips::containersFor of every row the flag reaches
+     */
+    public static function assertNotInTrip(array $containers): void
+    {
+        foreach ($containers as $list) {
+            if ($list !== []) {
+                throw HttpError::badRequest('Take this event out of its trip before making it a trip', 'trip_nested');
+            }
+        }
+    }
+
     /** Clearing is_container is only allowed once the trip has no members. */
     public static function assertClearable(int $liveMemberCount): void
     {

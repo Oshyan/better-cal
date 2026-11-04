@@ -24,6 +24,8 @@ final class Driver
     private array $fixtures = [];
     /** @var list<array> the event_links attaching edited days, as made */
     private array $tripLinks = [];
+    /** tripsFor's draw for this case: per exception, 'stop', 'trip' or null. */
+    private array $tripsDrawn = [];
     /** Parts of the design the oracle had no answer for in this case. */
     public array $unoracled = [];
 
@@ -74,6 +76,7 @@ final class Driver
         Prof::mark('exceptions');
         try {
             $trips = $this->tripsFor($spec);
+            $this->tripsDrawn = $trips;
             if (in_array('trip', $trips, true) && !$spec['vector']['trip']) {
                 // An edited day that is a trip needs a series that is one.
                 $this->events->patch($this->userId, $id, ['scope' => 'all', 'isContainer' => true]);
@@ -104,11 +107,32 @@ final class Driver
         $this->spec['path'] = $path;
         $sent = null;
         Prof::mark('edit');
+        // A trip never contains another trip (Trips): the flag set for all
+        // events of a series with an edited day that is a stop is refused.
+        $stopAts = [];
+        foreach ($spec['exceptions'] ?? [] as $i => $ex) {
+            if (($this->tripsDrawn[$i] ?? null) === 'stop') {
+                $stopAts[] = (int) $ex['at'];
+            }
+        }
+        $nests = $v['trip'] && match ($scope) {
+            'all' => $stopAts !== [],
+            'following' => array_filter($stopAts, static fn(int $at): bool => $at >= (int) $spec['acted']) !== [],
+            default => false,
+        };
         try {
             $sent = $this->applyEdit($id, $before, $acted, $v, $s0, 'edit');
         } catch (\Throwable $e) {
+            if ($e instanceof HttpError && $e->errorCode === 'trip_nested') {
+                $this->check('b-trip', $nests, 'the trip flag is refused only when a row it reaches is in a trip', ['scope' => $scope]);
+                $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
+                return $this->result($path);
+            }
             $this->fail('api-crash', 'the edit failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
             return $this->result($path);
+        }
+        if ($nests) {
+            $this->fail('b-trip', 'the trip flag set on a series with a day in a trip was not refused');
         }
         if ($sent === null) {
             return $this->result($path); // refused, checked

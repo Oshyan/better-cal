@@ -1572,6 +1572,22 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($late, [$ownDate], $toLa);
     $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
     checkEq('R1: a day at its own date and time the same way, before and after', ['2027-01-19', '2027-01-19', '2027-01-19T21:30:00-08:00'], [$day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null]);
+    // Review F1: the choices for a day moved on its own name the day each
+    // choice comes out on, placed as the commit places it, in the plan's
+    // zone: Jan 12 at its own Wed 13 Jan 00:30 New York (Tue 12 Jan 21:30
+    // in Los Angeles), the series moved to Wednesday and to Los Angeles time.
+    $ownWed = smEdited($late, 5, '2027-01-12 01:30', [], '2027-01-13 00:30', ['date', 'time']);
+    $toWedLa = ['acted' => smAt('2027-01-05 01:30', $ny), 'landed' => ['start_utc' => smAt('2027-01-06 01:30', $la), 'end_utc' => smAt('2027-01-06 02:30', $la), 'all_day' => 0, 'tzid' => $la], 'rrule' => 'FREQ=WEEKLY;BYDAY=WE'];
+    $p = smPlan($late, [$ownWed], $toWedLa);
+    $g = smGroup($p, 'movedDays');
+    checkEq('F1: keep names Tue 12 Jan and move names Wed 13 Jan, the days each choice comes out on in Los Angeles', [
+        ['keep', '2027-01-12', 'Keep Tue 12 Jan'], ['move', '2027-01-13', 'Move to Wed 13 Jan'],
+    ], array_map(static fn(array $o): array => [$o['id'], $o['date'] ?? null, $o['label']], $g['options'] ?? []));
+    $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('F1: the row agrees with the kept choice', ['2027-01-12', '2027-01-12'], [$day['shows'] ?? null, $day['to'] ?? null]);
+    $moved = smPlan($late, [$ownWed], $toWedLa, ['movedDays' => 'move']);
+    $day = array_values(array_filter($moved['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    checkEq('F1: moved with the rest, the row lands on the day the choice named', ['2027-01-13', smAt('2027-01-14 00:30', $ny)], [$day['to'] ?? null, $moved['writes']['overrides'][5]['start_utc'] ?? null]);
     $allDayLate = smSeries('Sample day', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05', 60, true);
     $ownDay = smEdited($allDayLate, 2, '2027-01-12', [], '2027-01-13', ['date']);
     $p = smPlan($allDayLate, [$ownDay], ['columns' => ['title' => 'Sample day out']]);

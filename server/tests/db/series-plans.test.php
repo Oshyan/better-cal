@@ -514,6 +514,27 @@ return static function (Db $db): void {
         (new BetterCal\Domain\Trips($db, $d->undo))->attach($u, $day, $member);
         [$code] = $answer(fn() => planned($d->events, $u, $trip, ['scope' => 'all', 'isContainer' => false]));
         checkEq('a member on an edited day of the trip: clearing for all events is 400 trip_has_members, nothing written', ['400 trip_has_members', [1, 1]], [$code, $flags($trip)]);
+        // Review F2: a trip never contains another trip. Setting the flag is
+        // refused on every row it reaches that is in a trip: the edited day
+        // alone, the series from either row, and a standalone event.
+        $trips = new BetterCal\Domain\Trips($db, $d->undo);
+        $trips->detach($u, $day, $member);
+        planned($d->events, $u, $trip, ['scope' => 'all', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => false]);
+        $outer = (int) $d->events->create($u, eventAt((int) $db->scalar('SELECT calendar_id FROM events WHERE id = ?', [$trip]), 'Sample outer trip', '2027-01-10', ['isContainer' => true]))['eventId'];
+        $trips->attach($u, $outer, $day);
+        checkEq('the edited day, no trip itself, is in a trip', [[0, 0], 1], [$flags($trip), count($trips->listMembers($u, $outer))]);
+        [$code] = $answer(fn() => $d->events->patch($u, $day, ['isContainer' => true]));
+        checkEq('the edited day alone made a trip: 400 trip_nested', '400 trip_nested', $code);
+        [$code] = $answer(fn() => planned($d->events, $u, $trip, $on));
+        [$code2] = $answer(fn() => planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => true]));
+        checkEq('the series made a trip from the master or from that day: 400 trip_nested, nothing written, the link stands', ['400 trip_nested', '400 trip_nested', [0, 0], 1], [$code, $code2, $flags($trip), count($trips->listMembers($u, $outer))]);
+        $trips->detach($u, $outer, $day);
+        planned($d->events, $u, $trip, $on);
+        checkEq('out of the trip, the series becomes one', [1, 1], $flags($trip));
+        $trips->attach($u, $outer, $member);
+        [$code] = $answer(fn() => $d->events->patch($u, $member, ['isContainer' => true]));
+        $d->events->patch($u, $outer, ['title' => 'Sample outer trip, renamed']);
+        checkEq('a standalone event in a trip can\'t become one; its trip is unchanged', ['400 trip_nested', 0, 1], [$code, (int) $db->scalar('SELECT is_container FROM events WHERE id = ?', [$member]), count($trips->listMembers($u, $outer))]);
     });
 
     scenario('"Use series value" for one of date, time, length, all-day: the zone goes with the time it keeps', function () use ($d, $u, $db, $home): void {

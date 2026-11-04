@@ -18,9 +18,9 @@ return [
     ],
     [
         'id' => 'to-from-pattern-day', 'file' => $model, 'checks' => ['c-placement'],
-        'what' => 'a to from a pattern day (its new key\'s UTC date) beside an at from an instant',
-        'patch' => [["\$out['to'] = \$out['after']['date'];", "\$out['to'] = substr((string) (\$after['recurrence_instance_utc'] ?? \$after['start_utc']), 0, 10);"]],
-        'cases' => ['acted-all-day-day-of-a-timed-series-from-its-row', 'mutation-drag-with-edited-days-in-other-zones'],
+        'what' => 'an edited day\'s to from a pattern day (its image, a day of the new rule) beside an at from its instant',
+        'patch' => [["'title' => (string) \$row['title'], 'outcome' => \$moved ? 'moves' : 'stays'] + \$sides", "'title' => (string) \$row['title'], 'outcome' => \$moved ? 'moves' : 'stays', 'to' => self::patternOut(\$calc1, (int) \$img)] + \$sides"]],
+        'cases' => ['mutation-drag-with-edited-days-in-other-zones', 'mutation-drag-with-a-day-at-its-own-date'],
     ],
     [
         'id' => 'day-from-before', 'file' => $model, 'checks' => ['c-placement'],
@@ -30,9 +30,18 @@ return [
     ],
     [
         'id' => 'earlier-min-across-series', 'file' => $model, 'checks' => ['c-placement'],
-        'what' => 'earlier as a min across two series: day numbers of two zones compared as days',
-        'patch' => [["\$new = \$mine !== null && (\$was === null || \$s['calc']->instant(\$mine) < \$this->old->instant(\$was));", "\$new = \$mine !== null && (\$was === null || \$mine < \$was);"]],
-        'cases' => ['mutation-earlier-across-zones'],
+        // Both halves of a min across two series: where the readings differ (day numbers as days) and which comes first (the smaller day number).
+        // Today the model detects by day number (review D2), so reading-earlier-by-instant-across-zones fails unmutated; when the model compares
+        // instants this text is gone and the runner fails loudly until the first pair is retargeted at its detection.
+        'what' => 'earlier as a min across two series: two zones\' day numbers compared as days, to find where they differ and which comes first',
+        'patch' => [["                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$s['calc']->instant(\$mine) < \$this->old->instant(\$was));", "                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$mine < \$was);"]],
+        'cases' => ['mutation-earlier-across-zones', 'reading-earlier-by-instant-across-zones'],
+    ],
+    [
+        'id' => 'start-as-key', 'file' => $model, 'checks' => ['c-shape'],
+        'what' => 'every series\' start written as a key, the form only an anchored series\' start has',
+        'patch' => [["\$startIso = \$calc1->anchor !== null ? self::keyOut(Time::toDb(\$start1)) : self::inZoneOut(\$start1, \$this->planZone());", "\$startIso = self::keyOut(Time::toDb(\$start1));"]],
+        'cases' => ['next-trailing-skipped-occurrences', 'acted-timed-day-of-an-all-day-series-from-its-row'],
     ],
     [
         'id' => 'next-drops-acted', 'file' => $model, 'checks' => ['c-next'],
@@ -90,16 +99,28 @@ return [
         'cases' => ['mutation-all-day-day-in-a-daily-evening-series'],
     ],
     [
+        'id' => 'notes-dropped', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'every note on a clock that doesn\'t exist or happens twice dropped',
+        'patch' => [["        if (\$this->allDay1 || \$calc->tz === 'UTC') {\n            return;\n        }\n        \$tz = Time::zone(\$calc->tz);", "        if (true || \$this->allDay1 || \$calc->tz === 'UTC') {\n            return;\n        }\n        \$tz = Time::zone(\$calc->tz);"]],
+        'cases' => ['note-a-clock-in-the-autumn-overlap', 'note-a-clock-in-the-spring-gap', 'note-a-half-hour-repeated-clock-on-lord-howe'],
+    ],
+    [
         'id' => 'untouched-unrelated-column', 'file' => $model, 'checks' => ['c-untouched'],
         'what' => 'an unrelated column (the icon) changed on the series',
         'patch' => [["                'master' => \$masterCols,", "                'master' => \$masterCols + ['icon' => 'sample'],"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
     [
-        'id' => 'untouched-control-event', 'file' => $model, 'checks' => ['c-untouched'],
-        'what' => 'a control event touched (the row made just before the series)',
-        'patch' => [["                'overrides' => \$overrideWrites,", "                'overrides' => \$overrideWrites + [((int) \$this->master['id']) - 1 => ['location' => 'Sample Annex']],"]],
+        'id' => 'untouched-control-event', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['c-untouched'],
+        'what' => 'a commit that writes the account\'s other events: every event of its own made before the series takes the new place',
+        'patch' => [["            if (\$w['master'] !== []) {\n", "            \$this->db->run(\"UPDATE events SET location = 'Sample Annex' WHERE user_id = ? AND id < ? AND recurrence_parent_id IS NULL AND rrule IS NULL\", [\$userId, \$id]);\n            if (\$w['master'] !== []) {\n"]],
         'cases' => ['next-trailing-skipped-occurrences'],
+    ],
+    [
+        'id' => 'untouched-own-placement-entry', 'file' => $model, 'checks' => ['c-untouched'],
+        'what' => 'an edited day\'s own date dropped from its own list under a drag that keeps its placement (allowed when c-untouched went by edit kind)',
+        'patch' => [["\$encoded = OwnFields::encode(\$ownAfter);", "\$encoded = OwnFields::encode(array_values(array_diff(\$ownAfter, ['date'])));"]],
+        'cases' => ['mutation-drag-with-a-day-at-its-own-date'],
     ],
     [
         'id' => 'untouched-insertion', 'file' => $model, 'checks' => ['c-untouched'],
@@ -107,14 +128,16 @@ return [
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    // The trip rule's two mutations patch today's query (Trips::assertRestored, which Undo calls); when the shared rule lands as
+    // Trips::assertRules for every writer, retarget both at it: the runner fails until then, the text being gone.
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'Undo\'s gate lets a trip\'s flag be cleared while it has members',
+        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],
     ],
     [
         'id' => 'undo-gate-nesting', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'Undo\'s gate lets a link that nests a trip be restored',
+        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a link with both ends flagged stand',
         'patch' => [["((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))", "((c.is_container = 1 AND (1 = 0 OR l.container_id = l.event_id))"]],
     ],
 ];

@@ -104,6 +104,105 @@ trait PlanUntouched
         return $fates;
     }
 
+    /**
+     * The series' placement columns the oracle changes: none for a change of
+     * fields alone, the rule for a bound (and its skips where the oracle's differ), and for a change of time, days or
+     * pattern the start, rule and skips, the end where the start or the
+     * length moves, the all-day flag and zone where they change.
+     *
+     * @return list<string>
+     */
+    private function masterPlacement(array $before, Expect $x, ?array $out): array
+    {
+        // A bound drops the skips past the new end: the skips change where the oracle's differ from those stored.
+        $skips = array_map(static fn(string $k): int => Clock::dayOf($k, $before['tz']), $before['exdates']);
+        sort($skips);
+        if ($x->kind === 'bound' && $out === null) {
+            $this->unoracled[] = 'c-untouched: the skips of a bound change to a rule outside the drag table';
+        }
+        $skipsChange = $out === null || $out['skips'] !== $skips;
+        $cols = match ($x->kind) {
+            'fields' => [],
+            'bound' => $skipsChange ? ['rrule', 'exdates_json'] : ['rrule'],
+            default => ['start_utc', 'end_utc', 'rrule', 'exdates_json'],
+        };
+        if ($x->allDay1 !== $before['allDay']) {
+            $cols = array_merge($cols, ['all_day', 'tzid', 'start_utc', 'end_utc']);
+        }
+        if (!$x->allDay1 && !$before['allDay'] && $x->tz1 !== $before['tz']) {
+            $cols[] = 'tzid';
+        }
+        if ($x->len1 !== $before['len']) {
+            $cols[] = 'end_utc';
+        }
+        return array_values(array_unique($cols));
+    }
+
+    /**
+     * An edited row's placement columns the oracle changes, and whether its
+     * own placement entries may: where it stays, each column the harness's
+     * placement of it (its image's key, placeExpected) gives another value
+     * than it had; the day acted on as the request put it; a row kept on its
+     * own where it shows, none. Where the oracle has no image for it, its
+     * placement can't be judged: recorded as unoracled.
+     *
+     * @return array{0:list<string>,1:bool}
+     */
+    private function rowPlacement(int $id, string $fate, array $before, array $after, array $edit, array $choices, array $ctx): array
+    {
+        if ($id === $edit['fromRow'] && $edit['sent'] !== null) {
+            return [self::PLACEMENT_COLUMNS, true]; // where the request put it (placedAt), checked by d-acted and c-edited
+        }
+        if ($fate !== 'stays') {
+            return [[], false];
+        }
+        $row0 = $before['overrides'][$id];
+        $img = $ctx['out']['rows'][$id]['img'] ?? null;
+        $key = $img === null ? null : self::keyOnDay($after, $ctx, (int) $img);
+        if ($ctx['out'] === null || $key === null) {
+            $this->unoracled[] = 'c-untouched: an edited row\'s placement where the oracle has no image for it';
+            return [self::PLACEMENT_COLUMNS, true];
+        }
+        [$start, $len, $allDay, $zone] = self::placeExpected($ctx['x'], $before, $row0, $key, (int) $img, ($choices['movedDays'] ?? 'keep') === 'move');
+        $end = Clock::db(Clock::plus(Clock::parse($start), $len));
+        $cols = [];
+        if ($key !== (string) $row0['recurrence_instance_utc']) {
+            $cols[] = 'recurrence_instance_utc';
+        }
+        if ($start !== (string) $row0['start_utc']) {
+            $cols[] = 'start_utc';
+        }
+        if ($end !== (string) $row0['end_utc'] || $start !== (string) $row0['start_utc']) {
+            $cols[] = 'end_utc';
+        }
+        $kind = $allDay !== ((int) $row0['all_day'] === 1);
+        if ($kind) {
+            $cols = array_merge($cols, ['all_day', 'tzid']);
+        } elseif (!$allDay && $zone !== (string) $row0['tzid']) {
+            $cols[] = 'tzid';
+        }
+        $this->ran('c-untouched', 'edited row placement from the oracle');
+        // Its own placement entries change only where its kind does (an own clock or length of the other kind doesn't carry over).
+        return [$cols, $kind];
+    }
+
+    /** The stored series' occurrence key on a day, looked for past the window read. */
+    private static function keyOnDay(array $after, array $ctx, int $dn): ?string
+    {
+        if (isset($ctx['byDay'][$dn])) {
+            return $ctx['byDay'][$dn];
+        }
+        if ($after['through'] === null) {
+            return null;
+        }
+        foreach (Truth::keysFrom($after['row'], Days::date($dn - 1) . ' 00:00:00', 3) as $k) {
+            if (Clock::dayOf($k, $ctx['tz1']) === $dn) {
+                return $k;
+            }
+        }
+        return null;
+    }
+
     private function untouchedFail(string $what, array $detail): void
     {
         $this->records[] = ['invariant' => 'c-untouched', 'what' => $what, 'detail' => $detail];
@@ -116,7 +215,6 @@ trait PlanUntouched
         $x = $ctx['x'];
         $out = $ctx['out'];
         $master = (int) $before['row']['id'];
-        $timeEdit = $edit['sent'] !== null || $edit['rule'] === 'new' || $edit['boundSent'] !== null;
         $fields = array_keys($edit['fields']);
         $fates = $this->fates($before, $after, $edit, $choices, $ctx);
         $takes = function (int $id, string $f) use ($before, $edit, $choices, $master): bool {
@@ -130,22 +228,26 @@ trait PlanUntouched
             $r1 = $w1['events'][$id] ?? null;
             if ($id === $master) {
                 $role = 'master';
-                $allowed = array_merge($book, $timeEdit ? ['start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json'] : [], $edit['trip'] ? ['is_container'] : []);
+                $allowed = array_merge($book, $this->masterPlacement($before, $x, $out), $edit['trip'] ? ['is_container'] : []);
             } elseif (isset($fates[$id])) {
                 $role = 'edited row ' . $fates[$id];
-                $allowed = array_merge($book, $timeEdit || $id === $edit['fromRow'] ? self::PLACEMENT_COLUMNS : [], $edit['trip'] ? ['is_container'] : [], $fates[$id] === 'leaves' ? self::DETACH : []);
+                [$placed, $ownPlacement] = $this->rowPlacement($id, $fates[$id], $before, $after, $edit, $choices, $ctx);
+                $allowed = array_merge($book, $placed, $edit['trip'] ? ['is_container'] : [], $fates[$id] === 'leaves' ? self::DETACH : []);
             } else {
                 $role = in_array($id, $this->controls, true) ? ((int) $r0['calendar_id'] === $this->calendarId ? 'control, same calendar' : 'control, another calendar') : 'other row';
                 $allowed = $book;
             }
             $this->ran('c-untouched', $role);
+            if (!isset($fates[$id])) {
+                $ownPlacement = false;
+            }
             foreach (self::FIELD_COLUMNS as $f => $col) {
                 if (isset($fates[$id]) || $id === $master ? $takes($id, $f) : false) {
                     $allowed[] = $col;
                 }
             }
             // The own list may change where an entry of it may (checked entry by entry below).
-            if (isset($fates[$id]) && ($timeEdit || $id === $edit['fromRow'] || array_filter($fields, static fn(string $f): bool => $takes($id, $f)) !== [])) {
+            if (isset($fates[$id]) && (($ownPlacement ?? false) || array_filter($fields, static fn(string $f): bool => $takes($id, $f)) !== [])) {
                 $allowed[] = 'override_fields';
             }
             if ($r1 === null || $r1['deleted_at'] !== null && $r0['deleted_at'] === null) {
@@ -159,12 +261,12 @@ trait PlanUntouched
                     $this->untouchedFail("a column the edit has no reason to change changed: $col", ['row' => $id, 'role' => $role, 'was' => $v, 'now' => $r1[$col] ?? null]);
                 }
             }
-            // The own list: placement entries where the edit sent a time, a rule or a bound; a field's entry where the row takes the field.
+            // The own list: placement entries where the oracle changes the row's placement fields (rowPlacement); a field's entry where the row takes the field.
             if (isset($fates[$id]) && $fates[$id] === 'stays') {
                 $l0 = json_decode((string) ($r0['override_fields'] ?? '[]'), true) ?: [];
                 $l1 = json_decode((string) ($r1['override_fields'] ?? '[]'), true) ?: [];
                 foreach (array_merge(array_diff($l0, $l1), array_diff($l1, $l0)) as $entry) {
-                    $ok = in_array($entry, self::PLACEMENT_OWN, true) ? ($timeEdit || $id === $edit['fromRow']) : $takes($id, (string) $entry);
+                    $ok = in_array($entry, self::PLACEMENT_OWN, true) ? ($ownPlacement ?? false) : $takes($id, (string) $entry);
                     if (!$ok) {
                         $this->untouchedFail("an own-list entry the edit has no reason to change changed: $entry", ['row' => $id, 'was' => $l0, 'now' => $l1]);
                     }

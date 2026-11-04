@@ -161,7 +161,7 @@ trait PlanChecks
     private function checkPlanData(array $plan, array $before, array $after, array $sent, Expect $x, ?array $out, array $choices): void
     {
         $ctx = $this->planContext($before, $after, $sent, $x, $out, $choices);
-        $this->checkShape($plan, $ctx['zone'], false);
+        $this->checkShape($plan, $ctx['zone'], false, null, self::anchored($after));
         $this->checkPlacement($plan, $before, $after, $sent['edit'], $choices, $ctx);
         $this->checkNext($plan, $before, $after, $sent['edit'], $ctx);
         if ($sent['kind'] === 'all' && $this->wide0 !== null) {
@@ -331,9 +331,9 @@ trait PlanChecks
     /**
      * c-shape: the plan by exact field path and role. $zone is the zone the
      * harness derived (never the plan's); a refused plan is checked by its
-     * own shape, in the old series' zone.
+     * own shape, in the old series' zone ($tz0, null for an all-day series, whose start is a date).
      */
-    private function checkShape(array $plan, ?string $zone, bool $refused, ?string $tz0 = null): void
+    private function checkShape(array $plan, ?string $zone, bool $refused, ?string $tz0 = null, bool $anchored = false): void
     {
         $this->ran('c-shape', $refused ? 'refused plan' : 'plan');
         $this->shapeKeys('plan', '', $plan);
@@ -353,7 +353,10 @@ trait PlanChecks
             }
             $this->ran('c-shape', 'refused start');
             $start = $plan['start'] ?? null;
-            if (is_string($start) && preg_match(self::DATE_RE, $start) !== 1) {
+            if ($tz0 === null) {
+                // An all-day series' start is a bare date, in the refused plan too.
+                $this->role('date', 'plan.start', $start);
+            } else {
                 $this->isoIn('plan.start', $start, $tz0, 'refused start');
             }
         } else {
@@ -393,11 +396,19 @@ trait PlanChecks
         // The series' start: a date when all-day, a key when anchored, else in the plan's zone.
         if (!$refused) {
             $start = $plan['start'] ?? null;
-            $this->ran('c-shape', 'plan.start');
-            if ($zone === null) {
+            if ($anchored) {
+                // The stored start is the skipped day before a skipped hour (anchored): a key, exactly then.
+                $this->role('key', 'plan.start', $start);
+                $this->ran('c-shape', 'plan.start (anchored)');
+            } elseif ($zone === null) {
                 $this->role('date', 'plan.start', $start);
-            } elseif (!is_string($start) || !str_ends_with($start, 'Z') || preg_match(self::KEY_RE, $start) !== 1) {
+                $this->ran('c-shape', 'plan.start (all-day)');
+            } else {
                 $this->isoIn('plan.start', $start, $zone, 'plan.start');
+                $this->ran('c-shape', 'plan.start (timed)');
+                if (is_string($start) && preg_match(self::KEY_RE, $start) === 1) {
+                    $this->shapeFail('plan.start', 'a key only for an anchored series', $start);
+                }
             }
         }
         // The bound.
@@ -540,6 +551,19 @@ trait PlanChecks
         foreach ($plan['fields'] ?? [] as $i => $f) {
             $this->shapeKeys("plan.fields[$i]", 'fields[]', $f);
         }
+    }
+
+    /**
+     * Whether a series as stored is anchored on the day before a skipped
+     * hour: its stored start is a skipped day, and its clock doesn't exist
+     * on the next day of its expansion (series-model.md, Zones, DST and
+     * All-Day Days).
+     */
+    private static function anchored(array $st): bool
+    {
+        $raw = $st['raw'];
+        return !$st['allDay'] && count($raw) >= 2 && $raw[0]['key'] === (string) $st['row']['start_utc'] && in_array($raw[0]['key'], $st['exdates'], true)
+            && Clock::inGap($raw[1]['dn'], $st['clock'], $st['tz']);
     }
 
     private function shapeBound(string $path, array $b): void

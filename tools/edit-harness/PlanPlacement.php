@@ -83,7 +83,7 @@ trait PlanPlacement
             $this->placeLossesGains($plan, $before, $after, $edit, $ctx, $choices);
             $this->placeReadings($plan, $before, $choices, $ctx);
         }
-        $this->placeNotes($plan, $after, $ctx);
+        $this->placeNotes($plan, $after, $edit, $ctx);
     }
 
     /** A skipped day: its identity, and the day its image is in the new series; a generated one, a stored skip on its day. */
@@ -95,12 +95,17 @@ trait PlanPlacement
             $this->expect('c-placement', 'a generated skip is a stored skipped day on its day', 'to (generated)', true, in_array($d['to'] ?? null, $days, true), ['to' => $d['to'] ?? null]);
             return;
         }
-        if (!in_array($outcome, ['moves', 'stays'], true) || $key === null) {
-            return;
+        if ($outcome === 'anchor' || $key === null) {
+            return; // an anchor is no day of the old series (c-shape names its key)
         }
         $this->expect('c-placement', 'a skipped day shows on its identity day', "shows (skipped $outcome)", $identity($key), $d['shows'] ?? null, ['key' => $key]);
+        if (!in_array($outcome, ['moves', 'stays'], true)) {
+            return; // dropped: no day in the new series to go to
+        }
         $img = $ctx['out']['images'][$key] ?? null;
-        if ($ctx['out'] !== null && $img !== null) {
+        if ($ctx['out'] === null || $img === null) {
+            $this->unoracled[] = 'c-placement: a skipped day\'s to where the oracle has no image for it';
+        } else {
             $this->expect('c-placement', 'a skipped day goes to its image\'s day', "to (skipped $outcome)", Days::date((int) $img), $d['to'] ?? null, ['key' => $key]);
         }
     }
@@ -183,7 +188,12 @@ trait PlanPlacement
         $x = $ctx['x'];
         $zone = $ctx['zone'];
         foreach ($plan['groups'] ?? [] as $g) {
-            if (($g['id'] ?? '') !== 'movedDays' || !isset($g['day'])) {
+            if (($g['id'] ?? '') !== 'movedDays') {
+                continue;
+            }
+            if (!isset($g['day'])) {
+                // A choice about several days names no day, and its options no date to check.
+                $this->unoracled[] = 'c-placement: a moved-day choice about several days (no day, no dates)';
                 continue;
             }
             $id = $rowsByKey[self::dbKey((string) $g['day'])] ?? null;
@@ -204,6 +214,7 @@ trait PlanPlacement
                     continue;
                 }
                 if ($ctx['out'] === null || $img === null || $key === null) {
+                    $this->unoracled[] = 'c-placement: a moved-day option other than the chosen one, where the oracle has no image for its day';
                     continue;
                 }
                 [$start, , $allDay, $tz] = self::placeExpected($x, $before, $row0, $key, (int) $img, ($o['id'] ?? '') === 'move');
@@ -372,8 +383,8 @@ trait PlanPlacement
      * from the day acted on through its first one that differs from the
      * other reading's (three at least, or the first three and `then`, the
      * last shared and the first different, when that is further on); and
-     * `earlier`, where its days before the day acted on first differ, index
-     * by index, from the series as it is today, the earlier of the two by
+     * `earlier`, where its events before the day acted on first differ, event
+     * by event by instant and kind, from the series as it is today, the earlier of the two by
      * instant, named by its series. The contract leaves three things open:
      * whether a reading's days are its rule unbounded or its series as
      * bounded, whether a gain at an edge (added, or left out as a generated skip) is one
@@ -403,8 +414,14 @@ trait PlanPlacement
         $entry = static fn(int $d): array => $x->allDay1
             ? ['start' => Days::date($d) . 'T00:00:00+00:00', 'allDay' => true]
             : ['start' => Clock::iso(Clock::at($d, $clock, $x->tz1)), 'allDay' => false];
-        $actedDn = Clock::dayOf($x->actedKey(), $ctx['tz0']);
-        $old = array_values(array_filter($before['raw'], static fn(array $o): bool => $o['dn'] < $actedDn));
+        // The series as it is today, before the day acted on: each event's instant, kind and day in the old zone.
+        $actedAt = Clock::parse($x->actedKey())->getTimestamp();
+        $old = [];
+        foreach ($before['raw'] as $o) {
+            if (Clock::parse($o['key'])->getTimestamp() < $actedAt) {
+                $old[] = ['ts' => Clock::parse($o['key'])->getTimestamp(), 'allDay' => $before['allDay'], 'date' => Days::date($o['dn'])];
+            }
+        }
         // Each enabled option's days, in each of the open readings.
         $seqs = [];
         foreach ($group['options'] ?? [] as $o) {
@@ -427,17 +444,26 @@ trait PlanPlacement
             if (!array_key_exists('earlier', $s['o'])) {
                 continue; // c-shape says where an option must carry it
             }
+            // Event by event, by instant and kind, never by day number (two
+            // zones' day numbers name different days): the first index where
+            // the reading's events before the day acted on and the series'
+            // today differ, the earlier of the two, named by its own series.
             $wants = [];
             foreach ($s['v'] as $days) {
-                foreach ([$actedDn, $x->landedDn] as $edge) {
-                    $mine = array_values(array_filter($days, static fn(int $d): bool => $d < $edge));
+                foreach ([$actedAt, $instant($x->landedDn)] as $edge) {
+                    $mine = [];
+                    foreach ($days as $d) {
+                        if ($instant($d) < $edge) {
+                            $mine[] = ['ts' => $instant($d), 'allDay' => $x->allDay1, 'date' => Days::date($d)];
+                        }
+                    }
                     $want = [null, null];
                     for ($j = 0, $n = max(count($mine), count($old)); $j < $n; $j++) {
                         $m = $mine[$j] ?? null;
                         $w = $old[$j] ?? null;
-                        if ($m !== ($w['dn'] ?? null)) {
-                            $newFirst = $m !== null && ($w === null || $instant($m) < Clock::parse($w['key'])->getTimestamp());
-                            $want = $newFirst ? [Days::date($m), 'new'] : [Days::date($w['dn']), 'old'];
+                        if ($m === null || $w === null || $m['ts'] !== $w['ts'] || $m['allDay'] !== $w['allDay']) {
+                            $newFirst = $m !== null && ($w === null || $m['ts'] < $w['ts']);
+                            $want = $newFirst ? [$m['date'], 'new'] : [$w['date'], 'old'];
                             break;
                         }
                     }
@@ -449,7 +475,7 @@ trait PlanPlacement
                 continue;
             }
             $o = $s['o'];
-            $this->expect('c-placement', 'a reading\'s earlier is where its days before the day acted on first differ from the series today, the earlier by instant, named by its series', 'reading earlier', reset($wants), [$o['earlier'] ?? null, $o['earlierSeries'] ?? null], ['option' => $id]);
+            $this->expect('c-placement', 'a reading\'s earlier is where its events before the day acted on first differ from the series today, by instant and kind, the earlier of the two, named by its own series', 'reading earlier', reset($wants), [$o['earlier'] ?? null, $o['earlierSeries'] ?? null], ['option' => $id]);
         }
         if (count($seqs) !== 2) {
             if (count($seqs) > 2) {
@@ -500,33 +526,79 @@ trait PlanPlacement
         }
     }
 
-    /** Notes on a clock that doesn't exist or happens twice: on a day of the stored series, its occurrence's instant there, by tzdata. */
-    private function placeNotes(array $plan, array $after, array $ctx): void
+    /**
+     * The instants a wall clock names on a day in a zone, by its transitions
+     * (tzdata), whatever their size: none in a gap, two where the clock
+     * happens twice, one otherwise.
+     *
+     * @return list<int>
+     */
+    private static function wallInstants(int $dn, int $secs, string $tz): array
+    {
+        $zone = Clock::zone($tz);
+        $wall = Clock::parse(Days::date($dn) . ' 00:00:00')->getTimestamp() + $secs;
+        $offsets = [];
+        foreach ($zone->getTransitions($wall - 2 * 86400, $wall + 2 * 86400) ?: [] as $t) {
+            $offsets[(int) $t['offset']] = true;
+        }
+        $out = [];
+        foreach (array_keys($offsets) as $off) {
+            $t = $wall - $off;
+            if ($zone->getOffset(new \DateTimeImmutable('@' . $t)) === $off) {
+                $out[] = $t;
+            }
+        }
+        sort($out);
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * Notes on a clock that doesn't exist or happens twice, by tzdata: every
+     * day of the stored series from the cutoff through a year on whose clock
+     * names no instant (gap) or two (overlap) must have its note, and every
+     * note must be such a day, at that occurrence's instant (an overlap's
+     * first), in the series' zone.
+     */
+    private function placeNotes(array $plan, array $after, array $edit, array $ctx): void
     {
         $m1 = $after['row'];
+        $listed = [];
         foreach ($plan['notes'] ?? [] as $n) {
-            $kind = (string) ($n['kind'] ?? '');
-            if (!in_array($kind, ['gap', 'overlap'], true)) {
-                continue;
+            if (in_array($n['kind'] ?? '', ['gap', 'overlap'], true)) {
+                $listed[$n['kind'] . ' ' . ($n['date'] ?? '')] = $n;
             }
-            $date = (string) ($n['date'] ?? '');
-            $ok = false;
-            $at = null;
-            if ((int) $m1['all_day'] === 0 && preg_match(self::DATE_RE, $date) === 1) {
-                $tz = (string) $m1['tzid'];
-                $dn = Days::ofDate($date);
-                $clock = Clock::secsOf(Clock::local((string) $m1['start_utc'], $tz));
-                $first = Clock::at($dn, $clock, $tz);
-                $twice = false;
-                foreach ([3600, 1800] as $back) {
-                    $twice = $twice || Clock::plus($first, $back)->format('Y-m-d H:i:s') === $first->format('Y-m-d H:i:s');
+        }
+        $want = [];
+        if ((int) $m1['all_day'] === 0 && $after['shape']->cap !== 'unreadable') {
+            $tz = (string) $m1['tzid'];
+            $clock = Clock::secsOf(Clock::local((string) $m1['start_utc'], $tz));
+            $cut = self::cutoff($after, $edit, $ctx);
+            foreach (Truth::keysFrom($m1, Days::date($cut) . ' 00:00:00', 367) as $k) {
+                $dn = Clock::dayOf($k, $tz);
+                if ($dn < $cut || $dn > $cut + 366) {
+                    continue;
                 }
-                $ok = $kind === 'gap' ? Clock::inGap($dn, $clock, $tz) : $twice;
-                $k = $ctx['byDay'][$dn] ?? null;
-                $at = $k === null ? Clock::iso($first) : Clock::iso(Clock::local($k, $tz));
+                $at = self::wallInstants($dn, $clock, $tz);
+                $kind = match (count($at)) {
+                    0 => 'gap',
+                    1 => null,
+                    default => 'overlap',
+                };
+                if ($kind !== null) {
+                    $first = $kind === 'overlap' ? $at[0] : Clock::parse($k)->getTimestamp();
+                    $want[$kind . ' ' . Days::date($dn)] = Clock::iso((new \DateTimeImmutable('@' . $first))->setTimezone(Clock::zone($tz)));
+                }
             }
-            $this->expect('c-placement', "a $kind note names a day the series' clock " . ($kind === 'gap' ? 'doesn\'t exist on' : 'happens twice on') . ', by tzdata', "notes ($kind)", true, $ok, ['note' => $n]);
-            $this->expect('c-placement', 'a note\'s at is the stored series\' occurrence on that day', "notes at ($kind)", $at, self::norm($n, ['at'])['at'] ?? null, ['note' => $n]);
+        }
+        foreach ($want as $id => $at) {
+            $kind = strstr($id, ' ', true);
+            $this->expect('c-placement', "a day of the stored series whose clock " . ($kind === 'gap' ? 'doesn\'t exist' : 'happens twice') . ' there has its note', "notes ($kind) present", true, isset($listed[$id]), ['day' => $id]);
+            if (isset($listed[$id])) {
+                $this->expect('c-placement', 'a note\'s at is the series\' instant on that day (an overlap\'s first)', "notes at ($kind)", $at, self::norm($listed[$id], ['at'])['at'] ?? null, ['note' => $listed[$id]]);
+            }
+        }
+        foreach ($listed as $id => $n) {
+            $this->expect('c-placement', 'a note names a day of the stored series whose clock doesn\'t exist or happens twice there, by tzdata', 'notes (' . $n['kind'] . ')', true, isset($want[$id]), ['note' => $n]);
         }
     }
 }

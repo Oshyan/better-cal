@@ -124,19 +124,19 @@ final class Driver
         $this->spec['path'] = $path;
         $sent = null;
         Prof::mark('edit');
-        // A trip never contains another trip (Trips): the flag set for all
-        // events of a series with an edited day that is a stop is refused.
+        // A trip never contains another trip (Trips, one rule for every
+        // writer): after a write no live link has both its trip and its stop
+        // flagged, and no trip is its own stop. A refusal is right only where
+        // the end state could nest: the flag sent to a whole series (from its
+        // first day) with a day in it that is a stop. Otherwise the end state
+        // is read from the stored links (checkTripRule).
         $stopAts = [];
         foreach ($spec['exceptions'] ?? [] as $i => $ex) {
             if (($this->tripsDrawn[$i] ?? null) === 'stop') {
                 $stopAts[] = (int) $ex['at'];
             }
         }
-        $nests = $v['trip'] && match ($scope) {
-            'all' => $stopAts !== [],
-            'following' => array_filter($stopAts, static fn(int $at): bool => $at >= (int) $spec['acted']) !== [],
-            default => false,
-        };
+        $nests = $v['trip'] && $stopAts !== [] && ($scope === 'all' || $path === 'following@first');
         if ($scope === 'all') {
             $this->wide0 = $this->wide();
         }
@@ -144,16 +144,14 @@ final class Driver
             $sent = $this->applyEdit($id, $before, $acted, $v, $s0, 'edit');
         } catch (\Throwable $e) {
             if ($e instanceof HttpError && $e->errorCode === 'trip_nested') {
-                $this->check('b-trip', $nests, 'the trip flag is refused only when a row it reaches is in a trip', ['scope' => $scope]);
+                $this->check('b-trip', $nests, 'the trip flag is refused only where the end state could nest: sent to a whole series with a day in it that is a stop', ['scope' => $scope]);
                 $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
                 return $this->result($path);
             }
             $this->fail('api-crash', 'the edit failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
             return $this->result($path);
         }
-        if ($nests) {
-            $this->fail('b-trip', 'the trip flag set on a series with a day in a trip was not refused');
-        }
+        $this->checkTripRule('b-trip');
         if ($sent === null) {
             return $this->result($path); // refused, checked
         }
@@ -180,6 +178,15 @@ final class Driver
             }
         }
         return $this->result($path);
+    }
+
+    /** The trip rule's end state, read from the stored links: no live link with both ends flagged, and none from a row to itself. */
+    private function checkTripRule(string $inv): void
+    {
+        foreach ($this->db->all('SELECT l.id, l.container_id, l.event_id, c.is_container AS trip, m.is_container AS stop FROM event_links l JOIN events c ON c.id = l.container_id JOIN events m ON m.id = l.event_id WHERE (l.container_id >= ? OR l.event_id >= ?) AND c.user_id = ? AND c.deleted_at IS NULL AND m.deleted_at IS NULL', [$this->firstId, $this->firstId, $this->userId]) as $l) {
+            $this->check($inv, !((int) $l['trip'] === 1 && (int) $l['stop'] === 1), 'after a write no live link has both its trip and its stop flagged (a trip inside a trip)', ['link' => $l]);
+            $this->check($inv, (int) $l['container_id'] !== (int) $l['event_id'], 'no trip is its own stop', ['link' => $l]);
+        }
     }
 
     private function result(string $path): array
@@ -897,7 +904,7 @@ final class Driver
                     $this->checkRefused($st, $edit, $plan, $choices, $e);
                     // A refusal of the whole change has its own shape (no zone, acted or bound.from), its start in the old zone.
                     if (array_filter($plan['refusals'] ?? [], static fn(array $r): bool => !isset($r['group'])) !== []) {
-                        $this->checkShape($plan, null, true, Truth::tzOf($st['row']));
+                        $this->checkShape($plan, null, true, $st['allDay'] ? null : Truth::tzOf($st['row']));
                     }
                 }
                 return null;

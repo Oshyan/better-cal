@@ -1621,6 +1621,21 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Coming up: exactly four events left, nothing more', [['2027-01-19', '2027-01-26', '2027-02-02', '2027-02-09'], false], [smNext($p), $p['plan']['nextMore']]);
     $p = smPlan($six, [], $rename('2027-01-12'));
     checkEq('Coming up: five events left, one more', [['2027-01-12', '2027-01-19', '2027-01-26', '2027-02-02'], true], [smNext($p), $p['plan']['nextMore']]);
+
+    // The expander yields a monthly rule's UNTIL as an occurrence when it
+    // falls on the first of a month the rule doesn't give (sabre/vobject
+    // 4.6.1); no expansion in the app has it, the model's or the window's.
+    $second = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=2;UNTIL=20270601', '2027-01-02', 60, true);
+    $p = smPlan($second, [], ['acted' => smAt('2027-04-02 00:00:00', 'UTC'), 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Phantom UNTIL: an all-day 2nd of the month ending 1 Jun has no 1 Jun, in next or as its last day', [['2027-04-02', '2027-05-02'], false, '2027-05-02', 5],
+        [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last'], $p['plan']['bound']['events']]);
+    checkEq('Phantom UNTIL: the window shows no 1 Jun either', ['2027-01-02', '2027-02-02', '2027-03-02', '2027-04-02', '2027-05-02'], smShows($second, ['master' => []], '2027-06-30'));
+    $monday = smSeries('Sample practice', 'FREQ=MONTHLY;BYDAY=1MO;UNTIL=20270601T170000Z', '2027-01-04 10:00', 60, false, [], 'America/Los_Angeles');
+    $p = smPlan($monday, [], ['acted' => smAt('2027-04-05 10:00'), 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Phantom UNTIL: a timed first Monday ending at its own time on Tue 1 Jun has no 1 Jun', [['2027-04-05', '2027-05-03'], false, '2027-05-03'],
+        [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last']]);
+    $first = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-01-01', 60, true);
+    checkEq('Phantom UNTIL: an UNTIL on a 1st the rule gives is its last occurrence', ['2027-04-01', '2027-05-01', '2027-06-01'], array_slice(smShows($first, ['master' => []], '2027-06-30'), -3));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

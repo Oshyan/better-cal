@@ -1950,6 +1950,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Notes: from coming up\'s cutoff, the edited day shown on Sun 28 Mar has its gap noted', ['2027-03-28', ['gap', '2027-03-28']],
         [substr($p['plan']['next'][0]['start'] ?? '', 0, 10), array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes'])[0] ?? null]);
 
+    // And through the last date coming up shows when that is past the
+    // year: twice a year, its fourth date is a gap day in the second March.
+    $twiceYearly = smSeries('Sample meeting', 'FREQ=YEARLY;BYMONTH=3,11;BYDAY=2SU', '2026-11-08 02:30');
+    $p = smPlan($twiceYearly, [], ['acted' => smAt('2027-11-14 02:30'), 'columns' => ['title' => 'Sample meeting, renamed']]);
+    checkEq('Notes: the fourth coming-up date, a gap day past the year, has its note', [
+        ['2027-11-14', '2028-03-12', '2028-11-12', '2029-03-11'], [['gap', '2028-03-12'], ['gap', '2029-03-11']],
+    ], [smNext($p), array_map(static fn(array $n): array => [$n['kind'], $n['date'] ?? null], $p['plan']['notes'])]);
+
     // A refused change's plan gives the series' start by its kind: a date
     // for an all-day series, an instant in its zone for a timed one.
     $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);

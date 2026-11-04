@@ -1928,8 +1928,10 @@ final class Model
             $this->notes[] = ['kind' => 'google', 'words' => self::GOOGLE_NOTE];
         }
         if ($this->readable) {
-            // From coming up's own cutoff, so every date it shows is scanned.
-            $this->clockNotes($calc1, $cutDn);
+            // From coming up's own cutoff through the later of a year on and
+            // the last date it shows, so every date it shows is scanned.
+            $lastShown = array_reduce($next, static fn(int $m, array $e): int => max($m, self::dayOf(['date' => substr((string) $e['start'], 0, 10)])), $cutDn);
+            $this->clockNotes($calc1, $cutDn, max($cutDn + 366, $lastShown));
         }
         $fieldsWords = [];
         foreach ($this->changed as $field => $cols) {
@@ -2286,18 +2288,19 @@ final class Model
         return [$shown, count($out) > self::NEXT_SHOWN, $fromDn];
     }
 
-    /** Every day the plan shows, or within a year ahead, whose clock time is missing or doubled gets its note (Zones, DST and All-Day Days). */
-    private function clockNotes(Calc $calc, int $fromDn): void
+    /** Every day coming up shows, or within a year from its first day, whose clock time is missing or doubled gets its note (Zones, DST and All-Day Days). */
+    private function clockNotes(Calc $calc, int $fromDn, int $toDn): void
     {
         if ($this->allDay1 || $calc->tz === 'UTC') {
             return;
         }
         $tz = Time::zone($calc->tz);
-        // The year from the cutoff, read from the cutoff: however many
-        // occurrences come before it, the scan is bounded by the year alone.
+        // From the cutoff through $toDn (a year on, or the last date coming
+        // up shows when that is later), read from the cutoff: however many
+        // occurrences come before it, the scan is bounded by those days alone.
         $seen = null;
         foreach ($calc->keysFrom($fromDn) as [$d]) {
-            if ($d > $fromDn + 366) {
+            if ($d > $toDn) {
                 break;
             }
             if ($d === $seen) {

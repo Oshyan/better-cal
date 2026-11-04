@@ -2101,9 +2101,10 @@ final class Model
 
     /**
      * The occurrences a plan shows, for comparing readings past the bound
-     * (the walk): from the series' start through a span of periods past
-     * $through (the day acted on, or where it landed), so a day acted on
-     * long after the start is compared over as many periods as one near it.
+     * (the walk): from the series' start to the end of a span of periods
+     * past $through (the day acted on, or where it landed), so a day acted
+     * on long after the start is compared over as many periods as one near
+     * it, and every reading walked to the same day ends on the same day.
      *
      * @return list<int>
      */
@@ -2121,12 +2122,19 @@ final class Model
         };
         $out = [];
         $p = $r->periodOf($calc->startDn);
-        if ($through !== null && $through > $calc->startDn) {
-            $periods += intdiv($r->periodsBetween($p, $r->periodOf($through)), max(1, $r->interval)) + 1;
+        // Walked to a day, the same for every reading walked to the same
+        // one: the end of the span of periods after it. Counted from each
+        // reading's own start, two readings with different starts ended in
+        // different periods, and the longer one's last days read as a
+        // difference.
+        $limit = PHP_INT_MAX;
+        if ($through !== null) {
+            $limit = $r->periodFirst($r->periodPlus($r->periodOf(max($calc->startDn, $through)), $periods * $r->interval)) - 1;
+            $periods = PHP_INT_MAX;
         }
-        for ($i = 0; $i < $periods && $p <= ($r->kind === 'yearly' ? 9999 : PHP_INT_MAX); $i++) {
+        for ($i = 0; $i < $periods && $p <= ($r->kind === 'yearly' ? 9999 : PHP_INT_MAX) && $r->periodFirst($p) <= $limit; $i++) {
             foreach ($r->periodDays($p) as [$d]) {
-                if ($d >= $calc->startDn && !in_array($d, $skips, true)) {
+                if ($d >= $calc->startDn && $d <= $limit && !in_array($d, $skips, true)) {
                     $out[] = $d;
                 }
             }

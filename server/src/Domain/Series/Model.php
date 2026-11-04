@@ -980,7 +980,9 @@ final class Model
                 'rule' => ['before' => (string) $this->master['rrule'], 'after' => (string) $this->master['rrule'], 'wordsBefore' => $before, 'words' => $before,
                     'from' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0),
                     'to' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0)],
-                'start' => self::inZoneOut(Time::fromDb((string) $this->master['start_utc']), $this->tz0),
+                // The series' start as it stays, by its kind: a date for an
+                // all-day series, else in its zone.
+                'start' => self::inZoneOut(Time::fromDb((string) $this->master['start_utc']), $this->allDay0 ? null : $this->tz0),
                 'bound' => ['kind' => 'none', 'words' => '', 'events' => null, 'skipped' => 0, 'last' => null, 'separate' => 0],
                 'next' => [], 'nextMore' => false, 'counts' => ['events' => null, 'edited' => 0, 'skipped' => 0],
                 'groups' => [], 'days' => [], 'losses' => [], 'gains' => [],

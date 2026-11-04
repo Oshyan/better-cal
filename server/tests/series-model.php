@@ -1897,6 +1897,14 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
         [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
 
+    // A refused change's plan gives the series' start by its kind: a date
+    // for an all-day series, an instant in its zone for a timed one.
+    $fair = smSeries('Sample fair', 'RSCALE=GREGORIAN;FREQ=WEEKLY', '2027-01-05', 0, true);
+    $p = smPlan($fair, [], ['rrule' => 'RSCALE=GREGORIAN;FREQ=WEEKLY;COUNT=3']);
+    $p2 = smPlan($holiday, [], ['rrule' => 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L;COUNT=3']);
+    checkEq('Refused: an all-day series\' start is its date, a timed one\'s in its zone', [true, '2027-01-05', true, '2027-02-10T18:00:00-08:00'],
+        [$p['refused'], $p['plan']['start'], $p2['refused'], $p2['plan']['start']]);
+
     // A clock that happens twice is found from the zone's transitions,
     // whatever the repeated span: Lord Howe falls back half an hour, so
     // 01:45 on Sun 4 Apr 2027 happens twice, the first at +11:00.

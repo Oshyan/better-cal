@@ -101,7 +101,14 @@ try {
         $failed += $clean ? 0 : 1;
     }
     foreach ($selected as $m) {
-        $copy = $apply($m);
+        try {
+            $copy = $apply($m);
+        } catch (RuntimeException $e) {
+            // A patch that no longer applies tests nothing: a failure, named, and the run goes on to the rest.
+            echo "FAIL  {$m['id']}: the patch does not apply: " . $e->getMessage() . "\n";
+            $failed++;
+            continue;
+        }
         if (isset($m['dbtest'])) {
             [$code, $out] = $exec([PHP_BINARY, $root . '/server/tests/db/run.php'], ['BC_TEST_ONLY' => $m['dbtest'], 'BC_TEST_PRELOAD' => $copy]);
             preg_match('/(\d+) passed, (\d+) failed/', $out, $t);
@@ -130,6 +137,10 @@ try {
             . ($missing === [] ? '' : '; did not trip ' . implode(', ', $missing)) . ($others === [] ? '' : '; other checks failed ' . json_encode($others)) . "\n";
         $failed += $ok ? 0 : 1;
     }
+} catch (Throwable $e) {
+    // Anything else that stops the runner fails the run: a runner that breaks must never pass.
+    fwrite(STDERR, "The mutation runner stopped: " . get_class($e) . ": " . $e->getMessage() . "\n");
+    $failed++;
 } finally {
     foreach (glob("$tmp/*") ?: [] as $f) {
         unlink($f);

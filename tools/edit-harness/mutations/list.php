@@ -30,11 +30,13 @@ return [
     ],
     [
         'id' => 'earlier-min-across-series', 'file' => $model, 'checks' => ['c-placement'],
-        // Both halves of a min across two series: where the readings differ (day numbers as days) and which comes first (the smaller day number).
-        // Today the model detects by day number (review D2), so reading-earlier-by-instant-across-zones fails unmutated; when the model compares
-        // instants this text is gone and the runner fails loudly until the first pair is retargeted at its detection.
+        // Both halves of a min across two series: where the readings differ (two zones' day numbers taken as the same day) and which
+        // comes first (the smaller day number), in place of the model's instant-and-kind comparison and instant tie-break.
         'what' => 'earlier as a min across two series: two zones\' day numbers compared as days, to find where they differ and which comes first',
-        'patch' => [["                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$s['calc']->instant(\$mine) < \$this->old->instant(\$was));", "                if (\$mine !== \$was) {\n                    \$new = \$mine !== null && (\$was === null || \$mine < \$was);"]],
+        'patch' => [
+            ['                if ($mine !== null && $was !== null && $s[\'calc\']->instant($mine) == $this->old->instant($was) && $s[\'calc\']->allDay === $this->old->allDay) {', '                if ($mine === $was) {'],
+            ['                $new = $mine !== null && ($was === null || $s[\'calc\']->instant($mine) < $this->old->instant($was));', '                $new = $mine !== null && ($was === null || $mine < $was);'],
+        ],
         'cases' => ['mutation-earlier-across-zones', 'reading-earlier-by-instant-across-zones'],
     ],
     [
@@ -128,16 +130,15 @@ return [
         'patch' => [["                'create' => \$create,", "                'create' => array_merge(\$create, [['start_utc' => '2091-06-01 10:00:00', 'end_utc' => '2091-06-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC']]),"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
-    // The trip rule's two mutations patch today's query (Trips::assertRestored, which Undo calls); when the shared rule lands as
-    // Trips::assertRules for every writer, retarget both at it: the runner fails until then, the text being gone.
+    // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a trip\'s flag be cleared while a live stop stands',
+        'what' => 'the shared trip rule (Trips::assertRules) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],
     ],
     [
         'id' => 'undo-gate-nesting', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
-        'what' => 'the shared trip rule (Trips::assertRules, Undo\'s gate today) lets a link with both ends flagged stand',
+        'what' => 'the shared trip rule (Trips::assertRules) lets a link with both ends flagged stand',
         'patch' => [["((c.is_container = 1 AND (m.is_container = 1 OR l.container_id = l.event_id))", "((c.is_container = 1 AND (1 = 0 OR l.container_id = l.event_id))"]],
     ],
 ];

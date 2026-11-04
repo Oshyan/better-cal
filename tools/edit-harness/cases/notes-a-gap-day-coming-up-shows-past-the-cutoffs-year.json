@@ -1,0 +1,52 @@
+{
+    "n": 1103,
+    "seed": 6,
+    "series": {
+        "family": "yearly_months",
+        "rrule": "FREQ=YEARLY;BYMONTH=3,9;BYDAY=2WE",
+        "import": false,
+        "bound": "none",
+        "boundAt": 10,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2028-02-28 02:30",
+        "length": 30
+    },
+    "exceptions": [
+        {
+            "at": 4,
+            "kind": "skip"
+        },
+        {
+            "at": 1,
+            "kind": "skip"
+        }
+    ],
+    "acted": 7,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 4,
+        "clock": 0,
+        "zone": null,
+        "length": 3600,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "same",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=SU",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

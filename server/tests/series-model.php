@@ -1741,6 +1741,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: coming up in an all-day series, the timed day in its own zone, named', [
         ['2027-01-05T00:00:00+00:00', true, null], ['2027-01-12T20:00:00-08:00', false, $la], ['2027-01-19T00:00:00+00:00', true, null],
     ], array_slice($entries($p), 0, 3));
+    // Coming up in the order days show: by day, an all-day event first on
+    // its day, then by instant (an all-day day's UTC midnight is no instant
+    // of the evening before).
+    $daily = smSeries('Sample practice', 'FREQ=DAILY', '2027-01-11 20:00');
+    $wholeTue = smEdited($daily, 2, '2027-01-12 20:00', ['all_day' => 1, 'tzid' => 'UTC', 'start_utc' => '2027-01-12 00:00:00', 'end_utc' => '2027-01-13 00:00:00'], null, ['allDay']);
+    $thuOnTue = smEdited($daily, 3, '2027-01-14 20:00', ['title' => 'Sample practice at Sample Hall'], '2027-01-12 20:00', ['date', 'title']);
+    $p = smPlan($daily, [$wholeTue, $thuOnTue], ['columns' => ['location' => 'Sample Hall']]);
+    checkEq('Writers: coming up sorts by the day shown, the all-day day before the evening on the same day', [
+        '2027-01-11T20:00:00-08:00', '2027-01-12T00:00:00+00:00', '2027-01-12T20:00:00-08:00', '2027-01-13T20:00:00-08:00',
+    ], array_column($p['plan']['next'], 'start'));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

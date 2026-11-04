@@ -2162,7 +2162,7 @@ final class Model
 
     /**
      * The next four events as they will show, from the day acted on: every
-     * edited day by the day it shows on (by the zone rule, planDn), wherever
+     * edited day by the day it shows on (by the zone rule), wherever
      * its key is, and the occurrences with no row at their keys. With them,
      * whether any event of those comes after the four.
      *
@@ -2198,7 +2198,7 @@ final class Model
         foreach ($byKey as $key => $item) {
             if (!isset($skip[$key]) && $item['dn'] >= $fromDn) {
                 unset($item['dn']);
-                $rows[] = $item;
+                $rows[] = $item + ['key' => $key];
             }
         }
         // Every key the expander gives from the first day listed (several on
@@ -2211,7 +2211,7 @@ final class Model
             if (isset($skip[$key]) || isset($byKey[$key])) {
                 continue;
             }
-            $plain[] = $this->placementEntryOut(['start_utc' => $key, 'all_day' => $calc1->allDay ? 1 : 0, 'tzid' => $calc1->tz], $this->displayZone()) + ['kind' => $d === $actedDn ? 'acted' : 'occurrence'];
+            $plain[] = $this->placementEntryOut(['start_utc' => $key, 'all_day' => $calc1->allDay ? 1 : 0, 'tzid' => $calc1->tz], $this->displayZone()) + ['kind' => $d === $actedDn ? 'acted' : 'occurrence', 'key' => $key];
             if (count($plain) > self::NEXT_SHOWN) {
                 break;
             }
@@ -2219,11 +2219,17 @@ final class Model
         $out = array_merge($rows, $plain);
         if ($separate !== null) {
             // The day acted on, where it was put, on its own.
-            $out[] = $this->placementEntryOut($separate, $this->displayZone()) + ['kind' => 'acted', 'words' => 'on its own'];
+            $out[] = $this->placementEntryOut($separate, $this->displayZone()) + ['kind' => 'acted', 'words' => 'on its own', 'key' => ''];
         }
-        usort($out, static fn(array $a, array $b): int => strcmp((string) Time::parseIso($a['start'])->format('U'), (string) Time::parseIso($b['start'])->format('U')) ?: 0);
-        usort($out, static fn(array $a, array $b): int => Time::parseIso($a['start'])->getTimestamp() <=> Time::parseIso($b['start'])->getTimestamp());
-        return [array_slice($out, 0, self::NEXT_SHOWN), count($out) > self::NEXT_SHOWN];
+        // In the order they show: by the day each shows on, an all-day one
+        // first on its day, then by instant, then by key.
+        $order = static fn(array $e): array => [substr($e['start'], 0, 10), $e['allDay'] ? 0 : 1, Time::parseIso($e['start'])->getTimestamp(), $e['key']];
+        usort($out, static fn(array $a, array $b): int => $order($a) <=> $order($b));
+        $shown = array_map(static function (array $e): array {
+            unset($e['key']);
+            return $e;
+        }, array_slice($out, 0, self::NEXT_SHOWN));
+        return [$shown, count($out) > self::NEXT_SHOWN];
     }
 
     /** A clock time missing or doubled on a day the plan shows, or within a year (Zones, DST and All-Day Days). */

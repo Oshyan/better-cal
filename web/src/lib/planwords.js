@@ -58,9 +58,12 @@ export function fmtDay(value, { weekday = true, prev = null, refYear = new Date(
 
 // A clock with no zone to read it in is never guessed (series-model.md, One
 // zone), and a zone the browser can't read is no zone: the smoke suite
-// turns this on so such a call fails there; in the app the clock is left
-// out instead.
+// turns this on so such a call fails there; in the app the clock's place
+// says it is unavailable instead, so a preview missing a clock never reads
+// as complete.
 let strictClocks = false;
+/** What a clock that can't be said shows in its place. */
+export const CLOCK_UNAVAILABLE = 'time unavailable';
 export function setStrictClocks(on) { strictClocks = !!on; }
 
 /**
@@ -68,7 +71,8 @@ export function setStrictClocks(on) { strictClocks = !!on; }
  * instant: an ISO string read in `tz` (the plan's zone), or a value of the
  * plan carrying its own zone ({at or start, tz}: a timed day in an all-day
  * plan), read in that zone. With no zone, or one the browser can't read,
- * there is no clock: never the device's in its place.
+ * the clock is unavailable (CLOCK_UNAVAILABLE), never the device's in its
+ * place; with no instant there is no clock ("").
  */
 export function fmtClock(value, tz = null) {
   if (/^\d{2}:\d{2}$/.test(String(value))) {
@@ -82,7 +86,7 @@ export function fmtClock(value, tz = null) {
   const clock = zone && !isNaN(d) ? fmtTimeInZone(d, zone) : '';
   if (clock == null || !zone) {
     if (strictClocks) throw new Error(zone ? 'fmtClock: unreadable zone ' + zone + ' for ' + at : 'fmtClock: no zone for ' + at);
-    return '';
+    return isNaN(d) ? '' : CLOCK_UNAVAILABLE;
   }
   return clock;
 }
@@ -165,8 +169,9 @@ function ruleShape(part) {
   const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false });
   const m = words && /^(Daily|Weekly|Monthly|Yearly|Every \d+ (?:day|week|month|year)s)(?: on (.+?))?(, skipping months without one|, or the last day(?: in shorter months)?)?$/.exec(words);
   const clock = !part.allDay && part.start ? fmtClock(part.start, part.tz) : '';
-  // A timed rule whose clock can't be said has no shape to compare by clock.
-  if (!m || (!part.allDay && !clock)) return null;
+  // A timed rule whose clock can't be said has no shape to compare by clock:
+  // two unavailable clocks are not the same clock.
+  if (!m || (!part.allDay && (!clock || clock === CLOCK_UNAVAILABLE))) return null;
   return {
     period: PERIODS[m[1]] || lowerFirst(m[1]), weekly: m[1] === 'Weekly', days: m[2] || '', clause: m[3] || '',
     clock, zone: part.allDay ? '' : part.tz || '',
@@ -379,8 +384,8 @@ export function ownClock(d) {
  * A placement's clock as a row says it: "8:00 PM", read in its own zone
  * when it names one, else the plan's (`opts.tz`), and then with that zone's
  * name: "8:00 PM in Los Angeles". `named` names the plan's zone too, for a
- * clock that follows a sentence naming another. With no zone there is no
- * clock ("").
+ * clock that follows a sentence naming another. A clock that can't be
+ * said is "time unavailable", with its zone's name all the same.
  */
 export function clockOf(place, opts = {}, named = false) {
   const clock = place && place.at ? fmtClock(place, opts.tz) : '';
@@ -419,8 +424,8 @@ const OUTCOMES = {
   // "moves to Wed, Jan 13 at 1:30 AM", "moves to 8:00 PM", "moves to Wed, Jan 13".
   moves: (p) => 'moves to ' + (p.date && p.clock ? p.date + ' at ' + p.clock : p.date || p.clock || p.full),
   'all-day': (p) => 'becomes all-day' + spaced(atOn(p)),
-  // "now starts at 6:00 PM[ on Wed, Jan 13]": a timed placement has a clock, and a new kind is news (saysClock).
-  // With no clock to say (its zone unreadable): "is no longer all-day[ and moves to Wed, Jan 13]".
+  // "now starts at 6:00 PM[ on Wed, Jan 13]": a timed placement has a clock, and a new kind is news (saysClock),
+  // "now starts at time unavailable" when its zone can't be read; with no clock at all, "is no longer all-day[ and moves to Wed, Jan 13]".
   timed: (p) => (p.clock ? 'now starts ' + atOn(p) : 'is no longer all-day' + (p.date ? ' and moves to ' + p.date : '')),
   stays: (p) => 'stays ' + (atOn(p) || 'where it is'),
   separate: (p) => 'becomes an event of its own' + spaced(atOn(p)),
@@ -629,8 +634,8 @@ export function choiceWords(g, ctx = {}) {
     // (ISO in the plan's zone), read in each zone the label names, so a clock
     // and its zone's name always go together. Never its next list, whose first
     // timed entry can be an edited day at a clock of its own.
-    // A clock that can't be said, or an option without a timed start, leaves
-    // out its zone's name with it.
+    // A clock that can't be said shows as unavailable beside its zone's name;
+    // an option without a timed start (an older server) has no clocks to list.
     const inZone = (x, tz) => { const c = /T\d{2}:\d{2}/.test(x.start || '') ? fmtClock(x.start, tz) : ''; return c ? c + ' in ' + zoneName(tz) : ''; };
     const listed = (head, parts) => head + (parts.filter(Boolean).length ? ': ' + parts.filter(Boolean).join(', ') : '');
     return {
@@ -739,7 +744,8 @@ export const refusalWords = (code) => REFUSALS[code] || 'This change can’t be 
 export function noteWords(n, opts = {}) {
   if (!n) return '';
   if (n.kind === 'google') return 'Google decides what happens to edited days, and Better-Cal hasn’t checked what it does yet. This can’t be undone.';
-  // A note's clocks are its point: one that can't be said leaves out its clause, or the note.
+  // A note's clocks are its point: one that can't be said shows as unavailable
+  // in its place; a note with no instant at all has nothing to say.
   if (n.kind === 'gap') {
     const missing = fmtClock(n.clock), at = fmtClock(n.at, n.tz);
     return missing ? 'There is no ' + missing + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + (at ? ', so that one is at ' + at : '') + '.' : '';
@@ -752,7 +758,7 @@ export function noteWords(n, opts = {}) {
     const fold = n.fold === 'first' || n.fold === 'second' ? n.fold : null;
     const kind = n.daylight === true ? 'daylight' : n.daylight === false ? 'standard' : null;
     const which = fold ? '; this is the ' + fold + (kind ? ', in ' + kind + ' time' : '') : '';
-    return at + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + which + '.';
+    return upperFirst(at) + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + which + '.';
   }
   return '';
 }

@@ -72,13 +72,21 @@ jobs:
           --health-cmd "healthcheck.sh --connect --innodb_initialized"
           --health-interval 5s --health-timeout 5s --health-retries 30
     steps:
+      # git before the checkout, and the whole history: a migration's test
+      # makes its rows with an older version's code (oldSource in
+      # server/tests/db/lib.php).
+      - name: git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       # The app as installed: its libraries (repeating events need
       # sabre/vobject) from the lock file, as the fresh-install job does.
       - name: The MySQL driver, and Composer
         run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends libzip-dev unzip git
+          apt-get install -y -qq --no-install-recommends libzip-dev unzip
           docker-php-ext-install zip pdo_mysql
           php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
           php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'

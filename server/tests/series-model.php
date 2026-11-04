@@ -1561,6 +1561,13 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         'stays', '2027-01-11', '2027-01-11', '2027-01-11T21:30:00-08:00', '2027-01-12T09:30:00Z', $ownTime['start_utc'],
     ], [$day['outcome'] ?? null, $day['shows'] ?? null, $day['to'] ?? null, $day['at'] ?? null, $day['newKey'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? $ownTime['start_utc']]);
     checkEq('R1: the coming-up list writes that day in the same zone', ['2027-01-05T01:30:00-08:00', '2027-01-11T21:30:00-08:00', '2027-01-19T01:30:00-08:00', '2027-01-26T01:30:00-08:00'], array_column($p['plan']['next'], 'start'));
+    // A Los Angeles series whose Jan 12 is at its own 00:30 New York time
+    // (Monday 21:30 in Los Angeles), renamed from that day's own row: the
+    // list starts where the day shows in the plan's zone, before its key's day.
+    $laSeries = smSeries('Sample late call', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 01:30', 60, false, [], $la);
+    $nyDay = smEdited($laSeries, 4, '2027-01-12 01:30', ['tzid' => $ny, 'start_utc' => smAt('2027-01-12 00:30', $ny), 'end_utc' => smAt('2027-01-12 01:30', $ny)], null, ['time', 'zone']);
+    $p = smPlan($laSeries, [$nyDay], ['acted' => $nyDay['recurrence_instance_utc'], 'columns' => ['title' => 'Sample late call, renamed']]);
+    checkEq('R1: from the edited day itself, the coming-up list starts with it where it shows', ['2027-01-11T21:30:00-08:00', '2027-01-19T01:30:00-08:00', '2027-01-26T01:30:00-08:00', '2027-02-02T01:30:00-08:00'], array_column($p['plan']['next'], 'start'));
     $ownDate = smEdited($late, 3, '2027-01-19 01:30', [], '2027-01-20 00:30', ['date', 'time']);
     $p = smPlan($late, [$ownDate], $toLa);
     $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];

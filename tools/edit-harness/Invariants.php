@@ -916,10 +916,20 @@ trait Invariants
         $byKey = [];
         $over = [];
         $overDn = [];
+        // Every day of the plan is read in one zone, the series' after the
+        // change (an all-day row's start is a date): the day an edited row
+        // shows on, and the day the list starts from, which is the day the
+        // acted day shows on when that is earlier than where it landed.
+        $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
+        $planDay = static fn(array $row): int => Clock::dayOf((string) $row['start_utc'], (int) $row['all_day'] === 1 ? 'UTC' : $tz1);
+        $from = $x->fromDn();
+        $actedRow = $x->fromRow() !== null ? ($after['overrides'][$x->fromRow()] ?? null) : null;
+        if ($actedRow !== null) {
+            $from = min($from, $planDay($actedRow));
+        }
         foreach ($after['overrides'] as $ov) {
             $over[(string) $ov['recurrence_instance_utc']] = (string) $ov['start_utc'];
-            // The day it shows on, in its own zone (Own Fields: date).
-            $overDn[(string) $ov['recurrence_instance_utc']] = Clock::dayOf((string) $ov['start_utc'], Truth::tzOf($ov));
+            $overDn[(string) $ov['recurrence_instance_utc']] = $planDay($ov);
         }
         $next = array_map(static fn(array $n): string => (string) self::dbKey($n['start']), $plan['next'] ?? []);
         if (($after['phantom'] ?? null) !== null) {
@@ -936,15 +946,14 @@ trait Invariants
         // From the day acted on (where it landed), the events as they show:
         // an occurrence at its key, an edited day on the day it shows on,
         // wherever its key is (The Plan, 4: the next events as they will show).
-        $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
         foreach (array_unique(array_merge($keys, array_keys($over))) as $k) {
             $dn = $overDn[$k] ?? Clock::dayOf($k, $tz1);
-            if (!isset($exdates[$k]) && $dn >= $x->fromDn()) {
+            if (!isset($exdates[$k]) && $dn >= $from) {
                 $byKey[$k . ' 0'] = $over[$k] ?? $k;
             }
         }
         foreach ($this->standalones() as $s) {
-            if (Clock::dayOf((string) $s['start_utc'], $tz1) >= $x->fromDn() && in_array((string) $s['start_utc'], $next, true)) {
+            if ($planDay($s) >= $from && in_array((string) $s['start_utc'], $next, true)) {
                 $byKey[(string) $s['start_utc'] . ' 1'] = (string) $s['start_utc'];
             }
         }
@@ -955,7 +964,7 @@ trait Invariants
         $sortedNext = $next;
         sort($sortedNext);
         if ($next !== [] && $x->kind !== 'newrule') {
-            $this->check('c-next', $shown === $sortedNext, 'the plan\'s next dates are the next events the series shows from the day acted on', ['plan' => $next, 'shown' => $shown, 'from' => Days::date($x->fromDn())]);
+            $this->check('c-next', $shown === $sortedNext, 'the plan\'s next dates are the next events the series shows from the day acted on', ['plan' => $next, 'shown' => $shown, 'from' => Days::date($from)]);
         }
     }
 

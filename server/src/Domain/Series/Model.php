@@ -2158,6 +2158,7 @@ final class Model
         };
         foreach ($createdRows as $c) {
             $byKey[(string) $c['recurrence_instance_utc']] = $entry((string) $c['start_utc'], (int) $c['all_day'] === 1, 'acted');
+            $fromDn = min($fromDn, $byKey[(string) $c['recurrence_instance_utc']]['dn']);
         }
         foreach ($placeRows as $id => $img) {
             $row = $this->rows[$id];
@@ -2167,6 +2168,11 @@ final class Model
             $key = (string) ($overrideWrites[$id]['recurrence_instance_utc'] ?? $row['recurrence_instance_utc']);
             $byKey[$key] = $entry((string) $start, $allDay, 'edited')
                 + (in_array('date', $own, true) && $img !== $actedDn ? ['words' => 'its own date'] : []);
+            if ($id === $this->actedRowId) {
+                // The list starts where the day acted on shows, in the plan's
+                // zone, when that is earlier than the day it landed on.
+                $fromDn = min($fromDn, $byKey[$key]['dn']);
+            }
         }
         $rows = [];
         foreach ($byKey as $key => $item) {
@@ -2202,7 +2208,7 @@ final class Model
         $out = array_merge($rows, $plain);
         if ($separate !== null) {
             // The day acted on, where it was put, on its own.
-            $out[] = ['start' => Time::dbToIso((string) $separate['start_utc'], (int) $separate['all_day'] === 1 ? 'UTC' : (string) $separate['tzid']), 'kind' => 'acted', 'words' => 'on its own'];
+            $out[] = ['start' => Time::iso(Time::fromDb((string) $separate['start_utc'])->setTimezone($this->planZone((int) $separate['all_day'] === 1))), 'kind' => 'acted', 'words' => 'on its own'];
         }
         usort($out, static fn(array $a, array $b): int => strcmp((string) Time::parseIso($a['start'])->format('U'), (string) Time::parseIso($b['start'])->format('U')) ?: 0);
         usort($out, static fn(array $a, array $b): int => Time::parseIso($a['start'])->getTimestamp() <=> Time::parseIso($b['start'])->getTimestamp());

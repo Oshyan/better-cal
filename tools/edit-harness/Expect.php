@@ -571,6 +571,12 @@ final class Expect
         return min($this->landedDn, $put);
     }
 
+    /** The edited row the request came through, when it did. */
+    public function fromRow(): ?int
+    {
+        return $this->e['fromRow'] ?? null;
+    }
+
     /** The drag whose correspondence the map reading uses. */
     public ?self $mapDrag = null;
 

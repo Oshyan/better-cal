@@ -1762,6 +1762,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Writers: a reading\'s dates are entries of its rule, in its zone and kind', [
         ['start' => '2027-01-06T20:00:00-08:00', 'allDay' => false], ['start' => '2027-01-07T20:00:00-08:00', 'allDay' => false], ['start' => '2027-01-13T20:00:00-08:00', 'allDay' => false],
     ], $member['dates'] ?? null);
+    // A reading's first earlier day that differs from the series as it is
+    // today is a day of one of the two, named: the old one's when it comes
+    // first, the reading's own when that does.
+    $earlierOf = static function (array $p): array {
+        $o = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === 'member'))[0] ?? [];
+        return [$o['earlier'] ?? null, $o['earlierSeries'] ?? 'missing'];
+    };
+    checkEq('Writers: Tuesday 19 Jan dragged to Wednesday, the first earlier day that differs is the old Tue 5 Jan', ['2027-01-05', 'old'],
+        $earlierOf(smPlan($tueThu, [], smDrag($tueThu, '2027-01-19 20:00', '2027-01-20 20:00'))));
+    checkEq('Writers: Thursday 21 Jan dragged to Wednesday, it is the reading\'s own Wed 6 Jan', ['2027-01-06', 'new'],
+        $earlierOf(smPlan($tueThu, [], smDrag($tueThu, '2027-01-21 20:00', '2027-01-20 20:00'))));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

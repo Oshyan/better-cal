@@ -521,10 +521,10 @@ final class Model
      * `then`, the last date they share and its first different one), and
      * `earlier`, the first date before the day acted on where it differs
      * from the series as it is today (for every reading, the preselected one
-     * included).
+     * included), and `earlierSeries`, whose day that is: "old" or "new".
      *
      * @param array<int, array> $alts
-     * @return array<int, array{dates: list<array>, then: list<array>, earlier: ?string}>
+     * @return array<int, array{dates: list<array>, then: list<array>, earlier: ?string, earlierSeries: ?string}>
      */
     private function readingApart(array $alts, int $selected): array
     {
@@ -558,21 +558,28 @@ final class Model
                 $dates = array_slice($mine, 0, 3);
                 $then = array_slice($mine, $i - 1, 2);
             }
-            // Against the series as it is today, for every reading.
-            $earlier = null;
+            // Against the series as it is today, for every reading: where the
+            // two first differ, the one that comes first, a day of its own
+            // series (each day number is in its own series' zone, so the two
+            // are ordered by their instants, never compared as days).
+            $earlier = ['earlier' => null, 'earlierSeries' => null];
             $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
             $n = max(count($before), count($oldBefore));
             for ($j = 0; $j < $n; $j++) {
-                if (($before[$j] ?? null) !== ($oldBefore[$j] ?? null)) {
-                    $earlier = Cal::date(min(array_filter([$before[$j] ?? null, $oldBefore[$j] ?? null], static fn($x): bool => $x !== null)));
+                $mine = $before[$j] ?? null;
+                $was = $oldBefore[$j] ?? null;
+                if ($mine !== $was) {
+                    $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
+                    $earlier = $new
+                        ? ['earlier' => self::patternOut($s['calc'], $mine), 'earlierSeries' => 'new']
+                        : ['earlier' => self::patternOut($this->old, (int) $was), 'earlierSeries' => 'old'];
                     break;
                 }
             }
             $out[$oi] = [
                 'dates' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $dates),
                 'then' => array_map(fn(int $d): array => $this->patternInstantOut($s['calc'], $d), $then),
-                'earlier' => $earlier,
-            ];
+            ] + $earlier;
         }
         return $out;
     }

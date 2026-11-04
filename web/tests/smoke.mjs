@@ -5002,9 +5002,10 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   W2.setStrictClocks(false);
   const quiet = [W2.fmtClock('2027-01-12T20:00:00-08:00'), planView({ ...evening, days: [{ ...evening.days[0], tz: undefined, after: { ...evening.days[0].after, tz: undefined } }] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
   W2.setStrictClocks(true);
-  eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  eq('zone rule: in the app a clock with no zone shows as unavailable, never guessed', quiet, ['time unavailable', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays at time unavailable."]]);
   // A zone name the browser can't read (an import's zone the server accepts
-  // and Intl doesn't) is no zone: no clock, never the device's under its name.
+  // and Intl doesn't) is no zone: its clock shows as unavailable under its
+  // name, never the device's.
   const MARS = 'Mars/Olympus_Mons';
   const { fmtTimeInZone } = await import('../src/lib/dates.js');
   let unreadable = null;
@@ -5015,7 +5016,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const marsDay = { ...evening.days[0], tz: MARS, before: { ...evening.days[0].before, tz: MARS }, after: { ...evening.days[0].after, tz: MARS } };
   const marsQuiet = [W2.fmtClock('2027-01-12T20:00:00-08:00', MARS), W2.clockOf(marsDay.after), planView({ ...evening, days: [marsDay] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
   W2.setStrictClocks(true);
-  eq('zone rule: in the app a clock in a zone the browser can\'t read is left out, and so is the zone\'s name', marsQuiet, ['', '', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  eq('zone rule: in the app a clock in a zone the browser can\'t read shows as unavailable, beside the zone\'s name', marsQuiet, ['time unavailable', 'time unavailable in Olympus Mons', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays at time unavailable in Olympus Mons."]]);
   eq('zone rule: a clock for its zone\'s name is null for a zone the browser can\'t read', [fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), MARS), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), null), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), LA)],
     [null, null, '8:00 PM']);
 
@@ -5199,7 +5200,8 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     }
 
     // A clock that can't be said (in the app, a zone the browser can't read)
-    // leaves out its clause, or the sentence, and never prints an empty or null clock.
+    // shows as unavailable in its place, so a preview missing a clock never
+    // reads as complete, and never prints an empty or null clock.
     {
       const MARS = 'Mars/Olympus_Mons';
       W2.setStrictClocks(false);
@@ -5207,12 +5209,12 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       const mars = { rule: { from: weekly(null), to: weekly(LA) }, zone: MARS };
       const one = rows(plan(LA, [madeTimed()], mars));
       const moved = rows(plan(LA, [madeTimed({ after: { ...at('2027-01-13', '18:00', LA), kind: 'timed' }, takes: ['allDay', 'date'] })], mars));
-      // Days made timed there share a row, with no clock to say.
+      // Days made timed there share a row, its clock unavailable.
       const two = view(plan(LA, [madeTimed(), madeTimed({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: ad('2027-01-19'), after: { ...at('2027-01-19', '18:00', LA), kind: 'timed' } })], mars)).edited.map((r) => r.line1);
       const group = W2.groupLines({ count: 2, outcome: 'timed', clock: null, first: '2027-01-12', last: '2027-01-19' }, { refYear: 2027 }).line1;
       const notes = view(plan(LA, [], { notes: [
         { kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: MARS },
-        { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: MARS },
+        { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: MARS, fold: 'first', daylight: true },
       ] })).notes;
       const marsRule = { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: MARS, allDay: false };
       const rule = [W2.ruleWords(marsRule), W2.changeSentence({ from: weekly(LA), to: marsRule }, noEnd, { refYear: 2027 })];
@@ -5220,15 +5222,16 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
         { id: 'clock', start: '2027-01-05T19:00:00-08:00', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] },
         { id: 'moment', start: '2027-01-05T19:00:00-08:00', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] }] }] })).readings.map((c) => c.options.map((o) => o.label));
       W2.setStrictClocks(true);
-      eq('verify: a clock that can\'t be said drops its clause: a day made timed, alone, moved and in a group', [one, moved, two, group], [
-        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day."],
-        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day and moves to Wed, Jan 13."],
-        ['2 days that were changed earlier are no longer all-day.'],
+      // A group given no clock at all (groupLines' own input) still says only the kind.
+      eq('verify: a clock that can\'t be said shows as unavailable: a day made timed, alone, moved and in a group', [one, moved, two, group], [
+        ["'Sample practice 2' on Tue, Jan 12 now starts at time unavailable."],
+        ["'Sample practice 2' on Tue, Jan 12 now starts at time unavailable on Wed, Jan 13."],
+        ['2 days that were changed earlier now start at time unavailable.'],
         '2 days that were changed earlier are no longer all-day.']);
-      eq('verify: a clock that can\'t be said drops its clause: notes, the rule and the zone choice', [notes, rule, zone], [
-        ['There is no 2:30 AM on Sun, Mar 14 in Olympus Mons.'],
-        ['weekly on Tuesday', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday, with no end, as before.'],
-        [['Keep the clock time', 'Keep the same moment: 7:00 PM in Los Angeles']]]);
+      eq('verify: a clock that can\'t be said shows as unavailable: notes, the rule and the zone choice, beside the zone\'s name', [notes, rule, zone], [
+        ['A clock time is skipped on Sun, Mar 14 in Olympus Mons; its time is unavailable.', 'A clock time happens twice on Sun, Nov 7 in Olympus Mons; its time is unavailable; this is the first, in daylight time.'],
+        ['weekly on Tuesday at time unavailable', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday at time unavailable, with no end, as before.'],
+        [['Keep the clock time: time unavailable in Olympus Mons', 'Keep the same moment: 7:00 PM in Los Angeles, time unavailable in Olympus Mons']]]);
     }
 
     // A group other than the zone, whose options agree at first and then diverge, in an all-day plan.

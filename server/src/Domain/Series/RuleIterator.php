@@ -77,15 +77,15 @@ class RuleIterator extends RRuleIterator
 
     /** The rule without BYSETPOS, COUNT and UNTIL, from a period before the start, whose periods' sets BYSETPOS limits (periodSet); null without BYSETPOS. */
     private ?self $sets = null;
-    /** @var list<\DateTimeImmutable> the current period's picked occurrences after the current one (sets, or BYWEEKNO's years) */
+    /** @var list<\DateTimeImmutable> the current period's picked occurrences after the current one (sets, or a numbered year's) */
     private array $picked = [];
-    /** The next year a YEARLY rule with BYWEEKNO reads, null before the first. */
+    /** The next year a YEARLY rule naming days by number (yearNumbered) reads, null before the first. */
     private ?int $weekYear = null;
 
     public function __construct($rrule, \DateTimeInterface $start)
     {
         parent::__construct($rrule, $start);
-        if (!$this->owned() && $this->bySetPos !== null && $this->byWeekNo === null) {
+        if (!$this->owned() && $this->bySetPos !== null && !$this->yearNumbered()) {
             $parts = $this->setsRule($rrule);
             $this->sets = new self(implode(';', array_map(static fn(string $k, string $v): string => $k . '=' . $v, array_keys($parts), $parts)), $this->setsStart());
             $this->rewind();
@@ -141,7 +141,7 @@ class RuleIterator extends RRuleIterator
     #[\ReturnTypeWillChange]
     public function next()
     {
-        if ($this->weekNumbered() || $this->sets !== null) {
+        if ($this->yearNumbered() || $this->sets !== null) {
             $this->nextPicked();
             return;
         }
@@ -199,10 +199,15 @@ class RuleIterator extends RRuleIterator
         ++$this->counter;
     }
 
-    /** A YEARLY rule with BYWEEKNO, whose years the iterator reads itself (weekYearSet). */
-    private function weekNumbered(): bool
+    /**
+     * A YEARLY rule naming its days by their number in the year's weeks
+     * (BYWEEKNO) or days (BYYEARDAY), whose years the iterator reads itself
+     * (yearSet): sabre reads BYWEEKNO's Sunday a week early and steps a
+     * BYYEARDAY rule from 29 February to the next 29 February.
+     */
+    private function yearNumbered(): bool
     {
-        return $this->frequency === 'yearly' && $this->byWeekNo !== null;
+        return $this->frequency === 'yearly' && ($this->byWeekNo !== null || $this->byYearDay !== null);
     }
 
     /**
@@ -210,7 +215,7 @@ class RuleIterator extends RRuleIterator
      * whole: BYSETPOS limits the set of each period (RFC 5545 3.3.10: the
      * occurrences of one interval of the frequency, whatever the frequency),
      * read from the rule without it (periodSet), and a YEARLY rule with
-     * BYWEEKNO is read a year at a time (weekYearSet). An occurrence is one
+     * BYWEEKNO or BYYEARDAY is read a year at a time (yearSet). An occurrence is one
      * after the start (the start is the first, yielded before any next()).
      * The rule ends with its sets, or when a whole cycle of the walk has gone
      * by without one (cycle()), the rule's own end.
@@ -225,7 +230,7 @@ class RuleIterator extends RRuleIterator
                 $found = array_shift($this->picked);
                 break;
             }
-            $set = $this->weekNumbered() ? $this->weekYearSet() : $this->periodSet();
+            $set = $this->yearNumbered() ? $this->yearSet() : $this->periodSet();
             if ($set === null) {
                 break;
             }
@@ -344,16 +349,17 @@ class RuleIterator extends RRuleIterator
     }
 
     /**
-     * The next year's set of a YEARLY rule with BYWEEKNO, and where it starts:
-     * the days of its listed weeks (week 1 the first week, from WKST, with at
-     * least four days in the year; a negative number from the year's last
-     * week), which the rule's other day parts admit, on the start's weekday
-     * where no part names a day, at the start's clock. Years step by INTERVAL
+     * The next year's set of a YEARLY rule naming days by number, and where
+     * it starts: the days of the year, or with BYWEEKNO of its listed weeks
+     * (week 1 the first week, from WKST, with at least four days in the
+     * year; a negative number from the year's last week), which the rule's
+     * other day parts admit, on the start's weekday where no part names a
+     * day (BYWEEKNO alone), at the start's clock. Years step by INTERVAL
      * from the start's.
      *
      * @return array{0:int,1:list<\DateTimeImmutable>}
      */
-    private function weekYearSet(): array
+    private function yearSet(): array
     {
         $s = \DateTimeImmutable::createFromInterface($this->startDate);
         $y = $this->weekYear ?? (int) $s->format('Y');
@@ -362,13 +368,19 @@ class RuleIterator extends RRuleIterator
         $weeks = intdiv($this->week1($y + 1) - $w1, 7);
         $named = $this->byDay !== null || $this->byMonthDay !== null || $this->byYearDay !== null;
         $wd = Cal::wd(Cal::dnOf($s));
-        $set = [];
-        foreach (array_map('intval', $this->byWeekNo) as $n) {
-            $week = $n > 0 ? $n : $weeks + $n + 1;
-            if ($week < 1 || $week > $weeks) {
-                continue;
+        $spans = [[Cal::dn($y, 1, 1), Cal::dn($y, 12, 31)]];
+        if ($this->byWeekNo !== null) {
+            $spans = [];
+            foreach (array_map('intval', $this->byWeekNo) as $n) {
+                $week = $n > 0 ? $n : $weeks + $n + 1;
+                if ($week >= 1 && $week <= $weeks) {
+                    $spans[] = [$w1 + 7 * ($week - 1), $w1 + 7 * ($week - 1) + 6];
+                }
             }
-            for ($dn = $w1 + 7 * ($week - 1), $last = $dn + 6; $dn <= $last; $dn++) {
+        }
+        $set = [];
+        foreach ($spans as [$first, $last]) {
+            for ($dn = $first; $dn <= $last; $dn++) {
                 if ($this->admits($dn) && ($named || Cal::wd($dn) === $wd)) {
                     [$yy, $mm, $dd] = Cal::ymd($dn);
                     $at = $s->setDate($yy, $mm, $dd);
@@ -377,7 +389,7 @@ class RuleIterator extends RRuleIterator
             }
         }
         ksort($set);
-        return [$this->dayStart($w1), array_values($set)];
+        return [$this->dayStart(min($w1, Cal::dn($y, 1, 1))), array_values($set)];
     }
 
     /** The first day of week 1 of year $y: the week, from WKST, holding at least four of the year's days. */
@@ -597,7 +609,7 @@ class RuleIterator extends RRuleIterator
      */
     public function jumpTo(int $ts): void
     {
-        if ($this->count !== null || $this->owned() || $this->sets !== null || $this->weekNumbered() || $this->spanUnit() === null) {
+        if ($this->count !== null || $this->owned() || $this->sets !== null || $this->yearNumbered() || $this->spanUnit() === null) {
             return;
         }
         while ($this->valid() && $this->currentDate->getTimestamp() < $ts) {

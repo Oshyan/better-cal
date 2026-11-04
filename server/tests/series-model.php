@@ -2064,12 +2064,24 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
     ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
 
+    // A zone option's start is in the plan's zone even when its plan is refused.
+    $firstWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
+    $laAt = new DateTimeImmutable('2028-09-01 06:00', Time::zone('America/Los_Angeles'));
+    $p = smPlan($firstWeekday, [], ['acted' => smAt('2028-09-01 06:00', 'Australia/Lord_Howe'), 'landed' => ['start_utc' => Time::toDb($laAt), 'end_utc' => Time::toDb($laAt->modify('+90 minutes')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+    checkEq('Zone options: the first weekday of the month from Lord Howe to Los Angeles, the moment option (whose plan is refused) starts at the series\' stored start, 06:00 on 1 Mar 2028 there, written in Los Angeles', [
+        ['clock', '2028-03-01T06:00:00-08:00'], ['moment', '2028-02-29T11:00:00-08:00'],
+    ], array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? []));
+
     // BYSETPOS limits each period's set, for every frequency.
     checkEq('BYSETPOS: weekly on Mon, Wed and Fri, the last of each week, from Mon 4 Jan 2027: the start, then Fri 8 and Fri 15 Jan', ['2027-01-04 09:00', '2027-01-08 09:00', '2027-01-15 09:00'],
         $walk('FREQ=WEEKLY;BYDAY=MO,WE,FR;BYSETPOS=-1;COUNT=3', '2027-01-04 09:00', 'UTC'));
     checkEq('BYSETPOS: yearly on Mondays of January and February, the last of each year (not of each month): 22 Feb 2027, 28 Feb 2028, 26 Feb 2029', ['2027-02-22 09:00', '2028-02-28 09:00', '2029-02-26 09:00'],
         $walk('FREQ=YEARLY;BYMONTH=1,2;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2027-02-22 09:00', 'UTC'));
-    checkEq('BYSETPOS: daily at 09:00 and 17:00, the last of each day', ['2027-01-05 09:00', '2027-01-05 17:00', '2027-01-06 17:00'],
+    $lastWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;UNTIL=20270301', '2027-01-29', 0, true);
+    checkEq('BYSETPOS: all-day on the last weekday of the month until Mon 1 Mar 2027: 29 Jan and 26 Feb, and no 1 Mar, which is a weekday but not the last', [
+        ['2027-01-29', '2027-02-26'], ['2027-01-29', '2027-02-26'],
+    ], [array_map([Cal::class, 'date'], BetterCal\Domain\Series\Calc::fromRow($lastWeekday)->occurrences(PHP_INT_MAX, 10)), smShows($lastWeekday, ['master' => []], '2027-03-31')]);
+    checkEq('BYSETPOS: daily at 09:00 and 17:00, the last of each day',['2027-01-05 09:00', '2027-01-05 17:00', '2027-01-06 17:00'],
         $walk('FREQ=DAILY;BYHOUR=9,17;BYSETPOS=-1;COUNT=3', '2027-01-05 09:00', 'UTC'));
 
     // BYWEEKNO: week 1 is the first week (from WKST) with four days of the year.
@@ -2077,6 +2089,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         $walk('FREQ=YEARLY;BYWEEKNO=27;BYDAY=SU;COUNT=3', '2028-07-09 10:00', 'UTC'));
     checkEq('BYWEEKNO: with weeks from Sunday, week 1\'s Sunday is 3 Jan 2027, 2 Jan 2028 and 31 Dec 2028', ['2027-01-03 09:00', '2028-01-02 09:00', '2028-12-31 09:00'],
         $walk('FREQ=YEARLY;BYWEEKNO=1;WKST=SU;BYDAY=SU;COUNT=3', '2027-01-03 09:00', 'UTC'));
+
+    checkEq('BYYEARDAY: the 60th day of each year is 1 Mar 2027, 29 Feb 2028, 1 Mar 2029 and 1 Mar 2030', ['2027-03-01 21:15', '2028-02-29 21:15', '2029-03-01 21:15', '2030-03-01 21:15'],
+        $walk('FREQ=YEARLY;BYYEARDAY=60;COUNT=4', '2027-03-01 21:15', 'Pacific/Auckland'));
 
     // The carried clock of DAILY;BYDAY: the daily iterator keeps the clock a
     // skipped hour pushed on, on a day it steps to (every INTERVAL-th day

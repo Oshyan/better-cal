@@ -460,9 +460,20 @@ final class Model
                 }
                 // A zone option's label is the series' clock under it, never
                 // a day coming up (which can be an edited day at its own
-                // time): its series' start, as that plan's rule.to writes it.
+                // time): its series' start, written in this plan's zone as
+                // rule.to.start is (an option's plan writes its rule.to in
+                // its own series' zone, which a refused one keeps as it was).
                 if ($group['id'] === 'zone') {
-                    $plan['groups'][$gi]['options'][$oi]['start'] = $alt['plan']['rule']['to']['start'];
+                    $to = (string) $alt['plan']['rule']['to']['start'];
+                    $plan['groups'][$gi]['options'][$oi]['start'] = $plan['zone'] !== null && str_contains($to, 'T') ? self::inZoneOut(Time::parseIso($to), $plan['zone']) : $to;
+                }
+            }
+            // A disabled zone option has no series under it to start.
+            if ($group['id'] === 'zone') {
+                foreach ($group['options'] as $oi => $option) {
+                    if (!isset($alts[$oi])) {
+                        $plan['groups'][$gi]['options'][$oi]['start'] = null;
+                    }
                 }
             }
         }

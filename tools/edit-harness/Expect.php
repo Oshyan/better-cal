@@ -588,11 +588,59 @@ final class Expect
     }
 
     /** A reading's rule's days from $from on, unbounded, as its walk gives them (its pattern instants' days). */
-    public function readingDays(array $reading, int $from, bool $far = false): array
+    public function readingDays(array $reading, int $from): array
     {
-        // 60 periods, or a whole Gregorian cycle (400 years, where every calendar repeats): a first difference can lie that far on.
+        // 60 periods past where the day acted on lands: the days `earlier` reads.
         $span = max(1, $this->s0->periodSpan() * $this->s0->interval);
-        return array_keys($this->walk($reading['T'], $from, max($from, $this->landedDn) + ($far ? 146097 : 60 * $span + 400)));
+        return array_keys($this->walk($reading['T'], $from, max($from, $this->landedDn) + 60 * $span + 400));
+    }
+
+    /**
+     * A reading's walk from $lo to $hi, a stretch at a time, so a far walk
+     * holds one stretch of days, never its whole span.
+     *
+     * @return \Generator<int>
+     */
+    public function readingStream(array $reading, int $lo, int $hi): \Generator
+    {
+        $step = max(4096, 16 * max(1, $this->s0->periodSpan() * $this->s0->interval));
+        for ($a = $lo; $a <= $hi; $a += $step) {
+            foreach (array_keys($this->walk($reading['T'], $a, min($hi, $a + $step - 1))) as $d) {
+                yield $d;
+            }
+        }
+    }
+
+    /**
+     * The days after which a reading's walk gives the same days again, by
+     * periods of its rule, or null where the harness can't read its periods.
+     * No Loss, Proved per Family: "A series every n months revisits the same
+     * place in that cycle after 4,800 / gcd(n, 4,800) periods, a yearly one
+     * every n years after 400 / gcd(n, 400)", the Gregorian calendar
+     * repeating every 146,097 days; daily and weekly days are a function of
+     * the weekday and the interval's phase alone ("a one-to-one map of
+     * days"), so they repeat after lcm(7, n) days and n weeks.
+     */
+    public function readingCycle(array $reading): ?int
+    {
+        $s = $reading['T']['type'] === 'keep' ? $this->newShape() : $this->s0;
+        if ($s === null || !$s->supported()) {
+            return null;
+        }
+        $gcd = static function (int $a, int $b): int {
+            while ($b !== 0) {
+                [$a, $b] = [$b, $a % $b];
+            }
+            return $a;
+        };
+        $n = $s->interval;
+        return match ($s->freq) {
+            'DAILY' => intdiv(7 * $n, $gcd(7, $n)),
+            'WEEKLY' => 7 * $n,
+            'MONTHLY' => intdiv($n, $gcd($n, 4800)) * 146097,
+            'YEARLY' => intdiv($n, $gcd($n, 400)) * 146097,
+            default => null,
+        };
     }
 
     /** The edited row the request came through, when it did. */

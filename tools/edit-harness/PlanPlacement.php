@@ -500,7 +500,7 @@ trait PlanPlacement
             $gen = array_fill_keys(array_merge($outR['gen'], $outR['edge']), true);
             $walk = $x->readingDays($r, (int) $outR['start']);
             $noGen = static fn(array $l): array => array_values(array_filter($l, static fn(int $d): bool => !isset($gen[$d])));
-            $seqs[$o['id']] = ['o' => $o, 'r' => $r, 'start' => (int) $outR['start'], 'noGen' => $noGen,
+            $seqs[$o['id']] = ['o' => $o, 'r' => $r, 'start' => (int) $outR['start'], 'gen' => $gen,
                 'v' => ['rule' => $walk, 'rule without edge gains' => $noGen($walk), 'series' => $outR['days'], 'series without edge gains' => $noGen($outR['days'])]];
         }
         foreach ($seqs as $id => $s) {
@@ -547,46 +547,145 @@ trait PlanPlacement
             return;
         }
         $ids = array_keys($seqs);
-        foreach ($ids as $k => $id) {
-            $forms = [];
-            foreach (array_keys($seqs[$id]['v']) as $v) {
-                $mine = array_values(array_filter($seqs[$id]['v'][$v], static fn(int $d): bool => $d >= $x->landedDn));
-                $theirs = array_values(array_filter($seqs[$ids[1 - $k]]['v'][$v], static fn(int $d): bool => $d >= $x->landedDn));
-                $i = 0;
-                while ($i < count($mine) && $i < count($theirs) && $mine[$i] === $theirs[$i]) {
-                    $i++;
-                }
-                if (str_starts_with($v, 'rule') && $i === min(count($mine), count($theirs))) {
-                    // The rules agree as far as the short walk goes: walk both on, as far as two readings are compared.
-                    $far = [];
-                    foreach ([$id, $ids[1 - $k]] as $sid) {
-                        $w = $x->readingDays($seqs[$sid]['r'], $seqs[$sid]['start'], true);
-                        $far[] = array_values(array_filter($v === 'rule' ? $w : ($seqs[$sid]['noGen'])($w), static fn(int $d): bool => $d >= $x->landedDn));
-                    }
-                    [$mine, $theirs] = $far;
-                    while ($i < count($mine) && $i < count($theirs) && $mine[$i] === $theirs[$i]) {
-                        $i++;
-                    }
-                }
-                $differs = $i < count($mine);
-                $form = [
-                    'through' => array_map($entry, array_slice($mine, 0, $differs ? max(3, $i + 1) : 3)),
-                    'split' => $differs && $i >= 3 ? [array_map($entry, array_slice($mine, 0, 3)), array_map($entry, array_slice($mine, $i - 1, 2))] : null,
-                ];
-                $forms[json_encode($form)] = $form;
+        // How far two readings' rules are compared: Finding the Readings
+        // merges two only when their occurrences are the same "for as long as
+        // the rule could run (the walk below, past the bound, not just the
+        // series' span)", and the walk is No Loss, Proved per Family's, by
+        // periods of the rule: "that many periods ... finding no loss or merge
+        // there proves there is none anywhere" (Expect::readingCycle). So the
+        // rules are compared by their days, past every day that isn't
+        // periodic (both starts, the day acted on, every gain at an edge),
+        // through one whole cycle of both rules: walks that agree over it
+        // agree for all time, so `then` can name nothing past it. The end of
+        // year 9999 ends every rule. The days are compared a stretch at a
+        // time and nothing else ends a comparison; the walk reads on three
+        // cycles past it only to list a reading's first three dates.
+        $cycles = array_map(static fn(string $sid): ?int => $x->readingCycle($seqs[$sid]['r']), $ids);
+        if (in_array(null, $cycles, true)) {
+            $this->unoracled[] = 'c-placement: a reading\'s dates where a rule\'s periods can\'t be read, so its comparison with the other reading has no bound';
+            return;
+        }
+        [$g, $b] = $cycles;
+        while ($b !== 0) {
+            [$g, $b] = [$b, $g % $b];
+        }
+        $far = max($x->landedDn, $seqs[$ids[0]]['start'], $seqs[$ids[1]]['start']);
+        foreach ($ids as $sid) {
+            foreach (array_keys($seqs[$sid]['gen']) as $d) {
+                $far = max($far, $d + 1);
             }
-            if (count($forms) > 1) {
+        }
+        $cycle = intdiv($cycles[0], $g) * $cycles[1];
+        $end = Days::dn(9999, 12, 31);
+        $far = min($far + $cycle - 1, $end);
+        $list = min($far + 3 * $cycle, $end);
+        // The plan's own list bounds how many days a comparison keeps.
+        $keep = array_map(static fn(string $sid): int => max(3, count($seqs[$sid]['o']['dates'] ?? [])), $ids);
+        $forms = [[], []];
+        foreach (array_keys($seqs[$ids[0]]['v']) as $v) {
+            $streams = [];
+            foreach ($ids as $sid) {
+                $sq = $seqs[$sid];
+                $streams[] = str_starts_with($v, 'rule')
+                    ? (static function () use ($x, $sq, $v, $list): \Generator {
+                        foreach ($x->readingStream($sq['r'], max($sq['start'], $x->landedDn), $list) as $d) {
+                            if ($v === 'rule' || !isset($sq['gen'][$d])) {
+                                yield $d;
+                            }
+                        }
+                    })()
+                    : (static function () use ($x, $sq, $v): \Generator {
+                        foreach ($sq['v'][$v] as $d) {
+                            if ($d >= $x->landedDn) {
+                                yield $d;
+                            }
+                        }
+                    })();
+            }
+            foreach (self::compareDays($streams[0], $streams[1], $keep, str_starts_with($v, 'rule') ? $far : null) as $k => $form) {
+                $forms[$k][json_encode(array_diff_key($form, ['prefix' => 1]))] = $form;
+            }
+        }
+        foreach ($ids as $k => $id) {
+            if (count($forms[$k]) > 1) {
                 $this->unoracled[] = 'c-placement: a reading\'s dates where the contract\'s open readings disagree';
                 continue;
             }
-            $form = reset($forms);
+            $form = reset($forms[$k]);
             $o = $seqs[$id]['o'];
             $dates = array_map(static fn(array $e): array => self::norm($e, ['start', 'allDay', 'tz']), $o['dates'] ?? []);
             $then = array_map(static fn(array $e): array => self::norm($e, ['start', 'allDay', 'tz']), $o['then'] ?? []);
             // Through the first different date, or the first three and then: the contract's "further on" reads either way from the fourth date on.
-            $ok = ($dates === $form['through'] && $then === []) || ($form['split'] !== null && $dates === $form['split'][0] && $then === $form['split'][1]);
-            $this->expect('c-placement', 'a reading\'s dates run from the day acted on through its first date that differs from the other\'s, or the first three and then', 'reading dates', true, $ok, ['option' => $id, 'want' => $form, 'dates' => $dates, 'then' => $then]);
+            $through = $then === [] && count($dates) === $form['length'] && $dates === array_map($entry, array_slice($form['prefix'], 0, $form['length']));
+            $split = $form['split'] !== null && $dates === array_map($entry, $form['split'][0]) && $then === array_map($entry, $form['split'][1]);
+            $want = ['differs' => $form['differs'], 'shared' => $form['shared'], 'length' => $form['length'], 'first' => array_map($entry, array_slice($form['prefix'], 0, min(6, $form['length']))),
+                'split' => $form['split'] === null ? null : [array_map($entry, $form['split'][0]), array_map($entry, $form['split'][1])]];
+            $this->expect('c-placement', 'a reading\'s dates run from the day acted on through its first date that differs from the other\'s, or the first three and then', 'reading dates', true, $through || $split, ['option' => $id, 'want' => $want, 'dates' => $dates, 'then' => $then]);
         }
+    }
+
+    /**
+     * Two readings' days compared in order, one day at a time. For each
+     * side: whether it has a day where they part (`differs`), how many days
+     * they share before it, its `dates` through that day (`length` of them,
+     * three at least, by a digest, with the first $keep of them kept as
+     * `prefix`), and `split`, its first three with `then` (the last shared
+     * day and its first different one) when they part past the third.
+     *
+     * Two rules are compared through $bound and agree for all time when
+     * they agree that far; their days past it list their first three.
+     *
+     * @param array{0:int,1:int} $keep
+     * @return array{0:array,1:array}
+     */
+    private static function compareDays(\Generator $a, \Generator $b, array $keep, ?int $bound): array
+    {
+        $got = [[], []];
+        $hash = [hash_init('sha1'), hash_init('sha1')];
+        $take = static function (int $k, int $d) use (&$got, &$hash, $keep): void {
+            hash_update($hash[$k], pack('q', $d));
+            if (count($got[$k]) < $keep[$k]) {
+                $got[$k][] = $d;
+            }
+        };
+        $shared = 0;
+        $last = null;
+        $past = static fn(\Generator $s): bool => $bound !== null && (!$s->valid() || $s->current() > $bound);
+        while ($a->valid() && $b->valid() && $a->current() === $b->current() && !$past($a)) {
+            $last = $a->current();
+            $take(0, $last);
+            $take(1, $last);
+            $shared++;
+            $a->next();
+            $b->next();
+        }
+        $agreed = $past($a) && $past($b);
+        $out = [];
+        foreach ([$a, $b] as $k => $s) {
+            if ($agreed || !$s->valid()) {
+                // Nothing past what they share: its first three, read on past the bound where they agree.
+                while ($agreed && $s->valid() && count($got[$k]) < 3) {
+                    $take($k, $s->current());
+                    $s->next();
+                }
+                $h = hash_init('sha1');
+                foreach (array_slice($got[$k], 0, 3) as $d) {
+                    hash_update($h, pack('q', $d));
+                }
+                $out[$k] = ['differs' => false, 'shared' => null, 'length' => min(3, count($got[$k])), 'digest' => hash_final($h), 'prefix' => $got[$k], 'split' => null];
+                continue;
+            }
+            $first = $s->current();
+            $length = $shared;
+            while ($s->valid() && $length < max(3, $shared + 1)) {
+                $take($k, $s->current());
+                $length++;
+                $s->next();
+            }
+            $out[$k] = ['differs' => true, 'shared' => $shared, 'length' => $length, 'digest' => hash_final(hash_copy($hash[$k])), 'prefix' => $got[$k],
+                'split' => $shared >= 3 ? [array_slice($got[$k], 0, 3), [$last, $first]] : null];
+        }
+        return $out;
     }
 
     /**

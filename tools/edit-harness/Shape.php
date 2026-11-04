@@ -36,6 +36,36 @@ final class Shape
     public ?string $until = null;
     public array $parts = [];
     public bool $bare = false;
+    /** A rule naming its hour, read in its zone: the zone and the clock it names (inZone). */
+    private ?string $gapTz = null;
+    private int $gapSecs = 0;
+
+    /**
+     * The pattern read in a series' zone at its clock. A rule naming its hour
+     * (BYHOUR) is stepped hour by hour by the expander and has no occurrence
+     * on a day whose clock falls in a spring-forward gap (series-model.md,
+     * Zones, DST and All-Day Days), so such a day is no day of it. Any other
+     * rule keeps a gap day, at the clock plus the gap.
+     */
+    public function inZone(string $tz, int $clockSecs, bool $allDay, bool $clockFromRule = true): self
+    {
+        $this->gapTz = null;
+        if (!$allDay && isset($this->parts['BYHOUR']) && !str_contains($this->parts['BYHOUR'], ',')) {
+            $this->gapTz = $tz;
+            // The clock the rule names, or $clockSecs for a rule about to be
+            // written at that clock (a drag writes the new hour and minute).
+            $this->gapSecs = !$clockFromRule ? $clockSecs : (int) $this->parts['BYHOUR'] * 3600
+                + (isset($this->parts['BYMINUTE']) ? (int) $this->parts['BYMINUTE'] : intdiv($clockSecs % 3600, 60)) * 60
+                + (isset($this->parts['BYSECOND']) ? (int) $this->parts['BYSECOND'] : $clockSecs % 60);
+        }
+        return $this;
+    }
+
+    /** Whether the expander leaves $dn, a day of the pattern, out for its clock (inZone): no occurrence there. */
+    public function skipsForGap(int $dn): bool
+    {
+        return $this->gapTz !== null && Clock::inGap($dn, $this->gapSecs, $this->gapTz);
+    }
 
     /** @return array<string,string> */
     public static function parts(string $rrule): array
@@ -427,13 +457,15 @@ final class Shape
     }
 
     /**
-     * The pattern's days from $fromDn to $toDn (inclusive), counting the
+     * The series' days from $fromDn to $toDn (inclusive), counting the
      * periods of a series whose start is $startDn (its phase), the days
-     * before the start included when $fromDn is earlier.
+     * before the start included when $fromDn is earlier. Its occurrences,
+     * without the days its clock's gap leaves out (inZone); with $pattern,
+     * every day the pattern names, the members' days for images.
      *
      * @return list<int>
      */
-    public function days(int $startDn, int $fromDn, int $toDn, int $max = PHP_INT_MAX): array
+    public function days(int $startDn, int $fromDn, int $toDn, int $max = PHP_INT_MAX, bool $pattern = false): array
     {
         $p0 = $this->periodOf($startDn);
         $out = [];
@@ -442,7 +474,7 @@ final class Shape
                 continue;
             }
             foreach ($this->periodDays($p) as [$d]) {
-                if ($d >= $fromDn && $d <= $toDn) {
+                if ($d >= $fromDn && $d <= $toDn && ($pattern || !$this->skipsForGap($d))) {
                     $out[] = $d;
                     if (count($out) >= $max) {
                         return $out;
@@ -453,10 +485,10 @@ final class Shape
         return $out;
     }
 
-    /** Whether $dn is a day of the pattern counted from a series starting on $startDn. */
+    /** Whether $dn is an occurrence's day of the pattern counted from a series starting on $startDn. */
     public function has(int $dn, int $startDn): bool
     {
-        return $this->counted($this->periodOf($dn), $this->periodOf($startDn)) && $this->memberOf($dn) !== null;
+        return $this->counted($this->periodOf($dn), $this->periodOf($startDn)) && $this->memberOf($dn) !== null && !$this->skipsForGap($dn);
     }
 
     /** Days per period at most, for sizing a walk. */

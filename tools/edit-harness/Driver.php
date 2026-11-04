@@ -20,6 +20,10 @@ final class Driver
     private array $spec = [];
     private ?Rng $rng = null;
     private int $firstId = 0;
+    /** @var list<int> the trips and stops this case made for its edited days (attachTrips): fixtures, never the edit's own events */
+    private array $fixtures = [];
+    /** @var list<array> the event_links attaching edited days, as made */
+    private array $tripLinks = [];
     /** Parts of the design the oracle had no answer for in this case. */
     public array $unoracled = [];
 
@@ -45,6 +49,8 @@ final class Driver
         $this->spec = $spec;
         $this->rng = $r;
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
+        $this->fixtures = [];
+        $this->tripLinks = [];
         Prof::mark('create');
         $id = $this->createSeries($spec['series']);
         Prof::mark('state');
@@ -67,7 +73,13 @@ final class Driver
         }
         Prof::mark('exceptions');
         try {
+            $trips = $this->tripsFor($spec);
+            if (in_array('trip', $trips, true) && !$spec['vector']['trip']) {
+                // An edited day that is a trip needs a series that is one.
+                $this->events->patch($this->userId, $id, ['scope' => 'all', 'isContainer' => true]);
+            }
             $this->applyExceptions($id, $st, $spec['exceptions']);
+            $this->attachTrips($id, $st, $spec['exceptions'], $trips);
         } catch (HttpError $e) {
             $this->fail('b-this', 'a "this event" edit was refused: ' . $e->errorCode, ['message' => $e->getMessage()]);
             return $this->result('none');
@@ -107,6 +119,7 @@ final class Driver
         $s1 = $this->snapshot();
         Prof::mark('checks');
         $this->checkEdit($before, $after, $acted, $v, $sent, $s0);
+        $this->checkTripLinks($before, $acted, $sent);
         Prof::mark('undo');
         // Undo: every row as it was.
         if ($this->undoLatest('f-undo', 'undo')) {
@@ -197,6 +210,56 @@ final class Driver
             return ';UNTIL=' . Clock::parse($last['key'])->format('Ymd\THis\Z');
         }
         return ';UNTIL=' . Clock::at($last['dn'], 86399, $s['tzid'])->setTimezone(Clock::utc())->format('Ymd\THis\Z');
+    }
+
+    /**
+     * Which edited days are in a trip, worked out from the case's seed and
+     * number so the drawn space is untouched: 'stop' (a stop of a trip of
+     * its own), 'trip' (a trip with a stop in it; its series is made a trip
+     * first) or null, by exception index.
+     *
+     * @return array<int,?string>
+     */
+    private function tripsFor(array $spec): array
+    {
+        $out = [];
+        foreach ($spec['exceptions'] ?? [] as $i => $ex) {
+            $k = $ex['kind'] === 'skip' ? 0 : crc32('trip:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0) . ':' . $i) % 5;
+            $out[$i] = match (true) {
+                $k === 1 => 'stop',
+                $k === 2 && !$spec['vector']['trip'] => 'trip',
+                default => null,
+            };
+        }
+        // In a series that is a trip every edited day is one, and a trip
+        // can't be another's stop: its days in trips are trips with stops.
+        if (in_array('trip', $out, true)) {
+            $out = array_map(static fn(?string $t): ?string => $t === null ? null : 'trip', $out);
+        }
+        return $out;
+    }
+
+    /** The trip links of tripsFor, each through Trips as the app makes them, far from the series' days. */
+    private function attachTrips(int $id, array $st, array $exceptions, array $trips): void
+    {
+        $trip = new \BetterCal\Domain\Trips($this->db, $this->undo);
+        foreach ($exceptions as $i => $ex) {
+            $occ = $st['raw'][$ex['at']] ?? null;
+            if (($trips[$i] ?? null) === null || $occ === null) {
+                continue;
+            }
+            $row = $this->db->one('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $occ['key']]);
+            if ($row === null) {
+                continue;
+            }
+            $at = sprintf('2090-01-%02dT10:00:00+00:00', 1 + count($this->fixtures));
+            $other = (int) $this->events->create($this->userId, ['calendarId' => $this->calendarId, 'title' => $trips[$i] === 'stop' ? 'Sample trip' : 'Sample stop',
+                'start' => $at, 'end' => str_replace('T10:', 'T11:', $at), 'allDay' => false, 'tzid' => 'UTC', 'isContainer' => $trips[$i] === 'stop'])['eventId'];
+            $this->fixtures[] = $other;
+            [$container, $member] = $trips[$i] === 'stop' ? [$other, (int) $row['id']] : [(int) $row['id'], $other];
+            $trip->attach($this->userId, $container, $member);
+            $this->tripLinks[] = $this->db->one('SELECT * FROM event_links WHERE container_id = ? AND event_id = ?', [$container, $member]);
+        }
     }
 
     private function instanceArg(array $st, string $key): string
@@ -330,13 +393,27 @@ final class Driver
         foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $ov) {
             $overrides[(int) $ov['id']] = $ov;
         }
+        // An edited day's own things (series-model.md, Own Fields): the
+        // fields its list names, and its trip when a link names it, since a
+        // row exists for what refers to it too.
         $own = [];
+        $linked = [];
+        if ($overrides !== []) {
+            [$in, $params] = Db::in(array_keys($overrides));
+            foreach ($this->db->all("SELECT container_id, event_id FROM event_links WHERE event_id IN $in OR container_id IN $in", array_merge($params, $params)) as $l) {
+                $linked[(int) $l['container_id']] = true;
+                $linked[(int) $l['event_id']] = true;
+            }
+        }
         foreach ($overrides as $oid => $ov) {
             $own[$oid] = json_decode((string) ($ov['override_fields'] ?? '[]'), true) ?: [];
+            if (isset($linked[$oid])) {
+                $own[$oid][] = 'trip';
+            }
         }
         $ids = array_merge([$id], array_keys($overrides));
         [$tags, $people] = $this->labels($ids);
-        $shape = Shape::parse((string) ($row['rrule'] ?? ''), $startDn);
+        $shape = Shape::parse((string) ($row['rrule'] ?? ''), $startDn)->inZone($tz, $start === null || (int) ($row['all_day'] ?? 0) === 1 ? 0 : Clock::secsOf($start), (int) ($row['all_day'] ?? 0) === 1);
         $occ = $exp['occ'];
         return [
             'id' => $id,
@@ -502,6 +579,16 @@ final class Driver
                         $c = $cS - $v['clock'];
                     }
                     $at = Clock::at($dS + $v['date'], $c, $tz);
+                    // A clock that happens twice names two instants: the
+                    // request puts the day on the second in half the cases
+                    // (by the case's number), so both directions are drawn.
+                    foreach ([3600, 1800] as $back) {
+                        $later = Clock::plus($at, $back);
+                        if ($later->format('Y-m-d H:i:s') === $at->format('Y-m-d H:i:s') && crc32('fold:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 2 === 1) {
+                            $at = $later;
+                            break;
+                        }
+                    }
                     $l = max(900, $len + $v['length']);
                     if ($v['zone'] !== null) {
                         $in['tzid'] = $tz;

@@ -169,10 +169,48 @@ trait Invariants
         return $v === null ? null : (int) $v;
     }
 
-    /** Standalone events this case made (no rule, no parent), live. */
+    /** Standalone events this case made (no rule, no parent), live; the trip fixtures aren't among them. */
     private function standalones(): array
     {
-        return $this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId]);
+        $rows = $this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId]);
+        return array_values(array_filter($rows, fn(array $r): bool => !in_array((int) $r['id'], $this->fixtures, true)));
+    }
+
+    /**
+     * (b-trip-links) A row exists for what refers to it (series-model.md,
+     * Own Fields): right after the edit, before Undo, every trip link the
+     * case made stands, unchanged, while its edited day's row stands; and
+     * the row goes only when the edit deletes that day (a delete of it, or
+     * a plan's "deleted" outcome), never because it rejoins the series.
+     */
+    private function checkTripLinks(array $before, array $acted, array $sent): void
+    {
+        $outcomes = [];
+        foreach ($sent['_plan']['days'] ?? [] as $d) {
+            if (($d['kind'] ?? '') === 'edited' && isset($d['key'])) {
+                $outcomes[str_replace(['T', 'Z'], [' ', ''], (string) $d['key'])] = $d['outcome'];
+            }
+        }
+        foreach ($this->tripLinks as $link) {
+            $ids = [(int) $link['container_id'], (int) $link['event_id']];
+            $dayId = in_array($ids[0], $this->fixtures, true) ? $ids[1] : $ids[0];
+            $key = (string) ($before['overrides'][$dayId]['recurrence_instance_utc'] ?? '');
+            $row = $this->db->one('SELECT id, deleted_at FROM events WHERE id = ?', [$dayId]);
+            $live = $row !== null && $row['deleted_at'] === null;
+            $now = $this->db->one('SELECT * FROM event_links WHERE id = ?', [(int) $link['id']]);
+            $deletes = match ($sent['kind']) {
+                'deleteThis' => $key === $acted['key'],
+                'deleteFollowing' => $key >= $acted['key'],
+                'all', 'following' => ($outcomes[$key] ?? null) === 'deleted',
+                default => false,
+            };
+            $this->check('b-trip-links', $live ? $now == $link : $deletes, $live
+                ? 'an edited day in a trip keeps its link, unchanged'
+                : 'an edited day in a trip is deleted only when the edit deletes it', ['key' => $key, 'outcome' => $outcomes[$key] ?? null, 'link' => $link, 'now' => $now]);
+            if (($outcomes[$key] ?? null) === 'rejoins') {
+                $this->fail('b-trip-links', 'an edited day in a trip goes back to the series while its link stands', ['key' => $key, 'link' => $link]);
+            }
+        }
     }
 
     // ---- (a) ---------------------------------------------------------------
@@ -710,7 +748,11 @@ trait Invariants
             if (!$ownTime && $x->allDay1 === false && (int) $ov0['all_day'] === 1 && !$ownAllDay) {
                 $clock = $x->clock1;
             }
-            $start = Clock::db(Clock::at($day, $clock, $zone));
+            // An instant given stays that instant: where its day, clock and
+            // zone come out as it showed, it is where it showed, whichever of
+            // a repeated hour's two instants that was.
+            $was = Clock::local((string) $ov0['start_utc'], $zone);
+            $start = Clock::dnOf($was) === $day && Clock::secsOf($was) === $clock ? (string) $ov0['start_utc'] : Clock::db(Clock::at($day, $clock, $zone));
         }
         $this->check('b-placed', (string) $ov1['start_utc'] === $start, 'an edited day shows as its own fields say (own date, time, all-day kept; the rest follows the series)', ['row' => (int) $ov0['id'], 'own' => $own, 'was' => $ov0['start_utc'], 'expected' => $start, 'stored' => $ov1['start_utc'], 'key' => $key, 'move' => $move]);
         $len1 = Clock::parse((string) $ov1['end_utc'])->getTimestamp() - Clock::parse((string) $ov1['start_utc'])->getTimestamp();
@@ -757,7 +799,15 @@ trait Invariants
         if (Clock::dayOf($at['start'], $pZone) !== Clock::dayOf($at['key'], $sZone)) {
             $own[] = 'date';
         }
-        if (!$at['allDay'] && ($at['allDay1'] || $at['tz'] !== $at['tz1'] || Clock::secsOf(Clock::local($at['start'], $pZone)) !== Clock::secsOf(Clock::local($at['key'], $sZone)))) {
+        // Its time is the series' where it shows at the instant the series
+        // gives it there: on its key's day the key itself, on a day of its
+        // own the series' clock there (its first instant in a repeated hour).
+        // Compared as instants: one day, clock and zone are two instants
+        // where the hour repeats.
+        $seriesAt = in_array('date', $own, true)
+            ? Clock::db(Clock::at(Clock::dayOf($at['start'], $sZone), Clock::secsOf(Clock::local($at['key'], $sZone)), $sZone))
+            : (string) $at['key'];
+        if (!$at['allDay'] && ($at['allDay1'] || $at['tz'] !== $at['tz1'] || Clock::parse((string) $at['start'])->getTimestamp() !== Clock::parse($seriesAt)->getTimestamp())) {
             $own[] = 'time';
         }
         if ($at['allDay'] === $at['allDay1'] && $at['len'] !== $at['len1']) {

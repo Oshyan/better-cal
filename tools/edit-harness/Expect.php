@@ -647,11 +647,15 @@ final class Expect
             }
             return $out;
         }
+        // Images are of the pattern's days; the new series has the ones its
+        // clock's gap doesn't leave out (Shape::inZone: a rule naming its
+        // hour, read at the new clock in the new zone).
+        $gap = (clone $s)->inZone($this->allDay1 ? 'UTC' : $this->tz1, $this->clock1, $this->allDay1, false);
         if ($t['type'] === 'same' || $t['type'] === 'shift') {
             $span = abs($t['delta'] ?? 0) + 7 * $s->interval * 2 + 7;
-            foreach ($s->days($o['startDn'], $lo - $span, $hi + $span) as $d) {
+            foreach ($s->days($o['startDn'], $lo - $span, $hi + $span, PHP_INT_MAX, true) as $d) {
                 $n = $this->image($t, $d);
-                if ($n !== null && $n >= $lo && $n <= $hi) {
+                if ($n !== null && $n >= $lo && $n <= $hi && !$gap->skipsForGap($n)) {
                     $out[$n] = $d;
                 }
             }
@@ -674,7 +678,7 @@ final class Expect
                     $mIdx = intdiv($i, count($s->forms));
                     $new = $s->evalForm($t['forms'][0], $p + $ks[$mIdx], $t['months'][$mIdx]);
                 }
-                if ($new === null || $new < $lo || $new > $hi) {
+                if ($new === null || $new < $lo || $new > $hi || $gap->skipsForGap($new)) {
                     continue;
                 }
                 $src = $s->memberDay($i, $p);
@@ -698,7 +702,7 @@ final class Expect
             $this->newShapeDone = true;
             $text = $this->e['ruleText'] ?? null;
             if ($text !== null) {
-                $this->newShapeCache = Shape::parse($text, $this->o['startDn'] + $this->delta);
+                $this->newShapeCache = Shape::parse($text, $this->o['startDn'] + $this->delta)->inZone($this->allDay1 ? 'UTC' : $this->tz1, $this->clock1, $this->allDay1);
             }
         }
         return $this->newShapeCache;

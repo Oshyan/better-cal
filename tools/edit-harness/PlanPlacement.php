@@ -121,9 +121,9 @@ trait PlanPlacement
         $zone = $ctx['zone'];
         $row0 = $before['overrides'][$id];
         $row1 = $after['overrides'][$id] ?? null;
-        $inside = $ctx['out'] === null
-            ? self::isNewDay($after, $ctx, Clock::dayOf((string) $row0['recurrence_instance_utc'], $ctx['tz1']))
-            : (bool) ($ctx['out']['rows'][$id]['inside'] ?? true);
+        // Under a rule outside the drag table a row is inside while its key has a new key (newKeyByPlace).
+        $placeKey = $ctx['out'] === null ? self::newKeyByPlace($before, $after, $ctx, (string) $row0['recurrence_instance_utc']) : null;
+        $inside = $ctx['out'] === null ? $placeKey !== null : (bool) ($ctx['out']['rows'][$id]['inside'] ?? true);
         $where = null;
         if ($row1 !== null) {
             $fate = (string) $row0['start_utc'] === (string) $row1['start_utc'] && (int) $row0['all_day'] === (int) $row1['all_day'] ? 'stays' : 'moves';
@@ -133,8 +133,8 @@ trait PlanPlacement
             $where = $alone[$id];
         } elseif ($inside) {
             $fate = 'rejoins';
-            $img = $ctx['out'] === null ? Clock::dayOf((string) $row0['recurrence_instance_utc'], $ctx['tz1']) : ($ctx['out']['rows'][$id]['img'] ?? null);
-            $k = $img === null ? null : ($ctx['byDay'][$img] ?? null);
+            $img = $ctx['out']['rows'][$id]['img'] ?? null;
+            $k = $ctx['out'] === null ? $placeKey : ($img === null ? null : ($ctx['byDay'][$img] ?? null));
             $where = $k === null ? null : self::occurrenceRow($after['row'], $k);
         } else {
             $fate = 'deleted';

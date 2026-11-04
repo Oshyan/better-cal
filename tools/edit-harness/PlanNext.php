@@ -40,7 +40,8 @@ trait PlanNext
         if ($after['through'] !== null) {
             // Unbounded: read the occurrences from the cutoff on, as far as it takes to have one past the limit.
             $from = Days::date($cut - 2) . ' 00:00:00';
-            for ($span = 8; $span <= 16384; $span *= 2) {
+            // As far as 800 years: a sparse rule (a week number on a 29 February) has one occurrence in 28 years.
+            for ($span = 8; $span <= 292194; $span *= 2) {
                 $keys = Truth::keysFrom($m1, $from, $span);
                 $n = 0;
                 foreach ($keys as $k) {

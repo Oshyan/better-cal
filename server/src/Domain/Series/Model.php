@@ -561,16 +561,17 @@ final class Model
             // Against the series as it is today, for every reading: where the
             // two first differ, the one that comes first, a day of its own
             // series. Each day number is in its own series' zone, so two days
-            // are the same only when they are the same instant of the same
-            // kind, and are ordered by their instants; only the day found is
-            // named, in its own series.
+            // are compared as the days they show on by the zone rule (shownDn,
+            // one zone for both), never as day numbers of two zones; a new
+            // time on the same day is no other day. They are ordered by their
+            // instants, and only the day found is named, in its own series.
             $earlier = ['earlier' => null, 'earlierSeries' => null];
             $before = array_values(array_filter($s['days'], static fn(int $d): bool => $d < $s['landed']));
             $n = max(count($before), count($oldBefore));
             for ($j = 0; $j < $n; $j++) {
                 $mine = $before[$j] ?? null;
                 $was = $oldBefore[$j] ?? null;
-                if ($mine !== null && $was !== null && $s['calc']->instant($mine) == $this->old->instant($was) && $s['calc']->allDay === $this->old->allDay) {
+                if ($mine !== null && $was !== null && $this->shownDn($s['calc'], $mine) === $this->shownDn($this->old, $was)) {
                     continue;
                 }
                 $new = $mine !== null && ($was === null || $s['calc']->instant($mine) < $this->old->instant($was));
@@ -585,6 +586,16 @@ final class Model
             ] + $earlier;
         }
         return $out;
+    }
+
+    /**
+     * The day a series' occurrence on its local day $dn shows on by the zone
+     * rule: an all-day day is its date; a timed one is its instant's day in
+     * the plan's zone, or in its own when the plan is all-day.
+     */
+    private function shownDn(Calc $calc, int $dn): int
+    {
+        return $calc->allDay ? $dn : Cal::dnOf($calc->instant($dn)->setTimezone(Time::zone($this->planZone() ?? $calc->tz)));
     }
 
     /**

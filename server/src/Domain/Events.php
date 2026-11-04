@@ -342,6 +342,7 @@ final class Events
     {
         $id = (int) $event['id'];
         [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
+        $this->tripRules($id, $localFields);
         $resp = null;
         if ($googleFields !== []) {
             $googleId = self::requireGoogleId($event);
@@ -373,6 +374,9 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        // An edited day never takes the flag this way (forOverride): the
+        // rows stand as the commit will leave them.
+        $this->tripRules();
         $resp = null;
         $instanceId = null;
         if ($existing !== null) {
@@ -448,6 +452,11 @@ final class Events
         $duration = Recurrence::durationSeconds($master);
         $allDay = (int) $master['all_day'] === 1;
         $masterGoogleId = self::requireGoogleId($master);
+        // The new series' row, which takes the flag, is made from Google's
+        // answer to the insert below (its id is Google's), so the flag can't
+        // go on first. A new row has no link, so the rows as the commit will
+        // leave them are the rows as they stand: the rules run on those.
+        $this->tripRules();
 
         // The old series ends before this occurrence; a new one starts here.
         $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
@@ -1373,13 +1382,41 @@ final class Events
             // series, whichever row and scope it names. A link names a row
             // and no edit moves one, so every link the edit can make live,
             // or leave without its trip, touches these rows.
+            // A Google path runs them before its first call (tripRules), so a
+            // refusal sends Google nothing.
             $tripRows = array_key_exists('isContainer', $in) ? $this->seriesRowIds($fresh) : [];
-            $flaggedBefore = Trips::flaggedAmong($this->db, $tripRows);
-            $this->patchLocked($userId, $id, $in, $authority);
-            if ($tripRows !== []) {
-                Trips::assertRules($this->db, $tripRows, $flaggedBefore, Trips::BY_EDIT);
+            $outer = $this->tripRule;
+            $this->tripRule = $tripRows === [] ? null : [$tripRows, Trips::flaggedAmong($this->db, $tripRows)];
+            try {
+                $this->patchLocked($userId, $id, $in, $authority);
+                $this->tripRules();
+            } finally {
+                $this->tripRule = $outer;
             }
         });
+    }
+
+    /** The patch under way's trip rows and those flagged before it ([rows, flagged]), for tripRules; null when it leaves the flag alone. */
+    private ?array $tripRule = null;
+
+    /**
+     * The trip rules (Trips::assertRules) over the patch under way's rows,
+     * as they stand. A Google path calls it before its first call to
+     * Google, with $flagRow and the local columns it will write there: the
+     * flag goes on first (Google never reads it, and Google's answer never
+     * writes it), so the rules read the rows as the commit will leave them.
+     * Inside the patch's transaction: a refusal, or Google's failing,
+     * rolls it back.
+     */
+    private function tripRules(?int $flagRow = null, array $localFields = []): void
+    {
+        if ($this->tripRule === null) {
+            return;
+        }
+        if ($flagRow !== null && array_key_exists('is_container', $localFields)) {
+            $this->db->update('events', ['is_container' => $localFields['is_container']], 'id = ?', [$flagRow]);
+        }
+        Trips::assertRules($this->db, $this->tripRule[0], $this->tripRule[1], Trips::BY_EDIT);
     }
 
     /**

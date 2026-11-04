@@ -373,4 +373,48 @@ return static function (Db $db): void {
         $got = $refusal(fn() => $d->events->patch($u, $t, ['isContainer' => false]));
         checkEq('turned off with a stop in it: 400 trip_has_members, naming both, nothing written', [['400 trip_has_members', "This would turn off the trip 'Sample trip' while 'Sample stop' is in it; detach its events first."], true], [$got, $state($u) === $before]);
     });
+
+    // On a Google calendar the rules run before Google is called: a refused
+    // edit sends Google nothing, the title it carried included. Google is a
+    // stand-in that counts every call, the token refresh among them.
+    scenario('writers: a Google event\'s new title with a refused trip flag sends Google nothing', function () use ($db, $trip, $trips, $refusal, $state, $flag): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) Settings::defaultCalendarId($db, $u);
+        $calls = [];
+        $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
+        $auth = new BetterCal\Domain\GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use (&$calls): array {
+            $calls[] = 'token';
+            return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
+        });
+        $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
+            $calls[] = $method;
+            return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed'])];
+        };
+        $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
+            new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new Trips($db, $d->undo), null,
+            new BetterCal\Domain\GoogleWriter($db, $auth, new BetterCal\Domain\Feeds($db), $transport));
+        $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'owner@example.test',
+            'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', $cfg['session_secret']), 'scopes' => BetterCal\Domain\GoogleAuth::SCOPES]);
+        $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
+            'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
+        $now = BetterCal\Support\Time::nowDb();
+        $meeting = $db->insert('events', ['user_id' => $u, 'calendar_id' => $googleCal, 'uid' => 'sample-meeting@google', 'title' => 'Sample meeting',
+            'start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'source' => 'feed',
+            'google_event_id' => 'g-sample', 'created_at' => $now, 'updated_at' => $now]);
+        $t = $trip($d, $u, $cal);
+        $trips($d)->attach($u, $t, $meeting);
+        $edit = ['title' => 'Sample meeting, renamed', 'isContainer' => true];
+        $before = $state($u);
+        $got = $refusal(fn() => $events->patch($u, $meeting, $edit));
+        checkEq('a stop on a Google calendar renamed and made a trip: 400 trip_nested, no call to Google, nothing written', [
+            ['400 trip_nested', "This would make 'Sample meeting' a trip inside the trip 'Sample trip'; a trip can't contain another trip."], [], true,
+        ], [$got, $calls, $state($u) === $before]);
+        // Out of its trip, the same edit is sent and written.
+        $trips($d)->detach($u, $t, $meeting);
+        $events->patch($u, $meeting, $edit);
+        checkEq('out of its trip, the same edit: sent to Google once, renamed and a trip', [['token', 'PATCH'], 'Sample meeting, renamed', 1],
+            [$calls, (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$meeting]), $flag($meeting)]);
+    });
 };

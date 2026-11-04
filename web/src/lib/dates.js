@@ -277,19 +277,33 @@ const dayMedYearFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', mon
 const dateShortYearFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
 export function fmtTime(d) { return timeFmt.format(d).replace(/\s/g, ' '); }
-/** The clock time in a given zone (the user's time format), or the local time when the zone is unknown. */
-export function fmtTimeIn(d, tz) {
-  if (!tz) return fmtTime(d);
+// A clock formatter for a zone, in the user's time format, or null when the
+// browser can't read the zone's name.
+function zoneTimeFmt(tz) {
   let f = zoneTimeFmts.get(tz);
   if (!f) {
     try {
       f = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz, ...tfOpts(timeFmtSetting) });
     } catch {
-      return fmtTime(d);
+      return null;
     }
     zoneTimeFmts.set(tz, f);
   }
-  return f.format(d).replace(/\s/g, ' ');
+  return f;
+}
+/** The clock time in a given zone (the user's time format), or the local time when the zone is unknown. */
+export function fmtTimeIn(d, tz) {
+  const f = tz ? zoneTimeFmt(tz) : null;
+  return f ? f.format(d).replace(/\s/g, ' ') : fmtTime(d);
+}
+/**
+ * The clock time in a given zone, or null when there is no zone or the
+ * browser can't read it: never another zone's clock in its place. For a
+ * clock said with its zone's name, where the device's clock would be wrong.
+ */
+export function fmtTimeInZone(d, tz) {
+  const f = tz ? zoneTimeFmt(tz) : null;
+  return f ? f.format(d).replace(/\s/g, ' ') : null;
 }
 
 /** "PDT", "BST", "CET"; "UTC-7" where the browser has no name for the zone at that instant. */

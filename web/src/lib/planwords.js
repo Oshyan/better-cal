@@ -11,7 +11,7 @@
 // this module only says them.
 
 import {
-  fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn,
+  fmtDayMedium, fmtDateFull, fmtDateShort, fmtDateShortYear, fmtTimeIn, fmtTimeInZone,
   dateOfDayKey, tzCity, untilDayKey,
 } from './dates.js';
 import { describeRepeat, ruleParts } from './repeat.js';
@@ -57,8 +57,9 @@ export function fmtDay(value, { weekday = true, prev = null, refYear = new Date(
 }
 
 // A clock with no zone to read it in is never guessed (series-model.md, One
-// zone): the smoke suite turns this on so such a call fails there; in the
-// app the clock is left out instead.
+// zone), and a zone the browser can't read is no zone: the smoke suite
+// turns this on so such a call fails there; in the app the clock is left
+// out instead.
 let strictClocks = false;
 export function setStrictClocks(on) { strictClocks = !!on; }
 
@@ -66,7 +67,8 @@ export function setStrictClocks(on) { strictClocks = !!on; }
  * A clock time, in the user's 12- or 24-hour setting, of "HH:MM" or of an
  * instant: an ISO string read in `tz` (the plan's zone), or a value of the
  * plan carrying its own zone ({at or start, tz}: a timed day in an all-day
- * plan), read in that zone. With no zone there is no clock.
+ * plan), read in that zone. With no zone, or one the browser can't read,
+ * there is no clock: never the device's in its place.
  */
 export function fmtClock(value, tz = null) {
   if (/^\d{2}:\d{2}$/.test(String(value))) {
@@ -76,12 +78,13 @@ export function fmtClock(value, tz = null) {
   const own = value && typeof value === 'object' ? value : null;
   const at = own ? own.at || own.start : value;
   const zone = (own && own.tz) || tz;
-  if (!zone) {
-    if (strictClocks) throw new Error('fmtClock: no zone for ' + at);
+  const d = new Date(at);
+  const clock = zone && !isNaN(d) ? fmtTimeInZone(d, zone) : '';
+  if (clock == null || !zone) {
+    if (strictClocks) throw new Error(zone ? 'fmtClock: unreadable zone ' + zone + ' for ' + at : 'fmtClock: no zone for ' + at);
     return '';
   }
-  const d = new Date(at);
-  return isNaN(d) ? '' : fmtTimeIn(d, zone);
+  return clock;
 }
 
 /** A zone as people name it: "Berlin". */
@@ -94,7 +97,8 @@ export function ruleWords(part) {
   if (!part || !part.rrule) return '';
   const start = dayKeyOf(part.start);
   const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false }) || 'on a custom schedule';
-  const clock = !part.allDay && part.start ? ' at ' + fmtClock(part.start, part.tz) : '';
+  const at = !part.allDay && part.start ? fmtClock(part.start, part.tz) : '';
+  const clock = at ? ' at ' + at : '';
   // "on the 31st at 6:00 PM, skipping months without one", never the clock after the clause.
   const clause = /(, skipping months without one|, or the last day(?: in shorter months)?)$/.exec(words);
   if (clause) return lowerFirst(words.slice(0, clause.index)) + clock + clause[1];
@@ -160,10 +164,12 @@ function ruleShape(part) {
   const start = dayKeyOf(part.start);
   const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false });
   const m = words && /^(Daily|Weekly|Monthly|Yearly|Every \d+ (?:day|week|month|year)s)(?: on (.+?))?(, skipping months without one|, or the last day(?: in shorter months)?)?$/.exec(words);
-  if (!m) return null;
+  const clock = !part.allDay && part.start ? fmtClock(part.start, part.tz) : '';
+  // A timed rule whose clock can't be said has no shape to compare by clock.
+  if (!m || (!part.allDay && !clock)) return null;
   return {
     period: PERIODS[m[1]] || lowerFirst(m[1]), weekly: m[1] === 'Weekly', days: m[2] || '', clause: m[3] || '',
-    clock: !part.allDay && part.start ? fmtClock(part.start, part.tz) : '', zone: part.allDay ? '' : part.tz || '',
+    clock, zone: part.allDay ? '' : part.tz || '',
   };
 }
 // "every Monday", "on the 1st each month".
@@ -254,7 +260,8 @@ function endChange(bound, rule, opts) {
  */
 export function startedLine(acted, opts = {}) {
   if (!acted || !(acted.kept || []).length) return '';
-  return 'Started from ' + dayName(acted, opts.series) + ' on ' + fmtDay(acted.before && acted.before.date, opts) + '.';
+  const on = fmtDay(acted.before && acted.before.date, opts);
+  return 'Started from ' + dayName(acted, opts.series) + (on ? ' on ' + on : '') + '.';
 }
 
 // The fields changed days have of their own, most common first: " (title,
@@ -371,20 +378,35 @@ export function ownClock(d) {
 /**
  * A placement's clock as a row says it: "8:00 PM", read in its own zone
  * when it names one, else the plan's (`opts.tz`), and then with that zone's
- * name: "8:00 PM in Los Angeles". With no zone there is no clock ("").
+ * name: "8:00 PM in Los Angeles". `named` names the plan's zone too, for a
+ * clock that follows a sentence naming another. With no zone there is no
+ * clock ("").
  */
-export function clockOf(place, opts = {}) {
+export function clockOf(place, opts = {}, named = false) {
   const clock = place && place.at ? fmtClock(place, opts.tz) : '';
-  return clock && place.tz ? clock + ' in ' + zoneName(place.tz) : clock;
+  return clock && (place.tz || named) ? clock + ' in ' + zoneName(place.tz || opts.tz) : clock;
 }
 
+/**
+ * The zone a placement's date is read in: a timed one's own (`tz`), else
+ * the plan's (`tz` here); an all-day date is itself, in no zone (null).
+ */
+export const placeZone = (place, tz = null) => (place && place.at ? place.tz || tz || null : null);
+/**
+ * Whether two dates may be compared, one repeated or left out against the
+ * other: only when they are read in the same zone. A date in no zone (an
+ * all-day one) is itself in any.
+ */
+export const sameZone = (a, b) => !a || !b || a === b;
+
 // Where a day shows after the change, as its row says it: its date, left
-// out when the sentence has just said that date (`prev`, a day key), and
-// its clock when the row says one (saysClock). `full` is its date always.
-function placeOf(d, prev, opts) {
+// out when the sentence has just said that date in the same zone (`prev`, a
+// day key, and `same`), and its clock when the row says one (saysClock).
+// `full` is its date always.
+function placeOf(d, prev, opts, same = true) {
   const a = d.after || {};
   const full = fmtDay(a.date, { ...opts, prev });
-  return { date: a.date && a.date !== prev ? full : '', clock: saysClock(d) ? clockOf(a, opts) : '', full };
+  return { date: a.date && !(same && a.date === prev) ? full : '', clock: saysClock(d) ? clockOf(a, opts) : '', full };
 }
 // "at 9:30 PM on Mon, Jan 11", "at 9:30 PM", "on Mon, Jan 11" or "".
 const atOn = (p) => (p.clock ? 'at ' + p.clock + (p.date ? ' on ' + p.date : '') : p.date ? 'on ' + p.date : '');
@@ -398,7 +420,8 @@ const OUTCOMES = {
   moves: (p) => 'moves to ' + (p.date && p.clock ? p.date + ' at ' + p.clock : p.date || p.clock || p.full),
   'all-day': (p) => 'becomes all-day' + spaced(atOn(p)),
   // "now starts at 6:00 PM[ on Wed, Jan 13]": a timed placement has a clock, and a new kind is news (saysClock).
-  timed: (p) => 'now starts ' + atOn(p),
+  // With no clock to say (its zone unreadable): "is no longer all-day[ and moves to Wed, Jan 13]".
+  timed: (p) => (p.clock ? 'now starts ' + atOn(p) : 'is no longer all-day' + (p.date ? ' and moves to ' + p.date : '')),
   stays: (p) => 'stays ' + (atOn(p) || 'where it is'),
   separate: (p) => 'becomes an event of its own' + spaced(atOn(p)),
   deleted: () => 'is deleted',
@@ -422,11 +445,22 @@ export const outcomeOf = (d) => (d.outcome === 'moves' && d.after && d.after.kin
 export function dayLines(d, opts = {}) {
   const acted = d.kind === 'acted';
   const name = acted ? 'The day you moved' : dayName(d, opts.series) + ownAside(d) + (d.day ? ' on ' + fmtDay(d.day, opts) : '');
+  // The date the sentence has just said and the zone it is read in: the
+  // date set on it, in its own zone, or the day it is about, in the old
+  // series' (`opts.dayTz`). Where it goes is left out against it only in
+  // the same zone.
   const said = d.ownDate ? d.ownDate.date : acted ? null : d.day;
-  const place = placeOf(d, said, opts);
+  const saidTz = d.ownDate ? placeZone(d.ownDate, opts.tz) : opts.dayTz || null;
+  const same = sameZone(saidTz, placeZone(d.after, opts.tz));
+  const place = placeOf(d, said, opts, same);
   // The date set on it, with its zone when that isn't the plan's, named
   // once: not again when the clock after it is in the same zone and says so.
   const ownZone = d.ownDate && d.ownDate.tz && !(place.clock && d.after.tz === d.ownDate.tz) ? ' in ' + zoneName(d.ownDate.tz) : '';
+  // A clock after a date named in another zone names its own, and so does
+  // one whose date is said again only because the date named before it is
+  // in another zone: the zone is why it is said.
+  const repeated = !same && !!place.date && (d.after || {}).date === said;
+  if ((ownZone || repeated) && place.clock) place.clock = clockOf(d.after, opts, true);
   const own = d.ownDate ? 'was moved earlier to ' + fmtDay(d.ownDate.date, { ...opts, prev: d.day }) + ownZone : '';
   const say = OUTCOMES[outcomeOf(d)];
   const now = say ? say(place) : '';
@@ -451,7 +485,7 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
       : shift ? 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier')
         : clock ? 'move to ' + clock : 'move with their events'),
     'all-day': () => 'become all-day',
-    timed: () => 'now start at ' + clock,
+    timed: () => (clock ? 'now start at ' + clock : 'are no longer all-day'),
     stays: () => 'stay where they are',
   };
   const does = (GROUPS[outcome] || GROUPS.stays)();
@@ -595,14 +629,15 @@ export function choiceWords(g, ctx = {}) {
     // all-day one has a date and no clock): its instant, read in each zone
     // the label names, so a clock and its zone's name always go together.
     const at = (x) => startOfNext((x.next || []).find((n) => n && !n.allDay));
-    const inTo = (x) => fmtClock(at(x), toTz);
-    const inFrom = (x) => fmtClock(at(x), fromTz);
+    // A clock that can't be said leaves out its zone's name with it.
+    const inZone = (x, tz) => { const c = fmtClock(at(x), tz); return c ? c + ' in ' + zoneName(tz) : ''; };
+    const listed = (head, parts) => head + (parts.filter(Boolean).length ? ': ' + parts.filter(Boolean).join(', ') : '');
     return {
       lead: '',
       reason: 'The series moves to ' + zoneName(toTz) + ' time. Keep the clock time, or the same moment?',
       options: label((x) => (x.id === 'clock'
-        ? 'Keep the clock time: ' + inTo(x) + ' in ' + zoneName(toTz)
-        : 'Keep the same moment: ' + inFrom(x) + ' in ' + zoneName(fromTz) + ', ' + inTo(x) + ' in ' + zoneName(toTz))),
+        ? listed('Keep the clock time', [inZone(x, toTz)])
+        : listed('Keep the same moment', [inZone(x, fromTz), inZone(x, toTz)]))),
     };
   }
   // The readings of the rule.
@@ -703,8 +738,15 @@ export const refusalWords = (code) => REFUSALS[code] || 'This change can’t be 
 export function noteWords(n, opts = {}) {
   if (!n) return '';
   if (n.kind === 'google') return 'Google decides what happens to edited days, and Better-Cal hasn’t checked what it does yet. This can’t be undone.';
-  if (n.kind === 'gap') return 'There is no ' + fmtClock(n.clock) + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + ', so that one is at ' + fmtClock(n.at, n.tz) + '.';
-  if (n.kind === 'overlap') return fmtClock(n.at, n.tz) + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + '; this is the first, in daylight time.';
+  // A note's clocks are its point: one that can't be said leaves out its clause, or the note.
+  if (n.kind === 'gap') {
+    const missing = fmtClock(n.clock), at = fmtClock(n.at, n.tz);
+    return missing ? 'There is no ' + missing + ' on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + (at ? ', so that one is at ' + at : '') + '.' : '';
+  }
+  if (n.kind === 'overlap') {
+    const at = fmtClock(n.at, n.tz);
+    return at ? at + ' happens twice on ' + fmtDay(n.date, opts) + ' in ' + zoneName(n.tz) + '; this is the first, in daylight time.' : '';
+  }
   return '';
 }
 

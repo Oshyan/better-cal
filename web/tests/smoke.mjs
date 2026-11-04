@@ -5003,6 +5003,21 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const quiet = [W2.fmtClock('2027-01-12T20:00:00-08:00'), planView({ ...evening, days: [{ ...evening.days[0], tz: undefined, after: { ...evening.days[0].after, tz: undefined } }] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
   W2.setStrictClocks(true);
   eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  // A zone name the browser can't read (an import's zone the server accepts
+  // and Intl doesn't) is no zone: no clock, never the device's under its name.
+  const MARS = 'Mars/Olympus_Mons';
+  const { fmtTimeInZone } = await import('../src/lib/dates.js');
+  let unreadable = null;
+  try { W2.fmtClock('2027-01-12T20:00:00-08:00', MARS); } catch (e) { unreadable = e.message; }
+  eq('zone rule: under test a clock in a zone the browser can\'t read throws', [unreadable, (() => { try { return W2.fmtClock({ at: '2027-01-12T20:00:00-08:00', tz: MARS }, LA); } catch (e) { return e.message; } })()],
+    ['fmtClock: unreadable zone ' + MARS + ' for 2027-01-12T20:00:00-08:00', 'fmtClock: unreadable zone ' + MARS + ' for 2027-01-12T20:00:00-08:00']);
+  W2.setStrictClocks(false);
+  const marsDay = { ...evening.days[0], tz: MARS, before: { ...evening.days[0].before, tz: MARS }, after: { ...evening.days[0].after, tz: MARS } };
+  const marsQuiet = [W2.fmtClock('2027-01-12T20:00:00-08:00', MARS), W2.clockOf(marsDay.after), planView({ ...evening, days: [marsDay] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
+  W2.setStrictClocks(true);
+  eq('zone rule: in the app a clock in a zone the browser can\'t read is left out, and so is the zone\'s name', marsQuiet, ['', '', ["'Sample practice', with a time of its own, on Tue, Jan 12 stays where it is."]]);
+  eq('zone rule: a clock for its zone\'s name is null for a zone the browser can\'t read', [fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), MARS), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), null), fmtTimeInZone(new Date('2027-01-12T20:00:00-08:00'), LA)],
+    [null, null, '8:00 PM']);
 
   // The verification set of 1.5.0's sentences (workfolder plan, The
   // client): plans shaped as the server writes them, read by the real
@@ -5089,7 +5104,32 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ["'Sample practice' on Tue, Jan 12 moves to Thu, Jan 14 at 1:00 AM."]);
     eq('verify: a date set in another zone is named with that zone', rows(plan(LA, [
       day({ outcome: 'stays', ownDate: { date: '2027-01-14', at: '2027-01-14T00:30:00-05:00', tz: NY }, before: at('2027-01-13', '21:30', LA), after: at('2027-01-13', '21:30', LA), kept: ['date', 'time'] })])),
-    ["'Sample practice' on Tue, Jan 12 was moved earlier to Thu, Jan 14 in New York and stays at 9:30 PM on Wed, Jan 13."]);
+    ["'Sample practice' on Tue, Jan 12 was moved earlier to Thu, Jan 14 in New York and stays at 9:30 PM in Los Angeles on Wed, Jan 13."]);
+    // A date is left out only against a date said in the same zone. A daily
+    // 18:00 Los Angeles series; a day set earlier to Thu 14 Jan 10:00 in Tokyo
+    // (Wed 13 Jan 17:00 in Los Angeles) moves a day later with the series, to
+    // Thu 14 Jan 17:00 in Los Angeles: its new date there is said, and its
+    // clock, after a date named in Tokyo, names Los Angeles.
+    const daily = { rule: { from: timedPart('FREQ=DAILY', wallAt('2027-01-04', '18:00', LA), LA), to: timedPart('FREQ=DAILY', wallAt('2027-01-05', '18:00', LA), LA) } };
+    const wed = (extra) => day({ key: '2027-01-14T02:00:00Z', day: '2027-01-13', outcome: 'moves', kept: ['date', 'time'], before: at('2027-01-13', '17:00', LA), ...extra });
+    eq('verify: a date set in another zone is never compared with the plan\'s: the day says its new date and its clock names its zone', rows(plan(LA, [
+      wed({ ownDate: { date: '2027-01-14', at: '2027-01-14T10:00:00+09:00', tz: TOKYO }, after: at('2027-01-14', '17:00', LA) })], daily)),
+    ["'Sample practice' on Wed, Jan 13 was moved earlier to Thu, Jan 14 in Tokyo and moves to Thu, Jan 14 at 5:00 PM in Los Angeles."]);
+    eq('verify: a date set in the plan\'s zone is still left out where the day keeps it', rows(plan(LA, [
+      wed({ ownDate: { date: '2027-01-14', at: wallAt('2027-01-14', '17:00', LA) }, before: at('2027-01-14', '17:00', LA), after: at('2027-01-14', '20:00', LA) })], daily)),
+    ["'Sample practice' on Wed, Jan 13 was moved earlier to Thu, Jan 14 and moves to 8:00 PM."]);
+    // The day a row is about is the old series' day: under a series moved to
+    // Tokyo, a Tuesday in Los Angeles is not compared with a Tuesday in Tokyo.
+    // When it reads the same, the zone is why it is said, so its clock names the zone.
+    eq('verify: in a zone change the day\'s date in the new zone is said, even when it reads the same, its clock naming the zone', rows(plan(TOKYO, [
+      day({ outcome: 'moves', kept: ['time'], before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-12', '20:00', TOKYO) })], { rule: { from: weekly(LA), to: weekly(TOKYO) } })),
+    ["'Sample practice' on Tue, Jan 12 moves to Tue, Jan 12 at 8:00 PM in Tokyo."]);
+    eq('verify: in a zone change a day whose date changes there says its clock unlabelled', rows(plan(TOKYO, [
+      day({ outcome: 'moves', kept: ['time'], before: at('2027-01-13', '13:00', TOKYO), after: at('2027-01-13', '20:00', TOKYO) })], { rule: { from: weekly(LA), to: weekly(TOKYO) } })),
+    ["'Sample practice' on Tue, Jan 12 moves to Wed, Jan 13 at 8:00 PM."]);
+    eq('verify: a date in no zone (all-day) is compared with any: a series made timed leaves the day\'s date out', rows(plan(LA, [
+      madeTimed()], { rule: { from: weekly(null), to: weekly(LA) } })),
+    ["'Sample practice 2' on Tue, Jan 12 now starts at 6:00 PM."]);
 
     // The day acted on, leaving the series: its after placement is the standalone row written.
     eq('verify: the day you moved, becoming an event of its own, is where the row is written', rows(plan(LA, [
@@ -5128,6 +5168,39 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       [['Keep the clock time: 7:00 PM in Tokyo', 'Wed, Mar 10'], ['Keep the same moment: 7:00 PM in Los Angeles, 12:00 PM in Tokyo', 'Thu, Mar 11']],
       [['Move every Wednesday to Thursday', 'Thu, Mar 11 · Thu, Mar 18'], ['Shift the whole weekly pattern', 'Thu, Mar 11 · Fri, Mar 19']],
     ], 'Thu, Mar 11 · Thu, Mar 18 · Thu, Mar 25 …']);
+
+    // A clock that can't be said (in the app, a zone the browser can't read)
+    // leaves out its clause, or the sentence, and never prints an empty or null clock.
+    {
+      const MARS = 'Mars/Olympus_Mons';
+      W2.setStrictClocks(false);
+      // An all-day series made timed in a zone the browser can't read.
+      const mars = { rule: { from: weekly(null), to: weekly(LA) }, zone: MARS };
+      const one = rows(plan(LA, [madeTimed()], mars));
+      const moved = rows(plan(LA, [madeTimed({ after: { ...at('2027-01-13', '18:00', LA), kind: 'timed' }, takes: ['allDay', 'date'] })], mars));
+      // Days made timed there share a row, with no clock to say.
+      const two = view(plan(LA, [madeTimed(), madeTimed({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: ad('2027-01-19'), after: { ...at('2027-01-19', '18:00', LA), kind: 'timed' } })], mars)).edited.map((r) => r.line1);
+      const group = W2.groupLines({ count: 2, outcome: 'timed', clock: null, first: '2027-01-12', last: '2027-01-19' }, { refYear: 2027 }).line1;
+      const notes = view(plan(LA, [], { notes: [
+        { kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: MARS },
+        { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: MARS },
+      ] })).notes;
+      const marsRule = { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: MARS, allDay: false };
+      const rule = [W2.ruleWords(marsRule), W2.changeSentence({ from: weekly(LA), to: marsRule }, noEnd, { refYear: 2027 })];
+      const zone = view(plan(LA, [], { groups: [{ id: 'zone', from: LA, to: MARS, selected: 'moment', options: [
+        { id: 'clock', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] },
+        { id: 'moment', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] }] }] })).readings.map((c) => c.options.map((o) => o.label));
+      W2.setStrictClocks(true);
+      eq('verify: a clock that can\'t be said drops its clause: a day made timed, alone, moved and in a group', [one, moved, two, group], [
+        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day."],
+        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day and moves to Wed, Jan 13."],
+        ['2 days that were changed earlier are no longer all-day.'],
+        '2 days that were changed earlier are no longer all-day.']);
+      eq('verify: a clock that can\'t be said drops its clause: notes, the rule and the zone choice', [notes, rule, zone], [
+        ['There is no 2:30 AM on Sun, Mar 14 in Olympus Mons.'],
+        ['weekly on Tuesday', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday, with no end, as before.'],
+        [['Keep the clock time', 'Keep the same moment: 7:00 PM in Los Angeles']]]);
+    }
 
     // A group other than the zone, whose options agree at first and then diverge, in an all-day plan.
     const entry = (date) => ({ start: date + 'T00:00:00+00:00', allDay: true });

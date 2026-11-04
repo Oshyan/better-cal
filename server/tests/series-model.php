@@ -2053,6 +2053,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Notes: a Berlin series at the first 02:30 of 31 Oct 2027 is noted at that instant, the first, in daylight time', [
         '2027-10-31T02:30:00+02:00', '2027-10-31T02:30:00+02:00', 'first', true, '02:30 happens twice on 31 Oct: this is the first, in daylight time',
     ], $overlap('2027-10-31T02:30:00+02:00'));
+
+    // A zone option carries its series' start, so its label is the series'
+    // clock, never an edited day's that comes first.
+    $tue = smSeries('Sample class', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 01:30', 60, false, [], 'America/New_York');
+    $early = smEdited($tue, 2, '2027-01-12 01:30', [], '2027-01-05 03:30', ['date', 'time']);
+    $la = new DateTimeImmutable('2027-01-05 01:30', Time::zone('America/Los_Angeles'));
+    $p = smPlan($tue, [$early], ['acted' => smAt('2027-01-05 01:30', 'America/New_York'), 'landed' => ['start_utc' => Time::toDb($la), 'end_utc' => Time::toDb($la->modify('+1 hour')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+    checkEq('Zone options: to Los Angeles, the clock option starts at 01:30 there and the moment option at 22:30 the evening before, though an edited day at 00:30 comes first', [
+        ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
+    ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

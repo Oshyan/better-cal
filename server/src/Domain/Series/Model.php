@@ -443,6 +443,12 @@ final class Model
                 if ($consequence) {
                     $plan['groups'][$gi]['options'][$oi]['words'] = $group['id'] === 'zone' ? $this->zoneWords($alt) : $this->readingWords($alt, $alts);
                 }
+                // A zone option's label is the series' clock under it, never
+                // a day coming up (which can be an edited day at its own
+                // time): its series' start, as that plan's rule.to writes it.
+                if ($group['id'] === 'zone') {
+                    $plan['groups'][$gi]['options'][$oi]['start'] = $alt['plan']['rule']['to']['start'];
+                }
             }
         }
         $plan['hash'] = $this->hash($result['selected']);

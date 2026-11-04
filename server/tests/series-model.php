@@ -1809,6 +1809,19 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $choirOwn = smEdited($choir, 2, '2027-04-13 19:00', ['title' => 'Rehearsal'], '2027-04-16 19:00', ['date', 'title']);
     $p = smPlan($choir, [$choirOwn], ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,TH']);
     checkEq('Writers: a day outside the new series is named by the day it is about', "'Rehearsal' Tue 13 Apr", $edited($p)['head'] ?? null);
+    // The day acted on, left outside the new series: where it goes is the
+    // standalone row the commit writes, not the day its occurrence lands on.
+    $concert = smEdited($utcWeekly, 2, '2027-02-09 19:00', ['title' => 'Sample concert'], '2027-02-11 19:00', ['date', 'title']);
+    $toFri = ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=3',
+        'landed' => ['start_utc' => smAt('2027-02-12 19:00', 'UTC'), 'end_utc' => smAt('2027-02-12 20:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC']];
+    $p = smPlan($utcWeekly, [$concert], $toFri);
+    $alone = $dayOf($p, $feb9) ?? [];
+    $standalone = $p['writes']['detach'][2] ?? [];
+    checkEq('Writers: the acted day on its own date, put on Fri 12 Feb outside the new series: its after is the standalone row', [
+        'separate', '2027-02-09', ['date' => '2027-02-11', 'at' => '2027-02-11T19:00:00+00:00'], ['date' => '2027-02-12', 'at' => '2027-02-12T19:00:00+00:00'], '2027-02-12',
+        ['date' => '2027-02-12', 'at' => '2027-02-12T19:00:00+00:00'], 'This one, Fri 12 Feb',
+    ], [$alone['outcome'] ?? null, $alone['day'] ?? null, $alone['before'] ?? null, $alone['after'] ?? null, $alone['to'] ?? null,
+        $standalone === [] ? null : ['date' => substr($standalone['start_utc'], 0, 10), 'at' => Time::iso(Time::fromDb($standalone['start_utc']))], $alone['head'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

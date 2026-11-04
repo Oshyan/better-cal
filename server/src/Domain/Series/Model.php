@@ -1545,7 +1545,7 @@ final class Model
         // row (Changing the Series from an Edited Day, 3).
         $createEdited = null;
         if (!$this->google && $actedPlaced && $this->actedRowId === null && ($nk = $newKey($this->acted, $actedImg)) !== null) {
-            $occ = ['override_fields' => '[]'] + self::occurrenceOf($this->master, [], $this->acted, $this->len0);
+            $occ = ['override_fields' => '[]', 'recurrence_instance_utc' => $this->acted] + self::occurrenceOf($this->master, [], $this->acted, $this->len0);
             $put = array_merge($occ, $land['cols']);
             $own = OwnFields::normalize($this->placementOwn($put, $nk));
             if ($own !== []) {
@@ -1555,11 +1555,9 @@ final class Model
                     'all_day' => $cAll ? 1 : 0, 'tzid' => $cTz, 'override_fields' => OwnFields::encode($own),
                 ];
                 // Where it showed, the occurrence at its old key; where it was put, the row created.
-                $before = $this->placementOut($occ, $this->displayZone());
-                $after = $this->afterOut($occ, $createEdited);
-                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => [],
-                    'day' => $this->identityOut($this->acted), 'before' => $before, 'after' => $after, 'shows' => $before['date'], 'to' => $after['date']]
-                    + Words::dayParts('This one, ' . Words::date(self::dayOf($after), $this->thisYear), 'keeps where it was put', ', ');
+                $sides = $this->rowSides($occ, $createEdited);
+                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => []] + $sides
+                    + Words::dayParts('This one, ' . Words::date(self::dayOf($sides['after']), $this->thisYear), 'keeps where it was put', ', ');
             }
         }
         $outside = 'keep';
@@ -1841,9 +1839,13 @@ final class Model
             } else {
                 $create[] = $placed;
             }
-            $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => $this->actedRowId !== null ? 'edited' : 'acted', 'outcome' => 'separate', 'to' => Cal::date($landedDn)]
+            // Where it showed (its row, or the occurrence at its key) and the
+            // standalone row the commit writes.
+            $occ = $this->actedRowId !== null ? $this->rows[$this->actedRowId] : ['override_fields' => '[]', 'recurrence_instance_utc' => $this->acted] + self::occurrenceOf($this->master, [], $this->acted, $this->len0);
+            $sides = $this->rowSides($occ, $placed);
+            $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => $this->actedRowId !== null ? 'edited' : 'acted', 'outcome' => 'separate'] + $sides
                 + ($this->actedRowId !== null ? ['title' => (string) $this->rows[$this->actedRowId]['title']] : [])
-                + Words::dayParts('This one, ' . Words::date($landedDn, $this->thisYear), 'becomes an event of its own', ', ');
+                + Words::dayParts('This one, ' . Words::date(self::dayOf($sides['after']), $this->thisYear), 'becomes an event of its own', ', ');
         }
 
         // Words and the rest of the plan.

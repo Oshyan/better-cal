@@ -5144,6 +5144,38 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
       [['Move every Wednesday to Thursday', 'Thu, Mar 11 · Thu, Mar 18'], ['Shift the whole weekly pattern', 'Thu, Mar 11 · Fri, Mar 19']],
     ], 'Thu, Mar 11 · Thu, Mar 18 · Thu, Mar 25 …']);
 
+    // A clock that can't be said (in the app, a zone the browser can't read)
+    // leaves out its clause, or the sentence, and never prints an empty or null clock.
+    {
+      const MARS = 'Mars/Olympus_Mons';
+      W2.setStrictClocks(false);
+      const marsTimed = (extra) => madeTimed({ after: { ...at('2027-01-12', '18:00', LA), tz: MARS, kind: 'timed' }, ...extra });
+      const one = rows(plan(LA, [marsTimed()]));
+      const moved = rows(plan(LA, [marsTimed({ after: { ...at('2027-01-13', '18:00', LA), tz: MARS, kind: 'timed' }, takes: ['allDay', 'date'] })]));
+      // Days made timed in a plan whose own zone can't be read share a row with no clock to say.
+      const two = view(plan(LA, [madeTimed(), madeTimed({ key: '2027-01-20T03:00:00Z', day: '2027-01-19', before: ad('2027-01-19'), after: { ...at('2027-01-19', '18:00', LA), kind: 'timed' } })], { zone: MARS })).edited.map((r) => r.line1);
+      const group = W2.groupLines({ count: 2, outcome: 'timed', clock: null, first: '2027-01-12', last: '2027-01-19' }, { refYear: 2027 }).line1;
+      const notes = view(plan(LA, [], { notes: [
+        { kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: MARS },
+        { kind: 'overlap', date: '2027-11-07', at: '2027-11-07T01:30:00-07:00', tz: MARS },
+      ] })).notes;
+      const marsRule = { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: MARS, allDay: false };
+      const rule = [W2.ruleWords(marsRule), W2.changeSentence({ from: weekly(LA), to: marsRule }, noEnd, { refYear: 2027 })];
+      const zone = view(plan(LA, [], { groups: [{ id: 'zone', from: LA, to: MARS, selected: 'moment', options: [
+        { id: 'clock', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] },
+        { id: 'moment', next: [{ start: '2027-03-10T19:00:00-08:00', allDay: false }] }] }] })).readings.map((c) => c.options.map((o) => o.label));
+      W2.setStrictClocks(true);
+      eq('verify: a clock that can\'t be said drops its clause: a day made timed, alone, moved and in a group', [one, moved, two, group], [
+        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day."],
+        ["'Sample practice 2' on Tue, Jan 12 is no longer all-day and moves to Wed, Jan 13."],
+        ['2 days that were changed earlier are no longer all-day.'],
+        '2 days that were changed earlier are no longer all-day.']);
+      eq('verify: a clock that can\'t be said drops its clause: notes, the rule and the zone choice', [notes, rule, zone], [
+        ['There is no 2:30 AM on Sun, Mar 14 in Olympus Mons.'],
+        ['weekly on Tuesday', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday, with no end, as before.'],
+        [['Keep the clock time', 'Keep the same moment: 7:00 PM in Los Angeles']]]);
+    }
+
     // A group other than the zone, whose options agree at first and then diverge, in an all-day plan.
     const entry = (date) => ({ start: date + 'T00:00:00+00:00', allDay: true });
     const diverge = view(plan(null, [], { rule: { from: allDayPart('FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30'), to: allDayPart('FREQ=MONTHLY;BYMONTHDAY=30', '2027-01-30') }, groups: [{ id: 'reading', selected: 'skip', options: [

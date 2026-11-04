@@ -261,3 +261,83 @@ try {
     $limit = 'WalkLimitReached';
 }
 checkEq('End: every 2 seconds from an even second never lands on second 31; the walk\'s limit is an error, never the end', 'WalkLimitReached', $limit);
+
+// ---- One ordered, unique stream ------------------------------------------
+// A gap or a skipped date resolves a period's clocks into the next period's
+// span; the stream is merged in time order, a duplicate dropped before COUNT
+// reads it. New York, 14 Mar 2027, 02:00 to 03:00: the skipped 02:00 and
+// 02:30 are 03:00 and 03:30, which the next hour names too.
+checkEq('Stream: an hourly half-hour rule across the spring change is twelve unique occurrences', [
+    '2027-03-14 00:00:00-05:00', '2027-03-14 00:30:00-05:00', '2027-03-14 01:00:00-05:00', '2027-03-14 01:30:00-05:00',
+    '2027-03-14 03:00:00-04:00', '2027-03-14 03:30:00-04:00', '2027-03-14 04:00:00-04:00', '2027-03-14 04:30:00-04:00',
+    '2027-03-14 05:00:00-04:00', '2027-03-14 05:30:00-04:00', '2027-03-14 06:00:00-04:00', '2027-03-14 06:30:00-04:00',
+], exWalk('FREQ=HOURLY;BYMINUTE=0,30;COUNT=12', '2027-03-14 00:00', 'America/New_York', 14, true));
+$streamRow = static fn(string $rrule, string $startUtc, string $endUtc, string $tz): array => ['id' => 1, 'rrule' => $rrule, 'start_utc' => $startUtc, 'end_utc' => $endUtc, 'all_day' => 0, 'tzid' => $tz, 'exdates_json' => null];
+$utcIn = static fn(array $row, string $from, string $to): array => array_map(static fn(array $o): string => Time::toDb($o['start']),
+    Recurrence::occurrences($row, Time::fromDb($from), Time::fromDb($to)));
+checkEq('Stream: the same rule through a window is the same twelve instants', [
+    '2027-03-14 05:00:00', '2027-03-14 05:30:00', '2027-03-14 06:00:00', '2027-03-14 06:30:00', '2027-03-14 07:00:00', '2027-03-14 07:30:00',
+    '2027-03-14 08:00:00', '2027-03-14 08:30:00', '2027-03-14 09:00:00', '2027-03-14 09:30:00', '2027-03-14 10:00:00', '2027-03-14 10:30:00',
+], $utcIn($streamRow('FREQ=HOURLY;BYMINUTE=0,30;COUNT=12', '2027-03-14 05:00:00', '2027-03-14 05:10:00', 'America/New_York'), '2027-03-14 05:00:00', '2027-03-14 12:00:00'));
+// Troll, 28 Mar 2027, 01:00 to 03:00: the skipped 02:00 is 04:00, after the
+// 03:00 the next hour names, which is distinct and comes first.
+checkEq('Stream: across a two-hour change a shifted 04:00 follows a distinct 03:00', [
+    '2027-03-27 02:00:00+00:00', '2027-03-27 03:00:00+00:00', '2027-03-28 03:00:00+02:00', '2027-03-28 04:00:00+02:00', '2027-03-29 02:00:00+02:00', '2027-03-29 03:00:00+02:00',
+], exWalk('FREQ=HOURLY;BYHOUR=2,3;COUNT=6', '2027-03-27 02:00', 'Antarctica/Troll', 8, true));
+checkEq('Stream: a window holding that 03:00 reads it', ['2027-03-28 01:00:00'],
+    $utcIn($streamRow('FREQ=HOURLY;BYHOUR=2,3;COUNT=6', '2027-03-27 02:00:00', '2027-03-27 02:10:00', 'Antarctica/Troll'), '2027-03-28 00:00:00', '2027-03-28 01:30:00'));
+// Apia skipped 30 Dec 2011 (-10:00 to +14:00): that date's clocks are 31
+// December's instants, one occurrence each.
+checkEq('Stream: a daily two-clock rule across a skipped date is ten unique occurrences through 3 January', [
+    '2011-12-29 09:00:00-10:00', '2011-12-29 10:00:00-10:00', '2011-12-31 09:00:00+14:00', '2011-12-31 10:00:00+14:00', '2012-01-01 09:00:00+14:00',
+    '2012-01-01 10:00:00+14:00', '2012-01-02 09:00:00+14:00', '2012-01-02 10:00:00+14:00', '2012-01-03 09:00:00+14:00', '2012-01-03 10:00:00+14:00',
+], exWalk('FREQ=DAILY;BYHOUR=9,10;COUNT=10', '2011-12-29 09:00', 'Pacific/Apia', 12, true));
+
+// ---- Seeking: a narrow window reads what a broad one reads in its range --
+// Each broad window's instants are listed by hand, and so is each narrow
+// window's: one starting inside the transition and one after it.
+$seekCases = [
+    // New York, one hour: the skipped 02:00 and 02:30 are 07:00Z and 07:30Z.
+    'a one-hour change' => [$streamRow('FREQ=HOURLY;BYMINUTE=0,30', '2027-03-14 05:00:00', '2027-03-14 05:10:00', 'America/New_York'), [
+        [['2027-03-14 05:00:00', '2027-03-14 09:00:00'], ['2027-03-14 05:00:00', '2027-03-14 05:30:00', '2027-03-14 06:00:00', '2027-03-14 06:30:00', '2027-03-14 07:00:00', '2027-03-14 07:30:00', '2027-03-14 08:00:00', '2027-03-14 08:30:00']],
+        [['2027-03-14 07:00:00', '2027-03-14 07:40:00'], ['2027-03-14 07:00:00', '2027-03-14 07:30:00']],
+        [['2027-03-14 08:00:00', '2027-03-14 08:40:00'], ['2027-03-14 08:00:00', '2027-03-14 08:30:00']],
+    ]],
+    // Lord Howe, half an hour, 3 Oct 2027: the skipped 02:15 is 02:45 (15:45Z), which 02:45 names too.
+    'a half-hour change' => [$streamRow('FREQ=HOURLY;BYMINUTE=15,45', '2027-10-02 13:45:00', '2027-10-02 13:55:00', 'Australia/Lord_Howe'), [
+        [['2027-10-02 13:00:00', '2027-10-02 17:00:00'], ['2027-10-02 13:45:00', '2027-10-02 14:15:00', '2027-10-02 14:45:00', '2027-10-02 15:15:00', '2027-10-02 15:45:00', '2027-10-02 16:15:00', '2027-10-02 16:45:00']],
+        [['2027-10-02 15:40:00', '2027-10-02 16:00:00'], ['2027-10-02 15:45:00']],
+        [['2027-10-02 16:10:00', '2027-10-02 16:30:00'], ['2027-10-02 16:15:00']],
+    ]],
+    // Troll, two hours: 28 Mar's 01:45 is 03:45 (01:45Z), two wall hours after its own period.
+    'a two-hour change' => [$streamRow('FREQ=HOURLY;BYHOUR=1;BYMINUTE=45', '2027-03-27 01:45:00', '2027-03-27 01:50:00', 'Antarctica/Troll'), [
+        [['2027-03-27 00:00:00', '2027-03-29 00:00:00'], ['2027-03-27 01:45:00', '2027-03-28 01:45:00', '2027-03-28 23:45:00']],
+        [['2027-03-28 01:40:00', '2027-03-28 02:00:00'], ['2027-03-28 01:45:00']],
+        [['2027-03-28 23:40:00', '2027-03-29 00:00:00'], ['2027-03-28 23:45:00']],
+    ]],
+    // Apia, a skipped date: 31 Dec's 09:00 and 10:00 are 19:00Z and 20:00Z on 30 Dec.
+    'a skipped date' => [$streamRow('FREQ=DAILY;BYHOUR=9,10', '2011-12-29 19:00:00', '2011-12-29 19:10:00', 'Pacific/Apia'), [
+        [['2011-12-29 00:00:00', '2012-01-01 00:00:00'], ['2011-12-29 19:00:00', '2011-12-29 20:00:00', '2011-12-30 19:00:00', '2011-12-30 20:00:00', '2011-12-31 19:00:00', '2011-12-31 20:00:00']],
+        [['2011-12-30 19:00:00', '2011-12-30 19:30:00'], ['2011-12-30 19:00:00']],
+        [['2011-12-31 20:00:00', '2011-12-31 20:30:00'], ['2011-12-31 20:00:00']],
+    ]],
+];
+foreach ($seekCases as $name => [$row, $windows]) {
+    checkEq("Seek: across $name, the broad window and windows starting inside and after it", array_column($windows, 1),
+        array_map(static fn(array $w): array => $utcIn($row, ...$w[0]), $windows));
+}
+
+// ---- Laziness: a period is produced as it is walked ----------------------
+// Every weekday, 24 hours and 24 minutes: 210,240 clocks a year. Validating
+// it and walking its first three hold one period's clocks, never the year's.
+$probe = 'FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=' . implode(',', range(0, 23)) . ';BYMINUTE=' . implode(',', range(0, 23));
+$before = memory_get_usage();
+Recurrence::validateRrule($probe . ';COUNT=1');
+$lazy = new RuleIterator($probe, new DateTimeImmutable('2027-01-01 00:00:00', Time::utc()));
+$firstThree = [];
+for ($lazy->rewind(); $lazy->valid() && count($firstThree) < 3; $lazy->next()) {
+    $firstThree[] = $lazy->current()->format('Y-m-d H:i:s');
+}
+checkEq('Lazy: a rule of 210,240 clocks a year validates and walks its first three in under a MiB', [['2027-01-01 00:00:00', '2027-01-01 00:01:00', '2027-01-01 00:02:00'], true],
+    [$firstThree, memory_get_usage() - $before < 1048576]);
+unset($lazy);

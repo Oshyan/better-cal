@@ -15,14 +15,17 @@ const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'O
 const wordsOf = (x) => (x == null ? '' : typeof x === 'string' ? x : x.words || '');
 
 /**
- * The one zone every date and time of a plan is written in: the series'
- * after the change, from the plan's rule (an all-day series' plan is in
- * UTC, its dates whole days). Never the device's or an occurrence's: an
- * occurrence from the calendar's window carries no zone of its own.
+ * The plan's zone (series-model.md, One zone): the series' after the
+ * change, in which every timed value of the plan is written; null for a
+ * series all-day after it, whose dates are themselves and whose timed days
+ * carry their own `tz`. A plan from a server before `zone` names the zone
+ * in its rule. Never the device's or an occurrence's: an occurrence from
+ * the calendar's window carries no zone of its own.
  */
 export function planZone(plan) {
+  if (plan && 'zone' in plan) return plan.zone || null;
   const to = plan && plan.rule && plan.rule.to;
-  return (to && to.tz) || 'UTC';
+  return (to && to.tz) || null;
 }
 
 // The wall date an ISO value names: its own date when it carries an offset
@@ -216,7 +219,8 @@ export function planView(plan, ctx = {}) {
     const sorted = [...ds].sort(byShown);
     const shifts = new Set(sorted.map((d) => (d.to && d.shows ? dayNumber(d.to) - dayNumber(d.shows) : null)));
     const weekdays = new Set(sorted.map((d) => (d.to ? new Date(dayNumber(d.to) * 86400000).getUTCDay() : null)));
-    const clocks = new Set(sorted.map((d) => (d.newKey ? W.fmtClock(d.newKey, opts.tz) : null)));
+    // A new key's clock is the series' time, which only a plan with a zone has.
+    const clocks = new Set(sorted.map((d) => (d.newKey && opts.tz ? W.fmtClock(d.newKey, opts.tz) : null)));
     const [shift] = shifts, [weekday] = weekdays, [clock] = clocks;
     const moved = outcome === 'moves' && shifts.size >= 1 && !shifts.has(null) && !shifts.has(0);
     const words = W.groupLines({

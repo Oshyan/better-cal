@@ -51,14 +51,32 @@ export function fmtDay(value, { weekday = true, prev = null, refYear = new Date(
   return showYear ? fmtDateShortYear(d) : fmtDateShort(d);
 }
 
-/** A clock time, in the user's 12- or 24-hour setting: of an instant in a zone, or of "HH:MM". */
+// A clock with no zone to read it in is never guessed (series-model.md, One
+// zone): the smoke suite turns this on so such a call fails there; in the
+// app the clock is left out instead.
+let strictClocks = false;
+export function setStrictClocks(on) { strictClocks = !!on; }
+
+/**
+ * A clock time, in the user's 12- or 24-hour setting, of "HH:MM" or of an
+ * instant: an ISO string read in `tz` (the plan's zone), or a value of the
+ * plan carrying its own zone ({at or start, tz}: a timed day in an all-day
+ * plan), read in that zone. With no zone there is no clock.
+ */
 export function fmtClock(value, tz = null) {
   if (/^\d{2}:\d{2}$/.test(String(value))) {
     const [h, m] = String(value).split(':').map(Number);
     return fmtTimeIn(new Date(Date.UTC(2000, 0, 1, h, m)), 'UTC');
   }
-  const d = new Date(value);
-  return isNaN(d) ? '' : fmtTimeIn(d, tz);
+  const own = value && typeof value === 'object' ? value : null;
+  const at = own ? own.at || own.start : value;
+  const zone = (own && own.tz) || tz;
+  if (!zone) {
+    if (strictClocks) throw new Error('fmtClock: no zone for ' + at);
+    return '';
+  }
+  const d = new Date(at);
+  return isNaN(d) ? '' : fmtTimeIn(d, zone);
 }
 
 /** A zone as people name it: "Berlin". */
@@ -301,17 +319,24 @@ function ownAside(d) {
  * The time a day shows at after the change when it isn't the series' new
  * time there (its own time kept): "1:00 PM", else "". That time is its
  * outcome, so its row states it; a time equal to the series' is never said.
+ * An all-day plan (no zone) has no series time: a timed day there always
+ * says its clock, in its own zone, named: "8:00 PM in Los Angeles".
  */
 export function ownClock(d, opts = {}) {
   if (!d || !d.at || !d.newKey) return '';
-  const at = fmtClock(d.at, opts.tz);
+  if (!opts.tz) {
+    const at = fmtClock(d);
+    return at && at + ' in ' + zoneName(d.tz);
+  }
+  const at = fmtClock(d, opts.tz);
   return at && at !== fmtClock(d.newKey, opts.tz) ? at : '';
 }
 
-// Where a day goes: its new date, or its new time on the same day.
+// Where a day goes: its new date, or its new time on the same day (a time
+// of the series, so only in a plan with a zone).
 function goes(d, opts) {
   if (d.to && d.shows && d.to !== d.shows) return 'moves to ' + fmtDay(d.to, { ...opts, prev: d.shows });
-  if (d.newKey && (d.takes || []).includes('time')) return 'moves to ' + fmtClock(d.newKey, opts.tz);
+  if (opts.tz && d.newKey && (d.takes || []).includes('time')) return 'moves to ' + fmtClock(d.newKey, opts.tz);
   return 'stays where it is';
 }
 

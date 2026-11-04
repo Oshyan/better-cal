@@ -203,6 +203,20 @@ checkEq('Fold: a weekly 02:30 reads the first of 31 Oct\'s two; a series stored 
 // HOURLY steps by wall clock; MINUTELY and SECONDLY in elapsed time.
 checkEq('HOURLY: every 3 hours keeps 00:00, 03:00, 06:00 across the spring change', ['2027-03-13 21:00:00-08:00', '2027-03-14 00:00:00-08:00', '2027-03-14 03:00:00-07:00', '2027-03-14 06:00:00-07:00'],
     exWalk('FREQ=HOURLY;INTERVAL=3;COUNT=4', '2027-03-13 21:00', 'America/Los_Angeles', 4, true));
+// The step to the skipped 02:00 is 03:00, which the next step names too: one
+// occurrence, counted once (RFC 5545 3.8.5.3: duplicate instances are ignored).
+$hourly = ['2027-03-14 00:00:00-08:00', '2027-03-14 01:00:00-08:00', '2027-03-14 03:00:00-07:00', '2027-03-14 04:00:00-07:00'];
+$hourlyIn = static function (string $rrule, string $from): array {
+    $row = ['id' => 1, 'rrule' => $rrule, 'start_utc' => '2027-03-14 08:00:00', 'end_utc' => '2027-03-14 08:30:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'exdates_json' => null];
+    return array_map(static fn(array $o): string => $o['start']->setTimezone(Time::zone('America/Los_Angeles'))->format('Y-m-d H:i:sP'),
+        Recurrence::occurrences($row, Time::fromDb($from), Time::fromDb('2027-03-14 11:30:00')));
+};
+checkEq('HOURLY: the skipped 02:00 and the 03:00 after it are one occurrence, counted once, from any window', [$hourly, $hourly, array_slice($hourly, 2), array_slice($hourly, 2)], [
+    exWalk('FREQ=HOURLY;COUNT=4', '2027-03-14 00:00', 'America/Los_Angeles', 5, true),
+    $hourlyIn('FREQ=HOURLY;COUNT=4', '2027-03-14 08:00:00'),
+    $hourlyIn('FREQ=HOURLY;COUNT=4', '2027-03-14 10:00:00'),
+    $hourlyIn('FREQ=HOURLY', '2027-03-14 10:00:00'),
+]);
 checkEq('HOURLY: across the fall change the repeated 01:00 is read once, at its first instant', ['2027-11-07 00:00:00-07:00', '2027-11-07 01:00:00-07:00', '2027-11-07 02:00:00-08:00', '2027-11-07 03:00:00-08:00'],
     exWalk('FREQ=HOURLY;COUNT=4', '2027-11-07 00:00', 'America/Los_Angeles', 4, true));
 checkEq('MINUTELY: every 60 minutes is elapsed time, both 01:30s of the fall change', ['2027-11-07 00:30:00-07:00', '2027-11-07 01:30:00-07:00', '2027-11-07 01:30:00-08:00', '2027-11-07 02:30:00-08:00'],

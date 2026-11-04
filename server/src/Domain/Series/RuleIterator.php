@@ -37,7 +37,8 @@ namespace BetterCal\Domain\Series;
  *    instant where it happens twice, and where it doesn't exist the same
  *    clock plus the gap, that day only; every other day is at its own clock
  *    (decisions.md, "A clock time the spring change skips"). Two wall clocks
- *    on one instant are one occurrence. HOURLY steps its hours on the wall
+ *    on one instant are one occurrence, in a period or across two (RFC 5545
+ *    3.8.5.3: "Duplicate instances are ignored"; next). HOURLY steps its hours on the wall
  *    clock; MINUTELY and SECONDLY step elapsed time.
  *  - BYSETPOS picks from each period's whole set, in time order, for every
  *    frequency.
@@ -207,10 +208,17 @@ class RuleIterator extends Walk
     public function next()
     {
         if ($this->currentDate !== null) {
-            if ($this->pending === []) {
-                $this->fill();
-            }
-            $this->currentDate = array_shift($this->pending);
+            // RFC 5545 3.8.5.3: "Duplicate instances are ignored." An instant
+            // equal to one the walk already yielded is no occurrence and is
+            // not counted. The walk yields in time order, so such an instant
+            // equals the last one yielded.
+            $last = $this->currentDate->getTimestamp();
+            do {
+                if ($this->pending === []) {
+                    $this->fill();
+                }
+                $this->currentDate = array_shift($this->pending);
+            } while ($this->currentDate !== null && $this->currentDate->getTimestamp() === $last);
             if ($this->currentDate !== null && $this->currentDate->getTimestamp() > self::UPPER_LIMIT) {
                 // The date upper limit: no instant after year 9999.
                 $this->currentDate = null;

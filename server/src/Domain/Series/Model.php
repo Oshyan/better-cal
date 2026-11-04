@@ -1985,7 +1985,9 @@ final class Model
                 + $boundData + ['from' => $this->boundFrom($oldOcc)],
             'next' => $next,
             'acted' => $this->actedRowId !== null && $this->ownOf($this->rows[$this->actedRowId]) !== []
-                ? ['key' => $iso($this->acted), 'title' => (string) $this->rows[$this->actedRowId]['title'], 'shows' => Cal::date($this->rowDn($this->rows[$this->actedRowId])), 'kept' => OwnFields::normalize($this->ownOf($this->rows[$this->actedRowId]))]
+                // The day it is about, the date set on it, and where it showed (shows, its date).
+                ? ['key' => $iso($this->acted), 'title' => (string) $this->rows[$this->actedRowId]['title']] + $this->rowSides($this->rows[$this->actedRowId], null)
+                    + ['kept' => OwnFields::normalize($this->ownOf($this->rows[$this->actedRowId]))]
                 : null,
             'nextMore' => $nextMore,
             'counts' => [

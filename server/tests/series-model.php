@@ -496,7 +496,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         $p = smPlan($choir, $choirRows, ['acted' => smAt('2027-03-09 19:00'), 'landed' => ['start_utc' => smAt('2027-03-10 18:00'), 'end_utc' => smAt('2027-03-10 19:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'], 'columns' => ['title' => 'Chorus']]);
         checkEq('Acceptance 12 (Choir from its 9 Mar): weekly on Wednesday at 19:00, renamed; started from \'Choir, sectionals\' on 9 Mar; one choice, the concert\'s own title', [
             ['rrule' => 'FREQ=WEEKLY;BYDAY=WE', 'start_utc' => smAt('2027-01-06 19:00'), 'end_utc' => smAt('2027-01-06 20:00'), 'title' => 'Chorus'],
-            ['key' => '2027-03-10T03:00:00Z', 'title' => 'Choir, sectionals', 'shows' => '2027-03-09', 'kept' => ['time', 'title']],
+            ['key' => '2027-03-10T03:00:00Z', 'title' => 'Choir, sectionals', 'day' => '2027-03-09', 'before' => ['date' => '2027-03-09', 'at' => '2027-03-09T18:00:00-08:00'], 'shows' => '2027-03-09', 'kept' => ['time', 'title']],
             ['ownTitle'], 'keep',
         ], [$p['writes']['master'], $p['plan']['acted'], array_column($p['plan']['groups'], 'id'), smGroup($p, 'ownTitle')['selected'] ?? null]);
         checkEq('Acceptance 12: 9 Mar lands at Wed 10 Mar 18:00 as Chorus, its time still its own; the concert keeps its title on Wed 24 Mar; 6 Apr moves to Wed 7 Apr and takes Chorus', [
@@ -1839,6 +1839,11 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($nightly, [], smDrag($nightly, '2027-05-13 02:30', '2027-05-14 02:30'));
     checkEq('Writers: a series anchored on the day before a skipped hour starts at its stored start, a key', smAt('2027-02-14 02:30'), str_replace(['T', 'Z'], [' ', ''], (string) $p['plan']['start']));
     checkEq('Writers: that start is written as a key', true, str_ends_with((string) $p['plan']['start'], 'Z'));
+    // The day the edit started from: the day it is about and where it showed.
+    $p = smPlan($practice, [$evening], ['acted' => $evening['recurrence_instance_utc'], 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Writers: started from the evening day of an all-day series: about Tue 12 Jan, shown at 20:00 in its own zone', [
+        '2027-01-12', ['date' => '2027-01-12', 'at' => '2027-01-12T20:00:00-08:00', 'tz' => $la], '2027-01-12',
+    ], [$p['plan']['acted']['day'] ?? null, $p['plan']['acted']['before'] ?? null, $p['plan']['acted']['shows'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

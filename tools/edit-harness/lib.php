@@ -50,6 +50,10 @@ final class Known
             ? [(string) $series['rrule'], (string) $series['tzid'], Clock::secsOf(new \DateTimeImmutable((string) $series['start'], Clock::zone((string) $series['tzid'])))] : null;
         $compared = isset($d['rrule'], $d['tz'], $d['start']) && is_string($d['tz']) && is_string($d['rrule']) && is_string($d['start']) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $d['start']) === 1
             ? [(string) $d['rrule'], $d['tz'], Clock::secsOf(Clock::local((string) $d['start'], $d['tz']))] : null;
+        // The legacy path's own failures stay its own, so an inherited cause counts only what the expander's readings did.
+        if (in_array($failure['path'] ?? '', self::PATHS, true) && !in_array($failure['invariant'], Driver::NEW_CHECKS, true)) {
+            return self::FOLLOWING;
+        }
         foreach ([$drawn, $compared] as $s) {
             if ($s !== null && self::inheritedClockParts(...$s)) {
                 return self::CLOCK_PARTS;

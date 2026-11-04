@@ -621,7 +621,7 @@ final class Model
             $n = min(count($ab ?? []), count($bb ?? []));
             for ($i = 0; $i < $n; $i++) {
                 if ($ab[$i] !== $bb[$i]) {
-                    return ['dates' => [Cal::date($ab[$i])], 'words' => ($i >= 3 ? 'the same ' . $i . ' dates; ' : '') . 'parts on ' . Words::dayMonth(min($ab[$i], $bb[$i]), $this->thisYear)];
+                    return ['dates' => [self::patternOut($alt['meta']['calc'], $ab[$i])], 'words' => ($i >= 3 ? 'the same ' . $i . ' dates; ' : '') . 'parts on ' . Words::dayMonth(min($ab[$i], $bb[$i]), $this->thisYear)];
                 }
             }
             if ($ab !== null && $bb !== null && $ab !== [] && $bb !== []) {
@@ -629,8 +629,8 @@ final class Model
                 $last = $ab[count($ab) - 1];
                 $separate = !empty($alt['meta']['separate']) ? ', and ' . Words::dayMonth((int) $alt['meta']['landed'], $this->thisYear) . ' separately' : '';
                 return count($ab) < count($bb)
-                    ? ['dates' => [Cal::date($last)], 'words' => 'ends ' . Words::dayMonth($last, $this->thisYear) . $separate]
-                    : ['dates' => array_map([Cal::class, 'date'], array_slice($ab, count($bb), 3)), 'words' => 'on to ' . Words::dayMonth($last, $this->thisYear) . $separate];
+                    ? ['dates' => [self::patternOut($alt['meta']['calc'], $last)], 'words' => 'ends ' . Words::dayMonth($last, $this->thisYear) . $separate]
+                    : ['dates' => array_map(static fn(int $d): string => self::patternOut($alt['meta']['calc'], $d), array_slice($ab, count($bb), 3)), 'words' => 'on to ' . Words::dayMonth($last, $this->thisYear) . $separate];
             }
             return ['dates' => [], 'words' => count($ab ?? []) > count($bb ?? []) ? 'more events' : 'fewer events'];
         }
@@ -638,7 +638,7 @@ final class Model
         $n = min(count($ap), count($bp));
         for ($i = 0; $i < $n; $i++) {
             if ($ap[$i] !== $bp[$i]) {
-                return ['dates' => [Cal::date($ap[$i])], 'words' => $same . 'parts on ' . Words::dayMonth(min($ap[$i], $bp[$i]), $this->thisYear)];
+                return ['dates' => [self::patternOut($alt['meta']['calc'], $ap[$i])], 'words' => $same . 'parts on ' . Words::dayMonth(min($ap[$i], $bp[$i]), $this->thisYear)];
             }
         }
         return ['dates' => [], 'words' => 'the same dates; its edited and skipped days differ'];
@@ -952,8 +952,8 @@ final class Model
         $kind = $this->r0->count !== null ? 'count' : ($this->r0->until !== null ? 'until' : 'none');
         $bounded = $kind !== 'none' && $this->readable && $this->old->bounded();
         $last = $bounded ? $this->old->last() : null;
-        return ['kind' => $kind] + ($this->r0->count !== null ? ['count' => $this->r0->count] : []) + ($this->r0->until !== null ? ['until' => $this->r0->until] : [])
-            + ['events' => $kind === 'none' ? null : count($oldOcc), 'last' => $last !== null ? Cal::date($last) : null];
+        return ['kind' => $kind] + ($this->r0->count !== null ? ['count' => $this->r0->count] : []) + ($this->r0->until !== null ? ['until' => self::boundOut($this->r0->until)] : [])
+            + ['events' => $kind === 'none' ? null : count($oldOcc), 'last' => $last !== null ? self::patternOut($this->old, $last) : null];
     }
 
     /** A refusal of the whole edit, with the series as it is. */
@@ -968,7 +968,7 @@ final class Model
                 'rule' => ['before' => (string) $this->master['rrule'], 'after' => (string) $this->master['rrule'], 'wordsBefore' => $before, 'words' => $before,
                     'from' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0),
                     'to' => $this->ruleData((string) $this->master['rrule'], Time::fromDb((string) $this->master['start_utc']), $this->tz0, $this->allDay0)],
-                'start' => Time::iso(Time::fromDb((string) $this->master['start_utc'])->setTimezone(Time::zone($this->tz0))),
+                'start' => self::inZoneOut(Time::fromDb((string) $this->master['start_utc']), $this->tz0),
                 'bound' => ['kind' => 'none', 'words' => '', 'events' => null, 'skipped' => 0, 'last' => null, 'separate' => 0],
                 'next' => [], 'nextMore' => false, 'counts' => ['events' => null, 'edited' => 0, 'skipped' => 0],
                 'groups' => [], 'days' => [], 'losses' => [], 'gains' => [],
@@ -1360,7 +1360,7 @@ final class Model
             $edge = $this->pick('edge', $edgeLabel, [
                 ['id' => 'without', 'label' => 'Don\'t add ' . $gainWords],
                 ['id' => 'add', 'label' => 'Add ' . $gainWords],
-            ], 'without', ['dates' => array_map([Cal::class, 'date'], $edgeGains), 'side' => count($sides) > 1 ? 'both' : $sides[0]]);
+            ], 'without', ['dates' => array_map(static fn(int $d): string => self::patternOut($calcP, $d), $edgeGains), 'side' => count($sides) > 1 ? 'both' : $sides[0]]);
             if ($edge === 'without') {
                 $genSkips = $edgeGains;
             }
@@ -1472,14 +1472,14 @@ final class Model
                 $nk = $newKey($key, $img);
                 if ($nk !== null) {
                     $newExdates[] = $nk;
-                    $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves', 'shows' => Cal::date($odn), 'to' => Cal::date((int) $img)]
+                    $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves', 'shows' => $this->identityOut($key), 'to' => self::patternOut($calc1, (int) $img)]
                         + Words::dayParts(Words::date($odn, $this->thisYear), $img === $odn ? 'stays skipped' : 'moves to ' . Words::date((int) $img, $this->thisYear), ' ', 'Skipped ');
                 } else {
                     // A skip belongs to the occurrence it removed: when the
                     // new series has no such occurrence (no image, or one
                     // before its start or past its end), it goes with it.
                     $side = $img === null ? null : ($img < $newStart ? 'start' : 'end');
-                    $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped', 'shows' => Cal::date($odn), 'why' => $img === null ? 'noday' : 'outside']
+                    $days[] = ['key' => $key, 'newKey' => null, 'kind' => 'skipped', 'outcome' => 'dropped', 'shows' => $this->identityOut($key), 'why' => $img === null ? 'noday' : 'outside']
                         + ($side !== null ? ['side' => $side] : [])
                         + Words::dayParts(Words::date($odn, $this->thisYear), match ($side) {
                             null => 'is forgotten: the new series has no ' . Words::date($odn, $this->thisYear),
@@ -1491,7 +1491,7 @@ final class Model
             foreach ($genSkips as $g) {
                 $nk = $calc1->key($g);
                 $newExdates[] = $nk;
-                $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated', 'to' => Cal::date($g), 'side' => $edgeAt[$g] ?? 'start']
+                $days[] = ['key' => null, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => 'generated', 'to' => self::patternOut($calc1, $g), 'side' => $edgeAt[$g] ?? 'start']
                     + Words::dayParts(Words::date($g, $this->thisYear), ($edgeAt[$g] ?? 'start') === 'start' && $newStart === $this->old->startDn
                         ? 'skipped, so the series starts as before'
                         : 'skipped: no event of the series was on it');
@@ -1560,7 +1560,7 @@ final class Model
             $outside = $this->pick('outside', 'Edited days outside the new series', [
                 ['id' => 'keep', 'label' => $one ? 'Keep it as an event of its own' : 'Keep them as events of their own'],
                 ['id' => 'delete', 'label' => $one ? 'Delete it' : 'Delete them'],
-            ], 'keep', ['count' => count($outsideRows)] + ($one ? ['day' => str_replace(' ', 'T', (string) $this->rows[array_key_first($outsideRows)]['recurrence_instance_utc']) . 'Z'] : []));
+            ], 'keep', ['count' => count($outsideRows)] + ($one ? ['day' => self::keyOut((string) $this->rows[array_key_first($outsideRows)]['recurrence_instance_utc'])] : []));
         }
         // Days on a date of their own from before this edit: kept, or moved
         // with their events this once. The acted day's date is the one the
@@ -1581,13 +1581,13 @@ final class Model
                 $oneId = $movedRows[0];
                 foreach (['keep' => false, 'move' => true] as $choice => $move) {
                     [$s, , $all, $sTz] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $this->old->dnOf((string) $one['recurrence_instance_utc']), $clock1, $this->clock0);
-                    $dates[$choice] = $this->planDn($s, $all, $sTz);
+                    $dates[$choice] = $this->placementOut(self::rowOf($s, $all, $sTz), $this->displayZone());
                 }
             }
             $moveOwnDates = $this->pick('movedDays', 'Days moved on their own', [
-                ['id' => 'keep', 'label' => $one !== null ? 'Keep ' . Words::date($dates['keep'], $this->thisYear) : 'Keep their dates'] + ($one !== null ? ['date' => Cal::date($dates['keep'])] : []),
-                ['id' => 'move', 'label' => $one !== null ? 'Move to ' . Words::date($dates['move'], $this->thisYear) : 'Move them with their events'] + ($one !== null ? ['date' => Cal::date($dates['move'])] : []),
-            ], 'keep', ['count' => count($movedRows)] + ($one !== null ? ['day' => str_replace(' ', 'T', (string) $one['recurrence_instance_utc']) . 'Z'] : [])) === 'move';
+                ['id' => 'keep', 'label' => $one !== null ? 'Keep ' . Words::date(self::dayOf($dates['keep']), $this->thisYear) : 'Keep their dates'] + ($one !== null ? ['date' => $dates['keep']['date']] : []),
+                ['id' => 'move', 'label' => $one !== null ? 'Move to ' . Words::date(self::dayOf($dates['move']), $this->thisYear) : 'Move them with their events'] + ($one !== null ? ['date' => $dates['move']['date']] : []),
+            ], 'keep', ['count' => count($movedRows)] + ($one !== null ? ['day' => self::keyOut((string) $one['recurrence_instance_utc'])] : [])) === 'move';
         }
 
         // Content fields: inherited ones follow; own ones are a choice, except
@@ -1606,7 +1606,7 @@ final class Model
             $give[$field] = $this->pick('own' . ucfirst($field), ($one ? '1 edited day keeps its own ' : count($owners) . ' edited days keep their own ') . $word, [
                 ['id' => 'keep', 'label' => $one ? 'Keep its own ' . $word : 'Keep their own ' . $word],
                 ['id' => 'give', 'label' => $one ? 'Give it the new ' . $word . ' too' : 'Give them the new ' . $word . ' too'],
-            ], 'keep', ['field' => $field, 'count' => count($owners), 'days' => array_map(fn(int $id): string => str_replace(' ', 'T', (string) $this->rows[$id]['recurrence_instance_utc']) . 'Z', $owners)]
+            ], 'keep', ['field' => $field, 'count' => count($owners), 'days' => array_map(fn(int $id): string => self::keyOut((string) $this->rows[$id]['recurrence_instance_utc']), $owners)]
                 + ($field === 'title' ? ['value' => (string) ($cols['title'] ?? '')] : [])) === 'give';
         }
 
@@ -1881,16 +1881,16 @@ final class Model
             if ($img !== null) {
                 $lossDays[] = $img;
             }
-            $losses[] = ['date' => Cal::date($dn), 'words' => Words::dayMonth($dn, $this->thisYear) . ($img === null ? ' has no place in the new series' : ($img < $newStart ? ' falls before the new start' : ' falls after the new end'))];
+            $losses[] = ['date' => $this->identityOut($this->old->key($dn)), 'words' => Words::dayMonth($dn, $this->thisYear) . ($img === null ? ' has no place in the new series' : ($img < $newStart ? ' falls before the new start' : ' falls after the new end'))];
         }
         [$boundKind, $boundWords, $boundData] = $this->boundWords($r1, $calc1, $oldOcc, $separate, $outside === 'keep' ? count($outsideRows) : 0, count($genSkips), $personSkipped, $lossDays, $allKeys);
         // A gain past the new end is no gain (P2-6: "Keep 6 events" adds nothing after its sixth).
-        $gainList = array_map(fn(int $d): array => ['date' => Cal::date($d), 'words' => 'Adds ' . Words::dayMonth($d, $this->thisYear)],
+        $gainList = array_map(fn(int $d): array => ['date' => self::patternOut($calc1, $d), 'words' => 'Adds ' . Words::dayMonth($d, $this->thisYear)],
             array_values(array_filter(array_merge($gains, $genSkips === [] ? $edgeGains : []), $inside)));
         // The next events from the day acted on: from where it lands, or from
         // where the request put it when that is earlier (an own date, or a
         // zone kept at its moment), so nothing between them goes unlisted.
-        $putDn = $this->placed ? $this->rowDn($this->landedCols) : $landedDn;
+        $putDn = $this->placed ? self::dayOf($this->placementOut($this->landedCols, $this->displayZone())) : $landedDn;
         // A rule the expander can't read lists nothing, and goes on past
         // that unless it has an end.
         [$next, $nextMore] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none'];
@@ -1952,7 +1952,7 @@ final class Model
         }
 
         // Keys in the plan read as instants: 2027-04-14T02:00:00Z.
-        $iso = static fn(?string $k): ?string => $k === null ? null : str_replace(' ', 'T', $k) . 'Z';
+        $iso = static fn(?string $k): ?string => $k === null ? null : self::keyOut($k);
         $days = array_map(static fn(array $d): array => ['key' => $iso($d['key']), 'newKey' => $iso($d['newKey'])] + $d + ['kept' => [], 'takes' => []], $days);
         $selected = [];
         foreach ($groupsOut as $g) {
@@ -1967,7 +1967,7 @@ final class Model
                 'to' => $this->ruleData($newRruleText ?? (string) $this->master['rrule'], $start1, $this->tz1, $this->allDay1)],
             'zone' => $this->planZone(),
             'start' => $startIso,
-            'bound' => ['kind' => $boundKind, 'words' => $boundWords] + ($r1->count !== null ? ['count' => $r1->count] : []) + ($r1->until !== null ? ['until' => $r1->until] : [])
+            'bound' => ['kind' => $boundKind, 'words' => $boundWords] + ($r1->count !== null ? ['count' => $r1->count] : []) + ($r1->until !== null ? ['until' => self::boundOut($r1->until)] : [])
                 + $boundData + ['from' => $this->boundFrom($oldOcc)],
             'next' => $next,
             'acted' => $this->actedRowId !== null && $this->ownOf($this->rows[$this->actedRowId]) !== []
@@ -2142,7 +2142,7 @@ final class Model
         // Every raw occurrence the expander gives, by key (a rule several
         // times a day counts each of its times: 60 events on 30 days are 60).
         $n = count($allKeys) - $generated;
-        $data = ['events' => $n, 'skipped' => $personSkipped, 'last' => $last !== null ? Cal::date($last) : null, 'separate' => $extra];
+        $data = ['events' => $n, 'skipped' => $personSkipped, 'last' => $last !== null ? self::patternOut($calc1, $last) : null, 'separate' => $extra];
         $ends = $last !== null ? 'ends ' . Words::dayMonth($last, $this->thisYear) : '';
         $wasWords = $was !== null && $last !== null && $was !== $last ? ' (was ' . Words::dayMonth($was, $this->thisYear) . ')' : '';
         $scheduled = $n . ' scheduled occurrence' . ($n === 1 ? '' : 's') . ', ' . $personSkipped . ' skipped';
@@ -2246,12 +2246,12 @@ final class Model
             $wall = sprintf('%s %02d:%02d:%02d', Cal::date($d), ...$calc->clock);
             $at = new \DateTimeImmutable($wall, $tz);
             if ($at->format('Y-m-d H:i:s') !== $wall) {
-                $this->notes[] = ['kind' => 'gap', 'date' => Cal::date($d), 'clock' => sprintf('%02d:%02d', $calc->clock[0], $calc->clock[1]), 'at' => Time::iso($at), 'tz' => $calc->tz, 'words' => sprintf('No %02d:%02d on %s in %s: that one is at %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), self::zoneName($calc->tz), $at->format('H:i'))];
+                $this->notes[] = ['kind' => 'gap', 'date' => self::patternOut($calc, $d), 'clock' => sprintf('%02d:%02d', $calc->clock[0], $calc->clock[1]), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('No %02d:%02d on %s in %s: that one is at %s', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear), self::zoneName($calc->tz), $at->format('H:i'))];
                 return;
             }
             $later = $at->modify('+1 hour');
             if ($later->getOffset() !== $at->getOffset() && $later->modify('-1 hour')->format('H:i') === $at->format('H:i') && (new \DateTimeImmutable('@' . ($at->getTimestamp() + 3600)))->setTimezone($tz)->format('H:i:s') === $at->format('H:i:s')) {
-                $this->notes[] = ['kind' => 'overlap', 'date' => Cal::date($d), 'at' => Time::iso($at), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
+                $this->notes[] = ['kind' => 'overlap', 'date' => self::patternOut($calc, $d), 'at' => self::inZoneOut($at, $calc->tz), 'tz' => $calc->tz, 'words' => sprintf('%02d:%02d happens twice on %s: this is the first, in daylight time', $calc->clock[0], $calc->clock[1], Words::dayMonth($d, $this->thisYear))];
                 return;
             }
         }
@@ -2350,6 +2350,122 @@ final class Model
     private function planZone(): ?string
     {
         return $this->allDay1 ? null : $this->tz1;
+    }
+
+    // ---- the writers -------------------------------------------------------
+    //
+    // Every date and instant the plan writes goes through one of these, by
+    // its role (series-model.md, Dates): the source carries its kind, so no
+    // caller chooses a zone or a form.
+
+    /** An occurrence key, the exact identity instant: UTC ISO ending in Z. */
+    private static function keyOut(string $dbKey): string
+    {
+        return str_replace(' ', 'T', $dbKey) . 'Z';
+    }
+
+    /** The day an occurrence is about: its old key's pattern day, in the old series' zone. */
+    private function identityOut(string $oldKey): string
+    {
+        return Cal::date($this->old->dnOf($oldKey));
+    }
+
+    /** A day of the series $calc names (old or new), a day number in that series' own zone: a date. */
+    private static function patternOut(Calc $calc, int $dn): string
+    {
+        unset($calc);
+        return Cal::date($dn);
+    }
+
+    /** A rule's UNTIL as the rule writes it: basic format, read in that rule's zone. */
+    private static function boundOut(string $until): string
+    {
+        return $until;
+    }
+
+    /** A value that names its zone beside itself: ISO in $tz, or a date when it has none (all-day). */
+    private static function inZoneOut(\DateTimeImmutable $at, ?string $tz): string
+    {
+        return $tz === null ? $at->setTimezone(Time::utc())->format('Y-m-d') : Time::iso($at->setTimezone(Time::zone($tz)));
+    }
+
+    /** The zone a shown placement is written in (One zone): the plan's, or none in an all-day plan, where each timed row is in its own. */
+    private function displayZone(): ?string
+    {
+        return $this->planZone();
+    }
+
+    /** A row's own zone, for what the person set on it (its own date). */
+    private static function rowZone(array $row): string
+    {
+        return (string) ($row['tzid'] ?? 'UTC');
+    }
+
+    /** $row's start as it is written: an all-day row's date as itself; a timed one in $zone, or its own zone when $zone is null. */
+    private static function localOf(array $row, ?string $zone): \DateTimeImmutable
+    {
+        $tz = (int) $row['all_day'] === 1 ? 'UTC' : ($zone ?? self::rowZone($row));
+        return Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz));
+    }
+
+    /** The zone named beside a timed value written in $tz: present whenever $tz isn't the plan's zone. */
+    private function zoneBeside(string $tz): array
+    {
+        $plan = $this->planZone();
+        return $plan !== null && Time::normalizeTzid($tz) === Time::normalizeTzid($plan) ? [] : ['tz' => $tz];
+    }
+
+    /**
+     * Where an event is, before or after: an all-day row's literal date, or a
+     * timed row's instant with its date and clock built together in $zone
+     * (displayZone() for where it shows, rowZone() for what was set on it),
+     * the zone named when it isn't the plan's. $row is a stored row or one
+     * the plan writes (start_utc, all_day, tzid).
+     *
+     * @return array{date:string,at?:string,tz?:string}
+     */
+    private function placementOut(array $row, ?string $zone): array
+    {
+        $local = self::localOf($row, $zone);
+        if ((int) $row['all_day'] === 1) {
+            return ['date' => $local->format('Y-m-d')];
+        }
+        return ['date' => $local->format('Y-m-d'), 'at' => Time::iso($local)] + $this->zoneBeside($zone ?? self::rowZone($row));
+    }
+
+    /**
+     * A placement as a list entry (coming up): its start (an all-day row's at
+     * its date's UTC midnight), its kind, and its zone when it isn't the plan's.
+     *
+     * @return array{start:string,allDay:bool,tz?:string}
+     */
+    private function placementEntryOut(array $row, ?string $zone): array
+    {
+        $allDay = (int) $row['all_day'] === 1;
+        return ['start' => Time::iso(self::localOf($row, $zone)), 'allDay' => $allDay] + ($allDay ? [] : $this->zoneBeside($zone ?? self::rowZone($row)));
+    }
+
+    /**
+     * An occurrence of a reading's rule on a day, as its calc gives it: a list
+     * entry in the calc's zone and kind.
+     *
+     * @return array{start:string,allDay:bool,tz?:string}
+     */
+    private function patternInstantOut(Calc $calc, int $dn): array
+    {
+        return $this->placementEntryOut(['start_utc' => $calc->key($dn), 'all_day' => $calc->allDay ? 1 : 0, 'tzid' => $calc->tz], $calc->tz);
+    }
+
+    /** A placement the plan writes, as a row: its start, kind and zone. */
+    private static function rowOf(\DateTimeImmutable $start, bool $allDay, string $tz): array
+    {
+        return ['start_utc' => Time::toDb($start), 'all_day' => $allDay ? 1 : 0, 'tzid' => $tz];
+    }
+
+    /** The day a placement's date names. */
+    private static function dayOf(array $placement): int
+    {
+        return Cal::dn((int) substr($placement['date'], 0, 4), (int) substr($placement['date'], 5, 2), (int) substr($placement['date'], 8, 2));
     }
 
     /**

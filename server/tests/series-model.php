@@ -1636,6 +1636,83 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         [smNext($p), $p['plan']['nextMore'], $p['plan']['bound']['last']]);
     $first = smSeries('Sample practice', 'FREQ=MONTHLY;BYMONTHDAY=1;UNTIL=20270601', '2027-01-01', 60, true);
     checkEq('Phantom UNTIL: an UNTIL on a 1st the rule gives is its last occurrence', ['2027-04-01', '2027-05-01', '2027-06-01'], array_slice(smShows($first, ['master' => []], '2027-06-30'), -3));
+
+    // The zone rule (One zone): the after side decides. A series timed after
+    // the edit writes every timed value of both sides in its zone and every
+    // all-day value as its date; a series all-day after the edit has no
+    // zone, its dates are themselves, and a timed day is written in its own
+    // zone, named beside it, on both sides.
+    $zoneOf = static fn(array $p): mixed => array_key_exists('zone', $p['plan']) ? $p['plan']['zone'] : 'missing';
+    $edited = static fn(array $p): array => array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+    $placed = static fn(array $d): array => [$d['outcome'] ?? null, $d['shows'] ?? null, $d['to'] ?? null, $d['at'] ?? null, $d['tz'] ?? null];
+    $tokyo = 'Asia/Tokyo';
+    $practice = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05', 60, true);
+    $evening = smEdited($practice, 2, '2027-01-12', ['all_day' => 0, 'tzid' => $la, 'start_utc' => smAt('2027-01-12 20:00', $la), 'end_utc' => smAt('2027-01-12 21:00', $la)], null, ['allDay', 'time']);
+    $p = smPlan($practice, [$evening], ['columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Zone: an all-day series has no zone; its day at its own 20:00 in Los Angeles is written there, on its own date, its zone beside it', [
+        null, ['stays', '2027-01-12', '2027-01-12', '2027-01-12T20:00:00-08:00', $la],
+    ], [$zoneOf($p), $placed($edited($p))]);
+    checkEq('Zone: coming up writes that day in its own zone too, beside the dates of the series', [
+        ['2027-01-05T00:00:00+00:00', null], ['2027-01-12T20:00:00-08:00', $la], ['2027-01-19T00:00:00+00:00', null],
+    ], array_map(static fn(array $n): array => [$n['start'], $n['tz'] ?? null], array_slice($p['plan']['next'], 0, 3)));
+
+    // A series made all-day: the days before are timed, each in its own zone.
+    $timed = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 20:00');
+    $toAllDay = ['acted' => smAt('2027-01-05 20:00', $la), 'landed' => ['start_utc' => '2027-01-05 00:00:00', 'end_utc' => '2027-01-06 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']];
+    $titled = smEdited($timed, 2, '2027-01-12 20:00', ['title' => 'Sample practice, Sample Hall'], null, ['title']);
+    $p = smPlan($timed, [$titled], $toAllDay);
+    checkEq('Zone: made all-day, a plain edited day showed on Tue 12 Jan in Los Angeles and becomes that date', [
+        null, ['moves', '2027-01-12', '2027-01-12', null, null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+    $ownTime = smEdited($timed, 2, '2027-01-12 20:00', [], '2027-01-12 21:30', ['time']);
+    $p = smPlan($timed, [$ownTime], $toAllDay);
+    checkEq('Zone: made all-day, a day at its own time showed on its own day and becomes that date', [
+        null, ['moves', '2027-01-12', '2027-01-12', null, null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+    $ownKind = smEdited($timed, 2, '2027-01-12 20:00', [], '2027-01-12 21:30', ['allDay', 'time']);
+    $p = smPlan($timed, [$ownKind], $toAllDay);
+    checkEq('Zone: made all-day, a day owning its kind and time stays timed, in its own zone, named', [
+        null, ['stays', '2027-01-12', '2027-01-12', '2027-01-12T21:30:00-08:00', $la],
+    ], [$zoneOf($p), $placed($edited($p))]);
+
+    // A series made timed: both sides in its new zone.
+    $toTimed = static fn(string $tz): array => ['acted' => '2027-01-05 00:00:00', 'landed' => ['start_utc' => smAt('2027-01-05 18:00', $tz), 'end_utc' => smAt('2027-01-05 19:00', $tz), 'all_day' => 0, 'tzid' => $tz]];
+    $wholeDay = smEdited($practice, 2, '2027-01-12', ['title' => 'Sample practice, Sample Hall'], null, ['title', 'allDay']);
+    $p = smPlan($practice, [$wholeDay], $toTimed($la));
+    checkEq('Zone: made timed, a day owning its all-day flag is its date on both sides', [
+        $la, ['stays', '2027-01-12', '2027-01-12', null, null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+    $p = smPlan($practice, [$evening], $toTimed($la));
+    checkEq('Zone: made timed in Los Angeles, the day at its own 20:00 there keeps its instant: both sides in the new zone, it stays', [
+        $la, ['stays', '2027-01-12', '2027-01-12', '2027-01-12T20:00:00-08:00', null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+    $p = smPlan($practice, [$evening], $toTimed($tokyo));
+    checkEq('Zone: made timed in Tokyo, the same day stays, shown where it is in Tokyo on both sides', [
+        $tokyo, ['stays', '2027-01-13', '2027-01-13', '2027-01-13T13:00:00+09:00', null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+
+    // An all-day day in a timed series is a date, and it moves by the instant.
+    $allDayRow = smEdited($timed, 2, '2027-01-12 20:00', ['all_day' => 1, 'tzid' => 'UTC', 'start_utc' => '2027-01-12 00:00:00', 'end_utc' => '2027-01-13 00:00:00'], null, ['allDay']);
+    $p = smPlan($timed, [$allDayRow], ['acted' => smAt('2027-01-05 20:00', $la), 'landed' => ['start_utc' => smAt('2027-01-06 20:00', $la), 'end_utc' => smAt('2027-01-06 21:00', $la), 'all_day' => 0, 'tzid' => $la], 'rrule' => 'FREQ=WEEKLY;BYDAY=WE']);
+    checkEq('Zone: a timed series moved to Wednesday, its all-day day moves from date to date', [
+        $la, ['moves', '2027-01-12', '2027-01-13', null, null],
+    ], [$zoneOf($p), $placed($edited($p))]);
+
+    // The day acted on is an edited row owning its all-day flag.
+    $p = smPlan($practice, [$evening], ['acted' => $evening['recurrence_instance_utc'], 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Zone: started from a timed day in an all-day series, the plan says where it showed, in its own zone, and coming up starts with it', [
+        null, '2027-01-12', ['2027-01-12T20:00:00-08:00', $la],
+    ], [$zoneOf($p), $p['plan']['acted']['shows'] ?? null, [$p['plan']['next'][0]['start'] ?? null, $p['plan']['next'][0]['tz'] ?? null]]);
+    $p = smPlan($timed, [$allDayRow], ['acted' => $allDayRow['recurrence_instance_utc'], 'columns' => ['title' => 'Sample practice, renamed']]);
+    checkEq('Zone: started from an all-day day in a timed series, the plan says its date', [$la, '2027-01-12', ['2027-01-12T00:00:00+00:00', null]],
+        [$zoneOf($p), $p['plan']['acted']['shows'] ?? null, [$p['plan']['next'][0]['start'] ?? null, $p['plan']['next'][0]['tz'] ?? null]]);
+
+    // The moved-day choices in an all-day plan name the days in the day's own zone.
+    $ownWedEvening = smEdited($practice, 3, '2027-01-12', ['all_day' => 0, 'tzid' => $la, 'start_utc' => smAt('2027-01-13 20:00', $la), 'end_utc' => smAt('2027-01-13 21:00', $la)], null, ['date', 'allDay', 'time']);
+    $p = smPlan($practice, [$ownWedEvening], ['acted' => '2027-01-05 00:00:00', 'landed' => ['start_utc' => '2027-01-06 00:00:00', 'end_utc' => '2027-01-07 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'], 'rrule' => 'FREQ=WEEKLY;BYDAY=WE']);
+    checkEq('Zone: an all-day series moved to Wednesday, a day at its own Wed 13 Jan 20:00 in Los Angeles: keep and move name its days there', [
+        ['keep', '2027-01-13'], ['move', '2027-01-14'],
+    ], array_map(static fn(array $o): array => [$o['id'], $o['date'] ?? null], smGroup($p, 'movedDays')['options'] ?? []));
 }
 
 if (!empty($GLOBALS['__standalone'])) {

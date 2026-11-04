@@ -1058,7 +1058,10 @@ final class Undo
      * Strict mode lets a caller wrap the whole group in one outer transaction:
      * the first non-undoable entry aborts instead of committing a partial undo.
      *
-     * @return array{undone:int,skipped:int}
+     * Not strict, an entry the trip rules refuse (undo_conflict) is listed
+     * in `refused` with its code and stays to undo; the rest go on.
+     *
+     * @return array{undone:int,skipped:int,refused:list<array{id:int,code:string,message:string}>}
      */
     public function undoRun(int $userId, string $runId, bool $strict = false, ?RequestAuthority $authority = null): array
     {
@@ -1074,6 +1077,7 @@ final class Undo
         }
         $undone = 0;
         $skipped = 0;
+        $refused = [];
         foreach ($rows as $row) {
             try {
                 $this->undoById($userId, (int) $row['id'], !$strict, $authority);
@@ -1083,10 +1087,14 @@ final class Undo
                 if ($strict || ($e instanceof HttpError && in_array($e->errorCode, ['session_revoked', 'token_revoked'], true))) {
                     throw $e;
                 }
+                if ($e instanceof HttpError && $e->errorCode === 'undo_conflict') {
+                    $refused[] = ['id' => (int) $row['id'], 'code' => $e->errorCode, 'message' => $e->getMessage()];
+                    continue;
+                }
                 $skipped++; // log-only entries and already-undone rows
             }
         }
-        return ['undone' => $undone, 'skipped' => $skipped];
+        return ['undone' => $undone, 'skipped' => $skipped, 'refused' => $refused];
     }
 
     /**
@@ -1207,17 +1215,22 @@ final class Undo
             // check: a change committed meanwhile is seen, and one that
             // comes after waits for this.
             $this->lockRows($before, $after);
+            // The events it touches, as rows or as the ends of a link: what
+            // the trip rules are checked over once it's done.
+            $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
             $pieces = $this->pieceTables($mutationId);
             foreach ($pieces as $side => $tables) {
                 foreach ($tables as $table) {
                     foreach ($this->piecesOf($mutationId, $side, $table) as $rows) {
                         $this->lockRows([$table => $rows], []);
+                        $eventIds = array_merge($eventIds, self::eventIdsOf([$table => $rows]));
                     }
                 }
             }
             if (!$force && $this->staleFor($mutation)) {
                 throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
             }
+            $flaggedBefore = Trips::flaggedAmong($this->db, $eventIds);
             // Delete rows created by the mutation (present in after, absent from before).
             foreach (array_reverse(self::TABLE_ORDER) as $table) {
                 $beforeKeys = [];
@@ -1346,6 +1359,10 @@ final class Undo
             if (is_array($details) && is_array($details['settings'] ?? null)) {
                 Settings::restore($this->db, (int) $mutation['user_id'], $details['settings']);
             }
+            // What it put back passes the trip rules as it now stands, under
+            // force too: a refusal throws, rolling all of it back, and the
+            // entry stays to undo once the conflict is gone.
+            Trips::assertRestored($this->db, $eventIds, $flaggedBefore);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
         });
 
@@ -1468,6 +1485,26 @@ final class Undo
             }
         }
         return $out;
+    }
+
+    /**
+     * The event ids in snapshot tables: each event row's, and both ends of
+     * each trip link. Pure.
+     *
+     * @param array<string,list<array>> $tables
+     * @return list<int>
+     */
+    private static function eventIdsOf(array $tables): array
+    {
+        $ids = [];
+        foreach ($tables['events'] ?? [] as $row) {
+            $ids[] = (int) ($row['id'] ?? 0);
+        }
+        foreach ($tables['event_links'] ?? [] as $row) {
+            $ids[] = (int) ($row['container_id'] ?? 0);
+            $ids[] = (int) ($row['event_id'] ?? 0);
+        }
+        return array_values(array_filter(array_unique($ids)));
     }
 
     private static function tables(?string $json): array

@@ -6,6 +6,9 @@ import './drafts.mjs';
 import './credentials.mjs';
 import './mail.mjs';
 import './resources.mjs';
+// The series panel never guesses a clock's zone: under test a clock with none throws.
+import { setStrictClocks } from '../src/lib/planwords.js';
+setStrictClocks(true);
 import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
@@ -4934,6 +4937,39 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   const late = planView(sampleLateClass(), { kind: 'drag', title: 'Sample late class', scope: 'all', refYear: 2027 });
   eq('one zone: the dates and clocks of a New York plan are New York\'s, wherever it is drawn', [late.change, late.edited.map((r) => r.line1)], [
     'From Tuesday to Wednesday each week, at 1:30 AM, with no end, as before.', ["'Sample late class' on Tue, Jan 12 moves to Wed, Jan 13 at 12:30 AM."]]);
+
+  // The zone rule: the plan names its zone, the series' after the change,
+  // and null for a series all-day after it; a plan from an older server
+  // names it in its rule.
+  const { planZone } = await import('../src/lib/seriesplan.js');
+  const W2 = await import('../src/lib/planwords.js');
+  const laTo = { rule: { to: { tz: 'America/Los_Angeles', allDay: false } } };
+  eq('zone rule: the plan\'s zone is plan.zone; an older plan\'s is its rule\'s; an all-day plan has none', [
+    planZone({ ...laTo, zone: 'Asia/Tokyo' }), planZone(laTo), planZone({ ...laTo, zone: null }), planZone({ rule: { to: { tz: null, allDay: true } } }),
+  ], ['Asia/Tokyo', 'America/Los_Angeles', null, null]);
+  // An all-day series with a day at its own 20:00 in Los Angeles: its clock is
+  // read in its own zone and said with the zone's name, wherever the panel is drawn.
+  const evening = {
+    hash: 'ad1', direct: false, zone: null,
+    rule: { from: { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05', tz: null, allDay: true }, to: { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05', tz: null, allDay: true } },
+    bound: { kind: 'none', events: null, last: null, from: { kind: 'none' } },
+    next: [{ start: '2027-01-05T00:00:00+00:00' }, { start: '2027-01-12T20:00:00-08:00', tz: 'America/Los_Angeles', kind: 'edited' }, { start: '2027-01-19T00:00:00+00:00' }], nextMore: true,
+    counts: { events: null, edited: 1, skipped: 0 }, groups: [], refusals: [], notes: [],
+    days: [{ key: '2027-01-12T00:00:00Z', newKey: '2027-01-12T00:00:00Z', kind: 'edited', title: 'Sample practice', outcome: 'stays', shows: '2027-01-12', to: '2027-01-12',
+      at: '2027-01-12T20:00:00-08:00', tz: 'America/Los_Angeles', kept: ['allDay', 'time'], takes: [] }],
+  };
+  const ev = planView(evening, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 });
+  eq('zone rule: an all-day plan\'s timed day says its clock in its own zone, named, and coming up has its date there', [ev.edited.map((r) => r.line1), ev.comingUp], [
+    ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays at 8:00 PM in Los Angeles."], 'Tue, Jan 5 · Tue, Jan 12 · Tue, Jan 19 …']);
+  eq('zone rule: a value with its own zone is read there, before the plan\'s', [W2.fmtClock(evening.days[0]), W2.fmtClock(evening.days[0], 'Asia/Tokyo'), W2.fmtClock('2027-01-12T20:00:00-08:00', 'Asia/Tokyo')],
+    ['8:00 PM', '8:00 PM', '1:00 PM']);
+  let threw = null;
+  try { W2.fmtClock('2027-01-12T20:00:00-08:00'); } catch (e) { threw = e.message; }
+  eq('zone rule: under test a clock with no zone throws', threw, 'fmtClock: no zone for 2027-01-12T20:00:00-08:00');
+  W2.setStrictClocks(false);
+  const quiet = [W2.fmtClock('2027-01-12T20:00:00-08:00'), planView({ ...evening, days: [{ ...evening.days[0], tz: undefined }] }, { kind: 'editor', title: 'Sample practice', scope: 'all', refYear: 2027 }).edited.map((r) => r.line1)];
+  W2.setStrictClocks(true);
+  eq('zone rule: in the app a clock with no zone is left out, never guessed', quiet, ['', ["'Sample practice', with its own all-day setting, on Tue, Jan 12 stays where it is."]]);
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };

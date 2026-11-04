@@ -28,53 +28,41 @@ final class Trips
 
     // ---- Pure seams (unit-testable without a DB) -----------------------
 
+    /** Who asks for the trip rules (assertRules), for what a refusal is called and how it reads. */
+    public const BY_EDIT = 'edit';
+    public const BY_LINK = 'link';
+    public const BY_UNDO = 'undo';
+
     /**
-     * Validate that $member may attach to $container. Both are event rows the
-     * caller already resolved (ownership checked). Feed events pass: the link
-     * never touches feed-derived content.
+     * The refusal codes the contract gives each caller, by the rule broken:
+     * a trip inside a trip or inside itself (nested), a trip turned off
+     * while it has a live stop (cleared).
+     */
+    private const REFUSALS = [
+        self::BY_EDIT => ['nested' => 'trip_nested', 'cleared' => 'trip_has_members'],
+        self::BY_LINK => ['nested' => 'trip_invalid', 'cleared' => 'trip_has_members'],
+        self::BY_UNDO => ['nested' => 'undo_conflict', 'cleared' => 'undo_conflict'],
+    ];
+
+    /**
+     * A link is made only to a trip: $container must have the flag set.
+     * What the link then leaves (a trip inside a trip, or inside itself) is
+     * for assertRules to refuse. The caller already resolved the row
+     * (ownership checked). Feed events pass as stops: the link never
+     * touches feed-derived content.
      *
      * @param array<string,mixed> $container
-     * @param array<string,mixed> $member
      */
-    public static function assertLinkable(array $container, array $member): void
+    public static function assertLinkable(array $container): void
     {
         if ((int) ($container['is_container'] ?? 0) !== 1) {
             throw HttpError::badRequest('Target event is not a trip', 'trip_invalid');
         }
-        if ((int) ($container['id'] ?? 0) === (int) ($member['id'] ?? -1)) {
-            throw HttpError::badRequest('A trip cannot contain itself', 'trip_invalid');
-        }
-        if ((int) ($member['is_container'] ?? 0) === 1) {
-            throw HttpError::badRequest('A trip cannot contain another trip', 'trip_invalid');
-        }
     }
 
     /**
-     * Setting is_container is refused on an event that is in a trip: a trip
-     * never contains another trip, and the link would make one.
-     *
-     * @param array<int,list<array{eventId:int,title:string}>> $containers Trips::containersFor of every row the flag reaches
-     */
-    public static function assertNotInTrip(array $containers): void
-    {
-        foreach ($containers as $list) {
-            if ($list !== []) {
-                throw HttpError::badRequest('Take this event out of its trip before making it a trip', 'trip_nested');
-            }
-        }
-    }
-
-    /** Clearing is_container is only allowed once the trip has no members. */
-    public static function assertClearable(int $liveMemberCount): void
-    {
-        if ($liveMemberCount > 0) {
-            throw HttpError::badRequest("Detach the trip's events before turning this off", 'trip_has_members');
-        }
-    }
-
-    /**
-     * The trips among $eventIds as they are now, by id: what a restore
-     * starts from, for assertRestored.
+     * The trips among $eventIds as they are now, by id: what a write or a
+     * restore starts from, for assertRules.
      *
      * @param list<int> $eventIds
      * @return array<int,true>
@@ -92,18 +80,22 @@ final class Trips
     }
 
     /**
-     * The trip rules over what a restore left, read from the database: every
-     * link touching $eventIds whose two events are live. Refused: a trip
-     * that is a stop of a trip (a trip never contains another trip), a trip
-     * that is its own stop, and a trip whose flag the restore cleared
-     * ($flaggedBefore, from flaggedAmong) while it has a stop. A link
-     * whose trip's flag was already clear is dormant, as containersFor
-     * reads it, and stands.
+     * The trip rules, stated once, over the state a write or a restore left,
+     * read from the database: every link touching $eventIds whose two
+     * events are live. Refused: a link whose trip and stop both have the
+     * flag set (a trip never contains another trip, whichever end the flag
+     * was set on), a trip that is its own stop, and a trip whose flag was
+     * cleared ($flaggedBefore, from flaggedAmong) while it has a stop. A
+     * link whose trip's flag was already clear is dormant, as containersFor
+     * reads it, and stands. Run inside the write's transaction, after it,
+     * so a refusal rolls all of it back: by every writer that sets or
+     * clears the flag or makes a link, and by Undo's restore. $by names
+     * the caller, for the refusal's code and words.
      *
-     * @param list<int> $eventIds the events the restore touched, as rows or as the ends of a link
+     * @param list<int> $eventIds the events the write touched, as rows or as the ends of a link
      * @param array<int,true> $flaggedBefore
      */
-    public static function assertRestored(Db $db, array $eventIds, array $flaggedBefore): void
+    public static function assertRules(Db $db, array $eventIds, array $flaggedBefore, string $by): void
     {
         [$was, $wasParams] = Db::in(array_keys($flaggedBefore));
         foreach (array_chunk(array_values(array_unique($eventIds)), 500) as $chunk) {
@@ -123,11 +115,13 @@ final class Trips
             }
             $title = static fn(int $id): string => "'" . $db->scalar('SELECT title FROM events WHERE id = ?', [$id]) . "'";
             [$trip, $stop] = [$title((int) $row['container_id']), $title((int) $row['event_id'])];
-            throw HttpError::badRequest(match (true) {
-                (int) $row['trip_flag'] === 0 => "Undoing this would turn off the trip $trip while $stop is in it; detach its events first.",
-                (int) $row['container_id'] === (int) $row['event_id'] => "Undoing this would put the trip $trip inside itself; a trip can't contain itself.",
-                default => "Undoing this would make $stop a trip inside the trip $trip; a trip can't contain another trip.",
-            }, 'undo_conflict');
+            $lead = $by === self::BY_UNDO ? 'Undoing this would' : 'This would';
+            [$rule, $words] = match (true) {
+                (int) $row['trip_flag'] === 0 => ['cleared', "$lead turn off the trip $trip while $stop is in it; detach its events first."],
+                (int) $row['container_id'] === (int) $row['event_id'] => ['nested', "$lead put the trip $trip inside itself; a trip can't contain itself."],
+                default => ['nested', "$lead make $stop a trip inside the trip $trip; a trip can't contain another trip."],
+            };
+            throw HttpError::badRequest($words, self::REFUSALS[$by][$rule]);
         }
     }
 
@@ -156,7 +150,7 @@ final class Trips
     {
         $this->undo->write($userId, function () use ($userId, $containerId, $eventId): void {
             [$container, $member, $calendarIds] = $this->lockEvents($userId, $containerId, $eventId);
-            self::assertLinkable($container, $member);
+            self::assertLinkable($container);
             if ($this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]) !== null) {
                 return; // already attached: idempotent, nothing to journal
             }
@@ -165,6 +159,8 @@ final class Trips
                 [$containerId]
             );
             $id = $this->db->insert('event_links', ['container_id' => $containerId, 'event_id' => $eventId, 'position' => $position]);
+            // A link changes no flag: what it leaves is all there is to refuse.
+            self::assertRules($this->db, [$containerId, $eventId], [], self::BY_LINK);
             $this->touchEvents([$containerId, $eventId]);
             $link = $this->db->one('SELECT * FROM event_links WHERE id = ?', [$id]);
             $this->undo->record($userId, 'event_links', $containerId, 'create', ['event_links' => []], ['event_links' => [$link]], calendarIds: $calendarIds);
@@ -207,16 +203,6 @@ final class Trips
             'SELECT e.* FROM event_links l JOIN events e ON e.id = l.event_id
              WHERE l.container_id = ? AND e.deleted_at IS NULL
              ORDER BY e.start_utc, e.end_utc DESC, e.title, e.id',
-            [$containerId]
-        );
-    }
-
-    /** Live member count; gates clearing is_container (see assertClearable). */
-    public function liveMemberCount(int $containerId): int
-    {
-        return (int) $this->db->scalar(
-            'SELECT COUNT(*) FROM event_links l JOIN events e ON e.id = l.event_id
-             WHERE l.container_id = ? AND e.deleted_at IS NULL',
             [$containerId]
         );
     }

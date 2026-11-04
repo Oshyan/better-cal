@@ -7771,55 +7771,29 @@ foreach ([['homeLat' => 91], ['homeLng' => -181], ['homeLat' => 'north'], ['mapS
 }
 
 // ---------------------------------------------------------------------------
-// Trips: linkability matrix, clear gating, container map shape, RELATED-TO
+// Trips: links made only to a trip, container map shape, RELATED-TO
 // serialization both directions (pure, no DB)
 // ---------------------------------------------------------------------------
 
 use BetterCal\Domain\Trips;
 
 $tripRow = ['id' => 1, 'is_container' => 1, 'calendar_id' => 3, 'uid' => 'trip-1'];
-$tripMemberRow = ['id' => 2, 'is_container' => 0, 'calendar_id' => 4, 'uid' => 'ev-2', 'source' => 'feed'];
 
+// A link is made only to a trip. What it leaves (a trip inside a trip or
+// inside itself) and clearing a trip with stops are the trip rules
+// (Trips::assertRules), read from the database: undo-trips.test.php.
 try {
-    Trips::assertLinkable($tripRow, $tripMemberRow);
-    check('trip attach valid pair accepted (feed member ok)', true);
+    Trips::assertLinkable($tripRow);
+    check('trip attach to a trip accepted', true);
 } catch (HttpError) {
-    check('trip attach valid pair accepted (feed member ok)', false);
+    check('trip attach to a trip accepted', false);
 }
 try {
-    // Same-calendar membership is explicitly supported (design decision 2).
-    Trips::assertLinkable($tripRow, ['id' => 8, 'is_container' => 0, 'calendar_id' => 3]);
-    check('trip attach same-calendar member accepted', true);
-} catch (HttpError) {
-    check('trip attach same-calendar member accepted', false);
-}
-foreach ([
-    'non-container target' => [['id' => 9, 'is_container' => 0], $tripMemberRow],
-    'container in container' => [$tripRow, ['id' => 5, 'is_container' => 1]],
-    'self-attach' => [$tripRow, $tripRow],
-] as $tripLabel => [$tripC, $tripM]) {
-    try {
-        Trips::assertLinkable($tripC, $tripM);
-        check("trip attach rejects $tripLabel", false);
-    } catch (HttpError $e) {
-        checkEq("trip attach $tripLabel error code", 'trip_invalid', $e->errorCode);
-        checkEq("trip attach $tripLabel status", 400, $e->status);
-    }
-}
-
-// Clearing is_container requires an empty trip.
-try {
-    Trips::assertClearable(0);
-    check('trip clear with no members allowed', true);
-} catch (HttpError) {
-    check('trip clear with no members allowed', false);
-}
-try {
-    Trips::assertClearable(2);
-    check('trip clear with members rejected', false);
+    Trips::assertLinkable(['id' => 9, 'is_container' => 0]);
+    check('trip attach rejects non-container target', false);
 } catch (HttpError $e) {
-    checkEq('trip clear with members code', 'trip_has_members', $e->errorCode);
-    checkEq('trip clear with members status', 400, $e->status);
+    checkEq('trip attach non-container target error code', 'trip_invalid', $e->errorCode);
+    checkEq('trip attach non-container target status', 400, $e->status);
 }
 
 // containersFor batch shape: link rows fold to eventId => [{eventId,title}].

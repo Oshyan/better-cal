@@ -1362,7 +1362,7 @@ final class Undo
             // What it put back passes the trip rules as it now stands, under
             // force too: a refusal throws, rolling all of it back, and the
             // entry stays to undo once the conflict is gone.
-            Trips::assertRestored($this->db, $eventIds, $flaggedBefore);
+            Trips::assertRules($this->db, $eventIds, $flaggedBefore, Trips::BY_UNDO);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
         });
 

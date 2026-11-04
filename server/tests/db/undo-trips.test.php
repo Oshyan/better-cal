@@ -240,4 +240,181 @@ return static function (Db $db): void {
                 $db->all('SELECT l.* FROM event_links l JOIN events e ON e.id = l.container_id WHERE e.user_id = ? ORDER BY l.id', [$u]),
             ]);
         });
+
+    // The writers pass the same rules as Undo (Trips::assertRules), over
+    // the state they leave, whichever end of a link the flag is set on.
+    $refusal = static function (callable $fn): array {
+        try {
+            $fn();
+            return [null, null];
+        } catch (HttpError $e) {
+            return [$e->status . ' ' . $e->errorCode, $e->getMessage()];
+        }
+    };
+    $nested = static fn(int $u): int => (int) $db->scalar(
+        'SELECT COUNT(*) FROM event_links l JOIN events c ON c.id = l.container_id JOIN events m ON m.id = l.event_id
+         WHERE c.user_id = ? AND c.is_container = 1 AND m.is_container = 1 AND c.deleted_at IS NULL AND m.deleted_at IS NULL',
+        [$u]
+    );
+    // A stop deleted, its trip turned off, the delete undone: the link is
+    // back, dormant (above). From there, each flag set alone is allowed
+    // while the link stays dormant; the one that would make it live
+    // between two trips is refused, in either order.
+    $dormant = static function ($d, int $u, int $cal) use ($db, $trip, $stop, $trips): array {
+        $t = $trip($d, $u, $cal);
+        $s = $stop($d, $u, $cal);
+        $trips($d)->attach($u, $t, $s);
+        $d->events->deleteEvent($u, $s, null, null);
+        $deleted = lastEntry($db, $u);
+        $d->events->patch($u, $t, ['isContainer' => false]);
+        $d->undo->undoById($u, $deleted);
+        return [$t, $s];
+    };
+    scenario('writers: a dormant link made live between two trips, the stop flagged first', function () use ($db, $dormant, $refusal, $state, $flag, $nested): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        [$t, $s] = $dormant($d, $u, (int) Settings::defaultCalendarId($db, $u));
+        [$code] = $refusal(fn() => $d->events->patch($u, $s, ['isContainer' => true]));
+        checkEq('the stop of a dormant link made a trip: allowed, its old trip still off', [null, 1, 0], [$code, $flag($s), $flag($t)]);
+        $before = $state($u);
+        [$code, $words] = $refusal(fn() => $d->events->patch($u, $t, ['isContainer' => true]));
+        checkEq('its old trip made a trip again: 400 trip_nested, naming both and the rule, nothing written', ['400 trip_nested', true, 0], [$code, $state($u) === $before, $nested($u)]);
+        checkEq('the refusal names the rows and the rule', "This would make 'Sample stop' a trip inside the trip 'Sample trip'; a trip can't contain another trip.", $words);
+    });
+    scenario('writers: a dormant link made live between two trips, the trip flagged first', function () use ($db, $dormant, $refusal, $state, $flag, $trips, $nested): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        [$t, $s] = $dormant($d, $u, (int) Settings::defaultCalendarId($db, $u));
+        [$code] = $refusal(fn() => $d->events->patch($u, $t, ['isContainer' => true]));
+        checkEq('a trip whose only link is dormant, to a stop that is no trip, made a trip again: allowed, the stop is its again', [null, 1, [$s]],
+            [$code, $flag($t), array_map('intval', array_column($trips($d)->listMembers($u, $t), 'id'))]);
+        $before = $state($u);
+        [$code, $words] = $refusal(fn() => $d->events->patch($u, $s, ['isContainer' => true]));
+        checkEq('then its stop made a trip: 400 trip_nested, nothing written', ['400 trip_nested', true, 0], [$code, $state($u) === $before, $nested($u)]);
+        checkEq('the refusal reads the same from either end', "This would make 'Sample stop' a trip inside the trip 'Sample trip'; a trip can't contain another trip.", $words);
+    });
+
+    // The same through the series path: an edited day of a trip series is
+    // the trip of a link made dormant the same way, and its stop made a
+    // trip. The series made a trip again reaches that day (the series'
+    // flag, on every row) and is refused from either row and from the
+    // first day on; for this event, or this and following from a later
+    // day, the edited day's flag is not written, so nothing nests.
+    scenario('writers: a series made a trip while an edited day is the trip of a dormant link to a trip', function () use ($db, $series, $stop, $trips, $rowsOf, $flagsOf, $flag, $refusal, $state, $nested): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) Settings::defaultCalendarId($db, $u);
+        $c = $series($d, $u, $cal, true);
+        $day = $rowsOf($c['series'])[1];
+        $s = $stop($d, $u, $cal);
+        $trips($d)->attach($u, $day, $s);
+        $d->events->deleteEvent($u, $s, null, null);
+        $deleted = lastEntry($db, $u);
+        $off = ['scope' => 'all', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'isContainer' => false];
+        planned($d->events, $u, $c['series'], $off);
+        $d->undo->undoById($u, $deleted);
+        $d->events->patch($u, $s, ['isContainer' => true]);
+        checkEq('the series off, its edited day\'s link dormant and back, the stop a trip', [[0, 0, 0], 1, 1], [$flagsOf($c['series']), $flag($s), count($db->all('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$day, $s]))]);
+        $words = "This would make 'Sample stop' a trip inside the trip 'Sample trip day one'; a trip can't contain another trip.";
+        foreach ([
+            'from the master for all events' => fn() => planned($d->events, $u, $c['series'], ['isContainer' => true] + $off),
+            'from the edited day\'s own row for all events' => fn() => planned($d->events, $u, $day, ['scope' => 'all', 'isContainer' => true]),
+            'the edited day alone' => fn() => $d->events->patch($u, $day, ['isContainer' => true]),
+            'this and following from the first day' => fn() => $d->events->patch($u, $c['series'], ['scope' => 'following', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'isContainer' => true]),
+        ] as $how => $write) {
+            $before = $state($u);
+            $got = $refusal($write);
+            checkEq("the series made a trip $how: 400 trip_nested, naming the day and its stop, nothing written", [['400 trip_nested', $words], true], [$got, $state($u) === $before]);
+        }
+        foreach ([
+            'for this event, the edited day\'s' => ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00'],
+            'for this and following from the edited day' => ['scope' => 'following', 'instanceStart' => '2027-01-12T18:00:00+00:00'],
+        ] as $how => $scope) {
+            $u2 = freshUser($db);
+            $d2 = domains($db);
+            $cal2 = (int) Settings::defaultCalendarId($db, $u2);
+            $c2 = $series($d2, $u2, $cal2, true);
+            $day2 = $rowsOf($c2['series'])[1];
+            $s2 = $stop($d2, $u2, $cal2);
+            $trips($d2)->attach($u2, $day2, $s2);
+            $d2->events->deleteEvent($u2, $s2, null, null);
+            $deleted2 = lastEntry($db, $u2);
+            planned($d2->events, $u2, $c2['series'], $off);
+            $d2->undo->undoById($u2, $deleted2);
+            $d2->events->patch($u2, $s2, ['isContainer' => true]);
+            [$code] = $refusal(fn() => $d2->events->patch($u2, $c2['series'], ['isContainer' => true] + $scope));
+            checkEq("the series made a trip $how: allowed, the edited day's flag as it was, no trip inside a trip", [null, 0, 0], [$code, $flag($day2), $nested($u2)]);
+        }
+    });
+
+    // Making a link passes the same rules (POST /events/:id/links, trip_invalid).
+    scenario('writers: a link that would put a trip inside a trip or inside itself is refused', function () use ($db, $trip, $trips, $refusal, $state): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) Settings::defaultCalendarId($db, $u);
+        $t = $trip($d, $u, $cal);
+        $inner = $trip($d, $u, $cal, 'Sample day trip');
+        $before = $state($u);
+        $got = [$refusal(fn() => $trips($d)->attach($u, $t, $inner)), $refusal(fn() => $trips($d)->attach($u, $t, $t))];
+        checkEq('a trip attached to a trip, and a trip to itself: 400 trip_invalid each, naming the rule, nothing written', [[
+            ['400 trip_invalid', "This would make 'Sample day trip' a trip inside the trip 'Sample trip'; a trip can't contain another trip."],
+            ['400 trip_invalid', "This would put the trip 'Sample trip' inside itself; a trip can't contain itself."],
+        ], true], [$got, $state($u) === $before]);
+    });
+
+    // Turning a trip off while it has a live stop, as an edit.
+    scenario('writers: a trip with a live stop is not turned off', function () use ($db, $trip, $stop, $trips, $refusal, $state): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) Settings::defaultCalendarId($db, $u);
+        $t = $trip($d, $u, $cal);
+        $trips($d)->attach($u, $t, $stop($d, $u, $cal));
+        $before = $state($u);
+        $got = $refusal(fn() => $d->events->patch($u, $t, ['isContainer' => false]));
+        checkEq('turned off with a stop in it: 400 trip_has_members, naming both, nothing written', [['400 trip_has_members', "This would turn off the trip 'Sample trip' while 'Sample stop' is in it; detach its events first."], true], [$got, $state($u) === $before]);
+    });
+
+    // On a Google calendar the rules run before Google is called: a refused
+    // edit sends Google nothing, the title it carried included. Google is a
+    // stand-in that counts every call, the token refresh among them.
+    scenario('writers: a Google event\'s new title with a refused trip flag sends Google nothing', function () use ($db, $trip, $trips, $refusal, $state, $flag): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) Settings::defaultCalendarId($db, $u);
+        $calls = [];
+        $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
+        $auth = new BetterCal\Domain\GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use (&$calls): array {
+            $calls[] = 'token';
+            return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
+        });
+        $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
+            $calls[] = $method;
+            return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed'])];
+        };
+        $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
+            new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new Trips($db, $d->undo), null,
+            new BetterCal\Domain\GoogleWriter($db, $auth, new BetterCal\Domain\Feeds($db), $transport));
+        $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'owner@example.test',
+            'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', $cfg['session_secret']), 'scopes' => BetterCal\Domain\GoogleAuth::SCOPES]);
+        $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
+            'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
+        $now = BetterCal\Support\Time::nowDb();
+        $meeting = $db->insert('events', ['user_id' => $u, 'calendar_id' => $googleCal, 'uid' => 'sample-meeting@google', 'title' => 'Sample meeting',
+            'start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'source' => 'feed',
+            'google_event_id' => 'g-sample', 'created_at' => $now, 'updated_at' => $now]);
+        $t = $trip($d, $u, $cal);
+        $trips($d)->attach($u, $t, $meeting);
+        $edit = ['title' => 'Sample meeting, renamed', 'isContainer' => true];
+        $before = $state($u);
+        $got = $refusal(fn() => $events->patch($u, $meeting, $edit));
+        checkEq('a stop on a Google calendar renamed and made a trip: 400 trip_nested, no call to Google, nothing written', [
+            ['400 trip_nested', "This would make 'Sample meeting' a trip inside the trip 'Sample trip'; a trip can't contain another trip."], [], true,
+        ], [$got, $calls, $state($u) === $before]);
+        // Out of its trip, the same edit is sent and written.
+        $trips($d)->detach($u, $t, $meeting);
+        $events->patch($u, $meeting, $edit);
+        checkEq('out of its trip, the same edit: sent to Google once, renamed and a trip', [['token', 'PATCH'], 'Sample meeting, renamed', 1],
+            [$calls, (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$meeting]), $flag($meeting)]);
+    });
 };

@@ -530,6 +530,9 @@ trait SeriesPlans
         $fields = $result['writes']['master'];
         unset($fields['exdates_json']);
         [$googleFields, $localFields] = self::splitGoogleFields($fields);
+        // After the plan is read (the flag is part of what it compares),
+        // before Google is sent anything.
+        $this->tripRules($id, $localFields);
         $resp = null;
         if ($googleFields !== []) {
             $googleId = self::requireGoogleId($event);

@@ -845,7 +845,6 @@ export function EditorDrawer() {
           kind: 'editor', occ, body: fields, quiet: true,
           fields: fieldLines(fields, was, {
             calendarName: (id) => (state.calendars.find((c) => c.id === Number(id)) || {}).name || '',
-            reminderWords: (list) => (list == null ? 'default' : list.length ? list.map((m) => fmtReminder({ minutes: m })).join(', ') : 'none'),
             personName: (id) => (state.people.find((p) => p.id === id) || {}).name || '',
             timeWords: (a, b) => timeChange({ start: a.start, end: a.end, allDay: a.allDay }, { start: b.start, end: b.end, allDay: b.allDay }),
           }),

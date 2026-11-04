@@ -14,9 +14,15 @@ const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'O
 
 const wordsOf = (x) => (x == null ? '' : typeof x === 'string' ? x : x.words || '');
 
-/** The zone the calendar is drawn in: this device's. */
-export function calendarZone() {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; }
+/**
+ * The one zone every date and time of a plan is written in: the series'
+ * after the change, from the plan's rule (an all-day series' plan is in
+ * UTC, its dates whole days). Never the device's or an occurrence's: an
+ * occurrence from the calendar's window carries no zone of its own.
+ */
+export function planZone(plan) {
+  const to = plan && plan.rule && plan.rule.to;
+  return (to && to.tz) || 'UTC';
 }
 
 // The wall date an ISO value names: its own date when it carries an offset
@@ -44,9 +50,9 @@ export function wallDate(iso, tz = null) {
 /**
  * A plan date as the examples write it: "Wed 10 Mar", or "10 Mar" without
  * the weekday, with the year only when it isn't `refYear` ("29 Feb 2028").
- * A UTC key is read in `tz`; the panel always passes one (the series' zone,
- * else the calendar's), so a Tuesday evening in Los Angeles is never read
- * as the Wednesday its UTC instant falls on.
+ * A UTC key is read in `tz`; the panel always passes one (the plan's
+ * zone), so a Tuesday evening in Los Angeles is never read as the
+ * Wednesday its UTC instant falls on.
  */
 export function planDate(iso, { weekday = true, tz = null, refYear = new Date().getFullYear() } = {}) {
   const w = wallDate(iso, tz);
@@ -79,27 +85,27 @@ export function chosen(plan, choices = {}) {
   return out;
 }
 
-// Where each group is drawn: under Change (the readings of the rule, the
-// bound, the zone), on one day's row, as a row of its own among the edited
-// days, or among the skipped days (a day the new rule would add).
+// The readings of the rule, the bound and the zone are drawn under Change.
 const CHANGE_GROUPS = new Set(['reading', 'bound', 'zone']);
-const dayOfGroup = (g) => (g.day != null ? g.day : Array.isArray(g.days) && g.days.length === 1 ? g.days[0] : null);
+// The days a group is about: its `day`, or its `days`.
+const namesOf = (g) => (g.day != null ? [g.day] : Array.isArray(g.days) ? g.days : []);
+const push = (map, key, value) => map.set(key, [...(map.get(key) || []), value]);
 
 const dayNumber = (key) => (key ? Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10)) / 86400000 : null);
 
 /**
  * Everything the panel shows, from a plan (null while it is being worked
- * out), every sentence from lib/planwords.js. ctx: kind ('drag' | 'resize'
- * | 'editor'), title (the series'), calendar (its name), scope, choices
- * (picked so far), tz (the series' zone, for times), refYear, fields
- * ([{label, words}] the editor changed), edits (the field names the change
- * sends, for its verb), newTitle (a rename's), changed (a 409 replaced the
- * plan).
+ * out), every sentence from lib/planwords.js, every date and time in the
+ * plan's zone (planZone). ctx: kind ('drag' | 'resize' | 'editor'), title
+ * (the series'), calendar (its name), scope, choices (picked so far),
+ * refYear, fields ([{label, words}] the editor changed), edits (the field
+ * names the change sends, for its verb), newTitle (a rename's), changed (a
+ * 409 replaced the plan).
  */
 export function planView(plan, ctx = {}) {
   const verb = W.verbOf(ctx.kind, ctx.edits || []);
   const title = W.titleWords(verb, ctx.scope);
-  const opts = { refYear: ctx.refYear, tz: ctx.tz || calendarZone(), series: ctx.title || '', newTitle: ctx.newTitle || '' };
+  const opts = { refYear: ctx.refYear, tz: planZone(plan), series: ctx.title || '', newTitle: ctx.newTitle || '' };
   const view = {
     heading: title + (ctx.title ? ' · ' + ctx.title : ''),
     title,
@@ -155,71 +161,77 @@ export function planView(plan, ctx = {}) {
   view.count = plan.counts ? plan.counts.events : null;
   view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts, plan.days, plan.rule);
 
-  const onDay = new Map();
-  const onDays = new Map(); // a day's key -> the choice about it and other days
+  // Every group is drawn once, by its id: the readings, the bound and the
+  // zone under Change; a day the new rule would add among the removed days;
+  // every other group on the row of the days it is about, of those with
+  // rows: one day's own row, or the row of the days it is about together.
+  // A group about no day with a row is a row of its own.
+  const rowDays = days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'));
+  const hasRow = new Set(rowDays.map((d) => d.key));
+  const onDay = new Map(); // a day's key -> the groups about it alone
+  const onDays = new Map(); // the keys of days a group is about together -> those groups
   const editedChoices = [];
   const skippedChoices = [];
   for (const g of plan.groups || []) {
-    const day = dayOfGroup(g);
+    const names = [...new Set(namesOf(g).filter((k) => hasRow.has(k)))].sort();
     if (CHANGE_GROUPS.has(g.id)) view.readings.push(choice(g));
-    else if (g.id === 'edge') skippedChoices.push({ key: 'choice:edge', line1: '', line2: '', choice: choice(g) });
-    else if (day != null && byKey.has(day)) onDay.set(day, [...(onDay.get(day) || []), g]);
-    else if (/^own[A-Z]/.test(g.id) && Array.isArray(g.days) && g.days.length > 1 && g.days.every((k) => byKey.has(k) && ['moves', 'stays'].includes(byKey.get(k).outcome))) g.days.forEach((k) => onDays.set(k, g));
-    else editedChoices.push({ key: 'choice:' + g.id, line1: '', line2: '', choice: choice(g) });
+    else if (g.id === 'edge') skippedChoices.push({ key: 'choice:' + g.id, line1: '', line2: '', choices: [choice(g)] });
+    else if (names.length === 1) push(onDay, names[0], g);
+    else if (names.length > 1) push(onDays, names.join(' '), g);
+    else editedChoices.push({ key: 'choice:' + g.id, line1: '', line2: '', choices: [choice(g)] });
   }
 
   // Edited days. A day that does something of its own (stays at its own
-  // date, becomes an event of its own, is deleted, goes back to the
-  // series) or carries a choice has its own row, first. Days that go with
-  // their events the same way are one row, by their outcome alone (what
-  // they keep or take never splits it). The day acted on is in Coming up.
-  const rows = [];
-  const groups = new Map();
+  // date or time, becomes an event of its own, is deleted, goes back to the
+  // series) or has a choice about it alone has its own row, first. Days a
+  // choice is about together are its row. The rest that go with their
+  // events the same way are one row, by their outcome alone (what they keep
+  // or take never splits it). The day acted on is in Coming up.
   const list = (x) => (Array.isArray(x) ? x : []);
-  for (const d of days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'))) {
+  const together = new Set([...onDays.keys()].flatMap((k) => k.split(' ')));
+  const plainRow = (d) => ({ key: d.key, ...W.dayLines(d, opts), choices: [] });
+  const rows = [];
+  const outcomes = new Map();
+  for (const d of rowDays) {
     const gs = onDay.get(d.key) || [];
-    const kept = list(d.kept);
-    let row = { key: d.key, ...W.dayLines(d, opts), choice: null };
-    // A day's own choice sits on its row: its subject, then the reason and radios.
-    const own = gs.find((g) => /^own[A-Z]/.test(g.id));
-    const outside = gs.find((g) => g.id === 'outside');
-    if (outside) row = { key: d.key, line1: W.dayName(d, opts.series) + ' on ' + W.fmtDay(d.shows, opts) + ' falls after the new end.', line2: '', choice: choice(outside) };
-    else if (own) row = { key: d.key, line1: W.dayName({ ...d, kept: ['title'] }) + ' on ' + W.fmtDay(d.shows, opts) + ' has its own ' + (own.field === 'title' ? 'title, ' + "'" + d.title + "'" : W.fieldNoun(own.field)) + '.', line2: '', choice: choice(own, { oldTitle: d.title }) };
-    else if (gs.length) row.choice = choice(gs[0]);
-    // A day at a time of its own after the change has an outcome of its own: its row says the time.
-    const goesWith = (d.outcome === 'moves' || d.outcome === 'stays') && !gs.length && !kept.includes('date') && !W.ownClock(d, opts);
-    if (!goesWith) { rows.push(row); continue; }
-    // Grouped by outcome alone: what a day keeps or takes never splits a
-    // group; days a choice is about together are a group of their own with it.
-    const shared = onDays.get(d.key) || null;
-    const id = d.outcome + (shared ? ':' + shared.id : '');
-    if (!groups.has(id)) groups.set(id, { outcome: d.outcome, shared, days: [] });
-    groups.get(id).days.push({ d, row });
+    const ownOutcome = !(d.outcome === 'moves' || d.outcome === 'stays') || list(d.kept).includes('date') || !!W.ownClock(d, opts);
+    if (gs.length) rows.push({ key: d.key, line1: W.choiceDayLine(d, gs, opts), line2: '', choices: gs.map((g) => choice(g, { oldTitle: d.title })) });
+    else if (ownOutcome) rows.push(plainRow(d));
+    else if (!together.has(d.key)) push(outcomes, d.outcome, d);
   }
-  const groupRows = [...groups.values()].map((grp) => {
-    if (grp.days.length === 1) return grp.days[0].row;
-    const sorted = [...grp.days].sort((a, b) => String(a.d.shows || a.d.key).localeCompare(String(b.d.shows || b.d.key)));
-    const shifts = new Set(sorted.map((x) => (x.d.to && x.d.shows ? dayNumber(x.d.to) - dayNumber(x.d.shows) : null)));
-    const weekdays = new Set(sorted.map((x) => (x.d.to ? new Date(dayNumber(x.d.to) * 86400000).getUTCDay() : null)));
-    const clocks = new Set(sorted.map((x) => (x.d.newKey ? W.fmtClock(x.d.newKey, opts.tz) : null)));
+  const byShown = (a, b) => String(a.shows || a.key).localeCompare(String(b.shows || b.key));
+  // The row of days a choice is about together: what they have, their dates, the choices, and the days under it.
+  const togetherRows = [...onDays].map(([k, gs]) => {
+    const sorted = k.split(' ').map((key) => byKey.get(key)).sort(byShown);
+    const span = W.daysSpan(sorted.length, sorted[0].shows, sorted[sorted.length - 1].shows, opts);
+    return {
+      key: 'days:' + k, line1: W.togetherLine(gs, sorted.length, sorted.map((d) => d.title).filter(Boolean)), ...span,
+      choices: gs.map((g) => choice(g, { onRow: true })), days: sorted.map(plainRow),
+    };
+  });
+  const outcomeRows = [...outcomes].map(([outcome, ds]) => {
+    if (ds.length === 1) return plainRow(ds[0]);
+    const sorted = [...ds].sort(byShown);
+    const shifts = new Set(sorted.map((d) => (d.to && d.shows ? dayNumber(d.to) - dayNumber(d.shows) : null)));
+    const weekdays = new Set(sorted.map((d) => (d.to ? new Date(dayNumber(d.to) * 86400000).getUTCDay() : null)));
+    const clocks = new Set(sorted.map((d) => (d.newKey ? W.fmtClock(d.newKey, opts.tz) : null)));
     const [shift] = shifts, [weekday] = weekdays, [clock] = clocks;
-    const moved = grp.outcome === 'moves' && shifts.size >= 1 && !shifts.has(null) && !shifts.has(0);
+    const moved = outcome === 'moves' && shifts.size >= 1 && !shifts.has(null) && !shifts.has(0);
     const words = W.groupLines({
-      count: sorted.length, outcome: grp.outcome,
+      count: sorted.length, outcome,
       weekday: moved && weekdays.size === 1 ? weekday : null,
       shift: moved && shifts.size === 1 ? shift : null,
-      clock: grp.outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((x) => (x.d.takes || []).includes('time')) ? clock : null,
-      first: sorted[0].d.shows, last: sorted[sorted.length - 1].d.shows,
+      clock: outcome === 'moves' && !moved && clocks.size === 1 && sorted.every((d) => list(d.takes).includes('time')) ? clock : null,
+      first: sorted[0].shows, last: sorted[sorted.length - 1].shows,
     }, opts);
-    const line1 = grp.shared ? W.sharedLine(grp.shared, sorted.length, sorted.map((x) => x.d.title).filter(Boolean)) : words.line1;
-    return { key: 'group:' + sorted[0].d.key, line1, range: words.range, toggle: words.toggle, choice: grp.shared ? choice(grp.shared, { onRow: true }) : null, days: sorted.map((x) => x.row) };
+    return { key: 'group:' + sorted[0].key, line1: words.line1, range: words.range, toggle: words.toggle, choices: [], days: sorted.map(plainRow) };
   });
-  view.edited = [...rows, ...groupRows, ...editedChoices];
+  view.edited = [...rows, ...togetherRows, ...outcomeRows, ...editedChoices];
   // Skipped days: an anchor is no event, and a day the new rule would add
   // is said by its choice.
   const edge = skippedChoices.length > 0;
   view.skipped = [
-    ...W.removedRows(days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor' && !(edge && x.outcome === 'generated')), opts).map((r) => ({ ...r, choice: null })),
+    ...W.removedRows(days.filter((x) => x.kind === 'skipped' && x.outcome !== 'anchor' && !(edge && x.outcome === 'generated')), opts).map((r) => ({ ...r, choices: [] })),
     ...skippedChoices,
   ];
   view.notes = (plan.notes || []).map((n) => W.noteWords(n, opts)).filter(Boolean);

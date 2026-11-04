@@ -1103,19 +1103,25 @@ body.bc-drag-copy .bc-drag-ghost::after {
 :is(.bc-chip, .bc-bar, .bc-block).is-series-pending {
   background: transparent !important; border: 1.5px dashed currentColor !important; box-shadow: none !important;
 }
-/* The series change panel (SeriesDialog.js): one docked place for every plan,
-   from a drag or the editor. Desktop: bottom right of the calendar, 440 wide,
-   no taller than the window less 12px above and below, no backdrop; beside
-   the editor drawer or the event panel when one is open, which each say how
-   far they reach from the window's right edge (--bc-sd-side). Phone: a bottom
-   sheet over the bottom bar, up to two thirds of the screen. Header and
-   actions stay; the body scrolls. Its size and place are only ever set here. */
+/* The series change panel (SeriesDialog.js): one place for every plan, from
+   a drag or the editor, chosen by the width it has. It lives in a lane: the
+   window less what the editor drawer or the event panel covers on its right
+   (each says how far it reaches, --bc-sd-side). Where the lane holds the
+   panel at its full width (480 and 12 either side), the panel docks at its
+   bottom right, no taller than the window less 12px above and below, no
+   backdrop. Where it doesn't, the panel is the sheet across the bottom of
+   the window, over the drawer, up to two thirds of the screen: the same at
+   641 pixels beside the drawer as on a phone. Header and actions stay; the
+   body scrolls. Its size and place are only ever set here. */
 .bc-drawer { --bc-sd-side: min(480px, 94vw); }
 .bc-app:has(.bc-evpanel) { --bc-sd-side: min(480px, 100vw); }
+.bc-sd-lane {
+  position: fixed; z-index: 1001; top: 0; bottom: 0; left: 0; right: var(--bc-sd-side, 0px);
+  container: bc-sd-lane / inline-size; pointer-events: none;
+}
 .bc-sd {
-  position: fixed; z-index: 1001; right: calc(var(--bc-sd-side, 0px) + 12px); bottom: 12px;
-  width: 480px; max-width: calc(100vw - var(--bc-sd-side, 0px) - 24px);
-  max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
+  position: absolute; right: 12px; bottom: 12px; width: 480px; max-height: calc(100% - 24px);
+  pointer-events: auto;
   background: var(--bg-raised); border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: var(--shadow);
   display: flex; flex-direction: column; font-size: 13px; line-height: 1.4; outline: none;
@@ -1174,9 +1180,16 @@ body.bc-drag-copy .bc-drag-ghost::after {
 .bc-sd-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); flex: none; }
 .bc-sd-actions .bc-btn { padding: 4px 14px; }
 .bc-sd-status { color: var(--fg-muted); margin-right: auto; }
+/* A phone has no room to dock in, whatever lies beside: its lane is no
+   width, so the panel is the sheet. */
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-sd-lane { --bc-sd-side: 100vw; }
+}
+/* The sheet: from the lane's left edge to the window's right edge (past
+   the lane by what lies beside it), across the bottom. */
+@container bc-sd-lane (max-width: 503.98px) {
   .bc-sd {
-    left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 66vh; max-height: 66dvh;
+    left: 0; right: calc(0px - var(--bc-sd-side, 0px)); bottom: 0; width: auto; max-height: 66vh; max-height: 66dvh;
     border-radius: 14px 14px 0 0; font-size: 15px; animation: bc-sheet-up 0.18s ease;
   }
   .bc-sd-head { padding: 12px 14px 10px; }

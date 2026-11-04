@@ -4557,13 +4557,38 @@ function sampleEditedDays(keeps = () => ['title', 'location']) {
   };
 }
 
+// Edited days with their own title and place, each owned field a choice
+// about all of them, as the server sends them for a rename and a new place
+// (1.5.0 review, F2): owned([ownDay(...), ...]).
+const ownDay = (key, shows, extra = {}) => ({ key, newKey: key, kind: 'edited', title: 'Sample own title ' + shows.slice(8), outcome: 'stays', shows, to: shows,
+  at: shows + 'T18:00:00+00:00', kept: ['title', 'location'], takes: [], ...extra });
+const ownGroups = (keys) => [['ownTitle', 'title'], ['ownLocation', 'location']].map(([id, field]) => ({ id, field, count: keys.length, days: keys, selected: 'keep',
+  ...(field === 'title' ? { value: 'Sample renamed series' } : {}), options: [{ id: 'keep' }, { id: 'give' }] }));
+const utcPart = (rrule, start) => ({ rrule, start, tz: 'UTC', allDay: false });
+const owned = (days) => ({
+  hash: 'own' + days.length, direct: false, rule: { from: utcPart('FREQ=WEEKLY;BYDAY=TU', '2027-01-05T18:00:00+00:00'), to: utcPart('FREQ=WEEKLY;BYDAY=TU', '2027-01-05T18:00:00+00:00') },
+  bound: { kind: 'none', events: null, last: null, from: { kind: 'none' } }, next: [], counts: { events: null, edited: days.length, skipped: 0 },
+  groups: ownGroups(days.map((d) => d.key)), days, refusals: [], notes: [],
+});
+// A New York series on Tuesdays at 01:30 dragged to Wednesday, with a day at
+// its own 00:30 (1.5.0 review, F4).
+const nyPart = (rrule, start) => ({ rrule, start, tz: 'America/New_York', allDay: false });
+const sampleLateClass = () => ({
+  hash: 'ny1', direct: false, rule: { from: nyPart('FREQ=WEEKLY;BYDAY=TU', '2027-01-05T01:30:00-05:00'), to: nyPart('FREQ=WEEKLY;BYDAY=WE', '2027-01-06T01:30:00-05:00') },
+  bound: { kind: 'none', events: null, last: null, from: { kind: 'none' } },
+  next: ['2027-01-20T01:30:00-05:00', '2027-01-27T01:30:00-05:00', '2027-02-03T01:30:00-05:00'].map((start) => ({ start })), nextMore: true,
+  counts: { events: null, edited: 1, skipped: 0 }, groups: [], refusals: [], notes: [],
+  days: [{ key: '2027-01-12T06:30:00Z', newKey: '2027-01-13T06:30:00Z', kind: 'edited', title: 'Sample late class', outcome: 'moves', shows: '2027-01-12', to: '2027-01-13',
+    at: '2027-01-13T00:30:00-05:00', kept: ['time'], takes: ['date'] }],
+});
+
 console.log('--- the series change panel, its sentences from the plan\'s data (1.5.0) ---');
 {
   const { planView, commitPlan, creationLine } = await import('../src/lib/seriesplan.js');
   const { setTimeFormat } = await import('../src/lib/dates.js');
   setTimeFormat('12');
   const LA = 'America/Los_Angeles';
-  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', calendar: 'Sample', tz: LA, refYear: 2027, ...extra });
+  const ctx = (extra = {}) => ({ kind: 'drag', title: 'Choir', calendar: 'Sample', refYear: 2027, ...extra });
   const rule = (before, after, startBefore, startAfter, extra = {}) => ({
     before, after, from: { rrule: before, start: startBefore, tz: LA, allDay: false }, to: { rrule: after, start: startAfter, tz: LA, allDay: false }, ...extra,
   });
@@ -4589,7 +4614,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: CHANGE names only what changes, the rest as context, the end part of it', v.change, 'From Tuesday to Wednesday each week, at 7:00 PM, with no end, as before.');
   eq('series panel: COMING UP, three dates and the ellipsis while the series goes on', v.comingUp, 'Wed, Mar 10 · Wed, Mar 17 · Fri, Mar 26 …');
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
-  eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choice.reason, v.edited[0].choice.options.map((o) => [o.label, o.selected])], [
+  eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' was moved earlier to Fri, Mar 26.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");
   eq('series panel: a removed day that moves with the series, in one sentence with its consequence', v.skipped.map((r) => r.line1), ["'Choir' on Tue, Mar 30 was removed earlier, so no event is added on Wed, Mar 31."]);
@@ -4673,7 +4698,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     days: [{ key: null, newKey: '2027-01-09T02:00:00Z', kind: 'skipped', outcome: 'generated', to: '2027-01-08', side: 'start' }],
   };
   const pv = planView(pottery, ctx({ title: 'Pottery' }));
-  eq('series panel: a day the new rule would add is a choice among the skipped days', [pv.skipped.length, pv.skipped[0].choice.lead, pv.skipped[0].choice.reason, pv.skipped[0].choice.options.map((o) => o.label)],
+  eq('series panel: a day the new rule would add is a choice among the skipped days', [pv.skipped.length, pv.skipped[0].choices[0].lead, pv.skipped[0].choices[0].reason, pv.skipped[0].choices[0].options.map((o) => o.label)],
     [1, 'The new rule would add Fri, Jan 8 at the start.', 'Add it, or leave it out?', ['Leave it out', 'Add it']]);
   eq('series panel: a skip the new rule has no day for', planView({ ...pottery, groups: [], days: [{ key: '2027-01-14T02:00:00Z', kind: 'skipped', outcome: 'dropped', shows: '2027-01-13', why: 'noday' }] }, ctx()).skipped.map((r) => r.line1),
     ["'Choir' on Wed, Jan 13 was removed earlier; the new pattern has no day there."]);
@@ -4724,7 +4749,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ],
   };
   const p = planView(piano, ctx({ title: 'Piano lesson with Alex Example' }));
-  eq('series panel: a day after the new end, a day going back to the series, a deleted day', p.edited.map((r) => [r.line1, r.choice && r.choice.reason, r.choice && r.choice.options.map((o) => o.label)]), [
+  eq('series panel: a day after the new end, a day going back to the series, a deleted day', p.edited.map((r) => [r.line1, r.choices[0] && r.choices[0].reason, r.choices[0] && r.choices[0].options.map((o) => o.label)]), [
     ["'Recital at Sample Hall' on Sun, Oct 31 falls after the new end.", 'Keep it as an event of its own, or delete it?', ['Keep it on its own', 'Delete it']],
     ["'Piano lesson with Alex Example' on Tue, Mar 16 goes back to the series; nothing of its own is left.", null, null],
     ["'Sample class' on Fri, Apr 30 is deleted.", null, null],
@@ -4734,7 +4759,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     groups: [{ id: 'ownTitle', selected: 'keep', field: 'title', count: 1, days: ['2027-04-14T02:00:00Z'], value: 'Chorus', options: [{ id: 'keep' }, { id: 'give' }] }],
     days: [{ key: '2027-04-14T02:00:00Z', newKey: '2027-04-14T02:00:00Z', kind: 'edited', title: 'Rehearsal', outcome: 'stays', shows: '2027-04-13', to: '2027-04-13', kept: ['title'], takes: [] }] },
   ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', fields: [{ label: 'Title', words: 'Choir, now Chorus' }] }));
-  eq('series panel: a rename, its field, the rule as before, and the day with its own title asking', [rename.title, rename.fields, rename.change, rename.edited[0].line1, rename.edited[0].choice.reason, rename.edited[0].choice.options.map((o) => o.label)], [
+  eq('series panel: a rename, its field, the rule as before, and the day with its own title asking', [rename.title, rename.fields, rename.change, rename.edited[0].line1, rename.edited[0].choices[0].reason, rename.edited[0].choices[0].options.map((o) => o.label)], [
     'Rename all events', ["Title from 'Choir' to 'Chorus'."], 'Still weekly on Tuesday at 7:00 PM, with no end, as before.',
     "'Rehearsal' on Tue, Apr 13 has its own title, 'Rehearsal'.", 'Keep its title, or give it the new one too?', ["Keep 'Rehearsal'", "Rename it to 'Chorus'"]]);
   eq('series panel: a resize is a change, a refused plan offers only this one', [planView({ hash: 'z' }, ctx({ kind: 'resize' })).action, planView({ hash: 'z', refusals: [{ code: 'weekno' }] }, ctx()).onlyThis],
@@ -4758,7 +4783,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ctx({ title: 'Sample practice', refYear: 2026, kind: 'editor', edits: ['title'], newTitle: 'Sample rehearsal' }));
   eq('series panel: only a field that changes is said', renamed.edited[0].line1, "'Sample practice', with its own location, on Tue, Nov 3 stays where it is and is renamed to 'Sample rehearsal'.");
   const several = planView({ ...choir, groups: [{ id: 'movedDays', selected: 'keep', count: 2, options: [{ id: 'keep' }, { id: 'move' }] }] }, ctx());
-  const severalChoice = several.edited.find((r) => r.choice && r.choice.id === 'movedDays').choice;
+  const severalChoice = several.edited.find((r) => (r.choices || []).some((c) => c.id === 'movedDays')).choices[0];
   eq('series panel: several days with their own dates give their reason first', [severalChoice.lead, severalChoice.reason, severalChoice.options.map((o) => o.label)],
     ['', 'These days were moved earlier. Keep them there, or move them with the rest?', ['Keep their dates', 'Move them with the rest']]);
   const labels = (g, r = gym.rule) => planView({ ...gym, rule: r, groups: [g] }, ctx()).readings[0].options.map((o) => o.label);
@@ -4787,7 +4812,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     days: [{ key: 'k1', kind: 'edited', title: 'Choir, extra rehearsal', outcome: 'stays', shows: '2026-11-17', to: '2026-11-17', kept: ['title'], takes: [] },
       { key: 'k2', kind: 'edited', title: 'Choir, concert', outcome: 'stays', shows: '2026-12-15', to: '2026-12-15', kept: ['title'], takes: [] }] },
   ctx({ kind: 'editor', edits: ['title'], newTitle: 'Chorus', refYear: 2026 }));
-  eq('series panel: a choice about several days sits on their group row', [twoTitles.edited.length, twoTitles.edited[0].line1, twoTitles.edited[0].range, twoTitles.edited[0].choice.lead, twoTitles.edited[0].choice.reason, twoTitles.edited[0].choice.options.map((o) => o.label)],
+  eq('series panel: a choice about several days sits on their group row', [twoTitles.edited.length, twoTitles.edited[0].line1, twoTitles.edited[0].range, twoTitles.edited[0].choices[0].lead, twoTitles.edited[0].choices[0].reason, twoTitles.edited[0].choices[0].options.map((o) => o.label)],
     [1, "2 days have their own titles ('Choir, extra rehearsal', 'Choir, concert').", 'Nov 17 to Dec 15', '', 'Keep their titles, or give them the new one too?', ['Keep their own titles', "Rename them to 'Chorus'"]]);
 
   // The change sentence names only what changes.
@@ -4859,11 +4884,53 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     shows: k, to: fixtureKey(61 + n * 8 + 2), kept: [], takes: ['date'] })) }, ctx());
   eq('edited days grouped: days landing on different weekdays say how far they move', shifted.edited.map((d) => [d.line1, d.range]), [['3 days that were changed earlier move 2 days later.', 'Mar 3 to Mar 19']]);
   const choiceDays = planView({ ...sampleEditedDays(), groups: sampleEditedDays().days.slice(0, 3).map((d, n) => ({ id: 'movedDays' + n, day: d.key, selected: 'keep', options: [{ id: 'keep', date: d.shows }, { id: 'move', date: d.to }] })) }, ctx());
-  eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => !!d.choice), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
+  eq('edited days grouped: a day with a choice of its own is never folded into a group', [choiceDays.edited.slice(0, 3).map((d) => d.choices.length > 0), choiceDays.edited.find((d) => d.days).days.length], [[true, true, true], 35]);
   // The groups come from the plan's data, never its words.
   const reworded = sampleEditedDays();
   reworded.days = reworded.days.map((d, i) => ({ ...d, words: 'Reworded ' + 'x'.repeat(i), head: 'h' + i, outcomeWords: 'o' + i }));
   eq('edited days grouped: by outcome, kept and takes, whatever the words say', planView(reworded, ctx()).edited.map((d) => (d.days ? d.days.length : 0)), [0, 0, 38]);
+
+  // Every group of a plan is drawn exactly once, by its own id: a day's row
+  // lists every group about that day alone, and a group about several days
+  // is on the row of those days, whatever else each of them does. The
+  // commit sends what each drawn choice shows (1.5.0 review, F2).
+  const choicesIn = (view) => [
+    ...view.readings,
+    ...[...view.edited, ...view.skipped].flatMap((r) => [...(r.choices || []), ...(r.days || []).flatMap((x) => x.choices || [])]),
+  ];
+  const ownCases = [
+    ['one day with its own title and place', owned([ownDay('2027-01-12T18:00:00Z', '2027-01-12')]), [
+      ["'Sample own title 12' on Tue, Jan 12 has its own title, 'Sample own title 12', and its own location.", ['ownTitle', 'ownLocation']]]],
+    ['two days with their own titles and places', owned([ownDay('2027-01-12T18:00:00Z', '2027-01-12'), ownDay('2027-01-19T18:00:00Z', '2027-01-19')]), [
+      ["2 days have their own titles ('Sample own title 12', 'Sample own title 19') and locations.", ['ownTitle', 'ownLocation']]]],
+    ['two days, one of them at a date and time of its own', owned([
+      ownDay('2027-01-12T18:00:00Z', '2027-01-14', { at: '2027-01-14T19:00:00+00:00', kept: ['date', 'time', 'title', 'location'] }), ownDay('2027-01-19T18:00:00Z', '2027-01-19')]), [
+      ["'Sample own title 14' stays on Thu, Jan 14 at 7:00 PM.", []],
+      ["2 days have their own titles ('Sample own title 14', 'Sample own title 19') and locations.", ['ownTitle', 'ownLocation']]]],
+  ];
+  for (const [name, p, rows] of ownCases) {
+    const ids = p.groups.map((g) => g.id);
+    const view = planView(p, ctx({ kind: 'editor', title: 'Sample series' }));
+    eq(`every choice drawn, ${name}: each group once, by its id`, choicesIn(view).map((c) => c.id).sort(), [...ids].sort());
+    eq(`every choice drawn, ${name}: the rows, and the choices on each`, view.edited.map((r) => [r.line1, (r.choices || []).map((c) => c.id)]), rows);
+    const picks = Object.fromEntries(ids.map((id) => [id, 'give']));
+    const picked = planView(p, ctx({ kind: 'editor', title: 'Sample series', choices: picks }));
+    eq(`every choice drawn, ${name}: each shows its pick, and the commit sends the picks`, [
+      choicesIn(picked).map((c) => [c.id, c.options.find((o) => o.selected).id]).sort(), commitPlan(p, picks).choices,
+    ], [ids.map((id) => [id, 'give']).sort(), picks]);
+  }
+  // A group about a day with no row of its own (the day acted on, moving with the drag) is still drawn.
+  const actedOwn = { ...owned([]), groups: [{ id: 'ownTitle', field: 'title', count: 1, days: ['2027-01-12T18:00:00Z'], selected: 'keep', options: [{ id: 'keep' }, { id: 'give' }] }],
+    days: [{ key: '2027-01-12T18:00:00Z', newKey: '2027-01-13T18:00:00Z', kind: 'acted', outcome: 'moves', shows: '2027-01-12', to: '2027-01-13', kept: ['title'], takes: [] }] };
+  eq('every choice drawn: one about the day acted on, which has no row, is a row of its own', choicesIn(planView(actedOwn, ctx())).map((c) => c.id), ['ownTitle']);
+
+  // Every date and time in the panel is in one zone, the plan's (the
+  // series' after the change), never the device's or an occurrence's: a
+  // New York series' day at its own 00:30 reads 12:30 AM on its New York
+  // date wherever the panel is drawn (1.5.0 review, F4).
+  const late = planView(sampleLateClass(), { kind: 'drag', title: 'Sample late class', scope: 'all', refYear: 2027 });
+  eq('one zone: the dates and clocks of a New York plan are New York\'s, wherever it is drawn', [late.change, late.edited.map((r) => r.line1)], [
+    'From Tuesday to Wednesday each week, at 1:30 AM, with no end, as before.', ["'Sample late class' on Tue, Jan 12 moves to Wed, Jan 13 at 12:30 AM."]]);
 
   // Creating a series: quick add's line and the editor's Repeat row.
   const created = { rule: { words: 'Monthly on the 30th, or the last day' }, start: '2027-01-30T19:00:00-08:00', next: ['2027-01-30T19:00:00-08:00', '2027-02-28T19:00:00-08:00', '2027-03-30T19:00:00-07:00'], bound: { words: '6 events' } };
@@ -4998,7 +5065,7 @@ console.log('--- the series panel, docked, open while the window crosses the pho
       id: 9000 + opened, kind: host === 'editor' ? 'editor' : 'drag',
       occ: { instanceId: 'sample-' + opened, allDay: false }, body: { start: '2027-03-10T19:00:00-08:00' },
       at: host === 'editor' ? null : { x: 640, y: 300 }, before: null, apply: null, onDone: null, fields: [],
-      title: 'Sample practice', tz: 'America/Los_Angeles', google: false, scope: 'all',
+      title: 'Sample practice', google: false, scope: 'all',
       plan, status: 'ready', choices: {}, changed: false, hidden: false,
     } });
     const box = new FakeNode(1, 'div');
@@ -5007,15 +5074,15 @@ console.log('--- the series panel, docked, open while the window crosses the pho
     await settle();
     return box;
   };
-  const panel = (box) => box.firstChild;
+  const panel = (box) => box.firstChild.firstChild; // .bc-sd, in its lane
   // The rows of the Edited block, and the group's button.
   const editedRows = (box) => box.querySelectorAll('.bc-sd-block').find((b) => b.firstChild && b.firstChild.textContent === 'Edited days');
   const topRows = (box) => editedRows(box).childNodes[1].childNodes.filter((n) => n.classes.includes('bc-sd-row'));
   const toggle = (box) => box.querySelectorAll('.bc-sd-toggle')[0];
   const openDays = (box) => box.querySelectorAll('.bc-sd-days').flatMap((n) => n.childNodes).length;
-  const seen = (box) => ({ cls: panel(box).getAttribute('class'), style: panel(box).style.cssText, rows: topRows(box).length, opened: openDays(box) });
+  const seen = (box) => ({ cls: box.firstChild.getAttribute('class') + ' > ' + panel(box).getAttribute('class'), style: box.firstChild.style.cssText + panel(box).style.cssText, rows: topRows(box).length, opened: openDays(box) });
   const close = async (box) => { render(null, box); box.remove(); put({ seriesChange: null }); await settle(); };
-  const docked = { cls: 'bc-sd', style: '', rows: 3, opened: 0 };
+  const docked = { cls: 'bc-sd-lane > bc-sd', style: '', rows: 3, opened: 0 };
 
   for (const host of ['editor', 'calendar']) {
     await resize(1280, 800);
@@ -5056,22 +5123,110 @@ console.log('--- the series panel, docked, open while the window crosses the pho
     setClock('12');
     await close(box);
   }
-  // Where the panel sits and how tall it may be are app.css's alone:
-  // docked bottom right, beside the editor drawer or the event panel, the
-  // sheet on a phone.
+  // Through the real panel and its flow: every group's radios are drawn,
+  // once each; picking every one asks again with the picks, and Confirm
+  // commits them (1.5.0 review, F2). Then the zone: a drag from a window
+  // occurrence (no zone of its own) and an editor save (the full record,
+  // with its zone) both read a New York plan in New York (F4).
+  {
+    const realFetch = globalThis.fetch;
+    const { openSeriesChange, cancelSeriesChange: cancelChange } = await import('../src/app/serieschange.js');
+    const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const sentNow = [];
+    let planNow = null;
+    globalThis.fetch = async (url, o = {}) => {
+      const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+      if (p === '/events/81' && o.method === 'PATCH') { const b = JSON.parse(o.body); sentNow.push(b); return reply(b.preview ? { plan: planNow } : { ok: true }); }
+      return reply(p === '/changes/cursor' ? { cursor: 'p1' } : p === '/events' ? { events: [] } : {});
+    };
+    const savedConfig = st.config;
+    put({ config: { ...st.config, seriesPlans: true }, calendars: [{ id: 3, name: 'Sample', editable: true }], loadedRanges: [], visibleDays: null });
+    const fire = (node, type) => { for (const fn of [...((node && node.listeners[type]) || [])]) fn.call(node, { type, target: node, currentTarget: node }); };
+    const mount = async (host) => { const box = new FakeNode(1, 'div'); fakeDoc.body.appendChild(box); render(html`<${SeriesDialog} host=${host} />`, box); await settle(); return box; };
+    const unmount = async (box) => { cancelChange(); render(null, box); box.remove(); await settle(); };
+    const occOf = (extra = {}) => ({ instanceId: '81@1', eventId: 81, calendarId: 3, title: 'Sample series', recurring: true, start: '2027-01-05T18:00:00+00:00', end: '2027-01-05T19:00:00+00:00', allDay: false, ...extra });
+    const radios = (box) => box.querySelectorAll('input').map((n) => n.getAttribute('name'));
+    for (const [name, days] of [
+      ['one day with two owned fields', [ownDay('2027-01-12T18:00:00Z', '2027-01-12')]],
+      ['two days', [ownDay('2027-01-12T18:00:00Z', '2027-01-12'), ownDay('2027-01-19T18:00:00Z', '2027-01-19')]],
+      ['two days, one timed on its own', [ownDay('2027-01-12T18:00:00Z', '2027-01-14', { at: '2027-01-14T19:00:00+00:00', kept: ['date', 'time', 'title', 'location'] }), ownDay('2027-01-19T18:00:00Z', '2027-01-19')]],
+    ]) {
+      planNow = owned(days);
+      sentNow.length = 0;
+      openSeriesChange({ kind: 'editor', occ: occOf({ tzid: 'UTC' }), body: { title: 'Sample renamed series', location: 'Sample Annex' }, quiet: true });
+      await settle();
+      const box = await mount('editor');
+      eq(`panel, ${name}: two radios for each group, by its id, and no other`, radios(box), ['sd-ownTitle', 'sd-ownTitle', 'sd-ownLocation', 'sd-ownLocation']);
+      for (const id of ['ownTitle', 'ownLocation']) {
+        fire(box.querySelectorAll('input').filter((n) => n.getAttribute('name') === 'sd-' + id)[1], 'change');
+        await settle();
+      }
+      box.querySelectorAll('.bc-btn-primary')[0].click();
+      await settle();
+      eq(`panel, ${name}: each pick asked again with it, and Confirm committed both`, sentNow.map((b) => (b.preview ? (b.plan ? b.plan.choices : {}) : ['commit', b.plan.choices])), [
+        {}, { ownTitle: 'give' }, { ownTitle: 'give', ownLocation: 'give' }, ['commit', { ownTitle: 'give', ownLocation: 'give' }]]);
+      await unmount(box);
+    }
+    const lateText = async (kind, occ) => {
+      planNow = sampleLateClass();
+      openSeriesChange({ kind, occ, body: kind === 'drag' ? { start: '2027-01-20T01:30:00-05:00', end: '2027-01-20T02:30:00-05:00' } : { title: 'Sample later class' }, quiet: kind === 'editor' });
+      await settle();
+      const box = await mount(kind === 'editor' ? 'editor' : 'calendar');
+      const text = box.textContent;
+      await unmount(box);
+      return [/at 1:30 AM, with no end/.test(text), /moves to Wed, Jan 13 at 12:30 AM\./.test(text)];
+    };
+    eq('panel zone: a drag from a window occurrence, which carries no zone, reads the New York plan in New York', await lateText('drag', occOf({ title: 'Sample late class', start: '2027-01-19T01:30:00-05:00' })), [true, true]);
+    eq('panel zone: an editor save, from the record with its zone, the same', await lateText('editor', occOf({ title: 'Sample late class', start: '2027-01-19T01:30:00-05:00', tzid: 'America/New_York' })), [true, true]);
+    put({ config: savedConfig, seriesChange: null });
+    globalThis.fetch = realFetch;
+  }
+
+  // Where the panel sits and how tall it may be are app.css's alone, chosen
+  // by the width it has: its lane is the window less the editor drawer or
+  // the event panel beside it; it docks at the lane's bottom right where
+  // the lane holds it at its full width, else it is the sheet across the
+  // bottom of the window, as on a phone (1.5.0 review, F5).
   const { readFileSync: readCss } = await import('node:fs');
   const css = readCss(new URL('../styles/app.css', import.meta.url), 'utf8');
-  const rule = (sel) => { const i = css.indexOf('\n' + sel + ' {'); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
-  const sd = rule('.bc-sd');
-  eq('series panel css: docked bottom right of the calendar, 480 wide, no taller than the window less a margin', [
-    /right: calc\(var\(--bc-sd-side, 0px\) \+ 12px\)/.test(sd), /bottom: 12px/.test(sd), /width: 480px/.test(sd), /max-height: calc\(100dvh - 24px\)/.test(sd),
+  const rule = (sel, from = 0) => { const i = css.indexOf('\n' + sel + ' {', from); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
+  const sd = rule('.bc-sd'), lane = rule('.bc-sd-lane');
+  eq('series panel css: the lane is the window less what lies beside it on the right, and a container', [
+    /position: fixed/.test(lane), /top: 0; bottom: 0; left: 0; right: var\(--bc-sd-side, 0px\)/.test(lane), /container: bc-sd-lane \/ inline-size/.test(lane), /pointer-events: none/.test(lane),
   ], [true, true, true, true]);
-  eq('series panel css: the editor drawer and the event panel say how far they reach, so it docks beside them', [
+  eq('series panel css: docked at the lane\'s bottom right, 480 wide, no taller than the window less a margin', [
+    /position: absolute; right: 12px; bottom: 12px; width: 480px; max-height: calc\(100% - 24px\)/.test(sd), /pointer-events: auto/.test(sd),
+  ], [true, true]);
+  eq('series panel css: the editor drawer and the event panel say how far they reach', [
     /\.bc-drawer \{ --bc-sd-side: min\(480px, 94vw\); \}/.test(css), /\.bc-app:has\(\.bc-evpanel\) \{ --bc-sd-side: min\(480px, 100vw\); \}/.test(css),
   ], [true, true]);
-  const phoneAt = css.indexOf('@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {\n  .bc-sd {');
-  const sheet = phoneAt < 0 ? '' : css.slice(phoneAt, css.indexOf('}', phoneAt + 100));
-  eq('series panel css: on a phone, the bottom sheet up to two thirds of the screen', [phoneAt > 0, /left: 0; right: 0; bottom: 0/.test(sheet), /max-height: 66dvh/.test(sheet)], [true, true, true]);
+  const sheetAt = css.indexOf('@container bc-sd-lane (max-width: ');
+  const sheet = sheetAt < 0 ? '' : css.slice(sheetAt, css.indexOf('}', sheetAt));
+  const limit = sheetAt < 0 ? NaN : parseFloat(css.slice(sheetAt + '@container bc-sd-lane (max-width: '.length));
+  const full = 480 + 2 * 12;
+  eq('series panel css: the sheet wherever the lane is narrower than the panel at its full width, from the lane\'s left to the window\'s right edge', [
+    limit < full && limit > full - 1, /left: 0; right: calc\(0px - var\(--bc-sd-side, 0px\)\); bottom: 0; width: auto/.test(sheet), /max-height: 66dvh/.test(sheet),
+  ], [true, true, true]);
+  const phoneAt = css.indexOf('@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {\n  .bc-sd-lane { --bc-sd-side: 100vw; }');
+  eq('series panel css: a phone has no room to dock in, so its lane is no width and the panel the sheet', phoneAt > 0, true);
+  // Those rules at the widths around the drawer: the lane, then where the
+  // panel lands. Its body is within the window at its full width, and its
+  // actions (never scrolled) on screen.
+  const sideOf = (sel) => { const m = /min\((\d+)px, (\d+)vw\)/.exec(rule(sel)); return (w) => Math.min(+m[1], (+m[2] * w) / 100); };
+  const hosts = { editor: sideOf('.bc-drawer'), 'event panel': sideOf('.bc-app:has(.bc-evpanel)') };
+  const place = (w, h, side) => {
+    const laneWidth = w <= 640 ? 0 : Math.max(0, w - side(w));
+    if (laneWidth <= limit) return { as: 'sheet', left: 0, right: w, bottom: h };
+    return { as: 'docked', left: w - side(w) - 12 - 480, right: w - side(w) - 12, bottom: h - 12 };
+  };
+  for (const [host, side] of Object.entries(hosts)) {
+    for (const [w, as] of [[641, 'sheet'], [700, 'sheet'], [900, 'sheet'], [1024, 'docked'], [1280, 'docked']]) {
+      const at = place(w, 800, side);
+      eq(`series panel beside the ${host} at ${w} x 800: ${as}, its body within the window at its full width, its actions on screen`, [
+        at.as, at.left >= 0 && at.right <= w, at.right - at.left >= 480, at.bottom <= 800,
+      ], [as, true, true, true]);
+    }
+  }
   // The renderer owns the panel's style: the component writes none itself,
   // so no layout can leave one behind for another.
   const { readFileSync: readSource } = await import('node:fs');
@@ -5251,23 +5406,34 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   eq('editor payload: a new place sends its coordinates too', changedFields({ ...was, location: 'Sample Annex', locationLat: null, locationLng: null }, was),
     { location: 'Sample Annex', locationLat: null, locationLng: null });
   eq('editor payload: tags by value, not by reference', changedFields({ ...was, tagNames: ['music'] }, was), {});
-  eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }, {
-    reminderWords: (l) => l.map((m) => (m === 60 ? '1 hour before' : m + ' minutes')).join(', '),
-  }), [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes' }]);
+  eq('editor lines: each changed field, before and now', fieldLines({ title: 'Sample chorus', reminders: [30] }, { ...was, reminders: [60] }),
+    [{ label: 'Title', words: 'Sample choir, now Sample chorus' }, { label: 'Reminder', words: '1 hour before, now 30 minutes before' }]);
+  // Reminders reach the panel in the shapes the editor holds them: the form
+  // as it opened has minutes, the save sends entries ({minutes}). One
+  // normalization, then one formatter (1.5.0 review, F6).
+  const { normalizeMinutesList, remindersWords } = await import('../src/lib/reminders.js');
+  const { planView: panelOf } = await import('../src/lib/seriesplan.js');
+  const reminderChange = (opened, now) => panelOf({ hash: 'r1' }, { kind: 'editor', fields: fieldLines({ reminders: normalizeMinutesList(now) }, { ...was, reminders: opened }) }).fields;
+  eq('editor to panel: a reminder from 1 hour to 30 minutes before', reminderChange([60], [30]), ['Reminder from 1 hour before to 30 minutes before.']);
+  eq('editor to panel: a reminder from 30 minutes to 1 hour before', reminderChange([30], [60]), ['Reminder from 30 minutes before to 1 hour before.']);
+  eq('reminder words: minutes and entries read the same; none of its own is the default', [
+    remindersWords([30, 60]), remindersWords([{ minutes: 30 }, { minutes: 60 }]), remindersWords([0]), remindersWords([]), remindersWords(null), remindersWords([{ daysBefore: 1, time: '18:00' }]),
+  ].map((w) => w.replace(/\s/g, ' ')), ['30 minutes before, 1 hour before', '30 minutes before, 1 hour before', 'At start', 'none', 'default', 'Day before at 6:00 PM']);
 
   const realFetch = globalThis.fetch;
-  const { openSeriesChange, confirmSeriesChange } = await import('../src/app/serieschange.js');
+  const { openSeriesChange, confirmSeriesChange, cancelSeriesChange } = await import('../src/app/serieschange.js');
   const { state: st, set: put } = await import('../src/app/store.js');
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
   const sent = [];
   let plan = null;
+  let commits = []; // answers for the next commits, in turn; then { ok: true }
   globalThis.fetch = async (url, o = {}) => {
     const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
     if (p === '/events/52' && o.method === 'PATCH') {
       const body = JSON.parse(o.body);
       sent.push(body);
-      return body.preview ? json({ plan }) : json({ ok: true });
+      return body.preview ? json({ plan }) : commits.length ? commits.shift()() : json({ ok: true });
     }
     if (p === '/changes/cursor') return json({ cursor: 'e1' });
     if (p === '/events') return json({ events: [] });
@@ -5293,6 +5459,33 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   await confirmSeriesChange();
   await tick();
   eq('editor save, previewed: Confirm saves with the choice and closes the editor', [sent[1].plan, st.seriesChange, closed], [{ hash: 'n1', choices: { ownTitle: 'keep' } }, null, 2]);
+  // A quiet save is quiet only while its plan needs no one. Its commit met a
+  // series changed since the preview: the new plan, with a choice or a
+  // refusal, shows; one that still needs no one is committed (F8).
+  const changedWith = (next) => () => json({ error: { code: 'series_plan_changed', message: 'The series changed', plan: next } }, 409);
+  const ownChoice = { hash: 'n2', direct: false, groups: [{ id: 'ownTitle', selected: 'keep', options: [{ id: 'keep' }, { id: 'give' }] }], refusals: [] };
+  for (const [what, answerOf, after] of [
+    ['a choice', changedWith(ownChoice), 'n2'],
+    ['a refusal', () => json({ error: { code: 'series_refused', message: 'Refused', plan: { hash: 'n3', direct: false, groups: [], refusals: [{ code: 'weekno' }] } } }, 422), 'n3'],
+  ]) {
+    sent.length = 0;
+    plan = { hash: 'd2', direct: true, groups: [], refusals: [] };
+    commits = [answerOf];
+    openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+    await tick();
+    eq(`editor save, quiet, its commit answered with ${what}: the panel shows the new plan, the save waits for it`, [
+      sent.map((b) => (b.preview ? 'preview' : b.plan.hash)), st.seriesChange && st.seriesChange.hidden, st.seriesChange && st.seriesChange.plan.hash, st.seriesChange && st.seriesChange.status,
+    ], [['preview', 'd2'], false, after, 'ready']);
+    cancelSeriesChange();
+  }
+  sent.length = 0;
+  plan = { hash: 'd3', direct: true, groups: [], refusals: [] };
+  commits = [changedWith({ hash: 'd4', direct: true, groups: [], refusals: [] })];
+  const closedBefore = closed;
+  openSeriesChange({ kind: 'editor', occ, body: { title: 'Sample chorus' }, quiet: true, onDone: () => { closed++; } });
+  await tick();
+  eq('editor save, quiet, its commit answered with a plan that still needs no one: committed with the new hash, no panel', [
+    sent.map((b) => (b.preview ? 'preview' : b.plan.hash)), st.seriesChange, closed - closedBefore], [['preview', 'd3', 'd4'], null, 1]);
   // From an edited day with its own title: the heading and the toast name the series.
   sent.length = 0;
   plan = { hash: 'm1', direct: false, groups: [], refusals: [] };

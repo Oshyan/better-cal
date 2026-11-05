@@ -37,6 +37,7 @@ import { attachScrollRail } from '../ui/scrollrail.js';
 import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 import { useLongPress, RowMenu } from '../ui/rowmenu.js';
+import { scopeDropChoice } from './scopes.js';
 import {
   readSidebarWidth, saveSidebarWidth, applySidebarWidth, clampSidebarWidth, SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX,
 } from '../lib/sidebarwidth.js';
@@ -562,18 +563,7 @@ export function Sidebar({ open, collapsed, onClose }) {
         const occ = state.occ.get(ext.instanceId);
         if (occ && occ.recurring) {
           // Repeating event: ask which occurrences take the person.
-          set({
-            dropChoice: {
-              x: pt.x, y: pt.y, title: 'Repeating event',
-              options: [
-                { label: 'This event', value: 'this' },
-                { label: 'This + following', value: 'following' },
-                { label: 'All events', value: 'all' },
-                { label: 'Cancel', value: null },
-              ],
-              cb: (v) => { if (v) linkPersonToEvent(occ, p, v); },
-            },
-          });
+          set({ dropChoice: scopeDropChoice(pt, occ, (v) => { if (v) linkPersonToEvent(occ, p, v); }) });
           return;
         }
         linkPersonToEvent(occ, p);

@@ -342,7 +342,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   // the sheet it was out of view whenever the sheet had scrolled, and the
   // switch seemed to do nothing.
   const attendScope = attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
-        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') close(); }}
+        onPick=${async (scope) => { const ask = attendPrompt; const back = { popover: state.popover, attendPrompt: ask }; set({ attendPrompt: null }); const r = await setRelationship(occ, ask.relationship, scope, () => set(back)); if (r === 'hidden') close(); }}
         onCancel=${() => set({ attendPrompt: null })} />`;
 
   return html`

@@ -83,7 +83,7 @@ function refusalFor(plan, groupId, optionId) {
 /** The whole plan's refusal in words (by its code), or null. */
 export function planRefusal(plan) {
   const r = (plan && plan.refusals || []).find((x) => x && x.option == null && x.group == null);
-  return r ? W.refusalWords(r.code) : null;
+  return r ? W.refusalWords(r.code, plan.scope) : null;
 }
 
 // The choice each group is on: the person's, where it is still an option,

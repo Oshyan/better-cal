@@ -161,7 +161,7 @@ export const state = {
   quickAddWindow: false, // quick add on its own, the extension's key (/new#window, QuickAddWindow.js)
   lastCreated: null, // {occ, message} for the newest event this page created (createEvent)
   paletteOpen: false, // command palette (Cmd/Ctrl-K)
-  dropChoice: null,  // {x, y, title, options: [{label, value}], cb} — chip at a drop point
+  dropChoice: null,  // {x, y, title, options: [{label, value}], note?, cb} — chip at a drop point
   // The series change dialog (SeriesDialog.js, serieschange.js): {kind, occ,
   // body, at, scope, plan, choices, status, changed, ...} while a change to a
   // repeating event waits for its plan and the person's confirm.

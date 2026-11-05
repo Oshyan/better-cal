@@ -474,9 +474,13 @@ function followSplitLater(occ, res) {
 // "This and following" for a delete or an answer: the series dialog with
 // that change's own route, its plan saying what the events before the day
 // become. Returns true when the dialog opened (the change waits for it).
-function followingThroughPlan(occ, scope, kind, route, body, done) {
+// rescope(): the dialog's "Change scope", back to the chooser that asked
+// (the delete or answer row on its panel); without one, the panel or the
+// editor that was open is opened again, where the scope is chosen.
+function followingThroughPlan(occ, scope, kind, route, body, done, rescope = null) {
   if (!occ.recurring || scope !== 'following' || !seriesPlans()) return false;
-  openSeriesChange({ kind, occ, scope, route, body, done, onDone: (res) => followSplitLater(occ, res) });
+  const back = { popover: state.popover, editor: state.editor };
+  openSeriesChange({ kind, occ, scope, route, body, done, rescope: rescope || (() => set(back)), onDone: (res) => followSplitLater(occ, res) });
   return true;
 }
 
@@ -655,8 +659,8 @@ export async function useSeriesValue(occ, names) {
   return true;
 }
 
-export async function deleteEvent(occ, scope) {
-  if (followingThroughPlan(occ, scope, 'delete', { method: 'DELETE', path: '/events/' + occ.eventId }, {}, 'Deleted this and following')) {
+export async function deleteEvent(occ, scope, rescope = null) {
+  if (followingThroughPlan(occ, scope, 'delete', { method: 'DELETE', path: '/events/' + occ.eventId }, {}, 'Deleted this and following', rescope)) {
     set({ popover: null, editor: null });
     return;
   }
@@ -751,11 +755,11 @@ export async function cycleAttendance(occ) {
 // calendars this is the event's status (tentative/confirmed), so it goes
 // wherever the event goes (CalDAV, Google); on an opportunities calendar it
 // is the private attendance mark. Returns the relationship set, or null.
-export async function setRelationship(occ, relationship, scope) {
+export async function setRelationship(occ, relationship, scope, rescope = null) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const mine = cal ? cal.role === 'mine' : occ.source !== 'feed';
   const label0 = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
-  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/relationship' }, { relationship }, label0 + ' (this and following)')) return relationship;
+  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/relationship' }, { relationship }, label0 + ' (this and following)', rescope)) return relationship;
   const before = patchOccurrence(occ.instanceId, { relationship, attendance: relationship === 'hidden' ? 'hidden' : occ.attendance });
   try {
     const body = { relationship };
@@ -794,8 +798,8 @@ export function showAllRel() {
 
 // scope applies to a series: 'this' gives the occurrence its own row,
 // 'following' splits the series, 'all' (default) is the whole series.
-export async function setAttendance(occ, attendance, scope) {
-  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/attendance' }, { attendance }, (ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + ' (this and following)')) return attendance;
+export async function setAttendance(occ, attendance, scope, rescope = null) {
+  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/attendance' }, { attendance }, (ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + ' (this and following)', rescope)) return attendance;
   const before = patchOccurrence(occ.instanceId, { attendance });
   try {
     const body = { attendance };

@@ -42,6 +42,7 @@ import { changedFields, fieldLines } from '../lib/editfields.js';
 import { openSeriesChange, cancelSeriesChange, seriesPlans } from './serieschange.js';
 import { SeriesDialog } from './SeriesDialog.js';
 import { creationLine } from '../lib/seriesplan.js';
+import { seriesScopes } from './scopes.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -889,6 +890,9 @@ export function EditorDrawer() {
   // --- when ---------------------------------------------------------------------
   const [whenS, whenE] = formInstants(form);
   const backwards = !isNaN(whenS) && !isNaN(whenE) && whenE <= whenS;
+  // Apply to: the scopes this occurrence has with the calendar picked
+  // (scopes.js); one left out stays in the list, disabled, saying why.
+  const editorScopes = occ && occ.recurring ? seriesScopes(occ, { calendarId: Number(form.calendarId) }) : null;
   const startMins = minsOf(form.start);
   const endMins = minsOf(form.end);
   const quarter = (key, i, curMins) => {
@@ -1220,7 +1224,8 @@ export function EditorDrawer() {
         ${occ && occ.recurring && html`${lab('Apply to')}<div class=${'bc-ed-ctl' + flash('scope')}>
           <select ref=${scopeRef} value=${scope} onChange=${(e) => { setScope(e.target.value); autoScope.current = false; }} aria-label="Apply to">
             <option value="this">This event only</option>
-            ${!(occ.isException && Number(form.calendarId) !== occ.calendarId) && html`<option value="following">This and following</option>`}
+            ${editorScopes.scopes.includes('following') ? html`<option value="following">This and following</option>`
+              : editorScopes.why && html`<option value="following" disabled>${editorScopes.why}</option>`}
             <option value="all">All events in series</option>
           </select>
         </div>`}

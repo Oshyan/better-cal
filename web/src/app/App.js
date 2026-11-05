@@ -10,7 +10,7 @@ import { checkChanges } from './changecheck.js';
 import { runOwed } from './reloads.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
-  moveEvent, resizeEvent, seriesDrop, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
+  moveEvent, resizeEvent, seriesDrop, sendFeedback, exitReschedule, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
   resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows, hereKey } from './actions.js';
@@ -75,6 +75,7 @@ import { primeKeyboard } from '../lib/ioskeyboard.js';
 import { lookForUpdate } from './appversion.js';
 import { badgeSettingChanged, clearBadge } from './badge.js';
 import { reloadIfReady } from './drafts.js';
+import { scopeDropChoice } from './scopes.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -631,34 +632,22 @@ export function App() {
   // GCal-style scope chip for direct manipulation of repeating events: every
   // drag that would silently edit "this occurrence" asks which occurrences it
   // means, at the drop point. The editor keeps its own scope select.
-  // A date edited on its own moves to another calendar on its own or with
-  // all events, not with the following ones (#188): onlyThisOrAll.
-  // "All events…" on a drag or resize opens the series dialog (SeriesDialog.js),
-  // hence its ellipsis; "This + following" keeps its old path until 1.5.1.
-  const promptScopeAt = useCallback((at, cb, occ, onlyThisOrAll = false, allLabel = 'All events') => {
-    set({
-      dropChoice: {
-        x: at.x, y: at.y, title: occ && googleBacked(occ) ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
-        options: [
-          { label: 'This event', value: 'this' },
-          ...(onlyThisOrAll ? [] : [{ label: 'This + following', value: 'following' }]),
-          { label: allLabel, value: 'all' },
-          { label: 'Cancel', value: null },
-        ],
-        cb: (v) => { if (v) cb(v); },
-      },
-    });
+  // The scopes offered are the occurrence's (scopes.js): calendarId, the
+  // calendar a drop moves it to. "All events…" on a drag or resize opens the
+  // series dialog (SeriesDialog.js), hence its ellipsis.
+  const promptScopeAt = useCallback((at, cb, occ, calendarId = null, allLabel = 'All events') => {
+    set({ dropChoice: scopeDropChoice(at, occ, (v) => { if (v) cb(v); }, { calendarId, allLabel }) });
   }, []);
 
   const onDropToCalendar = useCallback((occ, calendarId, at) => {
     // Option/Alt: copy onto that calendar instead of moving there.
     if (at && at.copy) { copyEventTo(occ, calendarId, occ.recurring ? 'this' : 'all'); return; }
-    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope), occ, !!occ.isException); return; }
+    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope), occ, calendarId); return; }
     moveEventToCalendar(occ, calendarId);
   }, [promptScopeAt]);
 
   const onDropToPerson = useCallback((occ, name, at) => {
-    if (occ.recurring && at) { promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope)); return; }
+    if (occ.recurring && at) { promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope), occ); return; }
     linkPersonToEvent(occ, name);
   }, [promptScopeAt]);
 
@@ -667,7 +656,7 @@ export function App() {
     if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
     // "Change scope" in the series dialog asks again, at the same drop point.
-    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope, ask), occ, false, seriesAllLabel());
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope, ask), occ, null, seriesAllLabel());
     if (occ && occ.recurring && p.at) { ask(); return; }
     moveEvent(p);
   }, [promptScopeAt]);
@@ -691,7 +680,7 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope, ask), occ, false, seriesAllLabel());
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope, ask), occ, null, seriesAllLabel());
     if (occ && occ.recurring && p.at) { ask(); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
@@ -804,9 +793,9 @@ export function App() {
   const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey, x, y }) => {
     exitReschedule();
     const occ = state.occ.get(instanceId);
-    const ask = () => promptScopeAt({ x, y }, land, occ, false, seriesAllLabel());
+    const ask = () => promptScopeAt({ x, y }, land, occ, null, seriesAllLabel());
     const land = (scope) => {
-      if (scope === 'all' && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope, ask);
+      if ((scope === 'all' || scope === 'following') && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope, ask);
       else moveEvent({ instanceId, newStart, newEnd, scope });
       jumpToDate(targetKey, instanceId); // return the view to where the event now is
     };
@@ -1231,6 +1220,7 @@ function DropChoiceChip({ choice }) {
       class="bc-btn${o.value ? ' bc-btn-primary' : ''}"
       onClick=${() => { set({ dropChoice: null }); choice.cb(o.value); }}
     >${o.label}</button>`)}
+    ${choice.note && html`<span class="bc-drawer-note">${choice.note}</span>`}
   </div>`;
 }
 

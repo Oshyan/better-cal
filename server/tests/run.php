@@ -198,9 +198,11 @@ function undoJournal(\BetterCal\Infra\Db $db): void
     $db->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
 }
 
-/** What hangs off events (tags, people, trip links), for a setup whose events can be removed. */
+/** What hangs off events (tags, people, trip links, duplicate decisions, plugin data), for a setup whose events can be removed. */
 function eventLinkTables(\BetterCal\Infra\Db $db): void
 {
+    $db->run('CREATE TABLE IF NOT EXISTS event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
+    $db->run('CREATE TABLE IF NOT EXISTS event_plugin_data (event_id INTEGER NOT NULL, plugin_id TEXT NOT NULL, k TEXT NOT NULL, v_json TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (event_id, plugin_id, k))');
     $db->run('CREATE TABLE IF NOT EXISTS event_tags (event_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (event_id, tag_id))');
     $db->run('CREATE TABLE IF NOT EXISTS event_people (event_id INTEGER NOT NULL, person_id INTEGER NOT NULL, PRIMARY KEY (event_id, person_id))');
     $db->run('CREATE TABLE IF NOT EXISTS event_links (id INTEGER PRIMARY KEY, container_id INTEGER NOT NULL, event_id INTEGER NOT NULL, position INTEGER NOT NULL DEFAULT 0)');

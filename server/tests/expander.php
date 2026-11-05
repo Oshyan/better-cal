@@ -327,6 +327,62 @@ foreach ($seekCases as $name => [$row, $windows]) {
         array_map(static fn(array $w): array => $utcIn($row, ...$w[0]), $windows));
 }
 
+// ---- Windows far from the start (#201) -----------------------------------
+// Every day's clock is read from the start by one rule with no carried
+// state, so a short window and a long one, a year or nine from the start,
+// read the same days and keys. Los Angeles, 02:30, one hour long; the
+// spring change skips 02:00 to 03:00 on Sun 12 Mar 2028 and Sun 9 Mar 2036:
+// 02:30 PST is 10:30Z, 02:30 PDT 09:30Z, and the gap day's 03:30 PDT 10:30Z.
+// 2028 starts on a Saturday, March 2028 on a Wednesday, March 2036 on a Saturday.
+$farRow = static fn(string $rrule, string $startUtc): array => $streamRow($rrule, $startUtc, gmdate('Y-m-d H:i:s', strtotime($startUtc . ' UTC') + 3600), 'America/Los_Angeles');
+$far = [
+    // The issue's own reproduction: Monday, Wednesday and Friday at 02:30
+    // from Mon 1 Mar 2027, read in April 2028 by a few days and by a window
+    // starting before the change.
+    'a daily weekday list, April 2028, short and long' => [$farRow('FREQ=DAILY;BYDAY=MO,WE,FR', '2027-03-01 10:30:00'), [
+        [['2028-04-03 00:00:00', '2028-04-08 00:00:00'], ['2028-04-03 09:30:00', '2028-04-05 09:30:00', '2028-04-07 09:30:00']],
+        [['2028-03-09 00:00:00', '2028-04-08 00:00:00'], ['2028-03-10 10:30:00', '2028-03-13 09:30:00', '2028-03-15 09:30:00', '2028-03-17 09:30:00', '2028-03-20 09:30:00', '2028-03-22 09:30:00',
+            '2028-03-24 09:30:00', '2028-03-27 09:30:00', '2028-03-29 09:30:00', '2028-03-31 09:30:00', '2028-04-03 09:30:00', '2028-04-05 09:30:00', '2028-04-07 09:30:00']],
+    ]],
+    'a daily weekday list nine years on' => [$farRow('FREQ=DAILY;BYDAY=MO,WE,FR', '2027-03-01 10:30:00'), [
+        [['2036-03-07 00:00:00', '2036-03-11 00:00:00'], ['2036-03-07 10:30:00', '2036-03-10 09:30:00']],
+        [['2036-03-10 00:00:00', '2036-03-11 00:00:00'], ['2036-03-10 09:30:00']],
+    ]],
+    'a plain daily rule across the gap day' => [$farRow('FREQ=DAILY', '2027-03-01 10:30:00'), [
+        [['2028-03-01 00:00:00', '2028-03-14 00:00:00'], ['2028-03-01 10:30:00', '2028-03-02 10:30:00', '2028-03-03 10:30:00', '2028-03-04 10:30:00', '2028-03-05 10:30:00', '2028-03-06 10:30:00',
+            '2028-03-07 10:30:00', '2028-03-08 10:30:00', '2028-03-09 10:30:00', '2028-03-10 10:30:00', '2028-03-11 10:30:00', '2028-03-12 10:30:00', '2028-03-13 09:30:00']],
+        [['2028-03-11 00:00:00', '2028-03-14 00:00:00'], ['2028-03-11 10:30:00', '2028-03-12 10:30:00', '2028-03-13 09:30:00']],
+        [['2028-03-12 10:00:00', '2028-03-14 00:00:00'], ['2028-03-12 10:30:00', '2028-03-13 09:30:00']],
+        [['2036-03-08 00:00:00', '2036-03-11 00:00:00'], ['2036-03-08 10:30:00', '2036-03-09 10:30:00', '2036-03-10 09:30:00']],
+    ]],
+    'a daily rule naming its hour across the gap day' => [$farRow('FREQ=DAILY;BYHOUR=2;BYMINUTE=30', '2027-03-01 10:30:00'), [
+        [['2028-03-11 00:00:00', '2028-03-14 00:00:00'], ['2028-03-11 10:30:00', '2028-03-12 10:30:00', '2028-03-13 09:30:00']],
+        [['2028-03-12 10:00:00', '2028-03-14 00:00:00'], ['2028-03-12 10:30:00', '2028-03-13 09:30:00']],
+    ]],
+    // Sundays from Sun 7 Mar 2027.
+    'a weekly Sunday across the gap day' => [$farRow('FREQ=WEEKLY;BYDAY=SU', '2027-03-07 10:30:00'), [
+        [['2028-02-27 00:00:00', '2028-03-20 00:00:00'], ['2028-02-27 10:30:00', '2028-03-05 10:30:00', '2028-03-12 10:30:00', '2028-03-19 09:30:00']],
+        [['2028-03-12 00:00:00', '2028-03-20 00:00:00'], ['2028-03-12 10:30:00', '2028-03-19 09:30:00']],
+    ]],
+    'a weekly Sunday naming its hour across the gap day' => [$farRow('FREQ=WEEKLY;BYDAY=SU;BYHOUR=2;BYMINUTE=30', '2027-03-07 10:30:00'), [
+        [['2028-02-27 00:00:00', '2028-03-20 00:00:00'], ['2028-02-27 10:30:00', '2028-03-05 10:30:00', '2028-03-12 10:30:00', '2028-03-19 09:30:00']],
+        [['2028-03-12 00:00:00', '2028-03-20 00:00:00'], ['2028-03-12 10:30:00', '2028-03-19 09:30:00']],
+    ]],
+    // Second Sundays from Sun 14 Feb 2027: 12 Dec 2027, 9 Jan, 13 Feb, 12 Mar (the gap day) and 9 Apr 2028.
+    'a monthly second Sunday across the gap day' => [$farRow('FREQ=MONTHLY;BYDAY=2SU', '2027-02-14 10:30:00'), [
+        [['2027-12-01 00:00:00', '2028-04-10 00:00:00'], ['2027-12-12 10:30:00', '2028-01-09 10:30:00', '2028-02-13 10:30:00', '2028-03-12 10:30:00', '2028-04-09 09:30:00']],
+        [['2028-03-12 00:00:00', '2028-04-10 00:00:00'], ['2028-03-12 10:30:00', '2028-04-09 09:30:00']],
+    ]],
+    'a monthly second Sunday naming its hour across the gap day' => [$farRow('FREQ=MONTHLY;BYDAY=2SU;BYHOUR=2;BYMINUTE=30', '2027-02-14 10:30:00'), [
+        [['2027-12-01 00:00:00', '2028-04-10 00:00:00'], ['2027-12-12 10:30:00', '2028-01-09 10:30:00', '2028-02-13 10:30:00', '2028-03-12 10:30:00', '2028-04-09 09:30:00']],
+        [['2028-03-12 00:00:00', '2028-04-10 00:00:00'], ['2028-03-12 10:30:00', '2028-04-09 09:30:00']],
+    ]],
+];
+foreach ($far as $name => [$row, $windows]) {
+    checkEq("Far windows (#201): $name, every window reads the days the walk from the start reads", array_column($windows, 1),
+        array_map(static fn(array $w): array => $utcIn($row, ...$w[0]), $windows));
+}
+
 // ---- Laziness: a period is produced as it is walked ----------------------
 // Every weekday, 24 hours and 24 minutes: 210,240 clocks a year. Validating
 // it and walking its first three hold one period's clocks, never the year's.

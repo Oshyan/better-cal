@@ -1204,7 +1204,9 @@ trait Invariants
         $edit = $sent['edit'];
         $sentChoices = $sent['_choices'] ?? [];
         $this->splitCount = null;
-        if (isset($edit['boundSent']['count'])) {
+        // A COUNT sent with a new pattern is the part's own (decisions.md, a split's sent rule: the parts no longer share a
+        // rule), with no second reading; only a changed COUNT on the series' own pattern is read against its whole count.
+        if (isset($edit['boundSent']['count']) && $edit['rule'] !== 'new') {
             // A changed COUNT on a split (api-contract, This and following; decisions.md, a split's sent rule): the bound
             // group offers `whole`, the series' whole count with the part taking what is left after the events before the
             // split (preselected; refused `empty` when the old part already reaches it), and `part`, that many from the

@@ -892,8 +892,9 @@ trait Invariants
             // The same moment keeps every row's own instant (decisions.md, the zone "same moment" choice): its day and
             // clock are read in the old frame, the drag in it measured there, and the instant they name is the row's;
             // a day of its own time keeps its clock in its own zone, one of its own date the series' clock there.
-            if ((int) $x->moment['drag'] === 0 && !$move) {
-                // No drag: the row keeps the very instant it shows at, wherever its key's image lands.
+            if ((int) $x->moment['drag'] === 0 && !$move && $ownTime && $x->kind !== 'newrule') {
+                // No drag, a time of its own: the row keeps the very instant it shows at, wherever its key's image lands
+                // (a new rule's days are the edit's, not the moment's, and an own date takes the series' clock there).
                 return [(string) $ov0['start_utc'], $len, $allDay, $ownTime ? (string) $ov0['tzid'] : $x->tz1, $kindChanged];
             }
             $carry = (int) $x->moment['carry'];

@@ -1266,6 +1266,23 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         smAt('2027-03-07 02:30'), 'FREQ=WEEKLY;BYDAY=SU;COUNT=5', [smAt('2027-03-07 02:30')], ['2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00'], 'Weekly on Sunday at 02:30', '4 events, ends 4 Apr 2027',
     ], [$aligned['start_utc'], $aligned['rrule'], json_decode((string) $aligned['exdates_json'], true), array_slice($shown($aligned), 0, 2), $words['rule']['words'], $words['bound']['words']]);
 
+    // #193: a new series starts on its rule's first day on or after the
+    // start asked for, in every family, not only weekly; the creation line
+    // names that day. Los Angeles, 09:00, January 2027 (Fri 1 Jan).
+    $aligns = [
+        'monthly on the 15th, asked for Wed 20 Jan: Mon 15 Feb' => ['FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-20', '2027-02-15', 'Starts Mon 15 Feb 2027, the first 15th on or after the date you typed'],
+        'first and third Mondays, asked for Thu 7 Jan: Mon 18 Jan' => ['FREQ=MONTHLY;BYDAY=1MO,3MO', '2027-01-07', '2027-01-18', 'Starts Mon 18 Jan 2027, its first day on or after the date you typed'],
+        'the last weekday, asked for Mon 4 Jan: Fri 29 Jan' => ['FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', '2027-01-04', '2027-01-29', 'Starts Fri 29 Jan 2027, its first day on or after the date you typed'],
+        'yearly on 10 June, asked for Wed 20 Jan: Thu 10 Jun' => ['FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=10', '2027-01-20', '2027-06-10', 'Starts Thu 10 Jun 2027, its first day on or after the date you typed'],
+    ];
+    foreach ($aligns as $what => [$rr, $asked, $firstDay, $line]) {
+        $row = ['rrule' => $rr, 'start_utc' => smAt("$asked 09:00"), 'end_utc' => smAt("$asked 10:00"), 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'exdates_json' => null];
+        $aligned = array_merge($row, $start->invoke(null, $row));
+        $words = BetterCal\Domain\Events::creationPlan($aligned, $row);
+        checkEq("#193 ($what): stored from that day at 09:00, the rule as written, and the line names it", [smAt("$firstDay 09:00"), smAt("$firstDay 10:00"), $rr, $line],
+            [$aligned['start_utc'], $aligned['end_utc'], $aligned['rrule'], $words['startWords'] ?? null]);
+    }
+
     // ---- the harness's root causes on the rebuilt harness, each by its structural rule ----
 
     // Cause 1: the expander steps MINUTELY (sabre's iterator yielded the start again).

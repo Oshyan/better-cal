@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.1 (unreleased)
+
+Maintainers: the series harness runs a seed's cases on several processes at once (`--shards N`, each on a database of its own, merged into the report and findings one process gives), and the database suite's files run at once (`BC_TEST_JOBS`, the machine's CPUs by default): a 3,000-case seed in about a minute and a half on 8 shards and the database suite in under a minute, with the same cases, checks and totals as before.
+
 ## 1.5.0 (2026-11-04)
 
 One engine under repeating events: every whole-series change goes through one model that says what it will do before it does it, and a harness that generates thousands of series and edits measures it on every push ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).

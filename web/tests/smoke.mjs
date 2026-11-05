@@ -4976,6 +4976,12 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   // names it in its rule.
   const { planZone } = await import('../src/lib/seriesplan.js');
   const W2 = await import('../src/lib/planwords.js');
+  // A split's first line and delete following's change (series-model.md,
+  // The Plan, 2, a split): what the events before the day acted on become.
+  const splitPlan = { day: '2027-01-19', before: { bound: { kind: 'until', until: '20270112T180000Z', events: 2, last: '2027-01-12' } } };
+  eq('split: the events before the day stay, now ending on the old part\'s last day, with its count; delete following deletes the day and every one after', [
+    W2.splitLine(splitPlan, { refYear: 2027 }), W2.deleteSentence(splitPlan, { refYear: 2027 }), W2.splitLine(null), W2.titleWords(W2.verbOf('delete'), 'following'),
+  ], ['Events before Tue, Jan 19 stay as they are, now ending Jan 12 (2 events).', 'Deletes Tue, Jan 19 and every event after it.', '', 'Delete this and following']);
   const laTo = { rule: { to: { tz: 'America/Los_Angeles', allDay: false } } };
   eq('zone rule: the plan\'s zone is plan.zone; an older plan\'s is its rule\'s; an all-day plan has none', [
     planZone({ ...laTo, zone: 'Asia/Tokyo' }), planZone(laTo), planZone({ ...laTo, zone: null }), planZone({ rule: { to: { tz: null, allDay: true } } }),

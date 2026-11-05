@@ -197,6 +197,24 @@ export function fieldSentence(f) {
   return f.label + ' from ' + q(m[1]) + ' to ' + q(m[2]) + '.';
 }
 
+// ---- a split ------------------------------------------------------------------
+
+/**
+ * CHANGE, first line of a split ("this and following", delete following, an
+ * answer from a day on): what the events before the day acted on become.
+ * "Events before Tue, Jan 19 stay as they are, now ending Jan 12 (2 events)."
+ */
+export function splitLine(split, opts = {}) {
+  if (!split || !split.before || !split.day) return '';
+  const b = split.before.bound || {};
+  const n = b.events != null ? ' (' + plural(b.events, 'event', 'events') + ')' : '';
+  const ending = b.last ? ', now ending ' + fmtDay(b.last, { weekday: false, ...opts, prev: split.day }) : '';
+  return 'Events before ' + fmtDay(split.day, opts) + ' stay as they are' + ending + n + '.';
+}
+
+/** CHANGE of delete following: "Deletes Tue, Jan 19 and every event after it." */
+export const deleteSentence = (split, opts = {}) => (split && split.day ? 'Deletes ' + fmtDay(split.day, opts) + ' and every event after it.' : '');
+
 // ---- coming up and affects ---------------------------------------------------
 
 /**
@@ -288,9 +306,10 @@ function ownFieldsAside(days) {
 
 // ---- the header and the action ----------------------------------------------
 
-/** The verb of a change: Move for a drag, Rename for a title-only save, Change for the rest. */
+/** The verb of a change: Move for a drag, Rename for a title-only save, Delete for a delete, Change for the rest. */
 export function verbOf(kind, edits = []) {
   if (kind === 'drag') return 'Move';
+  if (kind === 'delete') return 'Delete';
   if (kind === 'editor' && edits.length === 1 && edits[0] === 'title') return 'Rename';
   return 'Change';
 }

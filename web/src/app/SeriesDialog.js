@@ -154,6 +154,7 @@ function PlanBlocks({ view, openGroups, onToggle, working }) {
     ${view.changed && html`<p class="bc-sd-changed" role="status">${view.changed}</p>`}
     <${Block} label="Change">
       ${view.fields.map((f) => html`<div key=${f} class="bc-sd-r1">${f}</div>`)}
+      ${!view.refused && view.split && html`<div class="bc-sd-r1">${view.split}</div>`}
       ${view.refused ? html`<div class="bc-sd-r1" role="alert">${view.refused}</div>`
         : view.change && html`<div class="bc-sd-r1">${view.change}</div>`}
       ${view.readings.map((c) => html`<${Choice} key=${c.id} choice=${c} />`)}

@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Domain\Series\OwnFields as OwnFieldsList;
+use BetterCal\Domain\Series\Split;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Plugin\PluginHost;
@@ -93,7 +94,33 @@ final class Events
      * it is the private attendance mark. Scope applies to a series as for
      * any other change.
      */
-    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null, ?RequestAuthority $authority = null): void
+    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null, ?RequestAuthority $authority = null, ?array $plan = null): void
+    {
+        [$how, $value] = $this->relationshipChange($userId, $id, $relationship, $scope, $instanceStart);
+        if ($how === 'patch') {
+            $this->patch($userId, $id, $value + ($plan !== null ? ['plan' => $plan] : []), $authority);
+            return;
+        }
+        $this->setAttendance($userId, $id, $value, $scope, $instanceStart, $plan);
+    }
+
+    /** The plan of a relationship from a day on (relationship with preview), written nowhere: the status edit's or the answer's. */
+    public function previewRelationship(int $userId, int $id, string $relationship, ?string $scope, ?string $instanceStart, array $choices = []): array
+    {
+        [$how, $value] = $this->relationshipChange($userId, $id, $relationship, $scope, $instanceStart);
+        if ($how === 'patch') {
+            return $this->previewPatch($userId, $id, $value + ['plan' => ['choices' => $choices]]);
+        }
+        return $this->previewAttendance($userId, $id, $value, $scope, $instanceStart, $choices);
+    }
+
+    /**
+     * What a relationship is on this event's calendar: ['patch', the edit]
+     * on my own calendar (its status), else ['attendance', the mark].
+     *
+     * @return array{0:string,1:mixed}
+     */
+    private function relationshipChange(int $userId, int $id, string $relationship, ?string $scope, ?string $instanceStart): array
     {
         $event = $this->get($userId, $id);
         $role = (string) ($this->calendarMeta((int) $event['calendar_id'])['role'] ?? 'mine');
@@ -107,21 +134,19 @@ final class Events
             // A Google-synced invitation's status is the organizer's; my own
             // choice is kept here, as attendance, and the next answer resets it.
             if (self::googleAnswer($event) !== null) {
-                $this->setAttendance($userId, $id, self::ATTENDANCE_ALIASES[$relationship], $scope, $instanceStart);
-                return;
+                return ['attendance', self::ATTENDANCE_ALIASES[$relationship]];
             }
             $in = ['status' => $relationship === 'maybe' ? 'tentative' : 'confirmed'];
             if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
                 $in['scope'] = $scope ?? 'all';
                 $in['instanceStart'] = $instanceStart;
             }
-            $this->patch($userId, $id, $in, $authority);
-            return;
+            return ['patch', $in];
         }
         if (!isset(self::ATTENDANCE_ALIASES[$relationship])) {
             throw HttpError::badRequest('relationship must be planned|maybe|available|hidden');
         }
-        $this->setAttendance($userId, $id, self::ATTENDANCE_ALIASES[$relationship], $scope, $instanceStart);
+        return ['attendance', self::ATTENDANCE_ALIASES[$relationship]];
     }
 
     public function __construct(
@@ -439,68 +464,6 @@ final class Events
         $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId);
     }
 
-    private function googlePatchFollowing(int $userId, array $calendar, array $master, array $in, ?RequestAuthority $authority = null): void
-    {
-        $instanceUtc = $this->requireInstance($in, $master);
-        // From the series' first day, "this and following" is the whole
-        // series, as in patchFollowing: split here, Google was sent a rule
-        // that ends before it begins, and the local copy showed the first
-        // day under both titles until Google's answer was next polled.
-        if ($instanceUtc === (string) $master['start_utc']) {
-            $this->googlePatchAll($userId, $calendar, $master, $in, $authority);
-            return;
-        }
-        $masterId = (int) $master['id'];
-        $instStart = Time::fromDb($instanceUtc);
-        $duration = Recurrence::durationSeconds($master);
-        $allDay = (int) $master['all_day'] === 1;
-        $masterGoogleId = self::requireGoogleId($master);
-        // The new series' row, which takes the flag, is made from Google's
-        // answer to the insert below (its id is Google's), so the flag can't
-        // go on first. A new row has no link, so the rows as the commit will
-        // leave them are the rows as they stand: the rules run on those.
-        $this->tripRules();
-
-        // The old series ends before this occurrence; a new one starts here.
-        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
-        $endOld = $this->google()->patch($calendar, $masterGoogleId, [
-            'recurrence' => GoogleWriter::recurrenceLines($oldRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
-        ], $this->googleBeforeSend($authority));
-
-        $newMaster = $this->copyForChild($master);
-        $newMaster['start_utc'] = Time::toDb($instStart);
-        $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
-        $newMaster['rrule'] = $this->followingRrule($master, $instanceUtc);
-        $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
-        $patch = $this->columnPatch($newMaster, $in);
-        [, $localFields] = self::splitGoogleFields($patch);
-        $newMaster = array_merge($newMaster, $patch);
-        if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
-            $newMaster['rrule'] = (string) $in['rrule'];
-        }
-        if (!empty($newMaster['rrule'])) {
-            $newMaster['rrule'] = Recurrence::inForm((string) $newMaster['rrule'], (int) $newMaster['all_day'] === 1, (int) $newMaster['all_day'] === 1 ? (string) $master['tzid'] : (string) $newMaster['tzid']);
-        }
-        $created = $this->google()->insert($calendar, $newMaster, $this->googleBeforeSend($authority));
-        $this->googleCommit($authority, function () use ($calendar, $endOld, $created, $userId, $localFields, $in): void {
-            $this->google()->apply($calendar, [$endOld, $created]);
-            $row = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($created['id'] ?? ''));
-            if ($row === null) {
-                return;
-            }
-            $rowId = (int) $row['id'];
-            $this->splitEventId = $rowId;
-            if ($localFields !== []) {
-                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
-            }
-            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
-            }
-            $this->applyPeoplePatch($userId, $rowId, $in);
-        });
-        $this->googleJournal($userId, "Changed '" . (string) $master['title'] . "' from " . $this->journalDay($userId, $master, $instStart) . " on", $calendar, $masterId);
-    }
-
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
     private function journalDay(int $userId, array $master, \DateTimeImmutable $at): string
     {
@@ -534,18 +497,6 @@ final class Events
         $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id']);
-    }
-
-    private function googleDeleteFollowing(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void
-    {
-        $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
-        $allDay = (int) $master['all_day'] === 1;
-        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil(Time::fromDb($instanceUtc)), $allDay, (string) $master['tzid']);
-        $resp = $this->google()->patch($calendar, self::requireGoogleId($master), [
-            'recurrence' => GoogleWriter::recurrenceLines($newRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
-        ], $this->googleBeforeSend($authority));
-        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [$resp]));
-        $this->googleJournal($userId, "Ended '" . (string) $master['title'] . "' before " . $this->journalDay($userId, $master, Time::fromDb($instanceUtc)), $calendar, (int) $master['id']);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
@@ -1568,35 +1519,40 @@ final class Events
                 $this->detachToCalendar($userId, $event, $this->requireInstance($in, $event), $in);
                 return;
             }
-            // 'following': patchFollowing splits and the new series takes the
-            // calendar; 'all': patchAll moves the series and its exceptions.
+            // 'following': the split's new series takes the calendar (its
+            // plan's master); 'all': the plan moves the series and its exceptions.
         }
 
-        // An edit with all events made from an edited day's own row is the
-        // series' edit, with that day as the day acted on (Changing the
-        // Series from an Edited Day): preview and commit alike.
-        if (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all' && !isset($in['calendarId'])) {
+        // An edit with all events, or this and following, made from an
+        // edited day's own row is the series' edit, with that day as the day
+        // acted on (Changing the Series from an Edited Day): preview and
+        // commit alike.
+        if (!empty($event['recurrence_parent_id']) && in_array((string) ($in['scope'] ?? ''), ['all', 'following'], true) && !isset($in['calendarId'])) {
             [$master, $masterIn] = $this->routeToMaster($userId, $event, $in);
             $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority);
             return;
         }
 
+        if ($scope === 'this') {
+            unset($in['plan']);
+        }
         if ($google !== null) {
+            // A split on Google is refused until 1.5.2 (Series\Split), from
+            // its first day it is the whole series'.
             match ($scope) {
                 'this' => $this->googlePatchThis($userId, $google, $event, $in, $authority),
-                'following' => $this->googlePatchFollowing($userId, $google, $event, $in, $authority),
+                'following' => $this->splitPlanned($userId, $event, $in, Split::EDIT) === false
+                    ? $this->googlePatchAllPlanned($userId, $google, $event, ['scope' => 'all'] + $in, $authority) : null,
                 'all' => $isRecurringMaster
                     ? $this->googlePatchAllPlanned($userId, $google, $event, $in, $authority)
                     : $this->googlePatchAll($userId, $google, $event, $in, $authority),
             };
             return;
         }
-        if ($scope !== 'all') {
-            unset($in['plan']);
-        }
         match ($scope) {
             'this' => $this->patchThis($userId, $event, $in),
-            'following' => $this->patchFollowing($userId, $event, $in),
+            // A split, or from the series' first day the whole series' plan.
+            'following' => $this->splitPlanned($userId, $event, $in, Split::EDIT) === false ? $this->patchAllPlanned($userId, $event, ['scope' => 'all'] + $in) : null,
             'all' => $isRecurringMaster ? $this->patchAllPlanned($userId, $event, $in) : $this->patchAll($userId, $event, $in),
         };
     }
@@ -1667,183 +1623,6 @@ final class Events
     }
 
     /**
-     * A weekly, monthly or yearly series starting on a day its rule doesn't
-     * name (BYDAY, BYMONTHDAY, BYSETPOS; a month and day for a yearly one)
-     * moves to the first day it does, keeping its time (start and end
-     * columns, or []). The iterator takes the start as a real occurrence, so
-     * left where it was the series would open with a day off its pattern
-     * (#193). A yearly nth weekday is left where it is: its next matching
-     * day is a year on, and a drag its rule could not follow (two months)
-     * would lose the whole first year.
-     */
-    private static function alignedStart(array $row): array
-    {
-        if (empty($row['rrule'])) {
-            return [];
-        }
-        $rule = RepeatParser::ruleParts((string) $row['rrule']);
-        $freq = $rule['FREQ'] ?? '';
-        if ((empty($rule['BYDAY']) && empty($rule['BYMONTHDAY']))
-            || !(in_array($freq, ['WEEKLY', 'MONTHLY'], true) || ($freq === 'YEARLY' && !empty($rule['BYMONTH']) && !empty($rule['BYMONTHDAY'])))) {
-            return [];
-        }
-        $tz = Time::zone((string) $row['tzid']);
-        $start = Time::fromDb((string) $row['start_utc'])->setTimezone($tz);
-        $n = self::dayDelta($start, RepeatParser::firstOn($rule, $start));
-        if ($n === 0) {
-            return [];
-        }
-        return [
-            'start_utc' => Time::toDb($start->modify('+' . $n . ' days')),
-            'end_utc' => Time::toDb(Time::fromDb((string) $row['end_utc'])->setTimezone($tz)->modify('+' . $n . ' days')),
-        ];
-    }
-
-    /** Whole calendar days from one local date to another. */
-    private static function dayDelta(\DateTimeImmutable $from, \DateTimeImmutable $to): int
-    {
-        return (int) (new \DateTimeImmutable($from->format('Y-m-d'), Time::utc()))
-            ->diff(new \DateTimeImmutable($to->format('Y-m-d'), Time::utc()))->format('%r%a');
-    }
-
-    /**
-     * When a series' start, zone or all-day flag changes, its skipped dates,
-     * edited occurrences and a timed UNTIL move with it: each keeps its place
-     * in the series (the same number of days on, at the series' new time of
-     * day, in its new zone). Left behind, a deleted day came back and an
-     * edited one showed twice (0.9.15, as Thunderbird and Nextcloud do it).
-     * Null when nothing moved.
-     *
-     * A monthly or yearly series' occurrences are not evenly spaced, so its
-     * keys follow the occurrence instead of the day count: a key that is the
-     * nth occurrence of its month (or year) under the old rule becomes the
-     * nth of the month the start moved to under the new one, which may name
-     * another day ("every 30th" dragged from 30 Jan to 1 Feb is "every 1st",
-     * rebaseSeriesEdit). Counted in days, the edited 30 Apr landed on 2 May
-     * beside the series' own 1 May, and a skipped 30 Apr came back. A key
-     * that is no occurrence of the old rule, or whose month has none under
-     * the new rule, moves by the days as before. $after is the series as it
-     * will be stored (alignedStart), so the new rule is read from a start
-     * on its own pattern.
-     *
-     * With $sameDays the series' days are what they were: the rule could
-     * not follow the drag (a list of days, the last day of the month) and
-     * the start only snapped to its next listed day. The keys keep their
-     * days and take the new time, zone and all-day flag. Counted from the
-     * day the user dropped on, every exception moved a month while the
-     * series stayed: a skipped day came back and an untouched one vanished.
-     *
-     * @return null|callable(string): string  old instance key => new one
-     */
-    private static function seriesKeyShift(array $before, array $after, bool $sameDays = false): ?callable
-    {
-        $oldTz = Time::zone((string) $before['tzid']);
-        $newTz = Time::zone((string) $after['tzid']);
-        $oldAllDay = (int) $before['all_day'] === 1;
-        $newAllDay = (int) $after['all_day'] === 1;
-        $was = Time::fromDb((string) $before['start_utc'])->setTimezone($oldTz);
-        $now = Time::fromDb((string) $after['start_utc'])->setTimezone($newTz);
-        $days = $sameDays ? 0 : self::dayDelta($was, $now);
-        $time = $newAllDay ? '00:00:00' : $now->format('H:i:s');
-        if ($days === 0 && $time === ($oldAllDay ? '00:00:00' : $was->format('H:i:s')) && $oldTz->getName() === $newTz->getName() && $oldAllDay === $newAllDay) {
-            return null;
-        }
-        $byDays = static function (string $key) use ($oldTz, $newTz, $days, $time): string {
-            $date = (new \DateTimeImmutable(Time::fromDb($key)->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
-                ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
-            return Time::toDb((new \DateTimeImmutable($date . ' ' . $time, $newTz))->setTimezone(Time::utc()));
-        };
-        $freq = RepeatParser::ruleParts((string) ($after['rrule'] ?? ''))['FREQ'] ?? '';
-        if ($days === 0 // the same days, at another time or in another zone
-            || !in_array($freq, ['MONTHLY', 'YEARLY'], true)
-            || $freq !== (RepeatParser::ruleParts((string) ($before['rrule'] ?? ''))['FREQ'] ?? '')) {
-            return $byDays;
-        }
-        $unit = $freq === 'MONTHLY' ? 'month' : 'year';
-        $periods = $freq === 'MONTHLY'
-            ? ((int) $now->format('Y') * 12 + (int) $now->format('n')) - ((int) $was->format('Y') * 12 + (int) $was->format('n'))
-            : (int) $now->format('Y') - (int) $was->format('Y');
-        // The rules without their bounds: a key near the series' end must
-        // still find its occurrence in a month the old UNTIL did not reach.
-        $oldRule = ['rrule' => Recurrence::pattern((string) $before['rrule'])] + $before;
-        $newRule = ['rrule' => Recurrence::pattern((string) $after['rrule'])] + $after;
-        return static function (string $key) use ($byDays, $oldTz, $newTz, $unit, $periods, $oldRule, $newRule): string {
-            $local = Time::fromDb($key)->setTimezone($oldTz);
-            $n = array_search($key, self::occurrencesIn($oldRule, $local, $unit, $oldTz), true);
-            if ($n === false) {
-                return $byDays($key);
-            }
-            $target = (new \DateTimeImmutable($local->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $newTz))
-                ->modify(($periods >= 0 ? '+' : '') . $periods . ' ' . $unit);
-            // The 1.4.6 following path's reading, which 1.5.1 moves onto the
-            // model (decisions.md, "This and following"): the nth of the new
-            // period, or the day shift where it has fewer.
-            return self::occurrencesIn($newRule, $target, $unit, $newTz)[$n] ?? $byDays($key);
-        };
-    }
-
-    /**
-     * The instance keys of a series' occurrences that start in the month or
-     * year (local to $tz) that holds $day, in order: every one of them (no
-     * display cap), and none that only runs into it.
-     *
-     * @return list<string>
-     */
-    private static function occurrencesIn(array $master, \DateTimeImmutable $day, string $unit, \DateTimeZone $tz): array
-    {
-        $from = new \DateTimeImmutable($day->format($unit === 'month' ? 'Y-m-01' : 'Y-01-01'), $tz);
-        $to = $from->modify('+1 ' . $unit);
-        $starts = array_map(static fn(array $occ): string => Time::toDb($occ['start']), Recurrence::occurrences($master, $from->setTimezone(Time::utc()), $to->setTimezone(Time::utc())));
-        $first = Time::toDb($from->setTimezone(Time::utc()));
-        return array_values(array_filter($starts, static fn(string $s): bool => $s >= $first));
-    }
-
-    /**
-     * The rule of a series whose days moved, its UNTIL moved the same way:
-     * the last day the series fell on goes where its occurrence goes (the
-     * key shift), at the series' new time, so the end still takes that day
-     * in. The editor writes a timed end at 23:59:59 of its last day, which
-     * is no occurrence; moved by the days alone, "every 28th until 28 May"
-     * dragged to the 1st ended on 29 May and lost its 1 Jun. A date series'
-     * end is a date in its zone (Recurrence::setUntil) and stays one. A
-     * rule without an UNTIL, or one no occurrence precedes, comes back as
-     * it is.
-     */
-    private static function movedUntil(array $before, array $after, callable $shift): string
-    {
-        $rrule = (string) $after['rrule'];
-        if (preg_match('/UNTIL=(\d{8})(T\d{6}Z)?/', $rrule, $m) !== 1) {
-            return $rrule;
-        }
-        $timed = ($m[2] ?? '') !== '';
-        $until = $timed
-            ? \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $m[1] . $m[2], Time::utc())
-            : \DateTimeImmutable::createFromFormat('Ymd H:i:s', $m[1] . ' 23:59:59', Time::zone((string) $before['tzid']));
-        if ($until === false) {
-            return $rrule;
-        }
-        $until = $until->setTimezone(Time::utc());
-        // The series' last day, skipped or not (a skip moves on its own),
-        // read whole (no display cap). A rule the expander can't read, or
-        // whose walk can't be completed, takes the unreadable-rule path: its
-        // UNTIL as the text says (decisions.md, "A rule the expander can't
-        // read"), moved the same way.
-        $last = Time::toDb($until);
-        try {
-            $occurrences = Recurrence::occurrences(['exdates_json' => null] + $before, Time::fromDb((string) $before['start_utc']), $until->modify('+1 second'));
-            if ($occurrences !== []) {
-                $last = Time::toDb(end($occurrences)['start']);
-            }
-        } catch (\BetterCal\Domain\Series\RuleNotReadable|\BetterCal\Domain\Series\WalkIncomplete) {
-        }
-        $moved = Time::fromDb($shift($last));
-        // Written in the series' own form (Recurrence::inForm): a date for an
-        // all-day series, an instant for a timed one.
-        $value = (int) ($after['all_day'] ?? 0) !== 1 ? $moved->format('Ymd\THis\Z') : $moved->setTimezone(Time::zone((string) $after['tzid']))->format('Ymd');
-        return str_replace($m[0], 'UNTIL=' . $value, $rrule);
-    }
-
-    /**
      * An event that doesn't repeat (or a series' calendar move from an old
      * client: see patchAllPlanned for every whole-series edit). A calendar
      * change carries its edited days along.
@@ -1903,42 +1682,6 @@ final class Events
     }
 
     /**
-     * The columns an edited occurrence takes when its series' days moved
-     * ($before to $after, the key shift giving it $key): one edited in other
-     * ways but not moved follows the series to its new day, time and zone;
-     * one moved to its own time goes to the day its occurrence moved to,
-     * keeping that time and its distance in days from the occurrence (left
-     * where it was, it stood on the old day while the day it was an edit of
-     * had moved on).
-     */
-    private static function movedOverride(array $ov, string $key, array $before, array $after): array
-    {
-        $set = ['recurrence_instance_utc' => $key, 'updated_at' => Time::nowDb()];
-        if ((string) $ov['start_utc'] === (string) $ov['recurrence_instance_utc']) {
-            $len = Time::fromDb((string) $ov['end_utc'])->getTimestamp() - Time::fromDb((string) $ov['start_utc'])->getTimestamp();
-            if ((int) $after['all_day'] !== (int) $ov['all_day']) {
-                $len = Recurrence::durationSeconds($after);
-            }
-            return $set + [
-                'start_utc' => $key,
-                'end_utc' => Time::toDb(Time::fromDb($key)->modify('+' . max(60, $len) . ' seconds')),
-                'all_day' => (int) $after['all_day'],
-                'tzid' => (string) $after['tzid'],
-            ];
-        }
-        $by = self::dayDelta(
-            Time::fromDb((string) $ov['recurrence_instance_utc'])->setTimezone(Time::zone((string) $before['tzid'])),
-            Time::fromDb($key)->setTimezone(Time::zone((string) $after['tzid']))
-        );
-        if ($by !== 0) {
-            $ovTz = Time::zone((string) $ov['tzid']);
-            $onDay = static fn(string $utc): string => Time::toDb(Time::fromDb($utc)->setTimezone($ovTz)->modify(($by >= 0 ? '+' : '') . $by . ' days'));
-            $set += ['start_utc' => $onDay((string) $ov['start_utc']), 'end_utc' => $onDay((string) $ov['end_utc'])];
-        }
-        return $set;
-    }
-
-    /**
      * The override row for one occurrence of a series, creating it from the
      * master (same content, same tags and people) when there is none. This is
      * how a per-occurrence attendance or reminder gets a row to live on
@@ -1981,7 +1724,7 @@ final class Events
      * standalone event there (new identity, same content, tags and people,
      * plus whatever else the same edit changed) and the series skips that
      * day. Used for an override row moved on its own, and for a master with
-     * scope 'this'. 'following' is a split (patchFollowing, the new series
+     * scope 'this'. 'following' is a split (Series\Split, the new series
      * takes the calendar) and 'all' moves the series with its exceptions.
      */
     private function detachToCalendar(int $userId, array $event, ?string $instanceUtc, array $in): void
@@ -2152,158 +1895,11 @@ final class Events
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
-    private function patchFollowing(int $userId, array $master, array $in): int
-    {
-        $instanceUtc = $this->requireInstance($in, $master);
-        $masterId = (int) $master['id'];
-        // From the series' first day, "this and following" is every day of
-        // it: the series itself changes, no split. Bounded before its own
-        // start, the old series still showed that start (the iterator yields
-        // it regardless of UNTIL), so the day appeared twice.
-        if ($instanceUtc === (string) $master['start_utc']) {
-            // "This and following" stays without the dialog until 1.5.1: the
-            // whole series takes its plan's preselected options.
-            $this->preselected = true;
-            try {
-                $this->patchAllPlanned($userId, $master, ['scope' => 'all'] + $in);
-            } finally {
-                $this->preselected = false;
-            }
-            return $masterId;
-        }
-        $instStart = Time::fromDb($instanceUtc);
-        $duration = Recurrence::durationSeconds($master);
-        $allDay = (int) $master['all_day'] === 1;
-
-        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
-
-        $newMaster = $this->copyForChild($master);
-        $newMaster['uid'] = Ids::ulid();
-        $newMaster['created_via'] = ActivityContext::get(); // the splitter, not the original creator
-        $newMaster['start_utc'] = Time::toDb($instStart);
-        $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
-        $newMaster['rrule'] = $this->followingRrule($master, $instanceUtc);
-        $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
-        $rest = $newMaster; // the rest of the series as it was
-        $newMaster = array_merge($newMaster, $this->columnPatch($newMaster, $in));
-        // Dragged from this day on, the rest of the series follows the day
-        // the way a whole-series drag does (rebaseSeriesEdit): every Monday
-        // from this one dragged to the Tuesday is every Tuesday from it.
-        // With the rule left as it was, the start snapped to the next listed
-        // day and the dragged day was gone.
-        $was = $instStart->setTimezone(Time::zone((string) $master['tzid']));
-        $now = Time::fromDb((string) $newMaster['start_utc'])->setTimezone(Time::zone((string) $newMaster['tzid']));
-        $days = self::dayDelta($was, $now);
-        $followed = $days !== 0 ? Recurrence::shiftBymonthday(Recurrence::shiftByday((string) $rest['rrule'], $days), $was, $now) : (string) $rest['rrule'];
-        $ownRule = isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '';
-        if ($ownRule) {
-            $newMaster['rrule'] = (string) $in['rrule'];
-        } elseif (isset($in['start'])) {
-            $newMaster['rrule'] = $followed;
-        }
-        // The edited and skipped days from this one on go to the new series
-        // as a whole-series drag moves them (patchAll): to the matching days
-        // of a rule that followed the drag, on their own days when the start
-        // only snapped to the next listed day, at the new time otherwise.
-        // Deleted with the split, every edit from the dragged day on was
-        // lost and a skipped day came back.
-        $shift = null;
-        if (Recurrence::pattern((string) $newMaster['rrule']) === Recurrence::pattern($followed)) {
-            // A new start date: the series starts on the first listed day.
-            // A rename alone leaves a start off the pattern where it is
-            // (that day is the one being edited).
-            $aligned = $days !== 0 ? self::alignedStart($newMaster) : [];
-            $sameDays = $aligned !== [] && Recurrence::pattern((string) $newMaster['rrule']) === Recurrence::pattern((string) $rest['rrule']);
-            $newMaster = array_merge($newMaster, $aligned);
-            $shift = self::seriesKeyShift($rest, $newMaster, $sameDays);
-        } else {
-            // New days chosen for the rest of the series: it starts on the
-            // first listed day, and old keys no longer name places in it.
-            $newMaster = array_merge($newMaster, self::alignedStart($newMaster));
-        }
-        if ($shift !== null) {
-            $exdates = array_map($shift, Recurrence::decodeExdates($newMaster['exdates_json']));
-            $newMaster['exdates_json'] = $exdates === [] ? null : json_encode($exdates);
-            if (!$ownRule) {
-                $newMaster['rrule'] = self::movedUntil($rest, $newMaster, $shift);
-            }
-        }
-        // The new series' rule in its own form (Recurrence::inForm), an UNTIL
-        // from the old series' clock read in its zone.
-        if (!empty($newMaster['rrule'])) {
-            $newMaster['rrule'] = Recurrence::inForm((string) $newMaster['rrule'], (int) $newMaster['all_day'] === 1, (int) $newMaster['all_day'] === 1 ? (string) $master['tzid'] : (string) $newMaster['tzid']);
-        }
-
-        $movedOverrides = $this->db->all(
-            'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
-            [$masterId, $instanceUtc]
-        );
-        // The day acted on takes the edit. Edited on its own before, it has
-        // a row of its own, carried like the later ones (its place in the
-        // series, its time by the key shift); the edit's other fields are
-        // then applied to it, the title, place, tags or people the person
-        // changed with that day open. Carried untouched, the one day they
-        // were editing was the one day the edit missed. The later edited
-        // days keep their own deviations.
-        $edit = array_diff_key($in, array_flip(['scope', 'instanceStart', 'start', 'end', 'allDay', 'tzid', 'rrule', 'calendarId']));
-        $splitDayId = null;
-        foreach ($movedOverrides as $ov) {
-            if ((string) $ov['recurrence_instance_utc'] === $instanceUtc) {
-                $splitDayId = (int) $ov['id'];
-            }
-        }
-        $beforeLinks = $splitDayId !== null ? $this->labels->eventLinkRows($splitDayId) : [];
-
-        $newId = $this->db->tx(function () use ($userId, $masterId, $oldRrule, $newMaster, $movedOverrides, $master, $shift, $edit, $splitDayId, $in): int {
-            $this->db->update('events', ['rrule' => $oldRrule, 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
-            $newId = $this->db->insert('events', $newMaster);
-            foreach ($movedOverrides as $ov) {
-                $key = $shift === null ? (string) $ov['recurrence_instance_utc'] : $shift((string) $ov['recurrence_instance_utc']);
-                // On the new series' calendar with it: parked on another, a
-                // row nothing can reach (as patchAll moves them).
-                $set = ['recurrence_parent_id' => $newId, 'uid' => $newMaster['uid'], 'calendar_id' => $newMaster['calendar_id']] + self::movedOverride($ov, $key, $master, $newMaster);
-                if ((int) $ov['id'] === $splitDayId) {
-                    $set = array_merge($set, $this->columnPatch($ov, $edit, null, forOverride: true));
-                }
-                $this->db->update('events', $set, 'id = ?', [(int) $ov['id']]);
-            }
-            if ($splitDayId !== null) {
-                if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                    $this->labels->setEventTags($userId, $splitDayId, $in['tagNames']);
-                }
-                $this->applyPeoplePatch($userId, $splitDayId, $in);
-            }
-            return $newId;
-        });
-
-        $afterMaster = $this->get($userId, $masterId);
-        $created = $this->get($userId, $newId);
-        $overridesAfter = [];
-        foreach ($movedOverrides as $ov) {
-            $overridesAfter[] = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $ov['id']]);
-        }
-        // The dates skipped from here on go with the new series: what the old
-        // one skipped is part of what this changed (an older skip's undo
-        // there would put back nothing).
-        $this->undo->record(
-            $userId,
-            'event',
-            $masterId,
-            'update',
-            ['events' => array_merge([$master], $movedOverrides)] + $beforeLinks,
-            ['events' => array_merge([$afterMaster, $created], array_values(array_filter($overridesAfter)))] + ($splitDayId !== null ? $this->labels->eventLinkRows($splitDayId) : []),
-            touches: !empty($created['exdates_json']) ? [[Undo::keyOf('events', ['id' => $masterId]), 'exdates_json^']] : []
-        );
-        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
-        ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
-        $this->splitEventId = (int) $newId;
-        return $newId;
-    }
-
-    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null): void
+    /** $plan: delete following's confirmed plan ({hash, choices}), as for any series change (Series Plans). */
+    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
     {
         $event = $this->get($userId, $id);
-        $this->undo->write($userId, function () use ($userId, $id, $scope, $instanceStart, $event, $authority): void {
+        $this->undo->write($userId, function () use ($userId, $id, $scope, $instanceStart, $event, $authority, $plan): void {
             // As in create(): the credential is locked before the calendar.
             $authority?->assertValid($this->db);
             $calendarId = (int) $event['calendar_id'];
@@ -2315,11 +1911,11 @@ final class Events
             if ((int) $fresh['calendar_id'] !== $calendarId) {
                 throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
             }
-            $this->deleteEventLocked($userId, $id, $scope, $instanceStart, $authority);
+            $this->deleteEventLocked($userId, $id, $scope, $instanceStart, $authority, $plan);
         });
     }
 
-    private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null): void
+    private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
     {
         $event = $this->get($userId, $id);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
@@ -2354,17 +1950,22 @@ final class Events
             self::refuseUnreadableSplit($event);
         }
 
+        // Delete following is a split with no new series (Series\Split);
+        // from the series' first day it is delete all, and on Google it is
+        // refused until 1.5.2.
+        $following = static fn(): array => ['instanceStart' => $instanceStart] + ($plan !== null ? ['plan' => $plan] : []);
         if ($google !== null) {
             match ($scope) {
                 'this' => $this->googleDeleteThis($userId, $google, $event, $instanceStart, $authority),
-                'following' => $this->googleDeleteFollowing($userId, $google, $event, $instanceStart, $authority),
+                'following' => $this->splitPlanned($userId, $event, $following(), Split::DELETE) === false
+                    ? $this->googleDeleteAll($userId, $google, $event, $authority) : null,
                 'all' => $this->googleDeleteAll($userId, $google, $event, $authority),
             };
             return;
         }
         match ($scope) {
             'this' => $this->deleteThis($userId, $event, $instanceStart),
-            'following' => $this->deleteFollowing($userId, $event, $instanceStart),
+            'following' => $this->splitPlanned($userId, $event, $following(), Split::DELETE) === false ? $this->deleteAll($userId, $event) : null,
             'all' => $this->deleteAll($userId, $event),
         };
     }
@@ -2404,41 +2005,6 @@ final class Events
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
-    private function deleteFollowing(int $userId, array $master, ?string $instanceStart): void
-    {
-        $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
-        $masterId = (int) $master['id'];
-        // From the first day it is the whole series (see patchFollowing).
-        if ($instanceUtc === (string) $master['start_utc']) {
-            $this->deleteAll($userId, $master);
-            return;
-        }
-        $instStart = Time::fromDb($instanceUtc);
-        $allDay = (int) $master['all_day'] === 1;
-        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
-        $movedOverrides = $this->db->all(
-            'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
-            [$masterId, $instanceUtc]
-        );
-        $removedLinks = Undo::linksOf($this->db, array_map(static fn($ov) => (int) $ov['id'], $movedOverrides));
-        $this->db->tx(function () use ($masterId, $newRrule, $movedOverrides): void {
-            $this->db->update('events', ['rrule' => $newRrule, 'updated_at' => Time::nowDb()], 'id = ?', [$masterId]);
-            foreach ($movedOverrides as $ov) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $ov['id']]);
-            }
-        });
-        $after = $this->get($userId, $masterId);
-        $this->undo->record(
-            $userId,
-            'event',
-            $masterId,
-            'update',
-            ['events' => array_merge([$master], $movedOverrides)] + $removedLinks,
-            ['events' => [$after]]
-        );
-        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
-    }
-
     private function deleteOverrideInstance(int $userId, array $override): void
     {
         $parent = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $override['recurrence_parent_id']]);
@@ -2472,12 +2038,12 @@ final class Events
      * 'following' splits the series there, 'all' (or no scope) sets the
      * master and every override.
      */
-    public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
+    public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null, ?array $plan = null): void
     {
         $event = $this->get($userId, $id);
         $structural = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
             && in_array($scope, ['this', 'following'], true);
-        $this->undo->write($userId, function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural): void {
+        $this->undo->write($userId, function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural, $plan): void {
             $calendarId = (int) $event['calendar_id'];
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
             if ($structural && $calendar !== null && (string) $calendar['kind'] === 'local') {
@@ -2487,11 +2053,11 @@ final class Events
             if ((int) $fresh['calendar_id'] !== $calendarId) {
                 throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
             }
-            $this->setAttendanceLocked($userId, $id, $attendance, $scope, $instanceStart);
+            $this->setAttendanceLocked($userId, $id, $attendance, $scope, $instanceStart, $plan);
         });
     }
 
-    private function setAttendanceLocked(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
+    private function setAttendanceLocked(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null, ?array $plan = null): void
     {
         $attendance = self::ATTENDANCE_ALIASES[$attendance] ?? $attendance;
         if (!in_array($attendance, self::ATTENDANCE, true)) {
@@ -2506,23 +2072,23 @@ final class Events
             $made = $this->db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $instanceUtc]) === null;
             $targetId = (int) $this->ensureOverride($userId, $event, $instanceUtc)['id'];
         } elseif ($isMaster && $scope === 'following') {
-            // From the first day it is the whole series (see patchFollowing),
-            // edited dates included.
+            // From the first day it is the whole series, edited dates
+            // included. Otherwise a split with no fields (Series\Split), on
+            // its plan, then the answer on the new series: one change, with
+            // one entry (Undo::group), so undoing it makes the series whole
+            // again.
             $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $event);
-            if ($instanceUtc === (string) $event['start_utc']) {
-                $scope = 'all';
-            } else {
-                // The split and the answer are one change, with one entry
-                // (Undo::group), so undoing it makes the series whole again.
-                // Recorded apart, undoing the answer left the split behind.
-                $word = ['going' => 'going', 'interested' => 'interested', 'hidden' => 'hidden'][$attendance] ?? null;
-                $summary = ($word !== null ? "Marked '" . (string) $event['title'] . "' " . $word : "Cleared the answer to '" . (string) $event['title'] . "'")
-                    . ' from ' . $this->journalDay($userId, $event, Time::fromDb($instanceUtc)) . ' on';
-                $this->undo->group(function () use ($userId, $event, $attendance, $instanceStart): void {
-                    $this->answerAttendance($userId, $event, $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]), $attendance, true, 'following', false);
-                }, $summary);
-                return;
-            }
+            $word = ['going' => 'going', 'interested' => 'interested', 'hidden' => 'hidden'][$attendance] ?? null;
+            $summary = ($word !== null ? "Marked '" . (string) $event['title'] . "' " . $word : "Cleared the answer to '" . (string) $event['title'] . "'")
+                . ' from ' . $this->journalDay($userId, $event, Time::fromDb($instanceUtc)) . ' on';
+            $this->undo->group(function () use ($userId, $event, $attendance, $instanceStart, $plan): void {
+                $in = ['instanceStart' => $instanceStart] + ($plan !== null ? ['plan' => $plan] : []);
+                $newId = $this->splitPlanned($userId, $event, $in, Split::ANSWER);
+                $newId === false
+                    ? $this->answerAttendance($userId, $event, (int) $event['id'], $attendance, true, 'all', false)
+                    : $this->answerAttendance($userId, $event, (int) $newId, $attendance, true, 'following', false);
+            }, $summary);
+            return;
         }
         $this->answerAttendance($userId, $event, $targetId, $attendance, $isMaster, $scope, $made);
     }
@@ -3286,44 +2852,6 @@ final class Events
         } catch (\InvalidArgumentException $e) {
             throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
         }
-    }
-
-    private function exdatesFrom(array $master, string $instanceUtc): ?string
-    {
-        $kept = array_values(array_filter($this->decodeExdates($master), static fn(string $ex) => $ex >= $instanceUtc));
-        return $kept === [] ? null : json_encode($kept);
-    }
-
-    /**
-     * The rule for the part of a series from $instanceUtc on: a COUNT keeps
-     * what is left of it (occurrences before the split are the old series').
-     * Dropping it made "10 times" split on the 6th run on for ever (audit,
-     * 0.9.14). Skipped dates still count toward COUNT (RFC 5545), so the
-     * occurrences before the split are counted from the rule alone.
-     */
-    private function followingRrule(array $master, string $instanceUtc): string
-    {
-        $rrule = (string) $master['rrule'];
-        $parts = Recurrence::rruleParts($rrule);
-        if (!isset($parts['COUNT'])) {
-            return $rrule;
-        }
-        // Every generated occurrence that starts before the split, counted
-        // by the expander with no display cap. The split's day was checked
-        // as an occurrence first (instanceKey), so the rule reads and its
-        // walk completes there; a failure here is a defect and propagates,
-        // never a count of 0 that would restart the whole COUNT.
-        $at = Time::fromDb($instanceUtc)->getTimestamp();
-        $before = 0;
-        for ($it = Recurrence::iterator($master); $it->valid() && $it->current()->getTimestamp() < $at; $it->next()) {
-            $before++;
-        }
-        $parts['COUNT'] = (string) max(1, (int) $parts['COUNT'] - $before);
-        $out = [];
-        foreach ($parts as $k => $v) {
-            $out[] = $k . '=' . $v;
-        }
-        return implode(';', $out);
     }
 
     /** Only bounded absolute web URLs are stored as event source links. */

@@ -97,7 +97,7 @@ return static function (Db $db): void {
         $b = $series('Evening walk', '2026-12-01');
         $later($b, '2026-12-01');
         $timeChange = lastEntry($db, $u);
-        $d->events->patch($u, $b, ['scope' => 'following', 'instanceStart' => '2026-12-05T19:00:00+00:00', 'title' => 'Evening walk, longer']);
+        planned($d->events, $u, $b, ['scope' => 'following', 'instanceStart' => '2026-12-05T19:00:00+00:00', 'title' => 'Evening walk, longer']);
         checkEq('undo: a series moved to another time, then split from a date on: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
         $c = $series('Lunch', '2026-12-01');
         $later($c, '2026-12-01');
@@ -115,14 +115,14 @@ return static function (Db $db): void {
     // its own, then the series split later on: fine too.
     scenario('undo: a split and the dates around it', function () use ($db, $d, $u, $series): void {
         $e = $series('Swim', '2026-12-01');
-        $d->events->patch($u, $e, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Swim, later']);
+        planned($d->events, $u, $e, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Swim, later']);
         $split = lastEntry($db, $u);
         $d->events->deleteEvent($u, $e, 'this', '2026-12-02T18:00:00+00:00');
         checkEq('undo: a series split, then an earlier date deleted: the split still undoes', null, refusal(fn() => $d->undo->undoById($u, $split)));
         $f = $series('Read', '2026-12-01');
         $d->events->patch($u, $f, ['scope' => 'this', 'instanceStart' => '2026-12-02T18:00:00+00:00', 'title' => 'Read aloud']);
         $aloud = lastEntry($db, $u);
-        $d->events->patch($u, $f, ['scope' => 'following', 'instanceStart' => '2026-12-07T18:00:00+00:00', 'title' => 'Read, later']);
+        planned($d->events, $u, $f, ['scope' => 'following', 'instanceStart' => '2026-12-07T18:00:00+00:00', 'title' => 'Read, later']);
         checkEq('undo: a date edited on its own, then the series split after it: still undoes', null, refusal(fn() => $d->undo->undoById($u, $aloud)));
 
         // A date skipped, then the series split before it: the skip went
@@ -130,17 +130,20 @@ return static function (Db $db): void {
         $g = $series('Walk', '2026-12-01');
         $d->events->deleteEvent($u, $g, 'this', '2026-12-08T18:00:00+00:00');
         $skipped = lastEntry($db, $u);
-        $d->events->patch($u, $g, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Walk, later']);
+        planned($d->events, $u, $g, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Walk, later']);
         checkEq('undo: a date skipped, then the series split before it: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $skipped)));
 
         // A split carrying a skipped date, then another date skipped on the
-        // old series: the split still undoes (its mark is one way).
+        // old series: since 1.5.1 the split takes the carried skip off the
+        // old series (a skip belongs to the occurrence it removed), so it
+        // changed the old series' skipped dates, and undoing it would put
+        // back the list from before the later skip: stale.
         $h = $series('Jog', '2026-12-01');
         $d->events->deleteEvent($u, $h, 'this', '2026-12-08T18:00:00+00:00');
-        $d->events->patch($u, $h, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Jog, later']);
+        planned($d->events, $u, $h, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Jog, later']);
         $carried = lastEntry($db, $u);
         $d->events->deleteEvent($u, $h, 'this', '2026-12-03T18:00:00+00:00');
-        checkEq('undo: a split carrying a skipped date, then an earlier date skipped: the split still undoes', null, refusal(fn() => $d->undo->undoById($u, $carried)));
+        checkEq('undo: a split carrying a skipped date, then an earlier date skipped: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $carried)));
     });
 
     // A setting turned off from unset is a change, and its undo unsets it.

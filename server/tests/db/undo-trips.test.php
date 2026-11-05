@@ -327,8 +327,10 @@ return static function (Db $db): void {
             checkEq("the series made a trip $how: 400 trip_nested, naming the day and its stop, nothing written", [['400 trip_nested', $words], true], [$got, $state($u) === $before]);
         }
         foreach ([
+            // This and following from the edited day is the part from it planned
+            // as a whole series since 1.5.1, refused as for all events
+            // (series-split.test.php, a trip flag from a day on).
             'for this event, the edited day\'s' => ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00'],
-            'for this and following from the edited day' => ['scope' => 'following', 'instanceStart' => '2027-01-12T18:00:00+00:00'],
         ] as $how => $scope) {
             $u2 = freshUser($db);
             $d2 = domains($db);
@@ -342,7 +344,7 @@ return static function (Db $db): void {
             planned($d2->events, $u2, $c2['series'], $off);
             $d2->undo->undoById($u2, $deleted2);
             $d2->events->patch($u2, $s2, ['isContainer' => true]);
-            [$code] = $refusal(fn() => $d2->events->patch($u2, $c2['series'], ['isContainer' => true] + $scope));
+            [$code] = $refusal(fn() => planned($d2->events, $u2, $c2['series'], ['isContainer' => true] + $scope));
             checkEq("the series made a trip $how: allowed, the edited day's flag as it was, no trip inside a trip", [null, 0, 0], [$code, $flag($day2), $nested($u2)]);
         }
     });

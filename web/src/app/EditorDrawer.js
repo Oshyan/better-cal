@@ -836,13 +836,13 @@ export function EditorDrawer() {
       // What the edit changed, for the toast ("Changed the title and time").
       let words = null;
       try { words = editedWords(opened || JSON.parse(initialSnapRef.current), form); } catch { /* no baseline: the toast says "Updated" */ }
-      // All events in a series: the plan first, in the dialog over the
-      // footer (SeriesDialog.js), unless it says the change is direct.
-      // "This and following" keeps its old path until 1.5.1.
-      if (occ.recurring && scope === 'all' && seriesPlans()) {
+      // All events, or this and following, in a series: the plan first, in
+      // the dialog over the footer (SeriesDialog.js), unless it says the
+      // change is direct (a split never is: it ends the series before it).
+      if (occ.recurring && (scope === 'all' || scope === 'following') && seriesPlans()) {
         const was = opened ? { ...formFields(opened), reminders: opened.reminders } : {};
         openSeriesChange({
-          kind: 'editor', occ, body: fields, quiet: true,
+          kind: 'editor', occ, body: fields, quiet: true, scope,
           fields: fieldLines(fields, was, {
             calendarName: (id) => (state.calendars.find((c) => c.id === Number(id)) || {}).name || '',
             personName: (id) => (state.people.find((p) => p.id === id) || {}).name || '',

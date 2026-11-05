@@ -838,7 +838,8 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     // N3, N5, own time: the lines say where a day goes and what it takes.
     $moved = [smEdited($choir, 3, '2027-03-23 19:00', [], '2027-03-26 19:00', ['date'])];
     // The edit names the occurrence by its key and says where it was put (S'), whichever row it came through.
-    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-27 19:00'));
+    // The same-way reading (adopting the day, preselected here, is in "Adopt" below).
+    $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-27 19:00'), ['day' => 'same']);
     checkEq('from an edited day with its own date, dragged a day: its line says where it goes', 'Tue 23 Mar, moved to Fri 26 Mar: moves to Sat 27 Mar',
         array_column($p['plan']['days'], 'words', 'key')['2027-03-24T02:00:00Z'] ?? null);
     $p = smPlan($choir, $moved, smDrag($choir, '2027-03-23 19:00', '2027-03-26 20:00'));
@@ -904,8 +905,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $m1 = $stored($counted, $p['writes']);
     checkEq('with a COUNT: stored COUNT=7 from 14 Feb, six events shown from 14 Mar to 14 Aug, the bound line as six', ['FREQ=MONTHLY;COUNT=7', 6, '2027-08-14', true],
         [$m1['rrule'], count($shown($m1, 20)), substr((string) ($shown($m1, 20)[5] ?? ''), 0, 10), str_starts_with($p['plan']['bound']['words'], '6 events')]);
-    $p2 = smPlan($m1, [], ['rrule' => 'FREQ=MONTHLY;COUNT=7', 'columns' => ['title' => 'Late shift']]);
-    checkEq('the editor sending the stored COUNT back is no bound change', [true, false], [$p2['plan']['direct'], isset($p2['writes']['master']['rrule'])]);
+    // The API says COUNT=6 (Events::shownRrule), and that is what the editor sends back.
+    $p2 = smPlan($m1, [], ['rrule' => 'FREQ=MONTHLY;COUNT=6', 'columns' => ['title' => 'Late shift']]);
+    checkEq('the editor sending the shown COUNT back is no bound change', [true, false], [$p2['plan']['direct'], isset($p2['writes']['master']['rrule'])]);
     // Auckland, harness seed 4 case 723's shape: weekly, a start on 27 Sep 2026 at 02:15.
     $nz = smSeries('Early swim', 'FREQ=WEEKLY;BYDAY=SA', '2026-09-26 02:15', 60, false, [], 'Pacific/Auckland');
     $p = smPlan($nz, [], smDrag($nz, '2026-10-03 02:15', '2026-10-04 02:15'));
@@ -1178,8 +1180,8 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $f6 = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00', 60, false, [], 'UTC');
     $f6row = smEdited($f6, 2, '2027-02-09 19:00', ['title' => 'Sample concert', 'start_utc' => smAt('2027-02-09 17:00', 'UTC'), 'end_utc' => smAt('2027-02-09 18:00', 'UTC')], null, ['title', 'time']);
     $p = smPlan($f6, [$f6row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample chorus'],
-        'landed' => ['start_utc' => smAt('2027-02-09 18:00', 'UTC'), 'end_utc' => smAt('2027-02-09 19:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC']]);
-    checkEq('F6: an hour later and renamed, acting on the day at its own 17:00: the series at 20:00, the day takes the title and lands at 18:00', [
+        'landed' => ['start_utc' => smAt('2027-02-09 18:00', 'UTC'), 'end_utc' => smAt('2027-02-09 19:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC']], ['time' => 'same']);
+    checkEq('F6, the same way (18:00 adopting its time is the other option): an hour later and renamed, acting on the day at its own 17:00: the series at 20:00, the day takes the title and lands at 18:00', [
         '2027-01-05 20:00:00', 'Sample chorus', '2027-02-09 18:00:00',
     ], [$p['writes']['master']['start_utc'] ?? null, $p['writes']['overrides'][2]['title'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? null]);
     $p = smPlan($f6, [$f6row], ['acted' => smAt('2027-02-09 19:00', 'UTC'), 'columns' => ['title' => 'Sample chorus']]);
@@ -2217,6 +2219,114 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($circle, [], smDrag($circle, '2027-03-15 19:00', '2027-03-30 19:00'));
     checkEq('Reading dates: the 15th dragged to the 30th, the readings part in February 2028: the last shared date and each one\'s first different one',
         ['clamp' => ['2028-01-30', '2028-02-29'], 'skip' => ['2028-01-30', '2028-03-30']], $then($p));
+}
+
+// Adoption: from an edited day, the day's own date, time or length can
+// become the series' own, each a group beside "the same way" (Changing the
+// Series from an Edited Day; prediction cases 12, 13, 14 and 21).
+{
+    $sel = static fn(array $p, string $g): ?string => smGroup($p, $g)['selected'] ?? null;
+    $rule = static fn(array $p): string => (string) $p['plan']['rule']['after'];
+    // Case 13: Choir's Tue 9 Mar moved to Thu 11 Mar, dragged to Fri 12 Mar.
+    $choir = smSeries('Choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00');
+    $rows = [smEdited($choir, 2, '2027-03-09 19:00', [], '2027-03-11 19:00', ['date'])];
+    $drag = smDrag($choir, '2027-03-09 19:00', '2027-03-12 19:00');
+    $drag['landed'] = ['start_utc' => smAt('2027-03-12 19:00'), 'end_utc' => smAt('2027-03-12 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'];
+    $p = smPlan($choir, $rows, $drag);
+    checkEq('Adopt, case 13: Friday becomes its day (preselected, three days is less than a week), weekly on Friday from Fri 8 Jan, next Fri 12, 19, 26 Mar',
+        ['adopt', ['adopt', 'same'], 'FREQ=WEEKLY;BYDAY=FR', '2027-01-08', ['2027-03-12', '2027-03-19', '2027-03-26']],
+        [$sel($p, 'day'), smOptions($p, 'day'), $rule($p), substr((string) $p['plan']['start'], 0, 10), smNext($p, 3)]);
+    checkEq('Adopt, case 13: the day is left with nothing of its own, so it goes back to the series on Fri 12 Mar', [[['rejoins', smAt('2027-03-12 19:00')]], [2]],
+        [array_values(array_map(static fn(array $d): array => [$d['outcome'], str_replace(['T', 'Z'], [' ', ''], (string) $d['newKey'])], array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'acted' || $d['kind'] === 'edited'))), $p['writes']['delete']]);
+    $p = smPlan($choir, $rows, $drag, ['day' => 'same']);
+    checkEq('Adopt, case 13, the same way: weekly on Wednesday, this one on Fri 12 Mar keyed Wed 10 Mar, next Fri 12, Wed 17, Wed 24 Mar',
+        ['FREQ=WEEKLY;BYDAY=WE', smAt('2027-03-10 19:00'), ['2027-03-12', '2027-03-17', '2027-03-24']],
+        [$rule($p), $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, smNext($p, 3)]);
+    // Case 12: Book club's 1 Jan moved to 31 Jan, dragged to 1 Feb: adopting moves every event a whole month.
+    $book = smSeries('Book club', 'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-01-01 19:00');
+    $rows = [smEdited($book, 2, '2027-01-01 19:00', [], '2027-01-31 19:00', ['date'])];
+    $drag = ['acted' => smAt('2027-01-01 19:00'), 'landed' => ['start_utc' => smAt('2027-02-01 19:00'), 'end_utc' => smAt('2027-02-01 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($book, $rows, $drag);
+    checkEq('Adopt, case 12: the same way first (a whole month), monthly on the 2nd', ['same', ['same', 'adopt'], 'FREQ=MONTHLY;BYMONTHDAY=2;COUNT=6'], [$sel($p, 'day'), smOptions($p, 'day'), $rule($p)]);
+    $p = smPlan($book, $rows, $drag, ['day' => 'adopt']);
+    checkEq('Adopt, case 12, adopted: the 1st, every event a month later, 1 Feb to 1 Jul', ['FREQ=MONTHLY;BYMONTHDAY=1;COUNT=6', '2027-02-01', '2027-07-01'],
+        [$rule($p), substr((string) $p['plan']['start'], 0, 10), $p['plan']['bound']['last'] ?? null]);
+    // Case 21: Sunday run's Sun 7 Mar moved to Mon 8 Mar, dragged to Tue 9 Mar, across a week boundary.
+    $run = smSeries('Sunday run', 'FREQ=WEEKLY;BYDAY=SU', '2027-01-03 08:00');
+    $rows = [smEdited($run, 2, '2027-03-07 08:00', [], '2027-03-08 08:00', ['date'])];
+    $drag = ['acted' => smAt('2027-03-07 08:00'), 'landed' => ['start_utc' => smAt('2027-03-09 08:00'), 'end_utc' => smAt('2027-03-09 09:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($run, $rows, $drag);
+    checkEq('Adopt, case 21: Tuesday becomes its day (preselected), from Tue 5 Jan', ['adopt', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05'],
+        [$sel($p, 'day'), $rule($p), substr((string) $p['plan']['start'], 0, 10)]);
+    // Case 14: Choir at 19:00, its 16 Mar at its own 19:30 and 6 Apr at its own 18:00; 16 Mar dragged to 20:00.
+    $rows = [smEdited($choir, 2, '2027-03-16 19:00', [], '2027-03-16 19:30', ['time']), smEdited($choir, 3, '2027-04-06 19:00', [], '2027-04-06 18:00', ['time'])];
+    $drag = ['acted' => smAt('2027-03-16 19:00'), 'landed' => ['start_utc' => smAt('2027-03-16 20:00'), 'end_utc' => smAt('2027-03-16 21:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($choir, $rows, $drag);
+    $time = smGroup($p, 'time');
+    checkEq('Adopt, case 14: 20:00 becomes its time (preselected): every event at 20:00, the half hour the same way moves named, 6 Apr at its own 18:00',
+        ['adopt', ['adopt', 'same'], 1800, '2027-01-05T20:00:00-08:00', smAt('2027-04-06 18:00')],
+        [$time['selected'] ?? null, smOptions($p, 'time'), $time['shift'] ?? null, $p['plan']['rule']['to']['start'], $p['writes']['overrides'][3]['start_utc'] ?? smAt('2027-04-06 18:00')]);
+    checkEq('Adopt, case 14: each option starts at its series\' clock, 20:00 and 19:30', ['2027-01-05T20:00:00-08:00', '2027-01-05T19:30:00-08:00'], array_column($time['options'] ?? [], 'start'));
+    $p = smPlan($choir, $rows, $drag, ['time' => 'same']);
+    checkEq('Adopt, case 14, the same way: every event half an hour later, at 19:30', '2027-01-05T19:30:00-08:00', $p['plan']['rule']['to']['start']);
+    // The date and the time apart: 9 Mar at its own Thu 11 Mar 19:30, dragged to Fri 12 Mar 20:00.
+    $rows = [smEdited($choir, 2, '2027-03-09 19:00', [], '2027-03-11 19:30', ['date', 'time'])];
+    $drag = ['acted' => smAt('2027-03-09 19:00'), 'landed' => ['start_utc' => smAt('2027-03-12 20:00'), 'end_utc' => smAt('2027-03-12 21:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($choir, $rows, $drag, ['day' => 'same', 'time' => 'adopt']);
+    checkEq('Adopt, apart: the same day and its time adopted: weekly on Wednesday at 20:00, this day on Fri 12 Mar keyed Wed 10 Mar',
+        [['day', 'time'], 'FREQ=WEEKLY;BYDAY=WE', '2027-01-06T20:00:00-08:00', smAt('2027-03-10 20:00'), smAt('2027-03-12 20:00')],
+        [array_column($p['plan']['groups'], 'id'), $rule($p), $p['plan']['rule']['to']['start'], $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $p['writes']['overrides'][2]['start_utc'] ?? null]);
+    // Typed values (the editor): a length typed is a value, a resize a delta.
+    $rows = [smEdited($choir, 2, '2027-03-09 19:00', ['end_utc' => smAt('2027-03-09 20:30')], null, ['length'])];
+    $resize = ['acted' => smAt('2027-03-09 19:00'), 'landed' => ['start_utc' => smAt('2027-03-09 19:00'), 'end_utc' => smAt('2027-03-09 21:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($choir, $rows, $resize);
+    checkEq('Adopt, length: a resize of a day at its own 90 minutes to 120 lengthens every event by 30 minutes (preselected), or makes 120 the series\' length',
+        ['same', ['same', 'adopt'], 1800, 7200, smAt('2027-01-05 20:30')], [smGroup($p, 'length')['selected'] ?? null, smOptions($p, 'length'), smGroup($p, 'length')['shift'] ?? null, smGroup($p, 'length')['length'] ?? null, $p['writes']['master']['end_utc'] ?? null]);
+    $p = smPlan($choir, $rows, $resize + ['typed' => true]);
+    checkEq('Adopt, length typed: 2 hours typed is the series\' length (preselected)', ['adopt', smAt('2027-01-05 21:00')], [smGroup($p, 'length')['selected'] ?? null, $p['writes']['master']['end_utc'] ?? null]);
+    // No own value, no adoption: an ordinary day dragged offers neither group.
+    $p = smPlan($choir, [], smDrag($choir, '2027-03-09 19:00', '2027-03-10 20:00'));
+    checkEq('Adopt: an ordinary day has nothing of its own to adopt', [], array_column($p['plan']['groups'], 'id'));
+}
+
+// The yearly wording, one table for the server and the editor (smoke.mjs reads it too).
+{
+    $table = json_decode((string) file_get_contents(__DIR__ . '/fixtures/yearly-words.json'), true);
+    foreach ($table['rows'] as $row) {
+        checkEq('Yearly words: ' . $row['rrule'], $row['server'], Words::rule(Rule::parse($row['rrule'], Cal::dn(2027, 1, 1))));
+    }
+}
+
+// The typed clock: 02:30 typed on the spring change day is a clock, not
+// the instant 03:30 holds (Zones, DST and All-Day Days).
+{
+    $daily = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=SU', '2027-03-07 09:00');
+    $edit = ['acted' => smAt('2027-03-07 09:00'), 'typed' => true, 'landed' => ['start_utc' => smAt('2027-03-14 03:30'), 'end_utc' => smAt('2027-03-14 04:30'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'clock' => [2, 30, 0]]];
+    $p = smPlan($daily, [], $edit);
+    checkEq('Typed clock: the first day typed to 02:30 on 14 Mar is stored from 7 Mar at 02:30, that day a skip; next 03:30 on 14 Mar, then 02:30',
+        [smAt('2027-03-07 02:30'), [smAt('2027-03-07 02:30')], ['2027-03-14T03:30:00-07:00', '2027-03-21T02:30:00-07:00']],
+        [$p['writes']['master']['start_utc'] ?? null, $p['writes']['exdates'], array_slice(array_column($p['plan']['next'], 'start'), 0, 2)]);
+    unset($edit['landed']['clock']);
+    $p = smPlan($daily, [], $edit);
+    checkEq('Typed clock: the instant alone (the 1.5.0 request) is 03:30 every week', '2027-03-21T03:30:00-07:00', array_column($p['plan']['next'], 'start')[1] ?? null);
+
+    // A new series typed to start at 02:30 on 14 Mar 2027, 4 times: created
+    // through the anchor rule edits use, from 7 Mar, that day a skip, COUNT 5.
+    $start = new ReflectionMethod(BetterCal\Domain\Events::class, 'seriesStart');
+    $row = ['rrule' => 'FREQ=WEEKLY;COUNT=4', 'start_utc' => smAt('2027-03-14 03:30'), 'end_utc' => smAt('2027-03-14 04:30'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles'];
+    $made = $start->invoke(null, $row, [2, 30, 0]);
+    checkEq('Typed clock, created: 02:30 typed on 14 Mar is stored from 7 Mar at 02:30, a skip there, COUNT=5', [smAt('2027-03-07 02:30'), 'FREQ=WEEKLY;COUNT=5', json_encode([smAt('2027-03-07 02:30')])],
+        [$made['start_utc'] ?? null, $made['rrule'] ?? null, $made['exdates_json'] ?? null]);
+    checkEq('Typed clock, created from the instant alone: 03:30 is the series\' clock, nothing anchored', [], $start->invoke(null, $row, null));
+    // "Ends after" and every COUNT the API says: the events shown, 4, never the stored 5.
+    $stored = array_merge($row, $made);
+    checkEq('Ends after: the API says COUNT=4 for the anchored series storing COUNT=5', ['FREQ=WEEKLY;COUNT=4', 'FREQ=WEEKLY;COUNT=4'],
+        [BetterCal\Domain\Events::shownRrule($stored), BetterCal\Domain\Events::shownRrule($row + ['exdates_json' => null])]);
+    // A COUNT sent back is the events shown: 4 sent is no bound change, 6 sent stores 7.
+    $p = smPlan($stored, [], ['rrule' => 'FREQ=WEEKLY;COUNT=4', 'columns' => ['title' => 'Sample late practice']]);
+    checkEq('Ends after: the shown COUNT sent back is no change (a direct rename)', true, $p['plan']['direct']);
+    $p = smPlan($stored, [], ['rrule' => 'FREQ=WEEKLY;COUNT=6']);
+    checkEq('Ends after: 6 sent shows 6 events and stores COUNT=7', [6, 'FREQ=WEEKLY;COUNT=7'], [$p['plan']['bound']['events'] ?? null, $p['writes']['master']['rrule'] ?? null]);
 }
 
 if (!empty($GLOBALS['__standalone'])) {

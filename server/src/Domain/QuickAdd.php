@@ -246,6 +246,8 @@ final class QuickAdd
         // range keeps it unless the text says otherwise.
         $draft['when'] = ['date' => (bool) ($fallback['dateFound'] ?? false), 'time' => (bool) ($fallback['timeFound'] ?? false)];
         unset($draft['complete'], $draft['dateFound'], $draft['timeFound'], $draft['rangeFound']); // parser-internal, not part of the draft contract
+        // The other reading of its days, offered as a one-tap correction.
+        $draft['other'] = self::otherReading($draft, $tz);
         if ($modelLimit !== null) {
             $draft['modelLimit'] = $modelLimit;
         }
@@ -481,6 +483,63 @@ final class QuickAdd
         }
 
         return $merged;
+    }
+
+    /**
+     * The other reading of a draft's days (#198, decisions.md, "A day range
+     * with a time range"): the daytime shape can't tell a conference from
+     * a week of sessions, so a draft over several days reads both ways,
+     * and the confirmation offers the one not taken. One rule, both ways
+     * round: one timed stretch over several days, whose end is later in the
+     * day than its start, is also an event each of those days at those
+     * clocks; and a daily series bounded to a few days (COUNT or UNTIL, at
+     * most 31 of them) is also one stretch from its first start to its last
+     * end. Null when the draft has no such days (one day, all-day, any
+     * other rule).
+     *
+     * @return array{reading:string,start:string,end:string,allDay:bool,rrule:?string,days:int}|null
+     */
+    public static function otherReading(array $d, string $tz): ?array
+    {
+        if (($d['intent'] ?? 'event') !== 'event' || empty($d['start']) || empty($d['end']) || !empty($d['allDay'])) {
+            return null;
+        }
+        try {
+            $zone = Time::zone($tz);
+            $s = (new \DateTimeImmutable((string) $d['start']))->setTimezone($zone);
+            $e = (new \DateTimeImmutable((string) $d['end']))->setTimezone($zone);
+        } catch (\Exception) {
+            return null;
+        }
+        $rule = (string) ($d['rrule'] ?? '');
+        $iso = static fn(\DateTimeImmutable $t): string => Time::iso($t);
+        if ($rule === '') {
+            $days = (int) $s->setTime(0, 0)->diff($e->setTime(0, 0))->days + 1;
+            if ($days < 2 || $e->format('H:i') <= $s->format('H:i')) {
+                return null;
+            }
+            $end = $s->setTime((int) $e->format('G'), (int) $e->format('i'));
+            return ['reading' => 'each', 'start' => $iso($s), 'end' => $iso($end), 'allDay' => false, 'rrule' => 'FREQ=DAILY;COUNT=' . $days, 'days' => $days];
+        }
+        $p = RepeatParser::ruleParts($rule);
+        if (($p['FREQ'] ?? '') !== 'DAILY' || (int) ($p['INTERVAL'] ?? 1) !== 1 || count(array_diff(array_keys($p), ['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'])) > 0) {
+            return null;
+        }
+        if (isset($p['COUNT'])) {
+            $days = (int) $p['COUNT'];
+        } elseif (isset($p['UNTIL']) && preg_match('/^(\d{4})(\d{2})(\d{2})(T\d{6}Z?)?$/', (string) $p['UNTIL'], $m) === 1) {
+            $at = isset($m[4]) && $m[4] !== '' ? \DateTimeImmutable::createFromFormat('Ymd His', $m[1] . $m[2] . $m[3] . ' ' . substr($m[4], 1, 6), str_ends_with($m[4], 'Z') ? Time::utc() : $zone) : null;
+            $until = $at instanceof \DateTimeImmutable ? $at->setTimezone($zone) : new \DateTimeImmutable($m[1] . '-' . $m[2] . '-' . $m[3], $zone);
+            $days = (int) $s->setTime(0, 0)->diff($until->setTime(0, 0))->days + 1;
+        } else {
+            return null;
+        }
+        if ($days < 2 || $days > 31) {
+            return null;
+        }
+        $length = max(0, $e->getTimestamp() - $s->getTimestamp());
+        $lastEnd = $s->modify('+' . ($days - 1) . ' days')->modify('+' . $length . ' seconds');
+        return ['reading' => 'one', 'start' => $iso($s), 'end' => $iso($lastEnd), 'allDay' => false, 'rrule' => null, 'days' => $days];
     }
 
     /**

@@ -503,7 +503,7 @@ export function daysSpan(count, first, last, opts = {}) {
  * A group of days with the same outcome (outcomeOf): "10 days that were
  * changed earlier move to Wednesday." then "Nov 3 to Jan 19, 2027".
  */
-export function groupLines({ count, outcome, weekday = null, shift = null, clock = null, first, last }, opts = {}) {
+export function groupLines({ count, outcome, weekday = null, shift = null, clock = null, takes = [], first, last }, opts = {}) {
   const GROUPS = {
     moves: () => (weekday != null ? 'move to ' + WEEKDAY_NAMES[weekday]
       : shift ? 'move ' + (Math.abs(shift) === 1 ? 'a day' : Math.abs(shift) + ' days') + (shift > 0 ? ' later' : ' earlier')
@@ -512,8 +512,16 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
     timed: () => (clock ? 'now start at ' + clock : 'are no longer all-day'),
     stays: () => 'stay where they are',
   };
+  // A group says what happens to all of its days: where they go, by their
+  // outcome, and what every one of them takes from the change (a new
+  // length, the new reminders), as a day's own row does; what only some
+  // take is said on their rows when the group is opened.
   const does = (GROUPS[outcome] || GROUPS.stays)();
-  return { line1: count + ' days that were changed earlier ' + does + '.', ...daysSpan(count, first, last, opts) };
+  const taken = (takes || []).filter((f) => !PLACE_FIELDS.includes(f));
+  const renamed = taken.includes('title') && opts.newTitle ? 'are renamed to ' + quoted(opts.newTitle) : '';
+  const rest = taken.filter((f) => !(renamed && f === 'title'));
+  const also = [renamed, rest.length ? 'take the new ' + fieldList(rest) : ''].filter(Boolean).join(' and ');
+  return { line1: count + ' days that were changed earlier ' + does + (also ? ' and ' + also : '') + '.', ...daysSpan(count, first, last, opts) };
 }
 
 const isOwn = (g) => /^own[A-Z]/.test(g.id || '');
@@ -665,6 +673,7 @@ export function choiceWords(g, ctx = {}) {
         : listed('Keep the same moment', [inZone(x, fromTz), inZone(x, toTz)]))),
     };
   }
+  if (ADOPTION[g.id]) return ADOPTION[g.id](g, o, label, ctx);
   // The readings of the rule.
   const many = (g.options || []).length;
   const newRule = (g.options || []).some((x) => x.id === 'keep' || x.id === 'map');
@@ -676,6 +685,64 @@ export function choiceWords(g, ctx = {}) {
     options: label((x) => readingLabel(x, ctx)),
   };
 }
+
+// A span of time in words: "half an hour", "an hour", "1 hour 30 minutes", "45 minutes".
+export function spanWords(secs) {
+  const m = Math.round(Math.abs(secs) / 60);
+  if (m === 30) return 'half an hour';
+  if (m === 60) return 'an hour';
+  const h = Math.floor(m / 60), r = m % 60;
+  const hours = h ? plural(h, 'hour', 'hours') : '';
+  const mins = r ? plural(r, 'minute', 'minutes') : '';
+  return [hours, mins].filter(Boolean).join(' ') || '0 minutes';
+}
+const daysWords = (n) => (Math.abs(n) === 1 ? 'a day' : Math.abs(n) + ' days') + (n > 0 ? ' later' : ' earlier');
+const lowerRule = (rrule) => lowerFirst(describeRepeat(rrule || '', { ends: false }) || '');
+// The day a rule names, for "Friday becomes its day": a weekday, the nth of the month, or the day.
+function dayNamed(rrule) {
+  const p = ruleParts(rrule || '');
+  if (p.FREQ === 'WEEKLY' && /^[A-Z]{2}$/.test(p.BYDAY || '')) return WEEKDAY_NAMES[DAY_CODE[p.BYDAY]];
+  if (p.FREQ === 'MONTHLY' && /^\d+$/.test(p.BYMONTHDAY || '') && !p.BYDAY) return 'The ' + ordinalDay(Number(p.BYMONTHDAY));
+  return 'Its new day';
+}
+
+/**
+ * The adoptions (series-model.md, Changing the Series from an Edited Day,
+ * and the Dialog section's one line per sentence kind): the day acted on
+ * has its own date, time or length, and its new one can become the
+ * series' own, or every event moves by the same amount. Each option says
+ * the schedule it makes. `g.shift` is the same-way change (days, or
+ * seconds), `g.length` the new length; a day option carries its `rrule`,
+ * a time option its series' `start`.
+ */
+const ADOPTION = {
+  day: (g, o, label) => ({
+    lead: '',
+    reason: 'This day was moved earlier to a date of its own. Should its new day become the series’ day, or every event move the same way?',
+    options: label((x) => (x.id === 'adopt'
+      ? dayNamed(x.rrule) + ' becomes its day: ' + lowerRule(x.rrule)
+      : 'Every event moves ' + daysWords(g.shift || 0) + ': ' + lowerRule(x.rrule))),
+  }),
+  time: (g, o, label, ctx) => {
+    const tz = (ctx.opts || {}).tz || null;
+    const at = (x) => fmtClock(x.start, tz);
+    const adopt = o('adopt');
+    return {
+      lead: '',
+      reason: 'This day has a time of its own. Should its new time become the series’ time, or every event move by the same amount?',
+      options: label((x) => (x.id === 'adopt'
+        ? at(x) + ' becomes its time: every event at ' + at(x)
+        : 'Every event moves ' + spanWords(g.shift || 0) + ((g.shift || 0) > 0 ? ' later' : ' earlier') + ': ' + at(x) + ', this one at ' + at(adopt))),
+    };
+  },
+  length: (g, o, label) => ({
+    lead: '',
+    reason: 'This day has a length of its own. Should its new length become the series’ length, or every event change by the same amount?',
+    options: label((x) => (x.id === 'adopt'
+      ? upperFirst(spanWords(g.length || 0)) + ' becomes its length: every event ' + spanWords(g.length || 0) + ' long'
+      : 'Every event ' + ((g.shift || 0) > 0 ? 'lengthens' : 'shortens') + ' by ' + spanWords(g.shift || 0) + ', this one ' + spanWords(g.length || 0) + ' long')),
+  }),
+};
 
 // A reading's label, from the rule it writes.
 function readingLabel(x, ctx) {

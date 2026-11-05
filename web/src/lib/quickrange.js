@@ -34,3 +34,14 @@ export function buildRange(form, draft, dateTouched) {
   if (e <= s) e = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, eh, em); // overnight
   return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
 }
+
+// The clocks the strip says, for a timed range (api-contract.md, `typed`):
+// the wall clocks typed, with no offset, in this device's zone, so 02:30 on
+// a spring change day reaches the server as that clock and a series starts
+// there through the anchor rule, never at the hour its instant shifted to.
+// Null for an all-day range or an incomplete one.
+export function typedRange(form, range, tz) {
+  if (!range || form.allDay || !form.startTime || !form.endTime) return null;
+  const endDay = dayKeyOf(parseISO(range.end));
+  return { start: form.dateKey + 'T' + form.startTime, end: endDay + 'T' + form.endTime, tz };
+}

@@ -610,6 +610,7 @@ export function EditorDrawer() {
       ? api('/events/' + occNow.eventId, { method: 'PATCH', body: { scope: 'all', instanceStart: occNow.start, preview: true } })
       : api('/events', { method: 'POST', body: {
         preview: true, start, end: toISOWithOffset(fe), allDay: form.allDay, calendarId: Number(form.calendarId),
+        ...(form.allDay ? {} : { typed: { start: form.start, end: form.end, tz: form.tzTouched && form.tz ? form.tz : localTz() } }),
         tzid: form.tzTouched && !form.allDay ? form.tz : (occNow && occNow.tzid) || localTz(),
         rrule: repeatAsk.split('|')[1],
       } });
@@ -767,6 +768,10 @@ export function EditorDrawer() {
         calendarId: Number(fm.calendarId),
         start: toISOWithOffset(fs),
         end: toISOWithOffset(fe),
+        // The clocks typed, in the zone they were typed in (api-contract.md,
+        // `typed`): 02:30 typed on a spring change day is a clock its
+        // instant can't hold, and a typed time is a value, not a delta.
+        ...(fm.allDay ? {} : { typed: { start: fm.start, end: fm.end, tz: fm.tzTouched && fm.tz ? fm.tz : localTz() } }),
         allDay: fm.allDay,
         location: fm.location || null,
         // Picked coordinates persist directly; free-typed text sends null so

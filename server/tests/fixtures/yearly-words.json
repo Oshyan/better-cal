@@ -1,0 +1,11 @@
+{
+  "about": "A yearly rule's day in its months, one wording rule for the server (Series\\Words) and the editor (web/src/lib/repeat.js): the months with the day, each with it, then the listed months without it as skipped. Read by server/tests/series-model.php and web/tests/smoke.mjs. `server` is the server's day-month order; `editor` is the editor's words read in month-day order.",
+  "rows": [
+    { "rrule": "FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=31", "server": "Yearly on 31 March, skipping February", "editor": "Yearly on Mar 31, skipping February" },
+    { "rrule": "FREQ=YEARLY;BYMONTH=1,2,4,5;BYMONTHDAY=31", "server": "Yearly on 31 January and 31 May, skipping February and April", "editor": "Yearly on Jan 31 and May 31, skipping February and April" },
+    { "rrule": "FREQ=YEARLY;BYMONTH=1,2;BYMONTHDAY=30", "server": "Yearly on 30 January, skipping February", "editor": "Yearly on Jan 30, skipping February" },
+    { "rrule": "FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=29", "server": "Yearly on 29 February and 29 March, February only in leap years", "editor": "Yearly on Feb 29 and Mar 29, February only in leap years" },
+    { "rrule": "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29", "server": "Yearly on 29 February, only in leap years", "editor": "Yearly on 29 February, only in leap years" },
+    { "rrule": "FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=15", "server": "Yearly on 15 March and 15 September", "editor": "Yearly on Mar 15 and Sep 15" }
+  ]
+}

@@ -198,7 +198,7 @@ final class Events
     {
         $pluginId = (string) $calendar['plugin_id'];
         $name = $this->plugins()->displayName($pluginId);
-        $extra = array_diff(array_keys($in), ['start', 'end', 'allDay', 'tzid', 'scope', 'instanceStart', 'tagNames', 'reminders']);
+        $extra = array_diff(array_keys($in), ['start', 'end', 'typed', 'allDay', 'tzid', 'scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($extra !== []) {
             throw HttpError::forbidden('plugin_readonly', 'On a ' . $name . ' calendar only the time can be changed here; edit the rest in ' . $name);
         }
@@ -539,7 +539,8 @@ final class Events
     private function parentRrule(int $parentId): ?string
     {
         if (!array_key_exists($parentId, $this->parentRrules)) {
-            $value = $this->db->scalar('SELECT rrule FROM events WHERE id = ?', [$parentId]);
+            $parent = $this->db->one('SELECT rrule, start_utc, end_utc, all_day, tzid, exdates_json FROM events WHERE id = ?', [$parentId]);
+            $value = $parent !== null ? self::shownRrule($parent) : null;
             $this->parentRrules[$parentId] = is_string($value) && $value !== '' ? $value : null;
         }
         return $this->parentRrules[$parentId];
@@ -1036,6 +1037,7 @@ final class Events
         if ($calendar === null) {
             throw HttpError::badRequest('Unknown calendarId');
         }
+        $in = $this->typedTimes($userId, $in, null);
         $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
         if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
@@ -1118,7 +1120,7 @@ final class Events
         ];
         // A series starts on a day it actually repeats on, for every family
         // (series-model.md, Creating a Series).
-        $row = array_merge($row, self::seriesStart($row));
+        $row = array_merge($row, self::seriesStart($row, self::typedClock($in, $tzid, $allDay)));
 
         if ($google !== null) {
             return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in, $authority));
@@ -1254,6 +1256,7 @@ final class Events
             throw HttpError::badRequest('preview is answered without applying the change; send it to the preview path', 'preview_unavailable');
         }
         $event = $this->get($userId, $id);
+        $in = $this->typedTimes($userId, $in, (string) $event['tzid']);
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($editKeys !== [] && !str_starts_with(ActivityContext::get(), 'plugin:')) {
             $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
@@ -2349,7 +2352,7 @@ final class Events
             // clients can always describe the cadence, not just "repeats".
             // A lookup per override row, which is why it is record-only.
             $rrule = !empty($row['rrule'])
-                ? (string) $row['rrule']
+                ? self::shownRrule($row)
                 : (!empty($row['recurrence_parent_id']) ? $this->parentRrule((int) $row['recurrence_parent_id']) : null);
         }
         return [

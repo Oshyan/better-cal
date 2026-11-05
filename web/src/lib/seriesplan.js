@@ -98,8 +98,10 @@ export function chosen(plan, choices = {}) {
   return out;
 }
 
-// The readings of the rule, the bound and the zone are drawn under Change.
-const CHANGE_GROUPS = new Set(['reading', 'bound', 'zone']);
+// The readings of the rule, the adoptions of the day acted on's own date,
+// time and length, the bound and the zone are drawn under Change: each is
+// about the series, not about a day with a row.
+const CHANGE_GROUPS = new Set(['day', 'time', 'length', 'reading', 'bound', 'zone']);
 // The days a group is about: its `day`, or its `days`.
 const namesOf = (g) => (g.day != null ? [g.day] : Array.isArray(g.days) ? g.days : []);
 const push = (map, key, value) => map.set(key, [...(map.get(key) || []), value]);
@@ -246,7 +248,10 @@ export function planView(plan, ctx = {}) {
     const clocks = new Set(sorted.map((d) => (W.saysClock(d) ? W.clockOf(d.after, opts) || null : null)));
     const [shift] = shifts, [weekday] = weekdays, [clock] = clocks;
     const moved = outcome === 'moves' && shifts.size >= 1 && !shifts.has(null) && !shifts.has(0);
+    // What every day of the group takes, said on the group's line.
+    const takes = sorted.reduce((acc, d) => acc.filter((f) => (d.takes || []).includes(f)), [...(sorted[0].takes || [])]);
     const words = W.groupLines({
+      takes,
       count: sorted.length, outcome,
       weekday: moved && weekdays.size === 1 ? weekday : null,
       shift: moved && shifts.size === 1 ? shift : null,

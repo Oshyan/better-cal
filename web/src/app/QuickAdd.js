@@ -36,7 +36,7 @@ import {
 import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
-import { buildRange } from '../lib/quickrange.js';
+import { buildRange, typedRange } from '../lib/quickrange.js';
 import { creationLine, parsedSeries } from '../lib/seriesplan.js';
 import { seriesPlans } from './serieschange.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
@@ -225,6 +225,7 @@ export function QuickAdd() {
     if (!seriesPlans()) return;
     api('/events', { method: 'POST', body: {
       preview: true, start: seriesRange.start, end: seriesRange.end, allDay: form.allDay, rrule: seriesRule,
+      ...(typedRange(form, seriesRange, localTz()) ? { typed: typedRange(form, seriesRange, localTz()) } : {}),
       calendarId: form.calendarId != null ? Number(form.calendarId) : undefined, tzid: localTz(),
     } }).then((res) => {
       if (my === seriesReq.current) setSeriesPlan({ key: seriesKey, plan: res && res.plan });
@@ -370,6 +371,8 @@ export function QuickAdd() {
       calendarId: Number(f.calendarId),
       start: range.start,
       end: range.end,
+      // The clocks typed (a start in a skipped hour is a clock, not its instant).
+      ...(typedRange(f, range, localTz()) ? { typed: typedRange(f, range, localTz()) } : {}),
       allDay: f.allDay,
       rrule: effectiveRrule(f) || null,
       // "alert 30 minutes" in the text (#33): this event's own reminder.

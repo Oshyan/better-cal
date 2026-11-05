@@ -113,6 +113,37 @@ final class Model
     private bool $anchored = false;
     /** @var array<int,array<string,mixed>> */
     private array $rows = [];
+    /**
+     * The deltas measured from where the day acted on shows (the 1.5.0
+     * reading, "the series moves the same way"): [landed day, series clock,
+     * series length]. compute() takes these, or an adoption's, per choice.
+     *
+     * @var array{0:int,1:array{0:int,1:int,2:int},2:int}
+     */
+    private array $sameWay;
+    /** @var array<string,array<string,mixed>> the adoptions this edit offers, by part (self::ADOPTIONS) */
+    private array $adoptable = [];
+    /** The values were typed into the editor: a typed value names the value wanted, a drag a delta. */
+    private bool $typed = false;
+
+    /**
+     * The adoption readings (Changing the Series from an Edited Day): a part
+     * the day acted on owns (its date, time or length) is measured either
+     * from where the day shows, so the series moves the same way and the day
+     * keeps its own value, or from its occurrence, so the series takes the
+     * day's new value as its own and the day's own value is cleared. The
+     * second is the first plus the day's own offset for that part, nothing
+     * else. One row per part: its group, the own field it reads, and which
+     * option is preselected (open decision 1, and Typed Values as Assignment
+     * in the design): `period` adopts when that moves every event by less
+     * than one period of the rule, `always` adopts, `typed` adopts for a
+     * value typed into the editor and moves the same way for a drag.
+     */
+    private const ADOPTIONS = [
+        'day' => ['own' => 'date', 'label' => 'Its day', 'adopt' => 'This becomes the series\' day', 'same' => 'The series moves the same way', 'preselect' => 'period'],
+        'time' => ['own' => 'time', 'label' => 'Its time', 'adopt' => 'This becomes the series\' time', 'same' => 'The series moves the same way', 'preselect' => 'always'],
+        'length' => ['own' => 'length', 'label' => 'Its length', 'adopt' => 'This becomes the series\' length', 'same' => 'The series changes the same way', 'preselect' => 'typed'],
+    ];
 
     // Per computation.
     private array $choices = [];
@@ -217,7 +248,15 @@ final class Model
             $sAll === $lAll => max(0, $this->len0 + $lLen - $sLen),
             default => $this->len0,
         };
-        [$this->landedDn, $this->clock1] = $this->landing(Cal::dnOf($lAt) - Cal::dnOf($sAt), $sAll ? null : self::clockOf($sAt), $lAll ? null : self::clockOf($lAt));
+        // The clock the request put it at: the one typed when the request
+        // says (a typed clock in a skipped hour is that clock, which the
+        // instant can't hold: 02:30 there is the instant of 03:30), else
+        // its instant's in its zone.
+        $this->typed = !empty($edit['typed']);
+        $typedClock = is_array($edit['landed']['clock'] ?? null) ? array_map('intval', array_values($edit['landed']['clock'])) + [0, 0, 0] : null;
+        $lClock = $lAll ? null : ($typedClock ?? self::clockOf($lAt));
+        $sClock = $sAll ? null : self::clockOf($sAt);
+        [$this->landedDn, $this->clock1] = $this->landing(Cal::dnOf($lAt) - Cal::dnOf($sAt), $sClock, $lClock);
 
         // Content fields, tags and people: each measured against the
         // occurrence's own value where it owns the field, the series'
@@ -262,6 +301,30 @@ final class Model
             $this->changed['people'] = ['ids' => array_values((array) $edit['people'])];
         }
 
+        // The adoptions (self::ADOPTIONS): for each part the day acted on
+        // owns and the request changed, the day's own offset for it, read in
+        // the series' own zone and kind (a day of another zone or kind than
+        // the series has no offset to read, and a zone or all-day change is
+        // its own reading). Adopting adds the offset to the same-way delta.
+        $sameFrame = !$this->zoneChanged && $sAll === $lAll && $sAll === $this->allDay0 && ($sAll || Time::normalizeTzid($sTz) === Time::normalizeTzid($this->tz0));
+        if ($actedRow !== null && $sameFrame) {
+            $secs = static fn(array $c): int => $c[0] * 3600 + $c[1] * 60 + $c[2];
+            $offsets = [
+                'day' => [Cal::dnOf($sAt) - $this->actedDn0, Cal::dnOf($lAt) !== Cal::dnOf($sAt)],
+                'time' => $sAll ? [0, false] : [$secs($sClock) - $secs($this->clock0), $lClock !== $sClock],
+                'length' => [$sLen - $this->len0, $lLen !== $sLen],
+            ];
+            foreach (self::ADOPTIONS as $part => $row) {
+                [$offset, $changedPart] = $offsets[$part];
+                if ($offset !== 0 && $changedPart && in_array($row['own'], $actedOwn, true)) {
+                    $this->adoptable[$part] = ['offset' => $offset];
+                }
+            }
+            if ($this->adoptable !== []) {
+                $this->adoptable['_frame'] = ['days' => Cal::dnOf($lAt) - Cal::dnOf($sAt), 'seen' => $sClock, 'landed' => $lClock, 'lLen' => $lLen, 'sLen' => $sLen];
+            }
+        }
+
         // The rule's delta (The Function, 1): an unchanged rule is none, the
         // same pattern with another end a bound, anything else a new rule.
         if (array_key_exists('rrule', $edit)) {
@@ -269,8 +332,12 @@ final class Model
             if ($sent === null || $sent === '') {
                 $this->ruleDelta = 'none';
             } else {
+                // A COUNT sent counts the events the series shows, as every
+                // COUNT the API reads or writes does (Events::shownRrule): the
+                // stored day of an anchored start is the model's, never the
+                // caller's, and the writer adds it back (Calc::storedRule).
                 $rebased = $startDn + ($this->landedDn - $this->actedDn0);
-                $parsed = $this->withoutAnchor(Rule::parse((string) $sent, $startDn));
+                $parsed = Rule::parse((string) $sent, $startDn);
                 if ($this->readable && $parsed->comparable() === $this->r0->comparable()) {
                     if (!$this->sameBound($parsed)) {
                         $this->sentRule = $parsed;
@@ -279,7 +346,7 @@ final class Model
                 } elseif (!$this->readable && strtoupper(trim((string) $sent)) === strtoupper(trim((string) $master['rrule']))) {
                     // The unreadable rule sent back as it is.
                 } else {
-                    $this->sentRule = $this->withoutAnchor(Rule::parse((string) $sent, $rebased));
+                    $this->sentRule = Rule::parse((string) $sent, $rebased);
                     $this->ruleDelta = 'pattern';
                 }
             }
@@ -303,6 +370,7 @@ final class Model
             $this->startTo = $this->landedDn;
             $this->landedDn = $this->actedDn0;
         }
+        $this->sameWay = [$this->landedDn, $this->clock1, $this->len1];
     }
 
     /**
@@ -467,9 +535,14 @@ final class Model
                 // time): its series' start, written in this plan's zone as
                 // rule.to.start is (an option's plan writes its rule.to in
                 // its own series' zone, which a refused one keeps as it was).
-                if ($group['id'] === 'zone') {
+                // An adoption's option names what it makes the series: its
+                // rule (a day) and its start (a time, whose clock it says).
+                if ($group['id'] === 'zone' || $group['id'] === 'time') {
                     $to = (string) $alt['plan']['rule']['to']['start'];
                     $plan['groups'][$gi]['options'][$oi]['start'] = $plan['zone'] !== null && str_contains($to, 'T') ? self::inZoneOut(Time::parseIso($to), $plan['zone']) : $to;
+                }
+                if ($group['id'] === 'day') {
+                    $plan['groups'][$gi]['options'][$oi]['rrule'] = (string) $alt['plan']['rule']['to']['rrule'];
                 }
             }
             // A disabled zone option has no series under it to start.
@@ -909,6 +982,7 @@ final class Model
         $this->refusals = [];
         $this->notes = [];
 
+        [$this->landedDn, $this->clock1, $this->len1] = $this->adopted();
         $whole = $this->capability();
         if ($whole !== null) {
             return $this->refused($whole);
@@ -1018,6 +1092,91 @@ final class Model
             return $this->refused('empty');
         }
         return $out;
+    }
+
+    /**
+     * The landed day, the series' clock and its length under the adoption
+     * choices (self::ADOPTIONS): each part the edit can adopt is a group of
+     * two options, and an adopted part's delta is the same-way delta plus
+     * the day's own offset for it. A new rule gives the day acted on no
+     * special place, and a start moved alone names no day, so neither
+     * offers one.
+     *
+     * @return array{0:int,1:array{0:int,1:int,2:int},2:int}
+     */
+    private function adopted(): array
+    {
+        [$dn, $clock, $len] = $this->sameWay;
+        if ($this->adoptable === [] || $this->newRule() || $this->startTo !== null || !$this->readable) {
+            return [$dn, $clock, $len];
+        }
+        $f = $this->adoptable['_frame'];
+        $take = [];
+        foreach (self::ADOPTIONS as $part => $row) {
+            if (!isset($this->adoptable[$part])) {
+                continue;
+            }
+            $offset = (int) $this->adoptable[$part]['offset'];
+            $adopt = ['id' => 'adopt', 'label' => $row['adopt']];
+            $data = [];
+            if ($part === 'day') {
+                // Adopted, the drag runs from the day's occurrence to where it
+                // was put; refused where that drag is, with that reason.
+                $to = $this->actedDn0 + $f['days'] + $offset;
+                $why = $this->r0->fixedDays ?? (!$this->r0->supported() ? 'dayset' : null);
+                $enabled = $why === null ? array_filter(Readings::forDrag($this->r0, $this->actedDn0, $to, $this->old->startDn), static fn(array $r): bool => empty($r['disabled'])) : [];
+                if ($enabled === []) {
+                    $adopt += ['disabled' => true, 'reason' => self::REASONS[$why ?? 'dayset']];
+                }
+                $data = ['shift' => $f['days'], 'by' => $f['days'] + $offset];
+                $default = $row['preselect'] === 'period' && $this->withinPeriod($this->actedDn0, $to) ? 'adopt' : 'same';
+            } else {
+                $data = $part === 'time'
+                    ? ['shift' => ($f['landed'][0] * 3600 + $f['landed'][1] * 60 + $f['landed'][2]) - ($f['seen'][0] * 3600 + $f['seen'][1] * 60 + $f['seen'][2])]
+                    : ['shift' => $f['lLen'] - $f['sLen'], 'length' => $f['lLen']];
+                $default = $row['preselect'] === 'always' || ($row['preselect'] === 'typed' && $this->typed) ? 'adopt' : 'same';
+            }
+            $options = [$adopt, ['id' => 'same', 'label' => $row['same']]];
+            if ($default === 'same') {
+                $options = array_reverse($options);
+            }
+            $take[$part] = $this->pick($part, $row['label'], $options, $default, $data) === 'adopt' ? $offset : 0;
+        }
+        if (($take['day'] ?? 0) !== 0 || ($take['time'] ?? 0) !== 0) {
+            [$dn, $clock] = $this->landing($f['days'] + ($take['day'] ?? 0), $f['seen'] === null ? null : self::clockMinus($f['seen'], $take['time'] ?? 0), $f['landed']);
+        }
+        return [$dn, $clock, $len + ($take['length'] ?? 0)];
+    }
+
+    /** A clock less some seconds (across midnight it wraps: landing() carries the day). @return array{0:int,1:int,2:int} */
+    private static function clockMinus(array $c, int $secs): array
+    {
+        $s = ((($c[0] * 3600 + $c[1] * 60 + $c[2] - $secs) % 86400) + 86400) % 86400;
+        return [intdiv($s, 3600), intdiv($s % 3600, 60), $s % 60];
+    }
+
+    /**
+     * Whether $to lies within one period of the rule's frequency of $from
+     * (a day, a week, a month or a year either way, exclusive): an adoption
+     * that moves every event by less reads as "this is the day now".
+     */
+    private function withinPeriod(int $from, int $to): bool
+    {
+        $months = match ($this->r0->kind) {
+            'monthly' => 1,
+            'yearly' => 12,
+            default => null,
+        };
+        if ($months === null) {
+            $days = $this->r0->kind === 'weekly' ? 7 : 1;
+            return abs($to - $from) < $days;
+        }
+        $shift = static function (int $dn, int $k): int {
+            [, , $d] = Cal::ymd($dn);
+            [$y, $m] = Cal::fromMi(Cal::miOf($dn) + $k);
+            return Cal::dn($y, $m, min($d, Cal::monthLen($y, $m)));
+        };
+        return $to > $shift($from, -$months) && $to < $shift($from, $months);
     }
 
     /**
@@ -2864,12 +3023,6 @@ final class Model
     private static function clockOf(\DateTimeImmutable $t): array
     {
         return [(int) $t->format('G'), (int) $t->format('i'), (int) $t->format('s')];
-    }
-
-    /** A COUNT sent for an anchored series counts the stored day too, as the stored rule does. */
-    private function withoutAnchor(Rule $rule): Rule
-    {
-        return $this->anchored && $rule->count !== null && $rule->count > 1 ? $rule->withBound($rule->count - 1, null) : $rule;
     }
 
     private function sameBound(Rule $sent): bool

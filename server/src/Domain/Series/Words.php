@@ -154,11 +154,7 @@ final class Words
                 $mem = $r->members[0];
                 $months = self::andList(array_map(static fn(int $m): string => self::MONTHS[$m - 1], $r->months));
                 if ($mem['t'] === 'day' && (int) $mem['n'] > 0) {
-                    $words = $every('year', 'Yearly') . ' on ' . $mem['n'] . ' ' . $months;
-                    if ((int) $mem['n'] === 29 && $r->months === [2]) {
-                        $words .= ', only in leap years';
-                    }
-                    return self::clockBeforeClause($words, $at);
+                    return self::clockBeforeClause($every('year', 'Yearly') . self::yearlyOn($r->months, (int) $mem['n']), $at);
                 }
                 return $every('year', 'Yearly') . ' on ' . self::member($mem) . ' of ' . $months . $at;
         }
@@ -169,12 +165,41 @@ final class Words
     }
 
     /**
+     * A yearly rule's day in its months, the wording web/src/lib/repeat.js's
+     * yearlyOn gives (tested on both sides with the same rules): the months
+     * that have the day, each with it ("on 31 January and 31 March"), then
+     * the listed months that lack it as skipped (", skipping February"),
+     * never a date a month doesn't have ("31 February"). The 29th names
+     * February's leap years: ", only in leap years" when February is its
+     * one month, ", February only in leap years" beside others. A month has
+     * the day when its longest length (February's leap year) reaches it.
+     *
+     * @param list<int> $months
+     */
+    private static function yearlyOn(array $months, int $day): string
+    {
+        $has = array_values(array_filter($months, static fn(int $m): bool => $day <= Cal::monthLen(2000, $m)));
+        $lacks = array_values(array_filter($months, static fn(int $m): bool => $day > Cal::monthLen(2000, $m)));
+        if ($has === []) {
+            return ' on ' . $day . ' ' . self::andList(array_map(static fn(int $m): string => self::MONTHS[$m - 1], $months)) . ', which none of its months has';
+        }
+        $words = ' on ' . self::andList(array_map(static fn(int $m): string => $day . ' ' . self::MONTHS[$m - 1], $has));
+        if ($day === 29 && in_array(2, $has, true)) {
+            $words .= $has === [2] ? ', only in leap years' : ', February only in leap years';
+        }
+        if ($lacks !== []) {
+            $words .= ', skipping ' . self::andList(array_map(static fn(int $m): string => self::MONTHS[$m - 1], $lacks));
+        }
+        return $words;
+    }
+
+    /**
      * The clock right after the day, before a clause about other months:
      * "Monthly on the 31st at 16:00, skipping months without one".
      */
     private static function clockBeforeClause(string $words, string $at): string
     {
-        if ($at === '' || preg_match('/, (skipping|or the last|only in)/', $words, $m, PREG_OFFSET_CAPTURE) !== 1) {
+        if ($at === '' || preg_match('/, (skipping|or the last|only in|February only in)/', $words, $m, PREG_OFFSET_CAPTURE) !== 1) {
             return $words . $at;
         }
         $comma = (int) $m[0][1];

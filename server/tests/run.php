@@ -239,6 +239,18 @@ $tz = 'America/Los_Angeles';
 $now = new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone($tz));
 $p = static fn(string $text): array => FallbackParser::parse($text, $tz, $now);
 
+// The other reading of a draft's days, quick add's one-tap correction (#198):
+// one stretch is also each day, a few nights each day are also one stretch.
+$other = static fn(string $text): ?array => QuickAdd::otherReading($p($text), $tz);
+checkEq('quick add other reading: a workshop Aug 3-7 9am-5pm read as one stretch is also each day, 9am to 5pm, 5 times',
+    ['reading' => 'each', 'start' => '2026-08-03T09:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00', 'allDay' => false, 'rrule' => 'FREQ=DAILY;COUNT=5', 'days' => 5],
+    $other('Workshop Aug 3-7 9am-5pm'));
+checkEq('quick add other reading: a shift Aug 3-7 10pm-6am read each night is also one stretch, Aug 3 10pm to Aug 8 6am',
+    ['reading' => 'one', 'start' => '2026-08-03T22:00:00-07:00', 'end' => '2026-08-08T06:00:00-07:00', 'allDay' => false, 'rrule' => null, 'days' => 5],
+    $other('Shift Aug 3-7 10pm-6am'));
+checkEq('quick add other reading: one day, a weekly rule and an all-day range have none', [null, null, null],
+    [$other('Dinner Aug 3 7pm-9pm'), $other('Piano every Tuesday 4pm'), $other('Lisbon trip Aug 3-7')]);
+
 $d = $p('Dinner with Sam next thursday 7pm at Luna');
 checkEq('fp1 title keeps with-clause and place', 'Dinner with Sam at Luna', $d['title']);
 checkEq('fp1 start', '2026-08-06T19:00:00-07:00', $d['start']);

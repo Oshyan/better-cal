@@ -4140,6 +4140,12 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('repeat: yearly, several months without the day', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2,4,5;BYMONTHDAY=31')), 'Yearly on Jan 31 and May 31, skipping February and April');
   eq('repeat: yearly on the 30th of January and February', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2;BYMONTHDAY=30')), 'Yearly on Jan 30, skipping February');
   eq('repeat: yearly, the 29th in February only in leap years', mdOrder(said('FREQ=YEARLY;BYMONTH=2,3;BYMONTHDAY=29')), 'Yearly on Feb 29 and Mar 29, February only in leap years');
+  // The same wording rule as the server's (server/tests/fixtures/yearly-words.json, read by both suites).
+  {
+    const { readFileSync } = await import('node:fs');
+    const table = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/yearly-words.json', import.meta.url), 'utf8'));
+    for (const row of table.rows) eq('repeat: yearly words, the server\'s table: ' + row.rrule, mdOrder(said(row.rrule)), row.editor);
+  }
   eq('repeat: yearly, months that all have the day', mdOrder(said('FREQ=YEARLY;BYMONTH=1,3;BYMONTHDAY=31')), 'Yearly on Jan 31 and Mar 31');
   eq('repeat: yearly, a day no listed month has gets no words', said('FREQ=YEARLY;BYMONTH=2,4;BYMONTHDAY=31'), null);
   eq('repeat: yearly from the start\'s day, a month without it skipped', mdOrder(said('FREQ=YEARLY;BYMONTH=1,2,3', { start: new Date(2027, 0, 31) })), 'Yearly on Jan 31 and Mar 31, skipping February');

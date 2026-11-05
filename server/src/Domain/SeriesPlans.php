@@ -122,6 +122,7 @@ trait SeriesPlans
     public function previewPatch(int $userId, int $id, array $in): array
     {
         $event = $this->get($userId, $id);
+        $in = $this->typedTimes($userId, $in, (string) $event['tzid']);
         if (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all' && isset($in['calendarId'])) {
             // An edited day moved to another calendar with all events: the
             // series' move, as patchLocked sends it to the master.
@@ -206,6 +207,7 @@ trait SeriesPlans
             throw HttpError::badRequest('preview is for a new repeating event; send its rrule', 'preview_unavailable');
         }
         $rrule = Recurrence::validateRrule((string) $in['rrule']);
+        $in = $this->typedTimes($userId, $in, null);
         $tzid = isset($in['tzid']) ? Time::normalizeTzid((string) $in['tzid']) : $this->userTzid($userId);
         $allDay = filter_var($in['allDay'] ?? false, FILTER_VALIDATE_BOOL);
         if ($allDay) {
@@ -213,7 +215,7 @@ trait SeriesPlans
         }
         [$startUtc, $endUtc] = $this->parseTimes($in, $allDay, $tzid, null);
         $row = ['rrule' => $rrule, 'start_utc' => $startUtc, 'end_utc' => $endUtc, 'all_day' => $allDay ? 1 : 0, 'tzid' => $tzid];
-        $aligned = array_merge($row, self::seriesStart($row));
+        $aligned = array_merge($row, self::seriesStart($row, self::typedClock($in, $tzid, $allDay)));
         return self::creationPlan($aligned, $row, $userId === 0 ? null : $this->userTzid($userId));
     }
 
@@ -266,9 +268,13 @@ trait SeriesPlans
      * asked for, at the clock asked for. A first day in a skipped hour is
      * stored as an edit stores it (Zones, DST and All-Day Days): from the
      * rule's day before, that day a skip and COUNT one higher. A rule
-     * outside the drag table is taken as written.
+     * outside the drag table is taken as written. $typedClock is the clock
+     * the person typed (typedClock()), which a start in a skipped hour has
+     * and its instant can't hold.
+     *
+     * @param array{0:int,1:int,2:int}|null $typedClock
      */
-    private static function seriesStart(array $row): array
+    private static function seriesStart(array $row, ?array $typedClock = null): array
     {
         if (empty($row['rrule'])) {
             return [];
@@ -298,7 +304,7 @@ trait SeriesPlans
             }
             $first = $found ?? $dn;
         }
-        $clock = $allDay ? [0, 0, 0] : [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')];
+        $clock = $allDay ? [0, 0, 0] : ($typedClock ?? [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')]);
         $length = Recurrence::durationSeconds($row);
         try {
             $calc = new Calc($rule, $first, $tz, $allDay, $clock, $length);
@@ -323,6 +329,67 @@ trait SeriesPlans
             $out['exdates_json'] = json_encode(array_values(array_unique($skips)));
         }
         return $out;
+    }
+
+    /**
+     * A request's typed clock (api-contract.md, Writing Events): `typed:
+     * {start, end, tz}` are the wall clocks the person typed, with no
+     * offset, in the zone they were typed in. They are the request's `start`
+     * and `end`, each the instant of its clock by the one wall-clock rule
+     * (Calc::at: a skipped clock is the clock plus the gap, a repeated one
+     * its first instant), and the start's clock is kept beside them as
+     * `typed.clock`, since 02:30 on the spring change day is a clock its
+     * instant (03:30) can't hold. `tz` defaults to the request's `tzid`,
+     * then the event's zone ($eventTz), then the person's.
+     */
+    private function typedTimes(int $userId, array $in, ?string $eventTz): array
+    {
+        if (!is_array($in['typed'] ?? null)) {
+            unset($in['typed']);
+            return $in;
+        }
+        $t = $in['typed'];
+        $wall = '/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/';
+        if (!is_string($t['start'] ?? null) || preg_match($wall, $t['start'], $s) !== 1
+            || (isset($t['end']) && (!is_string($t['end']) || preg_match($wall, $t['end'], $e) !== 1))) {
+            throw HttpError::badRequest('typed.start and typed.end are wall clocks, YYYY-MM-DDTHH:MM[:SS] with no offset', 'invalid_typed');
+        }
+        $tz = Time::normalizeTzid((string) ($t['tz'] ?? $in['tzid'] ?? $eventTz ?? $this->userTzid($userId)));
+        $at = static fn(array $m): \DateTimeImmutable => Calc::at(Cal::dn((int) $m[1], (int) $m[2], (int) $m[3]), [(int) $m[4], (int) $m[5], (int) ($m[6] ?? 0)], $tz);
+        $in['start'] = Time::iso($at($s)->setTimezone(Time::zone($tz)));
+        if (isset($e)) {
+            $in['end'] = Time::iso($at($e)->setTimezone(Time::zone($tz)));
+        }
+        $in['typed'] = ['clock' => [(int) $s[4], (int) $s[5], (int) ($s[6] ?? 0)], 'tz' => $tz];
+        return $in;
+    }
+
+    /** The typed clock of a request for a series in $tz, or null: a clock typed in another zone is its instant there. */
+    private static function typedClock(array $in, string $tz, bool $allDay): ?array
+    {
+        $t = $in['typed'] ?? null;
+        return !$allDay && is_array($t) && is_array($t['clock'] ?? null) && Time::normalizeTzid((string) $t['tz']) === Time::normalizeTzid($tz) ? $t['clock'] : null;
+    }
+
+    /**
+     * The rule as the API says it: its COUNT the events the series shows.
+     * A series whose start is stored one period earlier as a generated skip
+     * (a start in a skipped hour, Zones, DST and All-Day Days) stores one
+     * more, which is the model's, never the person's; every COUNT the API
+     * reads (here) or writes (Model, a sent COUNT) counts the events shown.
+     */
+    public static function shownRrule(array $row): string
+    {
+        $rrule = (string) ($row['rrule'] ?? '');
+        if (!preg_match('/(^|;)COUNT=(\d+)/i', $rrule, $m) || !str_contains((string) ($row['exdates_json'] ?? ''), (string) $row['start_utc'])) {
+            return $rrule;
+        }
+        try {
+            $anchored = Calc::fromRow($row)->anchor !== null;
+        } catch (\Throwable) {
+            return $rrule;
+        }
+        return $anchored ? (string) preg_replace('/(^|;)COUNT=\d+/i', '${1}COUNT=' . max(1, (int) $m[2] - 1), $rrule, 1) : $rrule;
     }
 
     /**
@@ -353,6 +420,15 @@ trait SeriesPlans
                 'all_day' => (int) ($f['all_day'] ?? $occ['all_day']),
                 'tzid' => (string) ($f['tzid'] ?? $occ['tzid']),
             ];
+            // The clock typed (typedTimes): the value a person typed, which
+            // the model reads as one (a typed clock, an assignment).
+            if (is_array($in['typed'] ?? null)) {
+                $edit['typed'] = true;
+                $clock = self::typedClock($in, $edit['landed']['tzid'], $edit['landed']['all_day'] === 1);
+                if ($clock !== null) {
+                    $edit['landed']['clock'] = $clock;
+                }
+            }
         }
         if (array_key_exists('rrule', $in)) {
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];

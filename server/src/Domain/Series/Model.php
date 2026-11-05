@@ -54,6 +54,7 @@ final class Model
         'date' => 'date', 'time' => 'time', 'length' => 'length', 'allDay' => 'all-day setting', 'title' => 'title', 'location' => 'place',
         'description' => 'notes', 'url' => 'link', 'reminders' => 'reminders', 'status' => 'status', 'attendance' => 'answer',
         'tags' => 'tags', 'people' => 'people', 'icon' => 'icon', 'trip' => 'trip',
+        'duplicates' => 'duplicate decision', 'pluginData' => 'plugin data',
     ];
 
     public const REASONS = [
@@ -2590,7 +2591,8 @@ final class Model
 
     /**
      * An edited row's own things: its fields as stored, or by equality when
-     * it has no list yet, and its trip when a link refers to it (OwnFields::own).
+     * it has no list yet, and each kind of thing that refers to it, its trip,
+     * duplicate decisions and plugin data (opts rowLinks, OwnFields::own).
      *
      * @return list<string>
      */
@@ -2599,7 +2601,7 @@ final class Model
         $id = (int) $row['id'];
         $fields = OwnFields::decode($row['override_fields'] ?? null)
             ?? OwnFields::infer($row, $this->master, $this->opts['rowTags'][$id] ?? null, $this->opts['masterTags'] ?? null, $this->opts['rowPeople'][$id] ?? null, $this->opts['masterPeople'] ?? null);
-        return OwnFields::own($fields, !empty($this->opts['rowLinks'][$id]));
+        return OwnFields::own($fields, $this->opts['rowLinks'][$id] ?? []);
     }
 
     /**

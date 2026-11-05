@@ -398,9 +398,10 @@ trait SeriesPlans
             $rowTags[(int) $r['id']] = $labels['tags'][(int) $r['id']] ?? [];
             $rowPeople[(int) $r['id']] = $people[(int) $r['id']] ?? [];
         }
-        // What refers to each edited row (its trip, either direction): the
-        // day's own, so a row named by a link never goes back to the series.
-        $rowLinks = self::linksNaming($this->db, array_map(static fn(array $r): int => (int) $r['id'], $rows));
+        // What refers to each edited row (its trip, either direction, its
+        // duplicate decisions, its plugin data): the day's own, so a row
+        // something names never goes back to the series.
+        $rowLinks = self::referencesNaming($this->db, array_map(static fn(array $r): int => (int) $r['id'], $rows));
         $opts = [
             'google' => $google,
             'today' => Time::nowUtc()->setTimezone(Time::zone($this->userTzid($userId)))->format('Y-m-d'),
@@ -791,26 +792,16 @@ trait SeriesPlans
     }
 
     /**
-     * The event_links naming each row, as a trip or as one of a trip's
-     * stops, by row id.
+     * What refers to each row (its trip links, duplicate decisions and
+     * plugin data), by row id, as "kind:reference" entries: the one reading
+     * of OwnFields::REFERENCES.
      *
      * @param list<int> $ids
      * @return array<int,list<string>>
      */
-    private static function linksNaming(\BetterCal\Infra\Db $db, array $ids): array
+    private static function referencesNaming(\BetterCal\Infra\Db $db, array $ids): array
     {
-        $out = [];
-        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
-            [$in, $params] = \BetterCal\Infra\Db::in($chunk);
-            foreach ($db->all("SELECT id, container_id, event_id FROM event_links WHERE event_id IN $in OR container_id IN $in ORDER BY id", array_merge($params, $params)) as $l) {
-                foreach ([(int) $l['container_id'], (int) $l['event_id']] as $rid) {
-                    if (in_array($rid, $chunk, true)) {
-                        $out[$rid][] = (string) $l['id'];
-                    }
-                }
-            }
-        }
-        return $out;
+        return OwnFields::references($db, $ids);
     }
 
     /**
@@ -865,8 +856,8 @@ trait SeriesPlans
         $id = (int) $row['id'];
         $links = Undo::linksOf($this->db, [$id]);
         // The write rule every writer shares: a row goes only when nothing of
-        // its own is left, its trip included (OwnFields::own).
-        $gone = OwnFields::own($left, !empty(self::linksNaming($this->db, [$id])[$id])) === [];
+        // its own is left, nor anything referring to it (OwnFields::own).
+        $gone = OwnFields::own($left, self::referencesNaming($this->db, [$id])[$id] ?? []) === [];
         $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
             if ($gone) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);

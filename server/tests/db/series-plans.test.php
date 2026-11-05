@@ -883,4 +883,54 @@ return static function (Db $db): void {
             array_column(array_filter($plan['days'] ?? [], static fn(array $x): bool => $x['kind'] === 'edited'), 'outcome'),
         ]);
     });
+
+    // The same rule for the other things that name a row: a duplicate
+    // decision (linked or dismissed) and plugin data keep an edited day's
+    // row as a trip link does, so a rejoin never cascade-deletes them; a
+    // possible pair is the scan's proposal, not a decision, and the day
+    // rejoins.
+    scenario('an edited day a duplicate decision or plugin data names keeps its row and what names it (#202)', function () use ($d, $u, $db, $rows, $home): void {
+        $kinds = [
+            'a dismissed duplicate pair' => ['duplicates', 'dismissed'],
+            'a linked duplicate pair' => ['duplicates', 'linked'],
+            'plugin data' => ['pluginData', null],
+            'a possible duplicate pair' => [null, 'possible'],
+        ];
+        foreach ($kinds as $name => [$kind, $status]) {
+            $series = (int) $d->events->create($u, eventAt($home, 'Sample swim series', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU']))['eventId'];
+            $d->events->patch($u, $series, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'title' => 'Sample swim day']);
+            $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$series]);
+            $copy = (int) $d->events->create($u, eventAt($home, 'Sample swim copy', '2027-01-12'))['eventId'];
+            if ($status !== null) {
+                $db->insert('event_duplicates', ['user_id' => $u, 'event_a' => min($day, $copy), 'event_b' => max($day, $copy), 'status' => $status, 'basis' => 'owner']);
+            } else {
+                $db->insert('event_plugin_data', ['event_id' => $day, 'plugin_id' => 'sample-plugin', 'k' => 'note', 'v_json' => '"kept"']);
+            }
+            $refs = static fn() => [
+                $db->all('SELECT event_a, event_b, status FROM event_duplicates WHERE event_a = ? OR event_b = ?', [$day, $day]),
+                $db->all('SELECT plugin_id, k, v_json FROM event_plugin_data WHERE event_id = ?', [$day]),
+            ];
+            $before = [$rows($series), $refs()];
+            $plan = planned($d->events, $u, $series, ['scope' => 'all', 'title' => 'Renamed sample series'], ['ownTitle' => 'give']);
+            $planned = array_values(array_filter($plan['days'] ?? [], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+            if ($kind === null) {
+                checkEq("$name: given the new title, the day has nothing of its own left and goes back to the series, the proposal with it", [0, 'rejoins', [[], []]], [
+                    (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ?', [$series]), $planned['outcome'] ?? null, $refs(),
+                ]);
+                continue;
+            }
+            checkEq("$name: given the new title, the day keeps its row and stays, listing $kind, and what names it is as it was", [
+                'Renamed sample series', '[]', 'stays', [$kind], $before[1],
+            ], [
+                $db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]),
+                $planned['outcome'] ?? null, $planned['kept'] ?? null, $refs(),
+            ]);
+            $d->undo->undoLatest($u);
+            checkEq("$name: undone, the series and what names its day as before", $before, [$rows($series), $refs()]);
+            $d->events->patch($u, $series, ['scope' => 'this', 'instanceStart' => '2027-01-12T18:00:00+00:00', 'useSeries' => ['title']]);
+            checkEq("$name: \"Use series value\" on the day's only own field keeps the row, nothing of its own listed, what names it kept", [
+                'Sample swim series', '[]', $before[1],
+            ], [$db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]), $refs()]);
+        }
+    });
 };

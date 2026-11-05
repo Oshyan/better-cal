@@ -1518,7 +1518,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $club = smSeries('Sample club', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 18:00', 60, false, [], 'UTC');
     $inTrip = smEdited($club, 2, '2027-01-12 18:00', ['title' => 'Sample club, away'], null, ['title']);
     $rename = ['columns' => ['title' => 'Sample club night']];
-    $p = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['7']]]);
+    $p = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['trip:7']]]);
     $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
     checkEq('F1: a day in a trip given the new title stays, keeps its trip, its row written with no field of its own', [
         [], 'stays', ['trip'], "stays, keeps its trip, takes 'Sample club night'", ['title' => 'Sample club night', 'override_fields' => '[]'],
@@ -1527,13 +1527,26 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
     checkEq('F1: the same day in no trip has nothing of its own left and rejoins', [[2], 'rejoins'], [$p['writes']['delete'], $day['outcome'] ?? null]);
     $kept = smEdited($club, 2, '2027-01-12 18:00', [], null, []);
-    $p = smPlan($club, [$kept], $rename, [], ['rowLinks' => [2 => ['7']]]);
+    $p = smPlan($club, [$kept], $rename, [], ['rowLinks' => [2 => ['trip:7']]]);
     checkEq('F1: a row with no field of its own, kept for its trip, takes a rename and stays: the plan is direct', [true, [], ['title' => 'Sample club night']],
         [$p['plan']['direct'], $p['writes']['delete'], $p['writes']['overrides'][2] ?? null]);
-    checkEq('F1: the trip is never stored in the own list', ['[]', ['title']], [OwnFields::encode(['trip']), OwnFields::own(['title', 'trip'], false)]);
-    $a = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['7']]]);
-    $b = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['8']]]);
+    checkEq('F1: the trip is never stored in the own list', ['[]', ['title']], [OwnFields::encode(['trip']), OwnFields::own(['title', 'trip'], [])]);
+    $a = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['trip:7']]]);
+    $b = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => ['trip:8']]]);
     checkEq('F1: the hash covers the links naming the rows', true, $a['plan']['hash'] !== $b['plan']['hash']);
+    // The same rule for every kind of thing that names a row: a duplicate
+    // decision or plugin data keeps the day as a trip link does.
+    $named = [];
+    foreach (['duplicates:3' => 'duplicates', 'pluginData:sample-plugin/note' => 'pluginData'] as $ref => $kind) {
+        $p = smPlan($club, [$inTrip], $rename, ['ownTitle' => 'give'], ['rowLinks' => [2 => [$ref]]]);
+        $day = array_values(array_filter($p['plan']['days'], static fn(array $x): bool => $x['kind'] === 'edited'))[0] ?? [];
+        $named[$kind] = [$p['writes']['delete'], $day['outcome'] ?? null, $day['kept'] ?? null, $p['writes']['overrides'][2]['override_fields'] ?? null];
+    }
+    checkEq('F1: a day a duplicate decision or plugin data names, given the new title, stays and keeps it, nothing of it stored in the own list', [
+        'duplicates' => [[], 'stays', ['duplicates'], '[]'], 'pluginData' => [[], 'stays', ['pluginData'], '[]'],
+    ], $named);
+    checkEq('F1: own things are the fields, then each kind named, once', ['title', 'trip', 'duplicates', 'pluginData'],
+        OwnFields::own(['title'], ['pluginData:sample-plugin/a', 'trip:7', 'duplicates:3', 'trip:9', 'pluginData:sample-plugin/b']));
 
     // Review R2: a series column (the trip flag) has one value for the whole
     // series; the request names it for every row, so it changes when any row

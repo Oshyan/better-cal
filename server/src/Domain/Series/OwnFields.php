@@ -19,25 +19,68 @@ final class OwnFields
 
     /**
      * What refers to an edited row, and so is the day's own without being a
-     * field it set (series-model.md, Own Fields): its trip, the event_links
-     * naming the row as a trip or as one of a trip's stops. A row exists for
-     * its own fields and for what refers to it, so a day in a trip never
-     * goes back to the series while the link stands. Read from event_links
-     * each time, never stored in override_fields.
+     * field it set (series-model.md, Own Fields), by kind: its trip (the
+     * event_links naming the row as a trip or as one of a trip's stops), its
+     * duplicate decisions (an event_duplicates pair settled as linked or
+     * dismissed; a possible pair is the scan's proposal, which it makes
+     * again, not a decision) and its plugin data (event_plugin_data rows).
+     * A row exists for its own fields and for whatever refers to it, so a
+     * day something names never goes back to the series while it is named,
+     * and a rejoin never cascade-deletes what names the row. Each kind is
+     * [table, the columns naming its reference, the columns naming events,
+     * a condition]; read each time (references), never stored in
+     * override_fields.
      */
-    public const REFERENCES = ['trip'];
+    public const REFERENCES = [
+        'trip' => ['event_links', ['id'], ['container_id', 'event_id'], null],
+        'duplicates' => ['event_duplicates', ['id'], ['event_a', 'event_b'], "status IN ('linked', 'dismissed')"],
+        'pluginData' => ['event_plugin_data', ['plugin_id', 'k'], ['event_id'], null],
+    ];
 
     /**
-     * An edited day's own things: the fields it owns and, when anything
-     * refers to it, its trip. Empty only for a day with nothing of its own,
-     * the one kind of row that goes back to the series.
+     * What refers to each of $ids, every kind above read by the one query:
+     * [id => list of "kind:reference"], in order, so a plan's hash covers
+     * each one.
+     *
+     * @param list<int> $ids
+     * @return array<int,list<string>>
+     */
+    public static function references(\BetterCal\Infra\Db $db, array $ids): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
+            [$in, $params] = \BetterCal\Infra\Db::in($chunk);
+            foreach (self::REFERENCES as $kind => [$table, $refCols, $eventCols, $condition]) {
+                $where = '(' . implode(' OR ', array_map(static fn(string $c): string => "`$c` IN $in", $eventCols)) . ')' . ($condition === null ? '' : " AND $condition");
+                $order = implode(', ', array_map(static fn(string $c): string => "`$c`", $refCols));
+                $rows = $db->all("SELECT * FROM `$table` WHERE $where ORDER BY $order", array_merge(...array_fill(0, count($eventCols), $params)));
+                foreach ($rows as $r) {
+                    $ref = $kind . ':' . implode('/', array_map(static fn(string $c): string => (string) $r[$c], $refCols));
+                    foreach (array_unique(array_map(static fn(string $c): int => (int) $r[$c], $eventCols)) as $rid) {
+                        if (in_array($rid, $chunk, true)) {
+                            $out[$rid][] = $ref;
+                        }
+                    }
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * An edited day's own things: the fields it owns and each kind of thing
+     * that refers to it ($references, "kind:reference" entries as
+     * references() gives them). Empty only for a day with nothing of its
+     * own, the one kind of row that goes back to the series.
      *
      * @param list<string> $fields
+     * @param list<string> $references
      * @return list<string>
      */
-    public static function own(array $fields, bool $inTrip): array
+    public static function own(array $fields, array $references): array
     {
-        return self::normalize($inTrip ? array_merge($fields, ['trip']) : array_diff($fields, self::REFERENCES));
+        $kinds = array_map(static fn(string $r): string => explode(':', $r, 2)[0], $references);
+        return self::normalize(array_merge(array_diff($fields, array_keys(self::REFERENCES)), $kinds));
     }
 
     /** The content fields and the columns each one writes. */
@@ -95,14 +138,14 @@ final class OwnFields
     /** The stored list: the fields alone, since what refers to a row is read from its links. @param list<string> $list */
     public static function encode(array $list): string
     {
-        return json_encode(self::normalize(array_diff($list, self::REFERENCES)));
+        return json_encode(self::normalize(array_diff($list, array_keys(self::REFERENCES))));
     }
 
     /** @param list<mixed> $list @return list<string> */
     public static function normalize(array $list): array
     {
         $out = [];
-        foreach ([...self::FIELDS, ...self::REFERENCES] as $f) {
+        foreach ([...self::FIELDS, ...array_keys(self::REFERENCES)] as $f) {
             if (in_array($f, $list, true)) {
                 $out[] = $f;
             }

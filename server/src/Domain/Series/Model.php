@@ -154,8 +154,8 @@ final class Model
     private array $refusals = [];
     private array $notes = [];
     /**
-     * Under "the same moment", the clock the rows showed on: the old zone
-     * and the series' clock there after any drag ([tz, clock]), where a
+     * Under "the same moment", the clock the rows showed on: the series'
+     * old zone and its clock there after any drag ([tz, clock]), where a
      * row's inherited time is moved; the carry to the new zone relabels
      * days and moves no instant. Null otherwise.
      */
@@ -1064,7 +1064,7 @@ final class Model
                         'start_utc' => Time::toDb($put), 'end_utc' => Time::toDb($put->modify('+' . self::lengthOf($this->landedCols) . ' seconds')),
                     ] + $this->landedCols];
                     $carry = [$oDn, $mDn - $oDn];
-                    $this->shownFrame = [$sTz, $oClock];
+                    $this->shownFrame = [$this->tz0, $oClock];
                 }
             }
         }
@@ -1589,13 +1589,20 @@ final class Model
         $member = fn(int $dn): ?int => $this->r0->supported() ? $this->r0->memberOf($dn) : null;
         $imageOf = fn(int $dn): ?int => $image($dn, $member($dn));
         // The day a row's own values were set against, read so that its
-        // image less it is how far its occurrence moved on the row's own
-        // calendar: under the moment's carry that is the drag's move in the
-        // old zone alone, since the carry relabels days and moves no instant.
-        $fromOf = function (string $key) use ($reading, $member, $imageOf): int {
+        // image less it is how far its occurrence moved on the calendar the
+        // rows showed on: under the moment that is the old zone's, since the
+        // carry relabels days and moves no instant. The image there is the
+        // reading's drag before the carry where it has one, else (a new
+        // rule, whose days are the new zone's) its new key read on that
+        // calendar; never a day of the new zone less one of the old.
+        $fromOf = function (string $key, ?string $newKey = null) use ($reading, $member, $imageOf): int {
             $odn = $this->old->dnOf($key);
             $img = $imageOf($odn);
             $dragged = isset($reading['drag']) ? ($reading['drag'])($odn, $member($odn)) : null;
+            if ($img !== null && $dragged === null && $this->shownFrame !== null && $newKey !== null && $newKey !== '') {
+                $zone = Time::zone($this->shownFrame[0]);
+                $dragged = $odn + Cal::dnOf(Time::fromDb($newKey)->setTimezone($zone)) - Cal::dnOf(Time::fromDb($key)->setTimezone($zone));
+            }
             return $img === null || $dragged === null ? $odn : $odn + ($img - $dragged);
         };
         // Nothing about the expansion changes (the reading moves no day, and
@@ -1972,7 +1979,7 @@ final class Model
         // request just set, so it is no such day.
         $movedRows = [];
         foreach ($placeRows as $id => $img) {
-            if (!isset($asSet[$id]) && in_array('date', $ownNow[$id], true) && $img !== $fromOf((string) $this->rows[$id]['recurrence_instance_utc'])) {
+            if (!isset($asSet[$id]) && in_array('date', $ownNow[$id], true) && $img !== $fromOf((string) $this->rows[$id]['recurrence_instance_utc'], $newKeys[$id] ?? null)) {
                 $movedRows[] = $id;
             }
         }
@@ -1985,7 +1992,7 @@ final class Model
             if ($one !== null) {
                 $oneId = $movedRows[0];
                 foreach (['keep' => false, 'move' => true] as $choice => $move) {
-                    [$s, , $all, $sTz] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $fromOf((string) $one['recurrence_instance_utc']), $clock1, $this->clock0);
+                    [$s, , $all, $sTz] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $fromOf((string) $one['recurrence_instance_utc'], (string) $newKeys[$oneId]), $clock1, $this->clock0);
                     $dates[$choice] = $this->placementOut(self::rowOf($s, $all, $sTz), $this->displayZone());
                 }
             }
@@ -2105,7 +2112,7 @@ final class Model
             $actedRow = isset($asSet[$id]);
             [$start, $end, $allDay, $tz] = $actedRow
                 ? $this->place($asSet[$id], $own, (int) $img, $newKey, false, (int) $img, $clock1, $clock1)
-                : $this->place($row, $own, (int) $img, $newKey, $moveOwnDates, $fromOf((string) $row['recurrence_instance_utc']), $clock1, $this->clock0);
+                : $this->place($row, $own, (int) $img, $newKey, $moveOwnDates, $fromOf((string) $row['recurrence_instance_utc'], $newKey), $clock1, $this->clock0);
             $cols = [];
             $put = function (string $col, mixed $value) use (&$cols, $row): void {
                 if ((string) ($row[$col] ?? '') !== (string) ($value ?? '')) {

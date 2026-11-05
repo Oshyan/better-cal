@@ -990,5 +990,21 @@ return static function (Db $db): void {
         ], [$db->one('SELECT rrule, start_utc, tzid FROM events WHERE id = ?', [$class]), $db->one('SELECT start_utc, end_utc, tzid, override_fields FROM events WHERE id = ?', [$day])]);
         $d->undo->undoLatest($u);
         checkEq('the same moment undone: every row as before', $before, $rows($class));
+
+        // With a new rule: Mondays and Wednesdays at 03:00 Berlin, the old days a day earlier read as a drag. Tue 19 Jan at its
+        // own 09:00 goes with its occurrence to Mon 18 Jan 03:00 Berlin, Sun 17 Jan in Los Angeles, at 09:00 there.
+        $lab = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample moment lab', 'start' => '2027-01-05T18:00:00-08:00', 'end' => '2027-01-05T19:00:00-08:00',
+            'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU,TH'])['eventId'];
+        $d->events->patch($u, $lab, ['scope' => 'this', 'instanceStart' => '2027-01-20T02:00:00Z', 'start' => '2027-01-19T09:00:00-08:00', 'end' => '2027-01-19T10:00:00-08:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$lab]);
+        $before = $rows($lab);
+        planned($d->events, $u, $lab, ['scope' => 'all', 'instanceStart' => '2027-01-13T02:00:00Z', 'tzid' => 'Europe/Berlin', 'start' => '2027-01-12T18:00:00+01:00', 'end' => '2027-01-12T19:00:00+01:00',
+            'rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE'], ['zone' => 'moment', 'reading' => 'map']);
+        checkEq('a new rule at the same moment: the day at its own time is keyed on Mon 18 Jan 03:00 Berlin and shows Sun 17 Jan 09:00 Los Angeles time', [
+            ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE', 'tzid' => 'Europe/Berlin'],
+            ['recurrence_instance_utc' => '2027-01-18 02:00:00', 'start_utc' => '2027-01-17 17:00:00', 'end_utc' => '2027-01-17 18:00:00', 'tzid' => 'America/Los_Angeles'],
+        ], [$db->one('SELECT rrule, tzid FROM events WHERE id = ?', [$lab]), $db->one('SELECT recurrence_instance_utc, start_utc, end_utc, tzid FROM events WHERE id = ?', [$day])]);
+        $d->undo->undoLatest($u);
+        checkEq('the new rule at the same moment undone: every row as before', $before, $rows($lab));
     });
 };

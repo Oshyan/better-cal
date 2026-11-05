@@ -1991,7 +1991,20 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Zone moment, no drag: a day on its own date at the series\' time keeps its instant, Wed 20 Jan 18:00 Los Angeles time, written in Berlin, an hour long', [
         'FREQ=WEEKLY;BYDAY=WE,FR', smAt('2027-01-20 18:00'), smAt('2027-01-20 19:00'), 'Europe/Berlin',
     ], [$moved['writes']['master']['rrule'] ?? null, $w['start_utc'] ?? smAt('2027-01-20 18:00'), $w['end_utc'] ?? smAt('2027-01-20 19:00'), $w['tzid'] ?? 'America/Los_Angeles']);
-    $none = smPlan($class, [], ['acted' => smAt('2027-01-12 18:00'), 'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
+    // With a new rule too: the new rule's days are the new zone's, and a
+    // day at its own time goes with its occurrence to its new key read on
+    // the clock it showed on, never by a Berlin day less a Los Angeles one.
+    // Mondays and Wednesdays (the old days a day earlier, read as a drag)
+    // at 03:00 Berlin: Tue 19 Jan's key goes to Mon 18 Jan 03:00 Berlin,
+    // Sun 17 Jan 18:00 in Los Angeles, so the day is at its own 09:00 on Sun
+    // 17 Jan there (was: Mon 18 Jan, the Berlin day less the Los Angeles one).
+    $ownTime = smEdited($class, 2, '2027-01-19 18:00', [], '2027-01-19 09:00', ['time']);
+    $moved = smPlan($class, [$ownTime], ['acted' => smAt('2027-01-12 18:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE',
+        'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment', 'reading' => 'map']);
+    checkEq('Zone moment with a new rule: a day at its own 09:00 goes with its occurrence, Sun 17 Jan 18:00 in Los Angeles, to 09:00 that day there', [
+        'FREQ=WEEKLY;BYDAY=MO,WE', 'map', smAt('2027-01-18 03:00', 'Europe/Berlin'), smAt('2027-01-17 09:00'),
+    ], [$moved['writes']['master']['rrule'] ?? null, smGroup($moved, 'reading')['selected'] ?? null, $moved['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $moved['writes']['overrides'][2]['start_utc'] ?? null]);
+    $none = smPlan($class, [],['acted' => smAt('2027-01-12 18:00'), 'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
     checkEq('Zone moment, no drag, no edited days: the series alone, Wednesdays and Fridays at 03:00 in Berlin from Wed 6 Jan, nothing else written', [
         'FREQ=WEEKLY;BYDAY=WE,FR', '2027-01-06 02:00:00', 'Europe/Berlin', [],
     ], [$none['writes']['master']['rrule'] ?? null, $none['writes']['master']['start_utc'] ?? $class['start_utc'], $none['writes']['master']['tzid'] ?? null, $none['writes']['overrides'] ?? []]);

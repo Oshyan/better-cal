@@ -51,6 +51,9 @@ trait PlanPreselect
         return array_merge(['follow', 'member', 'pattern'], $fromEnd ? ['fromEnd'] : [], $monthEnd, ['lastFeb', 'leap', 'day', 'nth', 'position', 'same'], $fromEnd ? [] : ['fromEnd']);
     }
 
+    /** A split's changed COUNT (checkFollowing): the remainder its whole count leaves the part, or null. */
+    private ?array $splitCount = null;
+
     /** Each group of the baseline plan against the design's preselection for it. */
     private function checkPreselection(array $plan, array $before, array $edit): void
     {
@@ -113,6 +116,10 @@ trait PlanPreselect
         }
         if ($reading === null || !$reading['enabled']) {
             return [null, $id, ''];
+        }
+        if ($id === 'bound' && $this->splitCount !== null) {
+            // A COUNT changed on a split: the whole count (the number shown was the series'), unless it leaves the part nothing.
+            return [$this->splitCount['remainder'] > 0 ? 'whole' : 'part', 'bound (split count)', 'a changed count on a split is the series\' whole count'];
         }
         if ($id === 'bound') {
             if ($before['shape']->count === null) {

@@ -156,7 +156,8 @@ final class Expect
             $drag->kind = 'drag';
             $enabled = $drag->refusal() === null && $this->s0->supported() && array_filter($drag->designReadings(), static fn(array $r): bool => $r['enabled']) !== [];
             $this->adoptions['day']['disabled'] = !$enabled;
-            $this->adoptions['day']['preselect'] = $this->withinPeriod($this->actedDn, $to) ? 'adopt' : 'same';
+            // A refused option is never the preselection.
+            $this->adoptions['day']['preselect'] = $enabled && $this->withinPeriod($this->actedDn, $to) ? 'adopt' : 'same';
         }
         $chose = $e['adopt'] ?? [];
         if (isset($this->adoptions['time']) && ($chose['time'] ?? null) === 'adopt') {

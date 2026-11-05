@@ -1203,23 +1203,27 @@ trait Invariants
         $part['overrides'] = array_filter($before['overrides'], static fn(array $ov): bool => (string) $ov['recurrence_instance_utc'] >= $split);
         $edit = $sent['edit'];
         $sentChoices = $sent['_choices'] ?? [];
+        $this->splitCount = null;
         if (isset($edit['boundSent']['count'])) {
-            // A changed COUNT on a split (decided 2026-11-05): the series' whole count, the part taking what remains after
-            // the days before the split (preselected), or "N from this day on". The harness reads the whole count where
-            // the commit took the baseline's selection for every group it doesn't name, and leaves the other open.
-            $known = ['reading', 'bound', 'edge', 'outside', 'movedDays', 'zone', 'day', 'time', 'length'];
-            $other = false;
-            foreach ($this->splitBaseline['groups'] ?? [] as $g) {
-                if (!in_array($g['id'], $known, true) && !str_starts_with($g['id'], 'own') && ($sentChoices[$g['id']] ?? $g['selected']) !== $g['selected']) {
-                    $other = true;
-                }
+            // A changed COUNT on a split (api-contract, This and following; decisions.md, a split's sent rule): the bound
+            // group offers `whole`, the series' whole count with the part taking what is left after the events before the
+            // split (preselected; refused `empty` when the old part already reaches it), and `part`, that many from the
+            // split day. The part's expectation follows the option committed.
+            $n = (int) $edit['boundSent']['count'];
+            $remainder = $n - (count($before['raw']) - count($part['raw']));
+            $this->splitCount = ['remainder' => $remainder];
+            $group = array_column($sent['_plan']['groups'] ?? [], null, 'id')['bound'] ?? null;
+            $opts = array_column($group['options'] ?? [], null, 'id');
+            $this->check('c-groups', $group !== null && isset($opts['whole'], $opts['part']), 'a COUNT changed on a split offers the whole count or that many from the split day', ['group' => $group === null ? null : array_keys($opts)]);
+            if (isset($opts['whole'])) {
+                $this->check('c-readings', empty($opts['whole']['disabled']) === ($remainder > 0), $remainder > 0 ? 'the whole count is refused though the part keeps events under it' : 'the whole count is offered though the old part already reaches it', ['remainder' => $remainder, 'option' => $opts['whole']]);
             }
-            $remainder = (int) $edit['boundSent']['count'] - (count($before['raw']) - count($part['raw']));
-            if ($other || $remainder <= 0) {
-                $this->unoracled[] = $other ? 'a changed COUNT on a split read as N from the day on' : 'a changed COUNT on a split that leaves the part nothing';
-                return;
+            $chose = $sentChoices['bound'] ?? ($remainder > 0 ? 'whole' : 'part');
+            if ($chose === 'whole' && $remainder <= 0) {
+                return; // refused, checked above
             }
-            $edit['boundSent'] = ['count' => $remainder];
+            $edit['boundSent'] = ['count' => $chose === 'whole' ? $remainder : $n];
+            unset($sentChoices['bound']);
         }
         // The day acted on stays the edited row at the split key, its move measured from where it shows.
         $x = (new Expect($part, $edit + ['adopt' => $sentChoices]))->withZone($sentChoices['zone'] ?? null);
@@ -1261,6 +1265,9 @@ trait Invariants
         $choices['bound'] = $countFirst || $part['shape']->count === null ? 'count' : 'end';
         // The commit named an option for every group of the part's plan (api-contract, This and following).
         $choices = array_merge($choices, array_intersect_key($sentChoices, array_flip(['reading', 'bound', 'edge', 'outside', 'movedDays', 'zone', 'day', 'time', 'length'])));
+        if ($this->splitCount !== null) {
+            unset($choices['bound']); // the sent count, as the option committed reads it
+        }
         $out = $x->outcome($reading, $choices);
         if (!empty($out['empty'])) {
             return;

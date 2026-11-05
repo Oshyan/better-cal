@@ -99,7 +99,9 @@ trait PlanUntouched
                 $fates[$id] = $k !== null && self::ownAfter($id, $before, $edit, $choices, ['key' => $k] + $placedAt) === [] ? 'goes' : 'stays';
                 continue;
             }
-            $fates[$id] = ($r['acted'] && $ctx['special']) || ($choices['outside'] ?? 'keep') === 'keep' ? 'leaves' : 'goes';
+            // The day acted on leaves on its own where the plan's kept count cuts it off; cut off by a bound the
+            // person sent it is a day outside like any other (decisions.md), kept or deleted by the outside choice.
+            $fates[$id] = ($r['acted'] && $ctx['special'] && $edit['boundSent'] === null) || ($choices['outside'] ?? 'keep') === 'keep' ? 'leaves' : 'goes';
         }
         return $fates;
     }

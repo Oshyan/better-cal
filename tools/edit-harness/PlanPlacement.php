@@ -284,7 +284,7 @@ trait PlanPlacement
             return;
         }
         $chosen = $choices['zone'] ?? $group['selected'] ?? 'clock';
-        $x0 = new Expect($before, $edit);
+        $x0 = new Expect($before, $edit + ['adopt' => $choices]);
         foreach ($group['options'] ?? [] as $o) {
             $id = (string) ($o['id'] ?? '');
             if (!empty($o['disabled'])) {

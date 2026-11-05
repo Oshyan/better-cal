@@ -34,26 +34,16 @@ require_once __DIR__ . '/Driver.php';
  */
 final class Known
 {
-    /** The paths that stay on their 1.4.6 code until 1.5.1, decided from what the case sent (scope, and a day after the first). */
-    public const PATHS = ['following', 'deleteFollowing', 'attendFollowing'];
-
-    public const FOLLOWING = 'following-1.4.6 (the 1.4.6 following or delete-following path)';
+    /**
+     * The paths on code a release is still moving, decided from what the case sent: none since 1.5.1 put "this and
+     * following", delete following and an answer from a day on on the model.
+     */
+    public const PATHS = [];
 
     public static function cause(array $failure): ?string
     {
-        $d = $failure['detail'] ?? [];
-        $following = in_array($failure['path'] ?? '', self::PATHS, true);
-        // The following path writing a part several times a day as all-day (MINUTELY, HOURLY on a date), which the evaluator
-        // doesn't read: the legacy path until 1.5.1, under its cause.
-        $subDaily = preg_match('/(^|;)FREQ=(HOURLY|MINUTELY|SECONDLY)(;|$)/', strtoupper((string) ($d['rrule'] ?? ''))) === 1;
-        if ($following && $subDaily && $failure['invariant'] === 'c-occurrences' && ($d['why'] ?? '') === 'a clock part on an all-day series') {
-            return self::FOLLOWING;
-        }
-        // Any other failure of a check of the plan's data or the occurrences is never excused (README, Known Code Paths).
-        if (in_array($failure['invariant'], Driver::NEW_CHECKS, true)) {
-            return null;
-        }
-        return $following ? self::FOLLOWING : null;
+        unset($failure);
+        return null;
     }
 }
 
@@ -260,7 +250,11 @@ final class Runner
             $spec = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             $spec['fixed'] = basename($file, '.json');
             // A sequence (sequences/*.json) is its steps, one after another on one series (README, The Sequences).
-            $result = isset($spec['steps']) ? $driver->runSequence($spec) : $driver->run($spec, new Rng(0));
+            $result = match (true) {
+                isset($spec['steps']) => $driver->runSequence($spec),
+                !empty($spec['googleSplit']) => $driver->runGoogleSplit($spec),
+                default => $driver->run($spec, new Rng(0)),
+            };
             $this->count($result);
         }
     }

@@ -385,12 +385,13 @@ trait Invariants
             $this->checkUnsupported($before, $after, $sent, $choices, $plan);
             return;
         }
-        $x0 = new Expect($before, $edit);
+        $x0 = new Expect($before, $edit + ['adopt' => $choices]);
         $x = $x0->withZone($choices['zone'] ?? null);
         $groups = [];
         foreach ($plan['groups'] ?? [] as $g) {
             $groups[$g['id']] = $g;
         }
+        $this->checkAdoptions($x0, $groups);
         // A commit of every option (Driver::everyOption) is no preselected commit; its baseline is checked by PlanPreselect.
         $pre = $this->trial === null && (!empty($this->spec['preselected']['edit']) || $sent['kind'] === 'following');
         $this->check('c-groups', isset($groups['zone']) === $x0->zoneGroup, $x0->zoneGroup ? 'a zone change alone offers the same clock or the same moment' : 'a zone reading is offered where the design has none', ['offered' => isset($groups['zone'])]);
@@ -404,6 +405,11 @@ trait Invariants
         }
         // Readings: the plan's against the design's.
         $readings = $x->readings();
+        if ($x->momentOpen) {
+            // A monthly or yearly drag carried across a day boundary by the same moment: the harness leaves it open.
+            $this->unoracled[] = 'the same moment carrying a monthly or yearly drag across a day boundary';
+            return;
+        }
         $byId = [];
         foreach ($readings as $r) {
             $byId[$r['id']] = $r;
@@ -513,6 +519,39 @@ trait Invariants
             }
         }
         $this->check('c-split', $new === null, 'a whole-series edit makes no new series', []);
+    }
+
+    /**
+     * The adoptions (Changing the Series from an Edited Day): a group for each part the day acted on owns and the change
+     * moved, its "adopt" refused where the drag adopting the day would be; a whole series' and a split's part alike.
+     */
+    private function checkAdoptions(Expect $x0, array $groups): void
+    {
+        foreach (['day', 'time', 'length'] as $part) {
+            $want = $x0->adoptions[$part] ?? null;
+            $this->check('c-groups', isset($groups[$part]) === ($want !== null), $want !== null ? "the day acted on owns its $part and the change moved it, and no adoption group is offered" : "an adoption group for its $part is offered where the design has none", ['offered' => isset($groups[$part]), 'design' => $want]);
+            if ($want !== null && isset($groups[$part])) {
+                $adopt = array_values(array_filter($groups[$part]['options'] ?? [], static fn(array $o): bool => ($o['id'] ?? '') === 'adopt'))[0] ?? null;
+                $this->check('c-readings', $adopt !== null && empty($adopt['disabled']) === !$want['disabled'], $want['disabled'] ? "adopting the $part is offered though the drag that adopts it is refused" : "adopting the $part is refused though the design allows it", ['option' => $adopt]);
+            }
+        }
+    }
+
+    /** The UNTIL the old part of a split ends with: its last raw occurrence before the split, as an instant or, all-day, a date. */
+    private function splitUntil(string $inv, array $before, array $after, string $split): void
+    {
+        $last = null;
+        foreach ($before['raw'] as $o) {
+            if ($o['key'] < $split) {
+                $last = $o;
+            }
+        }
+        if ($last === null || $after['row']['deleted_at'] !== null) {
+            return;
+        }
+        $u = Shape::parts((string) $after['row']['rrule'])['UNTIL'] ?? null;
+        $want = $before['allDay'] ? str_replace('-', '', Days::date($last['dn'])) : Clock::parse($last['key'])->format('Ymd\THis\Z');
+        $this->check($inv, $u === $want, 'the old part ends with an UNTIL at its last occurrence before the split', ['until' => $u, 'expected' => $want]);
     }
 
     /**
@@ -697,6 +736,13 @@ trait Invariants
                 continue;
             }
             if ($r['acted']) {
+                // Outside by the plan's own kept count, or kept by the outside choice under a bound the person sent: on
+                // its own where it was put. Deleted only under a sent bound with "delete" (decisions.md, a bound the person
+                // sent that cuts off the day acted on).
+                if ($edit['boundSent'] !== null && $outside === 'delete') {
+                    $alone = array_filter($standalone, static fn(array $s): bool => (int) $s['id'] === $id);
+                    $this->check($inv . '-outside', $ov1 === null && $alone === [], 'the day acted on, cut off by a bound the person sent, is deleted with the other days outside', ['row' => $id]);
+                }
                 continue;
             }
             $own = null;
@@ -824,6 +870,18 @@ trait Invariants
         }
         $len = $ownLen || $ownAllDay ? $len0 : $x->len1;
         $zone = $x->tz1;
+        if ($x->moment !== null && !$allDay && ((int) $ov0['all_day'] === 1) === false && ($ownDate || $ownTime)) {
+            // The same moment keeps every row's own instant (decisions.md, the zone "same moment" choice): its day and
+            // clock are read in the old frame, the drag in it measured there, and the instant they name is the row's;
+            // a day of its own time keeps its clock in its own zone, one of its own date the series' clock there.
+            $carry = (int) $x->moment['carry'];
+            $zoneM = $ownTime ? (string) $ov0['tzid'] : $before['tz'];
+            $clockM = $ownTime ? Clock::secsOf(Clock::local((string) $ov0['start_utc'], (string) $ov0['tzid'])) : $x->momentOldClock;
+            $dayM = $ownDate ? ($move ? $shownDn + ($img - $carry - $oldKeyDn) : $shownDn) : $img - $carry;
+            $was = Clock::local((string) $ov0['start_utc'], $zoneM);
+            $start = Clock::dnOf($was) === $dayM && Clock::secsOf($was) === $clockM ? (string) $ov0['start_utc'] : Clock::db(Clock::at($dayM, $clockM, $zoneM));
+            return [$start, $len, $allDay, $ownTime ? $zoneM : $x->tz1, $kindChanged];
+        }
         if ($allDay) {
             $zone = 'UTC';
             $start = Days::date($day) . ' 00:00:00';
@@ -1047,7 +1105,7 @@ trait Invariants
         if ($st['shape']->cap === 'unreadable') {
             return;
         }
-        $x = (new Expect($st, $edit))->withZone($choices['zone'] ?? null);
+        $x = (new Expect($st, $edit + ['adopt' => $choices]))->withZone($choices['zone'] ?? null);
         if ($x->refusal() !== null) {
             return;
         }
@@ -1103,6 +1161,7 @@ trait Invariants
         }
         $late = array_values(array_filter($after['exdates'], static fn(string $k): bool => $k >= $split));
         $this->check('5-old', $late === [], 'the old part keeps no skipped day from the split on', ['skips' => $late]);
+        $this->splitUntil('5-old', $before, $after, $split);
         $this->check('5-new', $new !== null, 'a split makes a new series from the day acted on', []);
         if ($new === null || $before['shape']->cap === 'unreadable') {
             return;
@@ -1119,14 +1178,32 @@ trait Invariants
         $part['exdates'] = array_values(array_filter($before['exdates'], static fn(string $k): bool => $k >= $split));
         $part['overrides'] = array_filter($before['overrides'], static fn(array $ov): bool => (string) $ov['recurrence_instance_utc'] >= $split);
         $edit = $sent['edit'];
+        $sentChoices = $sent['_choices'] ?? [];
         // The day acted on stays the edited row at the split key, its move measured from where it shows.
-        $x = new Expect($part, $edit);
+        $x = (new Expect($part, $edit + ['adopt' => $sentChoices]))->withZone($sentChoices['zone'] ?? null);
         if ($x->refusal() !== null) {
             $this->fail('5-new', 'the design refuses this drag of the part from the split, and it was applied', []);
             return;
         }
         $readings = $x->readings();
+        if ($x->momentOpen) {
+            $this->unoracled[] = 'the same moment carrying a monthly or yearly drag across a day boundary';
+            return;
+        }
+        // The part's plan: its adoption groups, and (on the case's own commit) its preselections against the design's.
+        $partGroups = array_column($sent['_plan']['groups'] ?? [], null, 'id');
+        $this->checkAdoptions(new Expect($part, $edit), $partGroups);
+        if ($this->trial === null && $this->splitBaseline !== null) {
+            $this->checkPreselection($this->splitBaseline, $part, $edit);
+        }
         $pre = Expect::preselected($readings);
+        if (isset($sentChoices['reading'])) {
+            $pre = in_array($sentChoices['reading'], array_column($readings, 'id'), true) ? $sentChoices['reading'] : null;
+            if ($pre === null) {
+                $this->unoracled[] = 'reading ' . $sentChoices['reading'] . ' of the part from the split';
+                return;
+            }
+        }
         if ($pre === null) {
             $this->fail('5-new', 'the design refuses every reading of the part from the split, and it was applied', []);
             return;
@@ -1140,6 +1217,8 @@ trait Invariants
         $choices = ['reading' => $pre];
         $countFirst = $part['shape']->count !== null && ($x->outcome($reading, ['bound' => 'count'])['actedInside'] ?? false);
         $choices['bound'] = $countFirst || $part['shape']->count === null ? 'count' : 'end';
+        // The commit named an option for every group of the part's plan (api-contract, This and following).
+        $choices = array_merge($choices, array_intersect_key($sentChoices, array_flip(['reading', 'bound', 'edge', 'outside', 'movedDays', 'zone', 'day', 'time', 'length'])));
         $out = $x->outcome($reading, $choices);
         if (!empty($out['empty'])) {
             return;
@@ -1231,6 +1310,7 @@ trait Invariants
         }
         $late = array_values(array_filter($after['exdates'], static fn(string $k): bool => $k >= $split));
         $this->check('7-following', $late === [], 'skipped days from the split on are dropped', ['skips' => $late]);
+        $this->splitUntil('7-following', $before, $after, $split);
     }
 
     /** An answer for all events (or from a day on): the series and every edited day answer; nothing else changes. */

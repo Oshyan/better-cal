@@ -22,7 +22,7 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:']);
 if (isset($opts['help'])) {
     echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]\n";
     exit(0);
@@ -74,6 +74,10 @@ require $root . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
 if ($everyOption !== null) {
     BetterCal\EditHarness\Driver::$everyOption = $everyOption;
+}
+// --typed F: the share of drawn cases whose timed edits send the wall clocks typed (README, The Delta Vector).
+if (isset($opts['typed'])) {
+    BetterCal\EditHarness\Driver::$typed = (float) $opts['typed'];
 }
 
 use BetterCal\EditHarness\Known;
@@ -329,6 +333,9 @@ try {
     }
     if ($everyOption !== null) {
         array_push($pass, '--every-option', (string) $everyOption);
+    }
+    if (isset($opts['typed'])) {
+        array_push($pass, '--typed', (string) $opts['typed']);
     }
     if ($fixed !== null) {
         $pass[] = $opts['fixed'] === false ? '--fixed' : '--fixed=' . $opts['fixed'];

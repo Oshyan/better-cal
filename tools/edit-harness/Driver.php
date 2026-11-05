@@ -27,8 +27,14 @@ final class Driver
      */
     public static float $everyOption = 0.1;
 
+    /** The share of drawn cases whose timed edits send the wall clocks typed (`typed`, README, The Delta Vector); --typed sets it. */
+    public static float $typed = 0.3;
+
     /** The option combination being committed in isolated state (everyOption), or null for the case's own commit. */
     private ?string $trial = null;
+
+    /** A split's baseline plan (applyEdit), for the part's preselections in checkFollowing. */
+    private ?array $splitBaseline = null;
 
     /** Whether the case's trip flag could nest a trip (run): where a trip_nested refusal is right, for every option too. */
     private bool $nests = false;
@@ -69,6 +75,7 @@ final class Driver
         $this->unoracled = [];
         $this->runs = [];
         $this->wide0 = null;
+        $this->splitBaseline = null;
         $this->spec = $spec;
         $this->rng = $r;
         $this->controls = $this->makeControls();
@@ -94,6 +101,8 @@ final class Driver
         // Every option committed from the same baseline: always for a fixed case, for a share of the drawn ones chosen
         // from the case's seed and number alone (so the drawn space is untouched), kept in the spec so a shrink replays it.
         $this->spec['everyOption'] ??= isset($this->spec['fixed']) || crc32('every:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$everyOption * 10000);
+        // The wall clocks typed, for a share of the drawn cases (a fixed case names it), by seed and number alone.
+        $this->spec['typed'] ??= !isset($this->spec['fixed']) && crc32('typed:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$typed * 10000);
         $spec = $this->spec;
         // A fixed case may act on the stored start itself (a rule the expander can't read has no occurrences to pick from).
         $atStart = !empty($spec['actedStart']);
@@ -153,7 +162,9 @@ final class Driver
                 $stopAts[] = (int) $ex['at'];
             }
         }
-        $nests = $v['trip'] && $stopAts !== [] && ($scope === 'all' || $path === 'following@first');
+        // From a day on, the flag reaches the part from that day: refused where a stop is keyed in it (api-contract, This and following).
+        $partStops = array_filter($stopAts, static fn(int $at): bool => $at >= (int) ($spec['acted'] ?? 0));
+        $nests = $v['trip'] && (($scope === 'all' || $path === 'following@first') ? $stopAts !== [] : ($scope === 'following' && $partStops !== []));
         $this->nests = $nests;
         if ($scope === 'all') {
             $this->wide0 = $this->wide();
@@ -672,7 +683,8 @@ final class Driver
                 if ($from['allDay']) {
                     // Made timed: a clock and a zone of its own.
                     $tz = $v['toZone'];
-                    $at = Clock::at($dS + $v['date'], $v['toClock'], $tz);
+                    $c = $v['toClock'];
+                    $at = Clock::at($dS + $v['date'], $c, $tz);
                     $l = 3600; // an hour, as the editor gives a day made timed
                     $in += ['allDay' => false, 'tzid' => $tz];
                 } else {
@@ -685,7 +697,8 @@ final class Driver
                     // A clock that happens twice names two instants: the
                     // request puts the day on the second in half the cases
                     // (by the case's number), so both directions are drawn.
-                    foreach ([3600, 1800] as $back) {
+                    // A clock typed names its first instant (api-contract, typed), so a typed request never names the second.
+                    foreach (!empty($this->spec['typed']) && $v['zone'] === null ? [] : [3600, 1800] as $back) {
                         $later = Clock::plus($at, $back);
                         if ($later->format('Y-m-d H:i:s') === $at->format('Y-m-d H:i:s') && crc32('fold:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 2 === 1) {
                             $at = $later;
@@ -700,6 +713,16 @@ final class Driver
                 $end = Clock::plus($at, $l);
                 $in += ['start' => Clock::iso($at), 'end' => Clock::iso($end)];
                 $sent = ['start' => Clock::db($at), 'end' => Clock::db($end), 'allDay' => false, 'tz' => isset($in['tzid']) ? $tz : null];
+                // The wall clocks typed (api-contract, typed), for the case's share: the start read from the clock typed,
+                // its instant by the one wall-clock rule (a skipped clock the clock plus the gap, a repeated one its first
+                // instant), and the series' clock the clock typed. Not with a zone change, whose two promises read the
+                // wall clock on the old zone's clock.
+                if (!empty($this->spec['typed']) && $v['zone'] === null) {
+                    $wall = static fn(int $dn, int $secs): string => sprintf('%sT%02d:%02d:%02d', Days::date($dn), intdiv($secs, 3600), intdiv($secs % 3600, 60), $secs % 60);
+                    $endLocal = Clock::local(Clock::db($end), $tz);
+                    $in['typed'] = ['start' => $wall($dS + $v['date'], $c), 'end' => $wall(Clock::dnOf($endLocal), Clock::secsOf($endLocal)), 'tz' => $tz];
+                    $sent += ['typed' => true, 'typedClock' => $c, 'typedTz' => $tz];
+                }
             }
         }
         foreach ($v['fields'] as $f => $value) {
@@ -852,43 +875,17 @@ final class Driver
                 $this->events->deleteEvent($this->userId, $id, 'this', $inst);
                 return ['kind' => 'deleteThis', 'instanceStart' => $inst];
             case 'deleteFollowing':
-                $this->events->deleteEvent($this->userId, $id, 'following', $inst);
-                return ['kind' => 'deleteFollowing', 'instanceStart' => $inst];
+            case 'attendFollowing':
+                return $this->splitCommit($v['scope'], $id, $inst, $s0, $slot, $replay);
             case 'attendAll':
                 $this->events->setAttendance($this->userId, $id, 'going', 'all', $inst);
                 return ['kind' => 'attendAll', 'instanceStart' => $inst];
-            case 'attendFollowing':
-                $this->events->setAttendance($this->userId, $id, 'going', 'following', $inst);
-                return ['kind' => 'attendFollowing', 'instanceStart' => $inst];
         }
         [$target, $in, $edit] = $this->body($st, $acted, $v, $v['scope']);
         $this->spec['request'][$slot] = ['target' => $target === $id ? 'master' : 'edited day', 'body' => $in];
-        if ($v['scope'] === 'following') {
-            $plan = null;
-            if ($acted['key'] === (string) $st['row']['start_utc'] && $slot === 'edit' && !$replay) {
-                // From the first day it is the whole series with its preselected options: the plan it takes.
-                try {
-                    $plan = $this->events->previewPatch($this->userId, $target, ['scope' => 'all'] + $in);
-                } catch (HttpError) {
-                    $plan = null;
-                }
-            }
-            try {
-                $this->events->patch($this->userId, $target, $in);
-            } catch (HttpError $e) {
-                if ($e->errorCode === 'series_refused') {
-                    $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
-                    return null;
-                }
-                throw $e;
-            }
-            $choices = [];
-            foreach ($plan['groups'] ?? [] as $g) {
-                $choices[$g['id']] = $g['selected'];
-            }
-            return ['kind' => 'following', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $choices, 'target' => $target];
-        }
-        // Whole series: preview, pick one option per group, commit with the hash.
+        // Whole series and "this and following" alike (api-contract, This and following): preview, pick one option per
+        // group, commit with the hash. A split's plan is the part's plan with its split; from the series' first day it
+        // is the whole series' (scope all), checked as one.
         $choices = $this->spec['choices'][$slot] ?? null;
         $preview = fn(array $c): array => $this->events->previewPatch($this->userId, $target, $in + ['plan' => ['choices' => $c]]);
         $plan = $preview($choices ?? []);
@@ -918,6 +915,7 @@ final class Driver
         foreach ($plan['groups'] as $g) {
             $choices[$g['id']] ??= $g['selected'];
         }
+        $whole = ($plan['scope'] ?? 'all') === 'all';
         if ($slot === 'edit' && !$replay) {
             try {
                 $baseline ??= $preview([]);
@@ -925,8 +923,13 @@ final class Driver
                 $baseline = null;
             }
             if ($baseline !== null) {
-                // Each group's preselection against the design's table (PlanPreselect), on the baseline plan.
-                $this->checkPreselection($baseline, $st, $edit);
+                // Each group's preselection against the design's table (PlanPreselect), on the baseline plan; a split's
+                // against the part's, in checkFollowing, which plans it as a series of its own.
+                if ($whole) {
+                    $this->checkPreselection($baseline, $st, $edit);
+                } else {
+                    $this->splitBaseline = $baseline;
+                }
                 if (!empty($this->spec['everyOption'])) {
                     $this->everyOption($target, $in, $baseline, $choices, $st, $acted, $v, $s0, $edit);
                 }
@@ -935,13 +938,13 @@ final class Driver
         if (!$replay) {
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
-        $google = $slot === 'edit' && !$replay && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
+        $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
         try {
             $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         } catch (HttpError $e) {
             if ($e->errorCode === 'series_refused') {
                 $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
-                if ($slot === 'edit') {
+                if ($slot === 'edit' && $whole) {
                     $this->checkRefused($st, $edit, $plan, $choices, $e);
                     // A refusal of the whole change has its own shape (no zone, acted or bound.from), its start in the old zone.
                     if (array_filter($plan['refusals'] ?? [], static fn(array $r): bool => !isset($r['group'])) !== []) {
@@ -952,7 +955,45 @@ final class Driver
             }
             throw $e;
         }
-        return ['kind' => 'all', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $choices, '_google' => $google, 'target' => $target];
+        return ['kind' => $v['scope'] === 'following' ? 'following' : 'all', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $choices, '_google' => $google, 'target' => $target];
+    }
+
+    /**
+     * Delete following and an answer from a day on (api-contract, This and following): the split's preview (DELETE or
+     * attendance with preview), then the commit with its hash and an option for every group; from the series' first day
+     * the preview is `whole` and `direct`, delete all or the answer for all events, committed with no plan. A preview
+     * writes nothing; a refusal (series_refused) writes nothing.
+     */
+    private function splitCommit(string $scope, int $id, string $inst, array $s0, string $slot, bool $replay): ?array
+    {
+        $delete = $scope === 'deleteFollowing';
+        $named = $this->spec['choices'][$slot] ?? [];
+        $plan = $delete
+            ? $this->events->previewDelete($this->userId, $id, 'following', $inst, $named)
+            : $this->events->previewAttendance($this->userId, $id, 'going', 'following', $inst, $named);
+        if (!$replay) {
+            $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
+        }
+        $choices = $named;
+        foreach ($plan['groups'] ?? [] as $g) {
+            $choices[$g['id']] ??= $g['selected'];
+        }
+        $this->spec['choices'][$slot] = $choices;
+        $commit = !empty($plan['whole']) ? null : ['hash' => $plan['hash'], 'choices' => $choices];
+        try {
+            if ($delete) {
+                $this->events->deleteEvent($this->userId, $id, 'following', $inst, null, $commit);
+            } else {
+                $this->events->setAttendance($this->userId, $id, 'going', 'following', $inst, $commit);
+            }
+        } catch (HttpError $e) {
+            if ($e->errorCode !== 'series_refused') {
+                throw $e;
+            }
+            $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
+            return null;
+        }
+        return ['kind' => $scope, 'instanceStart' => $inst, '_plan' => $plan, '_choices' => $choices];
     }
 
     /** What a Google calendar would be offered for the same edit, from the same rows (invariant i). */
@@ -1069,10 +1110,12 @@ final class Driver
             if ($e->errorCode !== 'series_refused') {
                 throw $e;
             }
-            $this->checkRefused($st, $edit, $plan, $c, $e);
+            if (($plan['scope'] ?? 'all') === 'all') {
+                $this->checkRefused($st, $edit, $plan, $c, $e);
+            }
             return;
         }
-        $sent = ['kind' => 'all', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $c, '_google' => null, 'target' => $target];
+        $sent = ['kind' => $v['scope'] === 'following' ? 'following' : 'all', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $c, '_google' => null, 'target' => $target];
         $this->checkTripRule('b-trip');
         $this->checkEdit($st, $this->state($st['id']), $acted, $v, $sent, $s0);
         $this->checkTripLinks($st, $acted, $sent);

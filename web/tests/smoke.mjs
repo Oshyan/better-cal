@@ -3228,6 +3228,157 @@ console.log('--- chronological ordering across timezone offsets ---');
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
 }
 
+// --- Drawn: a folder's Only in the sidebar (#187), Apply to after a calendar change (#186) ---
+{
+  // The real Sidebar and EditorDrawer, drawn by Preact into a stand-in DOM
+  // (fakedom.mjs), clicked and changed as a person would, and read back.
+  const { fakeDom } = await import('./fakedom.mjs');
+  const dom = fakeDom();
+  dom.install();
+  const { options } = await import('../vendor/preact.module.js');
+  const savedRaf = options.requestAnimationFrame, savedDebounce = options.debounceRendering;
+  options.requestAnimationFrame = (cb) => setImmediate(cb);
+  options.debounceRendering = (cb) => Promise.resolve().then(cb);
+  const settle = async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r)); };
+  const { render, html } = await import('../vendor/index.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const saved = { calendars: st.calendars, folders: st.folders, editor: st.editor, collapsedFolders: st.collapsedFolders };
+  const realFetch = globalThis.fetch;
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  // A pretend server that keeps each calendar's checkbox.
+  const sample = [
+    { id: 1, name: 'Sample lessons', folderIds: [10], visible: true },
+    { id: 2, name: 'Sample recitals', folderIds: [10], visible: false },
+    { id: 3, name: 'Sample league', folderIds: [11], visible: true },
+    { id: 4, name: 'Sample feed', folderIds: [], visible: false },
+    { id: 5, name: 'Sample errands', folderIds: [], visible: true },
+  ];
+  const server = new Map(sample.map((c) => [c.id, c.visible]));
+  const folderList = [{ id: 10, name: 'Sample music', sort: 'manual', calendarIds: [1, 2] }, { id: 11, name: 'Sample sport', sort: 'manual', calendarIds: [3] }];
+  const listed = () => sample.map((c) => ({ ...c, visible: server.get(c.id) }));
+  globalThis.fetch = async (url, o = {}) => {
+    const u = new URL(String(url), 'http://app.test');
+    const m = u.pathname.match(/\/calendars\/(\d+)$/);
+    if (m && o.method === 'PATCH') {
+      const body = JSON.parse(o.body);
+      if ('visible' in body) server.set(Number(m[1]), body.visible);
+      return json({ id: Number(m[1]), visible: server.get(Number(m[1])) });
+    }
+    if (u.pathname.endsWith('/calendars')) return json({ calendars: listed(), folders: folderList, tags: [] });
+    return json({ events: [], people: [], plugins: [], count: 0 });
+  };
+  const on = () => st.calendars.filter((c) => c.visible).map((c) => c.id);
+  const onServer = () => [...server].filter(([, v]) => v).map(([id]) => id);
+
+  put({ calendars: listed(), folders: folderList, collapsedFolders: {} });
+  const { Sidebar } = await import('../src/app/Sidebar.js');
+  const bar = dom.doc.createElement('div');
+  dom.doc.body.appendChild(bar);
+  render(html`<${Sidebar} open=${true} collapsed=${false} onClose=${() => {}} />`, bar);
+  await settle();
+  const only = (name) => bar.querySelectorAll('.bc-cal-solo').find((b) => b.getAttribute('aria-label') === 'Show only ' + name || b.getAttribute('aria-label') === 'Stop showing only ' + name);
+  const banner = () => bar.querySelectorAll('.bc-solo-banner').map((b) => b.querySelector('strong').textContent);
+  const showAll = () => bar.querySelector('.bc-solo-banner').querySelector('.bc-link-btn');
+  const before = on();
+  eq('folder Only: the set before, for the checks below (one in the folder off, one outside it off)', before, [1, 3, 5]);
+
+  only('Sample music').click();
+  await settle();
+  eq("folder Only: exactly the folder's calendars are on, here and on the server", [on(), onServer()], [[1, 2], [1, 2]]);
+  eq('folder Only: its button is pressed and the banner names the folder', [only('Sample music').getAttribute('aria-pressed'), banner()], ['true', ['Sample music']]);
+  only('Sample music').click();
+  await settle();
+  eq('folder Only, clicked again: exactly the set from before, the one in the folder that was off off again', [on(), onServer(), banner()], [before, before, []]);
+
+  only('Sample music').click();
+  await settle();
+  showAll().click();
+  await settle();
+  eq("folder Only, the banner's Show all: exactly the set from before", [on(), onServer(), banner()], [before, before, []]);
+
+  only('Sample music').click();
+  await settle();
+  only('Sample sport').click();
+  await settle();
+  eq("folder Only on a second folder while in the first: just the second folder's", [on(), banner()], [[3], ['Sample sport']]);
+  showAll().click();
+  await settle();
+  eq("folder Only, then another: Show all restores the set from before either, not the first folder's", [on(), onServer()], [before, before]);
+  only('Sample music').click();
+  await settle();
+  only('Sample sport').click();
+  await settle();
+  only('Sample sport').click();
+  await settle();
+  eq("folder Only, then another, clicked again: the set from before either", [on(), onServer()], [before, before]);
+  render(null, bar);
+  await settle();
+
+  // The editor of a repeating event, and of one that doesn't repeat.
+  put({ calendars: [
+    { id: 21, name: 'Sample home', editable: true, visible: true, kind: 'local' },
+    { id: 22, name: 'Sample work', editable: true, visible: true, kind: 'local' },
+    { id: 23, name: 'Sample club', editable: true, visible: true, kind: 'local' },
+  ], folders: [] });
+  const { EditorDrawer } = await import('../src/app/EditorDrawer.js');
+  const ed = dom.doc.createElement('div');
+  dom.doc.body.appendChild(ed);
+  const repeating = { instanceId: '61@1', eventId: 61, calendarId: 21, title: 'Sample class', recurring: true, rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-03-09T19:00:00-08:00', end: '2027-03-09T20:00:00-08:00', allDay: false, full: true };
+  const open = async (occ) => {
+    render(null, ed);
+    put({ editor: null });
+    await settle();
+    put({ editor: { mode: 'edit', occ } });
+    render(html`<${EditorDrawer} />`, ed);
+    await settle();
+  };
+  const applyTo = () => ed.querySelector('select[aria-label="Apply to"]');
+  const scope = () => applyTo().value;
+  const lit = () => applyTo().parentNode.classes.includes('bc-nl-applied');
+  const pick = async (select, value) => { select.value = String(value); select.dispatch('change'); await settle(); };
+  const calendar = (v) => pick(ed.querySelector('select.bc-calselect'), v);
+
+  await open(repeating);
+  eq('Apply to: a repeating event opens on This event only', scope(), 'this');
+  await calendar(22);
+  eq('Apply to: another calendar for a repeating event switches it to All events in series, lit', [scope(), lit()], ['all', true]);
+  await calendar(21);
+  eq('Apply to: its own calendar again puts This event only back', scope(), 'this');
+
+  await open(repeating);
+  await pick(applyTo(), 'all');
+  await calendar(22);
+  await calendar(21);
+  eq('Apply to: All events picked by hand stays through a calendar change and back', scope(), 'all');
+  const following = applyTo().querySelectorAll('option').some((o) => o.getAttribute('value') === 'following' && !o.hasAttribute('disabled'));
+  if (following) {
+    await open(repeating);
+    await pick(applyTo(), 'following');
+    await calendar(22);
+    await calendar(21);
+    eq('Apply to: This and following picked by hand stays through a calendar change and back', scope(), 'following');
+  }
+  await open(repeating);
+  await calendar(22);
+  await pick(applyTo(), 'this');
+  await calendar(21);
+  eq('Apply to: This event only picked by hand after the switch stays when its own calendar is picked again', scope(), 'this');
+
+  await open({ ...repeating, instanceId: '62@1', eventId: 62, recurring: false, rrule: null });
+  await calendar(22);
+  eq("Apply to: an event that doesn't repeat has none, and its calendar changes alone", [applyTo(), ed.querySelector('select.bc-calselect').value], [null, '22']);
+
+  render(null, ed);
+  put({ editor: null });
+  await settle();
+  globalThis.fetch = realFetch;
+  put(saved);
+  if (savedRaf === undefined) delete options.requestAnimationFrame; else options.requestAnimationFrame = savedRaf;
+  if (savedDebounce === undefined) delete options.debounceRendering; else options.debounceRendering = savedDebounce;
+  dom.restore();
+}
+
 // --- Resizing in a repeated hour (#185) ---
 {
   const { wallInstant, dayKeyOf: keyOf } = await import('../src/lib/dates.js');

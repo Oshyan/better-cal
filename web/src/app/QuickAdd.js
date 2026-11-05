@@ -36,7 +36,7 @@ import {
 import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
-import { buildRange, typedRange, otherReadingWords, takeOtherReading } from '../lib/quickrange.js';
+import { buildRange, typedRange, otherReadingWords, takeOtherReading, assumedFor } from '../lib/quickrange.js';
 import { creationLine, parsedSeries } from '../lib/seriesplan.js';
 import { seriesPlans } from './serieschange.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
@@ -513,6 +513,12 @@ export function QuickAdd() {
   const localCals = state.calendars.filter((c) => c.editable);
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
   const range = buildRange(form, draft, touchedRef.current.has('dateKey'));
+  // What the parse assumed, beside the field it set while that field still
+  // shows the parse's value; the field itself is the correction.
+  const touchedAny = (...ks) => ks.some((k) => touchedRef.current.has(k));
+  const parsedEvent = draft && draft.intent !== 'availability';
+  const assumedDate = parsedEvent && !touchedAny('dateKey') ? assumedFor(draft, 'date') : '';
+  const assumedTime = parsedEvent && !form.allDay && !touchedAny('startTime', 'endTime', 'allDay') ? assumedFor(draft, 'time') : '';
   const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
     !!range && form.calendarId != null);
   // An event that ends on a later day says so: the strip shows one date.
@@ -579,6 +585,7 @@ export function QuickAdd() {
           <span class="bc-qa-label">Date</span>
           <${DateField} value=${form.dateKey} ariaLabel="Date" onChange=${(k) => touch('dateKey', k)} />
         </div>
+        ${assumedDate && html`<span class="bc-qa-assumed">${assumedDate}</span>`}
         ${!form.allDay && html`<div class=${'bc-qa-field bc-qa-time' + flashCls('startTime')}>
           <span class="bc-qa-label">Start</span>
           <${TimeField}
@@ -593,7 +600,8 @@ export function QuickAdd() {
             display=${clockLabel(hhmmToMins(form.endTime))} options=${endOptions} currentIdx=${Math.max(0, Math.min(95, Math.round(span / 15) - 1))}
             ariaLabel="End time" onText=${onEndText} onOption=${(m) => touch('endTime', minsToHHMM(m))}
           />
-        </div>`}
+        </div>
+        ${assumedTime && html`<span class="bc-qa-assumed">${assumedTime}</span>`}`}
         <label class=${'bc-check bc-qa-allday' + flashCls('allDay')}>
           <input
             type="checkbox" checked=${form.allDay}

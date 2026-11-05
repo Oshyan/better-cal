@@ -5800,7 +5800,7 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
 {
   const { planView } = await import('../src/lib/seriesplan.js');
   const { EDIT_FIELDS, changedFields, fieldLines, editField } = await import('../src/lib/editfields.js');
-  const { typedRange, otherReadingWords, takeOtherReading } = await import('../src/lib/quickrange.js');
+  const { typedRange, otherReadingWords, takeOtherReading, assumedFor } = await import('../src/lib/quickrange.js');
   const nx = (s) => ({ start: s, allDay: false });
   const base = {
     hash: 'a1', zone: 'America/Los_Angeles', rule: { from: { rrule: 'FREQ=WEEKLY;BYDAY=TU', tz: 'America/Los_Angeles', allDay: false }, to: { rrule: 'FREQ=WEEKLY;BYDAY=FR', start: '2027-01-08T19:00:00-08:00', tz: 'America/Los_Angeles', allDay: false } },
@@ -5843,6 +5843,21 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
   eq('quick add other reading: the chip says what a tap does', [otherReadingWords(stretch.other).label, otherReadingWords(each.other).label], ['Each day instead', 'One event instead']);
   eq('quick add other reading: taken, the days are each day\'s, and taken again, the stretch', [each.rrule, each.end, takeOtherReading(each).rrule, takeOtherReading(each).end],
     ['FREQ=DAILY;COUNT=5', '2026-08-03T17:00:00-07:00', null, '2026-08-07T17:00:00-07:00']);
+  // What the parse assumed, beside the field it set: the server's entries
+  // for "Standup 9-5pm" typed after 9 in the morning and "Dentist Mar 3 2pm"
+  // in November, and none for "Lunch tomorrow noon".
+  const standup = { assumed: [
+    { field: 'date', kind: 'rolled', typed: null, date: '2026-11-06', start: '09:00' },
+    { field: 'time', kind: 'clock', typed: '9-5pm', start: '09:00', end: '17:00' }] };
+  const dentist = { assumed: [{ field: 'date', kind: 'year', typed: 'Mar 3', date: '2027-03-03' }] };
+  eq('quick add assumed: the date and time say what was assumed, in the user\'s clock',
+    [assumedFor(standup, 'date'), assumedFor(standup, 'time'), assumedFor(dentist, 'date'), assumedFor(dentist, 'time')].map((w) => w.replace(/\s/g, ' ')),
+    ['tomorrow, as 9:00 AM has passed today', '9-5pm read as 9:00 AM to 5:00 PM', 'Mar 3 read as next year', '']);
+  eq('quick add assumed: nothing shown when nothing was assumed, or from a server without the list',
+    [assumedFor({ assumed: [] }, 'date'), assumedFor({ assumed: [] }, 'time'), assumedFor({}, 'time'), assumedFor(null, 'date')], ['', '', '', '']);
+  eq('quick add assumed: no time read at all says so, once',
+    assumedFor({ assumed: [{ field: 'time', kind: 'default', typed: null, start: '11:00', end: null }, { field: 'time', kind: 'default', typed: null, start: '11:00', end: null }] }, 'time'),
+    'no time read, so the next hour');
 }
 
 console.log('--- the editor\'s save: only what changed (#199), all events through the plan (1.5.0) ---');

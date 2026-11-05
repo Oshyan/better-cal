@@ -248,6 +248,11 @@ final class QuickAdd
         unset($draft['complete'], $draft['dateFound'], $draft['timeFound'], $draft['rangeFound']); // parser-internal, not part of the draft contract
         // The other reading of its days, offered as a one-tap correction.
         $draft['other'] = self::otherReading($draft, $tz);
+        // What the parser assumed where the text left it open, named beside
+        // the field it set. A model's draft keeps them only where it read the
+        // same times: its own guesses can't be named.
+        $draft['assumed'] = $draft['start'] === $fallback['start'] && $draft['end'] === $fallback['end']
+            && (bool) $draft['allDay'] === (bool) $fallback['allDay'] ? $fallback['assumed'] : [];
         if ($modelLimit !== null) {
             $draft['modelLimit'] = $modelLimit;
         }

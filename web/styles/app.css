@@ -1825,6 +1825,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-qa-date .bc-when-text { padding-right: 28px; }
 .bc-qa-time .bc-when-time { width: 6.6em; }
 .bc-qa-to { color: var(--fg-muted); font-size: 11.5px; }
+/* What the parse assumed (draft.assumed), beside the field it set. */
+.bc-qa-assumed { color: var(--fg-muted); font-size: 11.5px; }
 .bc-qa-allday { font-size: 12.5px; color: var(--fg); flex: none; }
 .bc-qa-calfield { min-width: 0; }
 .bc-qa-cal { max-width: 150px; }

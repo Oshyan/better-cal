@@ -53,7 +53,14 @@ final class FallbackParser
      * `reminders` is minutes before the start the text asked to be alerted
      * ("alert 30 minutes", "remind me ... to"), or null (#33).
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool,rangeFound:bool}
+     * `assumed` lists what the parser took for granted where the text left
+     * it open, for the draft to name beside the field (1.5.1): `clock`, a
+     * clock chosen for a time typed without am/pm ("at 7", "9-5pm"'s 9) or
+     * a time word ("this evening"); `year`, a date typed without a year put
+     * in next year; `rolled`, no day typed and the time already past today,
+     * so tomorrow; `default`, no time or date read, so the next hour.
+     *
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,assumed:list<array{field:string,kind:string,typed:?string,date?:string,start?:string,end?:?string}>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool,rangeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -62,6 +69,7 @@ final class FallbackParser
         $work = ' ' . trim($text) . ' ';
         // "tonight" carries both a date and a vague time; normalize it so the
         // two extractors each pick up their half.
+        $tonight = preg_match('/\btonight\b/i', $work, $tm) === 1 ? $tm[0] : null;
         $work = preg_replace('/\btonight\b/i', ' today evening ', $work) ?? $work;
         // "9am-noon", "noon-5pm", "6pm to midnight": noon and midnight at
         // either end of a time range read as 12pm and 12am, so every reader
@@ -112,17 +120,26 @@ final class FallbackParser
         // "starting Aug 12", "from Jan 21 to May 23" for a single event (#33);
         // with a repeat they are its bounds (RepeatParser).
         // "Fri 5pm to Sun 2pm": one timed stretch over several days.
-        [$work, $stretch] = $repeat === null ? self::timedStretch($work, $now) : [$work, null];
-        [$work, $startOn, $startRangeEnd, $startDated] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null, false];
+        // What the parser assumed, where the text left it open (the draft's
+        // `assumed`): each reader returns what it took for granted with what
+        // it read, and only the readings kept are named.
+        [$work, $stretch, $stretchAssumed] = $repeat === null ? self::timedStretch($work, $now) : [$work, null, []];
+        $typedStretch = $stretch !== null;
+        [$work, $startOn, $startRangeEnd, $startDated, $startAssumed] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null, false, []];
         $beforeDate = $work;
         $read = self::extractDate($work, $now, !$ownDays);
         [$work, $date, $dateFound, $rangeEnd] = $read;
         $datedRange = $read[4] ?? false;
+        $dateAssumed = $dateFound && isset($read[5]) ? [$read[5]] : [];
         if ($startOn !== null) {
             $date = $startOn;
             $dateFound = true;
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
             $datedRange = $startRangeEnd !== null ? $startDated : $datedRange;
+            $dateAssumed = $startAssumed;
+        }
+        if ($typedStretch) {
+            $dateAssumed = $stretchAssumed;
         }
         // Several days the text named: QuickAdd keeps them over a model
         // answer with fewer (#198).
@@ -144,9 +161,14 @@ final class FallbackParser
         }
         // With several days and no clock time, a time-of-day word is part of
         // the title ("Movie night Aug 3-7"): the range is all day anyway.
-        [$work, $startTime, $endTime, $timeFound, $timeZone] = $rangeEnd !== null && !RepeatParser::hasTime($work)
-            ? [$work, null, null, false, null]
+        $timeRead = $rangeEnd !== null && !RepeatParser::hasTime($work)
+            ? [$work, null, null, false, null, null]
             : self::extractTime($work);
+        [$work, $startTime, $endTime, $timeFound, $timeZone] = $timeRead;
+        $timeAssumed = $timeRead[5] ?? null;
+        if ($timeAssumed !== null && $tonight !== null && strtolower((string) $timeAssumed['typed']) === 'evening') {
+            $timeAssumed['typed'] = $tonight; // the evening "tonight" was read as
+        }
         if ($allDayKeyword) {
             [$timeFound, $endTime] = [false, null]; // "all day" wins over a time range too
         }
@@ -263,6 +285,8 @@ final class FallbackParser
             }
             if (!$dateFound && $start <= $now) {
                 $start = $start->add(new \DateInterval('P1D'));
+                // No day typed and the time has passed today: tomorrow.
+                $dateAssumed[] = ['field' => 'date', 'kind' => 'rolled', 'typed' => null, 'date' => $start->format('Y-m-d'), 'start' => $start->format('H:i')];
             }
             if ($stretch !== null) {
                 $end = $stretch[1];
@@ -289,6 +313,7 @@ final class FallbackParser
             // Next round hour, 1h default duration.
             $start = $now->setTime((int) $now->format('G'), 0)->add(new \DateInterval('PT1H'));
             $end = $start->add(new \DateInterval('PT' . ($durationMin ?? 60) . 'M'));
+            $timeAssumed = ['field' => 'time', 'kind' => 'default', 'typed' => null, 'start' => $start->format('H:i'), 'end' => null];
         }
 
         // A series with no day given starts at its next occurrence, so
@@ -324,6 +349,15 @@ final class FallbackParser
             $confidence = min($confidence, 0.5);
         }
 
+        // The assumptions behind the readings kept: a date's year only while
+        // the start is still in it, a clock only on a timed draft whose
+        // clocks it gave (a stretch typed with its own times gave them).
+        $assumed = array_values(array_filter($dateAssumed,
+            static fn(array $a): bool => $a['kind'] !== 'year' || substr($a['date'], 0, 4) === $start->format('Y')));
+        if ($timeAssumed !== null && ($timeAssumed['kind'] === 'default' || ($timeFound && !$allDay && !$typedStretch))) {
+            $assumed[] = $timeAssumed;
+        }
+
         return [
             'title' => $title,
             'start' => Time::iso($start),
@@ -333,6 +367,7 @@ final class FallbackParser
             'personNames' => $personNames,
             'rrule' => $rrule,
             'reminders' => $reminders,
+            'assumed' => $assumed,
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',
             'complete' => $dateFound && ($timeFound || $allDay) && !$suspect,
@@ -349,9 +384,10 @@ final class FallbackParser
     }
 
     /**
-     * @return array{0:string,1:\DateTimeImmutable,2:bool,3:?\DateTimeImmutable,4?:bool}
+     * @return array{0:string,1:\DateTimeImmutable,2:bool,3:?\DateTimeImmutable,4?:bool,5?:?array<string,mixed>}
      *         [remaining text, start date, found?, inclusive range end date,
-     *         whether the range was written as dates ("Aug 3-7")]
+     *         whether the range was written as dates ("Aug 3-7"), the year it
+     *         assumed (`assumed`), if any]
      */
     private static function extractDate(string $work, \DateTimeImmutable $now, bool $weekdays = true): array
     {
@@ -386,11 +422,13 @@ final class FallbackParser
                 $start = self::mkDate($now, $y, $m1, (int) $m[2]);
                 $end = self::mkDate($now, $m2 < $m1 ? $y + 1 : $y, $m2, (int) $m[4]);
                 if ($start !== null && $end !== null && $end >= $start) {
+                    $assumed = null;
                     if ($year === null && $start < $now->setTime(0, 0)) {
                         $start = $start->modify('+1 year');
                         $end = $end->modify('+1 year');
+                        $assumed = self::nextYear($m[0], $start);
                     }
-                    return [self::cut($work, $m[0]), $start, true, $end, true];
+                    return [self::cut($work, $m[0]), $start, true, $end, true, $assumed];
                 }
             }
         }
@@ -409,10 +447,12 @@ final class FallbackParser
             }
             $candidate = self::mkDate($now, $year ?? (int) $now->format('Y'), (int) $m[1], (int) $m[2]);
             if ($candidate !== null) {
+                $assumed = null;
                 if ($year === null && $candidate < $now->setTime(0, 0)) {
                     $candidate = $candidate->modify('+1 year');
+                    $assumed = self::nextYear($m[0], $candidate);
                 }
-                return [self::cut($work, $m[0]), $candidate, true, null];
+                return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
             }
         }
         // Month name: "July 31", "Jul 31, 2026", "31 July"
@@ -427,10 +467,12 @@ final class FallbackParser
                 $year = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : null;
                 $candidate = self::mkDate($now, $year ?? (int) $now->format('Y'), $monthNum, (int) $m[2]);
                 if ($candidate !== null) {
+                    $assumed = null;
                     if ($year === null && $candidate < $now->setTime(0, 0)) {
                         $candidate = $candidate->modify('+1 year');
+                        $assumed = self::nextYear($m[0], $candidate);
                     }
-                    return [self::cut($work, $m[0]), $candidate, true, null];
+                    return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
                 }
             }
         }
@@ -518,11 +560,13 @@ final class FallbackParser
                 $year = ($m[4] ?? '') !== '' ? (int) $m[4] : (int) $now->format('Y');
                 $candidate = self::nthWeekdayOfMonth($now, $year, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
                 if ($candidate !== null) {
+                    $assumed = null;
                     if (($m[4] ?? '') === '' && $candidate < $now->setTime(0, 0)) {
                         $candidate = self::nthWeekdayOfMonth($now, $year + 1, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
+                        $assumed = $candidate !== null ? self::nextYear($m[0], $candidate) : null;
                     }
                     if ($candidate !== null) {
-                        return [self::cut($work, $m[0]), $candidate, true, null];
+                        return [self::cut($work, $m[0]), $candidate, true, null, false, $assumed];
                     }
                 }
             }
@@ -632,7 +676,7 @@ final class FallbackParser
      * up to six leading words that extractDate reads in full. `length` counts
      * from the start of $text.
      *
-     * @return null|array{date:\DateTimeImmutable,length:int,rangeEnd:?\DateTimeImmutable,dated:bool}
+     * @return null|array{date:\DateTimeImmutable,length:int,rangeEnd:?\DateTimeImmutable,dated:bool,assumed:?array<string,mixed>}
      */
     public static function leadingDate(string $text, \DateTimeImmutable $now): ?array
     {
@@ -643,7 +687,7 @@ final class FallbackParser
             $read = self::extractDate(' ' . substr($text, 0, $length) . ' ', $now);
             [$rest, $date, $found, $rangeEnd] = $read;
             if ($found && trim($rest, " \t,.") === '') {
-                $best = ['date' => $date, 'length' => $length, 'rangeEnd' => $rangeEnd, 'dated' => $read[4] ?? false];
+                $best = ['date' => $date, 'length' => $length, 'rangeEnd' => $rangeEnd, 'dated' => $read[4] ?? false, 'assumed' => $read[5] ?? null];
             }
         }
         return $best;
@@ -651,12 +695,24 @@ final class FallbackParser
 
     /**
      * A time, a time range, or a time-of-day word, with a zone typed right
-     * after it ("9:40am EST") as [4].
+     * after it ("9:40am EST") as [4], and the clock it chose where the text
+     * gave no am/pm (`assumed`) as [5]: a lone hour ("at 7"), an h:mm whose
+     * hour could be either half ("at 2:30", "Gym 6:30"; never "07:30" or
+     * "19:00"), a range's start turned back to the morning ("11-1pm"), or a
+     * time word ("this evening").
      *
-     * @return array{0:string,1:?array{0:int,1:int},2:?array{0:int,1:int},3:bool,4:?string}
+     * @return array{0:string,1:?array{0:int,1:int},2:?array{0:int,1:int},3:bool,4:?string,5:?array<string,mixed>}
      */
     private static function extractTime(string $work): array
     {
+        $clock = static fn(string $typed, array $start, ?array $end = null): array => [
+            'field' => 'time', 'kind' => 'clock', 'typed' => trim(preg_replace('/\s+/', ' ', $typed) ?? $typed),
+            'start' => sprintf('%02d:%02d', $start[0], $start[1]),
+            'end' => $end !== null ? sprintf('%02d:%02d', $end[0], $end[1]) : null,
+        ];
+        // An hour that reads as either half of the day: 1 to 12, written
+        // without a leading zero.
+        $either = static fn(string $h): bool => $h[0] !== '0' && (int) $h >= 1 && (int) $h <= 12;
         // Three- and four-letter zones in any case; the two-letter ones only
         // in capitals and not before a word ("3pm CT scan", "3pm pt"), unless
         // that word is one of the parser's own ("3pm ET with Sam").
@@ -673,14 +729,17 @@ final class FallbackParser
             $end = self::to24((int) $m[4], (int) ($m[5] ?: 0), $mer2);
             // "11-1pm": the start took the end's pm, so pull it back to am. A
             // start that says pm itself stays ("10pm to 6am" runs overnight).
+            $assumed = null;
             if (($m[3] ?? '') === '' && $start[0] * 60 + $start[1] >= $end[0] * 60 + $end[1] && $start[0] >= 12) {
                 $start[0] -= 12;
+                $assumed = $clock($m[0], $start, $end);
             }
-            return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 7)];
+            return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 7), $assumed];
         }
         // 24h range: "19:00-21:30"
         if (preg_match('/\b(?:(?:at|from)\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
-            return [self::cut($work, $m[0]), [(int) $m[1], (int) $m[2]], [(int) $m[3], (int) $m[4]], true, $zone($m, 5)];
+            [$start, $end] = [[(int) $m[1], (int) $m[2]], [(int) $m[3], (int) $m[4]]];
+            return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 5), $either($m[1]) && $either($m[3]) ? $clock($m[0], $start, $end) : null];
         }
         // Single time with meridiem: "7pm", "7:30 pm", "at 2pm"
         if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
@@ -697,7 +756,7 @@ final class FallbackParser
             $min = (int) $m[3];
             if ($h <= 23 && $min <= 59) {
                 if (($m[1] ?? '') !== '' && $h >= 1 && $h <= 7 && $m[2][0] !== '0' && !$morning) $h += 12;
-                return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 4)];
+                return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 4), $either($m[2]) ? $clock($m[0], [$h, $min]) : null];
             }
         }
         // "at 1", "at 11": an hour on its own, after "at" and before the end
@@ -707,7 +766,8 @@ final class FallbackParser
         if (preg_match('/\bat\s+(\d{1,2})\b' . $zoneAlt . '(?=\s*(?:$|,|;|\b(?:with|w\/|for|on|in|at|tomorrow|today|tonight|next|this|every)\b))/i', $work, $m)) {
             $h = (int) $m[1];
             if ($h >= 1 && $h <= 12) {
-                return [self::cut($work, $m[0]), [$h <= 7 && !$morning ? $h + 12 : $h, 0], null, true, $zone($m, 2)];
+                $start = [$h <= 7 && !$morning ? $h + 12 : $h, 0];
+                return [self::cut($work, $m[0]), $start, null, true, $zone($m, 2), $clock($m[0], $start)];
             }
         }
         if (preg_match('/\b(?:at\s+)?noon\b/i', $work, $m)) {
@@ -724,9 +784,9 @@ final class FallbackParser
         if (preg_match('/\b(?:in\s+the\s+|this\s+)(morning|afternoon|evening|night)\b/i', $work, $m)
             || preg_match('/\b(morning|afternoon|evening|night)\s*$/i', $work, $m)
         ) {
-            return [self::cut($work, $m[0]), $vague[strtolower($m[1])], null, true, null];
+            return [self::cut($work, $m[0]), $vague[strtolower($m[1])], null, true, null, $clock($m[0], $vague[strtolower($m[1])])];
         }
-        return [$work, null, null, false, null];
+        return [$work, null, null, false, null, null];
     }
 
     /**
@@ -765,9 +825,10 @@ final class FallbackParser
     /**
      * A day and time to a later day and time ("Fri 5pm to Sun 2pm", "Aug 3
      * 9am - Aug 5 noon"): [remaining text, [start, end]] or no stretch. A
-     * weekday end counts from the start day.
+     * weekday end counts from the start day. [2] is the year it assumed for
+     * the start, if any.
      *
-     * @return array{0:string,1:?array{0:\DateTimeImmutable,1:\DateTimeImmutable}}
+     * @return array{0:string,1:?array{0:\DateTimeImmutable,1:\DateTimeImmutable},2:list<array<string,mixed>>}
      */
     private static function timedStretch(string $work, \DateTimeImmutable $now): array
     {
@@ -777,35 +838,41 @@ final class FallbackParser
         $time = '(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)';
         $re = '/(?<![\p{L}\p{N}])(?:from\s+)?' . $when . ',?\s+(?:at\s+)?' . $time . '\s*(?:-|–|—|\bto\b|\buntil\b|\btill\b)\s*' . $when . ',?\s+(?:at\s+)?' . $time . '\b/iu';
         if (preg_match($re, $work, $m) !== 1) {
-            return [$work, null];
+            return [$work, null, []];
         }
-        $at = static function (string $when, string $time, \DateTimeImmutable $from): ?\DateTimeImmutable {
+        $assumed = [];
+        $at = static function (string $when, string $time, \DateTimeImmutable $from) use (&$assumed): ?\DateTimeImmutable {
             // The time keeps a short day name from reading as a title word.
-            [, $date, $found] = self::extractDate(' ' . $when . ' 12pm ', $from);
+            $read = self::extractDate(' ' . $when . ' 12pm ', $from);
+            [, $date, $found] = $read;
             [, $t, , $timeFound] = self::extractTime(' ' . $time . ' ');
+            if (isset($read[5])) {
+                $assumed[] = $read[5];
+            }
             return $found && $timeFound ? $date->setTime($t[0], $t[1]) : null;
         };
         $start = $at($m[1], $m[2], $now);
         if ($start === null) {
-            return [$work, null];
+            return [$work, null, []];
         }
         $end = $at($m[3], $m[4], $start->setTime(0, 0));
         if ($end === null) {
-            return [$work, null];
+            return [$work, null, []];
         }
         if ($end <= $start && preg_match('/^' . $day . '$/i', trim($m[3])) === 1) {
             $end = $end->add(new \DateInterval('P7D'));
         }
-        return $end > $start ? [self::cut($work, $m[0]), [$start, $end]] : [$work, null];
+        // The start's year is the one to name: the end counts from it.
+        return $end > $start ? [self::cut($work, $m[0]), [$start, $end], array_slice($assumed, 0, 1)] : [$work, null, []];
     }
 
     /**
      * "starting Aug 12", "from Jan 21 to May 23", "beginning Monday" for a
      * single event: [remaining text, start date, inclusive end date, whether
-     * that range was written as dates]. Not the "from" of "3 days from
-     * now", which extractDate reads.
+     * that range was written as dates, the years it assumed]. Not the
+     * "from" of "3 days from now", which extractDate reads.
      *
-     * @return array{0:string,1:?\DateTimeImmutable,2:?\DateTimeImmutable,3:bool}
+     * @return array{0:string,1:?\DateTimeImmutable,2:?\DateTimeImmutable,3:bool,4:list<array<string,mixed>>}
      */
     private static function startPhrase(string $work, \DateTimeImmutable $now): array
     {
@@ -832,6 +899,7 @@ final class FallbackParser
             }
             $len = strlen($m[0][0]) + $first['length'];
             $end = $first['rangeEnd'];
+            $assumed = $first['assumed'] !== null ? [$first['assumed']] : [];
             if ($end === null && preg_match('/^\s*(?:to|until|till|through|thru|-|–|—)\s*/i', substr($rest, $first['length']), $t)) {
                 $second = self::leadingDate(substr($rest, $first['length'] + strlen($t[0])), $now);
                 if ($second !== null && $second['date'] >= $first['date']) {
@@ -839,9 +907,9 @@ final class FallbackParser
                     $len += strlen($t[0]) + $second['length'];
                 }
             }
-            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end, $first['dated']];
+            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end, $first['dated'], $assumed];
         }
-        return [$work, null, null, false];
+        return [$work, null, null, false, []];
     }
 
     /**
@@ -869,6 +937,12 @@ final class FallbackParser
             }
         }
         return [$work, null];
+    }
+
+    /** A date typed without a year, read as next year's (`assumed`). */
+    private static function nextYear(string $typed, \DateTimeImmutable $date): array
+    {
+        return ['field' => 'date', 'kind' => 'year', 'typed' => trim(preg_replace('/\s+/', ' ', $typed) ?? $typed), 'date' => $date->format('Y-m-d')];
     }
 
     /** @return array{0:int,1:int} */

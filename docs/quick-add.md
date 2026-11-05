@@ -2,6 +2,8 @@
 
 Quick add turns a line of text into an event. Open it with **c** or the Quick add button on desktop, or **New** on a phone. The card shows what it understood as you type, and you can fix anything there before you press Create, or open the full editor with **More options**.
 
+When it has to assume something you didn't type, the card says so in muted text beside the date or time it set: "at 7 read as 7:00 PM", "Mar 3 read as next year", "tomorrow, as 9:00 AM has passed today", or "no time read, so the next hour". If it guessed wrong, change that date or time right there; nothing is shown when nothing was assumed.
+
 It works without AI. If you've set up an AI model, Settings → General → **Natural language parsing** decides when it's asked: **Smart** (only when unsure, the default), **Always** or **Never**. Markers always win.
 
 ## Examples

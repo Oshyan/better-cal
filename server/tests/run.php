@@ -5861,6 +5861,11 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         [['date' => true, 'time' => true], ['date' => false, 'time' => false], false],
         [$deterministic['draft']['when'] ?? null, $qa->run(1, 'Stay at the lake', 'UTC', false, null, 77)['draft']['when'] ?? null,
          isset($deterministic['draft']['dateFound']) || isset($deterministic['draft']['timeFound'])]);
+    checkEq('quick add: the draft names what it assumed, and an empty list when nothing was',
+        [[], ['clock'], ['default']],
+        [$deterministic['draft']['assumed'] ?? null,
+         array_column($qa->run(1, 'Coffee tomorrow at 2:30', 'UTC', false, null, 77)['draft']['assumed'] ?? [], 'kind'),
+         array_column($qa->run(1, 'Stay at the lake', 'UTC', false, null, 77)['draft']['assumed'] ?? [], 'kind')]);
     Limits::configure(['MODEL_QUICKADD_CHARS' => 5]);
     try {
         $qa->run(1, '123456', 'UTC', false, null, 77);

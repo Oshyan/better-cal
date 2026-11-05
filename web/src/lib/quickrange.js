@@ -1,7 +1,7 @@
 // Quick add's strip (date, start, end, all day) -> the {start, end} it saves.
 // Pure, so the smoke tests can cover it.
 
-import { parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset } from './dates.js';
+import { parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, fmtTime } from './dates.js';
 
 // Strip values -> {start, end} ISO strings, or null when incomplete. A parse
 // that ends on a later day keeps that day while the date is untouched: the
@@ -66,4 +66,28 @@ export function takeOtherReading(draft) {
     ...draft, start: o.start, end: o.end, allDay: o.allDay, rrule: o.rrule || null, series: null,
     other: { reading: o.reading === 'each' ? 'one' : 'each', start: draft.start, end: draft.end, allDay: !!draft.allDay, rrule: draft.rrule || null, days: o.days },
   };
+}
+
+// What the parse assumed where the text left it open (the server's
+// `draft.assumed`), in words for beside the field it set: "at 7 read as
+// 7:00 PM", "Mar 3 read as next year". Clocks in the user's 12- or 24-hour
+// setting.
+const clockWords = (hhmm) => {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  return fmtTime(new Date(2000, 0, 1, h, m));
+};
+export function assumedWords(a) {
+  if (!a) return '';
+  if (a.kind === 'clock') return a.typed + ' read as ' + clockWords(a.start) + (a.end ? ' to ' + clockWords(a.end) : '');
+  if (a.kind === 'year') return a.typed + ' read as next year';
+  if (a.kind === 'rolled') return 'tomorrow, as ' + clockWords(a.start) + ' has passed today';
+  if (a.kind === 'default') return 'no time read, so the next hour';
+  return '';
+}
+
+// Every assumption about `field` ('date' or 'time') in words, once each,
+// or '' when there is none.
+export function assumedFor(draft, field) {
+  const list = draft && Array.isArray(draft.assumed) ? draft.assumed : [];
+  return [...new Set(list.filter((a) => a.field === field).map(assumedWords).filter(Boolean))].join('; ');
 }

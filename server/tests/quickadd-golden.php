@@ -48,9 +48,21 @@ $goldenExtra = [
     'Mon-Fri 10pm to 6am', 'Sat-Sun 10am-4pm', 'Aug 3-7 9am-5pm', 'Aug 3 to 7 9am-5pm', 'Aug 3 to Aug 7 9am-5pm',
     'Aug 3-7 10pm-6am', 'Dec 30 to Jan 2 9am-5pm', 'Aug 3-7 9am-noon', 'Aug 3 - 6-8pm', '3-7 Aug',
 ];
+// What the parser assumed (`assumed`, 1.5.1), read on 2026-07-30 at 10:00:
+// an am/pm it chose, a date put in next year, a time past today moved to
+// tomorrow, no time read at all, and nothing assumed.
+$goldenAssumed = [
+    'Dentist Mar 3 2pm', 'Coffee at 2:30', 'Gym 6:30', 'Standup 9-5pm', 'Standup 9-5', 'Lunch 11-1pm',
+    'Trip Mar 3-7', 'Call mom tonight', 'Standup 9am', 'Gym 07:30', 'Lunch tomorrow noon', 'Dentist Dec 3 2pm',
+];
 $goldenInputs = [];
 foreach ($goldenTitles as $title) {
     foreach ($goldenWhens as $when) {
+        // One with-clause per phrase: nobody types "Dinner with Sam 3pm
+        // ET with Sam".
+        if (preg_match('/\bwith\b/i', $title) === 1 && preg_match('/\bwith\b/i', $when) === 1) {
+            continue;
+        }
         $goldenInputs[] = trim("$title $when");
     }
 }
@@ -58,6 +70,9 @@ foreach (['Standup', 'Workshop', 'Trip', 'Mon-Fri check', 'Ferry to Friday Harbo
     foreach ($goldenExtra as $when) {
         $goldenInputs[] = "$title $when";
     }
+}
+foreach ($goldenAssumed as $text) {
+    $goldenInputs[] = $text;
 }
 $goldenInputs = array_values(array_unique($goldenInputs));
 
@@ -68,7 +83,8 @@ $goldenRead = static function (string $text) use ($goldenTz, $goldenNow): array 
     return [
         $d['title'], substr($d['start'], 0, 16), substr($d['end'], 0, 16), $d['allDay'], $d['location'],
         $d['personNames'], $d['rrule'] ?? null, $d['reminders'] ?? null,
-    ];
+        // What it assumed, only when it assumed something.
+    ] + ($d['assumed'] !== [] ? [8 => $d['assumed']] : []);
 };
 $goldenFile = __DIR__ . '/fixtures/quickadd-golden.json';
 

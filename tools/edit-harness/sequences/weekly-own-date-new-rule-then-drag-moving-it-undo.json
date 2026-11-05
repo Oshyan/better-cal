@@ -1,0 +1,108 @@
+{
+    "about": "Weekly on Tuesday with a day moved to its own date and a skipped day: the rule changed in the editor to Thursday (the old days shifted, preselected: the moved day and the skip move with their events), then a drag a day later with the moved day moved too, then Undo twice.",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 0,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-01-05 19:00",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 3,
+            "mins": 0,
+            "zone": "UTC",
+            "len": 0
+        },
+        {
+            "at": 4,
+            "kind": "skip"
+        }
+    ],
+    "expect": {
+        "zone": "Europe/Berlin",
+        "shows": [
+            "2027-01-05 19:00 Sample series",
+            "2027-01-12 19:00 Sample series",
+            "2027-01-22 19:00 Sample series",
+            "2027-01-26 19:00 Sample series",
+            "2027-02-09 19:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-01-05",
+            "vector": {
+                "rule": "new",
+                "newRule": "FREQ=WEEKLY;BYDAY=TH"
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-07 19:00 Sample series",
+                    "2027-01-14 19:00 Sample series",
+                    "2027-01-22 19:00 Sample series",
+                    "2027-01-28 19:00 Sample series",
+                    "2027-02-11 19:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-01-14",
+            "vector": {
+                "date": 1
+            },
+            "choices": {
+                "movedDays": "move"
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-08 19:00 Sample series",
+                    "2027-01-15 19:00 Sample series",
+                    "2027-01-23 19:00 Sample series",
+                    "2027-01-29 19:00 Sample series",
+                    "2027-02-12 19:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-07 19:00 Sample series",
+                    "2027-01-14 19:00 Sample series",
+                    "2027-01-22 19:00 Sample series",
+                    "2027-01-28 19:00 Sample series",
+                    "2027-02-11 19:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-05 19:00 Sample series",
+                    "2027-01-12 19:00 Sample series",
+                    "2027-01-22 19:00 Sample series",
+                    "2027-01-26 19:00 Sample series",
+                    "2027-02-09 19:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

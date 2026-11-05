@@ -24,6 +24,8 @@ require_once __DIR__ . '/PlanChecks.php';
 require_once __DIR__ . '/PlanPlacement.php';
 require_once __DIR__ . '/PlanNext.php';
 require_once __DIR__ . '/PlanUntouched.php';
+require_once __DIR__ . '/PlanPreselect.php';
+require_once __DIR__ . '/Sequences.php';
 require_once __DIR__ . '/Driver.php';
 
 /**
@@ -136,6 +138,7 @@ final class Report
             $t['unexpected'], $t['newOnKnown'], $t['unoracled'], $t['skipped']);
         $out .= 'Accepted by known cause: ' . ($t['byCause'] === [] ? 'none' : implode('; ', array_map(static fn(string $c, int $n): string => "$n $c", array_keys($t['byCause']), $t['byCause']))) . ".\n";
         $out .= 'Plan-data checks run: ' . implode(', ', array_map(static fn(string $c): string => $c . ' ' . ($runs[$c] ?? 0), Driver::NEW_CHECKS)) . ".\n";
+        $out .= 'Options committed from the baseline in isolated state: ' . ($runs['every-option'] ?? 0) . ' (' . implode(', ', array_map(static fn(string $g, int $n): string => "$g $n", array_keys($t['runs']['every-option'] ?? []), $t['runs']['every-option'] ?? [])) . ").\n";
         $out .= $t['missing'] === [] ? "Every required category ran.\n" : 'Required categories that never ran (' . count($t['missing']) . '): ' . implode('; ', $t['missing']) . "\n";
         return $out;
     }
@@ -247,11 +250,17 @@ final class Runner
             // A case is named by its path, or by its name under cases/.
             if (!is_file($file)) {
                 $name = preg_replace('/\.json$/', '', $file);
-                $file = is_file(__DIR__ . "/cases/$name.json") ? __DIR__ . "/cases/$name.json" : __DIR__ . "/mutations/cases/$name.json";
+                $file = __DIR__ . "/mutations/cases/$name.json";
+                foreach (["/cases/$name.json", "/sequences/$name.json"] as $at) {
+                    if (is_file(__DIR__ . $at)) {
+                        $file = __DIR__ . $at;
+                    }
+                }
             }
             $spec = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             $spec['fixed'] = basename($file, '.json');
-            $result = $driver->run($spec, new Rng(0));
+            // A sequence (sequences/*.json) is its steps, one after another on one series (README, The Sequences).
+            $result = isset($spec['steps']) ? $driver->runSequence($spec) : $driver->run($spec, new Rng(0));
             $this->count($result);
         }
     }
@@ -261,7 +270,9 @@ final class Runner
     {
         $files = glob(__DIR__ . '/cases/*.json') ?: [];
         sort($files);
-        return $files;
+        $sequences = glob(__DIR__ . '/sequences/*.json') ?: [];
+        sort($sequences);
+        return array_merge($files, $sequences);
     }
 
     private function driver(): Driver

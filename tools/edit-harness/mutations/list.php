@@ -301,6 +301,28 @@ return [
         'patch' => [["            \$now = Time::nowDb();\n            if (\$w['master'] !== []) {\n", "            \$now = Time::nowDb();\n            \$this->db->insert('calendars', ['user_id' => \$userId, 'name' => 'Sample extra', 'color' => '#336699', 'kind' => 'local', 'position' => 999]);\n            if (\$w['master'] !== []) {\n"]],
         'cases' => ['next-trailing-skipped-occurrences'],
     ],
+    // The preselection check (PlanPreselect): the design's table, not the plan's order.
+    [
+        'id' => 'preselect-new-rule-keeps-keys', 'file' => $model, 'checks' => ['c-preselect-design'],
+        'what' => 'a new rule that is the old one shifted preselects keeping the keys, not moving the days as a drag would',
+        'patch' => [["            array_unshift(\$out, [\n                'id' => 'map',", "            array_push(\$out, [\n                'id' => 'map',"]],
+        'cases' => ['zone-option-start-under-a-new-rule-with-its-own-clock'],
+    ],
+    // Every option committed from the baseline: an option no case's own commit picks is wrong, and only the commit of
+    // every option sees it (the case commits the preselected "keep").
+    [
+        'id' => 'moved-days-move-ignored', 'file' => $model, 'checks' => ['b-placed', 'c-placement'],
+        'what' => '"Move" for a day moved on its own commits it kept on its own date',
+        'patch' => [["(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move';", "(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move' && false;"]],
+        'cases' => ['mutation-drag-with-a-day-at-its-own-date'],
+    ],
+    // The sequences' own checks: an Undo after several steps puts back the step before, and the shown events agree.
+    [
+        'id' => 'undo-latest-takes-the-one-before', 'file' => 'server/src/Domain/Undo.php', 'checks' => ['s-undo', 's-step'],
+        'what' => 'Undo of the last change undoes the change before it instead',
+        'patch' => [["source IN \$in ORDER BY id DESC LIMIT 1\",", "source IN \$in ORDER BY id DESC LIMIT 1 OFFSET 1\","]],
+        'cases' => ['weekly-list-member-rename-own-title-count-undo'],
+    ],
     // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',

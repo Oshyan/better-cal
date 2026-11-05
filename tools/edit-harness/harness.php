@@ -5,7 +5,7 @@
 //
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/harness.php [--cases N] [--seed S]
 //       [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]]
-//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N]
+//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]
 //
 // --fixed runs the fixed cases (cases/*.json, or the files named) after the
 // drawn ones (--cases 0 for the fixed ones alone; a full run of 1,000 cases or
@@ -22,9 +22,9 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]\n";
     exit(0);
 }
 $fixed = !array_key_exists('fixed', $opts) ? null : ($opts['fixed'] === false ? [] : explode(',', (string) $opts['fixed']));
@@ -49,6 +49,12 @@ $child = isset($opts['shard']);
 $partialFile = isset($opts['partial']) ? (string) $opts['partial'] : null;
 // A full run must execute every required category; a slice or one family needn't.
 $full = $onlyFamily === null && $onlyCase === null && $cases >= 1000;
+// --every-option F: the share of drawn whole-series cases that commit every option of every choice (README, Every Option).
+$everyOption = isset($opts['every-option']) ? (float) $opts['every-option'] : null;
+if ($everyOption !== null && ($everyOption < 0 || $everyOption > 1)) {
+    fwrite(STDERR, "--every-option needs a share from 0 to 1.\n");
+    exit(1);
+}
 
 $root = dirname(__DIR__, 2);
 if (!is_file($root . '/server/vendor/autoload.php')) {
@@ -66,6 +72,9 @@ if (isset($opts['model'])) {
 }
 require $root . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
+if ($everyOption !== null) {
+    BetterCal\EditHarness\Driver::$everyOption = $everyOption;
+}
 
 use BetterCal\EditHarness\Known;
 use BetterCal\EditHarness\Prof;
@@ -317,6 +326,9 @@ try {
     }
     if (!$shrink) {
         $pass[] = '--no-shrink';
+    }
+    if ($everyOption !== null) {
+        array_push($pass, '--every-option', (string) $everyOption);
     }
     if ($fixed !== null) {
         $pass[] = $opts['fixed'] === false ? '--fixed' : '--fixed=' . $opts['fixed'];

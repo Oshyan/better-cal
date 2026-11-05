@@ -500,7 +500,7 @@ final class Expect
         return false;
     }
 
-    /** A new pattern: keys on its days stay (keep); the old days shifted offers the drag's mapping (map). */
+    /** A new pattern: the old days shifted offers the drag's mapping (map, first, as the design preselects it); keys on its days stay (keep). */
     private function newRuleReadings(): array
     {
         $out = [self::reading('keep', ['type' => 'keep'])];
@@ -551,7 +551,8 @@ final class Expect
                     }
                     $days = array_keys($x->walk($r['T'], $lo, $hi));
                     if ($days !== [] && $days === $s1->days($days[0], $lo, $hi)) {
-                        $out[] = self::reading('map', $r['T']);
+                        // The design's order: the old days shifted first (A New Rule, and Who Owns What).
+                        array_unshift($out, self::reading('map', $r['T']));
                         $this->mapDrag = $x;
                         return $out;
                     }

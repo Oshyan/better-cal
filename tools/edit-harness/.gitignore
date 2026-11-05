@@ -6,3 +6,4 @@
 !mutations/*.json
 !mutations/cases/*.json
 !cases/*/*.json
+!sequences/*.json

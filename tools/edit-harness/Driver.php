@@ -18,6 +18,20 @@ final class Driver
     use PlanPlacement;
     use PlanNext;
     use PlanUntouched;
+    use PlanPreselect;
+    use Sequences;
+
+    /**
+     * The share of drawn whole-series cases that commit every option of every choice from the same baseline (README,
+     * Every Option); the fixed cases and the sequences always do. harness.php --every-option sets it.
+     */
+    public static float $everyOption = 0.1;
+
+    /** The option combination being committed in isolated state (everyOption), or null for the case's own commit. */
+    private ?string $trial = null;
+
+    /** Whether the case's trip flag could nest a trip (run): where a trip_nested refusal is right, for every option too. */
+    private bool $nests = false;
 
     /** @var list<array> */
     private array $records = [];
@@ -77,6 +91,9 @@ final class Driver
             $spec['stack'] = Delta::stack($r);
             $this->spec = $spec + $this->spec;
         }
+        // Every option committed from the same baseline: always for a fixed case, for a share of the drawn ones chosen
+        // from the case's seed and number alone (so the drawn space is untouched), kept in the spec so a shrink replays it.
+        $this->spec['everyOption'] ??= isset($this->spec['fixed']) || crc32('every:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$everyOption * 10000);
         $spec = $this->spec;
         // A fixed case may act on the stored start itself (a rule the expander can't read has no occurrences to pick from).
         $atStart = !empty($spec['actedStart']);
@@ -137,6 +154,7 @@ final class Driver
             }
         }
         $nests = $v['trip'] && $stopAts !== [] && ($scope === 'all' || $path === 'following@first');
+        $this->nests = $nests;
         if ($scope === 'all') {
             $this->wide0 = $this->wide();
         }
@@ -874,6 +892,8 @@ final class Driver
         $choices = $this->spec['choices'][$slot] ?? null;
         $preview = fn(array $c): array => $this->events->previewPatch($this->userId, $target, $in + ['plan' => ['choices' => $c]]);
         $plan = $preview($choices ?? []);
+        // The baseline: the plan with no choice named, whose selections are the preselected options.
+        $baseline = $choices === null || $choices === [] ? $plan : null;
         if ($choices === null) {
             $choices = [];
             $preselected = $this->rng === null || $this->rng->chance(0.5);
@@ -897,6 +917,20 @@ final class Driver
         }
         foreach ($plan['groups'] as $g) {
             $choices[$g['id']] ??= $g['selected'];
+        }
+        if ($slot === 'edit' && !$replay) {
+            try {
+                $baseline ??= $preview([]);
+            } catch (HttpError) {
+                $baseline = null;
+            }
+            if ($baseline !== null) {
+                // Each group's preselection against the design's table (PlanPreselect), on the baseline plan.
+                $this->checkPreselection($baseline, $st, $edit);
+                if (!empty($this->spec['everyOption'])) {
+                    $this->everyOption($target, $in, $baseline, $choices, $st, $acted, $v, $s0, $edit);
+                }
+            }
         }
         if (!$replay) {
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
@@ -937,6 +971,111 @@ final class Driver
         } catch (\Throwable $e) {
             return ['error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Every option of every choice committed from the same baseline (README, Every Option): the baseline plan's
+     * preselected combination and, for each group, each other enabled option with the rest as preselected, each
+     * previewed with that choice, committed inside a transaction of its own, checked by the same checks as the case's
+     * own commit (checkEdit, the trip rule and links) and rolled back. The combination the case itself commits is left
+     * to it. An option the baseline offers that its own preview no longer offers enabled is unreachable, counted. After
+     * them every row must be as before (H-isolation), so the case's own commit starts from the same state.
+     */
+    private function everyOption(int $target, array $in, array $baseline, array $main, array $st, array $acted, array $v, array $s0, array $edit): void
+    {
+        Prof::mark('options');
+        $sel = [];
+        foreach ($baseline['groups'] as $g) {
+            $sel[$g['id']] = $g['selected'];
+        }
+        $combos = ['preselected' => [null, null, $sel]];
+        foreach ($baseline['groups'] as $g) {
+            foreach ($g['options'] as $o) {
+                if (empty($o['disabled']) && $o['id'] !== $g['selected']) {
+                    $combos[$g['id'] . '=' . $o['id']] = [$g['id'], $o['id'], [$g['id'] => $o['id']] + $sel];
+                }
+            }
+        }
+        $sameAsMain = static function (array $c) use ($main): bool {
+            foreach ($c as $k => $x) {
+                if (($main[$k] ?? null) !== $x) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $pdo = $this->db->pdo();
+        foreach ($combos as $label => [$gid, $oid, $c]) {
+            if ($sameAsMain($c)) {
+                continue; // the case's own commit checks this combination
+            }
+            $n0 = count($this->records);
+            $this->trial = $label;
+            $this->ran('every-option', $gid === null ? 'preselected' : $gid);
+            try {
+                // Inside the app's own write (the account locked first, as every write takes it), so the commit nests in
+                // it as the app's writes nest; the sentinel rolls it back.
+                $this->undo->write($this->userId, function () use ($target, $in, $gid, $oid, $c, $st, $acted, $v, $s0, $edit): void {
+                    $this->trialCommit($target, $in, $gid, $oid, $c, $st, $acted, $v, $s0, $edit);
+                    throw new TrialRollback();
+                });
+            } catch (TrialRollback) {
+                // rolled back, as every trial is
+            } catch (\Throwable $e) {
+                $this->fail('api-crash', 'the option ' . $label . ' failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+            } finally {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $this->trial = null;
+                for ($i = $n0; $i < count($this->records); $i++) {
+                    $this->records[$i]['detail']['option'] = $label;
+                }
+            }
+        }
+        $this->same('H-isolation', $s0, $this->snapshot(), 'every option was committed in isolated state: after its rollback every row is as before');
+        Prof::mark('edit');
+    }
+
+    /** One option's preview and commit, checked as the case's own commit is (everyOption, inside its transaction). */
+    private function trialCommit(int $target, array $in, ?string $gid, ?string $oid, array $c, array $st, array $acted, array $v, array $s0, array $edit): void
+    {
+        $plan = $this->events->previewPatch($this->userId, $target, $in + ['plan' => ['choices' => $c]]);
+        if ($gid !== null) {
+            $reached = false;
+            foreach ($plan['groups'] as $g) {
+                foreach ($g['id'] === $gid ? $g['options'] : [] as $o) {
+                    $reached = $reached || ($o['id'] === $oid && empty($o['disabled']) && $g['selected'] === $oid);
+                }
+            }
+            if (!$reached) {
+                $this->unoracled[] = 'every option: an option the baseline offers is not offered once chosen';
+                return;
+            }
+        }
+        foreach ($plan['groups'] as $g) {
+            $c[$g['id']] ??= $g['selected'];
+        }
+        try {
+            $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $c]]);
+        } catch (HttpError $e) {
+            if ($e->errorCode === 'trip_nested') {
+                // As the case's own commit is judged (run): refused only where the end state could nest.
+                // That it writes nothing is the app's own transaction's to show, which the trial's holds here: the
+                // case's own commit checks it (e-refused), and the trial's rollback undoes what the refusal left.
+                $this->check('b-trip', $this->nests, 'the trip flag is refused only where the end state could nest: sent to a whole series with a day in it that is a stop', ['scope' => $v['scope']]);
+                return;
+            }
+            if ($e->errorCode !== 'series_refused') {
+                throw $e;
+            }
+            $this->checkRefused($st, $edit, $plan, $c, $e);
+            return;
+        }
+        $sent = ['kind' => 'all', 'in' => $in, 'edit' => $edit, '_plan' => $plan, '_choices' => $c, '_google' => null, 'target' => $target];
+        $this->checkTripRule('b-trip');
+        $this->checkEdit($st, $this->state($st['id']), $acted, $v, $sent, $s0);
+        $this->checkTripLinks($st, $acted, $sent);
     }
 
     /** The edit applied again after Undo, with the same choices. */
@@ -1062,4 +1201,9 @@ final class Driver
         }
         return $out;
     }
+}
+
+/** Thrown at the end of an option's commit (Driver::everyOption) so the write that holds it rolls back. */
+final class TrialRollback extends \RuntimeException
+{
 }

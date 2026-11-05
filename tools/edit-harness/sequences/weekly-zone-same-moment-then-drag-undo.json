@@ -1,0 +1,98 @@
+{
+    "about": "Weekly on Monday at 09:00 in one zone with a day at its own time: the zone changed to another with the same moment chosen (the series at that instant's clock there, the own time keeping its instant), then a drag a day later, then Undo twice.",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO",
+        "import": false,
+        "bound": "none",
+        "boundAt": 0,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 09:00",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": 0,
+            "mins": 120,
+            "zone": "UTC",
+            "len": 0
+        }
+    ],
+    "expect": {
+        "zone": "America/Los_Angeles",
+        "shows": [
+            "2027-01-04 09:00 Sample series",
+            "2027-01-11 09:00 Sample series",
+            "2027-01-18 11:00 Sample series",
+            "2027-01-25 09:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-01-11",
+            "vector": {
+                "zone": "Europe/Berlin"
+            },
+            "choices": {
+                "zone": "moment"
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-04 18:00 Sample series",
+                    "2027-01-11 18:00 Sample series",
+                    "2027-01-18 20:00 Sample series",
+                    "2027-01-25 18:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-01-25",
+            "vector": {
+                "date": 1
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-05 18:00 Sample series",
+                    "2027-01-12 18:00 Sample series",
+                    "2027-01-19 20:00 Sample series",
+                    "2027-01-26 18:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "shows": [
+                    "2027-01-04 18:00 Sample series",
+                    "2027-01-11 18:00 Sample series",
+                    "2027-01-18 20:00 Sample series",
+                    "2027-01-25 18:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 09:00 Sample series",
+                    "2027-01-11 09:00 Sample series",
+                    "2027-01-18 11:00 Sample series",
+                    "2027-01-25 09:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

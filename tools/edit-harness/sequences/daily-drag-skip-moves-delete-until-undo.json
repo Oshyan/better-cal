@@ -1,0 +1,125 @@
+{
+    "about": "Every other day for eight events with a skipped day: a drag a day later (the skip moving with its occurrence, the count kept), one day deleted, an end put on a day of the series, then Undo three times back to the start.",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY;INTERVAL=2",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2027-03-01 07:30",
+        "length": 30
+    },
+    "exceptions": [
+        {
+            "at": 2,
+            "kind": "skip"
+        }
+    ],
+    "expect": {
+        "zone": "Asia/Kolkata",
+        "events": 7,
+        "shows": [
+            "2027-03-01 07:30 Sample series",
+            "2027-03-03 07:30 Sample series",
+            "2027-03-07 07:30 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-03-03",
+            "vector": {
+                "date": 1
+            },
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 7,
+                "shows": [
+                    "2027-03-02 07:30 Sample series",
+                    "2027-03-04 07:30 Sample series",
+                    "2027-03-08 07:30 Sample series",
+                    "2027-03-10 07:30 Sample series",
+                    "2027-03-12 07:30 Sample series",
+                    "2027-03-14 07:30 Sample series",
+                    "2027-03-16 07:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-03-10",
+            "vector": {
+                "scope": "deleteThis"
+            },
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 6,
+                "shows": [
+                    "2027-03-02 07:30 Sample series",
+                    "2027-03-04 07:30 Sample series",
+                    "2027-03-08 07:30 Sample series",
+                    "2027-03-12 07:30 Sample series",
+                    "2027-03-14 07:30 Sample series",
+                    "2027-03-16 07:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-03-02",
+            "vector": {
+                "bound": {
+                    "untilAt": 5
+                }
+            },
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 4,
+                "shows": [
+                    "2027-03-02 07:30 Sample series",
+                    "2027-03-04 07:30 Sample series",
+                    "2027-03-08 07:30 Sample series",
+                    "2027-03-12 07:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 6
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 7,
+                "shows": [
+                    "2027-03-02 07:30 Sample series",
+                    "2027-03-04 07:30 Sample series",
+                    "2027-03-08 07:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Asia/Kolkata",
+                "events": 7,
+                "shows": [
+                    "2027-03-01 07:30 Sample series",
+                    "2027-03-03 07:30 Sample series",
+                    "2027-03-07 07:30 Sample series",
+                    "2027-03-09 07:30 Sample series",
+                    "2027-03-11 07:30 Sample series",
+                    "2027-03-13 07:30 Sample series",
+                    "2027-03-15 07:30 Sample series"
+                ]
+            }
+        }
+    ]
+}

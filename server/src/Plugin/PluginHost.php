@@ -179,37 +179,10 @@ final class PluginHost
         return $this->ownerZone;
     }
 
+    /** The owner's local clock (Settings::localZone), as a move or undo on a plugin calendar reads it too. */
     public function timezone(): \DateTimeZone
     {
-        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$this->userId]);
-        $settings = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
-        $tz = is_string($settings['tz'] ?? null) && $settings['tz'] !== '' ? $settings['tz'] : null;
-        // No stored setting (the client knows its zone from the browser and
-        // never had to tell the server). The events themselves do know: take
-        // the zone the user's own recent events are written in. Falling back
-        // to the server's zone instead would put a user's "Saturday morning"
-        // in whatever zone the server happens to run in.
-        if ($tz === null) {
-            // UTC is excluded from the vote: a Takeout import writes thousands
-            // of rows as UTC, which means "unknown", not "this user lives in
-            // Greenwich". Plugin calendars are excluded for the same reason —
-            // they are written by machines, in UTC, and would outvote the user.
-            $tz = $this->db->scalar(
-                "SELECT e.tzid FROM events e JOIN calendars c ON c.id = e.calendar_id
-                 WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.tzid <> '' AND e.tzid <> 'UTC'
-                   AND c.kind <> 'plugin'
-                 GROUP BY e.tzid ORDER BY COUNT(*) DESC LIMIT 1",
-                [$this->userId]
-            );
-            $tz = is_string($tz) && $tz !== '' ? $tz : null;
-        }
-        // Last resort UTC, as for events (Events::userTzid): the host's own
-        // zone is wherever the machine happens to be set.
-        try {
-            return new \DateTimeZone($tz ?? 'UTC');
-        } catch (\Throwable) {
-            return new \DateTimeZone('UTC');
-        }
+        return \BetterCal\Domain\Settings::localZone($this->db, $this->userId);
     }
 
     // ---- calendars the person adds (ownCalendars) ------------------------

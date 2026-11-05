@@ -32,6 +32,45 @@ final class Settings
     }
 
     /**
+     * The owner's local clock, for a plugin's times that come with no offset:
+     * the Home zone when one is set; otherwise the zone most of the owner's
+     * own events are written in; UTC when there is neither. A plugin's sync
+     * (PluginHost::timezone) and a move or undo on a plugin calendar
+     * (Events::pluginReschedule, Undo::undoPluginEdit) all read it here, so
+     * the same offset-less time lands on the same instant whichever wrote it.
+     */
+    public static function localZone(Db $db, int $userId): \DateTimeZone
+    {
+        $tz = self::homeTzid($db, $userId);
+        if ($tz === null) {
+            // The client knows its zone from the browser and may never have
+            // told the server; the events do know. UTC doesn't vote: a Takeout
+            // import writes thousands of rows as UTC, which means "unknown",
+            // not "this user lives in Greenwich". Plugin calendars don't vote
+            // either: machines write them, in UTC, and would outvote the user.
+            try {
+                $voted = $db->scalar(
+                    "SELECT e.tzid FROM events e JOIN calendars c ON c.id = e.calendar_id
+                     WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.tzid <> '' AND e.tzid <> 'UTC'
+                       AND c.kind <> 'plugin'
+                     GROUP BY e.tzid ORDER BY COUNT(*) DESC LIMIT 1",
+                    [$userId]
+                );
+            } catch (\PDOException) {
+                $voted = null;
+            }
+            $tz = is_string($voted) && $voted !== '' ? $voted : null;
+        }
+        // Last resort UTC, as for events: the server's own zone is wherever
+        // the machine happens to be set.
+        try {
+            return new \DateTimeZone($tz ?? 'UTC');
+        } catch (\Throwable) {
+            return new \DateTimeZone('UTC');
+        }
+    }
+
+    /**
      * The calendar new events go to when nothing says otherwise: the one
      * chosen in Settings. Set while there's a local calendar of the
      * person's own (setup sets it, deleting it moves it, migration 058 set

@@ -230,9 +230,9 @@ final class Events
         ], $authority);
         try {
             // A time the plugin gives back with no offset is the owner's
-            // local time (the Home zone in Settings; UTC until one is set),
-            // as undoing the move reads it (Undo::undoPluginEdit).
-            [$startUtc, $endUtc, $isAllDay] = PluginHost::spanToUtc($span, Time::zone(Settings::homeTzid($this->db, $userId)));
+            // local time (Settings::localZone), as its sync and undoing the
+            // move read it.
+            [$startUtc, $endUtc, $isAllDay] = PluginHost::spanToUtc($span, Settings::localZone($this->db, $userId));
         } catch (\Throwable) {
             // Converted to a refusal naming the plugin, before anything is
             // written: whatever a plugin's code throws, the write doesn't happen.

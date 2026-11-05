@@ -8128,7 +8128,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         if (isset($GLOBALS["moverDuring"])) { ($GLOBALS["moverDuring"])(); }
         if ($edit["title"] === "refuse") throw new BetterCal\Plugin\PluginEditRefused("The source said no.");
         if ($edit["title"] === "boom") throw new RuntimeException("socket closed");
-        return $edit["after"];
+        return $GLOBALS["moverAnswer"] ?? $edit["after"];
     }
 };');
     $edb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
@@ -8340,6 +8340,48 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     try { BetterCal\Domain\RequestAuthority::during($kinds['session'][0], fn() => $askerEvents->patch(1, 3, $move)); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
     $askerAfterQuery = null;
     checkEq('plugin requests: an edit made under a registered credential rechecks it too', ['session_revoked', ['query']], [$caught?->errorCode, $askerSent]);
+
+    // A plugin's sync, a move on its calendar and the move's undo read an
+    // offset-less time on one clock (Settings::localZone): with no Home zone
+    // set, the zone the owner's own events vote for (plugin calendars and
+    // UTC don't vote), else the Home zone, else UTC.
+    $live();
+    $edb->run("UPDATE users SET settings_json = '{}' WHERE id = 1");
+    $edb->run("INSERT INTO calendars (id, user_id, kind) VALUES (9, 1, 'local')");
+    foreach ([21, 22] as $id) {
+        $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (?, 1, 9, ?, 'Own event', '2030-01-05 09:00:00', '2030-01-05 10:00:00', 0, 'Europe/Berlin')", [$id, 'own-' . $id]);
+    }
+    $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (23, 1, 9, 'own-23', 'Own event', '2030-01-05 09:00:00', '2030-01-05 10:00:00', 0, 'America/Chicago')");
+    foreach ([24, 25, 26] as $id) {
+        $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (?, 1, 1, ?, 'Machine row', '2030-01-05 09:00:00', '2030-01-05 10:00:00', 0, 'Asia/Tokyo')", [$id, 'plg-mover-m' . $id]);
+    }
+    $edb->run("UPDATE events SET title = 'Timed item', start_utc = '2030-01-02 16:00:00', end_utc = '2030-01-02 17:00:00' WHERE id = 2");
+    $syncZone = static fn(): string => (new BetterCal\Plugin\PluginHost($edb, 'mover', 1, new BetterCal\Infra\HttpClient(), [], []))->timezone()->getName();
+    $spanOf = static fn(int $id): array => [$edb->scalar('SELECT start_utc FROM events WHERE id = ?', [$id]), $edb->scalar('SELECT end_utc FROM events WHERE id = ?', [$id])];
+    checkEq('plugin zone: with no Home zone, sync reads the zone the owner\'s own events vote for', 'Europe/Berlin', $syncZone());
+    $GLOBALS['moverAnswer'] = ['start' => '2030-01-03T10:00:00', 'end' => '2030-01-03T11:00:00', 'allDay' => false];
+    $authEvents->patch(1, 2, ['start' => '2030-01-03T09:00:00Z', 'end' => '2030-01-03T10:00:00Z', 'allDay' => false], $kinds['API key'][0]);
+    checkEq('plugin zone: a move reads the answer on the same clock (10:00 in Berlin in January is 09:00 UTC)', ['2030-01-03 09:00:00', '2030-01-03 10:00:00'], $spanOf(2));
+    $GLOBALS['moverAnswer'] = ['start' => '2030-01-02T17:00:00', 'end' => '2030-01-02T18:00:00', 'allDay' => false];
+    $authUndo->undoLatest(1, $kinds['API key'][0]);
+    checkEq('plugin zone: and so does its undo', ['2030-01-02 16:00:00', '2030-01-02 17:00:00'], $spanOf(2));
+    // A Home zone, once set, wins over the vote for all three.
+    $edb->run("UPDATE users SET settings_json = ? WHERE id = 1", [json_encode(['tz' => 'America/New_York'])]);
+    checkEq('plugin zone: with a Home zone, sync reads it', 'America/New_York', $syncZone());
+    $GLOBALS['moverAnswer'] = ['start' => '2030-01-03T10:00:00', 'end' => '2030-01-03T11:00:00', 'allDay' => false];
+    $authEvents->patch(1, 2, ['start' => '2030-01-03T15:00:00Z', 'end' => '2030-01-03T16:00:00Z', 'allDay' => false], $kinds['API key'][0]);
+    checkEq('plugin zone: and a move reads it', ['2030-01-03 15:00:00', '2030-01-03 16:00:00'], $spanOf(2));
+    $GLOBALS['moverAnswer'] = ['start' => '2030-01-02T11:00:00', 'end' => '2030-01-02T12:00:00', 'allDay' => false];
+    $authUndo->undoLatest(1, $kinds['API key'][0]);
+    checkEq('plugin zone: and its undo', ['2030-01-02 16:00:00', '2030-01-02 17:00:00'], $spanOf(2));
+    unset($GLOBALS['moverAnswer']);
+    // An owner whose only calendar is an empty plugin one reads the Home
+    // zone; with none set either, UTC.
+    $edb->run("INSERT INTO users (id, settings_json) VALUES (2, ?)", [json_encode(['tz' => 'Australia/Sydney'])]);
+    $edb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (10, 2, 'plugin', 'mover')");
+    checkEq('plugin zone: an empty plugin calendar reads the Home zone', 'Australia/Sydney', BetterCal\Domain\Settings::localZone($edb, 2)->getName());
+    $edb->run("UPDATE users SET settings_json = '{}' WHERE id = 2");
+    checkEq('plugin zone: and with no Home zone and no events of its own, UTC', 'UTC', BetterCal\Domain\Settings::localZone($edb, 2)->getName());
     array_map('unlink', glob($dir . '/asker/*'));
     rmdir($dir . '/asker');
     array_map('unlink', glob($dir . '/mover/*'));

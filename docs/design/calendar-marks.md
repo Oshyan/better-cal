@@ -15,7 +15,7 @@ The mockup is [calendar-marks.html](calendar-marks.html) (open it in a browser t
 
 - Discs are 10px on chips, 14px in the sidebar and 12px elsewhere (the event panel's calendar line 16px). Every calendar gets one; a plain calendar's is empty.
 - The glyph fills 80% of the disc (up from about 75% in the mockup) with a 0.75px line at any size: the mockup's heavier line made fine icons like the sunset harder to read.
-- Google's disc carries a stroked G in the glyphs' style; the colored Google logo stays after the calendar's name in the sidebar.
+- Google's disc carries a stroked G in the glyphs' style, a ring open on the right with a bar into the center, drawn on the disc's own box so it is centered at every size. The disc is the one place a calendar's provider shows; the colored Google logo appears only in a calendar's Source line in Settings (1.5.1; before it a second colored G followed the name in the sidebar).
 - The sunrise and sunset icons were redrawn as horizon, half sun and arrow; the side rays ran together at mark size.
 - Week and day blocks and month bars keep the icon alone, in the text color, before the title.
 - Phone month pills hide the disc for plain calendars, as they hid the dot, and show a 9px disc for marked ones.

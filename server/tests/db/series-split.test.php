@@ -513,4 +513,46 @@ return static function (Db $db): void {
             [(int) $col($day, 'recurrence_parent_id'), $col($day, 'start_utc')],
         ]);
     });
+
+    // All events from an edited day's own row is the series' change at its
+    // key too, for a delete, an answer and a relationship as for an edit;
+    // "this" (or no scope) there is that day alone.
+    scenario('series: delete all, an answer for all and a relationship for all from an edited day\'s own row are the whole series\', and Undo puts it back', function () use ($d, $u, $db, $rows, $series, $choices, $col): void {
+        $moved = ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-20T19:00:00+00:00', 'end' => '2027-01-20T20:00:00+00:00'];
+        $dayOf = static fn(int $master): int => (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$master, '2027-01-19 18:00:00']);
+
+        $gone = $series('Sample lesson', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6');
+        $d->events->patch($u, $gone, $moved);
+        $d->events->patch($u, $gone, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'title' => 'Sample lesson, recital']);
+        $before = $rows($gone);
+        $d->events->deleteEvent($u, $dayOf($gone), 'all', '2027-01-20T19:00:00+00:00');
+        checkEq('delete all from the edited day deletes the series and both edited days', [3, 0],
+            [count($before), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE (id = ? OR recurrence_parent_id = ?) AND deleted_at IS NULL', [$gone, $gone])]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo puts the series and its edited days back', $before, $rows($gone));
+
+        $club = $series('Sample games night', 'FREQ=WEEKLY;BYDAY=TU');
+        $d->events->patch($u, $club, $moved);
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'location' => 'Sample Hall']);
+        $before = $rows($club);
+        $d->events->setAttendance($u, $dayOf($club), 'going', 'all', '2027-01-20T19:00:00+00:00');
+        checkEq('an answer for all from the edited day answers the series and both edited days', ['going', ['going', 'going']], [
+            $col($club, 'attendance'), array_column($db->all('SELECT attendance FROM events WHERE recurrence_parent_id = ? ORDER BY id', [$club]), 'attendance'),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo takes the answer back everywhere', $before, $rows($club));
+
+        $own = $series('Sample band practice', 'FREQ=WEEKLY;BYDAY=TU');
+        $d->events->patch($u, $own, $moved);
+        $day = $dayOf($own);
+        $before = $rows($own);
+        $plan = $d->events->previewRelationship($u, $day, 'maybe', 'all', '2027-01-20T19:00:00+00:00');
+        checkEq('a relationship for all from the edited day previews the series\' status edit, the same plan as from the series at its key', ['all', true],
+            [$plan['scope'], $plan === $d->events->previewRelationship($u, $own, 'maybe', 'all', '2027-01-19T18:00:00+00:00')]);
+        $d->events->setRelationship($u, $day, 'maybe', 'all', '2027-01-20T19:00:00+00:00', null, ['hash' => $plan['hash'], 'choices' => $choices($plan)]);
+        checkEq('the series and the moved day are tentative, the day where it was put', ['tentative', 'tentative', '2027-01-20 19:00:00'],
+            [$col($own, 'status'), $col($day, 'status'), $col($day, 'start_utc')]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo puts the status back', $before, $rows($own));
+    });
 };

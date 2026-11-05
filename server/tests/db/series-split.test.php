@@ -446,4 +446,71 @@ return static function (Db $db): void {
         $d->undo->undoLatest($u);
         checkEq('undone: every row as before, and the part is gone', [$before, 0], [$rows($club), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$new])]);
     });
+
+    // From an edited day's own row, delete following, an answer from a day
+    // on and a relationship from a day on are the series' split at that
+    // day's key (the row's recurrence_instance_utc), as an edit is; the
+    // instanceStart sent is the day the row shows on, which is not its key.
+    scenario('split: delete following from an edited day\'s own row is the series\' at its key, preview and commit alike, and Undo puts it back', function () use ($d, $u, $db, $rows, $series, $col): void {
+        $swim = $series('Sample swim', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6');
+        $d->events->patch($u, $swim, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample swim, moved', 'start' => '2027-01-20T19:00:00+00:00', 'end' => '2027-01-20T20:00:00+00:00']);
+        $d->events->patch($u, $swim, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'title' => 'Sample swim test']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND title = ?', [$swim, 'Sample swim, moved']);
+        $before = $rows($swim);
+        $plan = $d->events->previewDelete($u, $day, 'following', '2027-01-20T19:00:00+00:00');
+        checkEq('the preview from the edited day is the series\' delete at 19 Jan: ends on 12 Jan after 2 events, both edited days deleted, the same plan as from the series', [
+            'delete', '2027-01-19T18:00:00Z', ['kind' => 'until', 'until' => '20270112T180000Z', 'events' => 2, 'last' => '2027-01-12'], null,
+            [['2027-01-19T18:00:00Z', 'edited', 'deleted'], ['2027-01-26T18:00:00Z', 'edited', 'deleted']], true, $before,
+        ], [
+            $plan['action'], $plan['split']['at'], $plan['split']['before']['bound'], $plan['split']['after'],
+            array_map(static fn(array $x): array => [$x['key'], $x['kind'], $x['outcome']], $plan['days']),
+            $plan === $d->events->previewDelete($u, $swim, 'following', '2027-01-19T18:00:00+00:00'), $rows($swim),
+        ]);
+        $d->events->deleteEvent($u, $day, 'following', '2027-01-20T19:00:00+00:00', null, ['hash' => $plan['hash'], 'choices' => []]);
+        checkEq('the commit writes that plan: the series ends on 12 Jan and the edited day goes with the part', ['FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 0, 0], [
+            $col($swim, 'rrule'), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ?', [$swim]),
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$day]),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo puts the series and its edited days back', $before, $rows($swim));
+    });
+
+    scenario('split: an answer from an edited day\'s own row is the series\' answer from its key, preview and commit alike', function () use ($d, $u, $db, $rows, $series, $newest, $col): void {
+        $club = $series('Sample reading club', 'FREQ=WEEKLY;BYDAY=TU');
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-20T19:00:00+00:00', 'end' => '2027-01-20T20:00:00+00:00']);
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'location' => 'Sample Hall']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$club, '2027-01-19 18:00:00']);
+        $before = $rows($club);
+        $plan = $d->events->previewAttendance($u, $day, 'going', 'following', '2027-01-20T19:00:00+00:00');
+        checkEq('the preview from the edited day is the series\' answer at 19 Jan, the same plan as from the series', ['answer', '2027-01-19T18:00:00Z', 2, true, $before], [
+            $plan['action'], $plan['split']['at'], $plan['split']['after']['edited'],
+            $plan === $d->events->previewAttendance($u, $club, 'going', 'following', '2027-01-19T18:00:00+00:00'), $rows($club),
+        ]);
+        $d->events->setAttendance($u, $day, 'going', 'following', '2027-01-20T19:00:00+00:00', ['hash' => $plan['hash'], 'choices' => []]);
+        $new = $newest($club);
+        checkEq('the old part ends on 12 Jan with no answer; the new one from 19 Jan and both edited days answer going, the moved day where it was put', [
+            'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 'none', '2027-01-19 18:00:00', 'going',
+            [[$day, '2027-01-20 19:00:00', 'going'], [$day + 1, '2027-01-26 18:00:00', 'going']],
+        ], [
+            $col($club, 'rrule'), $col($club, 'attendance'), $col($new, 'start_utc'), $col($new, 'attendance'),
+            array_map(static fn(array $r): array => [(int) $r['id'], $r['start_utc'], $r['attendance']], $db->all('SELECT id, start_utc, attendance FROM events WHERE recurrence_parent_id = ? ORDER BY id', [$new])),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo makes the series whole again', $before, $rows($club));
+    });
+
+    scenario('split: a relationship from an edited day\'s own row is the series\' status edit from its key', function () use ($d, $u, $db, $series, $choices, $newest, $col): void {
+        $own = $series('Sample practice', 'FREQ=WEEKLY;BYDAY=TU');
+        $d->events->patch($u, $own, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-20T19:00:00+00:00', 'end' => '2027-01-20T20:00:00+00:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$own]);
+        $plan = $d->events->previewRelationship($u, $day, 'maybe', 'following', '2027-01-20T19:00:00+00:00');
+        $d->events->setRelationship($u, $day, 'maybe', 'following', '2027-01-20T19:00:00+00:00', null, ['hash' => $plan['hash'], 'choices' => $choices($plan)]);
+        $new = $newest($own);
+        checkEq('the plan is the series\' status split at 19 Jan; the old part ends on 12 Jan confirmed, the new one is tentative and carries the moved day', [
+            'following', 'edit', '2027-01-19T18:00:00Z', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 'confirmed', 'tentative', '2027-01-19 18:00:00', [$new, '2027-01-20 19:00:00'],
+        ], [
+            $plan['scope'], $plan['action'], $plan['split']['at'], $col($own, 'rrule'), $col($own, 'status'), $col($new, 'status'), $col($new, 'start_utc'),
+            [(int) $col($day, 'recurrence_parent_id'), $col($day, 'start_utc')],
+        ]);
+    });
 };

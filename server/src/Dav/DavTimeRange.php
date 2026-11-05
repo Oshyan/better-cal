@@ -52,12 +52,17 @@ final class DavTimeRange
      * the range, as Recurrence::expand gives them. $first stops at the first
      * window holding one, for a caller that only asks whether there is any.
      *
+     * The range is read in windows the expander's cap (MAX_INSTANCES per
+     * series per window) cannot cut: a window it cut is read again as two
+     * halves, and each next window after a whole one is twice as long, so
+     * every window kept is complete and the answer is every occurrence in
+     * the range, however many, the calendar's window reading the same rows.
+     *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides
      * @return list<array{row:array,start:\DateTimeImmutable,end:\DateTimeImmutable,instanceUtc:string}>
      */
     public static function occurrences(
-        Recurrence $recurrence,
         array $master,
         array $overrides,
         ?\DateTimeInterface $rangeStart,
@@ -70,10 +75,19 @@ final class DavTimeRange
         $from = $rangeStart === null ? new \DateTimeImmutable('0001-01-01 00:00:00', Time::utc()) : self::utc($rangeStart)->modify('-1 second');
         $to = $rangeEnd === null ? new \DateTimeImmutable('9999-12-31 23:59:59', Time::utc()) : self::utc($rangeEnd);
         $out = [];
-        $step = self::FIRST_STEP_SECONDS;
+        $step = $first ? self::FIRST_STEP_SECONDS : max(1, $to->getTimestamp() - $from->getTimestamp());
         while ($from < $to) {
-            $until = $first && $to->getTimestamp() - $from->getTimestamp() > $step ? $from->modify('+' . $step . ' seconds') : $to;
-            foreach ($recurrence->expand($master, $overrides, $from, $until) as $occ) {
+            $until = $to->getTimestamp() - $from->getTimestamp() > $step ? $from->modify('+' . $step . ' seconds') : $to;
+            // A Recurrence of its own per window, so capped() says whether
+            // this window was cut.
+            $window = new Recurrence();
+            $occs = $window->expand($master, $overrides, $from, $until);
+            $span = $until->getTimestamp() - $from->getTimestamp();
+            if ($window->capped() !== [] && $span > 1) {
+                $step = intdiv($span, 2);
+                continue;
+            }
+            foreach ($occs as $occ) {
                 if (self::overlaps($occ['start'], $occ['end'], $rangeStart, $rangeEnd) && !isset($out[$occ['instanceUtc']])) {
                     $out[$occ['instanceUtc']] = $occ;
                 }
@@ -82,7 +96,7 @@ final class DavTimeRange
                 break;
             }
             $from = $until;
-            $step *= 2;
+            $step = $span * 2;
         }
         $out = array_values($out);
         usort($out, static fn(array $a, array $b): int => $a['start'] <=> $b['start']);
@@ -172,7 +186,7 @@ final class DavTimeRange
                 }
             }
             $repeats = !empty($master['rrule']);
-            foreach (self::occurrences(new Recurrence(), $master, $overrides, $rangeStart, $rangeEnd) as $occ) {
+            foreach (self::occurrences($master, $overrides, $rangeStart, $rangeEnd) as $occ) {
                 $from = $edited[$occ['instanceUtc']] ?? $masterEvent;
                 if ($from === null) {
                     continue;

@@ -206,3 +206,29 @@ checkEq('calendar-query with expand over an all-day series: Fri 15 and Fri 22 Ja
 $dqXml = $dqReport('/calendars/sam@example.test/cal-' . $dqWeekly . '/', $dqQueryBody('20270110T000000Z', '20270131T000000Z', false));
 checkEq('calendar-query without expand: the object as stored, its series VEVENT with its rule and its moved day', [2, 1, 1],
     [substr_count($dqXml, 'BEGIN:VEVENT'), substr_count($dqXml, 'RRULE:FREQ=WEEKLY;BYDAY=TU'), substr_count($dqXml, 'RECURRENCE-ID')]);
+
+// Past the expander's cap: Recurrence::expand reads at most 1,000 occurrences
+// of a series per window, so a range holding more is read in windows the cap
+// cannot cut, never answered short.
+// Hourly, 30 minutes long, from Mon 1 Mar 2027 00:00 UTC, 1,100 events: the
+// last is 1,099 hours on, Thu 15 Apr 19:00 (45 days and 19 hours).
+$dqHourly = $dqNewCalendar();
+$dqRow($dqHourly, ['uid' => 'dq-hourly@example.test', 'start_utc' => '2027-03-01 00:00:00', 'end_utc' => '2027-03-01 00:30:00', 'rrule' => 'FREQ=HOURLY;COUNT=1100']);
+$dqHourlyAll = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqHourly . '/', $dqQueryBody('20270301T000000Z', '20270501T000000Z')));
+checkEq('expand over a range holding 1,100 occurrences, more than the cap: all 1,100, each once, from Mon 1 Mar 00:00 to Thu 15 Apr 19:00', [
+    1100, 1100, '20270301T000000Z 20270301T000000Z', '20270415T190000Z 20270415T190000Z',
+], [count($dqHourlyAll), count(array_unique($dqHourlyAll)), $dqHourlyAll[0] ?? null, $dqHourlyAll[1099] ?? null]);
+// The same series with its first 1,000 hours skipped: what is left starts
+// 1,000 hours on, Sun 11 Apr 16:00 (41 days and 16 hours).
+$dqSkipped = $dqNewCalendar();
+$dqSkips = [];
+for ($dqHour = 0; $dqHour < 1000; $dqHour++) {
+    $dqSkips[] = $dqUtc('2027-03-01 00:00:00')->modify('+' . $dqHour . ' hours')->format('Y-m-d H:i:s');
+}
+$dqRow($dqSkipped, ['uid' => 'dq-skipped@example.test', 'start_utc' => '2027-03-01 00:00:00', 'end_utc' => '2027-03-01 00:30:00', 'rrule' => 'FREQ=HOURLY;COUNT=1100', 'exdates_json' => json_encode($dqSkips)]);
+checkEq('a range open before the series whose first 1,000 occurrences are skipped holds it, by the ones after them; one ending at Sun 11 Apr 16:00 does not', [['dq-skipped@example.test.ics'], []], [
+    $dqQuery($dqSkipped, null, '2027-05-01 00:00:00'), $dqQuery($dqSkipped, null, '2027-04-11 16:00:00'),
+]);
+$dqLeft = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqSkipped . '/', $dqQueryBody('20270301T000000Z', '20270501T000000Z')));
+checkEq('expand over it: the 100 left, from Sun 11 Apr 16:00 to Thu 15 Apr 19:00', [100, '20270411T160000Z 20270411T160000Z', '20270415T190000Z 20270415T190000Z'],
+    [count($dqLeft), $dqLeft[0] ?? null, $dqLeft[99] ?? null]);

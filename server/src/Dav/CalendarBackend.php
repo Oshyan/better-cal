@@ -269,12 +269,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 $overrides[(string) $row['uid']][] = $row;
             }
         }
-        $recurrence = new \BetterCal\Domain\Recurrence();
         $everyEvent = DavTimeRange::holdsForEveryEvent($rest);
         $result = [];
         foreach ($masters as $uid => $master) {
             foreach ($ranges as $range) {
-                if (DavTimeRange::occurrences($recurrence, $master, $overrides[$uid] ?? [], $range['start'], $range['end'], true) === []) {
+                if (DavTimeRange::occurrences($master, $overrides[$uid] ?? [], $range['start'], $range['end'], true) === []) {
                     continue 2;
                 }
             }

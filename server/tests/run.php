@@ -2479,6 +2479,39 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     // occurrence, so the app can keep it open (it used to go blank). Needs
     // sabre/vobject to prove the occurrence (the install job runs it).
     if (class_exists(\Sabre\VObject\Reader::class)) {
+        // A series' start as the API reads it is its first shown day
+        // (Events::shownSpan, beside shownRrule): a new series typed at 02:30
+        // on the spring change day is stored from the week before, that day
+        // a skip and COUNT one higher, and every API reading of the master
+        // (the create's answer, the single-event fetch, the list shape) says
+        // 14 Mar, the typed clock read as its instant, with its length.
+        $gapTz = 'America/Los_Angeles';
+        $gap = $eventsA->create(1, ['calendarId' => 10, 'title' => 'Standup', 'start' => '2027-03-14T03:30:00-07:00', 'end' => '2027-03-14T04:30:00-07:00',
+            'typed' => ['start' => '2027-03-14T02:30', 'end' => '2027-03-14T04:30', 'tz' => $gapTz], 'allDay' => false, 'tzid' => $gapTz, 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+        $gapId = (int) $gap['eventId'];
+        $gapRow = $adb->one('SELECT rrule, start_utc, end_utc, exdates_json FROM events WHERE id = ?', [$gapId]);
+        checkEq('first day in the skipped hour: stored from 7 Mar at 02:30, a skip there, COUNT=5', ['FREQ=WEEKLY;COUNT=5', '2027-03-07 10:30:00', '2027-03-07 11:30:00', ['2027-03-07 10:30:00']],
+            [$gapRow['rrule'], $gapRow['start_utc'], $gapRow['end_utc'], json_decode((string) $gapRow['exdates_json'], true)]);
+        $read = static fn(array $o): array => [$o['start'], $o['end'], $o['rrule'] ?? null, $o['instanceId']];
+        checkEq('first day in the skipped hour: the create answers 14 Mar at 03:30 for an hour, COUNT=4, its instance that day',
+            ['2027-03-14T03:30:00-07:00', '2027-03-14T04:30:00-07:00', 'FREQ=WEEKLY;COUNT=4', Recurrence::instanceId($gapId, Time::fromDb('2027-03-14 10:30:00'))], $read($gap));
+        checkEq('first day in the skipped hour: the single-event fetch agrees with the create', $read($gap), $read($eventsA->serializeSingle($eventsA->get(1, $gapId))));
+        $listed = $eventsA->serializeRows([$eventsA->get(1, $gapId)])[0];
+        checkEq('first day in the skipped hour: the list shape (search, links) says the same start and end', [$gap['start'], $gap['end']], [$listed['start'], $listed['end']]);
+        // The stored expansion less its skips: the days the series shows.
+        $skipped = Recurrence::decodeExdates($gapRow['exdates_json']);
+        $expanded = array_values(array_map(static fn(array $o): string => Time::iso($o['start']->setTimezone(new DateTimeZone($gapTz))),
+            array_filter(Recurrence::sabreExpand($adb->one('SELECT * FROM events WHERE id = ?', [$gapId]), Time::fromDb('2027-03-01 00:00:00'), Time::fromDb('2027-04-15 00:00:00')),
+                static fn(array $o): bool => !in_array(Time::toDb($o['start']), $skipped, true))));
+        checkEq('first day in the skipped hour: the first day it shows is the record\'s start, four events', [$gap['start'], 4], [$expanded[0] ?? null, count($expanded)]);
+        // A series not in the gap: what the API reads is the row as stored.
+        $plainSeries = $eventsA->create(1, ['calendarId' => 10, 'title' => 'Standup, late', 'start' => '2027-03-14T05:30:00-07:00', 'end' => '2027-03-14T06:30:00-07:00',
+            'allDay' => false, 'tzid' => $gapTz, 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+        $plainRow = $adb->one('SELECT rrule, start_utc, end_utc FROM events WHERE id = ?', [(int) $plainSeries['eventId']]);
+        checkEq('a series outside the gap: the record is its row', [$plainRow['rrule'], Time::iso(Time::fromDb((string) $plainRow['start_utc'])->setTimezone(new DateTimeZone($gapTz))), Time::iso(Time::fromDb((string) $plainRow['end_utc'])->setTimezone(new DateTimeZone($gapTz)))],
+            [$plainSeries['rrule'], $plainSeries['start'], $plainSeries['end']]);
+        $adb->run('DELETE FROM events WHERE id IN (?, ?)', [$gapId, (int) $plainSeries['eventId']]);
+
         $seriesId = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily sample', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $splitter = $eventsA;
         (new ReflectionProperty($splitter, 'splitEventId'))->setValue($splitter, null);

@@ -393,6 +393,37 @@ trait SeriesPlans
     }
 
     /**
+     * The start and end as the API says them: a series' first shown day.
+     * Like its COUNT (shownRrule), a series stored one period earlier as a
+     * generated skip (a start in a skipped hour) is stored from a day it
+     * never shows, which is the model's, never the person's; every start
+     * the API reads for a series is its first shown day, at the row's
+     * length. Any other row is its stored start and end. The stored form
+     * stays for the rows, ICS, CalDAV (DTSTART and EXDATE spell the same
+     * series), the plans and Undo, which read rows, not API output.
+     *
+     * @return array{0:\DateTimeImmutable,1:\DateTimeImmutable} UTC
+     */
+    public static function shownSpan(array $row): array
+    {
+        $start = Time::fromDb((string) $row['start_utc']);
+        $end = Time::fromDb((string) $row['end_utc']);
+        if (empty($row['rrule']) || !str_contains((string) ($row['exdates_json'] ?? ''), (string) $row['start_utc'])) {
+            return [$start, $end];
+        }
+        try {
+            $calc = Calc::fromRow($row);
+            if ($calc->anchor === null) {
+                return [$start, $end];
+            }
+            $first = $calc->instant($calc->startDn);
+        } catch (\Throwable) {
+            return [$start, $end];
+        }
+        return [$first, $first->modify('+' . ($end->getTimestamp() - $start->getTimestamp()) . ' seconds')];
+    }
+
+    /**
      * The series' rows and the edit, as the model reads them.
      *
      * @return array{0:array,1:list<array>,2:array,3:array}

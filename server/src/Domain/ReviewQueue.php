@@ -784,7 +784,7 @@ final class ReviewQueue
     {
         $now ??= Time::nowUtc();
         $rows = $this->db->all(
-            "SELECT id, title, start_utc, end_utc, all_day, tzid, location, rrule, invite_json, created_at FROM events
+            "SELECT id, title, start_utc, end_utc, all_day, tzid, location, rrule, exdates_json, invite_json, created_at FROM events
              WHERE user_id = ? AND deleted_at IS NULL AND invite_json IS NOT NULL AND status <> 'cancelled'
                AND recurrence_parent_id IS NULL AND (end_utc > ? OR rrule IS NOT NULL)
              ORDER BY start_utc ASC LIMIT 500",
@@ -813,14 +813,16 @@ final class ReviewQueue
             }
             $tz = Time::zone((string) $row['tzid']);
             $allDay = (int) $row['all_day'] === 1;
-            $fmt = static fn(string $db): string => $allDay
-                ? Time::fromDb($db)->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
-                : Time::iso(Time::fromDb($db)->setTimezone($tz));
+            $fmt = static fn(\DateTimeImmutable $at): string => $allDay
+                ? $at->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                : Time::iso($at->setTimezone($tz));
+            // A series' start as the API reads it: its first shown day (Events::shownSpan).
+            [$shownStart, $shownEnd] = Events::shownSpan($row);
             $out[] = [
                 'eventId' => (int) $row['id'],
                 'title' => (string) $row['title'],
-                'start' => $fmt((string) $row['start_utc']),
-                'end' => $fmt((string) $row['end_utc']),
+                'start' => $fmt($shownStart),
+                'end' => $fmt($shownEnd),
                 'allDay' => $allDay,
                 // The event's zone, as an event carries it: the MCP server
                 // gives UTC times on the owner's Home clock by it.

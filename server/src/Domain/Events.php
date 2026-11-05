@@ -2250,7 +2250,9 @@ final class Events
         $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
         $links['dupes'] = $this->duplicates()->linkedFor([self::seriesId($row)]);
         $links['feedback'] = $this->feedbackFor(self::feedIds([$row]));
-        return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: true);
+        // A series' start as read is its first shown day (shownSpan).
+        [$start, $end] = self::shownSpan($row);
+        return $this->serialize($row, $start, $end, $links, full: true);
     }
 
     /**
@@ -2271,7 +2273,7 @@ final class Events
         $links['dupes'] = $this->duplicates()->linkedFor(array_values(array_unique(array_map(self::seriesId(...), $rows))));
         $links['feedback'] = $this->feedbackFor(self::feedIds($rows));
         return array_map(
-            fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: false),
+            fn(array $row) => $this->serialize($row, self::shownSpan($row)[0], self::shownSpan($row)[1], $links, full: false),
             $rows
         );
     }

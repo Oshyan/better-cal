@@ -78,10 +78,16 @@ final class Report
 
     public static function tally(Runner $runner): array
     {
+        return self::tallyOf($runner->counts, $runner->failures);
+    }
+
+    /** The tallies from a run's counts and failure records, one process's or several merged (harness.php --shards). */
+    public static function tallyOf(array $counts, array $failures): array
+    {
         $byCause = [];
         $unexpected = 0;
         $newOnKnown = 0;
-        foreach ($runner->failures as $f) {
+        foreach ($failures as $f) {
             $cause = Known::cause($f);
             if ($cause === null) {
                 $unexpected++;
@@ -95,15 +101,15 @@ final class Report
         $missing = [];
         foreach (self::REQUIRED as $check => $roles) {
             foreach ($roles as $role) {
-                if (($runner->counts['runs'][$check][$role] ?? 0) === 0) {
+                if (($counts['runs'][$check][$role] ?? 0) === 0) {
                     $missing[] = "$check | $role";
                 }
             }
         }
         return [
             'unexpected' => $unexpected, 'byCause' => $byCause, 'newOnKnown' => $newOnKnown,
-            'unoracled' => array_sum($runner->counts['unoracled']), 'skipped' => $runner->counts['skipped'] ?? 0,
-            'runs' => $runner->counts['runs'] ?? [], 'missing' => $missing,
+            'unoracled' => array_sum($counts['unoracled']), 'skipped' => $counts['skipped'] ?? 0,
+            'runs' => $counts['runs'] ?? [], 'missing' => $missing,
         ];
     }
 
@@ -187,6 +193,10 @@ final class Runner
     public array $counts = ['cases' => 0, 'byFamily' => [], 'byPath' => [], 'failures' => [], 'unoracled' => []];
     /** @var list<array> */
     public array $failures = [];
+    /** @var array<string, list<int>> Where each key of the counts was first counted (bump). */
+    public array $firstSeen = [];
+    private array $at = [0, 0];
+    private int $seen = 0;
 
     public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed)
     {
@@ -197,16 +207,21 @@ final class Runner
         }
     }
 
-    /** A fresh account every $perUser cases keeps the journal short. */
-    public function run(int $cases, ?string $onlyFamily = null, ?int $onlyCase = null, int $perUser = 150, ?callable $progress = null): void
+    /**
+     * A fresh account for each block of $perUser case numbers keeps the journal short. Shard $shard of $shards runs the
+     * cases whose number is $shard modulo $shards (harness.php --shards), each still drawn from the seed and its number.
+     */
+    public function run(int $cases, ?string $onlyFamily = null, ?int $onlyCase = null, int $perUser = 150, ?callable $progress = null, int $shards = 1, int $shard = 0): void
     {
         $driver = null;
+        $block = null;
         for ($i = 1; $i <= $cases; $i++) {
-            if ($onlyCase !== null && $i !== $onlyCase) {
+            if (($onlyCase !== null && $i !== $onlyCase) || $i % $shards !== $shard % $shards) {
                 continue;
             }
-            if ($driver === null || ($i - 1) % $perUser === 0) {
+            if ($driver === null || intdiv($i - 1, $perUser) !== $block) {
                 $driver = $this->driver();
+                $block = intdiv($i - 1, $perUser);
             }
             $r = new Rng($this->seed * 1_000_003 + $i);
             $spec = ['n' => $i, 'seed' => $this->seed, 'series' => Space::series($r, $onlyFamily)];
@@ -261,24 +276,42 @@ final class Runner
         $spec = $result['spec'];
         $family = $spec['series']['family'];
         $path = $result['path'];
-        $this->counts['cases']++;
-        $this->counts['byFamily'][$family] = ($this->counts['byFamily'][$family] ?? 0) + 1;
-        $this->counts['byPath'][$path] = ($this->counts['byPath'][$path] ?? 0) + 1;
+        $this->at = isset($spec['fixed']) ? [1, 0] : [0, $spec['n']];
+        $this->bump(['cases']);
+        $this->bump(['byFamily', $family]);
+        $this->bump(['byPath', $path]);
         foreach ($result['unoracled'] as $u) {
-            $this->counts['unoracled'][$u] = ($this->counts['unoracled'][$u] ?? 0) + 1;
+            $this->bump(['unoracled', $u]);
         }
         if ($path === 'none') {
-            $this->counts['skipped'] = ($this->counts['skipped'] ?? 0) + 1;
+            $this->bump(['skipped']);
         }
         foreach ($result['runs'] ?? [] as $check => $byRole) {
             foreach ($byRole as $role => $n) {
-                $this->counts['runs'][$check][$role] = ($this->counts['runs'][$check][$role] ?? 0) + $n;
+                $this->bump(['runs', $check, $role], $n);
             }
         }
         foreach ($result['records'] as $rec) {
-            $this->counts['failures'][$rec['invariant']] = ($this->counts['failures'][$rec['invariant']] ?? 0) + 1;
+            $this->bump(['failures', $rec['invariant']]);
             $this->failures[] = ['n' => $spec['n'], 'seed' => $spec['seed'], 'revision' => Revision::get(), 'family' => $family, 'path' => $path, 'deltas' => isset($spec['vector']) ? Delta::nonZero($spec['vector']) : []] + $rec + ['spec' => $spec];
         }
+    }
+
+    /**
+     * Adds $n to the count at $path, noting for each new key where it was first counted: its case (drawn ones by number,
+     * the fixed ones after) and its order in this process, so counts merged from shards keep the key order of one process.
+     */
+    private function bump(array $path, int $n = 1): void
+    {
+        $at = &$this->counts;
+        foreach ($path as $depth => $key) {
+            if (!array_key_exists($key, $at)) {
+                $this->firstSeen[implode("\0", array_slice($path, 0, $depth + 1))] = [...$this->at, $this->seen++];
+                $at[$key] = $depth === count($path) - 1 ? 0 : [];
+            }
+            $at = &$at[$key];
+        }
+        $at += $n;
     }
 
     /** A failure's signature, for one reproduction each: invariant, family, path. */

@@ -3,7 +3,7 @@
 Builds thousands of random repeating series with skipped and edited days, applies random edits to them as the client does (Events, the series plan API, Undo) against a migrated database, and checks what was written against the expander and against its own reading of the design ([series-model.md](../../docs/design/series-model.md), [api-contract.md](../../docs/api-contract.md) "Series Plans"). The design is the specification: nothing here takes the series model's word for what an edit should do. Run it after changing anything in the series model (`Domain/Series`, `SeriesPlans`), `Events`, `Recurrence` or `Undo`.
 
 ```bash
-BC_TEST_DB=127.0.0.1:3306 ./tools/edit-harness/run.sh [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet]
+BC_TEST_DB=127.0.0.1:3306 ./tools/edit-harness/run.sh [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--shards N]
 ```
 
 It needs PHP with `server/vendor` installed and a MariaDB or MySQL server it may create databases on (`BC_TEST_DB` as host:port, `BC_TEST_DB_USER` and `BC_TEST_DB_PASS`, root with no password by default), exactly as the database suite does. Each run makes a database of its own and drops it. 3,000 cases take about five and a half minutes, and shrinking adds a minute or two; a seed names a run, so `--seed 1 --case 116` replays one case and `--family` limits the draw to one family. It writes `findings.json` here (ignored by git): every failing check with the case that produced it, and one shrunk reproduction per finding signature. `HARNESS_SLOW=seconds` names each case that took longer, and `HARNESS_PROFILE=1` adds the time spent in each phase to the summary. It runs from the command line only.
@@ -11,6 +11,8 @@ It needs PHP with `server/vendor` installed and a MariaDB or MySQL server it may
 A seeded slice of 200 cases (seed 7) and the fixed cases run with the database suite on every push (`server/tests/db/edits.test.php`). It fails on any failure outside the known code paths below and lists each one with its signature and the case to replay, and it fails when the slice and the fixed cases together leave a required category of the plan's data checks unrun. The mutation runner follows it in CI (Mutations).
 
 `--fixed` runs the fixed cases after the drawn ones (`--cases 0 --fixed` for them alone, `--fixed=name,...` for some; a full run of 1,000 cases or more takes them all), `--save-spec DIR` writes each case's complete spec as a fixed case is written (`--case N` to save one), `--findings FILE` names the findings file, `--model FILE` loads the series model from a copy instead of the tree (the mutation runner's), and `--find 'check|role'` names each case that ran a category of the plan-data checks, to pick a fixed case from.
+
+`--shards N` runs the cases on N harness processes at once, each on a database of its own, and merges them into the report and findings file one process gives: the same cases, counts, failures, signatures, tallies and verdict. Each case is drawn from the seed and its number alone, so shard k runs the cases whose number is k modulo N, the fixed cases run once on the first shard, each shard shrinks its own signatures and the merged file keeps the reproduction of each signature's first failure. Ids the database makes (a row a check's detail names, a shrunk reproduction's calendar) are that shard's own. A shard that fails to start, crashes or writes no findings fails the run, with its output shown. `--case` and `--find` run on one process. 3,000 cases take about a minute and a half on 8 shards.
 
 ## Files
 

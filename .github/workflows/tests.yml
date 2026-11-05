@@ -108,6 +108,12 @@ jobs:
         env:
           BC_TEST_DB: mariadb:3306
         run: php tools/edit-harness/mutations/run.php
+      # A full run of one seed (the fixed cases included, every required
+      # category of the plan-data checks executed), on four processes at once.
+      - name: Edit harness, a full seed
+        env:
+          BC_TEST_DB: mariadb:3306
+        run: ./tools/edit-harness/run.sh --seed 7 --cases 1000 --quiet --shards 4
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

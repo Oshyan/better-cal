@@ -137,10 +137,15 @@ final class Plugins
         return mb_strlen($icon) <= 8 ? null : 'glyph is too long';
     }
 
+    /**
+     * $editHttp: tests only, further options for the HttpClient a plugin's
+     * edit is given (a stand-in transport and resolver); empty otherwise.
+     */
     public function __construct(
         private readonly Db $db,
         private readonly ?string $pluginsDir = null,
         private readonly array $cfg = [],
+        private readonly array $editHttp = [],
     ) {
     }
 
@@ -1602,8 +1607,15 @@ final class Plugins
      * @param array<string,mixed> $edit
      * @return array{start:string,end:string,allDay:bool}
      */
-    public function applyEdit(int $userId, string $id, array $edit): array
+    /**
+     * $authority: the request's credential (the registered one when none is
+     * given). It is checked, without lock, before every request the plugin
+     * sends during the edit, so a session or key revoked between a plugin's
+     * query and its update stops the update, with no plugin code involved.
+     */
+    public function applyEdit(int $userId, string $id, array $edit, ?RequestAuthority $authority = null): array
     {
+        $authority ??= RequestAuthority::current();
         $state = $this->db->one('SELECT * FROM plugins WHERE id = ? AND enabled = 1', [$id]);
         $m = $this->manifest($id);
         $name = (string) ($m['name'] ?? $id);
@@ -1614,14 +1626,36 @@ final class Plugins
         if (!$instance instanceof EditablePlugin) {
             throw HttpError::forbidden('plugin_readonly', $name . ' events are read-only here');
         }
-        $host = new PluginHost($this->db, $id, $userId, new HttpClient(requestBudget: 10, totalTimeoutMs: 10_000, absoluteDeadline: microtime(true) + 20.0), $m, $this->cfg, null);
+        // The refusal is kept: a plugin that catches it (as a network error,
+        // say) still fails the edit with it, and sends nothing further.
+        $refused = null;
+        $beforeSend = $authority === null ? null : function () use ($authority, &$refused): void {
+            if ($refused !== null) {
+                throw $refused;
+            }
+            try {
+                $authority->assertValid($this->db, false);
+            } catch (HttpError $e) {
+                throw $refused = $e;
+            }
+        };
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(...['requestBudget' => 10, 'totalTimeoutMs' => 10_000, 'absoluteDeadline' => microtime(true) + 20.0, 'beforeSend' => $beforeSend] + $this->editHttp), $m, $this->cfg, null);
         try {
             $span = ActivityContext::with('plugin:' . $id, fn() => $instance->applyEdit($host, $edit));
+            if ($refused !== null) {
+                throw $refused;
+            }
         } catch (PluginEditRefused $e) {
+            if ($refused !== null) {
+                throw $refused;
+            }
             throw new HttpError('plugin_edit_refused', mb_substr(trim($e->getMessage()), 0, 300) ?: $name . ' refused the change', 422);
         } catch (HttpError $e) {
             throw $e;
         } catch (\Throwable $e) {
+            if ($refused !== null) {
+                throw $refused;
+            }
             $detail = $this->privateDiagnostics($id, $m, $state) ? '' : ': ' . mb_substr($e->getMessage(), 0, 200);
             throw new HttpError('plugin_edit_failed', $name . " couldn't make the change" . $detail, 502);
         }

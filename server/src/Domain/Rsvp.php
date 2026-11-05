@@ -290,12 +290,16 @@ final class Rsvp
         $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken), $journal)
             : $this->answerByMail($row, $invite, $partstat, $authority, $retryUncertain, $journal);
-        if (!$outcome['sent'] && $entry > 0) {
-            // What became of the reply is known only after the attempt.
-            $this->db->run('UPDATE mutations SET summary = ? WHERE id = ?', [mb_substr($summary . ' (not sent: ' . ($outcome['message'] ?? 'unknown') . ')', 0, 300), $entry]);
-        }
-        // Journal so other open clients see the answer on their next cursor poll.
-        ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+        // Through the write boundary, so the request's credential is checked:
+        // the entry's wording and the change marker, nothing undo restores.
+        (new Undo($this->db))->write($userId, function () use ($outcome, $entry, $summary, $row): void {
+            if (!$outcome['sent'] && $entry > 0) {
+                // What became of the reply is known only after the attempt.
+                $this->db->run('UPDATE mutations SET summary = ? WHERE id = ?', [mb_substr($summary . ' (not sent: ' . ($outcome['message'] ?? 'unknown') . ')', 0, 300), $entry]);
+            }
+            // Journal so other open clients see the answer on their next cursor poll.
+            ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+        });
         return ['myPartstat' => $partstat] + $outcome;
     }
 

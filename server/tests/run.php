@@ -8247,6 +8247,84 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $authEvents->patch(1, 1, $move, $kinds['session'][0]);
     checkEq('authority: with the credential still valid, the move goes through', '2030-04-01 00:00:00', $edb->scalar('SELECT start_utc FROM events WHERE id = 1'));
 
+    // Every request a plugin sends during an edit rechecks the credential
+    // (Plugins::applyEdit's before-send hook), with no plugin code
+    // involved: a plugin that queries its source and then updates it, as
+    // Fibery does, sends no update once the credential is revoked after the
+    // query, for the move and for its undo. A stand-in transport answers.
+    mkdir($dir . '/asker', 0700, true);
+    file_put_contents($dir . '/asker/plugin.json', json_encode(['id' => 'asker', 'name' => 'Asker', 'version' => '1.0.0', 'permissions' => ['events:edit'], 'jobs' => []]));
+    file_put_contents($dir . '/asker/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\EditablePlugin {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+    public function applyEdit(BetterCal\Plugin\PluginHost $host, array $edit): array {
+        try {
+            $host->http()->json("POST", "https://source.example.test/api", ["command" => "query", "id" => $edit["sourceKey"]]);
+            $host->http()->json("POST", "https://source.example.test/api", ["command" => "update", "id" => $edit["sourceKey"], "to" => $edit["after"]]);
+        } catch (RuntimeException $e) {
+            throw new BetterCal\Plugin\PluginEditRefused("Could not reach the source");
+        }
+        return $edit["after"];
+    }
+};');
+    $edb->run("INSERT INTO plugins (id, enabled) VALUES ('asker', 1)");
+    $edb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (2, 1, 'plugin', 'asker')");
+    $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (3, 1, 2, 'plg-asker-item:9', 'Asked item', '2030-03-06 00:00:00', '2030-03-07 00:00:00', 1, 'UTC')");
+    $askerSent = [];
+    $askerAfterQuery = null;
+    $askerPlugins = new BetterCal\Domain\Plugins($edb, $dir, [], [
+        'resolver' => static fn(string $host): array => ['93.184.216.34'],
+        'transport' => static function (string $method, string $url, array $headers, ?string $body) use (&$askerSent, &$askerAfterQuery): array {
+            $command = (string) (json_decode((string) $body, true)['command'] ?? '');
+            $askerSent[] = $command;
+            if ($command === 'query' && $askerAfterQuery !== null) {
+                ($askerAfterQuery)();
+            }
+            return ['status' => 200, 'body' => '{}'];
+        },
+    ]);
+    $askerUndo = new BetterCal\Domain\Undo($edb, $askerPlugins);
+    $askerEvents = new BetterCal\Domain\Events($edb, new Recurrence(), $askerUndo, new BetterCal\Domain\Labels($edb), new Filters($edb, $askerUndo, new BetterCal\Infra\JobQueue($edb)), new BetterCal\Domain\Trips($edb, $askerUndo), $askerPlugins);
+    $askerState = static fn(): array => [$edb->scalar('SELECT start_utc FROM events WHERE id = 3'), (int) $edb->scalar("SELECT COUNT(*) FROM mutations WHERE entity = 'plugin_edit' AND entity_id = 3 AND undone = 0")];
+    foreach ($kinds as $label => [$authority, $revoke, $code]) {
+        $live();
+        $askerSent = [];
+        $askerAfterQuery = static fn() => $edb->run($revoke);
+        $before = $askerState();
+        $caught = null;
+        try { $askerEvents->patch(1, 3, $move, $authority); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+        $askerAfterQuery = null;
+        checkEq("plugin requests ($label): a move revoked after the source's query is refused with the revocation, no update sent, nothing saved",
+            [$code, ['query'], $before], [$caught?->errorCode, $askerSent, $askerState()]);
+
+        $live();
+        $askerUndo->write(1, fn() => $askerUndo->record(1, 'plugin_edit', 3, 'update', [], [], 'Sample asked move', ['pluginId' => 'asker', 'span' => ['start' => '2030-05-01', 'end' => '2030-05-02', 'allDay' => true]], [2]));
+        $before = $askerState();
+        $askerSent = [];
+        $askerAfterQuery = static fn() => $edb->run($revoke);
+        $caught = null;
+        try { $askerUndo->undoLatest(1, $authority); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+        $askerAfterQuery = null;
+        checkEq("plugin requests ($label): an undo revoked after the source's query is refused, no update sent, still undoable",
+            [$code, ['query'], $before], [$caught?->errorCode, $askerSent, $askerState()]);
+        $edb->run("UPDATE mutations SET undone = 1 WHERE entity = 'plugin_edit' AND entity_id = 3");
+    }
+    $live();
+    $askerSent = [];
+    $askerEvents->patch(1, 3, $move, $kinds['API key'][0]);
+    checkEq('plugin requests: with the credential still valid, the query and the update are sent and the move saved', [['query', 'update'], '2030-04-01 00:00:00'], [$askerSent, $edb->scalar('SELECT start_utc FROM events WHERE id = 3')]);
+    // With no credential given, the request's registered one is used.
+    $live();
+    $edb->run("UPDATE events SET start_utc = '2030-03-06 00:00:00', end_utc = '2030-03-07 00:00:00' WHERE id = 3");
+    $askerSent = [];
+    $askerAfterQuery = static fn() => BetterCal\Domain\RequestAuthority::during(null, fn() => $edb->run('DELETE FROM sessions'));
+    $caught = null;
+    try { BetterCal\Domain\RequestAuthority::during($kinds['session'][0], fn() => $askerEvents->patch(1, 3, $move)); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    $askerAfterQuery = null;
+    checkEq('plugin requests: an edit made under a registered credential rechecks it too', ['session_revoked', ['query']], [$caught?->errorCode, $askerSent]);
+    array_map('unlink', glob($dir . '/asker/*'));
+    rmdir($dir . '/asker');
     array_map('unlink', glob($dir . '/mover/*'));
     rmdir($dir . '/mover');
     rmdir($dir);
@@ -9144,33 +9222,50 @@ require __DIR__ . '/plugins.php';
     checkEq('mail fetch: oversize result uses bounded transport identity', ['imap-big', 11], [$oversize[0]['messageId'], $oversize[0]['oversize']]);
 
     // #157: a bounded list of unread UIDs. A normal count is one search; a
-    // large one is searched in windows from the oldest, only as far as read,
-    // widening across empty stretches, and nothing is skipped.
+    // large one is searched in windows of message positions (1 to the
+    // message count) from the oldest, only as far as read, at most
+    // count / 2000 searches whatever the UIDs are, and nothing is skipped.
     $MF = BetterCal\Infra\MailFetcher::class;
     $calls = [];
     $few = iterator_to_array($MF::unseenUids(3, 900, static function () use (&$calls): array { $calls[] = 'all'; return ['42', '7', '19']; },
         static function (string $set) use (&$calls): array { $calls[] = $set; return []; }), false);
     checkEq('mail unread: a normal count is one search, oldest first', [[7, 19, 42], ['all']], [$few, $calls]);
-    $unread = array_merge(range(3000, 3999), [250000, 250001]); // a flood, then two more far above
+    // A mailbox of 10,000 messages whose UIDs run to two billion (position p
+    // has UID p * 200,000), the 7,000 from position 3,001 on unread.
+    $uidAt = static fn(int $p): int => $p * 200000;
     $calls = [];
-    $range = static function (string $set) use (&$calls, $unread): array {
+    $positions = static function (string $set) use (&$calls, $uidAt): array {
         $calls[] = $set;
-        [$a, $b] = array_map('intval', explode(':', $set));
-        return array_values(array_filter($unread, static fn(int $u): bool => $u >= $a && $u <= $b));
+        [$a, $b] = explode(':', $set);
+        $b = $b === '*' ? 10000 : (int) $b;
+        $a = max(3001, (int) $a);
+        return $a > $b ? [] : array_reverse(array_map(static fn(int $p): string => (string) $uidAt($p), range($a, $b)));
     };
     $first = [];
-    foreach ($MF::unseenUids(50000, 300000, static fn(): array => throw new RuntimeException('must not list everything'), $range) as $u) {
+    foreach ($MF::unseenUids(7000, 10000, static fn(): array => throw new RuntimeException('must not list everything'), $positions) as $u) {
         $first[] = $u;
         if (count($first) === 10) break;
     }
-    checkEq('mail unread: a flood is read from its oldest in a window, and later windows are never searched', [range(3000, 3009), ['1:2000', '2001:18000']], [$first, $calls]);
+    checkEq('mail unread: a flood is read from its oldest, a window of positions at a time, and later windows are never searched',
+        [[600200000, 600400000, 600600000, 600800000, 601000000, 601200000, 601400000, 601600000, 601800000, 602000000], ['1:2000', '2001:4000']], [$first, $calls]);
     $calls = [];
-    $all = iterator_to_array($MF::unseenUids(50000, 300000, static fn(): array => [], $range), false);
-    checkEq('mail unread: reading on reaches every unread UID, none skipped or repeated', $unread, $all);
-    check('mail unread: empty stretches widen the window, up to its cap',
-        max(array_map(static function (string $set): int { [$a, $b] = array_map('intval', explode(':', $set)); return $b - $a + 1; }, $calls)) <= $MF::UID_WINDOW_MAX && count($calls) < 20);
-    checkEq('mail unread: no count reported falls back to windows, no UIDNEXT to one search', [[5], [5]], [
-        iterator_to_array($MF::unseenUids(null, 10, static fn(): array => [], static fn(string $s): array => ['5']), false),
+    $all = iterator_to_array($MF::unseenUids(7000, 10000, static fn(): array => [], $positions), false);
+    checkEq('mail unread: reading on reaches every unread UID, none skipped or repeated', array_map($uidAt, range(3001, 10000)), $all);
+    checkEq('mail unread: the mailbox is crossed in count / 2000 searches, the last to its end', ['1:2000', '2001:4000', '4001:6000', '6001:8000', '8001:*'], $calls);
+    // The review's case: thousands unread, UIDs to two billion, and every
+    // window empty (the unread count says more than the searches find).
+    $calls = [];
+    $none = iterator_to_array($MF::unseenUids(6000, 6000, static fn(): array => [], static function (string $set) use (&$calls): array { $calls[] = $set; return []; }), false);
+    checkEq('mail unread: empty windows end the run within the mailbox size, three searches for 6,000 messages', [[], ['1:2000', '2001:4000', '4001:*']], [$none, $calls]);
+    $calls = [];
+    iterator_to_array($MF::unseenUids(6000, 5000000, static fn(): array => [], static function (string $set) use (&$calls): array { $calls[] = $set; return []; }), false);
+    checkEq('mail unread: a run makes at most 500 searches, whatever the mailbox holds', [500, '1:2000', '998001:1000000'], [count($calls), $calls[0], $calls[499]]);
+    // A message an expunge moved into the next window is not listed twice.
+    $shifted = iterator_to_array($MF::unseenUids(null, 4000, static fn(): array => [],
+        static fn(string $set): array => $set === '1:2000' ? ['9', '5'] : ['9', '12']), false);
+    checkEq('mail unread: a UID already listed is not listed again', [5, 9, 12], $shifted);
+    checkEq('mail unread: no count reported falls back to windows, no message count to one search', [[5], [5]], [
+        iterator_to_array($MF::unseenUids(null, 10, static fn(): array => [], static fn(string $s): array => $s === '1:*' ? ['5'] : []), false),
         iterator_to_array($MF::unseenUids(9000, 0, static fn(): array => ['5'], static fn(string $s): array => []), false),
     ]);
 
@@ -13547,6 +13642,74 @@ $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);
 $dbErrors = array_values(array_filter(explode("\n", $runLog), static fn(string $l): bool => str_contains($l, 'SQLSTATE')));
 check('no database errors were logged during the run', $dbErrors === [], implode("\n", array_slice($dbErrors, 0, 5)));
+// Every write made under a request rechecks the request's credential at
+// the write boundary: Undo::write checks the registered credential
+// (RequestAuthority::during) right after the account's lock, and a write
+// statement made under it outside a transaction in which it was checked is
+// a journaling misuse. A worker's write, with none registered, is neither.
+{
+    $wb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $wb->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
+    $wb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $wb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $wb->run("INSERT INTO users VALUES (1, '{}')");
+    $wb->run('CREATE TABLE sample_rows (id INTEGER PRIMARY KEY, label TEXT)');
+    $wb->run("INSERT INTO sessions VALUES (?, 1, '2030-01-01 00:00:00', '2099-01-01 00:00:00')", [hash('sha256', 'sample-session')]);
+    $wb->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (5, 1, NULL)');
+    $wb->run("INSERT INTO sample_rows VALUES (1, 'first')");
+    $wbUndo = new BetterCal\Domain\Undo($wb);
+    $session = BetterCal\Domain\RequestAuthority::credential(1, null, 'sample-session');
+    $token = BetterCal\Domain\RequestAuthority::credential(1, 5, null);
+    $misusesAt = new ReflectionProperty(BetterCal\Domain\Undo::class, 'misuses');
+    $kept = $misusesAt->getValue();
+    $newMisuses = static function (callable $fn) use ($misusesAt): array {
+        $was = $misusesAt->getValue();
+        $fn();
+        $now = $misusesAt->getValue();
+        $misusesAt->setValue(null, $was);
+        return array_values(array_map(static fn(string $m): string => (string) preg_replace('/ at .*$/', '', $m), array_keys(array_diff_key($now, $was))));
+    };
+    $unchecked = ['write (UPDATE sample_rows) under a request credential not checked in its transaction'];
+    checkEq('write boundary: a direct write under a registered credential is a misuse', $unchecked,
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->run("UPDATE sample_rows SET label = 'direct' WHERE id = 1"))));
+    checkEq('write boundary: and so is one in a transaction that never checks it', $unchecked,
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($token, fn() => $wb->tx(fn() => $wb->run("UPDATE sample_rows SET label = 'in a tx' WHERE id = 1")))));
+    checkEq("write boundary: a worker's direct write, with no credential registered, is not", [],
+        $newMisuses(fn() => $wb->run("UPDATE sample_rows SET label = 'worker' WHERE id = 1")));
+    checkEq('write boundary: nor one run as no request inside a request', [],
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => BetterCal\Domain\RequestAuthority::during(null, fn() => $wb->run("UPDATE sample_rows SET label = 'job' WHERE id = 1")))));
+    checkEq('write boundary: nor a CalDAV request before it has signed in', [],
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during(fn() => null, fn() => $wb->run("UPDATE sample_rows SET label = 'signing in' WHERE id = 1"))));
+    checkEq('write boundary: a write in Undo::write is checked, and is no misuse', [[], 'boundary'],
+        [$newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wbUndo->write(1, fn() => $wb->run("UPDATE sample_rows SET label = 'boundary' WHERE id = 1")))),
+            $wb->scalar('SELECT label FROM sample_rows WHERE id = 1')]);
+    checkEq('write boundary: nor is one in a transaction that checks the credential', [],
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->tx(function () use ($wb, $session): void {
+            $session->assertValid($wb);
+            $wb->run("UPDATE sample_rows SET label = 'checked' WHERE id = 1");
+        }))));
+    checkEq('write boundary: a check in one transaction does not cover the next', $unchecked,
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, function () use ($wb, $session): void {
+            $wb->tx(fn() => $session->assertValid($wb));
+            $wb->tx(fn() => $wb->run("UPDATE sample_rows SET label = 'later' WHERE id = 1"));
+        })));
+    foreach (['session' => [$session, 'DELETE FROM sessions', 'session_revoked'], 'API key' => [$token, 'DELETE FROM api_tokens', 'token_revoked']] as $label => [$authority, $revoke, $code]) {
+        $wb->run($revoke);
+        $caught = null;
+        try {
+            BetterCal\Domain\RequestAuthority::during($authority, fn() => $wbUndo->write(1, fn() => $wb->run("UPDATE sample_rows SET label = 'revoked' WHERE id = 1")));
+        } catch (HttpError $e) {
+            $caught = $e;
+        }
+        checkEq("write boundary ($label): revoked after it signed in, a write through Undo::write is refused and nothing written", [$code, 'later'],
+            [$caught?->errorCode, $wb->scalar('SELECT label FROM sample_rows WHERE id = 1')]);
+    }
+    $wbUndo->write(1, fn() => $wb->run("UPDATE sample_rows SET label = 'by a job' WHERE id = 1"));
+    checkEq("write boundary: a worker's write through Undo::write has no credential to check", 'by a job', $wb->scalar('SELECT label FROM sample_rows WHERE id = 1'));
+    check('write boundary: the registration ends with the request', BetterCal\Domain\RequestAuthority::current() === null);
+    $misusesAt->setValue(null, $kept);
+}
+
 check('every change to undoable data was journaled in Undo::write', BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];

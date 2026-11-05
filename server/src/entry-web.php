@@ -398,7 +398,9 @@ function bc_handle_api(Request $request, array $cfg): void
             }
         }
 
-        $response = ($match['handler'])($request, $match['params']);
+        // Every write the handler makes is checked against the credential
+        // it signed in with (Undo::write); after it, only the response.
+        $response = Domain\RequestAuthority::during(Domain\RequestAuthority::of($request), fn(): Response => ($match['handler'])($request, $match['params']));
         // Any successful write moves the user's change marker, so every open
         // device refreshes, whatever the write touched (#16). Reads don't.
         if ($request->user !== null && $response->status < 400

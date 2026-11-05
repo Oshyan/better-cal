@@ -18,6 +18,61 @@ final class RequestAuthority
         private readonly ?string $passwordHash = null,
     ) {}
 
+    /**
+     * The credential of the request being served (during()), or a closure
+     * that resolves it once the request has signed in (CalDAV). Null for a
+     * worker's job, a command or a test that registers none.
+     *
+     * @var self|\Closure():?self|null
+     */
+    private static self|\Closure|null $current = null;
+
+    /** The credential every write made now is checked against (Undo::write), or null. */
+    public static function current(): ?self
+    {
+        $current = self::$current;
+        return $current instanceof \Closure ? $current() : $current;
+    }
+
+    /**
+     * Run $fn as a request made with $authority: every write made under it
+     * is checked at the write boundary (Undo::write, right after the
+     * account's lock), and a write statement made outside a transaction
+     * in which a credential was checked is a journaling misuse
+     * (Undo::uncheckedWrite). Null runs $fn as no request at all.
+     */
+    public static function during(self|\Closure|null $authority, callable $fn): mixed
+    {
+        $was = self::$current;
+        self::$current = $authority;
+        $watch = Db::watchWrites($authority === null ? null : static function (string $sql): void {
+            if (self::current() !== null) {
+                Undo::uncheckedWrite($sql);
+            }
+        });
+        try {
+            return $fn();
+        } finally {
+            self::$current = $was;
+            Db::watchWrites($watch);
+        }
+    }
+
+    /** What a signed-in request authenticated with: its API key or its browser session; null when it didn't sign in. */
+    public static function of(Request $request): ?self
+    {
+        if ($request->user === null) {
+            return null;
+        }
+        if ($request->authMethod === 'token' && $request->tokenId !== null) {
+            return self::credential((int) $request->user['id'], $request->tokenId, null);
+        }
+        if ($request->authMethod === 'session') {
+            return self::credential((int) $request->user['id'], null, $request->cookies[Auth::COOKIE] ?? null);
+        }
+        return null;
+    }
+
     public static function credential(int $userId, ?int $tokenId, ?string $session): self
     {
         return new self($userId, $tokenId, $session);
@@ -69,6 +124,9 @@ final class RequestAuthority
             Auth::assertRecentSession($db, $this->userId, $this->session, $lock);
         } else {
             Auth::assertSession($db, $this->userId, $this->session, $lock);
+        }
+        if ($lock) {
+            $db->credentialChecked();
         }
     }
 }

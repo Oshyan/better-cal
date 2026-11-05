@@ -191,8 +191,9 @@ final class Events
         $prefix = 'plg-' . $pluginId . '-';
         $uid = (string) $event['uid'];
         // The credential behind this request is checked again just before the
-        // source is changed and once more when the change is saved here, so
-        // a session or key revoked mid-request can't finish the move.
+        // source is changed, before every request the plugin sends for it
+        // (Plugins::applyEdit), and once more when the change is saved here,
+        // so a session or key revoked mid-request can't finish the move.
         $authority?->assertValid($this->db, false);
         $span = $this->plugins()->applyEdit($userId, $pluginId, [
             'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
@@ -201,7 +202,7 @@ final class Events
             'title' => (string) $event['title'],
             'before' => $before,
             'after' => $after,
-        ]);
+        ], $authority);
         try {
             // A time the plugin gives back with no offset is the owner's
             // local time (the Home zone in Settings; UTC until one is set),
@@ -2604,12 +2605,15 @@ final class Events
         $provider = $provider !== null && preg_match('/^[a-z0-9][a-z0-9.-]{0,31}$/', $provider) === 1 ? $provider : null;
         $now = Time::nowDb();
         // Only for the address it looked up: one changed meanwhile (on another
-        // device) isn't given the old one's place.
-        return $this->db->run(
+        // device) isn't given the old one's place. Through the write boundary,
+        // so the request's credential is checked, but with no journal entry:
+        // the place goes with the address it was looked up for, and undoing
+        // that edit takes the place too (it is not a change of the person's).
+        return $this->undo->write($userId, fn(): bool => $this->db->run(
             "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?, location_source = 'lookup', location_provider = ?, location_placed_at = ?
              WHERE id = ? AND user_id = ? AND source = 'local' AND deleted_at IS NULL AND location_lat IS NULL AND location = ?",
             [$lat, $lng, $now, $provider, $now, $id, $userId, $location]
-        )->rowCount() > 0;
+        )->rowCount() > 0);
     }
 
     /**

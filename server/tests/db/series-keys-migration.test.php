@@ -154,6 +154,63 @@ return static function (Db $db): void {
         $listed = array_values(array_filter((new Activity($db))->list($u)['entries'], static fn(array $e): bool => $e['id'] === $entry));
         checkEq('migration 064: an entry with a key no occurrence has now is log-only, and undo says why', [true, [['2027-03-16 09:30:00', '2027-03-16 09:30:00', 'Sample hours, edited']], 'not_undoable', true, false],
             [str_contains($said, ', 1 made log-only'), $editedOf($hours), $code, str_contains($message, 'upgrade to 1.5.0'), $listed[0]['undoable'] ?? null]);
+
+        // A day's title edited, then its clock (an entry with the day only),
+        // then its calendar deleted: no series row is live, and the clock
+        // edit's entry keeps none, so its days read by the series as the
+        // journal kept it. Undo the delete, then the clock edit: the day is
+        // back at the new reading's 02:30, owning its title only.
+        $chain = static fn(string $calendar, array $between = []): array => array_merge([
+            ['calendar' => $calendar, 'name' => 'Sample removed calendar'],
+            $la('chain', 'Sample chain', 'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=30') + ['calendar' => $calendar],
+            ['edit' => 'chain', 'at' => '2027-03-17T10:30:00Z', 'fields' => ['title' => 'Sample chain, edited']],
+            ['edit' => 'chain', 'at' => '2027-03-17T10:30:00Z', 'fields' => ['start' => '2027-03-17T12:00:00-07:00', 'end' => '2027-03-17T13:00:00-07:00']],
+            ['entry' => 'clock'],
+        ], $between, [['deleteCalendar' => $calendar], ['entry' => 'deleted']]);
+        $dayOf = static fn(int $master): array => array_values($db->one('SELECT recurrence_instance_utc, start_utc, override_fields FROM events WHERE recurrence_parent_id = ?', [$master]) ?? []);
+        $old = oldVersion($source, $chain('gone'));
+        [$u, $series, $entries] = [$old['user'], $old['series']['chain'], $old['entries']];
+        $said = $migrate($db);
+        check('migration 064: a deleted calendar\'s entries are rewritten, none made log-only', str_contains($said, ', 0 made log-only') && !str_contains($said, '; 0 undo entries'), $said);
+        domains($db)->undo->undoById($u, $entries['deleted']);
+        checkEq('migration 064: undoing the calendar delete brings the day back at the new key, at noon', ['2027-03-17 09:30:00', '2027-03-17 19:00:00', '["time","title"]'], $dayOf($series));
+        domains($db)->undo->undoById($u, $entries['clock']);
+        checkEq('migration 064: undoing the clock edit then puts back the new reading\'s 02:30, the title alone owned', [
+            ['2027-03-17 09:30:00', '2027-03-17 09:30:00', '["title"]'], [['2027-03-17 09:30:00', 'Sample chain, edited']],
+        ], [$dayOf($series), $shown($series, '2027-03-17 00:00:00', '2027-03-18 00:00:00')]);
+
+        // The rule changed between the clock edit and the delete: the delete
+        // keeps the later rule, whose reading leaves the old key where it is;
+        // the clock edit reads by the rule of its own time.
+        $old = oldVersion($source, $chain('changed', [['change' => 'chain', 'fields' => ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=30']], ['entry' => 'rule']]));
+        [$u, $series, $entries] = [$old['user'], $old['series']['chain'], $old['entries']];
+        $said = $migrate($db);
+        check('migration 064: with the rule changed between, none made log-only', str_contains($said, ', 0 made log-only'), $said);
+        foreach (['deleted', 'rule', 'clock'] as $name) {
+            domains($db)->undo->undoById($u, $entries[$name]);
+        }
+        checkEq('migration 064: undoing the delete, the rule change and the clock edit puts the day back at 02:30 on the first rule', [
+            'FREQ=DAILY;BYDAY=MO,WE,FR;COUNT=30', ['2027-03-17 09:30:00', '2027-03-17 09:30:00', '["title"]'], [['2027-03-17 09:30:00', 'Sample chain, edited']],
+        ], [(string) $db->scalar('SELECT rrule FROM events WHERE id = ?', [$series]), $dayOf($series), $shown($series, '2027-03-17 00:00:00', '2027-03-18 00:00:00')]);
+
+        // The same chain with every other entry past the undo window (the
+        // retention pass clears their snapshots): no snapshot and no live row
+        // says the series' rule, so the clock edit is log-only and says why.
+        $old = oldVersion($source, $chain('pruned'));
+        [$u, $entries] = [$old['user'], $old['entries']];
+        $db->run('UPDATE mutations SET created_at = ? WHERE user_id = ? AND id <> ?',
+            [gmdate('Y-m-d H:i:s', time() - (Activity::UNDO_DAYS + 1) * 86400), $u, $entries['clock']]);
+        (new Activity($db))->prune();
+        $said = $migrate($db);
+        $code = null;
+        $message = '';
+        try {
+            domains($db)->undo->undoById($u, $entries['clock']);
+        } catch (HttpError $e) {
+            [$code, $message] = [$e->errorCode, $e->getMessage()];
+        }
+        checkEq('migration 064: an entry whose series no snapshot keeps is log-only, and undo says why', [true, 'not_undoable', true],
+            [str_contains($said, ', 1 made log-only'), $code, str_contains($message, 'no longer on record')]);
     } finally {
         removeTree($source);
     }

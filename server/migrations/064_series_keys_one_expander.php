@@ -39,10 +39,14 @@ use BetterCal\Support\Time;
  * undo journal's snapshots of them (an entry's before and after, and the
  * rows it keeps in pieces), by the same mapping, in the series' own
  * transaction, so an undo puts back keys of the new reading. A snapshot's
- * keys are read by its own series row on the same side when it has one (a
- * rule since changed reads by the rule it had), else by the live one. An
- * entry with a stranded key in a snapshot is made log-only, saying why: its
- * undo would put back an identity no occurrence has.
+ * keys are read by the series row as it stood for that snapshot (a rule
+ * since changed, or made all-day, reads as it was then): the entry's own
+ * when it keeps one, else the journal's (the state the latest earlier entry
+ * left, else the one the next later entry found, a calendar delete's
+ * included), else the live one. An entry with a stranded key in a
+ * snapshot, or with days of a series no snapshot or live row keeps, is made
+ * log-only, saying why: its undo would put back an identity no occurrence
+ * has, or one never read.
  *
  * Idempotent and restartable: a moved key is an occurrence of the new
  * expansion, so a run again (after a full run, or one cut off after some
@@ -63,8 +67,10 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
     $jsonFlags = JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
 
     // A series row: a timed master with a rule. Its keys: its skips.
-    $isSeries = static fn(array $row): bool => empty($row['recurrence_parent_id']) && trim((string) ($row['rrule'] ?? '')) !== ''
-        && (int) ($row['all_day'] ?? 0) === 0 && isset($row['id'], $row['start_utc']);
+    // A master with a rule, timed or all-day: the state a snapshot's days are
+    // read by (an all-day one moves none of them).
+    $isMaster = static fn(array $row): bool => empty($row['recurrence_parent_id']) && trim((string) ($row['rrule'] ?? '')) !== '' && isset($row['id']);
+    $isSeries = static fn(array $row): bool => $isMaster($row) && (int) ($row['all_day'] ?? 0) === 0 && isset($row['start_utc']);
     $skipsOf = static function (array $row): array {
         try {
             return Recurrence::decodeExdates($row['exdates_json'] ?? null);
@@ -245,11 +251,11 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
 
     // The series rows an entry keeps, by side and id: what its snapshots'
     // keys are read by.
-    $entryMasters = static function (array $entry) use ($chunks, $isSeries): array {
+    $entryMasters = static function (array $entry) use ($chunks, $isMaster): array {
         $masters = ['before' => [], 'after' => []];
-        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$masters, $isSeries): ?array {
+        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$masters, $isMaster): ?array {
             foreach ($rows as $row) {
-                if (is_array($row) && $isSeries($row)) {
+                if (is_array($row) && $isMaster($row)) {
                     $masters[$side][(int) $row['id']] = $row;
                 }
             }
@@ -258,19 +264,35 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
         return $masters;
     };
 
-    $liveMaster = static function (int $id) use ($db, $isSeries): ?array {
+    $liveMaster = static function (int $id) use ($db, $isMaster): ?array {
         $row = $db->one('SELECT * FROM events WHERE id = ?', [$id]);
-        return $row !== null && $isSeries($row) ? $row : null;
+        return $row !== null && $isMaster($row) ? $row : null;
     };
 
-    // Series $id's keys in an entry, each with the series row it reads by:
-    // [reading key => [series row, keys]].
-    $entryKeys = static function (array $entry, int $id, array $masters, ?array $live) use ($chunks, $skipsOf, $readingKey): array {
+    // Series $id as it stood at entry $entryId, from the journal's own
+    // snapshots: the state the latest earlier entry left it in, else the
+    // state the next later one found it in (a delete's before included).
+    // Null: no entry keeps it.
+    $stateAt = static function (int $id, int $entryId) use (&$history): ?array {
+        $found = null;
+        foreach ($history[$id] ?? [] as [$at, $side, $row]) {
+            if ($at < $entryId && $side === 'after') {
+                $found = $row;
+            } elseif ($at > $entryId && $side === 'before' && $found === null) {
+                return $row;
+            }
+        }
+        return $found;
+    };
+
+    // Series $id's keys in an entry, each with the series row it reads by
+    // ($byOf(side)): [reading key => [series row, keys]].
+    $entryKeys = static function (array $entry, int $id, array $masters, callable $byOf) use ($chunks, $skipsOf, $readingKey, $isSeries): array {
         $out = [];
-        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$out, $id, $masters, $live, $skipsOf, $readingKey): ?array {
-            $by = $masters[$side][$id] ?? $live;
-            if ($by === null) {
-                return null;
+        $chunks($entry, static function (string $side, $chunk, array $rows) use (&$out, $id, $masters, $byOf, $skipsOf, $readingKey, $isSeries): ?array {
+            $by = $byOf($side);
+            if ($by === null || !$isSeries($by)) {
+                return null; // no state to read by (the entry is closed), or an all-day one
             }
             foreach ($rows as $row) {
                 if (!is_array($row)) {
@@ -290,8 +312,10 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
     };
 
     // The journal's undoable entries that keep a key of a series, by series
-    // id. Read once, a page at a time.
+    // id, and every state of a series row its snapshots keep, by series id
+    // in entry order ([entry id, side, row]). Read once, a page at a time.
     $journal = [];
+    $history = [];
     if ($hasJournal) {
         $afterId = 0;
         while (true) {
@@ -302,6 +326,11 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
             $afterId = (int) end($page)['id'];
             foreach ($page as $entry) {
                 $masters = $entryMasters($entry);
+                foreach ($masters as $side => $rows) {
+                    foreach ($rows as $masterId => $row) {
+                        $history[$masterId][] = [(int) $entry['id'], $side, $row];
+                    }
+                }
                 $chunks($entry, static function (string $side, $chunk, array $rows) use (&$journal, $entry, $masters): ?array {
                     foreach ($rows as $row) {
                         if (!is_array($row)) {
@@ -321,10 +350,16 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
 
     $series = $keysMoved = $skipsMoved = $left = $unread = $entriesKept = $entriesClosed = 0;
     $seen = [];
-    $process = static function (int $id, ?array $master) use (
+    $process = static function (int $id, ?array $live) use (
         $db, $dryRun, $afterSeries, $jsonFlags, &$journal, &$series, &$keysMoved, &$skipsMoved, &$left, &$unread, &$entriesKept, &$entriesClosed,
-        $skipsOf, $readingKey, $reading, $move, $chunks, $entryMasters, $entryKeys
+        $skipsOf, $readingKey, $reading, $move, $chunks, $entryMasters, $entryKeys, $stateAt, $isSeries
     ): void {
+        // The live rows read by the live series row; a snapshot by the series
+        // row as it stood for that snapshot: its own side's, the entry's
+        // other side's, the journal's state at that entry, else the live one.
+        $master = $live !== null && $isSeries($live) ? $live : null;
+        $byOf = static fn(array $entry, array $masters, string $side): ?array => $masters[$side][$id]
+            ?? $masters[$side === 'before' ? 'after' : 'before'][$id] ?? $stateAt($id, (int) $entry['id']) ?? $live;
         $entryIds = array_keys($journal[$id] ?? []);
         $edited = $master === null ? [] : $db->all('SELECT id, recurrence_instance_utc, start_utc, end_utc, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc IS NOT NULL', [$id]);
         $skips = $master === null ? [] : $skipsOf($master);
@@ -345,7 +380,7 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
             }
             $masters = $entryMasters($entry);
             $entries[] = [$entry, $masters];
-            foreach ($entryKeys($entry, $id, $masters, $master) as $k => [$by, $keys]) {
+            foreach ($entryKeys($entry, $id, $masters, static fn(string $side): ?array => $byOf($entry, $masters, $side)) as $k => [$by, $keys]) {
                 $groups[$k][0] = $by;
                 $groups[$k][1] = array_merge($groups[$k][1] ?? [], $keys);
             }
@@ -398,12 +433,19 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
             $changedRows = [];
             $changedSkips = [];
             $stranded = false;
+            $orphan = false;
             $any = false;
             foreach (['before', 'after'] as $side) {
-                $by = $masters[$side][$id] ?? $master;
-                $r = $by === null ? null : ($readings[$readingKey($by)] ?? null);
-                if ($r === null) {
+                $by = $byOf($entry, $masters, $side);
+                if ($by === null) {
+                    // Days of a series no snapshot or live row says the rule
+                    // of: not to be read, and not to be put back unread.
+                    $orphan = $orphan || $bySide[$side] !== [];
                     continue;
+                }
+                $r = $isSeries($by) ? ($readings[$readingKey($by)] ?? null) : null;
+                if ($r === null) {
+                    continue; // all-day then (its keys are dates), or a rule neither expander reads
                 }
                 $m = $move($r, $bySide[$side], isset($masters[$side][$id]) ? $skipsOf($masters[$side][$id]) : []);
                 $stranded = $stranded || $m['stranded'] !== [];
@@ -413,11 +455,13 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
                 }
                 $any = $any || $m['rows'] !== [] || $m['skips'] !== null;
             }
-            if ($stranded) {
+            if ($stranded || $orphan) {
                 $entriesClosed++;
                 $details = json_decode((string) ($entry['details_json'] ?? ''), true);
                 $details = is_array($details) ? $details : [];
-                $details['notUndoable'] = "This change can't be undone: the upgrade to 1.5.0 reads this series' dates anew, and a date it kept has no occurrence now";
+                $details['notUndoable'] = $stranded
+                    ? "This change can't be undone: the upgrade to 1.5.0 reads this series' dates anew, and a date it kept has no occurrence now"
+                    : "This change can't be undone: the upgrade to 1.5.0 reads this series' dates anew, and the series it changed a day of is no longer on record";
                 $writes[] = ['UPDATE mutations SET before_json = NULL, after_json = NULL, details_json = ? WHERE id = ?', [json_encode($details, $jsonFlags), (int) $entry['id']]];
                 $writes[] = ['DELETE FROM mutation_rows WHERE mutation_id = ?', [(int) $entry['id']]];
                 continue;
@@ -483,7 +527,7 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
         }
     }
     // Series the journal keeps that are no timed series now (gone, or made
-    // all-day since): their snapshots read by their own series rows.
+    // all-day since): their snapshots read by the series rows of their time.
     foreach (array_keys($journal) as $id) {
         if (!isset($seen[$id])) {
             $process($id, $liveMaster($id));

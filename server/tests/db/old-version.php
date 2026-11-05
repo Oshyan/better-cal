@@ -9,11 +9,14 @@ declare(strict_types=1);
 // second argument) go through that version's domain methods, never SQL. What
 // they made, by name, is written as JSON to the third argument.
 //
-// Steps: {"series": name, "title", "start", "end", "tzid", "rrule"} makes a
-// series; {"edit": name, "at": occurrence (UTC), "fields": {...}} edits one
-// day; {"skip": name, "at": occurrence} deletes one day; {"entry": name}
-// names the account's newest journal entry; {"window": name, "from", "to"}
-// keeps what the calendar shows then, each occurrence's UTC start and title.
+// Steps: {"calendar": name, "name"} makes a calendar; {"series": name,
+// "title", "start", "end", "tzid", "rrule", "calendar"?} makes a series (in
+// the default calendar, or a named one); {"edit": name, "at": occurrence
+// (UTC), "fields": {...}} edits one day; {"change": name, "fields": {...}}
+// edits the whole series; {"skip": name, "at": occurrence} deletes one day;
+// {"deleteCalendar": name} deletes a calendar; {"entry": name} names the
+// account's newest journal entry; {"window": name, "from", "to"} keeps what
+// the calendar shows then, each occurrence's UTC start and title.
 
 [, $oldSrc, $stepsFile, $outFile] = $argv;
 require dirname(__DIR__, 2) . '/src/bootstrap.php';
@@ -35,7 +38,7 @@ $db = new Db(['dsn' => (string) getenv('BC_TEST_DSN'), 'user' => (string) getenv
 $u = freshUser($db);
 $d = domains($db);
 $calendar = Settings::defaultCalendarId($db, $u);
-$out = ['user' => $u, 'calendar' => $calendar, 'series' => [], 'entries' => [],
+$out = ['user' => $u, 'calendar' => $calendar, 'calendars' => [], 'series' => [], 'entries' => [],
     // Which code made them: the older version's, for the test to check.
     'from' => (new ReflectionClass(BetterCal\Domain\Events::class))->getFileName()];
 foreach (json_decode((string) file_get_contents($stepsFile), true, 512, JSON_THROW_ON_ERROR) as $i => $step) {
@@ -50,11 +53,17 @@ file_put_contents($outFile, json_encode($out));
 
 function step(Domains $d, int $u, int $calendar, Db $db, array $step, array &$out): void
 {
-    if (isset($step['series'])) {
-        $out['series'][$step['series']] = (int) $d->events->create($u, ['calendarId' => $calendar, 'title' => $step['title'], 'start' => $step['start'], 'end' => $step['end'],
+    if (isset($step['calendar']) && !isset($step['series'])) {
+        $out['calendars'][$step['calendar']] = (int) $d->calendars->create($u, ['name' => $step['name']])['id'];
+    } elseif (isset($step['series'])) {
+        $out['series'][$step['series']] = (int) $d->events->create($u, ['calendarId' => isset($step['calendar']) ? $out['calendars'][$step['calendar']] : $calendar, 'title' => $step['title'], 'start' => $step['start'], 'end' => $step['end'],
             'allDay' => false, 'tzid' => $step['tzid'], 'rrule' => $step['rrule']])['eventId'];
     } elseif (isset($step['edit'])) {
         $d->events->patch($u, $out['series'][$step['edit']], ['scope' => 'this', 'instanceStart' => $step['at']] + $step['fields']);
+    } elseif (isset($step['change'])) {
+        $d->events->patch($u, $out['series'][$step['change']], ['scope' => 'all'] + $step['fields']);
+    } elseif (isset($step['deleteCalendar'])) {
+        $d->calendars->delete($u, $out['calendars'][$step['deleteCalendar']]);
     } elseif (isset($step['skip'])) {
         $d->events->deleteEvent($u, $out['series'][$step['skip']], 'this', $step['at']);
     } elseif (isset($step['entry'])) {

@@ -65,6 +65,14 @@ final class HttpClient
         // Connect over IPv4 only: for services whose API keys can be
         // restricted to IPv4 source addresses alone (LocationIQ).
         private readonly bool $ipv4Only = false,
+        // Runs just before every request is sent, each redirect included;
+        // what it throws is thrown instead of sending (a plugin's edit
+        // rechecking the request's credential, Plugins::applyEdit).
+        private readonly ?\Closure $beforeSend = null,
+        // Tests only: stands in for the network after every policy check,
+        // fn(string $method, string $url, array $headers, ?string $body):
+        // array{status:int,body:string}. Never set by app code.
+        private readonly ?\Closure $transport = null,
     ) {
     }
 
@@ -161,7 +169,7 @@ final class HttpClient
         $results = array_fill(0, count($urls), null);
         $batch = (object) ['bytes' => 0, 'overflow' => false];
         $deadline = $this->operationDeadline();
-        if (!function_exists('curl_multi_init')) {
+        if (!function_exists('curl_multi_init') || $this->transport !== null || $this->beforeSend !== null) {
             foreach (array_values($urls) as $index => $url) {
                 if (!is_string($url)) {
                     $results[$index] = ['status' => 0, 'body' => '', 'error' => 'HTTP URL must be a string'];
@@ -398,7 +406,14 @@ final class HttpClient
                 throw new \RuntimeException('HTTP batch deadline exceeded');
             }
 
+            if ($this->beforeSend !== null) {
+                ($this->beforeSend)();
+            }
             $this->used++;
+            if ($this->transport !== null) {
+                $answer = ($this->transport)($method, $url, $headers, $body);
+                return ['status' => (int) $answer['status'], 'body' => (string) $answer['body']];
+            }
             $ch = curl_init($url);
             $response = '';
             $overflow = false;

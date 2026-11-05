@@ -137,10 +137,15 @@ final class Plugins
         return mb_strlen($icon) <= 8 ? null : 'glyph is too long';
     }
 
+    /**
+     * $editHttp: tests only, further options for the HttpClient a plugin's
+     * edit is given (a stand-in transport and resolver); empty otherwise.
+     */
     public function __construct(
         private readonly Db $db,
         private readonly ?string $pluginsDir = null,
         private readonly array $cfg = [],
+        private readonly array $editHttp = [],
     ) {
     }
 
@@ -567,7 +572,7 @@ final class Plugins
     private function rememberPrivateDiagnostics(string $id): void
     {
         if (!PluginSecrets::hasSecrets($this->manifest($id) ?? [])) return;
-        $this->db->tx(function () use ($id): void {
+        RequestAuthority::checkedTx($this->db, function () use ($id): void {
             $raw = $this->db->scalar('SELECT settings_json FROM plugins WHERE id = ?' . $this->db->forUpdate(), [$id]);
             $values = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
             if (!empty($values[PluginSecrets::PRIVATE_DIAGNOSTICS])) return;
@@ -1602,8 +1607,15 @@ final class Plugins
      * @param array<string,mixed> $edit
      * @return array{start:string,end:string,allDay:bool}
      */
-    public function applyEdit(int $userId, string $id, array $edit): array
+    /**
+     * $authority: the request's credential (the registered one when none is
+     * given). It is checked, without lock, before every request the plugin
+     * sends during the edit, so a session or key revoked between a plugin's
+     * query and its update stops the update, with no plugin code involved.
+     */
+    public function applyEdit(int $userId, string $id, array $edit, ?RequestAuthority $authority = null): array
     {
+        $authority ??= RequestAuthority::current();
         $state = $this->db->one('SELECT * FROM plugins WHERE id = ? AND enabled = 1', [$id]);
         $m = $this->manifest($id);
         $name = (string) ($m['name'] ?? $id);
@@ -1614,14 +1626,36 @@ final class Plugins
         if (!$instance instanceof EditablePlugin) {
             throw HttpError::forbidden('plugin_readonly', $name . ' events are read-only here');
         }
-        $host = new PluginHost($this->db, $id, $userId, new HttpClient(requestBudget: 10, totalTimeoutMs: 10_000, absoluteDeadline: microtime(true) + 20.0), $m, $this->cfg, null);
+        // The refusal is kept: a plugin that catches it (as a network error,
+        // say) still fails the edit with it, and sends nothing further.
+        $refused = null;
+        $beforeSend = $authority === null ? null : function () use ($authority, &$refused): void {
+            if ($refused !== null) {
+                throw $refused;
+            }
+            try {
+                $authority->assertValid($this->db, false);
+            } catch (HttpError $e) {
+                throw $refused = $e;
+            }
+        };
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(...['requestBudget' => 10, 'totalTimeoutMs' => 10_000, 'absoluteDeadline' => microtime(true) + 20.0, 'beforeSend' => $beforeSend] + $this->editHttp), $m, $this->cfg, null);
         try {
             $span = ActivityContext::with('plugin:' . $id, fn() => $instance->applyEdit($host, $edit));
+            if ($refused !== null) {
+                throw $refused;
+            }
         } catch (PluginEditRefused $e) {
+            if ($refused !== null) {
+                throw $refused;
+            }
             throw new HttpError('plugin_edit_refused', mb_substr(trim($e->getMessage()), 0, 300) ?: $name . ' refused the change', 422);
         } catch (HttpError $e) {
             throw $e;
         } catch (\Throwable $e) {
+            if ($refused !== null) {
+                throw $refused;
+            }
             $detail = $this->privateDiagnostics($id, $m, $state) ? '' : ': ' . mb_substr($e->getMessage(), 0, 200);
             throw new HttpError('plugin_edit_failed', $name . " couldn't make the change" . $detail, 502);
         }
@@ -1669,7 +1703,7 @@ final class Plugins
         // the plugin it enabled stops the same way, on its next run.
         $tokenId = $state['changed_by_token_id'] ?? null;
         if ($tokenId !== null && !ApiTokens::stillValid($this->db, (int) $tokenId)) {
-            $this->db->tx(fn() => self::disableForRevokedToken($this->db, (int) $tokenId));
+            RequestAuthority::checkedTx($this->db, fn() => self::disableForRevokedToken($this->db, (int) $tokenId));
             return ['outcome' => 'error', 'error' => 'plugin turned off: the API key that enabled it is no longer valid'];
         }
         $instance = $this->load($id);
@@ -1702,31 +1736,33 @@ final class Plugins
             $error = $this->privateDiagnostics($id, $m, $state) ? PluginSecrets::HIDDEN_DIAGNOSTIC : mb_substr($e->getMessage(), 0, 300);
         }
         $ms = (int) round((microtime(true) - $t0) * 1000);
-        $this->db->insert('plugin_runs', [
-            'plugin_id' => $id,
-            'job_id' => $jobId,
-            'run_id' => $runId,
-            'calendar_id' => $calendarId, // one calendar's run; null for the whole plugin's (dueJobs)
-            'started_at' => $startedAt,
-            'duration_ms' => $ms,
-            'outcome' => $outcome,
-            'log_tail' => mb_substr(trim($host->logTail() . ($error !== null ? "\nERROR: " . $error : '')), 0, 4000),
-        ]);
-        // The last 20 runs are kept for the ops page, and each job's newest
-        // whole-plugin run however old, so a burst of one-calendar runs can't
-        // make the scheduled run look as if it had never happened.
-        $this->db->run('DELETE FROM plugin_runs WHERE plugin_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM plugin_runs WHERE plugin_id = ? ORDER BY id DESC LIMIT 20) keep)'
-            . ' AND id NOT IN (SELECT id FROM (SELECT MAX(id) AS id FROM plugin_runs WHERE plugin_id = ? AND calendar_id IS NULL GROUP BY job_id) full_runs)', [$id, $id, $id]);
+        RequestAuthority::checkedTx($this->db, function () use ($id, $jobId, $runId, $calendarId, $startedAt, $ms, $outcome, $host, $error, $state): void {
+            $this->db->insert('plugin_runs', [
+                'plugin_id' => $id,
+                'job_id' => $jobId,
+                'run_id' => $runId,
+                'calendar_id' => $calendarId, // one calendar's run; null for the whole plugin's (dueJobs)
+                'started_at' => $startedAt,
+                'duration_ms' => $ms,
+                'outcome' => $outcome,
+                'log_tail' => mb_substr(trim($host->logTail() . ($error !== null ? "\nERROR: " . $error : '')), 0, 4000),
+            ]);
+            // The last 20 runs are kept for the ops page, and each job's newest
+            // whole-plugin run however old, so a burst of one-calendar runs can't
+            // make the scheduled run look as if it had never happened.
+            $this->db->run('DELETE FROM plugin_runs WHERE plugin_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM plugin_runs WHERE plugin_id = ? ORDER BY id DESC LIMIT 20) keep)'
+                . ' AND id NOT IN (SELECT id FROM (SELECT MAX(id) AS id FROM plugin_runs WHERE plugin_id = ? AND calendar_id IS NULL GROUP BY job_id) full_runs)', [$id, $id, $id]);
 
-        if ($outcome === 'ok') {
-            $this->db->run('UPDATE plugins SET consecutive_failures = 0 WHERE id = ?', [$id]);
-        } else {
-            $fails = (int) $state['consecutive_failures'] + 1;
-            $this->db->run('UPDATE plugins SET consecutive_failures = ? WHERE id = ?', [$fails, $id]);
-            if ($fails >= self::FAILURE_DISABLE_THRESHOLD) {
-                $this->disable($id, 'auto-disabled after ' . $fails . ' consecutive failures (' . $error . ')');
+            if ($outcome === 'ok') {
+                $this->db->run('UPDATE plugins SET consecutive_failures = 0 WHERE id = ?', [$id]);
+            } else {
+                $fails = (int) $state['consecutive_failures'] + 1;
+                $this->db->run('UPDATE plugins SET consecutive_failures = ? WHERE id = ?', [$fails, $id]);
+                if ($fails >= self::FAILURE_DISABLE_THRESHOLD) {
+                    $this->disable($id, 'auto-disabled after ' . $fails . ' consecutive failures (' . $error . ')');
+                }
             }
-        }
+        });
         return ['outcome' => $outcome, 'error' => $error, 'durationMs' => $ms, 'runId' => $runId];
     }
 
@@ -1752,21 +1788,30 @@ final class Plugins
             || Maintenance::active((string) ($this->cfg['app_root'] ?? dirname(__DIR__, 3)))) {
             return false;
         }
-        register_shutdown_function(function () use ($jobIds): void {
-            try {
-                ignore_user_abort(true);
-                @set_time_limit(PluginHost::RUN_BUDGET_SECONDS * count($jobIds) + 30);
-                if (function_exists('fastcgi_finish_request')) {
-                    fastcgi_finish_request();
-                } else {
-                    litespeed_finish_request();
-                }
-                $this->runQueuedNow($jobIds);
-            } catch (\Throwable $e) {
-                error_log('Better-Cal: running a plugin job now: ' . $e->getMessage());
-            }
+        // Run after the response, still as the request that queued them:
+        // its credential is registered for the run, and checked at its writes.
+        $authority = RequestAuthority::current();
+        register_shutdown_function(function () use ($jobIds, $authority): void {
+            RequestAuthority::during($authority, fn() => $this->runQueuedAfterResponse($jobIds), false);
         });
         return true;
+    }
+
+    /** @param list<int> $jobIds */
+    private function runQueuedAfterResponse(array $jobIds): void
+    {
+        try {
+            ignore_user_abort(true);
+            @set_time_limit(PluginHost::RUN_BUDGET_SECONDS * count($jobIds) + 30);
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            } else {
+                litespeed_finish_request();
+            }
+            $this->runQueuedNow($jobIds);
+        } catch (\Throwable $e) {
+            error_log('Better-Cal: running a plugin job now: ' . $e->getMessage());
+        }
     }
 
     /** How long a post-response run waits for a worker run that's under way. */
@@ -1806,7 +1851,7 @@ final class Plugins
             $queue = new JobQueue($this->db);
             $ran = 0;
             foreach ($jobIds as $jobId) {
-                $job = $queue->claimById($jobId);
+                $job = RequestAuthority::checkedTx($this->db, fn(): ?array => $queue->claimById($jobId));
                 if ($job === null) {
                     continue; // the worker took it meanwhile
                 }
@@ -1814,9 +1859,9 @@ final class Plugins
                 try {
                     $payload = json_decode((string) ($job['payload_json'] ?? '{}'), true) ?: [];
                     $this->runJob((int) ($payload['userId'] ?? 0), (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
-                    $queue->markDone((int) $job['id']);
+                    RequestAuthority::checkedTx($this->db, fn() => $queue->markDone((int) $job['id']));
                 } catch (\Throwable $e) {
-                    $queue->markFailed($job, $e->getMessage());
+                    RequestAuthority::checkedTx($this->db, fn() => $queue->markFailed($job, $e->getMessage()));
                 }
             }
             return $ran;

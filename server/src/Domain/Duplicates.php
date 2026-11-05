@@ -910,10 +910,14 @@ final class Duplicates
     public static function markDistinct(Db $db, int $userId, int $a, int $b): void
     {
         [$x, $y] = $a < $b ? [$a, $b] : [$b, $a];
-        if ($db->scalar('SELECT id FROM event_duplicates WHERE event_a = ? AND event_b = ?', [$x, $y]) !== null) {
-            $db->update('event_duplicates', ['status' => 'dismissed', 'basis' => 'owner'], 'event_a = ? AND event_b = ?', [$x, $y]);
-            return;
-        }
-        $db->insert('event_duplicates', ['user_id' => $userId, 'event_a' => $x, 'event_b' => $y, 'status' => 'dismissed', 'basis' => 'owner']);
+        // Through the write boundary (the request's credential checked), with
+        // no journal entry: the pairs are the duplicate check's own, outside undo.
+        (new Undo($db))->write($userId, static function () use ($db, $userId, $x, $y): void {
+            if ($db->scalar('SELECT id FROM event_duplicates WHERE event_a = ? AND event_b = ?', [$x, $y]) !== null) {
+                $db->update('event_duplicates', ['status' => 'dismissed', 'basis' => 'owner'], 'event_a = ? AND event_b = ?', [$x, $y]);
+                return;
+            }
+            $db->insert('event_duplicates', ['user_id' => $userId, 'event_a' => $x, 'event_b' => $y, 'status' => 'dismissed', 'basis' => 'owner']);
+        });
     }
 }

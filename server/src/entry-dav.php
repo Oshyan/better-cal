@@ -80,4 +80,6 @@ $aclPlugin = new \Sabre\DAVACL\Plugin();
 $aclPlugin->hideNodesFromListings = true;
 $server->addPlugin($aclPlugin);
 
-$server->exec();
+// Every write is checked against the credential the client signed in
+// with, once it has (Undo::write).
+\BetterCal\Domain\RequestAuthority::during(fn() => $authBackend->authority(), fn() => $server->exec());

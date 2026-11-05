@@ -8,6 +8,42 @@ final class Db
 {
     private ?\PDO $pdo = null;
 
+    /**
+     * Moves on as each transaction begins or ends here, so a credential
+     * checked in one (credentialChecked) isn't taken for checked in the next.
+     */
+    private int $txSerial = 0;
+    private int $checkedIn = -1;
+
+    /**
+     * While a request's credential is registered (RequestAuthority::during):
+     * called with each write statement made outside a transaction in which
+     * a credential was checked, on any connection.
+     */
+    private static ?\Closure $uncheckedWrite = null;
+
+    /** Set (or with null, clear) the watch on writes; returns the one it replaces. */
+    public static function watchWrites(?\Closure $onUnchecked): ?\Closure
+    {
+        $was = self::$uncheckedWrite;
+        self::$uncheckedWrite = $onUnchecked;
+        return $was;
+    }
+
+    /** Was a credential checked in the transaction open now? */
+    public function credentialCheckedNow(): bool
+    {
+        return $this->checkedIn === $this->txSerial && $this->pdo()->inTransaction();
+    }
+
+    /** A credential was checked, locked, in the transaction open now (RequestAuthority::checked). */
+    public function credentialChecked(): void
+    {
+        if ($this->pdo()->inTransaction()) {
+            $this->checkedIn = $this->txSerial;
+        }
+    }
+
     public function __construct(private readonly array $cfg)
     {
     }
@@ -30,7 +66,13 @@ final class Db
 
     public function run(string $sql, array $params = []): \PDOStatement
     {
-        $stmt = $this->pdo()->prepare($sql);
+        $pdo = $this->pdo();
+        if (self::$uncheckedWrite !== null
+            && !($this->checkedIn === $this->txSerial && $pdo->inTransaction())
+            && preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i', $sql) === 1) {
+            (self::$uncheckedWrite)($sql);
+        }
+        $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt;
     }
@@ -121,6 +163,7 @@ final class Db
             return $fn();
         }
         $pdo->beginTransaction();
+        $this->txSerial++;
         try {
             $result = $fn();
             $pdo->commit();
@@ -128,6 +171,8 @@ final class Db
         } catch (\Throwable $e) {
             $pdo->rollBack();
             throw $e;
+        } finally {
+            $this->txSerial++;
         }
     }
 

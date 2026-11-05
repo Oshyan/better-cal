@@ -69,7 +69,7 @@ final class TrustedDevices
         $now ??= Time::nowUtc();
         $token = Ids::base64url(random_bytes(32));
         try {
-            $this->db->tx(function () use ($userId, $replaceId, $now, $token): void {
+            RequestAuthority::checkedTx($this->db, function () use ($userId, $replaceId, $now, $token): void {
                 if ($replaceId !== null) {
                     $this->db->run('DELETE FROM trusted_devices WHERE id = ? AND user_id = ?', [$replaceId, $userId]);
                 }

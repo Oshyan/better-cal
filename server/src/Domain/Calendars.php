@@ -426,7 +426,7 @@ final class Calendars
         if (($before['subscription_authority'] ?? SubscriptionAuthority::OWNER) !== SubscriptionAuthority::OWNER
             || ($before['created_by_token_id'] ?? null) !== null
         ) {
-            $this->undo->record(
+            $this->undo->write($userId, fn() => $this->undo->record(
                 $userId,
                 'calendar',
                 $id,
@@ -434,7 +434,7 @@ final class Calendars
                 null,
                 null,
                 'Kept subscription "' . (string) $after['name'] . '" active as an account-owned feed'
-            );
+            ));
         }
         return $this->serializeById($userId, $id);
     }

@@ -147,6 +147,9 @@ final class Undo
         }
         return $this->db->tx(function () use ($key, $userId, $fn): mixed {
             $this->lockAccount($userId);
+            // The request's credential (RequestAuthority::during), checked
+            // for every write made under a request; a worker has none.
+            RequestAuthority::current()?->assertValid($this->db);
             self::$writing[$key] = true;
             try {
                 return $fn();
@@ -185,7 +188,7 @@ final class Undo
         $at = [];
         foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
             $file = (string) ($frame['file'] ?? '');
-            if ($file !== '' && $file !== __FILE__ && !str_ends_with($file, '/Infra/Db.php') && !str_ends_with($file, '/ActivityContext.php')) {
+            if ($file !== '' && $file !== __FILE__ && !str_ends_with($file, '/Infra/Db.php') && !str_ends_with($file, '/ActivityContext.php') && !str_ends_with($file, '/RequestAuthority.php')) {
                 $at[] = basename($file) . ':' . ($frame['line'] ?? 0);
                 if (count($at) === 4) {
                     break;
@@ -193,6 +196,17 @@ final class Undo
             }
         }
         self::$misuses[$what . ' at ' . implode(' < ', $at)] = true;
+    }
+
+    /**
+     * A write to a table that is not bookkeeping (RequestAuthority::BOOKKEEPING),
+     * made under a request's credential outside a transaction in which it
+     * was checked: a change the credential's revocation wouldn't stop.
+     * Reported like any journaling mistake; the write itself still goes through.
+     */
+    public static function uncheckedWrite(string $verb, string $table): void
+    {
+        self::misuse('write (' . $verb . ' ' . $table . ') under a request credential not checked in its transaction');
     }
 
     /** The journaling mistakes the test suites ran into, each once. @return list<string> */
@@ -1129,7 +1143,8 @@ final class Undo
         $prefix = 'plg-' . $pluginId . '-';
         $uid = (string) $event['uid'];
         // As for the move itself: the credential is checked just before the
-        // source is changed and again when the result is saved here.
+        // source is changed, before every request the plugin sends for it,
+        // and again when the result is saved here.
         $authority?->assertValid($this->db, false);
         $result = $plugins->applyEdit($userId, $pluginId, [
             'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
@@ -1138,7 +1153,7 @@ final class Undo
             'title' => (string) $event['title'],
             'before' => Events::pluginSpan((string) $event['start_utc'], (string) $event['end_utc'], (int) $event['all_day'] === 1),
             'after' => $span,
-        ]);
+        ], $authority);
         // A time the plugin confirms with no offset is the owner's local
         // time (the Home zone in Settings; UTC until one is set), read as
         // the move itself reads it (Events::pluginReschedule).
@@ -1180,7 +1195,7 @@ final class Undo
             // The account first, as every change takes it (write()); then the
             // credential that asked for the undo must still be valid as it's saved.
             $this->lockAccount((int) $mutation['user_id']);
-            $authority?->assertValid($this->db);
+            ($authority ?? RequestAuthority::current())?->assertValid($this->db);
             // The calendars it named when recorded, as well as those its rows
             // show: a trip link's, or one deleted since.
             foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [$mutation['id']]) as $ref) {
@@ -1393,9 +1408,12 @@ final class Undo
                 }
             }
         }
-        foreach ($uids as $calendarId => $ofCalendar) {
-            ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
-        }
+        // CalDAV hears of it in a checked transaction of its own.
+        RequestAuthority::checkedTx($this->db, function () use ($uids): void {
+            foreach ($uids as $calendarId => $ofCalendar) {
+                ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
+            }
+        });
 
         return ['entity' => (string) $mutation['entity'], 'op' => (string) $mutation['op']];
     }

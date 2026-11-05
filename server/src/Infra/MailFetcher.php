@@ -32,17 +32,18 @@ use Webklex\PHPIMAP\IMAP;
  * - Parts have budgets too: a calendar part over MAIL_ICS_BYTES is ignored, and
  *   text/html is cut to MAIL_BODY_CHARS before anything downstream reads it.
  * - A bounded list of unread UIDs (#157). Anyone who can send to the address
- *   sets the unread count, so a large one is searched a window of UIDs at a
- *   time, oldest first, only as far as this run gets (unseenUids).
+ *   sets the unread count, so a large one is searched a window of message
+ *   positions at a time, oldest first, only as far as this run gets, and
+ *   never more often than the mailbox's size allows (unseenUids).
  */
 final class MailFetcher
 {
     /** Up to this many unread messages, one search lists them all, as before. */
     public const SEARCH_ALL_MAX = 5000;
-    /** Past it, each search covers this many UIDs to begin with... */
-    public const UID_WINDOW = 2000;
-    /** ...widening while searches come back nearly empty, up to this many. */
-    public const UID_WINDOW_MAX = 128000;
+    /** Past it, each search covers this many message positions... */
+    public const POSITION_WINDOW = 2000;
+    /** ...and a run makes at most this many: a mailbox of a million messages, crossed once. */
+    public const SEARCHES_MAX = 500;
 
     public function __construct(private readonly array $cfg)
     {
@@ -105,9 +106,12 @@ final class MailFetcher
             // get(), even when setFetchBody(false) is set.
             $uids = self::unseenUids(
                 $unseen,
-                (int) ($status['uidnext'] ?? 0),
+                (int) ($status['messages'] ?? 0),
                 static fn(): array => array_values($query->search()->toArray()),
-                static fn(string $set): array => (array) $connection->search(['UNSEEN', 'UID', $set], IMAP::ST_UID)->validatedData(),
+                // A bare sequence set is a position criterion (RFC 3501 6.4.4):
+                // "UID SEARCH UNSEEN 1:2000" lists the UIDs of the unread
+                // among the first 2000 messages.
+                static fn(string $set): array => (array) $connection->search(['UNSEEN', $set], IMAP::ST_UID)->validatedData(),
             );
             $mailbox = (string) ($this->cfg['imap']['host'] ?? '') . "\0"
                 . (string) ($this->cfg['imap']['user'] ?? '') . "\0INBOX\0" . $uidValidity;
@@ -140,37 +144,47 @@ final class MailFetcher
     }
 
     /**
-     * Unread UIDs, oldest first, holding at most UID_WINDOW_MAX (or
-     * SEARCH_ALL_MAX) of them at a time. A normal unread count is one search,
-     * as it always was. A large one, or none reported, is searched in windows
-     * of UIDs from the first, and only as far as the caller keeps reading: a
-     * run that stops after ten messages never lists the rest. A window that
-     * comes back nearly empty makes the next one wider, so a mailbox whose
-     * UIDs run into the millions (Gmail) isn't crossed 2000 at a time. Nothing is remembered
-     * between runs, so a message marked unread again for a retry is found
-     * the same way as any other. Pure apart from the two searches; tested.
+     * Unread UIDs, oldest first. A normal unread count is one search, as it
+     * always was. A large one, or none reported, is searched in windows of
+     * message positions (1 to the message count, which are dense whatever
+     * the UIDs are), from the first, and only as far as the caller keeps
+     * reading: a run that stops after ten messages never lists the rest. A
+     * mailbox is crossed in count / POSITION_WINDOW searches, so UIDs that
+     * run into the billions cost nothing more; a run makes at most that
+     * many, counted once at the start, and never more than SEARCHES_MAX. The
+     * last window runs to the mailbox's end ("*"), so a message that came
+     * in meanwhile is found and an expunge never names a position past it;
+     * a UID no greater than one already listed is not listed again. Nothing
+     * is remembered between runs, so a message marked unread again for a
+     * retry is found the same way as any other. Pure apart from the two
+     * searches; tested.
      *
      * @param callable():array $searchAll every unread UID
-     * @param callable(string):array $searchRange unread UIDs within "a:b"
+     * @param callable(string):array $searchPositions unread UIDs among positions "a:b"
      * @return \Generator<int,int>
      */
-    public static function unseenUids(?int $unseenCount, int $uidNext, callable $searchAll, callable $searchRange): \Generator
+    public static function unseenUids(?int $unseenCount, int $messageCount, callable $searchAll, callable $searchPositions): \Generator
     {
-        if (($unseenCount !== null && $unseenCount <= self::SEARCH_ALL_MAX) || $uidNext <= 1) {
+        if (($unseenCount !== null && $unseenCount <= self::SEARCH_ALL_MAX) || $messageCount < 1) {
             $all = array_map('intval', $searchAll());
             sort($all, SORT_NUMERIC);
             yield from $all;
             return;
         }
-        $width = self::UID_WINDOW;
-        for ($low = 1; $low < $uidNext; $low = $high + 1) {
-            $high = min($low + $width - 1, $uidNext - 1);
-            $found = array_map('intval', $searchRange($low . ':' . $high));
+        $needed = intdiv($messageCount + self::POSITION_WINDOW - 1, self::POSITION_WINDOW);
+        $searches = min($needed, self::SEARCHES_MAX);
+        $listed = 0;
+        for ($i = 0; $i < $searches; $i++) {
+            $low = $i * self::POSITION_WINDOW + 1;
+            $high = $i === $needed - 1 ? '*' : (string) ($low + self::POSITION_WINDOW - 1);
+            $found = array_map('intval', $searchPositions($low . ':' . $high));
             sort($found, SORT_NUMERIC);
             foreach ($found as $uid) {
-                if ($uid >= $low && $uid <= $high) yield $uid;
+                if ($uid > $listed) {
+                    $listed = $uid;
+                    yield $uid;
+                }
             }
-            $width = count($found) < intdiv(self::UID_WINDOW, 4) ? min($width * 8, self::UID_WINDOW_MAX) : self::UID_WINDOW;
         }
     }
 

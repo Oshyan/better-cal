@@ -134,11 +134,11 @@ final class Feeds
     public function pollFailed(array $calendar, \Throwable $e): void
     {
         $calendarId = (int) $calendar['id'];
-        $this->db->update('calendars', [
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->update('calendars', [
             'last_polled_at' => Time::nowDb(),
             'last_poll_status' => 'error',
             'last_poll_error' => mb_substr($e->getMessage(), 0, 2000),
-        ], 'id = ?', [$calendarId]);
+        ], 'id = ?', [$calendarId]));
         // The badge says "error" while you look; this gives it a since-when,
         // a history, and eventually an email if it stays that way.
         (new SystemHealth($this->db))->recordFailure('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name'], $e->getMessage());
@@ -447,14 +447,15 @@ final class Feeds
             }
         });
 
-        // CalDAV change journal: one entry per affected object (uid).
+        // CalDAV change journal: one entry per affected object (uid), each in
+        // a checked transaction of its own (a poll run by a request, inline).
         foreach (array_keys($changedUids) as $index => $uid) {
             if (($index & 127) === 0) {
                 self::assertSyncDeadline($deadline);
             }
             $uid = (string) $uid;
             if (isset($newMasterUids[$uid])) {
-                ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD);
+                RequestAuthority::checkedTx($this->db, fn() => ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD));
                 continue;
             }
             $masterExists = $this->db->scalar(
@@ -462,14 +463,14 @@ final class Feeds
                    AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL',
                 [$calendarId, $uid]
             );
-            ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE);
+            RequestAuthority::checkedTx($this->db, fn() => ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE));
         }
 
         // The publisher touched something. This is what "stale" is judged
         // against: not whether the feed HAS events (a dead feed keeps
         // serving its old ones forever) but when it last changed any.
         if (count($addedTitles) + count($updatedEventIds) + $removedCount > 0) {
-            $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]);
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]));
         }
 
         return $upserts;

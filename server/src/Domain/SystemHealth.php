@@ -489,9 +489,11 @@ final class SystemHealth
         if ($uid === null) {
             return;
         }
-        ActivityContext::with('system', function () use ($uid, $summary): void {
+        // The health record is bookkeeping; its note in Activity is the
+        // account's, so it is written in a checked transaction.
+        RequestAuthority::checkedTx($this->db, fn() => ActivityContext::with('system', function () use ($uid, $summary): void {
             (new Undo($this->db))->record($uid, 'system', 0, 'update', null, null, mb_substr($summary, 0, 300));
-        });
+        }));
     }
 
     private function recipientFor(array $row, ?string $alertEmail): ?string

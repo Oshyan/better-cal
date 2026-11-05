@@ -247,15 +247,17 @@ final class PushSubscriptions
         if ($row === null) {
             throw HttpError::notFound('No such device');
         }
-        // By id as well: a row saved before canonicalEndpoint folded case and
-        // :443 may not match its own canonical spelling.
-        $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND (id = ? OR ' . $this->identitySql() . ' = ?)', [$userId, $id, self::canonicalEndpoint((string) $row['endpoint'])]);
-        $hash = self::endpointHash((string) $row['endpoint']);
-        if ($this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) === null) {
-            $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);
-        }
-        (new Undo($this->db))->record($userId, 'push', $id, 'delete', null, null,
-            'Removed a device from reminders (' . ($row['device_label'] ?? self::service((string) $row['endpoint'])) . ')');
+        RequestAuthority::checkedTx($this->db, function () use ($userId, $id, $row): void {
+            // By id as well: a row saved before canonicalEndpoint folded case and
+            // :443 may not match its own canonical spelling.
+            $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND (id = ? OR ' . $this->identitySql() . ' = ?)', [$userId, $id, self::canonicalEndpoint((string) $row['endpoint'])]);
+            $hash = self::endpointHash((string) $row['endpoint']);
+            if ($this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) === null) {
+                $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);
+            }
+            (new Undo($this->db))->record($userId, 'push', $id, 'delete', null, null,
+                'Removed a device from reminders (' . ($row['device_label'] ?? self::service((string) $row['endpoint'])) . ')');
+        });
     }
 
     public function unsubscribe(int $userId, string $endpoint, ?int $tokenId = null): bool
@@ -265,10 +267,10 @@ final class PushSubscriptions
         }
         $endpoint = self::canonicalEndpoint($endpoint);
         if ($tokenId === null) {
-            return $this->db->run(
+            return RequestAuthority::checkedTx($this->db, fn(): bool => $this->db->run(
                 'DELETE FROM push_subscriptions WHERE user_id = ? AND ' . $this->identitySql() . ' = ?',
                 [$userId, $endpoint]
-            )->rowCount() > 0;
+            )->rowCount() > 0);
         }
         // A token may remove the standing channel it created, never a
         // browser-owned or different-token device. A mismatch stays a quiet
@@ -338,19 +340,19 @@ final class PushSubscriptions
 
     public function recordSuccess(int $id): void
     {
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'UPDATE push_subscriptions SET last_used_at = ?, failing_since = NULL WHERE id = ?',
             [Time::nowDb(), $id]
-        );
+        ));
     }
 
     /** Gone endpoint (404/410): start (or keep) the failing clock. */
     public function recordFailure(int $id): void
     {
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'UPDATE push_subscriptions SET failing_since = COALESCE(failing_since, ?) WHERE id = ?',
             [Time::nowDb(), $id]
-        );
+        ));
     }
 
     /** Delete subscriptions that have been failing since before $before. */

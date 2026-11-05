@@ -12,7 +12,10 @@ declare(strict_types=1);
 // whose snapshots are wrong, or who records nothing where it should, is
 // caught by the rows and not only by the touches. A writer that is log-only
 // on purpose (a feed's poll, a plugin's sync, an answer that went out) is
-// checked to be so.
+// checked to be so. Each runs as the request that makes it would, its
+// credential registered (RequestAuthority::during), so a writer that writes
+// outside the write boundary is a journaling misuse; a worker's runs as
+// none ($workers).
 
 use BetterCal\Domain\CalendarImport;
 use BetterCal\Domain\Duplicates;
@@ -27,6 +30,7 @@ use BetterCal\Domain\People;
 use BetterCal\Domain\Plugins;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\Recurrence;
+use BetterCal\Domain\RequestAuthority;
 use BetterCal\Domain\ReviewQueue;
 use BetterCal\Domain\Rsvp;
 use BetterCal\Domain\SavedViews;
@@ -215,12 +219,27 @@ return static function (Db $db): void {
          * null, it's nothing for the journal (no entry, and nothing undo knows
          * changed). $except: changes the writer is known not to say, each one
          * a gap to close (the check fails once it's closed, so the list is
-         * kept honest).
+         * kept honest). It runs as a request made with $asRequest, or, for
+         * one of $workers, as a worker's job, with no credential.
          */
-        $journaled = static function (string $what, callable $op, bool $vocabulary = true, ?bool $undoable = true, array $except = []) use ($db, $read, $readSettings, $unjournaled, $left, $redo, $restorer): void {
+        $asRequest = null;
+        $workers = [
+            "a feed's poll: an event changed, one gone, one new", 'a plugin making its calendar', "a plugin's sync: events added",
+            "a plugin's sync: one changed, one gone", "a Google calendar's poll (GoogleSync's write, with Google's answer given)",
+            'an emailed invitation held for Review', 'an emailed change held for Review', 'a mail limit noted in Review',
+            'an emailed invitation from a sender not approved: held', 'an emailed series with a day already cancelled, from a sender not approved: both held',
+            'an emailed series from a sender not approved, with a cancelled day arriving after it: both held',
+            'the organizer cancels the series while its invitation waits: closed in Review with its held day',
+            'a cancelled day of a series not on the calendar yet: held',
+            'an emailed series from an approved sender: added, its held cancelled day becoming a cancellation of that occurrence',
+            'an emailed invitation from an approved sender: added', 'an emailed change to an event you have: held', 'an emailed cancellation of it: held',
+            'an emailed change from someone other than the organizer: refused', "a booking read from an email's markup: added",
+            'an email admitted and its event made', 'the duplicate check: pairs found', "a plugin's proposal made", 'a proposal withdrawn',
+        ];
+        $journaled = static function (string $what, callable $op, bool $vocabulary = true, ?bool $undoable = true, array $except = []) use ($db, $read, $readSettings, $unjournaled, $left, $redo, $restorer, &$asRequest, $workers): void {
             $since = (int) $db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations');
             $before = $read();
-            $op();
+            RequestAuthority::during(in_array($what, $workers, true) ? null : $asRequest, $op);
             $after = $read();
             $settingsAfter = $readSettings();
             $missing = $unjournaled($since, $before, $after, $vocabulary);
@@ -260,6 +279,9 @@ return static function (Db $db): void {
         $u = freshUser($db);
         $d = domains($db);
         $home = (int) Settings::defaultCalendarId($db, $u);
+        // The owner's browser session, signed in: the credential every
+        // request below is made with. A worker's job is made with none.
+        $asRequest = requestCredentials($db, $u)['session'][0];
         $people = new People($db);
         $trips = new Trips($db, $d->undo);
         $views = new SavedViews($db, $d->undo);

@@ -338,3 +338,24 @@ function oldVersion(string $source, array $steps): array
     }
     return $out;
 }
+
+/**
+ * A signed-in browser session and an API key for the account, live: each
+ * kind's credential, the statement that revokes it (run as another
+ * request), and the refusal a write under it then gets.
+ *
+ * @return array<string,array{0:BetterCal\Domain\RequestAuthority,1:callable():void,2:string}>
+ */
+function requestCredentials(Db $db, int $userId): array
+{
+    $session = 'sample-session-' . bin2hex(random_bytes(8));
+    $db->run('INSERT INTO sessions (token_hash, user_id, csrf, expires_at) VALUES (?, ?, ?, ?)', [hash('sha256', $session), $userId, str_repeat('c', 32), '2099-01-01 00:00:00']);
+    $db->run('INSERT INTO api_tokens (user_id, name, token_hash) VALUES (?, ?, ?)', [$userId, 'Sample key', hash('sha256', $session . '-key')]);
+    $tokenId = (int) $db->pdo()->lastInsertId();
+    return [
+        'session' => [BetterCal\Domain\RequestAuthority::credential($userId, null, $session),
+            static fn() => BetterCal\Domain\RequestAuthority::during(null, fn() => $db->run('DELETE FROM sessions WHERE token_hash = ?', [hash('sha256', $session)])), 'session_revoked'],
+        'API key' => [BetterCal\Domain\RequestAuthority::credential($userId, $tokenId, null),
+            static fn() => BetterCal\Domain\RequestAuthority::during(null, fn() => $db->run('DELETE FROM api_tokens WHERE id = ?', [$tokenId])), 'token_revoked'],
+    ];
+}

@@ -116,6 +116,24 @@ trait SeriesPlans
     }
 
     /**
+     * A split (this and following) sent to an edited day's own row is the
+     * series' split at that day's key, whatever day the request names: the
+     * one routing every split takes (routeToMaster), for a delete and an
+     * answer as for an edit, preview and commit alike. Any other row or
+     * scope comes back as it was sent.
+     *
+     * @return array{0:array,1:?string} the row the split acts on and its instanceStart
+     */
+    private function followingFrom(int $userId, array $event, ?string $scope, ?string $instanceStart): array
+    {
+        if ($scope !== 'following' || empty($event['recurrence_parent_id'])) {
+            return [$event, $instanceStart];
+        }
+        [$master, $in] = $this->routeToMaster($userId, $event, ['scope' => 'following']);
+        return [$master, (string) $in['instanceStart']];
+    }
+
+    /**
      * The plan for a whole-series edit, written nowhere (preview: true).
      * The edit is the PATCH body; plan.choices may name options.
      */
@@ -157,7 +175,7 @@ trait SeriesPlans
     /** The plan of delete following (DELETE with preview), written nowhere. */
     public function previewDelete(int $userId, int $id, ?string $scope, ?string $instanceStart, array $choices = []): array
     {
-        $event = $this->get($userId, $id);
+        [$event, $instanceStart] = $this->followingFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
         if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
             throw HttpError::badRequest('preview is for deleting this and following events of a repeating series', 'preview_unavailable');
         }
@@ -168,7 +186,7 @@ trait SeriesPlans
     public function previewAttendance(int $userId, int $id, string $attendance, ?string $scope, ?string $instanceStart, array $choices = []): array
     {
         unset($attendance);
-        $event = $this->get($userId, $id);
+        [$event, $instanceStart] = $this->followingFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
         if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
             throw HttpError::badRequest('preview is for an answer from a day on in a repeating series', 'preview_unavailable');
         }

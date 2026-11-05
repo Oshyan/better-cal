@@ -234,7 +234,7 @@ Each is its own group (`day`, `time`, `length`) beside the same-way reading for 
 
 Measured in days on the occurrence, the first review's "Book club" (its 1 Jan moved to 31 Jan, dragged to 1 Feb) moves every event a day or adopts the 1st, never a key moved a month ([examples](series-model-examples.md#from-an-edited-day)).
 
-"This and following" from an edited day is measured the same way and applies the result to the part from K on. The split is by key, so an edited day keyed after the split but shown before it goes with the following part, and the plan says so: "Includes 'Rehearsal', moved to Fri 6 Mar, which belongs to Tue 9 Mar." From an edited day moved to another calendar, "This and following" stays unavailable ([#188](https://github.com/Oshyan/better-cal/issues/188)).
+"This and following" from an edited day is measured the same way and applies the result to the part from K on. The split is by key, so an edited day keyed after the split but shown before it goes with the following part, and the plan says so: "Includes 'Rehearsal', moved to Fri 6 Mar, which belongs to Tue 9 Mar." Delete following and an answer from a day on, sent to an edited day's own row, are the series' split at K too, preview and commit alike: one routing for every split, whatever day the request names. From an edited day moved to another calendar, "This and following" stays unavailable ([#188](https://github.com/Oshyan/better-cal/issues/188)).
 
 ## Mapping, Defined
 

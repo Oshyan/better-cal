@@ -137,7 +137,9 @@ final class Events
                 return ['attendance', self::ATTENDANCE_ALIASES[$relationship]];
             }
             $in = ['status' => $relationship === 'maybe' ? 'tentative' : 'confirmed'];
-            if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
+            // From an edited day's own row, this and following is the
+            // series' split at that day's key, which patch() routes there.
+            if ((!empty($event['rrule']) && empty($event['recurrence_parent_id'])) || (!empty($event['recurrence_parent_id']) && $scope === 'following')) {
                 $in['scope'] = $scope ?? 'all';
                 $in['instanceStart'] = $instanceStart;
             }
@@ -1920,7 +1922,7 @@ final class Events
 
     private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
     {
-        $event = $this->get($userId, $id);
+        [$event, $instanceStart] = $this->followingFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
@@ -2043,7 +2045,10 @@ final class Events
      */
     public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null, ?array $plan = null): void
     {
-        $event = $this->get($userId, $id);
+        // From an edited day's own row, an answer from that day on is the
+        // series' split at its key (followingFrom), as an edit is.
+        [$event, $instanceStart] = $this->followingFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
+        $id = (int) $event['id'];
         $structural = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
             && in_array($scope, ['this', 'following'], true);
         $this->undo->write($userId, function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural, $plan): void {

@@ -342,8 +342,12 @@ return static function (Db $db): void {
             planned($d2->events, $u2, $c2['series'], $off);
             $d2->undo->undoById($u2, $deleted2);
             $d2->events->patch($u2, $s2, ['isContainer' => true]);
-            [$code] = $refusal(fn() => $d2->events->patch($u2, $c2['series'], ['isContainer' => true] + $scope));
-            checkEq("the series made a trip $how: allowed, the edited day's flag as it was, no trip inside a trip", [null, 0, 0], [$code, $flag($day2), $nested($u2)]);
+            [$code] = $refusal(fn() => planned($d2->events, $u2, $c2['series'], ['isContainer' => true] + $scope));
+            // This and following is the part from the day planned as a whole
+            // series (1.5.1): the flag reaches every row of the part, this
+            // day among them, so it is refused as for all events.
+            $want = $scope['scope'] === 'following' ? '400 trip_nested' : null;
+            checkEq("the series made a trip $how: " . ($want === null ? 'allowed' : 'refused') . ", the edited day's flag as it was, no trip inside a trip", [$want, 0, 0], [$code, $flag($day2), $nested($u2)]);
         }
     });
 

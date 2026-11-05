@@ -223,7 +223,7 @@ return static function (Db $db): void {
             (int) $db->scalar("SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-12 18:00:00'", [$s]));
         $d->undo->undoLatest($u);
         checkEq('undone: the row and its own list are back', ['title'], $own($s, '2027-01-12 18:00:00'));
-        $d->events->patch($u, $s, ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Choir, spring term']);
+        planned($d->events, $u, $s, ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Choir, spring term']);
         $split = (int) $db->scalar("SELECT id FROM events WHERE title = 'Choir, spring term' AND recurrence_parent_id IS NULL AND user_id = ?", [$u]);
         checkEq('"this and following" carries the moved day with its own list', ['date'], $own($split, '2027-01-19 18:00:00'));
         // The migration's backfill: a row with no list, filled by equality.

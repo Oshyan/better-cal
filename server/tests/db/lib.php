@@ -159,6 +159,14 @@ function planned(BetterCal\Domain\Events $events, int $userId, int $id, array $i
     return $plan;
 }
 
+/** Delete following as the client makes it: preview, then the commit with its plan (none from the first day, delete all). */
+function plannedDelete(BetterCal\Domain\Events $events, int $userId, int $id, string $instanceStart): array
+{
+    $plan = $events->previewDelete($userId, $id, 'following', $instanceStart);
+    $events->deleteEvent($userId, $id, 'following', $instanceStart, null, !empty($plan['whole']) ? null : ['hash' => $plan['hash'], 'choices' => []]);
+    return $plan;
+}
+
 function refusal(callable $fn): ?string
 {
     try {

@@ -108,6 +108,43 @@ function planned(BetterCal\Domain\Events $events, int $userId, int $id, array $i
     return $plan;
 }
 
+/** The commit's plan for a split's preview: its hash and the preselected options (none when it is the whole series'). */
+function preselectedPlan(array $plan): ?array
+{
+    if (!empty($plan['whole'])) {
+        return null;
+    }
+    $sel = [];
+    foreach ($plan['groups'] as $g) {
+        $sel[$g['id']] = $g['selected'];
+    }
+    return ['hash' => $plan['hash'], 'choices' => $sel];
+}
+
+/** Delete following as the client makes it: preview, then the commit with its plan. */
+function plannedDelete(BetterCal\Domain\Events $events, int $userId, int $id, string $instanceStart): array
+{
+    $plan = $events->previewDelete($userId, $id, 'following', $instanceStart);
+    $events->deleteEvent($userId, $id, 'following', $instanceStart, null, preselectedPlan($plan));
+    return $plan;
+}
+
+/** An answer from a day on as the client makes it: preview, then the commit with its plan. */
+function plannedAnswer(BetterCal\Domain\Events $events, int $userId, int $id, string $attendance, string $instanceStart): array
+{
+    $plan = $events->previewAttendance($userId, $id, $attendance, 'following', $instanceStart);
+    $events->setAttendance($userId, $id, $attendance, 'following', $instanceStart, preselectedPlan($plan));
+    return $plan;
+}
+
+/** A relationship from a day on as the client makes it: preview, then the commit with its plan. */
+function plannedRelationship(BetterCal\Domain\Events $events, int $userId, int $id, string $relationship, string $instanceStart): array
+{
+    $plan = $events->previewRelationship($userId, $id, $relationship, 'following', $instanceStart);
+    $events->setRelationship($userId, $id, $relationship, 'following', $instanceStart, null, preselectedPlan($plan));
+    return $plan;
+}
+
 /**
  * Run $fn with PHP's error log captured instead of printed; returns its
  * result and what it logged. For tests that break a dependency on purpose
@@ -2433,7 +2470,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         (new ReflectionProperty($splitter, 'splitEventId'))->setValue($splitter, null);
         $splitter->setRelationship(1, $seriesId, 'maybe', 'all');
         checkEq('split: a whole-series change creates nothing new', null, $splitter->splitEventId());
-        $splitter->setRelationship(1, $seriesId, 'planned', 'following', '2026-12-10T18:00:00+00:00');
+        plannedRelationship($splitter, 1, $seriesId, 'planned', '2026-12-10T18:00:00+00:00');
         $newSeries = $splitter->splitEventId();
         check('split: "this and following" reports the new series that holds the occurrence',
             $newSeries !== null && $newSeries !== $seriesId
@@ -2522,7 +2559,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         };
         $firstDay = (int) $eventsA->create(1, $placeBase + ['title' => 'Team sync', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
         $eventsA->patch(1, $firstDay, ['scope' => 'this', 'instanceStart' => '2026-12-15T18:00:00+00:00', 'title' => 'Team sync, one day']);
-        $eventsA->patch(1, $firstDay, ['scope' => 'following', 'instanceStart' => '2026-12-08T18:00:00+00:00', 'title' => 'Team sync, renamed']);
+        planned($eventsA, 1, $firstDay, ['scope' => 'following', 'instanceStart' => '2026-12-08T18:00:00+00:00', 'title' => 'Team sync, renamed']);
         checkEq('following from the first day: the series itself is renamed, no split, and the day shows once', ['Team sync, renamed', 'FREQ=WEEKLY;BYDAY=TU', '2026-12-08 18:00:00', 1, ['Team sync, renamed'], 'Team sync, one day'], [
             $adb->scalar('SELECT title FROM events WHERE id = ?', [$firstDay]),
             $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$firstDay]),
@@ -2536,7 +2573,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             $adb->scalar('SELECT title FROM events WHERE id = ?', [$firstDay]),
             $onDay('Team sync', '2026-12-08'),
         ]);
-        $eventsA->deleteEvent(1, $firstDay, 'following', '2026-12-08T18:00:00+00:00');
+        plannedDelete($eventsA, 1, $firstDay, '2026-12-08T18:00:00+00:00');
         checkEq('ending a series from its first day removes it, edited dates included', [[], 0], [
             $onDay('Team sync', '2026-12-08'),
             (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE title LIKE 'Team sync%' AND deleted_at IS NULL"),
@@ -2551,7 +2588,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // since that day is the one being edited (Q2 of the review).
         $offPattern = (int) $eventsA->create(1, ['title' => 'Invoices', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start' => '2026-12-15T18:00:00+00:00', 'end' => '2026-12-15T19:00:00+00:00'] + $placeBase)['eventId'];
         $adb->run("UPDATE events SET start_utc = '2026-12-20 18:00:00', end_utc = '2026-12-20 19:00:00' WHERE id = ?", [$offPattern]);
-        $eventsA->patch(1, $offPattern, ['scope' => 'following', 'instanceStart' => '2026-12-20T18:00:00+00:00', 'title' => 'Invoices, renamed']);
+        planned($eventsA, 1, $offPattern, ['scope' => 'following', 'instanceStart' => '2026-12-20T18:00:00+00:00', 'title' => 'Invoices, renamed']);
         checkEq('a rename from an off-pattern first day keeps that day', ['Invoices, renamed', '2026-12-20 18:00:00', ['Invoices, renamed']], [
             $adb->scalar('SELECT title FROM events WHERE id = ?', [$offPattern]),
             $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$offPattern]),
@@ -2876,19 +2913,19 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // day on. With the rule left as it was, the new series opened on
         // the next listed day and the dragged day was gone from both.
         $lesson = (int) $eventsA->create(1, ['title' => 'Lesson', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
-        $eventsA->patch(1, $lesson, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
+        planned($eventsA, 1, $lesson, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
         checkEq('every Monday from 18 Jan on dragged to the Tuesday is every Tuesday from 19 Jan', [
             '2027-01-04 18:00:00 Lesson', '2027-01-11 18:00:00 Lesson', '2027-01-19 18:00:00 Lesson', '2027-01-26 18:00:00 Lesson', '2027-02-02 18:00:00 Lesson',
         ], $onDays('Lesson', '2027-01-01', '2027-02-05'));
         $undoA->undoLatest(1);
         checkEq('and undoes to Mondays', ['2027-01-04 18:00:00 Lesson', '2027-01-11 18:00:00 Lesson', '2027-01-18 18:00:00 Lesson', '2027-01-25 18:00:00 Lesson', '2027-02-01 18:00:00 Lesson'], $onDays('Lesson', '2027-01-01', '2027-02-05'));
         $council = (int) $eventsA->create(1, ['title' => 'Council', 'rrule' => 'FREQ=MONTHLY;BYDAY=2TU', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
-        $eventsA->patch(1, $council, ['scope' => 'following', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-03-10T18:00:00+00:00', 'end' => '2027-03-10T19:00:00+00:00']);
+        planned($eventsA, 1, $council, ['scope' => 'following', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-03-10T18:00:00+00:00', 'end' => '2027-03-10T19:00:00+00:00']);
         checkEq('the second Tuesday from 9 Mar on dragged to the Wednesday is the second Wednesday from 10 Mar', [
             '2027-01-12 18:00:00 Council', '2027-02-09 18:00:00 Council', '2027-03-10 18:00:00 Council', '2027-04-14 18:00:00 Council',
         ], $onDays('Council', '2027-01-01', '2027-04-30'));
         $jubilee = (int) $eventsA->create(1, ['title' => 'Jubilee', 'rrule' => 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', 'start' => '2027-03-15T18:00:00+00:00', 'end' => '2027-03-15T19:00:00+00:00'] + $placeBase)['eventId'];
-        $eventsA->patch(1, $jubilee, ['scope' => 'following', 'instanceStart' => '2028-03-15T18:00:00+00:00', 'start' => '2028-03-16T18:00:00+00:00', 'end' => '2028-03-16T19:00:00+00:00']);
+        planned($eventsA, 1, $jubilee, ['scope' => 'following', 'instanceStart' => '2028-03-15T18:00:00+00:00', 'start' => '2028-03-16T18:00:00+00:00', 'end' => '2028-03-16T19:00:00+00:00']);
         checkEq('every 15 Mar from 2028 on dragged to the 16th is every 16 Mar from 2028', [
             '2027-03-15 18:00:00 Jubilee', '2028-03-16 18:00:00 Jubilee', '2029-03-16 18:00:00 Jubilee',
         ], $onDays('Jubilee', '2027-01-01', '2029-12-31'));
@@ -2917,7 +2954,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         planned($eventsA, 1, $meet, ['scope' => 'all', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-04-13T18:00:00+00:00', 'end' => '2027-04-13T19:00:00+00:00']);
         checkEq('dragged to April\'s second Tuesday it is the second Tuesday of April', ['FREQ=YEARLY;BYMONTH=4;BYDAY=2TU', '2027-04-13 18:00:00', ['2028-04-11 18:00:00 = 2028-04-11 18:00:00 Spring meet, tenth'], ['2029-04-10 18:00:00']], $series($meet));
         $undoA->undoLatest(1);
-        $eventsA->patch(1, $meet, ['scope' => 'following', 'instanceStart' => '2028-03-14T18:00:00+00:00', 'start' => '2028-03-15T18:00:00+00:00', 'end' => '2028-03-15T19:00:00+00:00']);
+        planned($eventsA, 1, $meet, ['scope' => 'following', 'instanceStart' => '2028-03-14T18:00:00+00:00', 'start' => '2028-03-15T18:00:00+00:00', 'end' => '2028-03-15T19:00:00+00:00']);
         checkEq('from 2028 on dragged to Wed 15 Mar (that March\'s third Wednesday): 2027 keeps its Tuesday, 2028 on is the third Wednesday with its edit and its skip', [
             '2027-03-09 18:00:00 Spring meet', '2028-03-15 18:00:00 Spring meet, tenth', '2030-03-20 18:00:00 Spring meet',
         ], $onDays('Spring meet', '2027-01-01', '2030-12-31'));
@@ -2956,10 +2993,14 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // moves them, a day moved to its own time keeping it. They used to
         // be deleted with the split.
         $choir = (int) $eventsA->create(1, ['title' => 'Choir', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
-        $eventsA->patch(1, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, concert prep']);
+        // Its own title and place: a rename from it later keeps its row for
+        // the place (a day left with nothing of its own goes back to the
+        // series, and putting such a row back is the database suite's,
+        // series-split.test.php, since this suite's SQLite has no upsert).
+        $eventsA->patch(1, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, concert prep', 'location' => 'Sample Hall']);
         $eventsA->patch(1, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-25T18:00:00+00:00', 'title' => 'Choir, last', 'start' => '2027-01-25T09:00:00+00:00', 'end' => '2027-01-25T10:00:00+00:00']);
         $eventsA->deleteEvent(1, $choir, 'this', '2027-02-01T18:00:00+00:00');
-        $eventsA->patch(1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
+        planned($eventsA, 1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
         $newChoir = (int) $adb->scalar('SELECT id FROM events WHERE title = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL AND id <> ?', ['Choir', $choir]);
         checkEq('every Monday from 18 Jan on dragged to the Tuesday keeps its edited 18 and 25 Jan on the 19th and 26th, the one at 09:00 still at 09:00, and its skipped 1 Feb on 2 Feb', [
             ['FREQ=WEEKLY;BYDAY=TU', '2027-01-19 18:00:00', ['2027-01-19 18:00:00 = 2027-01-19 18:00:00 Choir, concert prep', '2027-01-26 18:00:00 = 2027-01-26 09:00:00 Choir, last'], ['2027-02-02 18:00:00']],
@@ -2979,7 +3020,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // The day acted on takes the edit, its own earlier edit or not: a
         // person with 18 Jan open who renames it "from this day on" means
         // that day too. The later edited days keep their own names.
-        $eventsA->patch(1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
+        planned($eventsA, 1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
         checkEq('renamed from 18 Jan on, that day takes the name and the later edited day keeps its own', [
             '2027-01-04 18:00:00 Choir', '2027-01-11 18:00:00 Choir', '2027-01-18 18:00:00 Choir, spring term', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir, spring term',
         ], $onDays('Choir', '2027-01-01', '2027-02-12'));
@@ -2990,7 +3031,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // The day's own time and place stay when the edit doesn't name them.
         $splitDay = static fn(): array => $adb->one('SELECT title, start_utc, location FROM events WHERE recurrence_instance_utc = ? AND deleted_at IS NULL', ['2027-01-18 18:00:00']) ?? [];
         $eventsA->patch(1, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-18T09:00:00+00:00', 'end' => '2027-01-18T10:00:00+00:00', 'location' => 'Sample Hall']);
-        $eventsA->patch(1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
+        planned($eventsA, 1, $choir, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Choir, spring term']);
         checkEq('renamed from a day moved to its own time and place, that day keeps both and takes the name', [
             ['title' => 'Choir, spring term', 'start_utc' => '2027-01-18 09:00:00', 'location' => 'Sample Hall'],
             ['2027-01-11 18:00:00 Choir', '2027-01-18 09:00:00 Choir, spring term', '2027-01-25 09:00:00 Choir, last', '2027-02-08 18:00:00 Choir, spring term'],
@@ -3004,10 +3045,12 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         // An answer from a day on splits the series and answers the new one:
         // one change, one entry, and its undo puts the series back whole.
         $entriesBefore = (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = 1');
-        $eventsA->setAttendance(1, $choir, 'going', 'following', '2027-01-18T18:00:00+00:00');
+        plannedAnswer($eventsA, 1, $choir, 'going', '2027-01-18T18:00:00+00:00');
         $newChoir = (int) $adb->scalar('SELECT id FROM events WHERE title = ? AND recurrence_parent_id IS NULL AND deleted_at IS NULL AND id <> ?', ['Choir', $choir]);
+        // The old part's UNTIL is its last occurrence before the split (cell:
+        // Attendance or relationship, following; 1.5.1), never a second before it.
         checkEq('going from 18 Jan on: one entry that says so, the series split there and the new one answered with its edited days', [
-            1, "Marked 'Choir' going from Jan 18 on", 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270118T175959Z', ['going', 'going', 'going'], 'none',
+            1, "Marked 'Choir' going from Jan 18 on", 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270111T180000Z', ['going', 'going', 'going'], 'none',
         ], [
             (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = 1') - $entriesBefore,
             $adb->scalar('SELECT summary FROM mutations WHERE user_id = 1 ORDER BY id DESC LIMIT 1'),
@@ -3026,12 +3069,12 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $committee = (int) $eventsA->create(1, ['title' => 'Committee', 'rrule' => 'FREQ=MONTHLY;BYDAY=2TU', 'start' => '2027-01-12T18:00:00+00:00', 'end' => '2027-01-12T19:00:00+00:00'] + $placeBase)['eventId'];
         $eventsA->patch(1, $committee, ['scope' => 'this', 'instanceStart' => '2027-04-13T18:00:00+00:00', 'title' => 'Committee, April']);
         $eventsA->deleteEvent(1, $committee, 'this', '2027-05-11T18:00:00+00:00');
-        $eventsA->patch(1, $committee, ['scope' => 'following', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-03-10T18:00:00+00:00', 'end' => '2027-03-10T19:00:00+00:00']);
+        planned($eventsA, 1, $committee, ['scope' => 'following', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'start' => '2027-03-10T18:00:00+00:00', 'end' => '2027-03-10T19:00:00+00:00']);
         checkEq('the second Tuesday from 9 Mar on dragged to the Wednesday keeps its edited 13 Apr on 14 Apr and its skipped 11 May on 12 May', [
             '2027-01-12 18:00:00 Committee', '2027-02-09 18:00:00 Committee', '2027-03-10 18:00:00 Committee', '2027-04-14 18:00:00 Committee, April', '2027-06-09 18:00:00 Committee',
         ], $onDays('Committee', '2027-01-01', '2027-06-30'));
         $rehearsal = (int) $eventsA->create(1, ['title' => 'Rehearsal', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270125T235959Z', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00'] + $placeBase)['eventId'];
-        $eventsA->patch(1, $rehearsal, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
+        planned($eventsA, 1, $rehearsal, ['scope' => 'following', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'start' => '2027-01-19T18:00:00+00:00', 'end' => '2027-01-19T19:00:00+00:00']);
         checkEq('every Monday until 25 Jan dragged to the Tuesday from 18 Jan on keeps its last week', [
             '2027-01-04 18:00:00 Rehearsal', '2027-01-11 18:00:00 Rehearsal', '2027-01-19 18:00:00 Rehearsal', '2027-01-26 18:00:00 Rehearsal',
         ], $onDays('Rehearsal', '2027-01-01', '2027-12-31'));
@@ -4594,8 +4637,6 @@ foreach ($adBack as $p) {
 }
 checkEq('all-day series exdate reads back on the same date', '2026-09-09', $adMaster !== null && !empty($adMaster['exdates']) ? substr((string) $adMaster['exdates'][0], 0, 10) : null);
 }
-checkEq('all-day split ends the old series the day before, in its zone', 'FREQ=WEEKLY;BYDAY=WE;UNTIL=20260915', Recurrence::setUntil('FREQ=WEEKLY;BYDAY=WE', Recurrence::splitUntil(Time::fromDb('2026-09-16 07:00:00')), true, 'America/Los_Angeles'));
-checkEq('all-day split in UTC unchanged', 'FREQ=WEEKLY;BYDAY=WE;UNTIL=20260915', Recurrence::setUntil('FREQ=WEEKLY;BYDAY=WE', Recurrence::splitUntil(Time::fromDb('2026-09-16 00:00:00')), true, 'UTC'));
 $over = 0;
 foreach (explode("\r\n", $calendar) as $line) {
     if (strlen($line) > 75) {
@@ -5207,80 +5248,9 @@ if (class_exists(\Sabre\VObject\Reader::class)) {
     $fOut = $fPlan(['rrule' => 'FREQ=WEEKLY;BYDAY=MO'] + $fMon, '2026-11-02T09:00:00-08:00', '2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00');
     checkEq('series moved Monday to Tuesday (cell: weekly one day): its day moves too', ['2026-10-06 16:00:00', 'FREQ=WEEKLY;BYDAY=TU'], [$fOut['start_utc'] ?? null, $fOut['rrule'] ?? null]);
 }
-    checkEq('month day shift: a move out of the month names the day landed on', 'FREQ=MONTHLY;BYMONTHDAY=1',
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=31', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-11-01')));
-    checkEq('month day shift: a move to the same day of another month keeps the day', 'FREQ=MONTHLY;BYMONTHDAY=15',
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=15', new DateTimeImmutable('2026-10-15'), new DateTimeImmutable('2026-11-15')));
-    checkEq('month day shift: the last day, a list of days and a plain monthly rule stay', ['FREQ=MONTHLY;BYMONTHDAY=-1', 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'FREQ=MONTHLY'], [
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=-1', new DateTimeImmutable('2026-10-31'), new DateTimeImmutable('2026-10-30')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYMONTHDAY=1,15', new DateTimeImmutable('2026-10-01'), new DateTimeImmutable('2026-10-02')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
-    ]);
-    // An nth weekday follows the day landed on, counted the way it was (from the start or the end of the month); a yearly month and day too.
-    checkEq('month day shift: the first Monday moved a day is the first Tuesday, the last Friday moved back the last Thursday, a week on the second Monday', ['FREQ=MONTHLY;BYDAY=1TU', 'FREQ=MONTHLY;BYDAY=-1TH', 'FREQ=MONTHLY;BYDAY=2MO', 'FREQ=MONTHLY;BYDAY=TU;BYSETPOS=1'], [
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=-1FR', new DateTimeImmutable('2026-10-30'), new DateTimeImmutable('2026-10-29')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-12')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
-    ]);
-    checkEq('month day shift: the same place in another month, two weekdays and a weekday list stay', ['FREQ=MONTHLY;BYDAY=1MO', 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'], [
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-11-02')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=1MO,3MO', new DateTimeImmutable('2026-10-05'), new DateTimeImmutable('2026-10-06')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', new DateTimeImmutable('2026-10-30'), new DateTimeImmutable('2026-10-29')),
-    ]);
-    checkEq('month day shift: a yearly month and day follow the day landed on, across a month too; a year on they stay', ['FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=16', 'FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=1', 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15'], [
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2027-03-16')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2027-04-01')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', new DateTimeImmutable('2027-03-15'), new DateTimeImmutable('2028-03-15')),
-    ]);
-    // The fifth of a weekday (the 29th to 31st) is written as the last, a fifth from the end as the first; a yearly nth weekday follows within its month and into another, one on two months stays.
-    checkEq('month day shift: a fifth weekday is the last, a fifth from the end the first, a yearly nth weekday follows its month and the day', ['FREQ=MONTHLY;BYDAY=-1FR', 'FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1', 'FREQ=MONTHLY;BYDAY=1FR', 'FREQ=YEARLY;BYMONTH=3;BYDAY=2WE', 'FREQ=YEARLY;BYMONTH=4;BYDAY=2TU', 'FREQ=YEARLY;BYMONTH=3;BYDAY=-1WE', 'FREQ=YEARLY;BYMONTH=3,9;BYDAY=2TU'], [
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=4TH', new DateTimeImmutable('2027-01-28'), new DateTimeImmutable('2027-01-29')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=TH;BYSETPOS=4', new DateTimeImmutable('2027-01-28'), new DateTimeImmutable('2027-01-29')),
-        Recurrence::shiftBymonthday('FREQ=MONTHLY;BYDAY=-1FR', new DateTimeImmutable('2027-01-29'), new DateTimeImmutable('2027-01-01')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYDAY=2TU', new DateTimeImmutable('2027-03-09'), new DateTimeImmutable('2027-03-10')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYDAY=2TU', new DateTimeImmutable('2027-03-09'), new DateTimeImmutable('2027-04-13')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3;BYDAY=-1TU', new DateTimeImmutable('2027-03-30'), new DateTimeImmutable('2027-03-31')),
-        Recurrence::shiftBymonthday('FREQ=YEARLY;BYMONTH=3,9;BYDAY=2TU', new DateTimeImmutable('2027-03-09'), new DateTimeImmutable('2027-03-10')),
-    ]);
-    $fShift = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('seriesKeyShift');
-    $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-05 17:00:00', 'end_utc' => '2026-10-05 18:00:00'] + $fMon);
-    checkEq('series moved to 10:00: skipped and edited days keep their place, across DST', ['2026-10-12 17:00:00', '2026-11-02 18:00:00'], [$fMap('2026-10-12 16:00:00'), $fMap('2026-11-02 17:00:00')]);
-    $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-06 16:00:00', 'end_utc' => '2026-10-06 17:00:00'] + $fMon);
-    checkEq('series moved a day: keys move a day', '2026-11-03 17:00:00', $fMap('2026-11-02 17:00:00'));
-    check('series unchanged: nothing to re-key', $fShift->invoke(null, $fMon, $fMon) === null);
-    $fMap = $fShift->invoke(null, $fMon, ['all_day' => 1, 'start_utc' => '2026-10-05 07:00:00', 'end_utc' => '2026-10-06 07:00:00'] + $fMon);
-    checkEq('series made all-day: keys become its local midnights', '2026-11-02 08:00:00', $fMap('2026-11-02 17:00:00'));
 
-    checkEq('byday: every Monday moved a day is every Tuesday', 'FREQ=WEEKLY;BYDAY=TU', Recurrence::shiftByday('FREQ=WEEKLY;BYDAY=MO', 1));
-    checkEq('byday: Mon/Wed/Fri moved back a day wraps Monday to Sunday', 'FREQ=WEEKLY;BYDAY=TU,TH,SU', Recurrence::shiftByday('FREQ=WEEKLY;BYDAY=MO,WE,FR', -1));
-    checkEq('byday: monthly nth weekday is left alone', 'FREQ=MONTHLY;BYDAY=3TH', Recurrence::shiftByday('FREQ=MONTHLY;BYDAY=3TH', 1));
-    checkEq('byday: a Thursday start with Mon/Wed/Fri waits one day for Friday', 1, Recurrence::daysToFirstByday('FREQ=WEEKLY;BYDAY=MO,WE,FR', new DateTimeImmutable('2026-10-08 09:00', new DateTimeZone('America/Los_Angeles'))));
-    checkEq('byday: a start on a listed day stays', 0, Recurrence::daysToFirstByday('FREQ=WEEKLY;BYDAY=MO,TH', new DateTimeImmutable('2026-10-08 09:00', new DateTimeZone('America/Los_Angeles'))));
     check('pattern ignores bounds', Recurrence::pattern('FREQ=WEEKLY;BYDAY=MO;COUNT=8') === Recurrence::pattern('FREQ=WEEKLY;UNTIL=20261201;BYDAY=MO'));
-    $fAlign = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('alignedStart');
-    checkEq('align: a Thursday 9:00 start of a Mon/Wed/Fri series moves to Friday 9:00', ['start_utc' => '2026-10-09 16:00:00', 'end_utc' => '2026-10-09 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
-    // Monthly rules too (#193): the 20th with "every 15th" waits for the next 15th, at 9:00 across the clock change.
-    checkEq('align: a monthly on the 15th started on the 20th moves to the next 15th', ['start_utc' => '2026-11-15 17:00:00', 'end_utc' => '2026-11-15 18:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
-    checkEq('align: a yearly on 15 March started on 20 October waits for the next 15 March; one with no month is left alone', [['start_utc' => '2027-03-15 16:00:00', 'end_utc' => '2027-03-15 17:00:00'], []], [
-        $fAlign->invoke(null, ['rrule' => 'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon),
-        $fAlign->invoke(null, ['rrule' => 'FREQ=YEARLY;BYMONTHDAY=15', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon),
-    ]);
-    // A yearly nth weekday off its day is left where it is: its next matching day is a year on.
-    checkEq('align: a yearly nth weekday started off its day stays', [], $fAlign->invoke(null, ['rrule' => 'FREQ=YEARLY;BYMONTH=3;BYDAY=2TU', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
-    checkEq('align: first and third Monday started on a Thursday moves to the next listed Monday', ['start_utc' => '2026-10-19 16:00:00', 'end_utc' => '2026-10-19 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=1MO,3MO', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
-    checkEq('align: last weekday started mid-month moves to the month\'s last weekday', ['start_utc' => '2026-10-30 16:00:00', 'end_utc' => '2026-10-30 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
-    checkEq('align: a monthly start already on its day stays', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=20', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
-    checkEq('align: a list of month days dragged off them starts on the next listed one', ['start_utc' => '2026-10-15 16:00:00', 'end_utc' => '2026-10-15 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start_utc' => '2026-10-02 16:00:00', 'end_utc' => '2026-10-02 17:00:00'] + $fMon));
-    checkEq('align: a plain monthly rule takes its start as its day', [], $fAlign->invoke(null, ['rrule' => 'FREQ=MONTHLY;COUNT=6', 'start_utc' => '2026-10-20 16:00:00', 'end_utc' => '2026-10-20 17:00:00'] + $fMon));
 
-    // "This and following" on a series with a COUNT keeps what is left of it.
-    $fFollow = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('followingRrule');
-    $fSeries = ['id' => 9, 'uid' => 'c10', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00', 'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => json_encode(['2026-10-12 16:00:00'])];
-if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
-    checkEq('split: 10 weekly split at the 6th leaves 5', 'FREQ=WEEKLY;COUNT=5', $fFollow->invoke($fEvents, $fSeries, '2026-11-09 17:00:00'));
-}
-    checkEq('split: no COUNT, rule unchanged', 'FREQ=WEEKLY', $fFollow->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY'] + $fSeries, '2026-11-09 17:00:00'));
     $fCount = static fn(): int => (int) $fdb->one('SELECT COUNT(*) AS n FROM feedback_signals')['n'];
     checkEq('thumbs: first up is recorded', 'up', $fEvents->recordFeedback(1, 1, 'up'));
     $fEvents->recordFeedback(1, 1, 'up');
@@ -5528,9 +5498,6 @@ checkEq('safeRrule: a part the table marks N/A drops the rule', null, Recurrence
 }
 
 // RRULE helpers.
-checkEq('setUntil replaces COUNT', 'FREQ=WEEKLY;UNTIL=20260201T000000Z', Recurrence::setUntil('FREQ=WEEKLY;COUNT=10', Time::fromDb('2026-02-01 00:00:00'), false));
-checkEq('setUntil all-day uses DATE', 'FREQ=DAILY;UNTIL=20260201', Recurrence::setUntil('FREQ=DAILY', Time::fromDb('2026-02-01 00:00:00'), true));
-checkEq('splitUntil is instance minus 1s', '2026-01-18 17:59:59', Time::toDb(Recurrence::splitUntil(Time::fromDb('2026-01-18 18:00:00'))));
 checkEq('validateRrule normalizes case', 'FREQ=WEEKLY;BYDAY=MO,WE', Recurrence::validateRrule('freq=weekly;byday=mo,we'));
 $boundedComplexRule = 'FREQ=YEARLY;BYMONTH=' . implode(',', range(1, 8))
     . ';BYMONTHDAY=' . implode(',', range(1, 16))
@@ -8335,11 +8302,9 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         'copy onto it' => static fn($a) => $gev->copyTo(1, 20, 2, 'all', null, null, null, false, $a),
         'edit' => static fn($a) => $gev->patch(1, 10, ['title' => 'Renamed sample'], $a),
         'edit one occurrence' => static fn($a) => $gev->patch(1, 11, ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2030-06-02T09:00:00+00:00'], $a),
-        'edit following' => static fn($a) => $gev->patch(1, 11, ['title' => 'From here', 'scope' => 'following', 'instanceStart' => '2030-06-02T09:00:00+00:00'], $a),
         'mark maybe' => static fn($a) => $gev->setRelationship(1, 10, 'maybe', null, null, $a),
         'delete' => static fn($a) => $gev->deleteEvent(1, 10, null, null, $a),
         'delete one occurrence' => static fn($a) => $gev->deleteEvent(1, 11, 'this', '2030-06-02T09:00:00+00:00', $a),
-        'delete following' => static fn($a) => $gev->deleteEvent(1, 11, 'following', '2030-06-02T09:00:00+00:00', $a),
         'delete a changed occurrence' => static fn($a) => $gev->deleteEvent(1, 12, null, null, $a),
     ];
     $state = static fn(): array => [$gw->all('SELECT * FROM events ORDER BY id'), (int) $gw->scalar('SELECT COUNT(*) FROM mutations')];

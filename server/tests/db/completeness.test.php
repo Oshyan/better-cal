@@ -304,8 +304,8 @@ return static function (Db $db): void {
         });
         $journaled('one date moved off to another calendar', fn() => $d->events->patch($u, $series, ['scope' => 'this', 'instanceStart' => '2026-11-07T18:00:00+00:00', 'calendarId' => $work]));
         $journaled('a whole series changed', fn() => planned($d->events, $u, $series, ['scope' => 'all', 'instanceStart' => '2026-11-02T18:00:00+00:00', 'start' => '2026-11-02T19:00:00+00:00', 'end' => '2026-11-02T20:00:00+00:00']));
-        $journaled('a series split from a date on', fn() => $d->events->patch($u, $series, ['scope' => 'following', 'instanceStart' => '2026-11-12T19:00:00+00:00', 'title' => 'Standup, later']));
-        $journaled('a series ended from a date on', fn() => $d->events->deleteEvent($u, $series, 'following', '2026-11-10T19:00:00+00:00'));
+        $journaled('a series split from a date on', fn() => planned($d->events, $u, $series, ['scope' => 'following', 'instanceStart' => '2026-11-12T19:00:00+00:00', 'title' => 'Standup, later']));
+        $journaled('a series ended from a date on', fn() => plannedDelete($d->events, $u, $series, '2026-11-10T19:00:00+00:00'));
         $journaled('a series marked going, all of it', fn() => $d->events->setAttendance($u, $series, 'interested'));
         $journaled('an event copied to another calendar', fn() => $d->events->copyTo($u, $event, $home));
         $journaled('an event deleted', fn() => $d->events->deleteEvent($u, $event, null, null));

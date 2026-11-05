@@ -8,6 +8,7 @@ use BetterCal\Dav\ChangeLog;
 use BetterCal\Domain\Series\Model;
 use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Domain\Series\Rule;
+use BetterCal\Domain\Series\Split;
 use BetterCal\Domain\Series\Cal;
 use BetterCal\Domain\Series\Calc;
 use BetterCal\Domain\Series\Words;
@@ -23,15 +24,16 @@ use BetterCal\Support\Time;
  * rows the plan writes go through Undo::write in one entry. Edited days'
  * own fields (events.override_fields, migration 063) are kept here too.
  *
- * Part of Events; the following, delete and attendance paths stay on their
- * own code until 1.5.1.
+ * Part of Events. "This and following", delete following and an answer
+ * from a day on are splits on the model (Series\Split, 1.5.1): the same
+ * preview and commit, their plan the old part's new bound with the part
+ * from the day acted on planned as a whole series.
  */
 trait SeriesPlans
 {
     /**
      * Whole-series edits made here without a dialog take their plan's
-     * preselected options: "this and following" from the first day until
-     * 1.5.1, and an invitation's update accepted in Review.
+     * preselected options: an invitation's update accepted in Review.
      */
     private bool $preselected = false;
 
@@ -95,12 +97,12 @@ trait SeriesPlans
     }
 
     /**
-     * An edit with all events sent to an edited day's own row is the
-     * series' edit acting on that day's occurrence (Changing the Series
-     * from an Edited Day): its key names the occurrence, and the body goes
-     * as it was sent. The model measures every delta from where that
-     * occurrence shows, whichever row the request came through, so there is
-     * nothing to translate here.
+     * An edit with all events (or this and following) sent to an edited
+     * day's own row is the series' edit acting on that day's occurrence
+     * (Changing the Series from an Edited Day): its key names the
+     * occurrence, and the body goes as it was sent. The model measures
+     * every delta from where that occurrence shows, whichever row the
+     * request came through, so there is nothing to translate here.
      *
      * @return array{0:array,1:array} the master and the edit for it
      */
@@ -108,7 +110,7 @@ trait SeriesPlans
     {
         $master = $this->get($userId, (int) $row['recurrence_parent_id']);
         $key = Time::fromDb((string) $row['recurrence_instance_utc']);
-        $in['scope'] = 'all';
+        $in['scope'] = (string) ($in['scope'] ?? 'all') === 'following' ? 'following' : 'all';
         $in['instanceStart'] = (int) $master['all_day'] === 1 ? $key->format('Y-m-d') : Time::iso($key);
         return [$master, $in];
     }
@@ -126,25 +128,72 @@ trait SeriesPlans
             $instance = Time::iso(Time::fromDb((string) $event['recurrence_instance_utc']));
             $in = ['calendarId' => $in['calendarId'], 'scope' => 'all', 'instanceStart' => $instance] + (isset($in['plan']) ? ['plan' => $in['plan']] : []);
             $event = $this->get($userId, (int) $event['recurrence_parent_id']);
-        } elseif (!empty($event['recurrence_parent_id']) && (string) ($in['scope'] ?? '') === 'all') {
-            // Any other edit with all events from an edited day's own row:
-            // the series' edit acting on that day's occurrence.
+        } elseif (!empty($event['recurrence_parent_id']) && in_array((string) ($in['scope'] ?? ''), ['all', 'following'], true)) {
+            // Any other edit with all events, or this and following, from an
+            // edited day's own row: the series' edit acting on that day's occurrence.
             [$event, $in] = $this->routeToMaster($userId, $event, $in);
         }
-        if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || (string) ($in['scope'] ?? '') !== 'all') {
-            throw HttpError::badRequest('preview is for changes to all events of a repeating series', 'preview_unavailable');
+        $scope = (string) ($in['scope'] ?? '');
+        if (empty($event['rrule']) || !empty($event['recurrence_parent_id']) || !in_array($scope, ['all', 'following'], true)) {
+            throw HttpError::badRequest('preview is for changes to all events, or this and following, of a repeating series', 'preview_unavailable');
         }
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
+        if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
+            $in['rrule'] = self::validatedSeriesRule($event, (string) $in['rrule'], $scope === 'all');
+        }
+        if ($scope === 'following') {
+            return $this->previewSplit($userId, $event, $in, Split::EDIT);
+        }
         $choices = is_array($in['plan']['choices'] ?? null) ? $in['plan']['choices'] : [];
         unset($in['plan'], $in['preview']);
-        if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
-            $in['rrule'] = self::validatedSeriesRule($event, (string) $in['rrule'], true);
-        }
         [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, false, $google !== null);
         return Model::plan($master, $rows, $edit, $choices, $opts)['plan'];
+    }
+
+    /** The plan of delete following (DELETE with preview), written nowhere. */
+    public function previewDelete(int $userId, int $id, ?string $scope, ?string $instanceStart, array $choices = []): array
+    {
+        $event = $this->get($userId, $id);
+        if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
+            throw HttpError::badRequest('preview is for deleting this and following events of a repeating series', 'preview_unavailable');
+        }
+        return $this->previewSplit($userId, $event, ['instanceStart' => $instanceStart, 'plan' => ['choices' => $choices]], Split::DELETE);
+    }
+
+    /** The plan of an answer from a day on (attendance with preview), written nowhere. */
+    public function previewAttendance(int $userId, int $id, string $attendance, ?string $scope, ?string $instanceStart, array $choices = []): array
+    {
+        unset($attendance);
+        $event = $this->get($userId, $id);
+        if ($scope !== 'following' || empty($event['rrule']) || !empty($event['recurrence_parent_id'])) {
+            throw HttpError::badRequest('preview is for an answer from a day on in a repeating series', 'preview_unavailable');
+        }
+        return $this->previewSplit($userId, $event, ['instanceStart' => $instanceStart, 'plan' => ['choices' => $choices]], Split::ANSWER);
+    }
+
+    /**
+     * A split's plan, written nowhere. From the series' first day the
+     * change is the whole series': an edit's plan is the whole series'
+     * plan; a delete or an answer from there is delete all or the answer
+     * for all events, which need no plan (`whole: true, direct: true`).
+     */
+    private function previewSplit(int $userId, array $event, array $in, string $mode): array
+    {
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        $choices = is_array($in['plan']['choices'] ?? null) ? $in['plan']['choices'] : [];
+        unset($in['plan'], $in['preview']);
+        [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, false, $google !== null);
+        $result = Split::plan($master, $rows, $edit, $choices, $opts, $mode);
+        if (!empty($result['whole'])) {
+            if ($mode === Split::EDIT) {
+                return Model::plan($master, $rows, $edit, $choices, $opts)['plan'];
+            }
+            return ['hash' => null, 'scope' => 'all', 'action' => $mode, 'whole' => true, 'direct' => true, 'groups' => [], 'days' => [], 'refusals' => [], 'notes' => [], 'next' => [], 'nextMore' => false];
+        }
+        return $result['plan'];
     }
 
     /**
@@ -376,7 +425,31 @@ trait SeriesPlans
         $choices = is_array($sent['choices'] ?? null) ? $sent['choices'] : [];
         unset($in['plan'], $in['preview']);
         [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, true, $google);
-        $result = Model::plan($master, $rows, $edit, $choices, $opts);
+        return $this->checkedPlan(Model::plan($master, $rows, $edit, $choices, $opts), $sent, $choices);
+    }
+
+    /**
+     * A split's plan for this commit (Series\Split), checked as every plan
+     * is; ['whole' => true] when the day acted on is the series' first.
+     */
+    private function committedSplit(int $userId, array $event, array $in, string $mode): array
+    {
+        $sent = $in['plan'] ?? null;
+        $choices = is_array($sent['choices'] ?? null) ? $sent['choices'] : [];
+        unset($in['plan'], $in['preview']);
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        [$master, $rows, $edit, $opts] = $this->seriesInput($userId, $event, $in, true, $google !== null);
+        $result = Split::plan($master, $rows, $edit, $choices, $opts, $mode);
+        return !empty($result['whole']) ? $result : $this->checkedPlan($result, $sent, $choices);
+    }
+
+    /**
+     * One rule for every plan a commit names (series-model.md, The API):
+     * refused is 422, a disabled option chosen 422, no plan sent 409 unless
+     * the plan is direct, a stale hash 409, a group left out 409.
+     */
+    private function checkedPlan(array $result, mixed $sent, array $choices): array
+    {
         $plan = $result['plan'];
         if ($result['refused']) {
             throw new HttpError('series_refused', $plan['refusals'][0]['words'] ?? 'This change can\'t be made to the series.', 422, ['plan' => $plan]);
@@ -426,85 +499,8 @@ trait SeriesPlans
         $beforeLinks = Undo::linksOf($this->db, array_merge([$id], $touchedIds));
         $created = [];
         $createdEdited = [];
-        $this->db->tx(function () use ($w, $id, $userId, $master, $byId, $in, &$created, &$createdEdited): void {
-            $now = Time::nowDb();
-            if ($w['master'] !== []) {
-                $this->db->update('events', $w['master'] + ['updated_at' => $now], 'id = ?', [$id]);
-            }
-            // Keys are unique per calendar and uid, and a new key may be one
-            // another row holds now (edited days moved by the distance between
-            // them, or a day moving onto the key of one leaving the series):
-            // every row that leaves the series or its key leaves it first,
-            // then the new keys are taken.
-            foreach ($w['delete'] as $rid) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
-            }
-            $park = [];
-            foreach ($w['overrides'] as $rid => $cols) {
-                if (array_key_exists('recurrence_instance_utc', $cols) || isset($cols['calendar_id'])) {
-                    $park[] = $rid;
-                }
-            }
-            $park = array_merge($park, array_keys($w['detach']));
-            self::parkInstanceKeys($this->db, $park);
-            foreach ($w['detach'] as $rid => $cols) {
-                $this->db->update('events', $this->withOwnColumn([
-                    'recurrence_parent_id' => null, 'recurrence_instance_utc' => null, 'uid' => Ids::ulid(), 'rrule' => null,
-                    'exdates_json' => null, 'google_event_id' => null, 'override_fields' => null, 'source' => 'local', 'updated_at' => $now,
-                ] + $cols), 'id = ?', [$rid]);
-            }
-            foreach ($w['overrides'] as $rid => $cols) {
-                $cols = $this->withOwnColumn($cols);
-                if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
-                    $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
-                }
-                $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
-            }
-            $after = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
-            foreach ($w['create'] as $placed) {
-                $row = $this->copyForChild($after);
-                $row['uid'] = Ids::ulid();
-                $row['recurrence_parent_id'] = null;
-                $row['recurrence_instance_utc'] = null;
-                $row['rrule'] = null;
-                $row['exdates_json'] = null;
-                $row['google_event_id'] = null;
-                $row['override_fields'] = null;
-                $row['created_via'] = ActivityContext::get();
-                $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $placed)));
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
-                $created[] = $newId;
-            }
-            // An occurrence the plan makes an edited day (the day acted on,
-            // where it keeps a placement of its own): its row, as "this event"
-            // makes one, from the series as written, with its tags and people.
-            foreach ($w['createEdited'] ?? [] as $cols) {
-                $row = $this->copyForChild($after);
-                $row['recurrence_parent_id'] = $id;
-                $row['rrule'] = null;
-                $row['exdates_json'] = null;
-                $row['created_via'] = ActivityContext::get();
-                $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
-                $createdEdited[] = $newId;
-            }
-            foreach ($w['tags'] as $target => $names) {
-                $this->labels->setEventTags($userId, $target === 'master' ? $id : (int) $target, $names);
-            }
-            foreach (array_keys($w['people']) as $target) {
-                $this->applyPeoplePatch($userId, $target === 'master' ? $id : (int) $target, $in);
-            }
-            foreach (array_merge($created, $createdEdited) as $newId) {
-                // A created row takes the series' new tags and people too.
-                if (isset($w['tags']['master'])) {
-                    $this->labels->setEventTags($userId, $newId, $w['tags']['master']);
-                }
-                if (isset($w['people']['master'])) {
-                    $this->applyPeoplePatch($userId, $newId, $in);
-                }
-            }
+        $this->db->tx(function () use ($w, $id, $userId, $byId, $in, &$created, &$createdEdited): void {
+            $this->writeSeriesPlan($userId, $id, $w, $in, $byId, $created, $createdEdited);
         });
         $afterMaster = $this->get($userId, $id);
         $afterRows = [$afterMaster];
@@ -531,6 +527,189 @@ trait SeriesPlans
             }
         }
     }
+
+    /**
+     * A split on its plan (Series\Split): the old series' new bound, and
+     * for an edit or an answer a new series from the day acted on, with the
+     * rows keyed from there re-parented to it and its own plan written on
+     * it; for a delete, those rows deleted. One transaction, one Undo entry
+     * (invariant 6: Undo removes the new series and puts every row back).
+     * Returns the new series' id, null for a delete, or false when the day
+     * acted on is the series' first (the change is the whole series').
+     */
+    private function splitPlanned(int $userId, array $event, array $in, string $mode): int|false|null
+    {
+        $result = $this->committedSplit($userId, $event, $in, $mode);
+        if (!empty($result['whole'])) {
+            return false;
+        }
+        $w = $result['writes'];
+        $id = (int) $event['id'];
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $byId = [];
+        foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $r) {
+            $byId[(int) $r['id']] = $r;
+        }
+        $partIds = $w['rows'];
+        $beforeRows = [$master];
+        foreach ($partIds as $rid) {
+            $beforeRows[] = $byId[$rid];
+        }
+        $beforeLinks = Undo::linksOf($this->db, array_merge([$id], $partIds));
+        $created = [];
+        $createdEdited = [];
+        $newId = $this->db->tx(function () use ($w, $id, $userId, $master, $byId, $partIds, $in, &$created, &$createdEdited): ?int {
+            $now = Time::nowDb();
+            if ($w['old'] !== []) {
+                $this->db->update('events', $w['old'] + ['updated_at' => $now], 'id = ?', [$id]);
+            }
+            if ($w['part'] === null) {
+                foreach ($partIds as $rid) {
+                    $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
+                }
+                return null;
+            }
+            // The new series: the old one's row from the day acted on, its
+            // own plan's master columns on top (a moved calendar included).
+            $pw = $w['plan'];
+            $row = $this->copyForChild($master);
+            $row['uid'] = Ids::ulid();
+            $row['recurrence_parent_id'] = null;
+            $row['recurrence_instance_utc'] = null;
+            $row['google_event_id'] = null;
+            $row['override_fields'] = null;
+            $row['created_via'] = ActivityContext::get();
+            $row = array_merge($row, $w['part'], $pw['master']);
+            $newId = $this->db->insert('events', $this->withOwnColumn($row));
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
+            // The rows keyed from the split on belong to it (a new uid, so
+            // no key of theirs meets one of the old series').
+            $moved = [];
+            foreach ($partIds as $rid) {
+                $set = ['recurrence_parent_id' => $newId, 'uid' => $row['uid'], 'calendar_id' => (int) $row['calendar_id']];
+                $this->db->update('events', $set, 'id = ?', [$rid]);
+                $moved[$rid] = $set + $byId[$rid];
+            }
+            $this->writeSeriesPlan($userId, $newId, ['master' => []] + $pw, $in, $moved, $created, $createdEdited);
+            return $newId;
+        });
+        $afterRows = [$this->db->one('SELECT * FROM events WHERE id = ?', [$id])];
+        if ($newId !== null) {
+            $afterRows[] = $this->db->one('SELECT * FROM events WHERE id = ?', [$newId]);
+        }
+        foreach (array_merge($partIds, $created, $createdEdited) as $rid) {
+            $row = $this->db->one('SELECT * FROM events WHERE id = ?', [$rid]);
+            if ($row !== null) {
+                $afterRows[] = $row;
+            }
+        }
+        $afterIds = array_merge([$id], $newId === null ? [] : [$newId], $partIds, $created, $createdEdited);
+        // The skips from the split on leave the old series with their
+        // occurrences, so its skipped dates are part of what this changed:
+        // a skip made on it earlier, or later, stands on this (stale_undo).
+        $this->undo->record($userId, 'event', $id, 'update', ['events' => $beforeRows] + $beforeLinks,
+            ['events' => $afterRows] + Undo::linksOf($this->db, $afterIds), mb_substr((string) $result['plan']['summary'], 0, 300));
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+        foreach (array_merge($newId === null ? [] : [$newId], array_keys($w['plan']['detach'] ?? []), $created) as $rid) {
+            $row = $this->db->one('SELECT calendar_id, uid FROM events WHERE id = ?', [(int) $rid]);
+            if ($row !== null) {
+                ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_ADD);
+            }
+        }
+        if ($newId !== null) {
+            $this->splitEventId = $newId;
+        }
+        return $newId;
+    }
+
+    /**
+     * The row writes of a whole-series plan on series $id, inside the
+     * caller's transaction: the master's columns, the rows that leave or
+     * change their key first, then the new keys, the rows it creates, tags
+     * and people. $byId: the series' edited rows as read.
+     */
+    private function writeSeriesPlan(int $userId, int $id, array $w, array $in, array $byId, array &$created, array &$createdEdited): void
+    {
+        $now = Time::nowDb();
+        if ($w['master'] !== []) {
+            $this->db->update('events', $w['master'] + ['updated_at' => $now], 'id = ?', [$id]);
+        }
+        // Keys are unique per calendar and uid, and a new key may be one
+        // another row holds now (edited days moved by the distance between
+        // them, or a day moving onto the key of one leaving the series):
+        // every row that leaves the series or its key leaves it first,
+        // then the new keys are taken.
+        foreach ($w['delete'] as $rid) {
+            $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
+        }
+        $park = [];
+        foreach ($w['overrides'] as $rid => $cols) {
+            if (array_key_exists('recurrence_instance_utc', $cols) || isset($cols['calendar_id'])) {
+                $park[] = $rid;
+            }
+        }
+        $park = array_merge($park, array_keys($w['detach']));
+        self::parkInstanceKeys($this->db, $park);
+        foreach ($w['detach'] as $rid => $cols) {
+            $this->db->update('events', $this->withOwnColumn([
+                'recurrence_parent_id' => null, 'recurrence_instance_utc' => null, 'uid' => Ids::ulid(), 'rrule' => null,
+                'exdates_json' => null, 'google_event_id' => null, 'override_fields' => null, 'source' => 'local', 'updated_at' => $now,
+            ] + $cols), 'id = ?', [$rid]);
+        }
+        foreach ($w['overrides'] as $rid => $cols) {
+            $cols = $this->withOwnColumn($cols);
+            if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
+                $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
+            }
+            $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
+        }
+        $after = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        foreach ($w['create'] as $placed) {
+            $row = $this->copyForChild($after);
+            $row['uid'] = Ids::ulid();
+            $row['recurrence_parent_id'] = null;
+            $row['recurrence_instance_utc'] = null;
+            $row['rrule'] = null;
+            $row['exdates_json'] = null;
+            $row['google_event_id'] = null;
+            $row['override_fields'] = null;
+            $row['created_via'] = ActivityContext::get();
+            $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $placed)));
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
+            $created[] = $newId;
+        }
+        // An occurrence the plan makes an edited day (the day acted on,
+        // where it keeps a placement of its own): its row, as "this event"
+        // makes one, from the series as written, with its tags and people.
+        foreach ($w['createEdited'] ?? [] as $cols) {
+            $row = $this->copyForChild($after);
+            $row['recurrence_parent_id'] = $id;
+            $row['rrule'] = null;
+            $row['exdates_json'] = null;
+            $row['created_via'] = ActivityContext::get();
+            $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
+            $createdEdited[] = $newId;
+        }
+        foreach ($w['tags'] as $target => $names) {
+            $this->labels->setEventTags($userId, $target === 'master' ? $id : (int) $target, $names);
+        }
+        foreach (array_keys($w['people']) as $target) {
+            $this->applyPeoplePatch($userId, $target === 'master' ? $id : (int) $target, $in);
+        }
+        foreach (array_merge($created, $createdEdited) as $newId) {
+            // A created row takes the series' new tags and people too.
+            if (isset($w['tags']['master'])) {
+                $this->labels->setEventTags($userId, $newId, $w['tags']['master']);
+            }
+            if (isset($w['people']['master'])) {
+                $this->applyPeoplePatch($userId, $newId, $in);
+            }
+        }
+}
 
     /**
      * A Google series for all events, until 1.5.2: only edits that keep the

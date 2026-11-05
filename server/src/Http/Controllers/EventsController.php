@@ -123,22 +123,30 @@ final class EventsController
 
     public function delete(Request $req, array $params): Response
     {
+        $scope = $req->str('scope') ?? $req->q('scope');
+        $instance = $req->str('instanceStart') ?? $req->q('instanceStart');
         if (($req->body['preview'] ?? false) === true || filter_var($req->q('preview', '0'), FILTER_VALIDATE_BOOL)) {
-            // Deletes keep today's path until 1.5.1; a preview is never applied.
-            throw HttpError::badRequest('Deletes have no preview yet', 'preview_unavailable');
+            // Delete following's plan (Series Plans): nothing written.
+            return Response::json(['plan' => $this->events->previewDelete((int) $req->user['id'], (int) $params['id'], $scope, $instance, self::choices($req))]);
         }
         try {
-            $this->events->deleteEvent(
-                (int) $req->user['id'],
-                (int) $params['id'],
-                $req->str('scope') ?? $req->q('scope'),
-                $req->str('instanceStart') ?? $req->q('instanceStart'),
-                RequestAuthority::request($req)
-            );
+            $this->events->deleteEvent((int) $req->user['id'], (int) $params['id'], $scope, $instance, RequestAuthority::request($req), self::plan($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
         return Response::json(['ok' => true]);
+    }
+
+    /** The plan a commit names ({hash, choices}), or null. */
+    private static function plan(Request $req): ?array
+    {
+        return is_array($req->body['plan'] ?? null) ? $req->body['plan'] : null;
+    }
+
+    /** The choices a preview names. */
+    private static function choices(Request $req): array
+    {
+        return is_array($req->body['plan']['choices'] ?? null) ? $req->body['plan']['choices'] : [];
     }
 
     public function rsvp(Request $req, array $params): Response
@@ -153,12 +161,12 @@ final class EventsController
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */
     public function relationship(Request $req, array $params): Response
     {
-        if (($req->body['preview'] ?? false) === true) {
-            throw HttpError::badRequest('Answers have no preview yet', 'preview_unavailable');
-        }
         $scope = $req->str('scope');
         if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
             throw HttpError::badRequest('scope must be this|following|all');
+        }
+        if (($req->body['preview'] ?? false) === true) {
+            return Response::json(['plan' => $this->events->previewRelationship((int) $req->user['id'], (int) $params['id'], (string) ($req->str('relationship') ?? ''), $scope, $req->str('instanceStart'), self::choices($req))]);
         }
         $this->events->setRelationship(
             (int) $req->user['id'],
@@ -166,26 +174,28 @@ final class EventsController
             (string) ($req->str('relationship') ?? ''),
             $scope,
             $req->str('instanceStart'),
-            RequestAuthority::request($req)
+            RequestAuthority::request($req),
+            self::plan($req)
         );
         return Response::json(['ok' => true] + self::split($this->events));
     }
 
     public function attendance(Request $req, array $params): Response
     {
-        if (($req->body['preview'] ?? false) === true) {
-            throw HttpError::badRequest('Answers have no preview yet', 'preview_unavailable');
-        }
         $scope = $req->str('scope');
         if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
             throw HttpError::badRequest('scope must be this|following|all');
+        }
+        if (($req->body['preview'] ?? false) === true) {
+            return Response::json(['plan' => $this->events->previewAttendance((int) $req->user['id'], (int) $params['id'], (string) ($req->str('attendance') ?? ''), $scope, $req->str('instanceStart'), self::choices($req))]);
         }
         $this->events->setAttendance(
             (int) $req->user['id'],
             (int) $params['id'],
             (string) ($req->str('attendance') ?? ''),
             $scope,
-            $req->str('instanceStart')
+            $req->str('instanceStart'),
+            self::plan($req)
         );
         return Response::json(['ok' => true] + self::split($this->events));
     }

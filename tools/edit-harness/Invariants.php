@@ -1203,6 +1203,24 @@ trait Invariants
         $part['overrides'] = array_filter($before['overrides'], static fn(array $ov): bool => (string) $ov['recurrence_instance_utc'] >= $split);
         $edit = $sent['edit'];
         $sentChoices = $sent['_choices'] ?? [];
+        if (isset($edit['boundSent']['count'])) {
+            // A changed COUNT on a split (decided 2026-11-05): the series' whole count, the part taking what remains after
+            // the days before the split (preselected), or "N from this day on". The harness reads the whole count where
+            // the commit took the baseline's selection for every group it doesn't name, and leaves the other open.
+            $known = ['reading', 'bound', 'edge', 'outside', 'movedDays', 'zone', 'day', 'time', 'length'];
+            $other = false;
+            foreach ($this->splitBaseline['groups'] ?? [] as $g) {
+                if (!in_array($g['id'], $known, true) && !str_starts_with($g['id'], 'own') && ($sentChoices[$g['id']] ?? $g['selected']) !== $g['selected']) {
+                    $other = true;
+                }
+            }
+            $remainder = (int) $edit['boundSent']['count'] - (count($before['raw']) - count($part['raw']));
+            if ($other || $remainder <= 0) {
+                $this->unoracled[] = $other ? 'a changed COUNT on a split read as N from the day on' : 'a changed COUNT on a split that leaves the part nothing';
+                return;
+            }
+            $edit['boundSent'] = ['count' => $remainder];
+        }
         // The day acted on stays the edited row at the split key, its move measured from where it shows.
         $x = (new Expect($part, $edit + ['adopt' => $sentChoices]))->withZone($sentChoices['zone'] ?? null);
         if ($x->refusal() !== null) {

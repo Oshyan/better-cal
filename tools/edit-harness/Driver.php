@@ -897,10 +897,11 @@ final class Driver
             for ($round = 0; $round < 6; $round++) {
                 $added = false;
                 foreach ($plan['groups'] as $g) {
-                    if (isset($choices[$g['id']])) {
+                    $enabled = array_values(array_map(static fn(array $o): string => $o['id'], array_filter($g['options'], static fn(array $o): bool => empty($o['disabled']))));
+                    // A choice another pick changed the options of (a reading the adoption no longer offers) is picked again.
+                    if (isset($choices[$g['id']]) && ($enabled === [] || in_array($choices[$g['id']], $enabled, true))) {
                         continue;
                     }
-                    $enabled = array_values(array_map(static fn(array $o): string => $o['id'], array_filter($g['options'], static fn(array $o): bool => empty($o['disabled']))));
                     $choices[$g['id']] = $preselected || $this->rng === null || $enabled === [] ? $g['selected'] : $this->rng->pick($enabled);
                     $added = true;
                 }
@@ -908,6 +909,13 @@ final class Driver
                     break; // the plan previewed is the preselected options' already
                 }
                 $plan = $preview($choices);
+            }
+            // Past the rounds, the last plan's selection stands for any choice it doesn't offer enabled.
+            foreach ($plan['groups'] as $g) {
+                $enabled = array_values(array_map(static fn(array $o): string => $o['id'], array_filter($g['options'], static fn(array $o): bool => empty($o['disabled']))));
+                if (isset($choices[$g['id']]) && $enabled !== [] && !in_array($choices[$g['id']], $enabled, true)) {
+                    $choices[$g['id']] = $g['selected'];
+                }
             }
             $this->spec['choices'][$slot] = $choices;
             $this->spec['preselected'][$slot] = $preselected;

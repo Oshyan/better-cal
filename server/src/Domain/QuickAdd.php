@@ -530,20 +530,26 @@ final class QuickAdd
         if (($p['FREQ'] ?? '') !== 'DAILY' || (int) ($p['INTERVAL'] ?? 1) !== 1 || count(array_diff(array_keys($p), ['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST'])) > 0) {
             return null;
         }
-        if (isset($p['COUNT'])) {
-            $days = (int) $p['COUNT'];
-        } elseif (isset($p['UNTIL']) && preg_match('/^(\d{4})(\d{2})(\d{2})(T\d{6}Z?)?$/', (string) $p['UNTIL'], $m) === 1) {
-            $at = isset($m[4]) && $m[4] !== '' ? \DateTimeImmutable::createFromFormat('Ymd His', $m[1] . $m[2] . $m[3] . ' ' . substr($m[4], 1, 6), str_ends_with($m[4], 'Z') ? Time::utc() : $zone) : null;
-            $until = $at instanceof \DateTimeImmutable ? $at->setTimezone($zone) : new \DateTimeImmutable($m[1] . '-' . $m[2] . '-' . $m[3], $zone);
-            $days = (int) $s->setTime(0, 0)->diff($until->setTime(0, 0))->days + 1;
-        } else {
+        if (!isset($p['COUNT']) && !isset($p['UNTIL'])) {
             return null;
         }
+        // Its days are the occurrences the series shows, read by the
+        // expander the draft's series is shown by (Recurrence::occurrences,
+        // Series\RuleIterator), never counted from dates: an UNTIL before
+        // the day's start clock ends the series the day before. One more
+        // than the most is read, to tell a longer series.
+        try {
+            $occs = Recurrence::occurrences([
+                'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb(max($s, $e)), 'all_day' => 0, 'tzid' => $tz, 'rrule' => $rule,
+            ], $s, new \DateTimeImmutable('9999-12-31 23:59:59', Time::utc()), null, 32);
+        } catch (\InvalidArgumentException|\BetterCal\Domain\Series\RuleNotReadable|\BetterCal\Domain\Series\WalkIncomplete) {
+            return null;
+        }
+        $days = count($occs);
         if ($days < 2 || $days > 31) {
             return null;
         }
-        $length = max(0, $e->getTimestamp() - $s->getTimestamp());
-        $lastEnd = $s->modify('+' . ($days - 1) . ' days')->modify('+' . $length . ' seconds');
+        $lastEnd = $occs[$days - 1]['end']->setTimezone($zone);
         return ['reading' => 'one', 'start' => $iso($s), 'end' => $iso($lastEnd), 'allDay' => false, 'rrule' => null, 'days' => $days];
     }
 

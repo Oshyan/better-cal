@@ -252,6 +252,17 @@ checkEq('quick add other reading: a shift Aug 3-7 10pm-6am read each night is al
     $other('Shift Aug 3-7 10pm-6am'));
 checkEq('quick add other reading: one day, a weekly rule and an all-day range have none', [null, null, null],
     [$other('Dinner Aug 3 7pm-9pm'), $other('Piano every Tuesday 4pm'), $other('Lisbon trip Aug 3-7')]);
+// A daily series' one-stretch reading runs to its last occurrence as the
+// series shows it, never to UNTIL's date: 6pm to 7pm in Los Angeles from
+// Fri 1 Jan 2027.
+$otherOf = static fn(string $rrule): ?array => QuickAdd::otherReading(
+    ['intent' => 'event', 'start' => '2027-01-01T18:00:00-08:00', 'end' => '2027-01-01T19:00:00-08:00', 'allDay' => false, 'rrule' => $rrule], $tz);
+$one = static fn(string $end, int $days): array => ['reading' => 'one', 'start' => '2027-01-01T18:00:00-08:00', 'end' => $end, 'allDay' => false, 'rrule' => null, 'days' => $days];
+checkEq('quick add other reading: an UNTIL of 3 Jan noon, before the 6pm start, ends the series on 2 Jan, so the stretch ends 2 Jan 7pm after 2 days', $one('2027-01-02T19:00:00-08:00', 2), $otherOf('FREQ=DAILY;UNTIL=20270103T200000Z'));
+checkEq('quick add other reading: an UNTIL of 3 Jan 8pm, after the start, keeps 3 Jan, so the stretch ends 3 Jan 7pm after 3 days', $one('2027-01-03T19:00:00-08:00', 3), $otherOf('FREQ=DAILY;UNTIL=20270104T040000Z'));
+checkEq('quick add other reading: a COUNT of 4 ends on 4 Jan 7pm; 31 days end on 31 Jan 7pm', [$one('2027-01-04T19:00:00-08:00', 4), $one('2027-01-31T19:00:00-08:00', 31)],
+    [$otherOf('FREQ=DAILY;COUNT=4'), $otherOf('FREQ=DAILY;COUNT=31')]);
+checkEq('quick add other reading: 32 days, by COUNT or by an UNTIL of 1 Feb 11pm, have none', [null, null], [$otherOf('FREQ=DAILY;COUNT=32'), $otherOf('FREQ=DAILY;UNTIL=20270202T070000Z')]);
 
 $d = $p('Dinner with Sam next thursday 7pm at Luna');
 checkEq('fp1 title keeps with-clause and place', 'Dinner with Sam at Luna', $d['title']);

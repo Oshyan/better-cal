@@ -76,6 +76,7 @@ final class Driver
         $this->runs = [];
         $this->wide0 = null;
         $this->splitBaseline = null;
+        $this->splitCount = null;
         $this->spec = $spec;
         $this->rng = $r;
         $this->controls = $this->makeControls();

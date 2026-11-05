@@ -38,6 +38,7 @@ final class Split
         'google' => 'On a Google calendar, splitting a series from a day on comes in a later version. Change only this one, or all events.',
         'unreadable' => Model::REASONS['unreadable'],
         'shape' => 'This repeat can\'t be split on this day: started there, it wouldn\'t give the same days. Change only this one, or all events.',
+        'empty' => Model::REASONS['empty'],
     ];
 
     /**
@@ -177,19 +178,59 @@ final class Split
         // edit for "this and following", no fields for an answer.
         $partMaster = $partCols + $master;
         $partEdit = $mode === self::ANSWER ? ['acted' => $acted] : $edit;
-        $result = Model::plan($partMaster, $partRows, $partEdit, $choices, $opts);
+
+        // The rule sent (decisions.md, a split's sent rule): compared with
+        // the series' rule as shown, which is what the editor sent back, so
+        // an unchanged rule is no rule and the part keeps the rest of the
+        // series' count. A changed UNTIL is the part's end as sent; one
+        // before the split leaves the part nothing, refused as an end before
+        // the start is. A changed COUNT is the series' whole count, the part
+        // taking what is left of it, with that many from this day on as the
+        // other reading.
+        $counts = null;
+        $sentBound = null;
+        if ($mode === self::EDIT && isset($edit['rrule']) && $edit['rrule'] !== '') {
+            [$delta, $sent] = Model::sentRule($master, $overrides, $edit, $opts);
+            if ($delta === null) {
+                unset($partEdit['rrule']);
+            } elseif ($delta === 'bound' && $sent->until !== null) {
+                if (self::untilBefore((string) $sent->until, $acted, $actedDn)) {
+                    return self::refused($master, $opts, 'empty');
+                }
+                $partEdit['boundSent'] = true;
+                $sentBound = ['kind' => 'until', 'until' => (string) $sent->until];
+            } elseif ($delta === 'bound' && $sent->count !== null) {
+                $counts = ['whole' => $sent->count - count($before), 'part' => $sent->count];
+                $sentCount = $sent;
+            }
+        }
+        if ($counts === null) {
+            $result = Model::plan($partMaster, $partRows, $partEdit, $choices, $opts);
+            $boundGroup = null;
+        } else {
+            [$result, $boundGroup, $n] = self::countReadings($partMaster, $partRows, $partEdit, $choices, $opts, $sentCount, $counts, $actedDn);
+            $sentBound = ['kind' => 'count', 'count' => $n];
+        }
         $plan = $result['plan'];
+        if ($boundGroup !== null) {
+            array_unshift($plan['groups'], $boundGroup);
+            $plan['refusals'] = array_merge($plan['refusals'], $boundGroup['refusals']);
+            unset($plan['groups'][0]['refusals']);
+            if (!in_array($choices['bound'] ?? null, array_column(array_filter($boundGroup['options'], static fn(array $o): bool => empty($o['disabled'])), 'id'), true)) {
+                $result['missing'][] = 'bound';
+            }
+        }
         $plan['scope'] = 'following';
         $plan['action'] = $mode === self::ANSWER ? 'answer' : 'edit';
         // A split changes the old series' bound, so it is never direct.
         $plan['direct'] = false;
         $plan['split'] = $split + ['after' => [
             'start' => self::inZone($start, $allDay ? null : $tz),
-            'bound' => ['kind' => $count !== null ? 'count' : ($rule->until !== null ? 'until' : 'none')] + ($count !== null ? ['count' => $count] : []) + ($rule->until !== null ? ['until' => $rule->until] : []),
+            'bound' => $sentBound ?? (['kind' => $count !== null ? 'count' : ($rule->until !== null ? 'until' : 'none')] + ($count !== null ? ['count' => $count] : []) + ($rule->until !== null ? ['until' => $rule->until] : [])),
             'edited' => count($partRows),
             'skipped' => count(array_diff($partSkips, $part->anchor !== null ? [Time::toDb($start)] : [])),
         ]];
-        $plan['hash'] = $hashOf(array_merge($seen, [$plan['hash']]));
+        $plan['hash'] = $hashOf(array_merge($seen, [$plan['hash']], $boundGroup !== null ? [$boundGroup['selected']] : []));
         return [
             'plan' => $plan,
             'writes' => $result['writes'] === null ? null : ['old' => $oldCols, 'part' => $partCols, 'rows' => array_map(static fn(array $r): int => (int) $r['id'], $partRows), 'plan' => $result['writes']],
@@ -197,6 +238,55 @@ final class Split
             'refused' => $result['refused'],
             'refusedChoice' => $result['refusedChoice'] ?? false,
         ];
+    }
+
+    /**
+     * A COUNT changed on a split, read two ways (decisions.md, a split's
+     * sent rule): `whole`, the series' whole count, the part taking what is
+     * left of it, preselected since the number shown was the series'; and
+     * `part`, that many from this day on. Each is the part planned with its
+     * count as sent, and its option shows its bound and first events. A
+     * reading that leaves the part nothing is disabled with the reason
+     * every such reading has.
+     *
+     * @param array{whole:int,part:int} $counts
+     * @return array{0:array,1:array,2:int} the chosen reading's result, the group, its count
+     */
+    private static function countReadings(array $partMaster, array $partRows, array $partEdit, array $choices, array $opts, Rule $sent, array $counts, int $actedDn): array
+    {
+        $labels = [
+            'whole' => Words::events($counts['part']) . ' in the whole series',
+            'part' => Words::events($counts['part']) . ' from ' . Cal::date($actedDn) . ' on',
+        ];
+        $alts = [];
+        $options = [];
+        $refusals = [];
+        $partChoices = array_diff_key($choices, ['bound' => true]);
+        foreach ($counts as $id => $n) {
+            $option = ['id' => $id, 'label' => $labels[$id]];
+            if ($n >= 1) {
+                $alts[$id] = Model::plan($partMaster, $partRows, ['rrule' => $sent->withBound($n, null)->text(), 'boundSent' => true] + $partEdit, $partChoices, $opts);
+                $alt = $alts[$id]['plan'];
+                $option += ['bound' => $alt['bound'], 'next' => array_map(static fn(array $e): array => array_intersect_key($e, ['start' => 1, 'allDay' => 1, 'tz' => 1]), array_slice($alt['next'], 0, 3))];
+            } else {
+                $option += ['disabled' => true, 'reason' => Model::REASONS['empty']];
+                $refusals[] = ['group' => 'bound', 'option' => $id, 'code' => 'empty', 'words' => Model::REASONS['empty']];
+            }
+            $options[] = $option;
+        }
+        $selected = isset($alts[$choices['bound'] ?? '']) ? (string) $choices['bound'] : (isset($alts['whole']) ? 'whole' : 'part');
+        $group = ['id' => 'bound', 'label' => 'Bound', 'selected' => $selected, 'count' => $counts['part'], 'at' => Cal::date($actedDn), 'options' => $options, 'refusals' => $refusals];
+        return [$alts[$selected], $group, $counts[$selected]];
+    }
+
+    /** Whether a sent UNTIL ends before the day acted on: a date against its day, an instant against its key. */
+    private static function untilBefore(string $until, string $acted, int $actedDn): bool
+    {
+        if (strlen($until) === 8) {
+            return Cal::dn((int) substr($until, 0, 4), (int) substr($until, 4, 2), (int) substr($until, 6, 2)) < $actedDn;
+        }
+        $at = \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $until, Time::utc());
+        return $at !== false && $at < Time::fromDb($acted);
     }
 
     /** A split the series can't take, with its reason and the series as it is. */

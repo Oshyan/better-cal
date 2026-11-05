@@ -153,6 +153,13 @@ final class Model
     private array $groups = [];
     private array $refusals = [];
     private array $notes = [];
+    /**
+     * Under "the same moment", the clock the rows showed on: the old zone
+     * and the series' clock there after any drag ([tz, clock]), where a
+     * row's inherited time is moved; the carry to the new zone relabels
+     * days and moves no instant. Null otherwise.
+     */
+    private ?array $shownFrame = null;
 
     private function __construct(private array $master, array $overrides, private array $edit, private array $opts)
     {
@@ -342,7 +349,10 @@ final class Model
                 $rebased = $startDn + ($this->landedDn - $this->actedDn0);
                 $parsed = Rule::parse((string) $sent, $startDn);
                 if ($this->readable && $parsed->comparable() === $this->r0->comparable()) {
-                    if (!$this->sameBound($parsed)) {
+                    // A split's part takes a bound the person changed as sent
+                    // (Split): compared there with the whole series' rule, so
+                    // the part's own may happen to equal it.
+                    if (!empty($edit['boundSent']) || !$this->sameBound($parsed)) {
                         $this->sentRule = $parsed;
                         $this->ruleDelta = 'bound';
                     }
@@ -466,6 +476,24 @@ final class Model
         $plan = self::read(fn(array $o): array => (new self($master, [], [], $o))->refused($code)['plan'], $opts);
         $plan['scope'] = $scope;
         return $plan;
+    }
+
+    /**
+     * What a sent rule changes in this series as shown (The Function, 1):
+     * null when it is the series' rule (an unchanged rule is no rule),
+     * 'bound' for the same pattern with another end, 'pattern' for another
+     * pattern, 'none' for no repeat; with the rule sent as read. A split
+     * compares the rule sent with the whole series' rule this way, since
+     * that is what the editor showed and sent back (Split).
+     *
+     * @return array{0:?string,1:?Rule}
+     */
+    public static function sentRule(array $master, array $overrides, array $edit, array $opts = []): array
+    {
+        return self::read(function (array $o) use ($master, $overrides, $edit): array {
+            $m = new self($master, $overrides, $edit, $o);
+            return [$m->ruleDelta, $m->sentRule];
+        }, $opts);
     }
 
     public static function plan(array $master, array $overrides, array $edit, array $choices = [], array $opts = []): array
@@ -984,6 +1012,7 @@ final class Model
         $this->groups = [];
         $this->refusals = [];
         $this->notes = [];
+        $this->shownFrame = null;
 
         [$this->landedDn, $this->clock1, $this->len1] = $this->adopted();
         $whole = $this->capability();
@@ -1035,6 +1064,7 @@ final class Model
                         'start_utc' => Time::toDb($put), 'end_utc' => Time::toDb($put->modify('+' . self::lengthOf($this->landedCols) . ' seconds')),
                     ] + $this->landedCols];
                     $carry = [$oDn, $mDn - $oDn];
+                    $this->shownFrame = [$sTz, $oClock];
                 }
             }
         }
@@ -1160,18 +1190,21 @@ final class Model
 
     /**
      * Whether $to lies within one period of the rule's frequency of $from
-     * (a day, a week, a month or a year either way, exclusive): an adoption
-     * that moves every event by less reads as "this is the day now".
+     * (a day, a week, a month or a year either way, exclusive), read from
+     * the frequency as written (Rule::frequency), never the family: a DAILY
+     * list's period is a day. An adoption that moves every event by less
+     * reads as "this is the day now".
      */
     private function withinPeriod(int $from, int $to): bool
     {
-        $months = match ($this->r0->kind) {
-            'monthly' => 1,
-            'yearly' => 12,
+        $frequency = $this->r0->frequency();
+        $months = match ($frequency) {
+            'MONTHLY' => 1,
+            'YEARLY' => 12,
             default => null,
         };
         if ($months === null) {
-            $days = $this->r0->kind === 'weekly' ? 7 : 1;
+            $days = $frequency === 'WEEKLY' ? 7 : 1;
             return abs($to - $from) < $days;
         }
         $shift = static function (int $dn, int $k): int {
@@ -3025,6 +3058,13 @@ final class Model
             } elseif (in_array('date', $own, true) && $rowAllDay) {
                 $clock = $seriesClock;
             } elseif (in_array('date', $own, true)) {
+                // The change is read on the clock the day showed on: under
+                // the same moment, the old zone's, where the series' clock
+                // moves only by a drag, so its instant is kept as an own
+                // time's is, and the zone it is written in is the series'.
+                if ($this->shownFrame !== null && Time::normalizeTzid($rowTz) === Time::normalizeTzid($this->shownFrame[0])) {
+                    [$atTz, $seriesClock] = $this->shownFrame;
+                }
                 $sec = $secs(self::clockOf($shown)) + $secs($seriesClock) - $secs($fromClock);
                 $carry = intdiv($sec - ((($sec % 86400) + 86400) % 86400), 86400);
                 $sec -= $carry * 86400;
@@ -3039,7 +3079,7 @@ final class Model
         if ($rowAllDay && !in_array('length', $own, true)) {
             $len = $this->allDay1 ? $rowLen : $this->len1;
         }
-        $start = Calc::at($date, $clock, $tz, $given);
+        $start = Calc::at($date, $clock, $atTz ?? $tz, $given);
         return [$start, $this->endFrom($start, false, $len, $tz), false, $tz];
     }
 

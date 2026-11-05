@@ -1980,6 +1980,21 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Zone moment, no drag: Tuesdays and Thursdays at 18:00 in Los Angeles are Wednesdays and Fridays at 03:00 in Berlin; the day at its own 09:00 keeps that instant, Tue 19 Jan 18:00 in Berlin', [
         'FREQ=WEEKLY;BYDAY=WE,FR', '2027-01-06 02:00:00', smAt('2027-01-19 09:00'),
     ], [$moved['writes']['master']['rrule'] ?? null, $moved['writes']['master']['start_utc'] ?? $class['start_utc'], $moved['writes']['overrides'][2]['start_utc'] ?? smAt('2027-01-19 09:00')]);
+    // An edited day with a date of its own and the series' time keeps its
+    // instant too, across the day boundary the carry crosses: Tue 19 Jan
+    // moved to Wed 20 Jan 18:00 in Los Angeles is Thu 21 Jan 03:00 in
+    // Berlin, never its old-zone date at the new zone's clock (20 Jan 03:00
+    // Berlin, a day earlier). The same rule as the day at its own time.
+    $ownDate = smEdited($class, 2, '2027-01-19 18:00', [], '2027-01-20 18:00', ['date']);
+    $moved = smPlan($class, [$ownDate], ['acted' => smAt('2027-01-12 18:00'), 'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
+    $w = $moved['writes']['overrides'][2] ?? [];
+    checkEq('Zone moment, no drag: a day on its own date at the series\' time keeps its instant, Wed 20 Jan 18:00 Los Angeles time, written in Berlin, an hour long', [
+        'FREQ=WEEKLY;BYDAY=WE,FR', smAt('2027-01-20 18:00'), smAt('2027-01-20 19:00'), 'Europe/Berlin',
+    ], [$moved['writes']['master']['rrule'] ?? null, $w['start_utc'] ?? smAt('2027-01-20 18:00'), $w['end_utc'] ?? smAt('2027-01-20 19:00'), $w['tzid'] ?? 'America/Los_Angeles']);
+    $none = smPlan($class, [], ['acted' => smAt('2027-01-12 18:00'), 'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
+    checkEq('Zone moment, no drag, no edited days: the series alone, Wednesdays and Fridays at 03:00 in Berlin from Wed 6 Jan, nothing else written', [
+        'FREQ=WEEKLY;BYDAY=WE,FR', '2027-01-06 02:00:00', 'Europe/Berlin', [],
+    ], [$none['writes']['master']['rrule'] ?? null, $none['writes']['master']['start_utc'] ?? $class['start_utc'], $none['writes']['master']['tzid'] ?? null, $none['writes']['overrides'] ?? []]);
 
     // Every day within the year whose clock is missing or doubled gets its
     // note: Sundays at 02:30 in Auckland happen twice on 4 Apr and not at
@@ -2304,6 +2319,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($run, $rows, $drag);
     checkEq('Adopt, case 21: Tuesday becomes its day (preselected), from Tue 5 Jan', ['adopt', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05'],
         [$sel($p, 'day'), $rule($p), substr((string) $p['plan']['start'], 0, 10)]);
+    // The period is the frequency's, read as written: Mondays and Wednesdays
+    // written DAILY repeat daily, so adopting a day three days off (Mon 8
+    // Mar, shown on Tue 9 Mar, dragged two days to Thu 11 Mar) moves every
+    // event by more than a day, and the same way is first; written WEEKLY,
+    // three days is less than a week, and adopting is.
+    foreach (['FREQ=DAILY;BYDAY=MO,WE' => ['same', ['same', 'adopt']], 'FREQ=WEEKLY;BYDAY=MO,WE' => ['adopt', ['adopt', 'same']]] as $rrule => $want) {
+        $lists = smSeries('Sample lab', $rrule, '2027-01-04 19:00');
+        $rows = [smEdited($lists, 2, '2027-03-08 19:00', [], '2027-03-09 19:00', ['date'])];
+        $p = smPlan($lists, $rows, ['acted' => smAt('2027-03-08 19:00'), 'landed' => ['start_utc' => smAt('2027-03-11 19:00'), 'end_utc' => smAt('2027-03-11 20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
+        checkEq("Adopt, by frequency: $rrule, an edited Monday on its own Tuesday dragged two days to Thursday preselects " . $want[0], $want, [$sel($p, 'day'), smOptions($p, 'day')]);
+    }
     // Case 14: Choir at 19:00, its 16 Mar at its own 19:30 and 6 Apr at its own 18:00; 16 Mar dragged to 20:00.
     $rows = [smEdited($choir, 2, '2027-03-16 19:00', [], '2027-03-16 19:30', ['time']), smEdited($choir, 3, '2027-04-06 19:00', [], '2027-04-06 18:00', ['time'])];
     $drag = ['acted' => smAt('2027-03-16 19:00'), 'landed' => ['start_utc' => smAt('2027-03-16 20:00'), 'end_utc' => smAt('2027-03-16 21:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];

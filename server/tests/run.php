@@ -9653,10 +9653,10 @@ require __DIR__ . '/plugins.php';
         error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, cancelled_at TEXT
     )');
     $mdb->run("INSERT INTO calendars VALUES (1, 1, 'local', NULL, NULL, NULL), (2, 1, 'local', NULL, NULL, NULL)");
-    $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT, is_container INTEGER, rrule TEXT, recurrence_parent_id INTEGER, google_event_id TEXT)');
+    $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT, is_container INTEGER, rrule TEXT, recurrence_parent_id INTEGER, google_event_id TEXT, tzid TEXT)');
     $mdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $mdb->run("INSERT INTO users VALUES (1, '{}')");
-    $mdb->run("INSERT INTO events VALUES (10, 1, 1, NULL, 0, NULL, NULL, NULL)");
+    $mdb->run("INSERT INTO events VALUES (10, 1, 1, NULL, 0, NULL, NULL, NULL, 'UTC')");
     undoJournal($mdb);
     eventLinkTables($mdb);
     $legacyCrossSnapshot = json_encode(['tables' => ['events' => [['id' => 20, 'calendar_id' => 2, 'uid' => 'legacy-shape']]]]);
@@ -9875,7 +9875,7 @@ checkEq('google sync: an untouched calendar applies the poll', false,
 checkEq('google sync: without a synctoken the poll applies as before', false,
     BetterCal\Domain\GoogleSync::editedDuringFetch(['id' => 1], ['id' => 1, 'synctoken' => 9]));
 
-    $mdb->run("INSERT INTO events VALUES (20, 1, 2, NULL, 0, NULL, NULL, NULL)");
+    $mdb->run("INSERT INTO events VALUES (20, 1, 2, NULL, 0, NULL, NULL, NULL, 'UTC')");
     $third = $claim->invoke($mover, $moveId);
     $beginImport = new ReflectionMethod($mover, 'beginImport');
     $beginImport->invoke($mover, $moveId, (string) $third['token'], 20, $eventMarker);

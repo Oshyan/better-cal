@@ -32,7 +32,7 @@ import { needsAttention } from './system.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
-import { Icon, CalDot, GoogleG } from '../ui/icons.js';
+import { Icon, CalDot } from '../ui/icons.js';
 import { attachScrollRail } from '../ui/scrollrail.js';
 import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -92,16 +92,15 @@ function healthBadge(cal, onOpen) {
 // loaded plugin list rather than the calendar payload, so it tracks the
 // manifest without a schema field to keep in sync.
 /**
- * Google's mark after a Google calendar's name. A calendar subscribed by web
- * address carries its link icon in its disc (ui/icons.js
- * CalDot), as a plugin calendar carries its own icon there.
+ * What a Google calendar's disc says of it. The disc (ui/icons.js CalDot) is
+ * the one place a calendar's provider shows: Google's G there, as a web
+ * feed's link or a plugin's icon, and nothing after the name.
  */
-function calSourceMark(cal) {
-  if (cal.kind !== 'subscribed' || cal.pluginId || cal.provider !== 'google') return null;
-  const label = cal.googleAccountEmail
+function calSourceLabel(cal) {
+  if (cal.kind !== 'subscribed' || cal.pluginId || cal.provider !== 'google') return undefined;
+  return cal.googleAccountEmail
     ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go to Google' : '; view only'}`
     : 'From Google Calendar; its account was disconnected, so it no longer updates';
-  return html`<span class="bc-cal-src is-google" role="img" aria-label=${label} title=${label}><${GoogleG} size=${11} /></span>`;
 }
 
 // The sidebar's right edge (#129): drag to resize, arrows to nudge, Home or a
@@ -179,9 +178,8 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phon
           onChange=${() => toggleCalendarVisible(cal)}
           aria-label=${'Toggle ' + cal.name}
         />
-        <${CalDot} cal=${cal} />
+        <${CalDot} cal=${cal} label=${calSourceLabel(cal)} />
         <span class="bc-cal-name">${cal.name}</span>
-        ${calSourceMark(cal)}
         ${filedIn && filedIn.length > 0 && html`<span
           class="bc-cal-filed" role="img"
           aria-label=${'Also in ' + filedIn.join(', ')}

@@ -3315,6 +3315,28 @@ console.log('--- chronological ordering across timezone offsets ---');
   render(null, bar);
   await settle();
 
+  // A Google calendar's row: its provider shows once, as the G in its disc,
+  // and the disc carries what the row says of the account; nothing follows
+  // the name.
+  put({ calendars: [
+    { id: 31, name: 'Sample shared', kind: 'subscribed', provider: 'google', googleAccountEmail: 'sam@example.test', editable: true, visible: true, folderIds: [] },
+    { id: 32, name: 'Sample chores', kind: 'local', editable: true, visible: true, folderIds: [] },
+  ], folders: [] });
+  render(html`<${Sidebar} open=${true} collapsed=${false} onClose=${() => {}} />`, bar);
+  await settle();
+  const rowOf = (id) => bar.querySelector('[data-cal-id="' + id + '"]').querySelector('.bc-cal-label');
+  const g = rowOf(31), gDisc = g.querySelector('.bc-cal-dot');
+  eq('a Google row: one provider mark, the G in its disc, and no second G after the name', [
+    g.querySelectorAll('svg').length, gDisc.querySelectorAll('svg').length, gDisc.classes.includes('is-marked'),
+    g.querySelectorAll('.bc-cal-src').length, g.childNodes.filter((n) => n.nodeType === 1).map((n) => n.localName + (n.classes[0] ? '.' + n.classes[0] : '')),
+  ], [1, 1, true, 0, ['input', 'span.bc-cal-dot', 'span.bc-cal-name']]);
+  eq("a Google row: the disc carries the account and where edits go, as its name and tooltip", [gDisc.getAttribute('role'), gDisc.getAttribute('aria-label'), gDisc.getAttribute('title')],
+    ['img', 'From Google Calendar (sam@example.test); edits here go to Google', 'From Google Calendar (sam@example.test); edits here go to Google']);
+  const plainDisc = rowOf(32).querySelector('.bc-cal-dot');
+  eq('a plain row: an empty disc with no name of its own', [plainDisc.querySelectorAll('svg').length, plainDisc.getAttribute('role'), plainDisc.getAttribute('aria-label')], [0, null, null]);
+  render(null, bar);
+  await settle();
+
   // The editor of a repeating event, and of one that doesn't repeat.
   put({ calendars: [
     { id: 21, name: 'Sample home', editable: true, visible: true, kind: 'local' },

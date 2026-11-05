@@ -509,17 +509,17 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
    together. Sized where it sits; chips use .bc-chip-dot. */
 .bc-cal-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .bc-cal-row .bc-cal-dot { width: 14px; height: 14px; }
-:is(.bc-cal-dot, .bc-chip-dot).is-disc > svg { display: block; width: 80%; height: 80%; stroke-width: 0.75px; }
+/* The glyph sits on the disc's own box, not in the flow of whatever holds
+   the disc: at any disc size, in a flex row, an option of the picker's list
+   or its cloned button, the svg is 80% of the disc and centered on it. */
+:is(.bc-cal-dot, .bc-chip-dot).is-disc { position: relative; }
+:is(.bc-cal-dot, .bc-chip-dot).is-disc > svg { display: block; position: absolute; inset: 0; margin: auto; width: 80%; height: 80%; stroke-width: 0.75px; }
 :is(.bc-cal-dot, .bc-chip-dot).is-disc > svg * { vector-effect: non-scaling-stroke; }
 :is(.bc-cal-dot, .bc-chip-dot).is-disc > .bc-glyph { font-size: 0.6em; line-height: 1; }
 /* Subscribed feeds render hollow (2px ring of the calendar color, transparent
    center) vs the solid fill of local calendars; the inline style carries the
    ring color. One treatment for every surface that shows a calendar dot. */
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* A calendar from somewhere else (Sidebar.js calSourceMark): Google's mark or a link. */
-.bc-cal-src { flex: none; display: inline-flex; color: var(--fg-muted); margin-left: 2px; }
-/* Google's G keeps its colours, and fades with a hidden calendar's row. */
-.bc-cal-row.is-off .bc-cal-src.is-google { filter: grayscale(1); opacity: 0.45; }
 .bc-health {
   color: var(--warn); cursor: pointer; display: inline-flex; align-items: center;
   border: none; border-radius: 4px; background: none; padding: 3px;

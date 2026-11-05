@@ -30,12 +30,15 @@ export function setPluginDecoLookup(fn) { pluginDecoLookup = typeof fn === 'func
  * (app.css); the glyph fills most of it with a fine line at any size. Pass
  * the calendar; `color` alone draws a plain disc, `deco` a plugin's icon.
  */
-export function CalDot({ cal, color, deco }) {
-  return html`<${MarkDisc} cal=${cal} color=${color} deco=${deco} cls="bc-cal-dot" />`;
+export function CalDot({ cal, color, deco, label }) {
+  return html`<${MarkDisc} cal=${cal} color=${color} deco=${deco} label=${label} cls="bc-cal-dot" />`;
 }
 
-// The disc itself, for CalDot and event chips (cls "bc-chip-dot").
-export function MarkDisc({ cal, color, deco, cls }) {
+// The disc itself, for CalDot and event chips (cls "bc-chip-dot"). The disc
+// is the one place a calendar's provider shows, so a caller with more to say
+// of it (the sidebar: which Google account, whether edits go there) passes
+// `label`, and the disc carries that as its name and tooltip.
+export function MarkDisc({ cal, color, deco, cls, label }) {
   const c = (cal && cal.color) || color || '#888';
   if (deco === undefined && cal && cal.pluginId) deco = pluginDecoLookup(cal.pluginId);
   const plugin = deco && (deco.icon || deco.iconPath);
@@ -43,14 +46,22 @@ export function MarkDisc({ cal, color, deco, cls }) {
     : isLinkFeed(cal) ? html`<${Icon} name="link" />`
       : isRingCal(cal) ? html`<${GoogleLetter} />`
         : null;
-  const title = plugin ? 'Provided by a plugin' : isLinkFeed(cal) ? 'Subscribed from a web address' : isRingCal(cal) ? 'Google calendar' : undefined;
-  return html`<span class=${cls + ' is-disc' + (glyph ? ' is-marked' : '')} title=${title} style=${`background:${c};color:${contrastText(c)}`}>${glyph}</span>`;
+  const title = label || (plugin ? 'Provided by a plugin' : isLinkFeed(cal) ? 'Subscribed from a web address' : isRingCal(cal) ? 'Google calendar' : undefined);
+  return html`<span
+    class=${cls + ' is-disc' + (glyph ? ' is-marked' : '')} title=${title}
+    role=${label ? 'img' : undefined} aria-label=${label || undefined}
+    style=${`background:${c};color:${contrastText(c)}`}
+  >${glyph}</span>`;
 }
 
-// Google's G for its calendars' discs, stroked like the other glyphs. The
-// colored logo stays where Google is named (the sidebar, Settings).
+// Google's G for its calendars' discs, in the disc's own ink and stroked like
+// the other glyphs: a ring on the 16 grid's center (r5.2, as the visibility
+// marks), open from 45 degrees above three o'clock down to three o'clock,
+// and a bar from there in to the center. Its box is the viewBox's own, so it
+// centers wherever the disc centers its svg. The colored logo stays only
+// where Google is named in words (a calendar's Source in its settings).
 function GoogleLetter() {
-  return html`<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12.3 4.6A5.1 5.1 0 1 0 13.1 8.4H8.4" /></svg>`;
+  return html`<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.68 4.32A5.2 5.2 0 1 0 13.2 8H8" /></svg>`;
 }
 
 // Filled cog silhouette: disc r5 with 8 rectangular teeth to r7.4 and a

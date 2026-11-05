@@ -916,17 +916,34 @@ final class Model
         // Where the occurrence acted on lands: its day, the series' clock,
         // and its own columns there.
         $land = ['dn' => $this->landedDn, 'clock' => $this->clock1, 'cols' => $this->landedCols];
-        // A zone change: the same clock time, or the same moment. The moment
-        // reading is the same request with its wall clock read in the old
-        // zone, so the occurrence keeps its instant; its deltas are measured
-        // and taken as any others.
+        // A zone change: the same clock time, or the same moment (Zones,
+        // DST and All-Day Days). The moment keeps every row's own instant:
+        // the request's wall clock is read on the clock it showed on (the
+        // old zone), any drag in it is measured in that zone alone, and the
+        // result is carried to the new zone, where each instant falls on
+        // whatever local day it has. No day read in one zone is subtracted
+        // from one read in the other.
+        $carry = null;
         if ($this->zoneChanged && !$this->allDay1) {
             $sTz = $this->seen['tzid'];
             $lTz = $this->landedCols['tzid'];
             $sAt = Time::fromDb($this->seen['start_utc'])->setTimezone(Time::zone($sTz));
             $lAt = Time::fromDb($this->landedCols['start_utc'])->setTimezone(Time::zone($lTz));
-            $moment = Calc::at(Cal::dnOf($lAt), self::clockOf($lAt), $sTz)->setTimezone(Time::zone($lTz));
-            [$mDn, $mClock] = $this->landing(Cal::dnOf($moment) - Cal::dnOf($sAt), self::clockOf($sAt), self::clockOf($moment));
+            $put = Calc::at(Cal::dnOf($lAt), self::clockOf($lAt), $sTz);
+            $putOld = $put->setTimezone(Time::zone($sTz));
+            // The drag in the old zone: its days and the series' clock there.
+            [$oDn, $oClock] = $this->landing(Cal::dnOf($putOld) - Cal::dnOf($sAt), self::clockOf($sAt), self::clockOf($putOld));
+            // Carried to the new zone by the two zones' offsets at that
+            // instant: the series' clock there, and the days its instants
+            // move on the new zone's calendar. Measured on the series' clock,
+            // so a day whose clock a skipped hour shifted carries the series
+            // as any other day does.
+            $off = $put->setTimezone(Time::zone($lTz))->getOffset() - $put->setTimezone(Time::zone($sTz))->getOffset();
+            $sec = $oClock[0] * 3600 + $oClock[1] * 60 + $oClock[2] + $off;
+            $days = intdiv($sec - ((($sec % 86400) + 86400) % 86400), 86400);
+            $sec -= $days * 86400;
+            $mDn = $oDn + $days;
+            $mClock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
             if ($mDn !== $land['dn'] || $mClock !== $land['clock']) {
                 $momentOption = ['id' => 'moment', 'label' => 'The same moment as now'];
                 if ($mDn !== $this->actedDn0 && ($this->r0->fixedDays !== null || !$this->r0->supported())) {
@@ -938,13 +955,17 @@ final class Model
                 ], 'clock', ['from' => $this->tz0, 'to' => $this->tz1]);
                 if ($zone === 'moment') {
                     $land = ['dn' => $mDn, 'clock' => $mClock, 'cols' => [
-                        'start_utc' => Time::toDb($moment), 'end_utc' => Time::toDb($moment->modify('+' . self::lengthOf($this->landedCols) . ' seconds')),
+                        'start_utc' => Time::toDb($put), 'end_utc' => Time::toDb($put->modify('+' . self::lengthOf($this->landedCols) . ' seconds')),
                     ] + $this->landedCols];
+                    $carry = [$oDn, $mDn - $oDn];
                 }
             }
         }
-        $delta = $land['dn'] - $this->actedDn0;
-        $readings = $this->readings($delta, $land['dn'], $land['clock']);
+        // Under the moment, the drag's readings are the old zone's, each
+        // carried by the days the instant moves on the new zone's calendar.
+        $readings = $carry === null
+            ? $this->readings($land['dn'] - $this->actedDn0, $land['dn'], $land['clock'])
+            : $this->carried($this->readings($carry[0] - $this->actedDn0, $carry[0], $land['clock']), $carry[0], $carry[1]);
         if ($readings === []) {
             return $this->refused('dayset');
         }
@@ -1097,6 +1118,57 @@ final class Model
             }
         }
         return $readings;
+    }
+
+    /**
+     * Readings of a drag measured in the old zone, carried to the new one
+     * under "the same moment": each reading's days are its old days read on
+     * the new zone's calendar, so every member moves by the days the
+     * instant moves ($days, from the landed day $at), never as a drag of
+     * one member. The carry is the drag table's whole-pattern shift by
+     * those days (its first enabled reading where the family has no
+     * pattern reading, the month-end readings' preselection among them);
+     * a rule that can't take it is the reason of that reading's refusal.
+     *
+     * @param list<array<string,mixed>> $readings
+     * @return list<array<string,mixed>>
+     */
+    private function carried(array $readings, int $at, int $days): array
+    {
+        if ($days === 0) {
+            return $readings;
+        }
+        $out = [];
+        foreach ($readings as $r) {
+            if (!empty($r['disabled'])) {
+                $out[] = $r;
+                continue;
+            }
+            /** @var Rule $rule */
+            $rule = $r['rule'];
+            $first = $r['image'];
+            $startImg = $first($this->old->startDn, $this->r0->supported() ? $this->r0->memberOf($this->old->startDn) : null) ?? $at;
+            $shifts = $rule->supported() ? Readings::forDrag($rule, $at, $at + $days, $startImg) : [];
+            $pick = null;
+            foreach ($shifts as $s) {
+                if (empty($s['disabled']) && ($pick === null || ($s['id'] === 'pattern' && $pick['id'] !== 'pattern'))) {
+                    $pick = $s;
+                }
+            }
+            if ($pick === null) {
+                $why = $shifts[0] ?? ['code' => 'dayset', 'reason' => self::REASONS['dayset']];
+                $out[] = ['disabled' => true, 'code' => $why['code'] ?? 'dayset', 'reason' => $why['reason'] ?? self::REASONS['dayset']] + $r;
+                continue;
+            }
+            $second = $pick['image'];
+            // 'drag': where the occurrence goes on the old zone's calendar,
+            // by which a row placed on its own (its own time or date) moves:
+            // the carry relabels days, it moves no instant.
+            $out[] = ['rule' => $pick['rule'], 'textKept' => false, 'drag' => $first,
+                'image' => static fn(int $dn, ?int $m = null): ?int => ($i = $first($dn, $m)) === null ? null : $second($i, $rule->memberOf($i)),
+            ] + $r;
+        }
+        return $out;
     }
 
     /**
@@ -1319,6 +1391,16 @@ final class Model
         $actedPlaced = $this->placed && !$newRule && $this->startTo === null;
         $member = fn(int $dn): ?int => $this->r0->supported() ? $this->r0->memberOf($dn) : null;
         $imageOf = fn(int $dn): ?int => $image($dn, $member($dn));
+        // The day a row's own values were set against, read so that its
+        // image less it is how far its occurrence moved on the row's own
+        // calendar: under the moment's carry that is the drag's move in the
+        // old zone alone, since the carry relabels days and moves no instant.
+        $fromOf = function (string $key) use ($reading, $member, $imageOf): int {
+            $odn = $this->old->dnOf($key);
+            $img = $imageOf($odn);
+            $dragged = isset($reading['drag']) ? ($reading['drag'])($odn, $member($odn)) : null;
+            return $img === null || $dragged === null ? $odn : $odn + ($img - $dragged);
+        };
         // Nothing about the expansion changes (the reading moves no day, and
         // the rule, start, zone, all-day flag and clock stay): the new series
         // is the stored one, and each key is its own image.
@@ -1661,7 +1743,7 @@ final class Model
         // request just set, so it is no such day.
         $movedRows = [];
         foreach ($placeRows as $id => $img) {
-            if (!isset($asSet[$id]) && in_array('date', $ownNow[$id], true) && $img !== $this->old->dnOf((string) $this->rows[$id]['recurrence_instance_utc'])) {
+            if (!isset($asSet[$id]) && in_array('date', $ownNow[$id], true) && $img !== $fromOf((string) $this->rows[$id]['recurrence_instance_utc'])) {
                 $movedRows[] = $id;
             }
         }
@@ -1674,7 +1756,7 @@ final class Model
             if ($one !== null) {
                 $oneId = $movedRows[0];
                 foreach (['keep' => false, 'move' => true] as $choice => $move) {
-                    [$s, , $all, $sTz] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $this->old->dnOf((string) $one['recurrence_instance_utc']), $clock1, $this->clock0);
+                    [$s, , $all, $sTz] = $this->place($one, $ownNow[$oneId], (int) $placeRows[$oneId], (string) $newKeys[$oneId], $move, $fromOf((string) $one['recurrence_instance_utc']), $clock1, $this->clock0);
                     $dates[$choice] = $this->placementOut(self::rowOf($s, $all, $sTz), $this->displayZone());
                 }
             }
@@ -1794,7 +1876,7 @@ final class Model
             $actedRow = isset($asSet[$id]);
             [$start, $end, $allDay, $tz] = $actedRow
                 ? $this->place($asSet[$id], $own, (int) $img, $newKey, false, (int) $img, $clock1, $clock1)
-                : $this->place($row, $own, (int) $img, $newKey, $moveOwnDates, $this->old->dnOf((string) $row['recurrence_instance_utc']), $clock1, $this->clock0);
+                : $this->place($row, $own, (int) $img, $newKey, $moveOwnDates, $fromOf((string) $row['recurrence_instance_utc']), $clock1, $this->clock0);
             $cols = [];
             $put = function (string $col, mixed $value) use (&$cols, $row): void {
                 if ((string) ($row[$col] ?? '') !== (string) ($value ?? '')) {

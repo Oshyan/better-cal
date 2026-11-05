@@ -1907,8 +1907,31 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $toFriBerlin = ['acted' => smAt('2027-01-14 18:00'), 'landed' => ['start_utc' => smAt('2027-01-15 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-15 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']];
     $p = smPlan($class, [], $toFriBerlin, ['zone' => 'moment']);
     $member = array_values(array_filter(smGroup($p, 'reading')['options'] ?? [], static fn(array $o): bool => $o['id'] === 'member'))[0] ?? [];
-    checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is its own Tue 5 Jan, where its instants first differ', ['2027-01-05', 'new'],
+    // Re-expected for 1.5.1 (decisions.md, the zone "same moment" choice):
+    // the member reading keeps the Tuesdays at their instants, so its first
+    // event that differs is the old Thu 7 Jan, moved to Fri 8 Jan in Los
+    // Angeles.
+    checkEq('Readings: dragged to Friday in Berlin at the same moment, the member reading\'s earlier day is the old Thu 7 Jan, where its instants first differ', ['2027-01-07', 'old'],
         [$member['earlier'] ?? null, $member['earlierSeries'] ?? null]);
+
+    // Zone moment: the same moment keeps every row's own instant, and a drag
+    // made with it is measured in the zone both its ends are read in.
+    // Tuesdays and Thursdays at 18:00 in Los Angeles; Thu 14 Jan dragged to
+    // Fri 15 Jan 18:00 Berlin, the same moment: Fri 15 Jan 18:00 in Los
+    // Angeles, which is Sat 16 Jan 03:00 in Berlin.
+    $at = static fn(array $res): array => [$res['writes']['master']['rrule'] ?? null, $res['writes']['master']['tzid'] ?? null, $res['writes']['master']['start_utc'] ?? $class['start_utc']];
+    checkEq('Zone moment: every Thursday moved to Friday in Los Angeles is Wednesdays and Saturdays at 03:00 in Berlin, from Wed 6 Jan (the old Tue 5 Jan 18:00)', ['FREQ=WEEKLY;BYDAY=WE,SA', 'Europe/Berlin', '2027-01-06 02:00:00'],
+        $at(smPlan($class, [], $toFriBerlin, ['zone' => 'moment', 'reading' => 'member'])));
+    checkEq('Zone moment: the whole pattern shifted a day in Los Angeles (Wednesday and Friday) is Thursdays and Saturdays at 03:00 in Berlin, from Thu 7 Jan', ['FREQ=WEEKLY;BYDAY=TH,SA', 'Europe/Berlin', '2027-01-07 02:00:00'],
+        $at(smPlan($class, [], $toFriBerlin, ['zone' => 'moment', 'reading' => 'pattern'])));
+    // An edited day at its own time keeps its instant, on whatever day that
+    // is in Berlin: a Tuesday moved to 09:00 that day stays at 09:00 Los
+    // Angeles time, 18:00 Berlin, the same date.
+    $own = smEdited($class, 2, '2027-01-19 18:00', [], '2027-01-19 09:00', ['time']);
+    $moved = smPlan($class, [$own], ['acted' => smAt('2027-01-12 18:00'), 'landed' => ['start_utc' => smAt('2027-01-12 18:00', 'Europe/Berlin'), 'end_utc' => smAt('2027-01-12 19:00', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
+    checkEq('Zone moment, no drag: Tuesdays and Thursdays at 18:00 in Los Angeles are Wednesdays and Fridays at 03:00 in Berlin; the day at its own 09:00 keeps that instant, Tue 19 Jan 18:00 in Berlin', [
+        'FREQ=WEEKLY;BYDAY=WE,FR', '2027-01-06 02:00:00', smAt('2027-01-19 09:00'),
+    ], [$moved['writes']['master']['rrule'] ?? null, $moved['writes']['master']['start_utc'] ?? $class['start_utc'], $moved['writes']['overrides'][2]['start_utc'] ?? smAt('2027-01-19 09:00')]);
 
     // Every day within the year whose clock is missing or doubled gets its
     // note: Sundays at 02:30 in Auckland happen twice on 4 Apr and not at

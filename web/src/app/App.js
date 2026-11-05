@@ -632,18 +632,17 @@ export function App() {
   // GCal-style scope chip for direct manipulation of repeating events: every
   // drag that would silently edit "this occurrence" asks which occurrences it
   // means, at the drop point. The editor keeps its own scope select.
-  // The scopes offered are the occurrence's (scopes.js): calendarId, the
-  // calendar a drop moves it to. "All events…" on a drag or resize opens the
-  // series dialog (SeriesDialog.js), hence its ellipsis.
-  const promptScopeAt = useCallback((at, cb, occ, calendarId = null, allLabel = 'All events') => {
-    set({ dropChoice: scopeDropChoice(at, occ, (v) => { if (v) cb(v); }, { calendarId, allLabel }) });
+  // The scopes offered are the occurrence's (scopes.js). "All events…" on a
+  // drag or resize opens the series dialog (SeriesDialog.js), hence its ellipsis.
+  const promptScopeAt = useCallback((at, cb, occ, allLabel = 'All events') => {
+    set({ dropChoice: scopeDropChoice(at, occ, (v) => { if (v) cb(v); }, { allLabel }) });
   }, []);
 
   const onDropToCalendar = useCallback((occ, calendarId, at) => {
     // Option/Alt: copy onto that calendar instead of moving there.
     if (at && at.copy) { copyEventTo(occ, calendarId, occ.recurring ? 'this' : 'all'); return; }
     // "Change scope" in the series dialog asks again, at the same drop point.
-    const ask = () => promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope, ask), occ, calendarId);
+    const ask = () => promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope, ask), occ);
     if (occ.recurring && at) { ask(); return; }
     moveEventToCalendar(occ, calendarId);
   }, [promptScopeAt]);
@@ -659,7 +658,7 @@ export function App() {
     if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
     // "Change scope" in the series dialog asks again, at the same drop point.
-    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope, ask), occ, null, seriesAllLabel());
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('drag', occ, p, scope, ask), occ, seriesAllLabel());
     if (occ && occ.recurring && p.at) { ask(); return; }
     moveEvent(p);
   }, [promptScopeAt]);
@@ -683,7 +682,7 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope, ask), occ, null, seriesAllLabel());
+    const ask = () => promptScopeAt(p.at, (scope) => seriesDrop('resize', occ, p, scope, ask), occ, seriesAllLabel());
     if (occ && occ.recurring && p.at) { ask(); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
@@ -796,7 +795,7 @@ export function App() {
   const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey, x, y }) => {
     exitReschedule();
     const occ = state.occ.get(instanceId);
-    const ask = () => promptScopeAt({ x, y }, land, occ, null, seriesAllLabel());
+    const ask = () => promptScopeAt({ x, y }, land, occ, seriesAllLabel());
     const land = (scope) => {
       if ((scope === 'all' || scope === 'following') && occ) seriesDrop('drag', occ, { instanceId, newStart, newEnd, at: { x, y } }, scope, ask);
       else moveEvent({ instanceId, newStart, newEnd, scope });

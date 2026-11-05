@@ -890,9 +890,9 @@ export function EditorDrawer() {
   // --- when ---------------------------------------------------------------------
   const [whenS, whenE] = formInstants(form);
   const backwards = !isNaN(whenS) && !isNaN(whenE) && whenE <= whenS;
-  // Apply to: the scopes this occurrence has with the calendar picked
-  // (scopes.js); one left out stays in the list, disabled, saying why.
-  const editorScopes = occ && occ.recurring ? seriesScopes(occ, { calendarId: Number(form.calendarId) }) : null;
+  // Apply to: the scopes this occurrence has (scopes.js); one left out
+  // stays in the list, disabled, saying why.
+  const editorScopes = occ && occ.recurring ? seriesScopes(occ) : null;
   const startMins = minsOf(form.start);
   const endMins = minsOf(form.end);
   const quarter = (key, i, curMins) => {
@@ -925,8 +925,7 @@ export function EditorDrawer() {
     upd({ calendarId: v });
     if (!occ || !occ.recurring) return;
     const moved = Number(v) !== occ.calendarId;
-    // A date edited on its own can't move with the following ones (#188).
-    if (moved && (scope === 'this' || (scope === 'following' && occ.isException))) {
+    if (moved && scope === 'this') {
       setScope('all');
       autoScope.current = true;
       setNlFlash(new Set(['scope']));

@@ -423,4 +423,27 @@ return static function (Db $db): void {
             (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Sample last hike' AND id <> ?", [$u, $last]),
         ]);
     });
+
+    scenario('split: from a day on a date of its own, made all-day and dragged with a changed count, the part takes the drag and keeps the day', function () use ($d, $u, $db, $rows, $series, $choices, $newest, $col): void {
+        $club = $series('Sample club', 'FREQ=WEEKLY;BYDAY=TU;BYHOUR=18;BYMINUTE=0');
+        // The 26 Jan event moved to Monday 25 Jan on its own: it shows there, keyed on its Tuesday.
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'start' => '2027-01-25T18:00:00+00:00', 'end' => '2027-01-25T19:00:00+00:00', 'title' => 'Sample club, moved']);
+        $before = $rows($club);
+        // From it on: all-day, dragged from Mon 25 to Sat 23 Jan, 5 events from this day on.
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'allDay' => true, 'start' => '2027-01-23', 'end' => '2027-01-24',
+            'rrule' => 'FREQ=WEEKLY;BYDAY=TU;BYHOUR=18;BYMINUTE=0;COUNT=5'];
+        $plan = $d->events->previewPatch($u, $club, $edit + ['preview' => true, 'plan' => ['choices' => ['bound' => 'part']]]);
+        $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($club);
+        $moved = $db->one('SELECT recurrence_instance_utc, start_utc, all_day, title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$new]);
+        checkEq('committed: Tuesdays to 19 Jan, then 5 all-day Sundays from 24 Jan, the moved day keyed on 24 Jan and still on its own Saturday 23 Jan', [
+            'FREQ=WEEKLY;BYDAY=TU;BYHOUR=18;BYMINUTE=0;UNTIL=20270119T180000Z', 'FREQ=WEEKLY;BYDAY=SU;COUNT=5', '2027-01-24 00:00:00', 1,
+            ['all_day' => 1, 'recurrence_instance_utc' => '2027-01-24 00:00:00', 'start_utc' => '2027-01-23 00:00:00', 'title' => 'Sample club, moved'],
+        ], [
+            $col($club, 'rrule'), $col($new, 'rrule'), $col($new, 'start_utc'), (int) $col($new, 'all_day'),
+            $moved === null ? null : ['all_day' => (int) $moved['all_day']] + $moved,
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('undone: every row as before, and the part is gone', [$before, 0], [$rows($club), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$new])]);
+    });
 };

@@ -201,7 +201,12 @@ final class Split
                 $sentBound = ['kind' => 'until', 'until' => (string) $sent->until];
             } elseif ($delta === 'bound' && $sent->count !== null) {
                 $counts = ['whole' => $sent->count - count($before), 'part' => $sent->count];
-                $sentCount = $sent;
+                // Each reading is the rule as sent with its count, never the
+                // series' reading of it: that reading drops the clock parts
+                // of a series made all-day, and the part, comparing it with
+                // its own rule, would take it for a new pattern and lose the
+                // drag sent with it.
+                $sentCount = Rule::parse((string) $edit['rrule'], $actedDn);
             }
         }
         if ($counts === null) {

@@ -224,6 +224,26 @@ try {
     MailAdmission::seriesStillActive($series + ['rrule' => 'FREQ=HOURLY;UNTIL=20900101T000000Z'], [], $now, new BetterCal\Support\ExpansionBudget(1, 2, 10));
     check('mail capacity: historical iteration respects the shared work budget', false);
 } catch (BetterCal\Support\WorkBudgetExceeded) { check('mail capacity: historical iteration respects the shared work budget', true); }
+// The estimate reads the rule the window reads, BY parts and all (the
+// app's expander), never its interval alone. From Thu 1 Jan 2026 10:00 UTC,
+// an hour long: Thursday, Friday and Saturday six times is 1, 2, 3, 8, 9
+// and 10 Jan (not six weeks); 10:00, 14:00 and 18:00 five times ends with
+// 2 Jan's 14:00 (not five days); every 30 minutes in the 10 o'clock hour
+// four times is 1 and 2 Jan's 10:00 and 10:30 (not two hours); a plain
+// daily rule three times is 1, 2 and 3 Jan.
+$estimate = [];
+foreach ([
+    'FREQ=WEEKLY;BYDAY=TH,FR,SA;COUNT=6' => ['2026-01-10T10:30:00Z', '2026-01-10T11:00:00Z'],
+    'FREQ=DAILY;BYHOUR=10,14,18;COUNT=5' => ['2026-01-02T14:30:00Z', '2026-01-02T15:00:00Z'],
+    'FREQ=MINUTELY;INTERVAL=30;BYHOUR=10;COUNT=4' => ['2026-01-02T11:00:00Z', '2026-01-02T11:30:00Z'],
+    'FREQ=DAILY;COUNT=3' => ['2026-01-03T10:30:00Z', '2026-01-03T11:00:00Z'],
+] as $rrule => [$during, $after]) {
+    $estimate[$rrule] = [MailAdmission::seriesStillActive($series + ['rrule' => $rrule], [], new DateTimeImmutable($during)), MailAdmission::seriesStillActive($series + ['rrule' => $rrule], [], new DateTimeImmutable($after))];
+}
+checkEq('mail capacity: a weekday list, BYHOUR, a minute rule limited by its hour and a plain rule are active through their last occurrence and no longer', [
+    'FREQ=WEEKLY;BYDAY=TH,FR,SA;COUNT=6' => [true, false], 'FREQ=DAILY;BYHOUR=10,14,18;COUNT=5' => [true, false],
+    'FREQ=MINUTELY;INTERVAL=30;BYHOUR=10;COUNT=4' => [true, false], 'FREQ=DAILY;COUNT=3' => [true, false],
+], $estimate);
 $dstSeries = ['start_utc' => '2026-03-28 23:00:00', 'end_utc' => '2026-03-29 22:00:00', 'tzid' => 'Europe/Paris', 'all_day' => 1, 'rrule' => 'FREQ=DAILY;UNTIL=20260329'];
 check('mail capacity: last all-day occurrence lasts through local date across DST', MailAdmission::seriesStillActive($dstSeries, [], new DateTimeImmutable('2026-03-29T21:00:00Z')));
 check('mail capacity: all-day UNTIL ends at local midnight', !MailAdmission::seriesStillActive($dstSeries, [], new DateTimeImmutable('2026-03-29T22:00:00Z')));

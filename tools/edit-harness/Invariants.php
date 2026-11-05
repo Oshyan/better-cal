@@ -202,7 +202,7 @@ trait Invariants
             $this->checkSeries('g', $new);
             $this->checkAttached('h', $new);
         }
-        $first = $acted['key'] === (string) $before['row']['start_utc'];
+        $first = self::isFirstDay($before, $acted['key']);
         switch ($sent['kind']) {
             case 'all':
                 $this->checkUntouched($before, $after, $v, $sent, $new);
@@ -229,6 +229,22 @@ trait Invariants
                 $this->checkAttend($before, $after, $new, $first ? null : $acted);
                 return;
         }
+    }
+
+    /**
+     * Whether a key is the series' first day (api-contract, This and following: from a series' first day it is the whole
+     * series' change): its stored start, or, for a start stored a period before a first day in a skipped hour (that
+     * stored day skipped, Zones, DST and All-Day Days), the first day shown.
+     */
+    private static function isFirstDay(array $st, string $key): bool
+    {
+        $start = (string) ($st['row']['start_utc'] ?? '');
+        if ($key === $start) {
+            return true;
+        }
+        $raw = $st['raw'];
+        return count($raw) >= 2 && $raw[0]['key'] === $start && in_array($start, $st['exdates'], true) && !$st['allDay']
+            && Clock::inGap($raw[1]['dn'], $st['clock'], $st['tz']) && $raw[1]['key'] === $key;
     }
 
     /** The series a split made in this case, if any. */
@@ -1166,6 +1182,12 @@ trait Invariants
         $this->splitUntil('5-old', $before, $after, $split);
         $this->check('5-new', $new !== null, 'a split makes a new series from the day acted on', []);
         if ($new === null || $before['shape']->cap === 'unreadable') {
+            return;
+        }
+        if (!$before['shape']->supported()) {
+            // A rule outside the drag table: its part is read by its capability, which checkUnsupported reads for a
+            // whole series; for a part it isn't worked out yet.
+            $this->unoracled[] = 'the part from a split of a rule outside the drag table';
             return;
         }
         // The part from the split, as a series of its own, dragged as a whole series.

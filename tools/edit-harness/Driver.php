@@ -137,7 +137,7 @@ final class Driver
             isset($spec['actedAt']) => $this->occurrenceFrom($before['row'], (string) $spec['actedAt']),
             default => $before['raw'][$spec['acted']] ?? $before['raw'][0],
         };
-        $first = $acted['key'] === (string) $before['row']['start_utc'];
+        $first = self::isFirstDay($before, $acted['key']);
         // The code path, decided from what was sent: "this and following",
         // delete following and attendance following from a day after the
         // first run on their 1.4.6 code until 1.5.1.

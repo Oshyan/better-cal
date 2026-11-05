@@ -587,4 +587,63 @@ return static function (Db $db): void {
         \BetterCal\Domain\Undo::dropUnusedPieces($db);
         checkEq("undo: the prune's sweep then takes the other account's, and the entry still undoable keeps its own", [0, 1], [$pieces($onTheirs), $pieces($onKept)]);
     });
+
+    // What refers to a row (OwnFields::REFERENCES: its trip, its duplicate
+    // decisions, its plugin data) cascades when the row is deleted, and is
+    // what Undo keeps of it: deleting an edited day and undoing that brings
+    // back its dismissed duplicate pair and its plugin data with it.
+    scenario('undo: an edited day deleted comes back with its duplicate decision and plugin data', function () use ($db, $count): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $home = (int) Settings::defaultCalendarId($db, $u);
+        $series = (int) $d->events->create($u, eventAt($home, 'Sample class', '2027-03-02', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=6']))['eventId'];
+        $d->events->patch($u, $series, ['scope' => 'this', 'instanceStart' => '2027-03-09T18:00:00+00:00', 'title' => 'Sample class, guest night']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$series]);
+        $other = (int) $d->events->create($u, eventAt($home, 'Sample guest night', '2027-03-09'))['eventId'];
+        $db->insert('event_duplicates', ['user_id' => $u, 'event_a' => min($day, $other), 'event_b' => max($day, $other), 'status' => 'dismissed', 'basis' => 'owner']);
+        $db->run('INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)', [$day, 'sample-plugin', 'note', '{"seats":12}']);
+        $refs = static fn(): array => [
+            $db->all('SELECT event_a, event_b, status FROM event_duplicates WHERE event_a = ? OR event_b = ?', [$day, $day]),
+            $db->all('SELECT event_id, plugin_id, k, v_json FROM event_plugin_data WHERE event_id = ?', [$day]),
+        ];
+        $was = $refs();
+        $d->events->deleteEvent($u, $day, null, null);
+        checkEq('undo: deleting the edited day takes its pair and plugin data with it', [0, [[], []]],
+            [$count('SELECT COUNT(*) FROM events WHERE id = ?', [$day]), $refs()]);
+        $d->undo->undoLatest($u);
+        checkEq('undo: one Undo brings the day back, its dismissed pair and its plugin data with it', [1, $was],
+            [$count('SELECT COUNT(*) FROM events WHERE id = ?', [$day]), $refs()]);
+    });
+
+    // An undo and its CalDAV journal are one transaction, the one that
+    // checked the credential: a credential revoked the moment the undo has
+    // committed finds no second transaction left to refuse, so CalDAV
+    // clients still hear of the undo. The revocation is made by the
+    // credential's own lookup, as soon as another connection sees the undo
+    // committed.
+    scenario('undo: an undo of a delete writes its CalDAV journal in its own transaction', function () use ($db, $count): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $home = (int) Settings::defaultCalendarId($db, $u);
+        $event = (int) $d->events->create($u, eventAt($home, 'Sample supper', '2027-02-11'))['eventId'];
+        $d->events->deleteEvent($u, $event, null, null);
+        $entry = lastEntry($db, $u);
+        [$authority, $revoke] = requestCredentials($db, $u)['session'];
+        $other = otherConnection();
+        $revoked = false;
+        $current = static function () use ($authority, $revoke, $other, $entry, &$revoked): BetterCal\Domain\RequestAuthority {
+            if (!$revoked && (int) $other->scalar('SELECT undone FROM mutations WHERE id = ?', [$entry]) === 1) {
+                $revoked = true;
+                $revoke();
+            }
+            return $authority;
+        };
+        $journal = static fn(): int => $count('SELECT COUNT(*) FROM dav_changes WHERE calendar_id = ?', [$home]);
+        $was = $journal();
+        checkEq('undo: the undo answers ok, with no check after it committed', [null, false],
+            [refusal(fn() => BetterCal\Domain\RequestAuthority::during($current, fn() => $d->undo->undoById($u, $entry))), $revoked]);
+        checkEq('undo: it is done, the event is back and its journal row is written', [1, null, $was + 1], [
+            $count('SELECT undone FROM mutations WHERE id = ?', [$entry]), $db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$event]), $journal(),
+        ]);
+    });
 };

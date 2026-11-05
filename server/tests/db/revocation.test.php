@@ -93,4 +93,55 @@ return static function (Db $db): void {
     $keyId = (int) $keyAuthority->tokenId();
     check('self-revoking: a key revokes itself', RequestAuthority::during($keyAuthority, fn() => $tokens->revoke($u, $keyId), true));
     checkEq('self-revoking: and is gone', 0, (int) $db->scalar('SELECT COUNT(*) FROM api_tokens WHERE id = ?', [$keyId]));
+
+    // A plugin job run after the response runs under the request's
+    // credential, and its work is checked at its writes; the queue's state
+    // (claimed, done, failed) is the server's own record. A credential
+    // revoked after the claim fails the job once, for good: never left
+    // running, never rerun by the worker with no credential.
+    $dir = sys_get_temp_dir() . '/bc-revoked-plugin-' . bin2hex(random_bytes(4));
+    $root = sys_get_temp_dir() . '/bc-revoked-root-' . bin2hex(random_bytes(4));
+    mkdir($dir . '/sample-sync', 0700, true);
+    mkdir($root . '/server', 0700, true);
+    symlink(realpath(__DIR__ . '/../../migrations'), $root . '/server/migrations');
+    try {
+        file_put_contents($dir . '/sample-sync/plugin.json', json_encode(['id' => 'sample-sync', 'name' => 'Sample sync', 'version' => '1.0.0', 'jobs' => [['id' => 'sync', 'interval' => 'PT1H']]]));
+        file_put_contents($dir . '/sample-sync/Plugin.php', '<?php
+return new class implements BetterCal\\Plugin\\PluginInterface {
+    public function runJob(BetterCal\\Plugin\\PluginHost $host, string $jobId): void { ($GLOBALS["sampleSyncDuring"] ?? static function (): void {})(); }
+    public function validateSettings(array $values): array { return []; }
+};');
+        $db->run("INSERT INTO plugins (id, version, enabled, settings_json) VALUES ('sample-sync', '1.0.0', 1, '{}')");
+        $cfg = ['db' => ['dsn' => (string) getenv('BC_TEST_DSN'), 'user' => (string) getenv('BC_TEST_DB_USER'), 'pass' => (string) getenv('BC_TEST_DB_PASS')],
+            'app_root' => $root, 'session_secret' => str_repeat('s', 32)];
+        $plugins = new BetterCal\Domain\Plugins($db, $dir, $cfg);
+        $queue = new BetterCal\Infra\JobQueue($db);
+        $job = static fn(int $id): array => $db->one('SELECT status, attempts FROM jobs WHERE id = ?', [$id]);
+
+        foreach (requestCredentials($db, $u) as $label => [$authority, $revoke]) {
+            $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
+            $GLOBALS['sampleSyncDuring'] = $revoke;
+            try {
+                $ran = refusal(fn() => RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false));
+            } finally {
+                unset($GLOBALS['sampleSyncDuring']);
+            }
+            checkEq("revocation ($label): a plugin job whose credential is revoked mid-run ends failed, once, nothing left running or queued", [null, ['status' => 'failed', 'attempts' => 1]],
+                [$ran, $job($id)]);
+        }
+        [$authority] = requestCredentials($db, $u)['session'];
+        $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
+        checkEq('revocation: with the credential valid, the job runs and is done', [1, ['status' => 'done', 'attempts' => 1]],
+            [RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false), $job($id)]);
+    } finally {
+        $db->run("DELETE FROM plugins WHERE id = 'sample-sync'");
+        array_map('unlink', glob($dir . '/sample-sync/*') ?: []);
+        @rmdir($dir . '/sample-sync');
+        @rmdir($dir);
+        @unlink($root . '/server/migrations');
+        @rmdir($root . '/server');
+        array_map('unlink', glob($root . '/.runtime-cache/*') ?: []);
+        @rmdir($root . '/.runtime-cache');
+        @rmdir($root);
+    }
 };

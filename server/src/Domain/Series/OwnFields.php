@@ -28,13 +28,16 @@ final class OwnFields
      * day something names never goes back to the series while it is named,
      * and a rejoin never cascade-deletes what names the row. Each kind is
      * [table, the columns naming its reference, the columns naming events,
-     * a condition]; read each time (references), never stored in
-     * override_fields.
+     * a condition, the table's key]; read each time (references), never
+     * stored in override_fields. The same table is what Undo keeps of a
+     * row it removes and puts back with it (Undo::linksOf): what refers to
+     * a row goes when the row goes (each cascades on delete), so it comes
+     * back when the row does.
      */
     public const REFERENCES = [
-        'trip' => ['event_links', ['id'], ['container_id', 'event_id'], null],
-        'duplicates' => ['event_duplicates', ['id'], ['event_a', 'event_b'], "status IN ('linked', 'dismissed')"],
-        'pluginData' => ['event_plugin_data', ['plugin_id', 'k'], ['event_id'], null],
+        'trip' => ['event_links', ['id'], ['container_id', 'event_id'], null, ['id']],
+        'duplicates' => ['event_duplicates', ['id'], ['event_a', 'event_b'], "status IN ('linked', 'dismissed')", ['id']],
+        'pluginData' => ['event_plugin_data', ['plugin_id', 'k'], ['event_id'], null, ['event_id', 'plugin_id', 'k']],
     ];
 
     /**

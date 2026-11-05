@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Dav\ChangeLog;
+use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
@@ -21,17 +22,21 @@ use BetterCal\Support\Time;
  */
 final class Undo
 {
-    /** Restore order respects FK dependencies; deletions run in reverse. */
+    /**
+     * Restore order respects FK dependencies; deletions run in reverse. The
+     * tables of what refers to an event (OwnFields::REFERENCES) come right
+     * after events (order()).
+     */
     private const TABLE_ORDER = [
         'folders', 'tags', 'people', 'calendars', 'calendar_folders',
-        'events', 'event_links', 'event_tags', 'event_people', 'out_feeds', 'filters', 'saved_views',
+        'events', 'event_tags', 'event_people', 'out_feeds', 'filters', 'saved_views',
         'availability', 'review_items',
     ];
 
     private const TABLE_PK = [
         'folders' => ['id'], 'tags' => ['id'], 'people' => ['id'], 'calendars' => ['id'],
         'events' => ['id'], 'out_feeds' => ['id'], 'filters' => ['id'], 'saved_views' => ['id'],
-        'event_links' => ['id'], 'availability' => ['id'], 'review_items' => ['id'],
+        'availability' => ['id'], 'review_items' => ['id'],
         'calendar_folders' => ['calendar_id', 'folder_id'],
         'event_tags' => ['event_id', 'tag_id'],
         'event_people' => ['event_id', 'person_id'],
@@ -49,12 +54,14 @@ final class Undo
         'calendar_folders' => ['calendar_id' => ['calendars', '+'], 'folder_id' => ['folders', '+']],
         'event_tags' => ['event_id' => ['events', '+'], 'tag_id' => ['tags', '+']],
         'event_people' => ['event_id' => ['events', '+'], 'person_id' => ['people', '+']],
-        'event_links' => ['container_id' => ['events', '+'], 'event_id' => ['events', '+']],
         'availability' => ['person_id' => ['people', '+']],
     ];
 
-    /** Rows that only link two others: put back only while both are still there. */
-    private const LINK_TABLES = ['calendar_folders', 'event_tags', 'event_people', 'event_links'];
+    /**
+     * Rows that only link two others: put back only while both are still
+     * there. What refers to an event is one too (isLink()).
+     */
+    private const LINK_TABLES = ['calendar_folders', 'event_tags', 'event_people'];
 
     /**
      * Tables whose rows one change can make or remove by the tens of
@@ -63,7 +70,57 @@ final class Undo
      * journal they were more than the database takes in one statement
      * (#191). Rows a change kept and changed stay in the entry.
      */
-    private const PIECE_TABLES = ['events', 'event_links', 'event_tags', 'event_people'];
+    private const PIECE_TABLES = ['events', 'event_tags', 'event_people'];
+
+    /**
+     * The tables of what refers to an event, from the one table of them
+     * (OwnFields::REFERENCES): [table => [its key, the columns naming
+     * events, the condition a row meets]].
+     *
+     * @return array<string,array{0:list<string>,1:list<string>,2:?string}>
+     */
+    private static function references(): array
+    {
+        $out = [];
+        foreach (OwnFields::REFERENCES as [$table, , $eventCols, $condition, $key]) {
+            $out[$table] = [$key, $eventCols, $condition];
+        }
+        return $out;
+    }
+
+    /** Every table an undo puts back, in restore order: the references right after events. */
+    private static function order(): array
+    {
+        $at = array_search('events', self::TABLE_ORDER, true) + 1;
+        return [...array_slice(self::TABLE_ORDER, 0, $at), ...array_keys(self::references()), ...array_slice(self::TABLE_ORDER, $at)];
+    }
+
+    /** A table's key columns. */
+    private static function pk(string $table): array
+    {
+        return self::TABLE_PK[$table] ?? self::references()[$table][0] ?? ['id'];
+    }
+
+    /** What a row of $table belongs to, by column (PARENTS): a reference belongs to each event it names. */
+    private static function parentsOf(string $table): array
+    {
+        if (isset(self::PARENTS[$table])) {
+            return self::PARENTS[$table];
+        }
+        return array_fill_keys(self::references()[$table][1] ?? [], ['events', '+']);
+    }
+
+    /** Whether rows of $table only link others (LINK_TABLES, and every reference). */
+    private static function isLink(string $table): bool
+    {
+        return in_array($table, self::LINK_TABLES, true) || isset(self::references()[$table]);
+    }
+
+    /** The tables whose rows can be kept in pieces (PIECE_TABLES, and every reference). */
+    private static function pieceTableNames(): array
+    {
+        return [...self::PIECE_TABLES, ...array_keys(self::references())];
+    }
 
     /** The most rows' text one piece holds, far under the smallest packet size a database is likely to allow. */
     private const PIECE_BYTES = 512 * 1024;
@@ -289,9 +346,9 @@ final class Undo
     {
         self::assertEntry($mutationId, 'recordRemoved');
         foreach (array_keys($tables) as $table) {
-            if (!in_array($table, self::PIECE_TABLES, true)) {
+            if (!in_array($table, self::pieceTableNames(), true)) {
                 // Kept in a piece, they would never be put back.
-                throw new \LogicException("Undo::recordRemoved can't keep $table rows, only " . implode(', ', self::PIECE_TABLES));
+                throw new \LogicException("Undo::recordRemoved can't keep $table rows, only " . implode(', ', self::pieceTableNames()));
             }
         }
         $this->recordTouches($mutationId, self::touchesOf($tables, null));
@@ -303,7 +360,7 @@ final class Undo
     }
 
     /**
-     * The events $where finds, with their tags, people and trip links,
+     * The events $where finds, with what hangs off them (linksOf),
      * added to an entry as rows it removes (recordRemoved), a page at a
      * time in id order.
      */
@@ -318,17 +375,19 @@ final class Undo
                 break;
             }
             $after = (int) $page[count($page) - 1]['id'];
-            $tables = ['events' => $page] + self::linksOf($this->db, array_map(static fn(array $e): int => (int) $e['id'], $page));
-            // A trip link between two of them is found from both pages.
-            $fresh = [];
-            foreach ($tables['event_links'] ?? [] as $link) {
-                if (!isset($links[(int) $link['id']])) {
-                    $links[(int) $link['id']] = true;
-                    $fresh[] = $link;
+            $tables = self::linksOf($this->db, array_map(static fn(array $e): int => (int) $e['id'], $page));
+            // A trip link or a duplicate pair between two of them is found from both pages.
+            foreach ($tables as $table => $rows) {
+                $fresh = [];
+                foreach ($rows as $row) {
+                    if (!isset($links[self::keyOf($table, $row)])) {
+                        $links[self::keyOf($table, $row)] = true;
+                        $fresh[] = $row;
+                    }
                 }
+                $tables[$table] = $fresh;
             }
-            $tables['event_links'] = $fresh;
-            $this->recordRemoved($mutationId, array_filter($tables));
+            $this->recordRemoved($mutationId, array_filter(['events' => $page] + $tables));
         } while (count($page) === 500);
     }
 
@@ -378,7 +437,7 @@ final class Undo
     private static function splitPieces(?array $before, ?array $after): array
     {
         $pieces = [];
-        foreach (self::PIECE_TABLES as $table) {
+        foreach (self::pieceTableNames() as $table) {
             $keys = [[], []];
             foreach ([$before, $after] as $i => $side) {
                 foreach ($side[$table] ?? [] as $row) {
@@ -588,9 +647,10 @@ final class Undo
     }
 
     /**
-     * What hangs off these events (their tags, people and trip links), for
-     * a change that removes them: the database takes those with them, and
-     * undo puts them back.
+     * What hangs off these events, for a change that removes them: their
+     * tags and people, and whatever refers to them by the one table of
+     * that (OwnFields::REFERENCES: trip links, duplicate decisions, plugin
+     * data). The database takes those with them, and undo puts them back.
      *
      * @param list<int> $eventIds
      * @return array<string,list<array>>
@@ -600,12 +660,16 @@ final class Undo
         $out = [];
         foreach (array_chunk(array_values(array_unique($eventIds)), 500) as $chunk) {
             [$in, $params] = Db::in($chunk);
-            foreach ([
+            $tables = [
                 'event_tags' => ["event_id IN $in", $params],
                 'event_people' => ["event_id IN $in", $params],
-                'event_links' => ["event_id IN $in OR container_id IN $in", array_merge($params, $params)],
-            ] as $table => [$where, $args]) {
-                foreach ($db->all("SELECT * FROM $table WHERE $where", $args) as $row) {
+            ];
+            foreach (self::references() as $table => [, $eventCols, $condition]) {
+                $tables[$table] = ['(' . implode(' OR ', array_map(static fn(string $c): string => "`$c` IN $in", $eventCols)) . ')' . ($condition === null ? '' : " AND $condition"),
+                    array_merge(...array_fill(0, count($eventCols), $params))];
+            }
+            foreach ($tables as $table => [$where, $args]) {
+                foreach ($db->all("SELECT * FROM `$table` WHERE $where", $args) as $row) {
                     $out[$table][self::keyOf($table, $row)] = $row;
                 }
             }
@@ -616,7 +680,7 @@ final class Undo
     /** A row's key: "table:id", or the parts of a composite key joined by "|". */
     public static function keyOf(string $table, array $row): string
     {
-        return $table . ':' . implode('|', array_map(static fn($c) => (string) ($row[$c] ?? ''), self::TABLE_PK[$table] ?? ['id']));
+        return $table . ':' . implode('|', array_map(static fn($c) => (string) ($row[$c] ?? ''), self::pk($table)));
     }
 
     /**
@@ -665,7 +729,7 @@ final class Undo
                         $out[] = [$k, $col];
                     }
                 }
-                foreach (self::PARENTS[$table] ?? [] as $col => [$parent, $mark]) {
+                foreach (self::parentsOf($table) as $col => [$parent, $mark]) {
                     if ($changed !== null && !in_array($col, $changed, true)) {
                         continue;
                     }
@@ -1253,7 +1317,7 @@ final class Undo
             }
             $flaggedBefore = Trips::flaggedAmong($this->db, $eventIds);
             // Delete rows created by the mutation (present in after, absent from before).
-            foreach (array_reverse(self::TABLE_ORDER) as $table) {
+            foreach (array_reverse(self::order()) as $table) {
                 $beforeKeys = [];
                 foreach ($before[$table] ?? [] as $row) {
                     $beforeKeys[self::keyOf($table, $row)] = true;
@@ -1266,7 +1330,7 @@ final class Undo
                 // Rows it made kept in pieces: each one made, none in before.
                 if (in_array($table, $pieces['after'] ?? [], true)) {
                     foreach ($this->piecesOf($mutationId, 'after', $table) as $rows) {
-                        if ((self::TABLE_PK[$table] ?? ['id']) === ['id']) {
+                        if ((self::pk($table)) === ['id']) {
                             foreach (array_chunk(array_column($rows, 'id'), 500) as $ids) {
                                 [$in, $params] = Db::in($ids);
                                 $this->db->run("DELETE FROM `$table` WHERE `id` IN $in", $params);
@@ -1303,7 +1367,7 @@ final class Undo
             // goes back leaves its key first and takes its own as restored.
             $parked = self::rekeyedEvents($before['events'] ?? [], $afterByKey['events'] ?? []);
             Events::parkInstanceKeys($this->db, array_keys($parked));
-            foreach (self::TABLE_ORDER as $table) {
+            foreach (self::order() as $table) {
                 foreach ($before[$table] ?? [] as $row) {
                     $kept = $afterByKey[$table][self::keyOf($table, $row)] ?? null;
                     $changed = null;
@@ -1322,8 +1386,8 @@ final class Undo
                         }
                         // An object column: just the keys it changed, into what's there now.
                         foreach (array_intersect(self::OBJECT_COLUMNS[$table] ?? [], $changed) as $col) {
-                            $now = $this->db->scalar("SELECT `$col` FROM `$table` WHERE " . implode(' AND ', array_map(static fn($c) => "`$c` = ?", self::TABLE_PK[$table])),
-                                array_map(static fn($c) => $row[$c] ?? null, self::TABLE_PK[$table]));
+                            $now = $this->db->scalar("SELECT `$col` FROM `$table` WHERE " . implode(' AND ', array_map(static fn($c) => "`$c` = ?", self::pk($table))),
+                                array_map(static fn($c) => $row[$c] ?? null, self::pk($table)));
                             $merged = self::object($now);
                             [$was, $set] = [self::object($row[$col] ?? null), self::object($kept[$col] ?? null)];
                             foreach (array_unique(array_merge(array_keys($was), array_keys($set))) as $key) {
@@ -1385,31 +1449,28 @@ final class Undo
             // entry stays to undo once the conflict is gone.
             Trips::assertRules($this->db, $eventIds, $flaggedBefore, Trips::BY_UNDO);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
-        });
-
-        // CalDAV journal: an undone event mutation must reach DAV clients too.
-        // Recording MODIFY is enough — sync clients drop uris that 404.
-        // Each uid once per calendar, and a calendar's all at once: one at a
-        // time, a large calendar's took half a minute.
-        $uids = [];
-        $note = static function (array $rows) use (&$uids): void {
-            foreach ($rows as $row) {
-                if (isset($row['calendar_id'], $row['uid'])) {
-                    $uids[(int) $row['calendar_id']][(string) $row['uid']] = true;
+            // CalDAV hears of it in this transaction, the one that checked
+            // the credential: the undo and its journal commit together or not
+            // at all. Recording MODIFY is enough (sync clients drop uris that
+            // 404), each uid once per calendar, and a calendar's all at once:
+            // one at a time, a large calendar's took half a minute.
+            $uids = [];
+            $note = static function (array $rows) use (&$uids): void {
+                foreach ($rows as $row) {
+                    if (isset($row['calendar_id'], $row['uid'])) {
+                        $uids[(int) $row['calendar_id']][(string) $row['uid']] = true;
+                    }
+                }
+            };
+            $note($before['events'] ?? []);
+            $note($after['events'] ?? []);
+            foreach ($pieces as $side => $tables) {
+                if (in_array('events', $tables, true)) {
+                    foreach ($this->piecesOf($mutationId, $side, 'events') as $rows) {
+                        $note($rows);
+                    }
                 }
             }
-        };
-        $note($before['events'] ?? []);
-        $note($after['events'] ?? []);
-        foreach ($pieces as $side => $tables) {
-            if (in_array('events', $tables, true)) {
-                foreach ($this->piecesOf($mutationId, $side, 'events') as $rows) {
-                    $note($rows);
-                }
-            }
-        }
-        // CalDAV hears of it in a checked transaction of its own.
-        RequestAuthority::checkedTx($this->db, function () use ($uids): void {
             foreach ($uids as $calendarId => $ofCalendar) {
                 ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
             }
@@ -1473,10 +1534,10 @@ final class Undo
      */
     private static function carriedLink(string $table, array $row, array $whole): bool
     {
-        if (!in_array($table, self::LINK_TABLES, true)) {
+        if (!self::isLink($table)) {
             return false;
         }
-        foreach (self::PARENTS[$table] ?? [] as $col => [$parent]) {
+        foreach (self::parentsOf($table) as $col => [$parent]) {
             if (!empty($row[$col]) && isset($whole[self::keyOf($parent, ['id' => $row[$col]])])) {
                 return true;
             }
@@ -1551,8 +1612,8 @@ final class Undo
         if ($this->db->forUpdate() === '') {
             return;
         }
-        foreach (self::TABLE_ORDER as $table) {
-            $col = (self::TABLE_PK[$table] ?? ['id'])[0];
+        foreach (self::order() as $table) {
+            $col = (self::pk($table))[0];
             $values = [];
             foreach ([$before[$table] ?? [], $after[$table] ?? []] as $rows) {
                 foreach ($rows as $row) {
@@ -1580,7 +1641,7 @@ final class Undo
     {
         $conds = [];
         $params = [];
-        foreach (self::TABLE_PK[$table] ?? ['id'] as $col) {
+        foreach (self::pk($table) as $col) {
             $conds[] = "`$col` = ?";
             $params[] = $row[$col] ?? null;
         }
@@ -1608,12 +1669,12 @@ final class Undo
 
     private function deleteByPk(string $table, array $row): void
     {
-        if (!in_array($table, self::TABLE_ORDER, true)) {
+        if (!in_array($table, self::order(), true)) {
             return;
         }
         $conds = [];
         $params = [];
-        foreach (self::TABLE_PK[$table] ?? ['id'] as $col) {
+        foreach (self::pk($table) as $col) {
             $conds[] = "`$col` = ?";
             $params[] = $row[$col] ?? null;
         }

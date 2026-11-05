@@ -2564,15 +2564,16 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $edited2 = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily mover 2', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
         $eventsA->patch(1, $edited2, ['scope' => 'this', 'instanceStart' => '2026-12-11T18:00:00+00:00', 'title' => 'Second edited date', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
         $edited2Date = (int) $adb->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$edited2]);
-        // This and following isn't offered from a date edited on its own
-        // (#188): refused, and nothing changes.
+        // This and following from a date edited on its own is the series'
+        // split at its key (1.5.1): sent without its plan, a 409 with the
+        // plan, and nothing changes.
         $caught = null;
         try {
             $eventsA->patch(1, $edited2Date, ['calendarId' => 13, 'scope' => 'following', 'title' => 'Second edited, renamed', 'start' => '2026-12-11T20:00:00+00:00', 'end' => '2026-12-11T21:00:00+00:00']);
         } catch (BetterCal\Http\HttpError $e) {
             $caught = $e;
         }
-        checkEq('edited date moved with "this and following": refused, and the series and the date stay as they were', ['scope_unavailable', 10, 10, 'Second edited date'], [
+        checkEq('edited date moved with "this and following" and no plan: the split asks for its plan, and the series and the date stay as they were', ['series_plan_required', 10, 10, 'Second edited date'], [
             $caught ? $caught->errorCode : null,
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2]),
             (int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$edited2Date]),

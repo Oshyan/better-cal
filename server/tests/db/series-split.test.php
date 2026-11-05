@@ -204,4 +204,138 @@ return static function (Db $db): void {
         $d->events->patch($u, $run, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
         checkEq('the series itself is renamed, no part is made', ['all', 'Run, longer', 0], [$plan['scope'], $col($run, 'title'), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id > ? AND recurrence_parent_id IS NULL', [$run])]);
     });
+
+    scenario('split: from an edited day\'s own row with a calendar change, the preview\'s plan is what the commit writes, and Undo puts it back', function () use ($d, $u, $db, $rows, $series, $choices, $newest, $col): void {
+        $choir = $series('Sample choir', 'FREQ=WEEKLY;BYDAY=TU;COUNT=8');
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample choir, guest night']);
+        $d->events->patch($u, $choir, ['scope' => 'this', 'instanceStart' => '2027-02-02T18:00:00+00:00', 'title' => 'Sample concert']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND title = ?', [$choir, 'Sample choir, guest night']);
+        $later = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND title = ?', [$choir, 'Sample concert']);
+        $two = (int) $d->calendars->create($u, ['name' => 'Sample second'])['id'];
+        $edit = ['scope' => 'following', 'calendarId' => $two];
+        $before = $rows($choir);
+        $plan = $d->events->previewPatch($u, $day, $edit + ['preview' => true]);
+        checkEq('the preview from the edited day is the series\' split at its key: the old part ends on 12 Jan after 2 events, the new one takes both edited days', [
+            'following', '2027-01-19T18:00:00Z', ['kind' => 'until', 'until' => '20270112T180000Z', 'events' => 2, 'last' => '2027-01-12'], 2, $before,
+        ], [$plan['scope'], $plan['split']['at'], $plan['split']['before']['bound'], $plan['split']['after']['edited'], $rows($choir)]);
+        $d->events->patch($u, $day, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($choir);
+        checkEq('the commit writes that plan: the old series bounded on its own calendar, the new part and both edited days on the new calendar', [
+            'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', (int) $before[0]['calendar_id'], $two, '2027-01-19 18:00:00', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6',
+            [[$day, $two, 'Sample choir, guest night'], [$later, $two, 'Sample concert']],
+        ], [
+            $col($choir, 'rrule'), (int) $col($choir, 'calendar_id'), (int) $col($new, 'calendar_id'), $col($new, 'start_utc'), $col($new, 'rrule'),
+            array_map(static fn(array $r): array => [(int) $r['id'], (int) $r['calendar_id'], $r['title']], $db->all('SELECT id, calendar_id, title FROM events WHERE recurrence_parent_id = ? ORDER BY id', [$new])),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('one Undo puts every row back on its calendar and removes the new part', [$before, 0],
+            [$rows($choir), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$new])]);
+    });
+
+    scenario('split: on a Google calendar it is 422 series_refused with the reason google, and nothing is sent or written', function () use ($db, $error): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $calls = [];
+        $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
+        $auth = new BetterCal\Domain\GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use (&$calls): array {
+            $calls[] = 'token';
+            return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
+        });
+        $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
+            $calls[] = $method;
+            return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample-series', 'iCalUID' => 'sample-series@google', 'status' => 'confirmed'])];
+        };
+        $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
+            new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
+            new BetterCal\Domain\GoogleWriter($db, $auth, new BetterCal\Domain\Feeds($db), $transport));
+        $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'owner@example.test',
+            'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', $cfg['session_secret']), 'scopes' => BetterCal\Domain\GoogleAuth::SCOPES]);
+        $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
+            'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
+        $now = BetterCal\Support\Time::nowDb();
+        $weekly = $db->insert('events', ['user_id' => $u, 'calendar_id' => $googleCal, 'uid' => 'sample-series@google', 'title' => 'Sample standup',
+            'start_utc' => '2027-01-05 18:00:00', 'end_utc' => '2027-01-05 19:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'source' => 'feed',
+            'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', 'google_event_id' => 'g-sample-series', 'created_at' => $now, 'updated_at' => $now]);
+        $state = static fn(): array => [$db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ?', [$weekly, $weekly]), (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u])];
+        $before = $state();
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample standup, new room'];
+        $plan = $events->previewPatch($u, $weekly, $edit + ['preview' => true]);
+        [$code, $refused] = $error(fn() => $events->patch($u, $weekly, $edit + ['plan' => ['hash' => $plan['hash'] ?? '', 'choices' => []]]));
+        [$deleteCode, $deleteRefused] = $error(fn() => $events->deleteEvent($u, $weekly, 'following', '2027-01-19T18:00:00+00:00', null, ['hash' => '', 'choices' => []]));
+        checkEq('the preview names the refusal, and the commit of an edit or a delete from a later day is 422 series_refused with the reason google; no call, nothing written', [
+            ['google'], '422 series_refused', ['google'], '422 series_refused', ['google'], [], $before,
+        ], [
+            array_column($plan['refusals'], 'code'), $code, array_column($refused['refusals'] ?? [], 'code'),
+            $deleteCode, array_column($deleteRefused['refusals'] ?? [], 'code'), $calls, $state(),
+        ]);
+    });
+
+    scenario('split: a relationship from a day on, previewed and committed, is the status edit on an own calendar and the answer on an opportunities one', function () use ($db, $d, $u, $series, $choices, $newest, $col): void {
+        $own = $series('Sample rehearsal', 'FREQ=WEEKLY;BYDAY=TU');
+        $plan = $d->events->previewRelationship($u, $own, 'maybe', 'following', '2027-01-19T18:00:00+00:00');
+        $d->events->setRelationship($u, $own, 'maybe', 'following', '2027-01-19T18:00:00+00:00', null, ['hash' => $plan['hash'], 'choices' => $choices($plan)]);
+        $new = $newest($own);
+        checkEq('own calendar: the plan is the status edit\'s split, the new part from 19 Jan is tentative (maybe), the old part keeps its status', [
+            'following', 'edit', 'confirmed', 'tentative', '2027-01-19 18:00:00', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z',
+        ], [$plan['scope'], $plan['action'], $col($own, 'status'), $col($new, 'status'), $col($new, 'start_utc'), $col($own, 'rrule')]);
+
+        $offers = (int) $d->calendars->create($u, ['name' => 'Sample offers', 'role' => 'opportunities'])['id'];
+        // A request of its own, as the app makes it: an Events reads its calendars once.
+        $d = domains($db);
+        $talk = (int) $d->events->create($u, eventAt($offers, 'Sample talks', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU']))['eventId'];
+        $plan = $d->events->previewRelationship($u, $talk, 'planned', 'following', '2027-01-19T18:00:00+00:00');
+        $d->events->setRelationship($u, $talk, 'planned', 'following', '2027-01-19T18:00:00+00:00', null, ['hash' => $plan['hash'], 'choices' => $choices($plan)]);
+        $new = $newest($talk);
+        checkEq('opportunities calendar: the plan is the answer\'s split, the new part from 19 Jan is going (planned), the old part keeps no answer', [
+            'following', 'answer', 'none', 'going', '2027-01-19 18:00:00',
+        ], [$plan['scope'], $plan['action'], $col($talk, 'attendance'), $col($new, 'attendance'), $col($new, 'start_utc')]);
+    });
+
+    scenario('split: delete following and an answer from the first day preview as the whole series\', with no plan to commit', function () use ($d, $u, $db, $series, $col): void {
+        $whole = ['whole' => true, 'direct' => true, 'hash' => null];
+        $gone = $series('Sample yoga', 'FREQ=WEEKLY;BYDAY=TU;COUNT=4');
+        $plan = $d->events->previewDelete($u, $gone, 'following', '2027-01-05T18:00:00+00:00');
+        $d->events->deleteEvent($u, $gone, 'following', '2027-01-05T18:00:00+00:00', null, null);
+        checkEq('delete following from the first day: {whole, direct, hash null}, and the commit with no plan deletes the series', [$whole, true],
+            [array_replace($whole, array_intersect_key($plan, $whole)), $col($gone, 'deleted_at') !== null]);
+
+        $answered = $series('Sample walk', 'FREQ=WEEKLY;BYDAY=TU;COUNT=4');
+        $plan = $d->events->previewAttendance($u, $answered, 'going', 'following', '2027-01-05T18:00:00+00:00');
+        $d->events->setAttendance($u, $answered, 'going', 'following', '2027-01-05T18:00:00+00:00', null);
+        checkEq('an answer from the first day: {whole, direct, hash null}, and the commit with no plan answers the whole series, no part made', [$whole, 'going', 0], [
+            array_replace($whole, array_intersect_key($plan, $whole)), $col($answered, 'attendance'),
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id > ? AND user_id = ? AND recurrence_parent_id IS NULL', [$answered, $u]),
+        ]);
+    });
+
+    scenario('split: a typed clock from a day on is read in the series\' zone, and the day acted on\'s own time and length are adoption groups of the part', function () use ($d, $u, $db, $home, $choices, $newest, $col): void {
+        $class = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample class', 'start' => '2027-01-05T18:00:00+01:00', 'end' => '2027-01-05T19:00:00+01:00',
+            'allDay' => false, 'tzid' => 'Europe/Berlin', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'])['eventId'];
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-12T17:00:00+00:00', 'typed' => ['start' => '2027-01-12T09:30', 'end' => '2027-01-12T10:30']];
+        $plan = $d->events->previewPatch($u, $class, $edit + ['preview' => true]);
+        $d->events->patch($u, $class, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($class);
+        checkEq('typed 09:30 to 10:30 in Berlin: the new part starts at 08:30 UTC on 12 Jan and ends an hour later, the old one ends on 5 Jan', [
+            '2027-01-12 08:30:00', '2027-01-12 09:30:00', 'Europe/Berlin', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270105T170000Z',
+        ], [$col($new, 'start_utc'), $col($new, 'end_utc'), $col($new, 'tzid'), $col($class, 'rrule')]);
+
+        $lab = (int) $d->events->create($u, eventAt($home, 'Sample lab', '2027-01-05', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU']))['eventId'];
+        $d->events->patch($u, $lab, ['scope' => 'this', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-19T19:00:00+00:00', 'end' => '2027-01-19T21:00:00+00:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$lab]);
+        $edit = ['scope' => 'following', 'typed' => ['start' => '2027-01-19T19:30', 'end' => '2027-01-19T20:30', 'tz' => 'UTC']];
+        $plan = $d->events->previewPatch($u, $day, $edit + ['preview' => true]);
+        $groups = [];
+        foreach ($plan['groups'] as $g) {
+            $groups[$g['id']] = [$g['selected'], array_column($g['options'], 'id')];
+        }
+        checkEq('from the edited day that owns its time and length, the part\'s plan has a time group preselecting adopt and a length group preselecting adopt for a typed value', [
+            'following', ['adopt', ['adopt', 'same']], ['adopt', ['adopt', 'same']],
+        ], [$plan['scope'], $groups['time'] ?? null, $groups['length'] ?? null]);
+        $d->events->patch($u, $day, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($lab);
+        checkEq('adopted: the new part is at 19:30 for an hour from 19 Jan, and the day keeps neither its own time nor its length', [
+            '2027-01-19 19:30:00', '2027-01-19 20:30:00', [],
+        ], [$col($new, 'start_utc'), $col($new, 'end_utc'), array_values(array_intersect(['time', 'length'], json_decode((string) ($db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]) ?? '[]'), true) ?? []))]);
+    });
 };

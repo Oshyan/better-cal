@@ -221,10 +221,11 @@ final class JobQueue
         $this->db->run("UPDATE jobs SET status = 'done', last_error = NULL WHERE id = ?", [$jobId]);
     }
 
-    public function markFailed(array $job, string $error): void
+    /** Retried with backoff, failed for good after MAX_ATTEMPTS, or at once when $retry is false (nothing left to run it as). */
+    public function markFailed(array $job, string $error, bool $retry = true): void
     {
         $attempts = (int) $job['attempts'];
-        if ($attempts >= self::MAX_ATTEMPTS) {
+        if (!$retry || $attempts >= self::MAX_ATTEMPTS) {
             $this->db->run("UPDATE jobs SET status = 'failed', last_error = ? WHERE id = ?", [mb_substr($error, 0, 2000), $job['id']]);
             return;
         }

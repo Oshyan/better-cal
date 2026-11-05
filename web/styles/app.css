@@ -1836,6 +1836,12 @@ body.bc-dragging * { cursor: grabbing !important; }
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .bc-qchip-repeat:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-inset)); }
+/* The other reading of the parse's days (#198): a tappable chip like the repeat chip. */
+.bc-qchip-other {
+  font: inherit; font-size: 12px; color: var(--accent); cursor: pointer;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); border-style: dashed;
+}
+.bc-qchip-other:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-inset)); }
 .bc-qchip.bc-nl-applied { animation: bc-nl-flash 0.9s ease; }
 @media (prefers-reduced-motion: reduce) { .bc-qchip.bc-nl-applied { animation: none; } }
 .bc-qa-repeat {

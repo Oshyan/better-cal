@@ -5784,6 +5784,55 @@ console.log('--- the series change flow: a drag, its plan, the commit (1.5.0) --
   globalThis.fetch = realFetch;
 }
 
+console.log('--- 1.5.1: adoption readings, typed values, one field table, quick add\'s other reading ---');
+{
+  const { planView } = await import('../src/lib/seriesplan.js');
+  const { EDIT_FIELDS, changedFields, fieldLines, editField } = await import('../src/lib/editfields.js');
+  const { typedRange, otherReadingWords, takeOtherReading } = await import('../src/lib/quickrange.js');
+  const nx = (s) => ({ start: s, allDay: false });
+  const base = {
+    hash: 'a1', zone: 'America/Los_Angeles', rule: { from: { rrule: 'FREQ=WEEKLY;BYDAY=TU', tz: 'America/Los_Angeles', allDay: false }, to: { rrule: 'FREQ=WEEKLY;BYDAY=FR', start: '2027-01-08T19:00:00-08:00', tz: 'America/Los_Angeles', allDay: false } },
+    bound: { kind: 'none' }, next: [], days: [], refusals: [], notes: [],
+  };
+  // Case 13: the day group, Friday adopted first, the same way a day later.
+  const day = planView({ ...base, groups: [{ id: 'day', selected: 'adopt', shift: 1, by: 3, options: [
+    { id: 'adopt', rrule: 'FREQ=WEEKLY;BYDAY=FR', next: [nx('2027-03-12T19:00:00-08:00')] },
+    { id: 'same', rrule: 'FREQ=WEEKLY;BYDAY=WE', next: [nx('2027-03-12T19:00:00-08:00')] }] }] }, { kind: 'drag', title: 'Choir', refYear: 2027 }).readings[0];
+  eq('adoption: the day\'s question and its two readings, as a person reads them', [day.reason, day.options.map((o) => o.label), day.options[0].selected], [
+    'This day was moved earlier to a date of its own. Should its new day become the series’ day, or every event move the same way?',
+    ['Friday becomes its day: weekly on Friday', 'Every event moves a day later: weekly on Wednesday'], true]);
+  // Case 14: the time group: 20:00 adopted, or half an hour later and this one at 20:00.
+  const time = planView({ ...base, groups: [{ id: 'time', selected: 'adopt', shift: 1800, options: [
+    { id: 'adopt', start: '2027-01-05T20:00:00-08:00' }, { id: 'same', start: '2027-01-05T19:30:00-08:00' }] }] }, { kind: 'drag', title: 'Choir', refYear: 2027 }).readings[0];
+  eq('adoption: the time\'s readings', time.options.map((o) => o.label.replace(/\s/g, ' ')),
+    ['8:00 PM becomes its time: every event at 8:00 PM', 'Every event moves half an hour later: 7:30 PM, this one at 8:00 PM']);
+  // A length typed: two hours becomes its length, or every event 30 minutes longer.
+  const len = planView({ ...base, groups: [{ id: 'length', selected: 'adopt', shift: 1800, length: 7200, options: [{ id: 'adopt' }, { id: 'same' }] }] }, { kind: 'editor', title: 'Choir' }).readings[0];
+  eq('adoption: the length\'s readings', len.options.map((o) => o.label), ['2 hours becomes its length: every event 2 hours long', 'Every event lengthens by half an hour, this one 2 hours long']);
+  // A length change reads as one: the group says what every day takes.
+  const dayOf = (key, day) => ({ key, kind: 'edited', title: 'Choir', day, outcome: 'stays', before: { date: day, at: day + 'T19:00:00-08:00' }, after: { date: day, at: day + 'T19:00:00-08:00' }, kept: ['title'], takes: ['length'] });
+  const lengthOnly = planView({ ...base, groups: [], days: [dayOf('k1', '2027-01-12'), dayOf('k2', '2027-01-19')] }, { kind: 'resize', title: 'Choir', refYear: 2027 });
+  eq('a length-only change: its days\' group says they take the new length', lengthOnly.edited.map((r) => r.line1), ['2 days that were changed earlier stay where they are and take the new length.']);
+  // One field table: every field the editor sends has a row, and the panel names it.
+  const sendable = ['title', 'calendarId', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'locationProvider', 'url', 'description', 'tagNames', 'personIds', 'rrule', 'reminders', 'isContainer', 'status'];
+  eq('field table: every field the editor sends is a row of the table', sendable.filter((k) => !editField(k)), []);
+  eq('field table: a field the table lacks is never sent', changedFields({ title: 'A', mystery: 2 }, { title: 'A', mystery: 1 }), {});
+  eq('field table: a new time sends its typed clocks with it', Object.keys(changedFields({ start: 'b', end: 'c', allDay: false, typed: { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' } }, { start: 'a', end: 'c', allDay: false, typed: null })), ['start', 'typed', 'end', 'allDay']);
+  eq('field table: every row but the rule has a label the panel says', EDIT_FIELDS.filter((r) => r.keys[0] !== 'rrule').every((r) => r.label && fieldLines(Object.fromEntries(r.keys.map((k) => [k, ['reminders', 'tagNames', 'personIds'].includes(k) ? [30] : 'x'])), {}, { timeWords: () => 'later', calendarName: (x) => x, personName: (x) => x }).length === 1), true);
+  // The typed clock from quick add's strip: the clocks, not the instants.
+  eq('quick add typed clock: 02:30 on the spring change day reaches the server as 02:30',
+    typedRange({ dateKey: '2027-03-14', startTime: '02:30', endTime: '03:30', allDay: false }, { start: '2027-03-14T03:30:00-07:00', end: '2027-03-14T03:30:00-07:00' }, 'America/Los_Angeles'),
+    { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' });
+  eq('quick add typed clock: none for an all-day range', typedRange({ dateKey: '2027-03-14', allDay: true }, { start: 'x', end: 'y' }, 'UTC'), null);
+  // Quick add's other reading: one tap, and a second puts it back.
+  const stretch = { title: 'Workshop', start: '2026-08-03T09:00:00-07:00', end: '2026-08-07T17:00:00-07:00', allDay: false, rrule: null,
+    other: { reading: 'each', start: '2026-08-03T09:00:00-07:00', end: '2026-08-03T17:00:00-07:00', allDay: false, rrule: 'FREQ=DAILY;COUNT=5', days: 5 } };
+  const each = takeOtherReading(stretch);
+  eq('quick add other reading: the chip says what a tap does', [otherReadingWords(stretch.other).label, otherReadingWords(each.other).label], ['Each day instead', 'One event instead']);
+  eq('quick add other reading: taken, the days are each day\'s, and taken again, the stretch', [each.rrule, each.end, takeOtherReading(each).rrule, takeOtherReading(each).end],
+    ['FREQ=DAILY;COUNT=5', '2026-08-03T17:00:00-07:00', null, '2026-08-07T17:00:00-07:00']);
+}
+
 console.log('--- the editor\'s save: only what changed (#199), all events through the plan (1.5.0) ---');
 {
   const { changedFields, fieldLines } = await import('../src/lib/editfields.js');

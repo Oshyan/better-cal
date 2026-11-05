@@ -323,8 +323,9 @@ return static function (Db $db): void {
         ]);
         // The day on its own date dragged on a day: the series moves a day, it lands where dropped.
         $editor = ['scope' => 'all', 'start' => '2027-03-26T18:00:00+00:00', 'end' => '2027-03-26T19:00:00+00:00'];
-        planned($d->events, $u, $moved, $editor);
-        checkEq('the moved day dragged a day with all events: Thursdays, and it shows on Fri 26 Mar', ['FREQ=WEEKLY;BYDAY=TH', '2027-03-26 18:00:00'],
+        // The same-way reading (adopting its Friday, preselected, is the model tests' "Adopt").
+        planned($d->events, $u, $moved, $editor, ['day' => 'same']);
+        checkEq('the moved day dragged a day with all events, the same way: Thursdays, and it shows on Fri 26 Mar', ['FREQ=WEEKLY;BYDAY=TH', '2027-03-26 18:00:00'],
             [$db->scalar('SELECT rrule FROM events WHERE id = ?', [$choir]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$moved])]);
         // "Use series value" sent to the day's own row, and to the master by its key.
         $d->events->patch($u, $rehearsal, ['scope' => 'this', 'useSeries' => ['title']]);
@@ -363,6 +364,18 @@ return static function (Db $db): void {
             $db->scalar("SELECT recurrence_instance_utc FROM events WHERE recurrence_parent_id = ? AND title = 'Night shift, inventory'", [$night]));
         $d->undo->undoLatest($u);
         checkEq('undone: every row as before', $before, $rows($night));
+        // A new series typed to start at 02:30 on the change day (the editor's
+        // and quick add's `typed`): that clock, through the same anchor rule.
+        $typed = $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample early practice', 'start' => '2027-03-14T03:30:00-07:00', 'end' => '2027-03-14T04:30:00-07:00',
+            'typed' => ['start' => '2027-03-14T02:30', 'end' => '2027-03-14T04:30', 'tz' => $la], 'allDay' => false, 'tzid' => $la, 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+        $stored = $db->one('SELECT rrule, start_utc, exdates_json FROM events WHERE id = ?', [(int) $typed['eventId']]);
+        checkEq('typed 02:30 on 14 Mar: stored from 7 Mar at 02:30, a skip there, COUNT=5; the API says COUNT=4', [
+            'FREQ=WEEKLY;COUNT=5', '2027-03-07 10:30:00', ['2027-03-07 10:30:00'], 'FREQ=WEEKLY;COUNT=4',
+        ], [$stored['rrule'], $stored['start_utc'], json_decode((string) $stored['exdates_json'], true), $typed['rrule'] ?? null]);
+        $window = $d->events->window($u, new \DateTimeImmutable('2027-03-01T00:00:00Z'), new \DateTimeImmutable('2027-04-15T00:00:00Z'), [$home], null, false);
+        $early = array_values(array_map(static fn(array $o): string => BetterCal\Support\Time::parseIso((string) $o['start'])->setTimezone(new DateTimeZone($la))->format('Y-m-d H:i'),
+            array_filter($window, static fn(array $o): bool => $o['title'] === 'Sample early practice')));
+        checkEq('typed 02:30: the window shows 14 Mar at 03:30, then 02:30, four events', ['2027-03-14 03:30', '2027-03-21 02:30', '2027-03-28 02:30', '2027-04-04 02:30'], $early);
     });
 
     // Re-expected for the structure rework: there is no routing flag any
@@ -381,8 +394,8 @@ return static function (Db $db): void {
         checkEq('F6: an hour later and renamed, from the day\'s own row and from the master naming its key: the same plan', $fromRow, $fromMaster);
         [$code] = $answer(fn() => $d->events->patch($u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00', 'title' => 'Sample chorus']));
         checkEq('F6: a plan-less rename naming that day is 409 series_plan_required (the day owns its title)', '409 series_plan_required', $code);
-        planned($d->events, $u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00', '_fromEditedDay' => true] + $edit);
-        checkEq('F6: committed from the master (a stray _fromEditedDay in the body is nothing): the series at 19:00, the day at 18:00 with the new title, its time its own and its title not', [
+        planned($d->events, $u, $choir, ['scope' => 'all', 'instanceStart' => '2027-02-09T18:00:00+00:00', '_fromEditedDay' => true] + $edit, ['time' => 'same']);
+        checkEq('F6, the same way (adopting its 18:00 is the other option): committed from the master (a stray _fromEditedDay in the body is nothing): the series at 19:00, the day at 18:00 with the new title, its time its own and its title not', [
             '2027-01-05 19:00:00', 'Sample chorus', '2027-02-09 18:00:00', ['time'],
         ], [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$choir]), $db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$day]), $own($day)]);
 

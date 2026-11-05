@@ -31,7 +31,9 @@ use BetterCal\Support\Time;
  *
  * $opts: google (bool), today ('Y-m-d', for the years in words), masterTags,
  * masterPeople, rowTags [id => list], rowPeople [id => list], rowLinks [id =>
- * the ids of the event_links naming the row, as a trip or as a stop].
+ * what refers to the row, as "kind:reference" entries: its trip links,
+ * duplicate decisions and plugin data (SeriesPlans::referencesNaming, one
+ * reading of OwnFields::REFERENCES)].
  *
  * Returns ['plan' => the plan as the API sends it, 'writes' => what the
  * writer applies, 'selected' => [group => option], 'groups' => list of
@@ -2112,7 +2114,10 @@ final class Model
             $newShown = self::dayOf($sides['after']);
             $newClock = substr((string) ($sides['after']['at'] ?? ''), 11, 5);
             $name = in_array('title', $ownBefore, true) ? "'" . (string) $row['title'] . "' " : '';
-            $keeps = array_values(array_intersect(['title', 'location', 'description', 'url', 'icon', 'tags', 'people', 'reminders', 'status', 'attendance', 'trip'], $ownAfter));
+            // What it keeps, in words from the one table of own fields
+            // (OWN_WORDS): every field it can own but its placement, which
+            // its outcome says, references (trip, duplicates, plugin data) included.
+            $keeps = array_values(array_intersect(array_diff(array_keys(self::OWN_WORDS), self::PLACEMENT), $ownAfter));
             $keepWords = array_map(static fn(string $f): string => self::OWN_WORDS[$f], $keeps);
             // A timed day at its own time while the series' time changes says
             // the time it keeps ("keeps its own time at 09:00", the examples' all-day case).

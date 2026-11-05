@@ -2302,6 +2302,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Adopt: an ordinary day has nothing of its own to adopt', [], array_column($p['plan']['groups'], 'id'));
 }
 
+// What a day keeps reads the one table of own fields: a day kept only for a
+// duplicate decision says so, never "stays, takes 'X'" with no reason.
+{
+    $choir = smSeries('Choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 19:00');
+    $rows = [smEdited($choir, 2, '2027-01-12 19:00', ['title' => 'Choir'], null, [])];
+    $p = smPlan($choir, $rows, ['columns' => ['title' => 'Chorus']], [], ['rowLinks' => [2 => ['duplicates:7']]]);
+    $words = array_column(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited'), 'outcomeWords');
+    checkEq('Keeps: a day kept for a duplicate decision names it', ["stays, keeps its duplicate decision"], array_values($words));
+}
+
 // The yearly wording, one table for the server and the editor (smoke.mjs reads it too).
 {
     $table = json_decode((string) file_get_contents(__DIR__ . '/fixtures/yearly-words.json'), true);

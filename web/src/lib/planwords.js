@@ -325,6 +325,8 @@ const FIELD_NOUNS = {
   date: 'date', time: 'time', length: 'length', allDay: 'all-day setting', title: 'title', location: 'location',
   description: 'notes', url: 'link', reminders: 'reminders', status: 'status', attendance: 'answer',
   tags: 'tags', people: 'people', icon: 'icon', trip: 'trip',
+  // References that keep a day's row (OwnFields::REFERENCES): its trip, a duplicate decision, plugin data.
+  duplicates: 'duplicate decision', pluginData: 'plugin data',
 };
 const fieldList = (fields) => andList(fields.map((f) => FIELD_NOUNS[f] || f));
 const contentOf = (list) => (list || []).filter((f) => f !== 'date' && f !== 'time');
@@ -525,7 +527,7 @@ export function groupLines({ count, outcome, weekday = null, shift = null, clock
 }
 
 const isOwn = (g) => /^own[A-Z]/.test(g.id || '');
-const pluralNoun = (noun) => (/s$|people/.test(noun) ? noun : noun + 's');
+const pluralNoun = (noun) => (/s$|people|data$/.test(noun) ? noun : noun + 's');
 
 /**
  * A day's row when choices are about it alone: what they are about.

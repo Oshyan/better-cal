@@ -36,7 +36,7 @@ import {
 import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
-import { buildRange, typedRange } from '../lib/quickrange.js';
+import { buildRange, typedRange, otherReadingWords, takeOtherReading } from '../lib/quickrange.js';
 import { creationLine, parsedSeries } from '../lib/seriesplan.js';
 import { seriesPlans } from './serieschange.js';
 import { useMarkerSuggest } from './MarkerSuggest.js';
@@ -282,6 +282,16 @@ export function QuickAdd() {
       clearTimeout(flashTimer.current);
       flashTimer.current = setTimeout(() => setFlash(null), 900);
     }
+  };
+
+  // The other reading of the parse's days, one tap (#198): the strip takes
+  // its days as it takes a parse's, the fields it sets no longer the
+  // person's own, and the chip then offers the reading it had.
+  const takeOther = () => {
+    const d = draftRef.current;
+    if (!d || !d.other) return;
+    for (const k of ['dateKey', 'startTime', 'endTime', 'allDay', 'rrule']) touchedRef.current.delete(k);
+    applyParse(takeOtherReading(d), lastParsedRef.current);
   };
 
   function onInput(e) {
@@ -546,6 +556,9 @@ export function QuickAdd() {
           title="Change how it repeats" onClick=${repeatToggle}
         ><${Icon} name="repeat" size=${12} />${repeatWords}</button>`}
         ${spanLabel && html`<span class="bc-qchip" title="Ends on a later day">${spanLabel}</span>`}
+        ${draft && draft.other && html`<button
+          type="button" class="bc-qchip bc-qchip-other" title=${otherReadingWords(draft.other).title} onClick=${takeOther}
+        >${otherReadingWords(draft.other).label}</button>`}
         ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft && Array.isArray(draft.tags) && draft.tags.map((t) => html`<span class="bc-qchip" title="Tag">#${t}</span>`)}

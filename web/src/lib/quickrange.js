@@ -45,3 +45,25 @@ export function typedRange(form, range, tz) {
   const endDay = dayKeyOf(parseISO(range.end));
   return { start: form.dateKey + 'T' + form.startTime, end: endDay + 'T' + form.endTime, tz };
 }
+
+// Quick add's other reading of a parse's days (#198): the server's
+// `draft.other`, one stretch against an event each day. Its chip's words,
+// as a person reads them, and its title (the longer why).
+export function otherReadingWords(other) {
+  if (!other) return null;
+  return other.reading === 'each'
+    ? { label: 'Each day instead', title: 'Make it an event on each of the ' + other.days + ' days, at these times' }
+    : { label: 'One event instead', title: 'Make it one event, from the first start to the last end' };
+}
+
+// The parse with its other reading taken: the draft's days become the
+// other reading's, and the reading it had becomes the other one, so a
+// second tap puts it back. Its series plan was for the reading it had.
+export function takeOtherReading(draft) {
+  const o = draft && draft.other;
+  if (!o) return draft;
+  return {
+    ...draft, start: o.start, end: o.end, allDay: o.allDay, rrule: o.rrule || null, series: null,
+    other: { reading: o.reading === 'each' ? 'one' : 'each', start: draft.start, end: draft.end, allDay: !!draft.allDay, rrule: draft.rrule || null, days: o.days },
+  };
+}

@@ -972,4 +972,23 @@ return static function (Db $db): void {
             ], [$db->scalar('SELECT title FROM events WHERE id = ?', [$day]), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]), $refs()]);
         }
     });
+
+    scenario('the same moment in another zone: a day on a date of its own keeps its instant across the day boundary, and undone', function () use ($d, $u, $db, $rows, $home): void {
+        // Tuesdays and Thursdays at 18:00 in Los Angeles; Tue 19 Jan moved to Wed 20 Jan at the series' time. Given Berlin at the same
+        // moment (the clock it showed, sent with the new zone), the series repeats Wednesdays and Fridays at 03:00 there and the day
+        // stays at Wed 20 Jan 18:00 Los Angeles time.
+        $class = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample moment class', 'start' => '2027-01-05T18:00:00-08:00', 'end' => '2027-01-05T19:00:00-08:00',
+            'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU,TH'])['eventId'];
+        $d->events->patch($u, $class, ['scope' => 'this', 'instanceStart' => '2027-01-20T02:00:00Z', 'start' => '2027-01-20T18:00:00-08:00', 'end' => '2027-01-20T19:00:00-08:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$class]);
+        $before = $rows($class);
+        planned($d->events, $u, $class, ['scope' => 'all', 'instanceStart' => '2027-01-13T02:00:00Z', 'tzid' => 'Europe/Berlin', 'start' => '2027-01-12T18:00:00+01:00', 'end' => '2027-01-12T19:00:00+01:00'],
+            ['zone' => 'moment', 'movedDays' => 'keep']);
+        checkEq('committed: Wednesdays and Fridays in Berlin from the same first instant; the day on its own date keeps 21 Jan 02:00Z, written in Berlin, its date its own', [
+            ['rrule' => 'FREQ=WEEKLY;BYDAY=WE,FR', 'start_utc' => '2027-01-06 02:00:00', 'tzid' => 'Europe/Berlin'],
+            ['start_utc' => '2027-01-21 02:00:00', 'end_utc' => '2027-01-21 03:00:00', 'tzid' => 'Europe/Berlin', 'override_fields' => '["date"]'],
+        ], [$db->one('SELECT rrule, start_utc, tzid FROM events WHERE id = ?', [$class]), $db->one('SELECT start_utc, end_utc, tzid, override_fields FROM events WHERE id = ?', [$day])]);
+        $d->undo->undoLatest($u);
+        checkEq('the same moment undone: every row as before', $before, $rows($class));
+    });
 };

@@ -338,4 +338,89 @@ return static function (Db $db): void {
             '2027-01-19 19:30:00', '2027-01-19 20:30:00', [],
         ], [$col($new, 'start_utc'), $col($new, 'end_utc'), array_values(array_intersect(['time', 'length'], json_decode((string) ($db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]) ?? '[]'), true) ?? []))]);
     });
+
+    scenario('split: the series\' rule sent back unchanged is no rule, so the part keeps the rest of the count', function () use ($d, $u, $db, $series, $choices, $newest, $col): void {
+        $club = $series('Sample club', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6');
+        // The editor sends the rule it showed, spelled its own way, with a drag of 19 Jan to Wednesday.
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-20T18:00:00+00:00', 'end' => '2027-01-20T19:00:00+00:00',
+            'rrule' => 'FREQ=WEEKLY;INTERVAL=1;BYDAY=TU;COUNT=6'];
+        $plan = $d->events->previewPatch($u, $club, $edit + ['preview' => true]);
+        checkEq('the preview: no bound group, the part has the 4 events left from 20 Jan, ending 10 Feb', [[], ['kind' => 'count', 'count' => 4], 4, '2027-02-10', 'FREQ=WEEKLY;BYDAY=WE;COUNT=4'],
+            [array_column($plan['groups'], 'id'), $plan['split']['after']['bound'], $plan['bound']['events'] ?? null, $plan['bound']['last'] ?? null, $plan['rule']['after']]);
+        $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($club);
+        checkEq('committed: Tuesdays 5 and 12 Jan, then 4 Wednesdays from 20 Jan, 6 events as the series showed', ['FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 'FREQ=WEEKLY;BYDAY=WE;COUNT=4', '2027-01-20 18:00:00'],
+            [$col($club, 'rrule'), $col($new, 'rrule'), $col($new, 'start_utc')]);
+    });
+
+    scenario('split: a changed count is the whole series\' (preselected) or that many from this day on, each committed as it says', function () use ($d, $u, $db, $rows, $error, $series, $choices, $newest, $col): void {
+        $club = $series('Sample club', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6');
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample club, spring', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=8'];
+        $before = $rows($club);
+        $plan = $d->events->previewPatch($u, $club, $edit + ['preview' => true]);
+        $bound = null;
+        foreach ($plan['groups'] as $g) {
+            if ($g['id'] === 'bound') {
+                $bound = $g;
+            }
+        }
+        checkEq('the bound group: 8 in the whole series (preselected: 6 from 19 Jan, ending 23 Feb) or 8 from 19 Jan on (ending 9 Mar), and the plan is the whole-count one', [
+            'whole', ['whole', 'part'], 8, [[6, '2027-02-23'], [8, '2027-03-09']], ['2027-01-19T18:00:00+00:00', '2027-01-26T18:00:00+00:00', '2027-02-02T18:00:00+00:00'],
+            ['kind' => 'count', 'count' => 6], 6,
+        ], [
+            $bound['selected'] ?? null, array_column($bound['options'] ?? [], 'id'), $bound['count'] ?? null,
+            array_map(static fn(array $o): array => [$o['bound']['events'] ?? null, $o['bound']['last'] ?? null], $bound['options'] ?? []),
+            array_column($bound['options'][0]['next'] ?? [], 'start'), $plan['split']['after']['bound'], $plan['bound']['events'] ?? null,
+        ]);
+        checkEq('a commit naming no bound reading is 409 series_plan_required', '409 series_plan_required',
+            $error(fn() => $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => array_diff_key($choices($plan), ['bound' => 1])]]))[0]);
+        $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]);
+        $new = $newest($club);
+        checkEq('the whole count committed: 2 before the split and 6 from 19 Jan, 8 in all', ['FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', 'Sample club, spring'],
+            [$col($club, 'rrule'), $col($new, 'rrule'), $col($new, 'title')]);
+        $d->undo->undoLatest($u);
+        checkEq('undone: every row as before', $before, $rows($club));
+        $part = $d->events->previewPatch($u, $club, $edit + ['preview' => true, 'plan' => ['choices' => ['bound' => 'part']]]);
+        checkEq('8 from this day on previewed: its plan has 8 events ending 9 Mar', ['part', 8, '2027-03-09'], [$part['groups'][0]['selected'], $part['bound']['events'] ?? null, $part['bound']['last'] ?? null]);
+        $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $part['hash'], 'choices' => $choices($part)]]);
+        $new = $newest($club);
+        checkEq('8 from this day on committed: the part has COUNT=8 from 19 Jan', ['FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T180000Z', 'FREQ=WEEKLY;BYDAY=TU;COUNT=8', '2027-01-19 18:00:00'],
+            [$col($club, 'rrule'), $col($new, 'rrule'), $col($new, 'start_utc')]);
+        // A whole count the old part already reaches leaves the part nothing: that reading is disabled, the other selected.
+        $short = $series('Sample short club', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6');
+        $plan = $d->events->previewPatch($u, $short, ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=2', 'preview' => true]);
+        checkEq('COUNT=2 sent at the third day: "2 from this day on" is selected, with 2 events from 19 Jan', ['part', 2, '2027-01-26'],
+            [$plan['groups'][0]['selected'] ?? null, $plan['bound']['events'] ?? null, $plan['bound']['last'] ?? null]);
+        checkEq('the disabled whole-count reading carries the empty reason and code', [true, 'This would leave the series with no events. Delete it instead?', ['group' => 'bound', 'option' => 'whole', 'code' => 'empty']],
+            [$plan['groups'][0]['options'][0]['disabled'] ?? false, $plan['groups'][0]['options'][0]['reason'] ?? null,
+                array_values(array_map(static fn(array $r): array => array_intersect_key($r, ['group' => 1, 'option' => 1, 'code' => 1]), array_filter($plan['refusals'], static fn(array $r): bool => ($r['group'] ?? null) === 'bound')))[0] ?? null]);
+    });
+
+    scenario('split: a sent end before the split day is refused as an end before the start is, and writes nothing', function () use ($d, $u, $db, $rows, $error, $series): void {
+        $walk = $series('Sample hike', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270209T180000Z');
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-19T19:00:00+00:00', 'end' => '2027-01-19T20:00:00+00:00',
+            'rrule' => 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T235959Z'];
+        $before = $rows($walk);
+        $entries = (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u]);
+        $whole = $d->events->previewPatch($u, $walk, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20261229T235959Z', 'preview' => true]);
+        $plan = $d->events->previewPatch($u, $walk, $edit + ['preview' => true]);
+        checkEq('the preview refuses it with the whole series\' reason for an end before the start, the same code and words', [
+            [['code' => 'empty', 'words' => 'This would leave the series with no events. Delete it instead?']], $whole['refusals'], [],
+        ], [$plan['refusals'], array_map(static fn(array $r): array => array_intersect_key($r, ['code' => 1, 'words' => 1]), $whole['refusals']), $plan['groups']]);
+        [$code, $errPlan] = $error(fn() => $d->events->patch($u, $walk, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => []]]));
+        checkEq('the commit is 422 series_refused with the plan, and every row and the Undo list are as before', ['422 series_refused', 'empty', $before, $entries],
+            [$code, $errPlan['refusals'][0]['code'] ?? null, $rows($walk), (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u])]);
+        checkEq('no part was made', 0, (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Sample hike' AND id <> ?", [$u, $walk]));
+        // From the series' last day, whose part is that one day: an end sent before it is the same refusal, never read as the end it has.
+        $last = $series('Sample last hike', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270119T180000Z');
+        $before = $rows($last);
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'start' => '2027-01-19T19:00:00+00:00', 'end' => '2027-01-19T20:00:00+00:00',
+            'rrule' => 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270112T235959Z'];
+        $plan = $d->events->previewPatch($u, $last, $edit + ['preview' => true]);
+        [$code] = $error(fn() => $d->events->patch($u, $last, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => []]]));
+        checkEq('from the last day: refused as empty, 422, nothing written and no part made', [['empty'], '422 series_refused', $before, 0], [
+            array_column($plan['refusals'], 'code'), $code, $rows($last),
+            (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Sample last hike' AND id <> ?", [$u, $last]),
+        ]);
+    });
 };

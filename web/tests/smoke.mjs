@@ -4728,6 +4728,18 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     'The series is set to 6 events, and the day you moved would fall after the sixth. Keep the end date, or keep the count?',
     [['Keep the end: 10 events, ending Nov 1', true], ['Keep 6 events; the moved day becomes an event of its own', false]]]);
   eq('series panel: a count names its events on the button', c.action, 'Move 10 events');
+  // A count changed from a day on: 8 in the whole series (6 from the split day), or 8 from that day.
+  const club = {
+    ...cello, rule: rule('FREQ=WEEKLY;BYDAY=TU;COUNT=6', 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', '2027-01-19T10:00:00-08:00', '2027-01-19T10:00:00-08:00'),
+    bound: { kind: 'count', count: 6, events: 6, last: '2027-02-23', from: { kind: 'count', count: 4 } },
+    groups: [{ id: 'bound', selected: 'whole', count: 8, at: '2027-01-19', options: [
+      { id: 'whole', bound: { kind: 'count', events: 6, last: '2027-02-23' } }, { id: 'part', bound: { kind: 'count', events: 8, last: '2027-03-09' } },
+    ] }],
+  };
+  const cl = planView(club, ctx({ title: 'Sample club' }));
+  eq('series panel: a count changed from a day on asks whether it counts the whole series or from that day', [cl.readings[0].reason, cl.readings[0].options.map((o) => [o.label, o.selected])], [
+    'You set 8 events. Count them in the whole series, or from Jan 19 on?',
+    [['8 in the whole series: 6 events from Jan 19, ending Feb 23', true], ['8 events from Jan 19, ending Mar 9', false]]]);
 
   // A day the new rule would add at the start: among the skipped days, a reason and its radios.
   const pottery = {

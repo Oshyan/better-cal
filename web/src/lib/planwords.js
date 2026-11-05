@@ -640,6 +640,22 @@ export function choiceWords(g, ctx = {}) {
       options: label((x) => (x.id === 'without' ? 'Leave ' + (one ? 'it' : 'them') + ' out' : 'Add ' + (one ? 'it' : 'them'))),
     };
   }
+  if (g.id === 'bound' && g.at) {
+    // A count changed from a day on (a split, `at` its day): the series'
+    // whole count, the part taking what is left, or that many from the day.
+    const day = fmtDay(g.at, { weekday: false, ...opts });
+    return {
+      lead: '',
+      reason: 'You set ' + plural(g.count, 'event', 'events') + '. Count them in the whole series, or from ' + day + ' on?',
+      options: label((x) => {
+        const b = x.bound || {};
+        const last = b.last ? ', ending ' + fmtDay(b.last, { weekday: false, ...opts }) : '';
+        return x.id === 'whole'
+          ? g.count + ' in the whole series: ' + plural(b.events != null ? b.events : 0, 'event', 'events') + ' from ' + day + last
+          : plural(g.count, 'event', 'events') + ' from ' + day + last;
+      }),
+    };
+  }
   if (g.id === 'bound') {
     const count = g.count;
     const from = (ctx.bound && ctx.bound.from) || {};

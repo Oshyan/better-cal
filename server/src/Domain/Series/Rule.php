@@ -531,6 +531,17 @@ final class Rule
         return $this->wkst ?? 0;
     }
 
+    /**
+     * The rule's frequency as written: what one period of it is, a day, a
+     * week, a month or a year. A DAILY list reads as the weekly family
+     * (its `freq` is the family's) and still repeats daily, until a reading
+     * rewrites its days as WEEKLY.
+     */
+    public function frequency(): string
+    {
+        return $this->dailyList && !$this->dirty ? 'DAILY' : $this->freq;
+    }
+
     /** The period holding a day: a day number, a week's first day, a month index or a year. */
     public function periodOf(int $dn): int
     {

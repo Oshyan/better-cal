@@ -1849,9 +1849,12 @@ final class Plugins
                 return 0;
             }
             $queue = new JobQueue($this->db);
+            $authority = RequestAuthority::current();
             $ran = 0;
             foreach ($jobIds as $jobId) {
-                $job = RequestAuthority::checkedTx($this->db, fn(): ?array => $queue->claimById($jobId));
+                // The queue's state is the server's own (asServer); the
+                // job's work runs under the request, checked at its writes.
+                $job = RequestAuthority::asServer(fn(): ?array => $queue->claimById($jobId));
                 if ($job === null) {
                     continue; // the worker took it meanwhile
                 }
@@ -1859,9 +1862,12 @@ final class Plugins
                 try {
                     $payload = json_decode((string) ($job['payload_json'] ?? '{}'), true) ?: [];
                     $this->runJob((int) ($payload['userId'] ?? 0), (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
-                    RequestAuthority::checkedTx($this->db, fn() => $queue->markDone((int) $job['id']));
+                    RequestAuthority::asServer(fn() => $queue->markDone((int) $job['id']));
                 } catch (\Throwable $e) {
-                    RequestAuthority::checkedTx($this->db, fn() => $queue->markFailed($job, $e->getMessage()));
+                    // A credential revoked meanwhile leaves nothing to run it
+                    // as: failed once, never rerun by the worker without it.
+                    $retry = $authority === null || $authority->stillValid($this->db);
+                    RequestAuthority::asServer(fn() => $queue->markFailed($job, $e->getMessage(), $retry));
                 }
             }
             return $ran;

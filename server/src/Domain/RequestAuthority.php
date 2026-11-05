@@ -47,7 +47,7 @@ final class RequestAuthority
         'model_admissions' => 'admission to the model: the budget a request draws on, counted before it is known to be valid',
         'external_action_admissions' => 'admission to an outside action (a test email): the same kind of budget',
         'http_cache' => 'a lookup cache (an event page, a plugin fetch): the same answer for whoever asks',
-        'geocode_cache' => 'a lookup cache (an address): the same answer for whoever asks',
+        'geocode_cache' => 'a lookup cache (an address as typed, and where it is): the same row whoever asks, and no account\'s',
         'system_health' => "the server's health record of its own jobs and providers",
     ];
     /** The credential every write made now is checked against (Undo::write), or null. */
@@ -97,6 +97,30 @@ final class RequestAuthority
             self::current()?->assertValid($db);
             return $fn();
         });
+    }
+
+    /**
+     * The server's own record of its work, written as no request: a job
+     * queue's state (claimed, done, failed). The job's work runs under the
+     * request and is checked at its writes; whether the queue ran it is the
+     * server's, true whoever queued it, so a credential revoked mid-run
+     * still lets the queue say the job failed, once. Not a table on
+     * BOOKKEEPING: a job row is queued by a request, under its check.
+     */
+    public static function asServer(callable $fn): mixed
+    {
+        return self::during(null, $fn);
+    }
+
+    /** Whether this credential is still valid, read without a lock (the record of a run it can no longer make). */
+    public function stillValid(Db $db): bool
+    {
+        try {
+            $this->assertValid($db, false);
+            return true;
+        } catch (HttpError) {
+            return false;
+        }
     }
 
     /**

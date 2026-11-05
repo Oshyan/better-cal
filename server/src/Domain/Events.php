@@ -1488,13 +1488,10 @@ final class Events
         if ($targetCalendar !== null && $targetCalendar !== (int) $event['calendar_id'] && $google === null) {
             if (!empty($event['recurrence_parent_id'])) {
                 // A date edited on its own, moved to another calendar: on its
-                // own (no scope), or with all events. Not with the following
-                // ones: that split drops later edited dates and this date's
-                // own details along with them (#188).
+                // own (no scope), with all events, or with the following ones
+                // (the series' split at its key, routed below as the preview
+                // routes it: the new part takes the calendar).
                 $whole = (string) ($in['scope'] ?? '');
-                if ($whole === 'following') {
-                    throw HttpError::badRequest('A date edited on its own moves on its own or with all events, not with the following ones', 'scope_unavailable');
-                }
                 // All events: the series moves, edited dates and all, and the
                 // rest of the edit stays this date's (applied to the whole
                 // series it would rename it after this date, #189). One
@@ -1515,8 +1512,10 @@ final class Events
                     }, "Moved '" . (string) $event['title'] . "' and its series to another calendar"));
                     return;
                 }
-                $this->detachToCalendar($userId, $event, null, $in);
-                return;
+                if ($whole !== 'following') {
+                    $this->detachToCalendar($userId, $event, null, $in);
+                    return;
+                }
             }
             if ($isRecurringMaster && $scope === 'this') {
                 $this->detachToCalendar($userId, $event, $this->requireInstance($in, $event), $in);
@@ -1529,8 +1528,9 @@ final class Events
         // An edit with all events, or this and following, made from an
         // edited day's own row is the series' edit, with that day as the day
         // acted on (Changing the Series from an Edited Day): preview and
-        // commit alike.
-        if (!empty($event['recurrence_parent_id']) && in_array((string) ($in['scope'] ?? ''), ['all', 'following'], true) && !isset($in['calendarId'])) {
+        // commit alike, a calendar change included (all events with one has
+        // gone as the series' move above).
+        if (!empty($event['recurrence_parent_id']) && in_array((string) ($in['scope'] ?? ''), ['all', 'following'], true)) {
             [$master, $masterIn] = $this->routeToMaster($userId, $event, $in);
             $this->patchLocked($userId, (int) $master['id'], $masterIn, $authority);
             return;

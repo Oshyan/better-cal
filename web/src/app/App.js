@@ -642,12 +642,15 @@ export function App() {
   const onDropToCalendar = useCallback((occ, calendarId, at) => {
     // Option/Alt: copy onto that calendar instead of moving there.
     if (at && at.copy) { copyEventTo(occ, calendarId, occ.recurring ? 'this' : 'all'); return; }
-    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope), occ, calendarId); return; }
+    // "Change scope" in the series dialog asks again, at the same drop point.
+    const ask = () => promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope, ask), occ, calendarId);
+    if (occ.recurring && at) { ask(); return; }
     moveEventToCalendar(occ, calendarId);
   }, [promptScopeAt]);
 
   const onDropToPerson = useCallback((occ, name, at) => {
-    if (occ.recurring && at) { promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope), occ); return; }
+    const ask = () => promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope, ask), occ);
+    if (occ.recurring && at) { ask(); return; }
     linkPersonToEvent(occ, name);
   }, [promptScopeAt]);
 

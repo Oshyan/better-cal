@@ -563,7 +563,9 @@ export function Sidebar({ open, collapsed, onClose }) {
         const occ = state.occ.get(ext.instanceId);
         if (occ && occ.recurring) {
           // Repeating event: ask which occurrences take the person.
-          set({ dropChoice: scopeDropChoice(pt, occ, (v) => { if (v) linkPersonToEvent(occ, p, v); }) });
+          // "Change scope" in the series dialog asks again, at the same point.
+          const ask = () => set({ dropChoice: scopeDropChoice(pt, occ, (v) => { if (v) linkPersonToEvent(occ, p, v, ask); }) });
+          ask();
           return;
         }
         linkPersonToEvent(occ, p);

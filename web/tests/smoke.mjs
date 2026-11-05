@@ -6170,5 +6170,100 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   globalThis.fetch = realFetch;
 }
 
+console.log('--- a change for more than one occurrence goes through its plan, whatever row asked (1.5.1) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { updateEvent, moveEventToCalendar, linkPersonToEvent, setRelationship } = await import('../src/app/actions.js');
+  const { changeSeriesScope, cancelSeriesChange, confirmSeriesChange } = await import('../src/app/serieschange.js');
+  const { scopeDropChoice } = await import('../src/app/scopes.js');
+  const { ScopeChoice } = await import('../src/app/DeleteScope.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const sent = [];
+  let plan = null;
+  let refuseWithoutPlan = false;
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p.startsWith('/events/')) {
+      const body = JSON.parse(o.body || '{}');
+      sent.push([o.method, p, body]);
+      if (body.preview) return json({ plan });
+      if (refuseWithoutPlan && !body.plan) return json({ error: { code: 'series_plan_required', message: 'Needs its plan', plan } }, 409);
+      return json({ ok: true });
+    }
+    if (p === '/changes/cursor') return json({ cursor: 'e1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  const savedCalendars = st.calendars, savedPeople = st.people;
+  put({
+    config: { ...st.config, seriesPlans: true }, seriesChange: null, loadedRanges: [], visibleDays: null,
+    calendars: [
+      { id: 41, name: 'Sample home', kind: 'local', provider: 'ics', editable: true, role: 'mine' },
+      { id: 42, name: 'Sample work', kind: 'local', provider: 'ics', editable: true, role: 'mine' },
+      { id: 43, name: 'Sample shared', kind: 'subscribed', provider: 'google', editable: true, role: 'mine' },
+    ],
+    people: [{ id: 7, name: 'Alex Example' }],
+  });
+  const occ = { instanceId: '91@1', eventId: 91, calendarId: 41, title: 'Sample run', recurring: true, rrule: 'FREQ=WEEKLY', people: [], start: '2027-05-04T07:00:00-07:00', end: '2027-05-04T08:00:00-07:00' };
+  const google = { ...occ, instanceId: '92@1', eventId: 92, calendarId: 43 };
+  const newTime = { start: '2027-05-04T08:00:00-07:00', end: '2027-05-04T09:00:00-07:00' };
+  const needsSomeone = { hash: 'p1', scope: 'following', direct: false, groups: [], refusals: [], split: null };
+  const rows = [
+    ['the New time row', (scope, re) => updateEvent(occ, newTime, scope, null, re), newTime],
+    ['a calendar drop', (scope, re) => moveEventToCalendar(occ, 42, scope, re), { calendarId: 42 }],
+    ['a person drop', (scope, re) => linkPersonToEvent(occ, { id: 7, name: 'Alex Example' }, scope, re), { personIds: [7] }],
+  ];
+  for (const [what, run, body] of rows) {
+    for (const scope of ['following', 'all']) {
+      sent.length = 0;
+      plan = { ...needsSomeone, scope };
+      let asked = 0;
+      await run(scope, () => { asked++; });
+      await tick();
+      const sc = st.seriesChange;
+      eq(`${what}, ${scope}: previewed with its own body, nothing written, the dialog shows its plan`, [
+        sent.map(([m, , b]) => [m, b.preview, b.scope]), sc && sc.status, sc && sc.hidden, sc && sc.body,
+      ], [[['PATCH', true, scope]], 'ready', false, body]);
+      changeSeriesScope();
+      eq(`${what}, ${scope}: Change scope closes it and asks again`, [st.seriesChange, asked], [null, 1]);
+    }
+  }
+  // A change to all events whose plan needs no one commits at once, no panel.
+  sent.length = 0;
+  plan = { hash: 'p2', scope: 'all', direct: true, groups: [], refusals: [] };
+  await moveEventToCalendar(occ, 42, 'all');
+  await tick();
+  eq('a calendar drop, all, its plan direct: previewed, then committed with the hash, no panel', [
+    sent.map(([, , b]) => (b.preview ? 'preview' : b.plan && b.plan.hash)), st.seriesChange,
+  ], [['preview', 'p2'], null]);
+  // Committed through the dialog: the row's own body, the plan's hash.
+  sent.length = 0;
+  plan = { ...needsSomeone };
+  await linkPersonToEvent(occ, { id: 7, name: 'Alex Example' }, 'following');
+  await tick();
+  await confirmSeriesChange();
+  await tick();
+  eq('a person drop, following, confirmed: the commit carries the people and the hash', sent[1] && [sent[1][2].personIds, sent[1][2].scope, sent[1][2].plan], [[7], 'following', { hash: 'p1', choices: {} }]);
+  // An answer for all events whose status edit needs its plan: the 409 opens the dialog with the same change.
+  sent.length = 0;
+  refuseWithoutPlan = true;
+  plan = { hash: 'p3', scope: 'all', direct: false, groups: [], refusals: [] };
+  await setRelationship(occ, 'maybe', 'all');
+  await tick();
+  eq('an answer for all events, its plan needed: the dialog opens through the same route and body, no failure toast', [
+    sent.map(([m, p, b]) => [m, p, !!b.preview]), st.seriesChange && st.seriesChange.body, st.seriesChange && typeof st.seriesChange.rescope,
+  ], [[['POST', '/events/91/relationship', false], ['POST', '/events/91/relationship', true]], { relationship: 'maybe' }, 'function']);
+  cancelSeriesChange();
+  refuseWithoutPlan = false;
+  // On a Google calendar the rows don't offer following.
+  const texts = (v) => (v == null || v === false ? [] : typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(texts) : v.props ? texts(v.props.children) : []);
+  eq('the New time row on Google: no This and following', texts(ScopeChoice({ occ: google, verb: 'New time for', onPick: () => {}, onCancel: () => {} })).includes('This and following'), false);
+  eq('a calendar or person drop on Google: no following in the chip', scopeDropChoice({ x: 0, y: 0 }, google, () => {}).options.map((o) => o.value), ['this', 'all', null]);
+  put({ calendars: savedCalendars, people: savedPeople, config: { ...st.config, seriesPlans: false } });
+  globalThis.fetch = realFetch;
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

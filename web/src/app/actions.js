@@ -17,7 +17,7 @@ import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 import { VIEW_LABELS } from './commanddefs.js';
 import { timeChange, listWords } from '../lib/changeline.js';
-import { openSeriesChange, seriesPlans } from './serieschange.js';
+import { openSeriesChange, seriesPlans, planOfError } from './serieschange.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -471,17 +471,48 @@ function followSplitLater(occ, res) {
   if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
 }
 
+// One rule for a change to a series for more than this one occurrence
+// (scope 'all' or 'following'): it goes through the series dialog
+// (serieschange.js), previewed with the change's own body and route, its
+// plan shown, committed with the hash. A plan that needs no one commits at
+// once with no panel (quiet). Returns true when the dialog opened (the
+// change waits for it). apply(scope): the change for this one day, for a
+// refused plan's "Only this one". rescope(): the dialog's "Change scope",
+// back to the chooser that asked; without one, the panel or the editor that
+// was open is opened again, where the scope is chosen.
+function throughPlan({ occ, scope, kind = 'change', route = null, body, done = null, apply = null, rescope = null }) {
+  if (!occ || !occ.recurring || (scope !== 'all' && scope !== 'following') || !seriesPlans()) return false;
+  const back = { popover: state.popover, editor: state.editor };
+  openSeriesChange({
+    kind, occ, scope, route, body, done, apply, quiet: true,
+    rescope: rescope || (() => set(back)),
+    onDone: (res) => followSplitLater(occ, res),
+  });
+  return true;
+}
+
 // "This and following" for a delete or an answer: the series dialog with
 // that change's own route, its plan saying what the events before the day
-// become. Returns true when the dialog opened (the change waits for it).
-// rescope(): the dialog's "Change scope", back to the chooser that asked
-// (the delete or answer row on its panel); without one, the panel or the
-// editor that was open is opened again, where the scope is chosen.
+// become. Their "all events" is no plan (a delete all, an answer for all).
 function followingThroughPlan(occ, scope, kind, route, body, done, rescope = null) {
-  if (!occ.recurring || scope !== 'following' || !seriesPlans()) return false;
-  const back = { popover: state.popover, editor: state.editor };
-  openSeriesChange({ kind, occ, scope, route, body, done, rescope: rescope || (() => set(back)), onDone: (res) => followSplitLater(occ, res) });
-  return true;
+  return scope === 'following' && throughPlan({ occ, scope, kind, route, body, done, rescope });
+}
+
+// Every request that changes a series with a scope: sent as it is, and when
+// the server answers that it needs its plan confirmed (a change to all
+// events that turned out not direct), the same change goes to the series
+// dialog instead of failing. Resolves to the answer, or PLANNED.
+const PLANNED = Symbol('planned');
+async function sendSeries(occ, path, method, body, dialog = {}) {
+  try {
+    return await api(path, { method, body });
+  } catch (e) {
+    if (e && e.code === 'series_plan_required' && planOfError(e)) {
+      const { scope, instanceStart: _i, ...fields } = body;
+      if (throughPlan({ ...dialog, occ, scope, body: fields, route: { method, path } })) return PLANNED;
+    }
+    throw e;
+  }
 }
 
 // The calendar a new event lands on when nothing else says otherwise: the
@@ -574,14 +605,18 @@ function updateLine(occ, fields, scope, words, google) {
   return 'Updated' + where;
 }
 
-export async function updateEvent(occ, fields, scope, words = null) {
+export async function updateEvent(occ, fields, scope, words = null, rescope = null) {
+  const done = updateLine(occ, fields, scope, words, googleBacked(occ));
+  const dialog = { done, rescope, apply: (s) => updateEvent(occ, fields, s, words) };
+  if (throughPlan({ ...dialog, occ, scope, body: fields })) return null;
   const body = { ...fields };
   if (occ.recurring) {
     body.scope = scope || 'this';
     body.instanceStart = occ.start;
   }
   try {
-    const res = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    const res = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog);
+    if (res === PLANNED) return null;
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
     toast(updateLine(occ, fields, occ.recurring ? (scope || 'this') : null, words, wentToGoogle), {
@@ -763,8 +798,9 @@ export async function setRelationship(occ, relationship, scope, rescope = null) 
   const before = patchOccurrence(occ.instanceId, { relationship, attendance: relationship === 'hidden' ? 'hidden' : occ.attendance });
   try {
     const body = { relationship };
-    if (occ.recurring) { body.scope = scope || (mine ? 'all' : 'all'); body.instanceStart = occ.start; }
-    const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
+    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
+    const res = await sendSeries(occ, '/events/' + occ.eventId + '/relationship', 'POST', body, { kind: 'answer', done: label0 + seriesWords(occ, body.scope, 'all'), rescope });
+    if (res === PLANNED) { restoreOccurrence(occ.instanceId, before); return relationship; }
     localSaved([before]);
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
@@ -993,16 +1029,20 @@ export async function quickAddCreate(fields) {
 // is a series-level fact, so recurring events always move whole ('all').
 // scope on a series: 'this' detaches the occurrence as its own event on the
 // target, 'following' splits the series there, 'all' moves the series.
-export async function moveEventToCalendar(occ, calendarId, scope) {
+export async function moveEventToCalendar(occ, calendarId, scope, rescope = null) {
   const cal = state.calendars.find((c) => c.id === calendarId);
   const from = state.calendars.find((c) => c.id === occ.calendarId);
   // Not onto a feed, and not across the Google boundary in either direction
   // (a Google event stays Google's; a local one is not copied up).
   if (!cal || !cal.editable || cal.provider === 'google' || (from && from.provider === 'google') || occ.calendarId === calendarId) return;
+  const which = occ.recurring ? scope || 'all' : undefined;
+  const dialog = { done: 'Moved to ' + cal.name + seriesWords(occ, which, 'this'), rescope, apply: (s) => moveEventToCalendar(occ, calendarId, s) };
+  if (throughPlan({ ...dialog, occ, scope: which, body: { calendarId } })) return;
   try {
     const body = { calendarId };
-    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    const saved = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    if (occ.recurring) { body.scope = which; body.instanceStart = occ.start; }
+    const saved = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog);
+    if (saved === PLANNED) return;
     toast('Moved to ' + cal.name + seriesWords(occ, body.scope, 'all'), { title: itemName(occ), undo: entriesOf(saved) });
     refreshWindow();
   } catch (e) {
@@ -1012,7 +1052,7 @@ export async function moveEventToCalendar(occ, calendarId, scope) {
 
 // Link a person to an event (drop either onto the other). personNames is a
 // full-replace field, so append to what the occurrence already carries.
-export async function linkPersonToEvent(occ, person, scope) {
+export async function linkPersonToEvent(occ, person, scope, rescope = null) {
   const names = Array.isArray(occ.people) ? occ.people : [];
   const personName = typeof person === 'string' ? person : person.name;
   if (names.includes(personName)) {
@@ -1029,10 +1069,15 @@ export async function linkPersonToEvent(occ, person, scope) {
     toast('Could not find ' + personName + ' in your people', { error: true });
     return;
   }
+  const which = occ.recurring ? scope || 'all' : undefined;
+  const personIds = [...ids, addId];
+  const dialog = { done: 'Added ' + personName + seriesWords(occ, which, 'this'), rescope, apply: (s) => linkPersonToEvent(occ, person, s) };
+  if (throughPlan({ ...dialog, occ, scope: which, body: { personIds } })) return;
   try {
-    const body = { personIds: [...ids, addId] };
-    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    const saved = await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    const body = { personIds };
+    if (occ.recurring) { body.scope = which; body.instanceStart = occ.start; }
+    const saved = await sendSeries(occ, '/events/' + occ.eventId, 'PATCH', body, dialog);
+    if (saved === PLANNED) return;
     toast('Added ' + personName, { title: itemName(occ), undo: entriesOf(saved) });
     refreshWindow();
   } catch (e) {

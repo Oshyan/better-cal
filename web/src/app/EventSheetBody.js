@@ -350,7 +350,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${panel && tools}
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
-      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
+      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope, null, () => setTimeScope(f)); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 
       ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => goBackTo(backTo)}>

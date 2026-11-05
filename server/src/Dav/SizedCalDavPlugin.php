@@ -18,9 +18,42 @@ use BetterCal\Domain\Ics;
  */
 final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
 {
+    /** @var array{start:\DateTimeInterface,end:\DateTimeInterface}|null the expand range of the report being answered */
+    private ?array $expand = null;
+
     public function __construct()
     {
         $this->maxResourceSize = Limits::get('DAV_OBJECT_BYTES');
+    }
+
+    /**
+     * calendar-query and calendar-multiget with an expand request (RFC 4791
+     * 9.6.5). The stock plugin expands each object with the library's
+     * iterator after fetching it; here the request's range is taken off the
+     * report, so the library never expands, and propFind() serves each
+     * object's calendar-data already expanded by the app's expander.
+     */
+    public function report($reportName, $report, $path)
+    {
+        if (!is_object($report) || !property_exists($report, 'expand') || $report->expand === null) {
+            return parent::report($reportName, $report, $path);
+        }
+        $this->expand = $report->expand;
+        $report->expand = null;
+        try {
+            return parent::report($reportName, $report, $path);
+        } finally {
+            $this->expand = null;
+        }
+    }
+
+    public function propFind(\Sabre\DAV\PropFind $propFind, \Sabre\DAV\INode $node)
+    {
+        parent::propFind($propFind, $node);
+        $name = '{' . self::NS_CALDAV . '}calendar-data';
+        if ($this->expand !== null && $node instanceof \Sabre\CalDAV\ICalendarObject && is_string($data = $propFind->get($name))) {
+            $propFind->set($name, str_replace("\r", '', DavTimeRange::expandObject($data, $this->expand['start'], $this->expand['end'])));
+        }
     }
 
     /** Bound the transport before Sabre materializes or parses its body. */

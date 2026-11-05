@@ -238,6 +238,54 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         return $out;
     }
 
+    /**
+     * calendar-query (RFC 4791 7.8). A time range on VEVENT is answered by
+     * the app's expander (DavTimeRange), so an object is in the range when
+     * an occurrence the calendar's window shows overlaps it; whatever else
+     * the filter asks (property and text matches, other components, a time
+     * range on an alarm) is the library's validator's, over the same bodies
+     * fetched one by one as before, and an object must pass both.
+     */
+    public function calendarQuery($calendarId, array $filters)
+    {
+        [$rest, $ranges] = DavTimeRange::split($filters);
+        if ($ranges === []) {
+            return parent::calendarQuery($calendarId, $filters);
+        }
+        $rows = $this->db->all(
+            'SELECT id, uid, start_utc, end_utc, all_day, tzid, rrule, exdates_json, recurrence_parent_id, recurrence_instance_utc
+             FROM events WHERE calendar_id = ? AND deleted_at IS NULL
+             ORDER BY recurrence_instance_utc IS NOT NULL, recurrence_instance_utc, id',
+            [(int) $calendarId]
+        );
+        // Grouped as getMultipleCalendarObjects builds an object: its series
+        // row, and every other row with its UID as an edited day.
+        $masters = [];
+        $overrides = [];
+        foreach ($rows as $row) {
+            if ($row['recurrence_instance_utc'] === null && $row['recurrence_parent_id'] === null) {
+                $masters[(string) $row['uid']] = $row;
+            } else {
+                $overrides[(string) $row['uid']][] = $row;
+            }
+        }
+        $recurrence = new \BetterCal\Domain\Recurrence();
+        $everyEvent = DavTimeRange::holdsForEveryEvent($rest);
+        $result = [];
+        foreach ($masters as $uid => $master) {
+            foreach ($ranges as $range) {
+                if (DavTimeRange::occurrences($recurrence, $master, $overrides[$uid] ?? [], $range['start'], $range['end'], true) === []) {
+                    continue 2;
+                }
+            }
+            $uri = DavIcs::objectUri((string) $uid);
+            if ($everyEvent || $this->validateFilterForObject(['calendarid' => (int) $calendarId, 'uri' => $uri], $rest)) {
+                $result[] = $uri;
+            }
+        }
+        return $result;
+    }
+
     // ---- Calendar objects (write) -------------------------------------
 
     public function createCalendarObject($calendarId, $objectUri, $calendarData)

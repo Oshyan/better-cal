@@ -1,0 +1,129 @@
+{
+    "about": "Monthly on the 15th for six events with a skipped day: a drag to the 30th (on the 30th or the last day in shorter months, preselected; the count kept, the skip moving with its occurrence), a time change, one day deleted, then Undo three times back to the start.",
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=15",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-01-15 10:00",
+        "length": 60
+    },
+    "exceptions": [
+        {
+            "at": 3,
+            "kind": "skip"
+        }
+    ],
+    "expect": {
+        "zone": "Europe/Berlin",
+        "events": 5,
+        "shows": [
+            "2027-01-15 10:00 Sample series",
+            "2027-02-15 10:00 Sample series",
+            "2027-03-15 10:00 Sample series",
+            "2027-05-15 10:00 Sample series",
+            "2027-06-15 10:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-01-15",
+            "vector": {
+                "date": 15
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 5,
+                "shows": [
+                    "2027-01-30 10:00 Sample series",
+                    "2027-02-28 10:00 Sample series",
+                    "2027-03-30 10:00 Sample series",
+                    "2027-05-30 10:00 Sample series",
+                    "2027-06-30 10:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-02-28",
+            "vector": {
+                "clock": 3600
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 5,
+                "shows": [
+                    "2027-01-30 11:00 Sample series",
+                    "2027-02-28 11:00 Sample series",
+                    "2027-03-30 11:00 Sample series",
+                    "2027-05-30 11:00 Sample series",
+                    "2027-06-30 11:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-05-30",
+            "vector": {
+                "scope": "deleteThis"
+            },
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 4,
+                "shows": [
+                    "2027-01-30 11:00 Sample series",
+                    "2027-02-28 11:00 Sample series",
+                    "2027-03-30 11:00 Sample series",
+                    "2027-06-30 11:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 5,
+                "shows": [
+                    "2027-01-30 11:00 Sample series",
+                    "2027-02-28 11:00 Sample series",
+                    "2027-03-30 11:00 Sample series",
+                    "2027-05-30 11:00 Sample series",
+                    "2027-06-30 11:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 5,
+                "shows": [
+                    "2027-01-30 10:00 Sample series",
+                    "2027-02-28 10:00 Sample series",
+                    "2027-03-30 10:00 Sample series",
+                    "2027-05-30 10:00 Sample series",
+                    "2027-06-30 10:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Berlin",
+                "events": 5,
+                "shows": [
+                    "2027-01-15 10:00 Sample series",
+                    "2027-02-15 10:00 Sample series",
+                    "2027-03-15 10:00 Sample series",
+                    "2027-05-15 10:00 Sample series",
+                    "2027-06-15 10:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

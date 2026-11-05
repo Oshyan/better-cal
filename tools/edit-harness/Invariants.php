@@ -391,7 +391,8 @@ trait Invariants
         foreach ($plan['groups'] ?? [] as $g) {
             $groups[$g['id']] = $g;
         }
-        $pre = !empty($this->spec['preselected']['edit']) || $sent['kind'] === 'following';
+        // A commit of every option (Driver::everyOption) is no preselected commit; its baseline is checked by PlanPreselect.
+        $pre = $this->trial === null && (!empty($this->spec['preselected']['edit']) || $sent['kind'] === 'following');
         $this->check('c-groups', isset($groups['zone']) === $x0->zoneGroup, $x0->zoneGroup ? 'a zone change alone offers the same clock or the same moment' : 'a zone reading is offered where the design has none', ['offered' => isset($groups['zone'])]);
         if (isset($groups['zone']) && $pre) {
             $this->check('c-preselect', $groups['zone']['selected'] === 'clock', 'the same clock time is preselected for a zone change', ['selected' => $groups['zone']['selected']]);

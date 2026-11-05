@@ -1,0 +1,126 @@
+{
+    "about": "A weekly list: a member dragged (move every Wednesday to Thursday, preselected), a rename for all events, one day given its own title, the series given an end after six events, then Undo twice.",
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE",
+        "import": false,
+        "bound": "none",
+        "boundAt": 0,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 18:00",
+        "length": 60
+    },
+    "expect": {
+        "zone": "America/Los_Angeles",
+        "shows": [
+            "2027-01-04 18:00 Sample series",
+            "2027-01-06 18:00 Sample series",
+            "2027-01-11 18:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-01-06",
+            "vector": {
+                "date": 1
+            },
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 18:00 Sample series",
+                    "2027-01-07 18:00 Sample series",
+                    "2027-01-11 18:00 Sample series",
+                    "2027-01-14 18:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-01-11",
+            "vector": {
+                "fields": {
+                    "title": "Sample series, renamed"
+                }
+            },
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 18:00 Sample series, renamed",
+                    "2027-01-07 18:00 Sample series, renamed",
+                    "2027-01-11 18:00 Sample series, renamed",
+                    "2027-01-14 18:00 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "this",
+            "acted": "2027-01-14",
+            "exception": {
+                "own": [
+                    "title"
+                ]
+            },
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 18:00 Sample series, renamed",
+                    "2027-01-07 18:00 Sample series, renamed",
+                    "2027-01-11 18:00 Sample series, renamed",
+                    "2027-01-14 18:00 Sample series, day 1",
+                    "2027-01-18 18:00 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-01-04",
+            "vector": {
+                "bound": {
+                    "count": 6
+                }
+            },
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "events": 6,
+                "shows": [
+                    "2027-01-04 18:00 Sample series, renamed",
+                    "2027-01-07 18:00 Sample series, renamed",
+                    "2027-01-11 18:00 Sample series, renamed",
+                    "2027-01-14 18:00 Sample series, day 1",
+                    "2027-01-18 18:00 Sample series, renamed",
+                    "2027-01-21 18:00 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 18:00 Sample series, renamed",
+                    "2027-01-07 18:00 Sample series, renamed",
+                    "2027-01-11 18:00 Sample series, renamed",
+                    "2027-01-14 18:00 Sample series, day 1",
+                    "2027-01-18 18:00 Sample series, renamed",
+                    "2027-01-21 18:00 Sample series, renamed",
+                    "2027-01-25 18:00 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "America/Los_Angeles",
+                "shows": [
+                    "2027-01-04 18:00 Sample series, renamed",
+                    "2027-01-07 18:00 Sample series, renamed",
+                    "2027-01-11 18:00 Sample series, renamed",
+                    "2027-01-14 18:00 Sample series, renamed"
+                ]
+            }
+        }
+    ]
+}

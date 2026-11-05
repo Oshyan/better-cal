@@ -963,7 +963,9 @@ final class Model
         }
         // Under the moment, the drag's readings are the old zone's, each
         // carried by the days the instant moves on the new zone's calendar.
-        $readings = $carry === null
+        // A new rule sent is the person's days in the series' new zone, so
+        // nothing of the old zone's calendar is carried into it.
+        $readings = $carry === null || $this->newRule()
             ? $this->readings($land['dn'] - $this->actedDn0, $land['dn'], $land['clock'])
             : $this->carried($this->readings($carry[0] - $this->actedDn0, $carry[0], $land['clock']), $carry[0], $carry[1]);
         if ($readings === []) {

@@ -1007,4 +1007,37 @@ return static function (Db $db): void {
         $d->undo->undoLatest($u);
         checkEq('the new rule at the same moment undone: every row as before', $before, $rows($lab));
     });
+    // #201: a day edited through a short window a year on, keyed as that
+    // window gives it (the occurrence's start), shows once in a long window,
+    // and the plain days keep their clock. Monday, Wednesday and Friday at
+    // 02:30 Los Angeles from Mon 1 Mar 2027, with and without the rule
+    // naming its clock; the spring change is Sun 12 Mar 2028, so Fri 10 Mar
+    // is 10:30Z and the days after it 09:30Z.
+    foreach (['FREQ=DAILY;BYDAY=MO,WE,FR', 'FREQ=DAILY;BYDAY=MO,WE,FR;BYHOUR=2;BYMINUTE=30'] as $rrule) {
+        scenario("far windows (#201): a day edited from a short window shows once in a long one ($rrule)", function () use ($d, $u, $home, $rrule): void {
+            $title = 'Sample early shift ' . bin2hex(random_bytes(3));
+            $id = (int) $d->events->create($u, ['calendarId' => $home, 'title' => $title, 'start' => '2027-03-01T02:30:00-08:00', 'end' => '2027-03-01T03:30:00-08:00',
+                'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => $rrule])['eventId'];
+            $read = static function (string $from, string $to) use ($d, $u, $home, $title): array {
+                $mine = array_filter($d->events->window($u, new \DateTimeImmutable($from), new \DateTimeImmutable($to), [$home], null, false),
+                    static fn(array $o): bool => str_starts_with((string) $o['title'], $title));
+                return array_values(array_map(static fn(array $o): array => [gmdate('Y-m-d H:i:s', BetterCal\Support\Time::parseIso((string) $o['start'])->getTimestamp()), (string) $o['title']], $mine));
+            };
+            $short = $read('2028-04-03T00:00:00Z', '2028-04-08T00:00:00Z');
+            checkEq('the short window: Mon, Wed and Fri at 02:30 PDT', ['2028-04-03 09:30:00', '2028-04-05 09:30:00', '2028-04-07 09:30:00'], array_column($short, 0));
+            $wed = null;
+            foreach ($d->events->window($u, new \DateTimeImmutable('2028-04-03T00:00:00Z'), new \DateTimeImmutable('2028-04-08T00:00:00Z'), [$home], null, false) as $o) {
+                if ($o['title'] === $title && str_starts_with(gmdate('Y-m-d', BetterCal\Support\Time::parseIso((string) $o['start'])->getTimestamp()), '2028-04-05')) {
+                    $wed = $o;
+                }
+            }
+            check('the short window gives Wed 5 Apr', $wed !== null);
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => (string) $wed['start'], 'title' => $title . ', inventory']);
+            $long = $read('2028-03-09T00:00:00Z', '2028-04-08T00:00:00Z');
+            $days = ['2028-03-10 10:30:00', '2028-03-13 09:30:00', '2028-03-15 09:30:00', '2028-03-17 09:30:00', '2028-03-20 09:30:00', '2028-03-22 09:30:00',
+                '2028-03-24 09:30:00', '2028-03-27 09:30:00', '2028-03-29 09:30:00', '2028-03-31 09:30:00', '2028-04-03 09:30:00', '2028-04-05 09:30:00', '2028-04-07 09:30:00'];
+            $expected = array_map(static fn(string $at): array => [$at, $at === '2028-04-05 09:30:00' ? $title . ', inventory' : $title], $days);
+            checkEq('the long window: every day once at its clock, the edited day once with its title', $expected, $long);
+        });
+    }
 };

@@ -2424,6 +2424,31 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Ends after: 6 sent shows 6 events and stores COUNT=7', [6, 'FREQ=WEEKLY;COUNT=7'], [$p['plan']['bound']['events'] ?? null, $p['writes']['master']['rrule'] ?? null]);
 }
 
+// A split from an edited day on a date of its own, made all-day, dragged
+// two days earlier and sent with a changed count (decisions.md, a split's
+// sent rule; Changing the Series from an Edited Day): the drag is measured
+// from where the day shows (Tue 26 Jan to Sun 24 Jan) and applies with the
+// count, so the part repeats on Mondays from 25 Jan, as the same edit for
+// all events does. Was: the part took the series' reading of the rule sent,
+// its clock parts dropped for all-day, as a new pattern, kept Wednesdays
+// and left the edited day keyed nowhere.
+$m = smSeries('Sample practice', 'FREQ=WEEKLY;BYDAY=WE;BYHOUR=19;BYMINUTE=0', '2027-01-06 19:00', 90);
+$own = smEdited($m, 2, '2027-01-27 19:00', ['title' => 'Sample practice, moved'], '2027-01-26 19:00', ['title', 'date']);
+$edit = ['acted' => $own['recurrence_instance_utc'], 'landed' => ['start_utc' => '2027-01-24 00:00:00', 'end_utc' => '2027-01-25 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'],
+    'rrule' => 'FREQ=WEEKLY;BYDAY=WE;BYHOUR=19;BYMINUTE=0;COUNT=5'];
+foreach (['whole' => [2, '2027-02-01'], 'part' => [5, '2027-02-22']] as $b => [$n, $last]) {
+    $s = BetterCal\Domain\Series\Split::plan($m, [$own], $edit, ['bound' => $b], ['today' => '2027-01-01'], BetterCal\Domain\Series\Split::EDIT);
+    $day = $s['plan']['days'][0] ?? [];
+    checkEq("Split all-day drag with a count ($b): Mondays from 25 Jan, $n events to $last, the edited day keyed on 25 Jan and showing on its own 24 Jan", [
+        'FREQ=WEEKLY;BYDAY=MO;COUNT=' . $n, '2027-01-25 00:00:00', 1, $n, $last, ['2027-01-25T00:00:00Z', 'moves'], '2027-01-24',
+    ], [
+        $s['writes']['plan']['master']['rrule'] ?? null, $s['writes']['plan']['master']['start_utc'] ?? null, $s['writes']['plan']['master']['all_day'] ?? null,
+        $s['plan']['bound']['events'] ?? null, $s['plan']['bound']['last'] ?? null, [$day['newKey'] ?? null, $day['outcome'] ?? null], substr($s['plan']['next'][0]['start'] ?? '', 0, 10),
+    ]);
+}
+$p = smPlan($m, [$own], array_diff_key($edit, ['rrule' => 1]));
+checkEq('Split all-day drag with a count: the same drag for all events is Mondays too', 'FREQ=WEEKLY;BYDAY=MO', $p['writes']['master']['rrule'] ?? null);
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

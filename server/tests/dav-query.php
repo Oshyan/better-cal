@@ -232,3 +232,28 @@ checkEq('a range open before the series whose first 1,000 occurrences are skippe
 $dqLeft = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqSkipped . '/', $dqQueryBody('20270301T000000Z', '20270501T000000Z')));
 checkEq('expand over it: the 100 left, from Sun 11 Apr 16:00 to Thu 15 Apr 19:00', [100, '20270411T160000Z 20270411T160000Z', '20270415T190000Z 20270415T190000Z'],
     [count($dqLeft), $dqLeft[0] ?? null, $dqLeft[99] ?? null]);
+
+// The request's expansion budget, as the calendar's window charges it: a
+// report past it is refused with the budget's words, never answered short.
+// Hourly with no end from Fri 1 Jan 2027: 1 Jan 2027 to 1 Jan 2030 holds
+// 26,280 (1,095 days), past the budget; daily with no end over ten years
+// holds 3,653 (three leap days), under it.
+$dqDense = $dqNewCalendar();
+$dqRow($dqDense, ['uid' => 'dq-dense@example.test', 'start_utc' => '2027-01-01 00:00:00', 'end_utc' => '2027-01-01 00:30:00', 'rrule' => 'FREQ=HOURLY']);
+$dqRefused = static function (callable $fn): ?array {
+    try {
+        $fn();
+        return null;
+    } catch (\Sabre\DAV\Exception\TooManyMatches $e) {
+        return [$e->getHTTPCode(), $e->getMessage()];
+    }
+};
+checkEq('expand past the budget, 26,280 hourly occurrences over three years: refused, 403 number-of-matches-within-limits in the budget\'s words', [
+    403, 'This report has too many events or repeating occurrences to answer safely (too many generated occurrences). Ask for a shorter time range.',
+], $dqRefused(fn() => $dqReport('/calendars/sam@example.test/cal-' . $dqDense . '/', $dqQueryBody('20270101T000000Z', '20300101T000000Z'))));
+checkEq('the same series in a time range alone is answered: the first occurrence is enough', ['dq-dense@example.test.ics'], $dqQuery($dqDense, '2027-01-01 00:00:00', '2030-01-01 00:00:00'));
+$dqDaily = $dqNewCalendar();
+$dqRow($dqDaily, ['uid' => 'dq-daily@example.test', 'start_utc' => '2027-01-01 07:00:00', 'end_utc' => '2027-01-01 08:00:00', 'rrule' => 'FREQ=DAILY']);
+$dqTen = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqDaily . '/', $dqQueryBody('20270101T000000Z', '20370101T000000Z')));
+checkEq('expand under the budget, daily over ten years: all 3,653, from Fri 1 Jan 2027 to Wed 31 Dec 2036', [3653, '20270101T070000Z 20270101T070000Z', '20361231T070000Z 20361231T070000Z'],
+    [count($dqTen), $dqTen[0] ?? null, $dqTen[3652] ?? null]);

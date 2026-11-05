@@ -21,6 +21,9 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
     /** @var array{start:\DateTimeInterface,end:\DateTimeInterface}|null the expand range of the report being answered */
     private ?array $expand = null;
 
+    /** The expansion budget of the report being answered, one for all its objects. */
+    private ?\BetterCal\Support\ExpansionBudget $budget = null;
+
     public function __construct()
     {
         $this->maxResourceSize = Limits::get('DAV_OBJECT_BYTES');
@@ -39,11 +42,13 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
             return parent::report($reportName, $report, $path);
         }
         $this->expand = $report->expand;
+        $this->budget = \BetterCal\Support\ExpansionBudget::standard();
         $report->expand = null;
         try {
             return parent::report($reportName, $report, $path);
         } finally {
             $this->expand = null;
+            $this->budget = null;
         }
     }
 
@@ -52,7 +57,12 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
         parent::propFind($propFind, $node);
         $name = '{' . self::NS_CALDAV . '}calendar-data';
         if ($this->expand !== null && $node instanceof \Sabre\CalDAV\ICalendarObject && is_string($data = $propFind->get($name))) {
-            $propFind->set($name, str_replace("\r", '', DavTimeRange::expandObject($data, $this->expand['start'], $this->expand['end'])));
+            try {
+                $expanded = DavTimeRange::expandObject($data, $this->expand['start'], $this->expand['end'], $this->budget);
+            } catch (\BetterCal\Support\WorkBudgetExceeded $e) {
+                throw DavTimeRange::refusal($e);
+            }
+            $propFind->set($name, str_replace("\r", '', $expanded));
         }
     }
 

@@ -6,6 +6,8 @@ namespace BetterCal\Dav;
 
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Recurrence;
+use BetterCal\Support\ExpansionBudget;
+use BetterCal\Support\WorkBudgetExceeded;
 use BetterCal\Support\Time;
 use Sabre\VObject;
 
@@ -57,6 +59,12 @@ final class DavTimeRange
      * halves, and each next window after a whole one is twice as long, so
      * every window kept is complete and the answer is every occurrence in
      * the range, however many, the calendar's window reading the same rows.
+     * A window never grows back to a length that was cut.
+     *
+     * $budget is the request's (ExpansionBudget, as the calendar's window
+     * charges it): the object is one series, and every occurrence each
+     * window read is charged, a cut window's too, so a range past it throws
+     * WorkBudgetExceeded and is refused by the caller (refusal()), never cut.
      *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides
@@ -68,6 +76,7 @@ final class DavTimeRange
         ?\DateTimeInterface $rangeStart,
         ?\DateTimeInterface $rangeEnd,
         bool $first = false,
+        ?ExpansionBudget $budget = null,
     ): array {
         // The expander's window keeps what ends after its start, so it opens
         // one second early to hold an occurrence with no length at the
@@ -75,7 +84,19 @@ final class DavTimeRange
         $from = $rangeStart === null ? new \DateTimeImmutable('0001-01-01 00:00:00', Time::utc()) : self::utc($rangeStart)->modify('-1 second');
         $to = $rangeEnd === null ? new \DateTimeImmutable('9999-12-31 23:59:59', Time::utc()) : self::utc($rangeEnd);
         $out = [];
-        $step = $first ? self::FIRST_STEP_SECONDS : max(1, $to->getTimestamp() - $from->getTimestamp());
+        // Nothing of the object starts before its series' stored start or
+        // its earliest edited day, so the windows start there at the
+        // earliest, not at the open side of a range.
+        $earliest = Time::fromDb((string) $master['start_utc']);
+        foreach ($overrides as $ov) {
+            $earliest = min($earliest, Time::fromDb((string) $ov['start_utc']));
+        }
+        $from = max($from, $earliest->modify('-1 second'));
+        $step = self::FIRST_STEP_SECONDS;
+        $ceiling = PHP_INT_MAX; // the shortest window cut so far
+        if (!empty($master['rrule'])) {
+            $budget?->beginSeries();
+        }
         while ($from < $to) {
             $until = $to->getTimestamp() - $from->getTimestamp() > $step ? $from->modify('+' . $step . ' seconds') : $to;
             // A Recurrence of its own per window, so capped() says whether
@@ -83,7 +104,12 @@ final class DavTimeRange
             $window = new Recurrence();
             $occs = $window->expand($master, $overrides, $from, $until);
             $span = $until->getTimestamp() - $from->getTimestamp();
-            if ($window->capped() !== [] && $span > 1) {
+            $cut = $window->capped() !== [];
+            // Each window's work is bounded by the cap, so it is charged
+            // after it is read.
+            $budget?->occurrence($cut ? Recurrence::MAX_INSTANCES : count($occs));
+            if ($cut && $span > 1) {
+                $ceiling = $span;
                 $step = intdiv($span, 2);
                 continue;
             }
@@ -96,7 +122,7 @@ final class DavTimeRange
                 break;
             }
             $from = $until;
-            $step = $span * 2;
+            $step = $span * 2 < $ceiling ? $span * 2 : $span;
         }
         $out = array_values($out);
         usort($out, static fn(array $a, array $b): int => $a['start'] <=> $b['start']);
@@ -155,7 +181,7 @@ final class DavTimeRange
      * object as a PUT of it is read (Ics::parse, DavIcs::eventColumns), and an
      * edited day carries its own VEVENT's properties.
      */
-    public static function expandObject(string $data, \DateTimeInterface $rangeStart, \DateTimeInterface $rangeEnd): string
+    public static function expandObject(string $data, \DateTimeInterface $rangeStart, \DateTimeInterface $rangeEnd, ?ExpansionBudget $budget = null): string
     {
         $data = (string) preg_replace("/\r?\n/", "\r\n", $data);
         $master = null;
@@ -186,7 +212,7 @@ final class DavTimeRange
                 }
             }
             $repeats = !empty($master['rrule']);
-            foreach (self::occurrences($master, $overrides, $rangeStart, $rangeEnd) as $occ) {
+            foreach (self::occurrences($master, $overrides, $rangeStart, $rangeEnd, false, $budget) as $occ) {
                 $from = $edited[$occ['instanceUtc']] ?? $masterEvent;
                 if ($from === null) {
                     continue;
@@ -199,6 +225,18 @@ final class DavTimeRange
         $source->destroy();
         $out->destroy();
         return $text;
+    }
+
+    /**
+     * A report whose occurrences are past the request's expansion budget,
+     * refused as a whole (403, DAV:number-of-matches-within-limits) with
+     * the budget's own words, never answered short.
+     */
+    public static function refusal(WorkBudgetExceeded $e): \Sabre\DAV\Exception\TooManyMatches
+    {
+        return new \Sabre\DAV\Exception\TooManyMatches(
+            'This report has too many events or repeating occurrences to answer safely (' . $e->getMessage() . '). Ask for a shorter time range.'
+        );
     }
 
     /** One occurrence as its own VEVENT. @param array{row:array,start:\DateTimeImmutable,end:\DateTimeImmutable,instanceUtc:string} $occ */

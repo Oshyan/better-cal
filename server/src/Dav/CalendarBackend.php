@@ -270,10 +270,17 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
         }
         $everyEvent = DavTimeRange::holdsForEveryEvent($rest);
+        // One budget for the request, as the calendar's window has.
+        $budget = \BetterCal\Support\ExpansionBudget::standard();
         $result = [];
         foreach ($masters as $uid => $master) {
             foreach ($ranges as $range) {
-                if (DavTimeRange::occurrences($master, $overrides[$uid] ?? [], $range['start'], $range['end'], true) === []) {
+                try {
+                    $none = DavTimeRange::occurrences($master, $overrides[$uid] ?? [], $range['start'], $range['end'], true, $budget) === [];
+                } catch (\BetterCal\Support\WorkBudgetExceeded $e) {
+                    throw DavTimeRange::refusal($e);
+                }
+                if ($none) {
                     continue 2;
                 }
             }

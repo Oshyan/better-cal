@@ -318,7 +318,7 @@ final class Expect
         $shift->kind = 'drag';
         $rs = $shift->designReadings();
         foreach ($rs as $r) {
-            if ($r['id'] === 'pattern') {
+            if ($r['id'] === 'pattern' && $r['enabled']) {
                 return [$r];
             }
         }

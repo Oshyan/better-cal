@@ -325,7 +325,9 @@ trait Invariants
         $choices = $sent['_choices'] ?? [];
         $timeSent = $edit['sent'] !== null;
         $ruleOrBound = $edit['rule'] === 'new' || $edit['boundSent'] !== null;
-        if (!$timeSent && !$ruleOrBound) {
+        // A split always ends the old part: a bound change on it (api-contract, This and following), checked by 5-old.
+        $split = $sent['kind'] === 'following' && $new !== null;
+        if (!$timeSent && !$ruleOrBound && !$split) {
             // A field-only edit keeps every key, shown time and skip exactly as stored, whatever the rule.
             foreach (['start_utc', 'end_utc', 'tzid', 'all_day', 'rrule', 'exdates_json'] as $col) {
                 $this->check('a-time', (string) $before['row'][$col] === (string) $after['row'][$col], "an edit with no time, rule or bound keeps the series' $col", ['was' => $before['row'][$col], 'now' => $after['row'][$col]]);
@@ -393,7 +395,7 @@ trait Invariants
         }
         $this->checkAdoptions($x0, $groups);
         // A commit of every option (Driver::everyOption) is no preselected commit; its baseline is checked by PlanPreselect.
-        $pre = $this->trial === null && (!empty($this->spec['preselected']['edit']) || $sent['kind'] === 'following');
+        $pre = $this->trial === null && !empty($this->spec['preselected']['edit']);
         $this->check('c-groups', isset($groups['zone']) === $x0->zoneGroup, $x0->zoneGroup ? 'a zone change alone offers the same clock or the same moment' : 'a zone reading is offered where the design has none', ['offered' => isset($groups['zone'])]);
         if (isset($groups['zone']) && $pre) {
             $this->check('c-preselect', $groups['zone']['selected'] === 'clock', 'the same clock time is preselected for a zone change', ['selected' => $groups['zone']['selected']]);
@@ -1247,7 +1249,7 @@ trait Invariants
             }
         }
         $this->compareSeries('5', $x, $out, $part, $mapped, $choices, null, $edit);
-        $this->checkFieldsReach($part, $mapped + ['tags' => $new['tags'], 'people' => $new['people']], $edit, $out, []);
+        $this->checkFieldsReach($part, $mapped + ['tags' => $new['tags'], 'people' => $new['people']], $edit, $out, $sentChoices);
     }
 
     // ---- deletes and answers ---------------------------------------------------

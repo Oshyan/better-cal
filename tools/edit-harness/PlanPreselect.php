@@ -91,6 +91,10 @@ trait PlanPreselect
             $want = (new Expect($before, $edit))->adoptions[$id]['preselect'] ?? null;
             return [$want, "adopt $id", $id === 'day' ? 'adopting the day when it moves every event by less than one period' : ($id === 'time' ? 'adopting the time always' : 'adopting a typed length, the same way for a drag')];
         }
+        $x->readings();
+        if ($x->momentOpen) {
+            return [null, $id, ''];
+        }
         if ($id === 'reading') {
             $newRule = $x->kind === 'newrule';
             foreach (self::readingPreference($before['shape'], $newRule) as $r) {

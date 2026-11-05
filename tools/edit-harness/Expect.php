@@ -98,6 +98,96 @@ final class Expect
         }
         $this->readTz = $this->allDay1 ? 'UTC' : ($sent['tz'] ?? $this->seenTz);
         [$this->landedDn, $this->clock1] = $this->landAt($start);
+        $this->adopt($shown, $start, $end, $shownLen);
+    }
+
+    /**
+     * The adoptions offered, by part (Changing the Series from an Edited Day): day, time, length, each with the day's
+     * own offset for it, its preselection and whether it is refused: [part => ['offset', 'preselect', 'disabled']].
+     *
+     * @var array<string,array{offset:int,preselect:string,disabled:bool}>
+     */
+    public array $adoptions = [];
+
+    /**
+     * From a day acted on that owns its date, time or length and was moved in it, with no zone or all-day change and
+     * shown in the series' own kind and zone: each such part is a group, "this becomes the series' own" (the delta
+     * measured from the occurrence, the same-way delta plus the day's own offset for that part) or "the series moves
+     * the same way". Not under a new rule, which gives the day acted on no special place, nor for a rule the expander
+     * can't read. The day is refused where the drag adopting it would be; it is preselected when that drag moves
+     * every event by less than one period of the rule's frequency, the time always, the length only when typed (the
+     * harness never types one). The choices the case made ($edit['adopt']) are applied to the landing.
+     */
+    private function adopt(array $shown, \DateTimeImmutable $start, \DateTimeImmutable $end, int $shownLen): void
+    {
+        $o = $this->o;
+        $e = $this->e;
+        $row = $e['fromRow'] ?? null;
+        if ($row === null || $e['rule'] === 'new' || $this->s0->cap === 'unreadable') {
+            return;
+        }
+        $sameFrame = $this->allDay1 === $o['allDay'] && (bool) $shown['allDay'] === $o['allDay'] && ($o['allDay'] || ($shown['tz'] === $o['tz'] && $this->tz1 === $o['tz']));
+        if (!$sameFrame) {
+            return;
+        }
+        $own = $o['own'][$row] ?? [];
+        $tz = $o['allDay'] ? 'UTC' : $o['tz'];
+        $s = Clock::local($shown['start'], $tz);
+        $l = $start->setTimezone(Clock::zone($tz));
+        $lLen = $end->getTimestamp() - $start->getTimestamp();
+        $days = Clock::dnOf($l) - Clock::dnOf($s);
+        $parts = [
+            'day' => ['date', Clock::dnOf($s) - $this->actedDn, $days !== 0],
+            'time' => ['time', $o['allDay'] ? 0 : Clock::secsOf($s) - $o['clock'], !$o['allDay'] && Clock::secsOf($l) !== Clock::secsOf($s)],
+            'length' => ['length', $shownLen - $o['len'], $lLen !== $shownLen],
+        ];
+        foreach ($parts as $part => [$field, $offset, $changed]) {
+            if ($offset === 0 || !$changed || !in_array($field, $own, true)) {
+                continue;
+            }
+            // The length is adopted first when typed (a typed value names the value wanted), the same way for a drag.
+            $this->adoptions[$part] = ['offset' => $offset, 'preselect' => $part === 'time' || ($part === 'length' && !empty($e['sent']['typed'])) ? 'adopt' : 'same', 'disabled' => false];
+        }
+        if (isset($this->adoptions['day'])) {
+            $to = $this->actedDn + $days + $this->adoptions['day']['offset'];
+            $drag = clone $this;
+            $drag->landedDn = $to;
+            $drag->delta = $to - $this->actedDn;
+            $drag->kind = 'drag';
+            $enabled = $drag->refusal() === null && $this->s0->supported() && array_filter($drag->designReadings(), static fn(array $r): bool => $r['enabled']) !== [];
+            $this->adoptions['day']['disabled'] = !$enabled;
+            $this->adoptions['day']['preselect'] = $this->withinPeriod($this->actedDn, $to) ? 'adopt' : 'same';
+        }
+        $chose = $e['adopt'] ?? [];
+        if (isset($this->adoptions['time']) && ($chose['time'] ?? null) === 'adopt') {
+            $this->clock1 = isset($e['sent']['typedClock']) && $e['sent']['typedTz'] === $tz ? (int) $e['sent']['typedClock'] : Clock::secsOf($l);
+            $this->landedDn = $this->actedDn + $days;
+        }
+        if (isset($this->adoptions['day']) && !$this->adoptions['day']['disabled'] && ($chose['day'] ?? null) === 'adopt') {
+            $this->landedDn += $this->adoptions['day']['offset'];
+        }
+        if (isset($this->adoptions['length']) && ($chose['length'] ?? null) === 'adopt') {
+            $this->len1 = $lLen;
+        }
+    }
+
+    /** Whether $to is within one period of the rule's frequency of $from, either way, exclusive (a day, a week, a month, a year). */
+    private function withinPeriod(int $from, int $to): bool
+    {
+        $months = match ($this->s0->freq) {
+            'MONTHLY' => 1,
+            'YEARLY' => 12,
+            default => null,
+        };
+        if ($months === null) {
+            return abs($to - $from) < ($this->s0->freq === 'WEEKLY' ? 7 : 1);
+        }
+        $at = static function (int $dn, int $k): int {
+            [, , $d] = Days::ymd($dn);
+            [$y, $m] = Days::fromMi(Days::miOf($dn) + $k);
+            return Days::dn($y, $m, min($d, Days::monthLen($y, $m)));
+        };
+        return $to > $at($from, -$months) && $to < $at($from, $months);
     }
 
     private string $seenTz = 'UTC';
@@ -114,8 +204,11 @@ final class Expect
         if ($this->allDay1) {
             return [$this->actedDn + $days, 0];
         }
-        $shift = $o['allDay'] ? 0 : Clock::secsOf($read) - Clock::secsOf($seen);
-        $clock = $o['allDay'] ? Clock::secsOf($read) : $o['clock'] + $shift;
+        // A clock typed in the series' zone is the landed clock, the instant its start (api-contract, typed).
+        $sent = $this->e['sent'] ?? [];
+        $secs = isset($sent['typedClock']) && $sent['typedTz'] === $this->readTz && $this->readTz === $this->tz1 && $start->getTimestamp() === Clock::parse($sent['start'])->getTimestamp() ? (int) $sent['typedClock'] : Clock::secsOf($read);
+        $shift = $o['allDay'] ? 0 : $secs - Clock::secsOf($seen);
+        $clock = $o['allDay'] ? $secs : $o['clock'] + $shift;
         $over = intdiv($clock - (($clock % 86400) + 86400) % 86400, 86400);
         return [$this->actedDn + $days + $over, (($clock % 86400) + 86400) % 86400];
     }
@@ -135,18 +228,41 @@ final class Expect
             $this->kind = 'bound';
         }
         // A zone change: the same clock in the new zone, or the same moment
-        // (Zones, DST and All-Day Days). The moment is the wall clock where
-        // it was put read on the clock it showed on, so the occurrence
-        // keeps its instant; its deltas are then measured as any others.
+        // (Zones, DST and All-Day Days; decisions.md, the zone "same moment"
+        // choice). The moment is the wall clock where it was put read on the
+        // clock it showed on, so the occurrence keeps its instant. Any drag
+        // in it is measured in the old zone alone (momentDrag, in days); the
+        // zone change then carries the result to the new zone by the days
+        // that instant moves on the new calendar (the carry), every member
+        // alike, and nothing else is measured as a drag.
         if ($this->e['sent'] !== null && $this->tz1 !== $o['tz'] && !$o['allDay'] && !$this->allDay1 && $this->readTz !== $this->seenTz) {
             $put = Clock::parse($this->e['sent']['start'])->setTimezone(Clock::zone($this->readTz));
             $this->momentAt = Clock::at(Clock::dnOf($put), Clock::secsOf($put), $this->seenTz);
             [$this->momentDn, $this->momentSecs] = $this->landAt($this->momentAt);
+            $seen = Clock::local($this->seenStart, $this->seenTz);
+            $old = $this->momentAt->setTimezone(Clock::zone($this->seenTz));
+            $clock = $o['clock'] + Clock::secsOf($old) - Clock::secsOf($seen);
+            $wrapped = (($clock % 86400) + 86400) % 86400;
+            $this->momentDrag = Clock::dnOf($old) - Clock::dnOf($seen) + intdiv($clock - $wrapped, 86400);
+            $this->momentOldClock = $wrapped;
             $this->zoneGroup = $this->momentDn !== $this->landedDn || $this->momentSecs !== $this->clock1;
         }
     }
 
-    /** The edit under the zone reading chosen: 'moment' makes it a drag by its Δ at the moment's clock. */
+    /** The drag in the same moment, measured in the old zone alone (days). */
+    private int $momentDrag = 0;
+    /** The series' clock under the same moment, read in the old zone. */
+    public int $momentOldClock = 0;
+    /** Under the same moment: ['drag' => days in the old zone, 'carry' => days the instant moves on the new calendar], else null. */
+    public ?array $moment = null;
+    /** A same-moment change the harness leaves open: a monthly or yearly drag carried across a day boundary as well (counted as unoracled). */
+    public bool $momentOpen = false;
+
+    /**
+     * The edit under the zone reading chosen: under 'moment' the series repeats at the instant the day acted on keeps,
+     * at its clock in the new zone, its days the drag in the old zone (with its readings) carried by the instant's days
+     * on the new calendar (momentReadings).
+     */
     public function withZone(?string $zone): self
     {
         if ($zone !== 'moment' || !$this->zoneGroup) {
@@ -156,8 +272,62 @@ final class Expect
         $c->landedDn = $this->momentDn;
         $c->clock1 = $this->momentSecs;
         $c->delta = $c->landedDn - $c->actedDn;
+        $c->moment = ['drag' => $this->momentDrag, 'carry' => $c->delta - $this->momentDrag];
         $c->kind = $this->kind === 'newrule' ? 'newrule' : ($c->delta !== 0 ? 'drag' : 'time');
         return $c;
+    }
+
+    /**
+     * The readings under the same moment: the drag in the old zone's (one, 'same', when it moved no day), each carried
+     * by the days the instant moves on the new calendar. For a daily or weekly rule the carry moves every day by those
+     * days; for a monthly or yearly one with no drag it is the drag table's whole-pattern shift by them, its preselected
+     * reading where the family offers several (decisions.md: the standard leaves the carry across a day boundary open,
+     * and the preselected reading is taken). A monthly or yearly drag carried as well is left open (momentOpen).
+     */
+    private function momentReadings(): array
+    {
+        ['drag' => $d1, 'carry' => $carry] = $this->moment;
+        $plain = clone $this;
+        $plain->moment = null;
+        $plain->landedDn = $this->actedDn + $d1;
+        $plain->delta = $d1;
+        $plain->kind = $d1 !== 0 ? 'drag' : 'time';
+        $base = $plain->designReadings();
+        if ($carry === 0) {
+            return $base;
+        }
+        $s = $this->s0;
+        if ($s->freq === 'DAILY' || $s->freq === 'WEEKLY') {
+            return array_map(static function (array $r) use ($carry): array {
+                if ($r['T']['type'] === 'same') {
+                    $r['T'] = ['type' => 'shift', 'moved' => null, 'delta' => $carry];
+                } elseif ($r['T']['type'] === 'shift') {
+                    $r['T']['carry'] = $carry;
+                }
+                return $r;
+            }, $base);
+        }
+        if ($d1 !== 0) {
+            $this->momentOpen = true;
+            return $base;
+        }
+        $shift = clone $this;
+        $shift->moment = null;
+        $shift->landedDn = $this->actedDn + $carry;
+        $shift->delta = $carry;
+        $shift->kind = 'drag';
+        $rs = $shift->designReadings();
+        foreach ($rs as $r) {
+            if ($r['id'] === 'pattern' && $r['enabled']) {
+                return [$r];
+            }
+        }
+        foreach ($rs as $r) {
+            if ($r['enabled']) {
+                return [$r];
+            }
+        }
+        return [$rs[0]];
     }
 
     // ---- capability --------------------------------------------------------
@@ -214,6 +384,9 @@ final class Expect
     {
         if ($this->kind === 'newrule') {
             return $this->newRuleReadings();
+        }
+        if ($this->moment !== null) {
+            return $this->momentReadings();
         }
         if ($this->delta === 0) {
             return [self::reading('same', ['type' => 'same'])];
@@ -541,6 +714,7 @@ final class Expect
                     continue;
                 }
                 $x = clone $this;
+                $x->moment = null; // the drag that makes the new pattern, read in the series' own days
                 $x->actedDn = $dn;
                 $x->landedDn = $to;
                 $x->delta = $to - $dn;
@@ -675,10 +849,11 @@ final class Expect
             case 'same':
                 return $dn;
             case 'shift':
+                // A carry (the same moment's days on the new calendar) moves every day after the drag.
                 if ($t['moved'] === null) {
-                    return $dn + $t['delta'];
+                    return $dn + $t['delta'] + ($t['carry'] ?? 0);
                 }
-                return $s->memberOf($dn) === $t['moved'] ? $dn + $t['delta'] : $dn;
+                return ($s->memberOf($dn) === $t['moved'] ? $dn + $t['delta'] : $dn) + ($t['carry'] ?? 0);
             case 'forms':
                 $i = $s->memberOf($dn);
                 if ($i === null) {
@@ -731,7 +906,7 @@ final class Expect
         // hour, read at the new clock in the new zone).
         $gap = (clone $s)->inZone($this->allDay1 ? 'UTC' : $this->tz1, $this->clock1, $this->allDay1, false);
         if ($t['type'] === 'same' || $t['type'] === 'shift') {
-            $span = abs($t['delta'] ?? 0) + 7 * $s->interval * 2 + 7;
+            $span = abs($t['delta'] ?? 0) + abs($t['carry'] ?? 0) + 7 * $s->interval * 2 + 7;
             foreach ($s->days($o['startDn'], $lo - $span, $hi + $span, PHP_INT_MAX, true) as $d) {
                 $n = $this->image($t, $d);
                 if ($n !== null && $n >= $lo && $n <= $hi && !$gap->skipsForGap($n)) {

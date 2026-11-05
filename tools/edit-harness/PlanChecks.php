@@ -134,10 +134,12 @@ trait PlanChecks
         $standalones = $this->standalones();
         // The day acted on as an event of its own: its own row detached, or
         // a row made where the request put it. Only where the request put it
-        // somewhere and sent no new pattern (Every Kind of Edit): otherwise
-        // its row is an edited day like any other, kept on its own by the
-        // outside choice.
-        $special = $edit['sent'] !== null && $x->kind !== 'newrule';
+        // somewhere and sent no new pattern (Every Kind of Edit); otherwise its
+        // row is an edited day like any other, kept on its own by the outside
+        // choice. Cut off by a bound the person sent, it is a day outside like
+        // any other (decisions.md, a bound the person sent that cuts off the
+        // day acted on): kept on its own where it was put, or deleted.
+        $special = $edit['sent'] !== null && $x->kind !== 'newrule' && !($edit['boundSent'] !== null && ($choices['outside'] ?? 'keep') === 'delete');
         $actedAlone = null;
         foreach ($special ? $standalones : [] as $s) {
             $sid = (int) $s['id'];
@@ -221,7 +223,7 @@ trait PlanChecks
         'bound.from' => ['kind', 'count', 'until', 'events', 'last'],
         'next[]' => ['start', 'allDay', 'tz', 'kind', 'words'],
         'counts' => ['events', 'edited', 'skipped'],
-        'groups[]' => ['id', 'label', 'selected', 'day', 'days', 'count', 'field', 'value', 'dates', 'side', 'splits', 'counted', 'from', 'to', 'options'],
+        'groups[]' => ['id', 'label', 'selected', 'day', 'days', 'count', 'field', 'value', 'dates', 'side', 'splits', 'counted', 'from', 'to', 'shift', 'by', 'length', 'options'],
         'options[]' => ['id', 'label', 'rrule', 'date', 'start', 'next', 'dates', 'then', 'earlier', 'earlierSeries', 'bound', 'differs', 'words', 'disabled', 'reason'],
         'entry' => ['start', 'allDay', 'tz'],
         'days[]' => ['key', 'newKey', 'kind', 'title', 'day', 'ownDate', 'before', 'after', 'shows', 'to', 'at', 'tz', 'why', 'side', 'outcome', 'head', 'outcomeWords', 'words', 'kept', 'takes'],
@@ -513,8 +515,11 @@ trait PlanChecks
                     }
                 } elseif (($g['id'] ?? '') === 'zone') {
                     $this->isoIn("$op.start", $o['start'] ?? null, $zone, 'zone option start');
+                } elseif (($g['id'] ?? '') === 'time' && array_key_exists('start', $o)) {
+                    // An adoption's time option carries its series' start as a zone option's is written (api-contract, The plan).
+                    $this->isoIn("$op.start", $o['start'], $zone, 'time option start');
                 } elseif (array_key_exists('start', $o)) {
-                    $this->shapeFail("$op.start", 'only a zone option carries a start', $o['start']);
+                    $this->shapeFail("$op.start", 'only a zone or time option carries a start', $o['start']);
                 }
                 if (array_key_exists('date', $o)) {
                     $this->role('date', "$op.date", $o['date']);

@@ -122,6 +122,62 @@ trait Sequences
         return $this->result('sequence');
     }
 
+    /**
+     * A split on a Google calendar the account can write is refused until 1.5.2 (api-contract, This and following):
+     * "this and following" from a day after the first, delete following and an answer from a day on each preview a plan
+     * whose refusal is `google`, and the commit with its hash is 422 series_refused, writing nothing and calling no one
+     * (`e-google`). The calendar and its series are written as a Google sync writes them; no Google stand-in is needed,
+     * since nothing may reach it.
+     */
+    public function runGoogleSplit(array $spec): array
+    {
+        $this->records = [];
+        $this->unoracled = [];
+        $this->runs = [];
+        $this->spec = $spec + ['n' => 0, 'seed' => 0];
+        $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
+        $account = $this->db->insert('google_accounts', ['user_id' => $this->userId, 'email' => 'owner@example.test', 'refresh_token_enc' => 'sealed-sample', 'scopes' => 'calendar']);
+        $cal = $this->db->insert('calendars', ['user_id' => $this->userId, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
+            'position' => \BetterCal\Domain\Order::endOfList($this->db, $this->userId), 'role' => 'mine']);
+        $now = \BetterCal\Support\Time::nowDb();
+        $s = $spec['series'];
+        $id = $this->db->insert('events', ['user_id' => $this->userId, 'calendar_id' => $cal, 'uid' => 'sample-series@google', 'title' => 'Sample series',
+            'start_utc' => $s['start'] . ':00', 'end_utc' => date('Y-m-d H:i:s', strtotime($s['start'] . ':00 UTC') + 60 * (int) $s['length']), 'all_day' => 0, 'tzid' => 'UTC',
+            'rrule' => $s['rrule'], 'source' => 'feed', 'google_event_id' => 'g-sample-series', 'created_at' => $now, 'updated_at' => $now]);
+        $at = (string) $spec['actedAt'];
+        $s0 = $this->snapshot();
+        $refused = function (string $what, callable $preview, callable $commit) use ($s0): void {
+            try {
+                $plan = $preview();
+            } catch (\Throwable $e) {
+                $this->fail('e-google', "$what: the preview failed with " . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+                return;
+            }
+            $codes = array_column($plan['refusals'] ?? [], 'code');
+            $this->check('e-google', in_array('google', $codes, true), "$what: the plan refuses a split on a Google calendar (google)", ['refusals' => $codes]);
+            $choices = [];
+            foreach ($plan['groups'] ?? [] as $g) {
+                $choices[$g['id']] = $g['selected'];
+            }
+            $got = null;
+            try {
+                $commit(['hash' => $plan['hash'] ?? null, 'choices' => $choices]);
+            } catch (HttpError $e) {
+                $got = $e->status . ' ' . $e->errorCode;
+            } catch (\Throwable $e) {
+                $got = get_class($e) . ': ' . mb_substr($e->getMessage(), 0, 200);
+            }
+            $this->check('e-google', $got === '422 series_refused', "$what: the commit is 422 series_refused", ['got' => $got]);
+            $this->same('e-google', $s0, $this->snapshot(), "$what: a refused split writes nothing");
+        };
+        $edit = ['scope' => 'following', 'instanceStart' => $at, 'title' => 'Sample series, renamed'];
+        $refused('this and following', fn() => $this->events->previewPatch($this->userId, $id, $edit), fn(array $p) => $this->events->patch($this->userId, $id, $edit + ['plan' => $p]));
+        $refused('delete following', fn() => $this->events->previewDelete($this->userId, $id, 'following', $at), fn(array $p) => $this->events->deleteEvent($this->userId, $id, 'following', $at, null, $p));
+        $refused('an answer from a day on', fn() => $this->events->previewAttendance($this->userId, $id, 'going', 'following', $at), fn(array $p) => $this->events->setAttendance($this->userId, $id, 'going', 'following', $at, $p));
+        return $this->result('google split');
+    }
+
     /** The raw occurrence of a series on a local date in its own zone, or null. */
     private function occurrenceOn(array $st, string $date): ?array
     {

@@ -84,7 +84,17 @@ trait PlanPreselect
         if (!$before['shape']->supported()) {
             return [null, $id, ''];
         }
-        $x = (new Expect($before, $edit))->withZone($selected['zone'] ?? null);
+        $x = (new Expect($before, $edit + ['adopt' => $selected]))->withZone($selected['zone'] ?? null);
+        if (in_array($id, ['day', 'time', 'length'], true)) {
+            // Open Decisions 1, from an edited day: the day adopted when that moves every event by less than one period
+            // of the rule's frequency, the time always, the length when typed (the case's `typed` share).
+            $want = (new Expect($before, $edit))->adoptions[$id]['preselect'] ?? null;
+            return [$want, "adopt $id", $id === 'day' ? 'adopting the day when it moves every event by less than one period' : ($id === 'time' ? 'adopting the time always' : 'adopting a typed length, the same way for a drag')];
+        }
+        $x->readings();
+        if ($x->momentOpen) {
+            return [null, $id, ''];
+        }
         if ($id === 'reading') {
             $newRule = $x->kind === 'newrule';
             foreach (self::readingPreference($before['shape'], $newRule) as $r) {

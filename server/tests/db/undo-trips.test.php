@@ -118,6 +118,25 @@ return static function (Db $db): void {
         },
         "Undoing this would make 'Sample stop' a trip inside the trip 'Sample trip'; a trip can't contain another trip.");
 
+    // A trip deleted, then its stop made a trip itself (the link is no live
+    // one while the trip is deleted). Undoing the delete would bring the
+    // trip back around a trip; once the stop is a trip no more, it goes.
+    $each('a trip deleted, then its stop flagged',
+        function (int $u, $d, int $cal) use ($trip, $stop, $trips): array {
+            $t = $trip($d, $u, $cal);
+            $s = $stop($d, $u, $cal);
+            $trips($d)->attach($u, $t, $s);
+            return ['trip' => $t, 'stop' => $s];
+        },
+        fn(int $u, $d, array $c) => $d->events->deleteEvent($u, $c['trip'], null, null),
+        fn(int $u, $d, array $c) => $d->events->patch($u, $c['stop'], ['isContainer' => true]),
+        fn(int $u, $d, array $c) => $d->events->patch($u, $c['stop'], ['isContainer' => false]),
+        function (int $u, $d, array $c) use ($db, $flag, $linked): void {
+            checkEq('a trip deleted, then its stop flagged: undone once the stop is no trip, the trip is back around it', [null, 1, 0, 1],
+                [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$c['trip']]), $flag($c['trip']), $flag($c['stop']), $linked($c['trip'], $c['stop'])]);
+        },
+        "Undoing this would make 'Sample stop' a trip inside the trip 'Sample trip'; a trip can't contain another trip.");
+
     // A trip with no stops turned off, then put in another trip: undoing
     // the flag would make it a trip inside that one.
     $each('flag cleared, then put in a trip',

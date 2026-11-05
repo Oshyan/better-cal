@@ -284,7 +284,7 @@ trait PlanPlacement
             return;
         }
         $chosen = $choices['zone'] ?? $group['selected'] ?? 'clock';
-        $x0 = new Expect($before, $edit);
+        $x0 = new Expect($before, $edit + ['adopt' => $choices]);
         foreach ($group['options'] ?? [] as $o) {
             $id = (string) ($o['id'] ?? '');
             if (!empty($o['disabled'])) {
@@ -298,6 +298,10 @@ trait PlanPlacement
             }
             $xz = $x0->withZone($id);
             $readings = array_values(array_filter($xz->readings(), static fn(array $r): bool => $r['enabled']));
+            if ($xz->momentOpen) {
+                $this->unoracled[] = 'the same moment carrying a monthly or yearly drag across a day boundary';
+                continue;
+            }
             $byId = array_column($readings, null, 'id');
             $rid = $choices['reading'] ?? Expect::preselected($readings);
             if ($rid === null || !isset($byId[$rid])) {

@@ -316,6 +316,13 @@ return [
         'patch' => [["(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move';", "(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move' && false;"]],
         'cases' => ['mutation-drag-with-a-day-at-its-own-date'],
     ],
+    // The wall clocks typed (Driver, the case's typed share): a typed length from a day of its own length is adopted first.
+    [
+        'id' => 'typed-length-not-adopted-first', 'file' => $model, 'checks' => ['c-preselect-design'],
+        'what' => 'a typed length from a day with its own length preselects the same way, as a resize does',
+        'patch' => [["(\$row['preselect'] === 'typed' && \$this->typed)", "(\$row['preselect'] === 'typed' && false)"]],
+        'cases' => ['mutation-typed-length-from-a-day-of-its-own-length'],
+    ],
     // The sequences' own checks: an Undo after several steps puts back the step before, and the shown events agree.
     [
         'id' => 'undo-latest-takes-the-one-before', 'file' => 'server/src/Domain/Undo.php', 'checks' => ['s-undo', 's-step'],
@@ -342,6 +349,8 @@ return [
         'checks' => array_merge(
             $undoCase('detach, then flag the stop', array_slice($undoPaths, 1)),
             ['detach, then flag the stop: undone, the stop is back in its trip and no trip itself'],
+            $undoCase('a trip deleted, then its stop flagged', array_slice($undoPaths, 1)),
+            ['a trip deleted, then its stop flagged: undone once the stop is no trip, the trip is back around it'],
             $undoCase('flag cleared, then put in a trip', $undoPaths),
             $undoCase('the series turned off for all events, then a day put in a trip', $undoPaths),
             [

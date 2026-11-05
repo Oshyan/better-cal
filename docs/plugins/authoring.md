@@ -126,7 +126,7 @@ Settings and context:
 - `ownCalendars(): array`: the calendars the person added to your plugin, each `{id, name, color, visible, settings}`; just one when this run follows a save to it. See [Calendars the Person Adds](#calendars-the-person-adds).
 - `ownCalendarSettings(int $calendarId): array` and `targetCalendar(): ?int`: one of them by id, and the calendar this run is for (null for a full run).
 - `calendars(): array`: the user's calendars (`id`, `name`, `kind`, `visible`).
-- `timezone(): DateTimeZone`: **the user's** zone. Use it for any local time you build; `date_default_timezone_get()` is the server's zone and may be a continent away.
+- `timezone(): DateTimeZone`: **the user's** zone. Use it for any local time you build; `date_default_timezone_get()` is the server's zone and may be a continent away. It is the Home zone when one is set, otherwise the zone most of the user's own events are written in, otherwise UTC, and a time you sync or return from `applyEdit` without an offset is read on this same clock, so a sync, a move and its undo agree.
 - `runId(): ?string`: the id grouping this run's changes, so the ops page can undo a run in one step.
 
 Reading the calendar:

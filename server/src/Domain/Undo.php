@@ -1219,9 +1219,9 @@ final class Undo
             'after' => $span,
         ], $authority);
         // A time the plugin confirms with no offset is the owner's local
-        // time (the Home zone in Settings; UTC until one is set), read as
-        // the move itself reads it (Events::pluginReschedule).
-        [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result, Time::zone(Settings::homeTzid($this->db, $userId)));
+        // time (Settings::localZone), read as its sync and the move itself
+        // read it.
+        [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result, Settings::localZone($this->db, $userId));
         $this->write($userId, function () use ($event, $startUtc, $endUtc, $allDay, $mutation, $authority): void {
             $authority?->assertValid($this->db);
             $this->db->update('events', [

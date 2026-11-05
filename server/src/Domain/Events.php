@@ -2273,7 +2273,10 @@ final class Events
         $links['dupes'] = $this->duplicates()->linkedFor(array_values(array_unique(array_map(self::seriesId(...), $rows))));
         $links['feedback'] = $this->feedbackFor(self::feedIds($rows));
         return array_map(
-            fn(array $row) => $this->serialize($row, self::shownSpan($row)[0], self::shownSpan($row)[1], $links, full: false),
+            function (array $row) use ($links): array {
+                [$start, $end] = self::shownSpan($row);
+                return $this->serialize($row, $start, $end, $links, full: false);
+            },
             $rows
         );
     }

@@ -134,6 +134,7 @@ export function planView(plan, ctx = {}) {
     saving: W.SAVING_WORDS,
     fields: [],
     refused: null,
+    split: '',
     change: '',
     readings: [],
     comingUp: '',
@@ -170,11 +171,16 @@ export function planView(plan, ctx = {}) {
   const trip = (plan.fields || []).find((f) => f && f.field === 'is_container');
   view.fields = (ctx.fields || []).map((f) => W.fieldSentence(f.field === 'isContainer' && trip ? { ...f, words: W.tripWords(trip) } : f));
   view.refused = planRefusal(plan);
-  view.change = view.refused ? '' : W.changeSentence(plan.rule, plan.bound, opts);
-  view.comingUp = W.comingUp(plan.next, plan.nextMore, opts);
+  // A split says what the events before the day acted on become, then the
+  // part from the day as any whole-series change; a delete following has
+  // no part, so its change is the delete itself.
+  const deletes = plan.action === 'delete';
+  view.split = view.refused ? '' : W.splitLine(plan.split, opts);
+  view.change = view.refused ? '' : deletes ? W.deleteSentence(plan.split, opts) : W.changeSentence(plan.rule, plan.bound, opts);
+  view.comingUp = deletes ? '' : W.comingUp(plan.next, plan.nextMore, opts);
   view.started = W.startedLine(plan.acted, opts);
   view.count = plan.counts ? plan.counts.events : null;
-  view.affects = view.refused ? '' : W.affects(plan.counts, plan.bound, opts, plan.days, plan.rule);
+  view.affects = view.refused || deletes ? '' : W.affects(plan.counts, plan.bound, opts, plan.days, plan.rule);
 
   // Every group is drawn once, by its id: the readings, the bound and the
   // zone under Change; a day the new rule would add among the removed days;
@@ -260,7 +266,7 @@ export function planView(plan, ctx = {}) {
   view.notes = (plan.notes || []).map((n) => W.noteWords(n, opts)).filter(Boolean);
   view.action = W.actionWords(verb, view.count, ctx.scope);
   const everyGroup = (plan.groups || []).every((g) => picked[g.id] != null);
-  view.canConfirm = !view.refused && everyGroup && !!plan.hash;
+  view.canConfirm = !view.refused && everyGroup && (!!plan.hash || !!plan.whole);
   return view;
 }
 

@@ -6,8 +6,11 @@
 // A drag waits for the dialog: its block stays where it was dropped, drawn
 // as pending, and nothing else on the calendar moves. Cancel puts it back.
 // A 409 series_plan_changed brings the new plan and asks again; a 422
-// series_refused brings the plan with its reasons. "This event" and, until
-// 1.5.1, "This and following" keep their old path, from the scope chooser.
+// series_refused brings the plan with its reasons. "This and following" is
+// the same flow with scope 'following' (a split: its plan says what the
+// events before the day become, then the part from it), and so are delete
+// following and an answer from a day on, each through its own route.
+// "This event" keeps its old path, from the scope chooser.
 
 import { state, set, toast, patchOccurrence, restoreOccurrence, localSaved, invalidateRecords } from './store.js';
 import { api, entriesOf, refreshWindow } from './api.js';
@@ -47,7 +50,14 @@ function current(id) {
 
 // The request for this change: its fields with the scope and the day acted on.
 function requestBody(sc, extra) {
-  return { ...sc.body, scope: 'all', instanceStart: sc.occ.start, ...extra };
+  return { ...sc.body, scope: sc.scope, instanceStart: sc.occ.start, ...extra };
+}
+
+// Where the change goes: PATCH the event, or the route the caller named
+// (DELETE for delete following, POST .../attendance for an answer).
+function send(sc, extra) {
+  const route = sc.route || {};
+  return api(route.path || '/events/' + sc.occ.eventId, { method: route.method || 'PATCH', body: requestBody(sc, extra) });
 }
 
 /**
@@ -60,9 +70,11 @@ function requestBody(sc, extra) {
  * after a commit. quiet: the panel stays hidden while the plan needs no one
  * (the editor: a rename no edited day owns saves at once); see receivePlan.
  * Every date and time in the panel is in the plan's zone (planZone), never
- * the occurrence's.
+ * the occurrence's. scope: 'all' or 'following'; route: {method, path} for
+ * a change that isn't a PATCH of the event (kind 'delete' or 'answer');
+ * done: the toast's words after a commit.
  */
-export function openSeriesChange({ kind, occ, body, pending = null, apply = null, rescope = null, onDone = null, fields = [], quiet = false }) {
+export function openSeriesChange({ kind, occ, body, pending = null, apply = null, rescope = null, onDone = null, fields = [], quiet = false, scope = 'all', route = null, done = null }) {
   if (!occ || !seriesPlans()) return null;
   const id = ++dialogs;
   const before = pending ? patchOccurrence(occ.instanceId, { start: pending.start, end: pending.end, seriesPending: true }) : null;
@@ -73,7 +85,7 @@ export function openSeriesChange({ kind, occ, body, pending = null, apply = null
       // with a title of its own (its occurrence names its series).
       title: occ.seriesTitle || occ.title || 'Untitled event',
       google: google(occ),
-      scope: 'all',
+      scope, route, done,
       plan: null,
       choices: {},
       status: 'loading',
@@ -92,7 +104,7 @@ async function requestPlan(id) {
   const choices = Object.keys(sc.choices).length ? { plan: { choices: sc.choices } } : {};
   let plan = null;
   try {
-    const res = await api('/events/' + sc.occ.eventId, { method: 'PATCH', body: requestBody(sc, { preview: true, ...choices }) });
+    const res = await send(sc, { preview: true, ...choices });
     plan = res && res.plan;
   } catch (e) {
     if (my !== seq || !current(id)) return;
@@ -110,11 +122,12 @@ const needsAttention = (plan) => !plan.direct || (plan.groups || []).length > 0 
 // Every plan that arrives, from a preview or as a commit's 409 or 422, the
 // same way: a quiet change stays hidden only while its plan needs no one,
 // and is then committed; any plan that needs someone shows the panel, which
-// stays shown from then on.
+// stays shown from then on. A split from the series' first day that is the
+// whole series' delete or answer (`whole`) needs no plan at all.
 function receivePlan(id, plan, patch = {}) {
   const now = current(id);
   if (!now) return;
-  const hidden = now.hidden && !needsAttention(plan);
+  const hidden = (now.hidden || !!plan.whole) && !needsAttention(plan);
   set({ seriesChange: { ...now, ...patch, plan, status: 'ready', hidden } });
   if (hidden) confirmSeriesChange();
 }
@@ -154,11 +167,11 @@ export async function confirmSeriesChange() {
   const sc = state.seriesChange;
   if (!sc || sc.status === 'committing') return false;
   const plan = sc.plan;
-  if (sc.status !== 'ready' || !plan || !plan.hash || planRefusal(plan)) return false;
+  if (sc.status !== 'ready' || !plan || (!plan.hash && !plan.whole) || planRefusal(plan)) return false;
   const id = sc.id;
   set({ seriesChange: { ...sc, status: 'committing' } });
   try {
-    const res = await api('/events/' + sc.occ.eventId, { method: 'PATCH', body: requestBody(sc, { plan: commitPlan(plan, sc.choices) }) });
+    const res = await send(sc, plan.whole ? {} : { plan: commitPlan(plan, sc.choices) });
     if (!current(id)) return false;
     if (sc.before) {
       // Drawn solid, and held so until an answer carries the change: the
@@ -167,9 +180,10 @@ export async function confirmSeriesChange() {
       localSaved([sc.before, solid]);
     }
     set({ seriesChange: null });
-    const verb = sc.kind === 'drag' ? 'Moved all events'
-      : sc.kind === 'resize' ? 'Changed all events'
-        : 'rrule' in sc.body ? 'Changed how it repeats' : 'Saved for all events';
+    const which = sc.scope === 'following' ? 'this and following' : 'all events';
+    const verb = sc.done || (sc.kind === 'drag' ? 'Moved ' + which
+      : sc.kind === 'resize' ? 'Changed ' + which
+        : 'rrule' in sc.body ? 'Changed how it repeats' : 'Saved for ' + which);
     toast(verb + (sc.google ? ' at Google' : ''), {
       title: sc.body.title || sc.title,
       undo: entriesOf(res),

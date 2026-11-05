@@ -445,23 +445,39 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   }
 }
 
-// A drop on a series occurrence with its scope picked (App.js): "All events"
-// waits for the series dialog (SeriesDialog.js), its block drawn pending
-// where it was dropped; "This event" and, until 1.5.1, "This and following"
-// act at once, as before. rescope(): the scope chooser again, for the
-// dialog's "Change scope".
+// A drop on a series occurrence with its scope picked (App.js): "All
+// events" and "This and following" wait for the series dialog
+// (SeriesDialog.js), its block drawn pending where it was dropped; "This
+// event" acts at once, as before. rescope(): the scope chooser again, for
+// the dialog's "Change scope".
 export function seriesDrop(kind, occ, p, scope, rescope = null) {
   const act = kind === 'resize' ? resizeEvent : moveEvent;
   // A server without series plans takes the change at once, as before 1.5.0.
-  if (scope !== 'all' || !seriesPlans()) return act({ ...p, scope });
+  if ((scope !== 'all' && scope !== 'following') || !seriesPlans()) return act({ ...p, scope });
   openSeriesChange({
-    kind, occ,
+    kind, occ, scope,
     body: { start: p.newStart, end: p.newEnd },
     pending: { start: p.newStart, end: p.newEnd },
     apply: (s) => act({ ...p, scope: s }),
     rescope,
+    onDone: (res) => followSplitLater(occ, res),
   });
   return null;
+}
+
+// After a split, the open panel follows the occurrence to its new series
+// once the window has its rows (refreshWindow, which the commit started).
+function followSplitLater(occ, res) {
+  if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
+}
+
+// "This and following" for a delete or an answer: the series dialog with
+// that change's own route, its plan saying what the events before the day
+// become. Returns true when the dialog opened (the change waits for it).
+function followingThroughPlan(occ, scope, kind, route, body, done) {
+  if (!occ.recurring || scope !== 'following' || !seriesPlans()) return false;
+  openSeriesChange({ kind, occ, scope, route, body, done, onDone: (res) => followSplitLater(occ, res) });
+  return true;
 }
 
 // The calendar a new event lands on when nothing else says otherwise: the
@@ -640,6 +656,10 @@ export async function useSeriesValue(occ, names) {
 }
 
 export async function deleteEvent(occ, scope) {
+  if (followingThroughPlan(occ, scope, 'delete', { method: 'DELETE', path: '/events/' + occ.eventId }, {}, 'Deleted this and following')) {
+    set({ popover: null, editor: null });
+    return;
+  }
   const removed = occ.recurring && (scope || 'this') === 'this'
     ? [removeOccurrence(occ.instanceId)].filter(Boolean)
     : removeOccurrencesOfEvent(occ.eventId);
@@ -734,6 +754,8 @@ export async function cycleAttendance(occ) {
 export async function setRelationship(occ, relationship, scope) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const mine = cal ? cal.role === 'mine' : occ.source !== 'feed';
+  const label0 = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
+  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/relationship' }, { relationship }, label0 + ' (this and following)')) return relationship;
   const before = patchOccurrence(occ.instanceId, { relationship, attendance: relationship === 'hidden' ? 'hidden' : occ.attendance });
   try {
     const body = { relationship };
@@ -773,6 +795,7 @@ export function showAllRel() {
 // scope applies to a series: 'this' gives the occurrence its own row,
 // 'following' splits the series, 'all' (default) is the whole series.
 export async function setAttendance(occ, attendance, scope) {
+  if (followingThroughPlan(occ, scope, 'answer', { method: 'POST', path: '/events/' + occ.eventId + '/attendance' }, { attendance }, (ATTENDANCE_TOASTS[attendance] || 'Attendance updated') + ' (this and following)')) return attendance;
   const before = patchOccurrence(occ.instanceId, { attendance });
   try {
     const body = { attendance };

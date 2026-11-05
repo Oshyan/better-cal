@@ -1,0 +1,108 @@
+{
+    "about": "A weekly trip series of five Saturdays: the trip flag cleared for all events, the series attached to a trip as its stop, the flag set again refused (it would put a trip inside a trip: trip_nested, nothing written), the series detached, the flag set, then Undo of the detach by its own entry refused (it would put the trip, a trip again, back inside the other: undo_conflict, nothing written, the entry left), Undo of the set, and Undo of the detach by its entry again, now through.",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=SA",
+        "import": false,
+        "bound": "count",
+        "boundAt": 5,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Paris",
+        "start": "2027-04-03 10:00",
+        "length": 120,
+        "trip": true
+    },
+    "expect": {
+        "zone": "Europe/Paris",
+        "events": 5,
+        "shows": [
+            "2027-04-03 10:00 Sample series",
+            "2027-04-10 10:00 Sample series",
+            "2027-04-17 10:00 Sample series",
+            "2027-04-24 10:00 Sample series",
+            "2027-05-01 10:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-04-03",
+            "vector": {
+                "untrip": true
+            },
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "attach",
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-04-10",
+            "vector": {
+                "trip": true
+            },
+            "refused": "trip_nested",
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "detach",
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-04-03",
+            "vector": {
+                "trip": true
+            },
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "undoEntry",
+            "step": 4,
+            "refused": "undo_conflict",
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5
+            }
+        },
+        {
+            "do": "undoEntry",
+            "step": 4,
+            "expect": {
+                "zone": "Europe/Paris",
+                "events": 5,
+                "shows": [
+                    "2027-04-03 10:00 Sample series",
+                    "2027-04-10 10:00 Sample series",
+                    "2027-04-17 10:00 Sample series",
+                    "2027-04-24 10:00 Sample series",
+                    "2027-05-01 10:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

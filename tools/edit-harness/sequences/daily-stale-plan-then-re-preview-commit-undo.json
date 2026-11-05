@@ -1,0 +1,125 @@
+{
+    "about": "Daily at 07:00 for six events: a time change for all events previewed, then a second request gives one day its own title, then the commit with the first plan's hash (409 series_plan_changed, the plan as the series now is, nothing written), then the change previewed again and committed with the new hash (the day keeping its title), then Undo twice.",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Chicago",
+        "start": "2027-09-06 07:00",
+        "length": 45
+    },
+    "expect": {
+        "zone": "America/Chicago",
+        "events": 6,
+        "shows": [
+            "2027-09-06 07:00 Sample series",
+            "2027-09-07 07:00 Sample series",
+            "2027-09-08 07:00 Sample series",
+            "2027-09-09 07:00 Sample series",
+            "2027-09-10 07:00 Sample series",
+            "2027-09-11 07:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "preview",
+            "acted": "2027-09-06",
+            "vector": {
+                "clock": 1800
+            },
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:00 Sample series",
+                    "2027-09-07 07:00 Sample series",
+                    "2027-09-08 07:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "this",
+            "acted": "2027-09-08",
+            "exception": {
+                "own": [
+                    "title"
+                ]
+            },
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:00 Sample series",
+                    "2027-09-07 07:00 Sample series",
+                    "2027-09-08 07:00 Sample series, day 1",
+                    "2027-09-09 07:00 Sample series",
+                    "2027-09-10 07:00 Sample series",
+                    "2027-09-11 07:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "commitHeld",
+            "refused": "series_plan_changed",
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:00 Sample series",
+                    "2027-09-07 07:00 Sample series",
+                    "2027-09-08 07:00 Sample series, day 1"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-09-06",
+            "vector": {
+                "clock": 1800
+            },
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:30 Sample series",
+                    "2027-09-07 07:30 Sample series",
+                    "2027-09-08 07:30 Sample series, day 1",
+                    "2027-09-09 07:30 Sample series",
+                    "2027-09-10 07:30 Sample series",
+                    "2027-09-11 07:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:00 Sample series",
+                    "2027-09-07 07:00 Sample series",
+                    "2027-09-08 07:00 Sample series, day 1"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "America/Chicago",
+                "events": 6,
+                "shows": [
+                    "2027-09-06 07:00 Sample series",
+                    "2027-09-07 07:00 Sample series",
+                    "2027-09-08 07:00 Sample series",
+                    "2027-09-09 07:00 Sample series",
+                    "2027-09-10 07:00 Sample series",
+                    "2027-09-11 07:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

@@ -1,0 +1,106 @@
+{
+    "about": "Weekly on Thursday with a day given its own title: an end after four events set from that day's own row, a rename for all events (the day keeping its own title), then Undo of the end by its own entry, not the latest (POST /activity/:id/undo: the end goes, the rename stays), then Undo of the latest, the rename.",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=TH",
+        "import": false,
+        "bound": "none",
+        "boundAt": 0,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Australia/Sydney",
+        "start": "2027-06-03 18:30",
+        "length": 90
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 0,
+            "mins": 0,
+            "zone": "UTC",
+            "len": 0
+        }
+    ],
+    "expect": {
+        "zone": "Australia/Sydney",
+        "shows": [
+            "2027-06-03 18:30 Sample series",
+            "2027-06-10 18:30 Sample series, day 1",
+            "2027-06-17 18:30 Sample series",
+            "2027-06-24 18:30 Sample series",
+            "2027-07-01 18:30 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "edit",
+            "acted": "2027-06-10",
+            "vector": {
+                "via": "row",
+                "bound": {
+                    "count": 4
+                }
+            },
+            "expect": {
+                "zone": "Australia/Sydney",
+                "events": 4,
+                "shows": [
+                    "2027-06-03 18:30 Sample series",
+                    "2027-06-10 18:30 Sample series, day 1",
+                    "2027-06-17 18:30 Sample series",
+                    "2027-06-24 18:30 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-06-17",
+            "vector": {
+                "fields": {
+                    "title": "Sample series, renamed"
+                }
+            },
+            "expect": {
+                "zone": "Australia/Sydney",
+                "events": 4,
+                "shows": [
+                    "2027-06-03 18:30 Sample series, renamed",
+                    "2027-06-10 18:30 Sample series, day 1",
+                    "2027-06-17 18:30 Sample series, renamed",
+                    "2027-06-24 18:30 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "undoEntry",
+            "step": 1,
+            "expect": {
+                "zone": "Australia/Sydney",
+                "shows": [
+                    "2027-06-03 18:30 Sample series, renamed",
+                    "2027-06-10 18:30 Sample series, day 1",
+                    "2027-06-17 18:30 Sample series, renamed",
+                    "2027-06-24 18:30 Sample series, renamed",
+                    "2027-07-01 18:30 Sample series, renamed"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Australia/Sydney",
+                "shows": [
+                    "2027-06-03 18:30 Sample series",
+                    "2027-06-10 18:30 Sample series, day 1",
+                    "2027-06-17 18:30 Sample series",
+                    "2027-06-24 18:30 Sample series",
+                    "2027-07-01 18:30 Sample series"
+                ]
+            }
+        }
+    ]
+}

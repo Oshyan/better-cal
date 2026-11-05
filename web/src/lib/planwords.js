@@ -825,8 +825,23 @@ const REFUSALS = {
   past_month_end: 'A day of its pattern would move past the end of its month.',
   count_range: 'A day would have no place in some months.',
 };
-/** A refusal's sentence, by its code. */
-export const refusalWords = (code) => REFUSALS[code] || 'This change can’t be made to the series.';
+// A split's own refusals (this and following, delete following, an answer
+// from a day on: Series\Split::REASONS). Its plan carries scope
+// 'following'; "google" there is the split's, not the day change's.
+const SPLIT_REFUSALS = {
+  google: 'On a Google calendar, splitting a series from a day on comes in a later version. Change only this one, or all events.',
+  shape: 'This repeat can’t be split on this day: started there, it wouldn’t give the same days. Change only this one, or all events.',
+};
+// The same reason in one line, where a scope chooser leaves the scope out
+// (app/scopes.js): a scope refused for every occurrence of a calendar kind
+// is not offered there, and these say why in its place.
+const UNOFFERED = {
+  google: 'This and following comes later on Google calendars',
+};
+/** A refusal's sentence, by its code (and the plan's scope: a split's are its own). */
+export const refusalWords = (code, scope) => (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to the series.';
+/** Why a scope chooser leaves "This and following" out, by the split refusal's code. */
+export const unofferedWords = (code) => UNOFFERED[code] || null;
 
 /** A note's sentence, by its kind and data. */
 export function noteWords(n, opts = {}) {

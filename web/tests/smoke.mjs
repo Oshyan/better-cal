@@ -6077,5 +6077,98 @@ console.log('--- the editor\'s monthly forms (1.5.0) ---');
   eq('monthly forms: bare from a 30th reads as skipping', describeRepeat('FREQ=MONTHLY', { start: new Date(2027, 2, 30) }), 'Monthly on the 30th, skipping months without one');
 }
 
+console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1) ---');
+{
+  const realFetch = globalThis.fetch;
+  const { seriesScopes, scopeDropChoice } = await import('../src/app/scopes.js');
+  const { ScopeChoice } = await import('../src/app/DeleteScope.js');
+  const { deleteEvent, setAttendance, setRelationship } = await import('../src/app/actions.js');
+  const { changeSeriesScope, cancelSeriesChange } = await import('../src/app/serieschange.js');
+  const { refusalWords, unofferedWords } = await import('../src/lib/planwords.js');
+  const { planRefusal } = await import('../src/lib/seriesplan.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  const tick = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const sent = [];
+  globalThis.fetch = async (url, o = {}) => {
+    const p = new URL(String(url), 'http://app.test').pathname.replace('/api/v1', '');
+    if (p.startsWith('/events/')) {
+      sent.push([o.method, p, JSON.parse(o.body || '{}')]);
+      return json({ plan: { hash: 's1', scope: 'following', direct: false, groups: [], refusals: [], split: null } });
+    }
+    if (p === '/changes/cursor') return json({ cursor: 'e1' });
+    if (p === '/events') return json({ events: [] });
+    return json({});
+  };
+  const savedCalendars = st.calendars;
+  put({
+    config: { ...st.config, seriesPlans: true }, seriesChange: null, loadedRanges: [], visibleDays: null,
+    calendars: [
+      { id: 31, name: 'Sample home', kind: 'local', provider: 'ics', editable: true, role: 'mine' },
+      { id: 32, name: 'Sample shared', kind: 'subscribed', provider: 'google', editable: true, role: 'mine' },
+      { id: 33, name: 'Sample other', kind: 'local', provider: 'ics', editable: true, role: 'mine' },
+    ],
+  });
+  const base = { eventId: 81, title: 'Sample swim', recurring: true, rrule: 'FREQ=WEEKLY', start: '2027-04-06T18:00:00-07:00', end: '2027-04-06T19:00:00-07:00' };
+  const local = { ...base, instanceId: '81@1', calendarId: 31 };
+  const google = { ...base, instanceId: '82@1', eventId: 82, calendarId: 32 };
+  const why = unofferedWords('google');
+
+  eq('scopes: a series on a local calendar has this, following and all', seriesScopes(local), { scopes: ['this', 'following', 'all'], why: null });
+  eq('scopes: on a Google calendar, no following, and the reason in its place', seriesScopes(google), { scopes: ['this', 'all'], why });
+  eq('scopes: the reason is one short line', [typeof why, why.length < 60, /Google/.test(why)], ['string', true, true]);
+  eq('scopes: a date edited on its own moved to another calendar: this or all, nothing to say (#188)',
+    seriesScopes({ ...local, isException: true }, { calendarId: 33 }), { scopes: ['this', 'all'], why: null });
+  eq('scopes: the same date staying on its calendar keeps following', seriesScopes({ ...local, isException: true }, { calendarId: 31 }).scopes, ['this', 'following', 'all']);
+
+  // The drop chip (drag, resize, reschedule, a calendar or a person drop).
+  const chip = (occ, o) => scopeDropChoice({ x: 10, y: 20 }, occ, () => {}, o);
+  eq('drop chip: local, three scopes and Cancel, no note', [chip(local).options.map((x) => x.value), chip(local).note], [['this', 'following', 'all', null], null]);
+  eq('drop chip: Google, no following, the reason as its note, the title says Google', [chip(google).options.map((x) => x.value), chip(google).note, /Google/.test(chip(google).title)],
+    [['this', 'all', null], why, true]);
+  eq('drop chip: the all label the caller gives', chip(local, { allLabel: 'All events…' }).options.map((x) => x.label), ['This event', 'This + following', 'All events…', 'Cancel']);
+
+  // The delete, answer and new-time row.
+  const texts = (v) => (v == null || v === false ? [] : typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(texts) : v.props ? texts(v.props.children) : []);
+  const row = (occ) => texts(ScopeChoice({ occ, verb: 'Delete', onPick: () => {}, onCancel: () => {} }));
+  eq('scope row: local offers This and following', row(local).includes('This and following'), true);
+  eq('scope row: Google leaves the button out and says why in its place', [row(google).includes('This and following'), row(google).includes(why)], [false, true]);
+
+  // The refusal panel's sentence for a split is the split's, beside the short line.
+  eq('refusal words: a split refused on Google says so, not the day change\'s sentence', [
+    planRefusal({ scope: 'following', refusals: [{ code: 'google' }] }), planRefusal({ scope: 'all', refusals: [{ code: 'google' }] }) === refusalWords('google'),
+  ], [refusalWords('google', 'following'), true]);
+  eq('refusal words: the split\'s Google sentence differs from a day change\'s', refusalWords('google', 'following') !== refusalWords('google'), true);
+
+  // Delete following and an answer from a day on carry "Change scope".
+  let asked = 0;
+  await deleteEvent(local, 'following', () => { asked++; });
+  await tick();
+  eq('delete following: the dialog opens through the delete route with a rescope', [st.seriesChange && st.seriesChange.kind, typeof (st.seriesChange && st.seriesChange.rescope), sent[sent.length - 1].slice(0, 2)],
+    ['delete', 'function', ['DELETE', '/events/81']]);
+  changeSeriesScope();
+  eq('delete following: Change scope closes the preview and asks again', [st.seriesChange, asked], [null, 1]);
+  await setAttendance(local, 'going', 'following', () => { asked++; });
+  await tick();
+  eq('answer from a day on (attendance): the dialog carries a rescope', [st.seriesChange && st.seriesChange.kind, typeof (st.seriesChange && st.seriesChange.rescope)], ['answer', 'function']);
+  changeSeriesScope();
+  eq('answer from a day on: Change scope asks again', [st.seriesChange, asked], [null, 2]);
+  await setRelationship(local, 'maybe', 'following', () => { asked++; });
+  await tick();
+  eq('answer from a day on (relationship): the dialog carries a rescope', typeof (st.seriesChange && st.seriesChange.rescope), 'function');
+  changeSeriesScope();
+  eq('answer from a day on (relationship): Change scope asks again', asked, 3);
+  // Without one of its own, Change scope opens the panel that was open again.
+  put({ popover: { instanceId: local.instanceId, anchorRect: null } });
+  await deleteEvent(local, 'following');
+  await tick();
+  eq('delete following, no rescope given: the panel closed while the dialog shows', [st.popover, typeof (st.seriesChange && st.seriesChange.rescope)], [null, 'function']);
+  changeSeriesScope();
+  eq('delete following, no rescope given: Change scope opens the panel again', st.popover && st.popover.instanceId, local.instanceId);
+  cancelSeriesChange();
+  put({ popover: null, editor: null, calendars: savedCalendars, config: { ...st.config, seriesPlans: false } });
+  globalThis.fetch = realFetch;
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

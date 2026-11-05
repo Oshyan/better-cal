@@ -8,23 +8,31 @@
 import { html } from '../../vendor/index.js';
 import { describeRrule } from './eventparts.js';
 import { deleteEvent, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
+import { state, set } from './store.js';
+import { seriesScopes } from './scopes.js';
 
 /** @param {{occ:object, verb:string, danger?:boolean, onPick:(scope:string)=>void, onCancel:()=>void, compact?:boolean}} props */
 export function ScopeChoice({ occ, verb, danger, onPick, onCancel, compact, note }) {
   const series = occ.rrule ? describeRrule(occ.rrule) : 'Repeats';
+  // The scopes this occurrence has (scopes.js); one left out says why in its place.
+  const { scopes, why } = seriesScopes(occ);
   return html`<div class=${'bc-delscope' + (compact ? ' is-compact' : '')} role="group" aria-label=${verb + ' which occurrences'}>
     <span class="bc-delscope-q">${verb}: <span class="bc-delscope-series">${series}</span>${note && html` <span class="bc-delscope-note">${note}</span>`}</span>
     <button type="button" class="bc-btn" onClick=${() => onPick('this')}>This occurrence</button>
-    <button type="button" class="bc-btn" onClick=${() => onPick('following')}>This and following</button>
+    ${scopes.includes('following') ? html`<button type="button" class="bc-btn" onClick=${() => onPick('following')}>This and following</button>`
+      : why && html`<span class="bc-drawer-note">${why}</span>`}
     <button type="button" class=${'bc-btn' + (danger ? ' bc-btn-danger' : '')} onClick=${() => onPick('all')}>All in series</button>
     <button type="button" class="bc-link-btn" onClick=${onCancel}>Cancel</button>
   </div>`;
 }
 
+// The series dialog's "Change scope" after delete following: this row
+// again, on the panel it was asked on (actions.js, followingThroughPlan).
 export function DeleteScope({ occ, onDone, onCancel, compact }) {
+  const back = { popover: state.popover, deletePrompt: occ.instanceId };
   const run = (scope) => {
     if (onDone) onDone();
-    deleteEvent(occ, scope);
+    deleteEvent(occ, scope, () => set(back));
   };
   const google = googleBacked(occ);
   const note = google ? GOOGLE_NO_UNDO : null;

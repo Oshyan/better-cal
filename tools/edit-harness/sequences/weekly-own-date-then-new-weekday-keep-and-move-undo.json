@@ -1,0 +1,109 @@
+{
+    "about": "Weekly on Wednesday at noon: one day dragged on its own to the Friday (its own date), then the rule changed in the editor to Thursday (the old days shifted, preselected) with the moved day kept on its Friday, Undo, then the same change from the same baseline with the moved day moved with its events (to the Saturday), Undo.",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=WE",
+        "import": false,
+        "bound": "none",
+        "boundAt": 0,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Singapore",
+        "start": "2027-03-03 12:00",
+        "length": 60
+    },
+    "expect": {
+        "zone": "Asia/Singapore",
+        "shows": [
+            "2027-03-03 12:00 Sample series",
+            "2027-03-10 12:00 Sample series",
+            "2027-03-17 12:00 Sample series",
+            "2027-03-24 12:00 Sample series"
+        ]
+    },
+    "steps": [
+        {
+            "do": "this",
+            "acted": "2027-03-10",
+            "exception": {
+                "own": [
+                    "date"
+                ],
+                "days": 2
+            },
+            "expect": {
+                "zone": "Asia/Singapore",
+                "shows": [
+                    "2027-03-03 12:00 Sample series",
+                    "2027-03-12 12:00 Sample series",
+                    "2027-03-17 12:00 Sample series",
+                    "2027-03-24 12:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-03-03",
+            "vector": {
+                "rule": "new",
+                "newRule": "FREQ=WEEKLY;BYDAY=TH"
+            },
+            "choices": {
+                "movedDays": "keep"
+            },
+            "expect": {
+                "zone": "Asia/Singapore",
+                "shows": [
+                    "2027-03-04 12:00 Sample series",
+                    "2027-03-12 12:00 Sample series",
+                    "2027-03-18 12:00 Sample series",
+                    "2027-03-25 12:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Asia/Singapore",
+                "shows": [
+                    "2027-03-03 12:00 Sample series",
+                    "2027-03-12 12:00 Sample series",
+                    "2027-03-17 12:00 Sample series",
+                    "2027-03-24 12:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "edit",
+            "acted": "2027-03-03",
+            "vector": {
+                "rule": "new",
+                "newRule": "FREQ=WEEKLY;BYDAY=TH"
+            },
+            "choices": {
+                "movedDays": "move"
+            },
+            "expect": {
+                "zone": "Asia/Singapore",
+                "shows": [
+                    "2027-03-04 12:00 Sample series",
+                    "2027-03-13 12:00 Sample series",
+                    "2027-03-18 12:00 Sample series",
+                    "2027-03-25 12:00 Sample series"
+                ]
+            }
+        },
+        {
+            "do": "undo",
+            "expect": {
+                "zone": "Asia/Singapore",
+                "shows": [
+                    "2027-03-03 12:00 Sample series",
+                    "2027-03-12 12:00 Sample series",
+                    "2027-03-17 12:00 Sample series",
+                    "2027-03-24 12:00 Sample series"
+                ]
+            }
+        }
+    ]
+}

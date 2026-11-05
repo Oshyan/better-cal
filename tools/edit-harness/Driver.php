@@ -27,6 +27,9 @@ final class Driver
      */
     public static float $everyOption = 0.1;
 
+    /** The groups whose options interact, committed in pairs before each option alone (everyOption). */
+    private const PAIRS = [['zone', 'movedDays'], ['reading', 'bound']];
+
     /** The share of drawn cases whose timed edits send the wall clocks typed (`typed`, README, The Delta Vector); --typed sets it. */
     public static float $typed = 0.3;
 
@@ -736,6 +739,9 @@ final class Driver
         }
         if ($v['trip']) {
             $in['isContainer'] = true;
+        } elseif (!empty($v['untrip'])) {
+            // The trip flag cleared (a sequence's step; the drawn space never clears it).
+            $in['isContainer'] = false;
         }
         // The rule: absent, sent back unchanged (as stored, or as the editor writes it), or a new pattern; a new bound rides on it.
         $ruleText = null;
@@ -785,6 +791,7 @@ final class Driver
             'boundSent' => $boundSent,
             'fields' => $changed,
             'trip' => $v['trip'],
+            'untrip' => !empty($v['untrip']),
         ];
         return [$target, $in, $edit];
     }
@@ -1028,22 +1035,37 @@ final class Driver
      * preselected combination and, for each group, each other enabled option with the rest as preselected, each
      * previewed with that choice, committed inside a transaction of its own, checked by the same checks as the case's
      * own commit (checkEdit, the trip rule and links) and rolled back. The combination the case itself commits is left
-     * to it. An option the baseline offers that its own preview no longer offers enabled is unreachable, counted. After
-     * them every row must be as before (H-isolation), so the case's own commit starts from the same state.
+     * to it. The interacting pairs come first (PAIRS: the zone with the moved days, the reading with the bound), every
+     * other option of one group with every other option of the other, then each option alone. A combination whose own
+     * preview removes a group it names, disables an option it names or selects another is unreachable: counted
+     * (`unreachable`, by why), not committed, not a failure. After them every row must be as before (H-isolation), so
+     * the case's own commit starts from the same state. Exhaustive combinations are for later (1.5.1's issue).
      */
     private function everyOption(int $target, array $in, array $baseline, array $main, array $st, array $acted, array $v, array $s0, array $edit): void
     {
         Prof::mark('options');
         $sel = [];
+        $others = [];
         foreach ($baseline['groups'] as $g) {
             $sel[$g['id']] = $g['selected'];
-        }
-        $combos = ['preselected' => [null, null, $sel]];
-        foreach ($baseline['groups'] as $g) {
             foreach ($g['options'] as $o) {
                 if (empty($o['disabled']) && $o['id'] !== $g['selected']) {
-                    $combos[$g['id'] . '=' . $o['id']] = [$g['id'], $o['id'], [$g['id'] => $o['id']] + $sel];
+                    $others[$g['id']][] = $o['id'];
                 }
+            }
+        }
+        // label => [the options it names, by group; the choices sent; its role in the tally]
+        $combos = ['preselected' => [[], $sel, 'preselected']];
+        foreach (self::PAIRS as [$a, $b]) {
+            foreach ($others[$a] ?? [] as $oa) {
+                foreach ($others[$b] ?? [] as $ob) {
+                    $combos["$a=$oa+$b=$ob"] = [[$a => $oa, $b => $ob], [$a => $oa, $b => $ob] + $sel, "$a+$b"];
+                }
+            }
+        }
+        foreach ($others as $gid => $ids) {
+            foreach ($ids as $oid) {
+                $combos[$gid . '=' . $oid] = [[$gid => $oid], [$gid => $oid] + $sel, $gid];
             }
         }
         $sameAsMain = static function (array $c) use ($main): bool {
@@ -1055,18 +1077,17 @@ final class Driver
             return true;
         };
         $pdo = $this->db->pdo();
-        foreach ($combos as $label => [$gid, $oid, $c]) {
+        foreach ($combos as $label => [$named, $c, $role]) {
             if ($sameAsMain($c)) {
                 continue; // the case's own commit checks this combination
             }
             $n0 = count($this->records);
             $this->trial = $label;
-            $this->ran('every-option', $gid === null ? 'preselected' : $gid);
             try {
                 // Inside the app's own write (the account locked first, as every write takes it), so the commit nests in
                 // it as the app's writes nest; the sentinel rolls it back.
-                $this->undo->write($this->userId, function () use ($target, $in, $gid, $oid, $c, $st, $acted, $v, $s0, $edit): void {
-                    $this->trialCommit($target, $in, $gid, $oid, $c, $st, $acted, $v, $s0, $edit);
+                $this->undo->write($this->userId, function () use ($target, $in, $named, $role, $c, $st, $acted, $v, $s0, $edit): void {
+                    $this->trialCommit($target, $in, $named, $role, $c, $st, $acted, $v, $s0, $edit);
                     throw new TrialRollback();
                 });
             } catch (TrialRollback) {
@@ -1088,21 +1109,25 @@ final class Driver
     }
 
     /** One option's preview and commit, checked as the case's own commit is (everyOption, inside its transaction). */
-    private function trialCommit(int $target, array $in, ?string $gid, ?string $oid, array $c, array $st, array $acted, array $v, array $s0, array $edit): void
+    private function trialCommit(int $target, array $in, array $named, string $role, array $c, array $st, array $acted, array $v, array $s0, array $edit): void
     {
         $plan = $this->events->previewPatch($this->userId, $target, $in + ['plan' => ['choices' => $c]]);
-        if ($gid !== null) {
-            $reached = false;
-            foreach ($plan['groups'] as $g) {
-                foreach ($g['id'] === $gid ? $g['options'] : [] as $o) {
-                    $reached = $reached || ($o['id'] === $oid && empty($o['disabled']) && $g['selected'] === $oid);
-                }
-            }
-            if (!$reached) {
-                $this->unoracled[] = 'every option: an option the baseline offers is not offered once chosen';
+        $groups = array_column($plan['groups'], null, 'id');
+        foreach ($named as $gid => $oid) {
+            $g = $groups[$gid] ?? null;
+            $o = $g === null ? null : (array_column($g['options'], null, 'id')[$oid] ?? null);
+            $why = match (true) {
+                $g === null => 'a selection removes a group',
+                $o === null || !empty($o['disabled']) => 'a selection disables an option',
+                $g['selected'] !== $oid => 'an option is not selected once chosen',
+                default => null,
+            };
+            if ($why !== null) {
+                $this->ran('unreachable', $why);
                 return;
             }
         }
+        $this->ran('every-option', $role);
         foreach ($plan['groups'] as $g) {
             $c[$g['id']] ??= $g['selected'];
         }

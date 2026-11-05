@@ -330,6 +330,44 @@ return [
         'patch' => [["source IN \$in ORDER BY id DESC LIMIT 1\",", "source IN \$in ORDER BY id DESC LIMIT 1 OFFSET 1\","]],
         'cases' => ['weekly-list-member-rename-own-title-count-undo'],
     ],
+    // The 1.5.1 sequences, one mutation each, and the pairs of the commit of every option.
+    [
+        'id' => 'own-time-in-the-series-zone', 'file' => $model, 'checks' => ['s-step', 'b-placed', 'c-untouched'],
+        'what' => 'a day at its own time keeps its clock in the series\' new zone, not its own zone\'s instant, under a zone change',
+        'patch' => [["            \$tz = (string) \$row['tzid'];\n            \$clock = self::clockOf(\$shown);", "            \$tz = \$this->tz1;\n            \$clock = self::clockOf(\$shown);"]],
+        'cases' => ['weekly-own-time-zone-moment-drag-split-from-the-first-day-undo-edit'],
+    ],
+    [
+        'id' => 'undo-trip-refusal-code', 'file' => 'server/src/Domain/Trips.php', 'checks' => ['s-undo'],
+        'what' => 'an Undo that would put a trip inside a trip refused with the edit\'s code (trip_nested), not undo_conflict',
+        'patch' => [["self::BY_UNDO => ['nested' => 'undo_conflict',", "self::BY_UNDO => ['nested' => 'trip_nested',"]],
+        'cases' => ['weekly-trip-clear-attach-refused-set-detach-set-undo-by-entry'],
+    ],
+    [
+        'id' => 'undo-entry-takes-the-latest', 'file' => 'server/src/Domain/Undo.php', 'checks' => ['s-undo', 's-step'],
+        'what' => 'Undo of an entry by its id undoes the latest change still standing instead',
+        'patch' => [["'SELECT * FROM mutations WHERE id = ? AND user_id = ?',", "'SELECT * FROM mutations WHERE id >= ? AND user_id = ? AND undone = 0 ORDER BY id DESC LIMIT 1',"]],
+        'cases' => ['weekly-count-from-an-edited-day-rename-undo-the-count-by-entry'],
+    ],
+    [
+        'id' => 'plan-hash-without-edited-rows', 'file' => $model, 'checks' => ['s-stale'],
+        'what' => 'the plan\'s hash leaves out the edited rows, so a day given its own title after the preview goes unnoticed',
+        'patch' => [["            \$rows, \$this->edit, \$selected, \$this->google,", "            [], \$this->edit, \$selected, \$this->google,"]],
+        'cases' => ['daily-stale-plan-then-re-preview-commit-undo'],
+    ],
+    [
+        'id' => 'moved-days-keep-ignored', 'file' => $model, 'checks' => ['s-step', 'b-placed', 'c-placement', 'c-untouched'],
+        'what' => '"Keep" for a day moved on its own commits it moved with its events',
+        'patch' => [["(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move';", "(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) !== 'never';"]],
+        'cases' => ['weekly-own-date-then-new-weekday-keep-and-move-undo'],
+    ],
+    [
+        // Only the pair commits both: the case's own commit takes the preselected clock and keep, each option alone the other's preselection.
+        'id' => 'moved-days-move-ignored-under-the-same-moment', 'file' => $model, 'checks' => ['b-placed', 'c-placement'],
+        'what' => '"Move" for a day moved on its own commits it kept when the zone change keeps the same moment',
+        'patch' => [["(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move';", "(\$one !== null ? ['day' => self::keyOut((string) \$one['recurrence_instance_utc'])] : [])) === 'move' && (\$this->choices['zone'] ?? 'clock') !== 'moment';"]],
+        'cases' => ['mutation-zone-and-drag-with-a-day-at-its-own-date'],
+    ],
     // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',

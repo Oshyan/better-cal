@@ -129,6 +129,7 @@ final class Report
         $out .= 'Accepted by known cause: ' . ($t['byCause'] === [] ? 'none' : implode('; ', array_map(static fn(string $c, int $n): string => "$n $c", array_keys($t['byCause']), $t['byCause']))) . ".\n";
         $out .= 'Plan-data checks run: ' . implode(', ', array_map(static fn(string $c): string => $c . ' ' . ($runs[$c] ?? 0), Driver::NEW_CHECKS)) . ".\n";
         $out .= 'Options committed from the baseline in isolated state: ' . ($runs['every-option'] ?? 0) . ' (' . implode(', ', array_map(static fn(string $g, int $n): string => "$g $n", array_keys($t['runs']['every-option'] ?? []), $t['runs']['every-option'] ?? [])) . ").\n";
+        $out .= 'Options unreachable from the baseline (counted, not failures): ' . ($runs['unreachable'] ?? 0) . ' (' . implode(', ', array_map(static fn(string $g, int $n): string => "$g $n", array_keys($t['runs']['unreachable'] ?? []), $t['runs']['unreachable'] ?? [])) . ").\n";
         $out .= $t['missing'] === [] ? "Every required category ran.\n" : 'Required categories that never ran (' . count($t['missing']) . '): ' . implode('; ', $t['missing']) . "\n";
         return $out;
     }

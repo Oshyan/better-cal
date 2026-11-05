@@ -330,7 +330,7 @@ trait Invariants
                 $this->check('a-fields', $a === $b, "a field the edit didn't change ($f) is untouched on every row", ['field' => $f, 'row' => $id, 'was' => $a, 'now' => $b]);
             }
         }
-        if (!$v['trip']) {
+        if (!$v['trip'] && empty($v['untrip'])) {
             foreach ($rows0 as $id => $r0) {
                 if (isset($rows1[$id])) {
                     $this->check('a-trip', (int) $r0['is_container'] === (int) $rows1[$id]['is_container'], 'the trip flag is untouched on every row when not sent', ['row' => $id]);
@@ -1033,6 +1033,11 @@ trait Invariants
         if ($edit['trip']) {
             foreach ([$after['row']] + $after['overrides'] as $r) {
                 $this->check('b-trip', (int) $r['is_container'] === 1, 'the trip flag reaches every row of the series', ['row' => $r['id']]);
+            }
+        }
+        if (!empty($edit['untrip'])) {
+            foreach ([$after['row']] + $after['overrides'] as $r) {
+                $this->check('b-trip', (int) $r['is_container'] === 0, 'the trip flag cleared reaches every row of the series', ['row' => $r['id']]);
             }
         }
     }

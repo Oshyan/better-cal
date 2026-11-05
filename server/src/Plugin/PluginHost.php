@@ -12,6 +12,7 @@ use BetterCal\Domain\Geocode;
 use BetterCal\Domain\Labels;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\Recurrence;
+use BetterCal\Domain\RequestAuthority;
 use BetterCal\Domain\Sanitize;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
@@ -430,19 +431,19 @@ final class PluginHost
             throw new \RuntimeException('setEventData: unknown event ' . $eventId);
         }
         if ($value === null) {
-            $this->db->run(
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
                 'DELETE FROM event_plugin_data WHERE event_id = ? AND plugin_id = ? AND k = ?',
                 [$eventId, $this->pluginId, $key]
-            );
+            ));
             return;
         }
         $values = PluginSecrets::seal($this->pluginId, 'eventSettings', $this->manifest['eventSettings'] ?? [], [$key => $value], (string) ($this->cfg['session_secret'] ?? ''));
         $value = $values[$key];
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
             [$eventId, $this->pluginId, mb_substr($key, 0, 120), json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE)]
-        );
+        ));
     }
 
     /**
@@ -623,11 +624,11 @@ final class PluginHost
 
     public function kvSet(string $key, mixed $value): void
     {
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES (?, ?, ?)
              ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
             [$this->pluginId, mb_substr($key, 0, 160), json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE)]
-        );
+        ));
     }
 
     /**
@@ -677,7 +678,7 @@ final class PluginHost
 
     public function kvDelete(string $key): void
     {
-        $this->db->run('DELETE FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$this->pluginId, $key]);
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run('DELETE FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$this->pluginId, $key]));
     }
 
     // ---- plugin interop: presence and published data ---------------------
@@ -714,20 +715,20 @@ final class PluginHost
         $expires = $ttlSeconds === null
             ? null
             : Time::toDb((new \DateTimeImmutable('@' . (time() + max(1, $ttlSeconds))))->setTimezone(new \DateTimeZone('UTC')));
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'INSERT INTO plugin_kv (plugin_id, k, v_json, is_public, expires_at) VALUES (?, ?, ?, 1, ?)
              ON DUPLICATE KEY UPDATE v_json = VALUES(v_json), is_public = 1, expires_at = VALUES(expires_at)',
             [$this->pluginId, mb_substr($key, 0, 160), json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE), $expires]
-        );
+        ));
     }
 
     /** Stop publishing a key. The value stays as your own private kv entry. */
     public function unpublish(string $key): void
     {
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             'UPDATE plugin_kv SET is_public = 0, expires_at = NULL WHERE plugin_id = ? AND k = ?',
             [$this->pluginId, $key]
-        );
+        ));
     }
 
     /**
@@ -1129,7 +1130,7 @@ final class PluginHost
         }
         // All at once: a reader between the delete and the inserts saw the
         // plugin with some or none of its bands (#185).
-        return $this->db->tx(fn(): int => $this->replaceRangesNow($ranges, $calendarId));
+        return RequestAuthority::checkedTx($this->db, fn(): int => $this->replaceRangesNow($ranges, $calendarId));
     }
 
     /** @param list<array<string,mixed>> $ranges */
@@ -1183,6 +1184,12 @@ final class PluginHost
      * @param list<array<string,mixed>> $warnings
      */
     public function replaceWarnings(array $warnings): int
+    {
+        return RequestAuthority::checkedTx($this->db, fn(): int => $this->replaceWarningsNow($warnings));
+    }
+
+    /** @param list<array<string,mixed>> $warnings */
+    private function replaceWarningsNow(array $warnings): int
     {
         $private = $this->privateDiagnostics();
         $this->db->run('DELETE FROM plugin_warnings WHERE plugin_id = ?', [$this->pluginId]);

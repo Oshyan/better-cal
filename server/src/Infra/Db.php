@@ -30,7 +30,13 @@ final class Db
         return $was;
     }
 
-    /** A credential was checked, locked, in the transaction open now (RequestAuthority::assertValid). */
+    /** Was a credential checked in the transaction open now? */
+    public function credentialCheckedNow(): bool
+    {
+        return $this->checkedIn === $this->txSerial && $this->pdo()->inTransaction();
+    }
+
+    /** A credential was checked, locked, in the transaction open now (RequestAuthority::checked). */
     public function credentialChecked(): void
     {
         if ($this->pdo()->inTransaction()) {

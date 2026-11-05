@@ -1218,12 +1218,12 @@ final class ReviewQueue
     /** Close open items whose event is gone, so the queue never offers a decision about nothing. */
     public function closeOrphans(int $userId): int
     {
-        return $this->db->run(
+        return RequestAuthority::checkedTx($this->db, fn(): int => $this->db->run(
             "UPDATE review_items SET status = 'gone', decided_at = ?
              WHERE user_id = ? AND status = 'open' AND event_id IS NOT NULL
                AND event_id NOT IN (SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL)",
             [Time::nowDb(), $userId, $userId]
-        )->rowCount();
+        )->rowCount());
     }
 
     // ---- internals -----------------------------------------------------
@@ -1243,7 +1243,7 @@ final class ReviewQueue
 
     private function close(int $id, string $status): void
     {
-        $this->db->run('UPDATE review_items SET status = ?, decided_at = ? WHERE id = ?', [$status, Time::nowDb(), $id]);
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run('UPDATE review_items SET status = ?, decided_at = ? WHERE id = ?', [$status, Time::nowDb(), $id]));
     }
 
     /** Only an applied decision can make a competing revision stale. */

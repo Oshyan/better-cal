@@ -199,15 +199,14 @@ final class Undo
     }
 
     /**
-     * A write statement made under a request's credential outside a
-     * transaction in which it was checked (RequestAuthority::during): a
-     * write the credential's revocation wouldn't stop. Reported like any
-     * journaling mistake; the write itself still goes through.
+     * A write to a table that is not bookkeeping (RequestAuthority::BOOKKEEPING),
+     * made under a request's credential outside a transaction in which it
+     * was checked: a change the credential's revocation wouldn't stop.
+     * Reported like any journaling mistake; the write itself still goes through.
      */
-    public static function uncheckedWrite(string $sql): void
+    public static function uncheckedWrite(string $verb, string $table): void
     {
-        preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\s+(?:IGNORE\s+|OR\s+\w+\s+)?(?:INTO\s+|FROM\s+)?`?(\w+)/i', $sql, $m);
-        self::misuse('write (' . strtoupper($m[1] ?? 'write') . ' ' . ($m[2] ?? '?') . ') under a request credential not checked in its transaction');
+        self::misuse('write (' . $verb . ' ' . $table . ') under a request credential not checked in its transaction');
     }
 
     /** The journaling mistakes the test suites ran into, each once. @return list<string> */
@@ -1409,9 +1408,12 @@ final class Undo
                 }
             }
         }
-        foreach ($uids as $calendarId => $ofCalendar) {
-            ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
-        }
+        // CalDAV hears of it in a checked transaction of its own.
+        RequestAuthority::checkedTx($this->db, function () use ($uids): void {
+            foreach ($uids as $calendarId => $ofCalendar) {
+                ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
+            }
+        });
 
         return ['entity' => (string) $mutation['entity'], 'op' => (string) $mutation['op']];
     }

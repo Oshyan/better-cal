@@ -97,16 +97,18 @@ final class Auth
         }
 
         $tokenHash = hash('sha256', $token);
-        return $this->db->tx(function () use ($tokenHash, $pushEndpointHash): int {
-            $lock = $this->db->forUpdate();
+        return $this->db->tx(function () use ($token, $tokenHash, $pushEndpointHash): int {
             $owner = $this->db->scalar('SELECT user_id FROM sessions WHERE token_hash = ?', [$tokenHash]);
             if ($owner === null) return 0;
-            if ($lock !== '') $this->db->one('SELECT id FROM users WHERE id = ?' . $lock, [(int) $owner]);
-            $session = $this->db->one('SELECT user_id FROM sessions WHERE token_hash = ?' . $lock, [$tokenHash]);
-            if ($session === null) {
+            // The session is checked (user, then session, locked) and ended
+            // in this one transaction: the check comes first, the revocation
+            // last, and nothing is written after it.
+            try {
+                self::assertSession($this->db, (int) $owner, $token, true);
+            } catch (HttpError) {
                 return 0; // Already signed out (or reset) is an idempotent success.
             }
-            $userId = (int) $session['user_id'];
+            $userId = (int) $owner;
             $push = $pushEndpointHash === null ? 0 : $this->db->run(
                 'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
                 [$userId, $pushEndpointHash]
@@ -261,19 +263,25 @@ final class Auth
             } catch (HttpError) {
                 return null;
             }
-            return $this->setPassword($userId, $new, $everything);
+            // Checked above; every session (this one too) ends here, and the
+            // Activity entry is written in the same transaction.
+            $out = $this->setPassword($userId, $new, $everything);
+            $this->notePasswordChanged($userId, $out, $everything);
+            return $out;
         });
-        if ($out !== null) {
-            $parts = ['every browser signed out'];
-            if ($everything) {
-                $parts[] = $out['tokens'] . ' API key' . ($out['tokens'] === 1 ? '' : 's') . ' revoked';
-                $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
-                if ($out['googleAccounts'] > 0) $parts[] = $out['googleAccounts'] . ' Google connection' . ($out['googleAccounts'] === 1 ? '' : 's') . ' paused';
-            }
-            (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
-                'Password changed: ' . implode(', ', $parts), $out);
-        }
         return $out;
+    }
+
+    private function notePasswordChanged(int $userId, array $out, bool $everything): void
+    {
+        $parts = ['every browser signed out'];
+        if ($everything) {
+            $parts[] = $out['tokens'] . ' API key' . ($out['tokens'] === 1 ? '' : 's') . ' revoked';
+            $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
+            if ($out['googleAccounts'] > 0) $parts[] = $out['googleAccounts'] . ' Google connection' . ($out['googleAccounts'] === 1 ? '' : 's') . ' paused';
+        }
+        (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
+            'Password changed: ' . implode(', ', $parts), $out);
     }
 
     /** Verify the current user's password and refresh only this browser session's step-up time. */
@@ -289,11 +297,9 @@ final class Auth
         return $this->db->tx(function () use ($userId, $token, $hash): bool {
             if (!RequestAuthority::passwordStillCurrent($this->db, $userId, $hash)) return false;
             $tokenHash = hash('sha256', $token);
-            $session = $this->db->one(
-                'SELECT token_hash FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?' . $this->db->forUpdate(),
-                [$tokenHash, $userId, Time::nowDb()]
-            );
-            if ($session === null) {
+            try {
+                self::assertSession($this->db, $userId, $token, true);
+            } catch (HttpError) {
                 return false;
             }
             $this->db->run('UPDATE sessions SET authenticated_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
@@ -324,6 +330,9 @@ final class Auth
         );
         if ($session === null) {
             throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
+        }
+        if ($forUpdate) {
+            RequestAuthority::checked($db, $userId);
         }
         return $session;
     }
@@ -423,8 +432,15 @@ final class Auth
                 $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($settings), $userId]);
                 $emailReset = true;
             }
-            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $review['paused'], 'subscriptionsChanged' => $review['changed']];
+            $out = ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $review['paused'], 'subscriptionsChanged' => $review['changed']];
+            $this->noteSignedOutOthers($userId, $out);
+            return $out;
         });
+        return $out;
+    }
+
+    private function noteSignedOutOthers(int $userId, array $out): void
+    {
         $parts = [$out['sessions'] . ' other browser' . ($out['sessions'] === 1 ? '' : 's') . ' signed out'];
         if ($out['pushDevices'] > 0) {
             $parts[] = $out['pushDevices'] . ' push device' . ($out['pushDevices'] === 1 ? '' : 's') . ' removed';
@@ -440,7 +456,6 @@ final class Auth
         }
         (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
             'Signed out everywhere else: ' . implode(', ', $parts), $out);
-        return $out;
     }
 
     /** @return ?array{user:array,csrf:string,authenticatedAt:?string,cacheId:string,offlineUntil:int} */

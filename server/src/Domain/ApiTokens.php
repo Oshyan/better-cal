@@ -95,7 +95,9 @@ final class ApiTokens
     /** @return ?array{subscriptionsPaused:int,pluginsDisabled:list<string>} null when the token does not exist */
     public function revokeWithImpact(int $userId, int $id): ?array
     {
-        return $this->db->tx(function () use ($userId, $id): ?array {
+        // Checked first (a key may revoke itself: the check, then the
+        // revocation, in this one transaction, and nothing written after).
+        return RequestAuthority::checkedTx($this->db, function () use ($userId, $id): ?array {
             $lock = $this->db->forUpdate();
             // Match compromise reset and durable channel creation: user first,
             // then token. A token holder cannot keep recovery deadlocking by
@@ -143,6 +145,9 @@ final class ApiTokens
         ) !== null;
         if (!$valid) {
             throw \BetterCal\Http\HttpError::conflict('token_revoked', 'The API key was revoked or expired before the change could be saved.');
+        }
+        if ($lock !== '' || $forUpdate) {
+            RequestAuthority::checked($db, $userId);
         }
     }
 

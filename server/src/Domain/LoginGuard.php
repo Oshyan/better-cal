@@ -100,7 +100,7 @@ final class LoginGuard
             if ($owner === null) {
                 return;
             }
-            ActivityContext::with('system', fn() => (new Undo($this->journal))->record(
+            RequestAuthority::checkedTx($this->journal, fn() => ActivityContext::with('system', fn() => (new Undo($this->journal))->record(
                 (int) $owner,
                 'system',
                 0,
@@ -109,7 +109,7 @@ final class LoginGuard
                 null,
                 'Blocked sign-in attempts from ' . $source . ' after ' . $this->maxFailures . ' wrong passwords (' . $door . ')',
                 ['source' => $source, 'door' => $door, 'unblocksInSeconds' => self::WINDOW]
-            ));
+            )));
         } catch (\Throwable $e) {
             error_log('login guard journal failed: ' . $e->getMessage());
         }

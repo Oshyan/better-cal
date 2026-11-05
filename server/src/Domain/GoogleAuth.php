@@ -190,7 +190,7 @@ final class GoogleAuth
             if ($e instanceof HttpError && $e->errorCode === 'google_reconnect_needed') {
                 $fields['reauth_required_at'] = Time::nowDb();
             }
-            $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']]);
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']]));
             throw $e;
         }
         // The reset may have committed while Google's token endpoint was in
@@ -198,7 +198,7 @@ final class GoogleAuth
         self::assertWithinDeadline($absoluteDeadline, 'Google token refresh');
         $account = $this->assertUsable($account);
         if (($account['status'] ?? 'ok') !== 'ok') {
-            $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ? AND refresh_token_enc = ? AND reauth_required_at IS NULL', [(int) $account['id'], (string) $account['refresh_token_enc']]);
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ? AND refresh_token_enc = ? AND reauth_required_at IS NULL', [(int) $account['id'], (string) $account['refresh_token_enc']]));
         }
         return (string) $token['access_token'];
     }

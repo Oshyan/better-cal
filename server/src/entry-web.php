@@ -399,14 +399,12 @@ function bc_handle_api(Request $request, array $cfg): void
         }
 
         // Every write the handler makes is checked against the credential
-        // it signed in with (Undo::write); after it, only the response.
-        $response = Domain\RequestAuthority::during(Domain\RequestAuthority::of($request), fn(): Response => ($match['handler'])($request, $match['params']));
-        // Any successful write moves the user's change marker, so every open
-        // device refreshes, whatever the write touched (#16). Reads don't.
-        if ($request->user !== null && $response->status < 400
-            && !in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)) {
-            \BetterCal\Dav\ChangeLog::touchAccount($db, (int) $request->user['id']);
-        }
+        // it signed in with (Undo::write, RequestAuthority::checkedTx), or is
+        // bookkeeping. A change a request (not a read) makes moves the
+        // account's change marker in the transaction that checks it, so every
+        // open device refreshes, whatever the write touched (#16).
+        $response = Domain\RequestAuthority::during(Domain\RequestAuthority::of($request), fn(): Response => ($match['handler'])($request, $match['params']),
+            !in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true));
         // The entries this request journaled that can be undone: its
         // toast's Undo undoes exactly these, not whatever came last.
         $entries = Domain\ActivityContext::takeEntries();

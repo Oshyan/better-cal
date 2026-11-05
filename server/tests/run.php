@@ -7353,6 +7353,8 @@ checkEq('push validate stores the canonical spelling', 'https://fcm.googleapis.c
 // cover neighbouring sessions, accounts and token owners too.
 {
     $p5db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $p5db->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $p5db->run('INSERT INTO users (id) VALUES (1), (2)');
     $p5db->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, authenticated_at TEXT, expires_at TEXT)');
     $p5db->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT NULL)');
     $p5db->run('CREATE TABLE push_subscriptions (

@@ -2629,7 +2629,8 @@ final class Events
         }
         $this->get($userId, $id); // ownership + existence
         if (($this->feedbackFor([$id])[$id] ?? null) !== $signal) {
-            $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $signal]);
+            // A training signal, not undoable: in a checked transaction.
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $signal]));
         }
         return $signal;
     }

@@ -128,11 +128,13 @@ final class AuthController
                 error_log('Google revocation after a password change failed: ' . $e->getMessage());
             }
         }
+        // Signed in again (checked by the new password): what follows is
+        // written as the new session, since the old one ended above.
         $login = $this->auth->login($email, $new);
         $response = Response::json(['ok' => true] + $out);
         if ($login !== null) {
             $response = $response->withCookie(Auth::COOKIE, $login['token'], $this->auth->cookieOptions());
-            $deviceToken = $this->devices?->remember($userId);
+            $deviceToken = \BetterCal\Domain\RequestAuthority::during(\BetterCal\Domain\RequestAuthority::credential($userId, null, $login['token']), fn(): ?string => $this->devices?->remember($userId));
             if ($deviceToken !== null) {
                 $response = $response->withCookie(TrustedDevices::COOKIE, $deviceToken, $this->auth->deviceCookieOptions());
             }

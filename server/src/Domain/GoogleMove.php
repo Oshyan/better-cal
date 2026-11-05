@@ -78,7 +78,7 @@ final class GoogleMove
             }
         }
 
-        [$moveId, $started] = $this->db->tx(function () use ($userId, $calendarId, $accountId, $googleCalendarId, $account, $sessionToken): array {
+        [$moveId, $started] = RequestAuthority::checkedTx($this->db, function () use ($userId, $calendarId, $accountId, $googleCalendarId, $account, $sessionToken): array {
             // Serialize durable move creation/retry with the exact initiating
             // session and quarantine. A reset/reconnect cannot revive the old
             // request; if this commits first, reset cancels the new move.
@@ -165,7 +165,7 @@ final class GoogleMove
     /** Stop a failed move so local editing can resume. Remote partial data is left for the owner to review at Google. */
     public function abandon(int $userId, int $calendarId): array
     {
-        $row = $this->db->tx(function () use ($userId, $calendarId): array {
+        $row = RequestAuthority::checkedTx($this->db, function () use ($userId, $calendarId): array {
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
             if ($calendar === null || (int) $calendar['user_id'] !== $userId) {
                 throw HttpError::notFound('No such calendar');
@@ -281,7 +281,7 @@ final class GoogleMove
 
             // Everything is at Google: the calendar becomes a Google-backed
             // one, and the first sync matches every row by its UID.
-            $this->db->tx(function () use ($moveId, $token, $calendarId, $account, $googleCalendarId): void {
+            RequestAuthority::checkedTx($this->db, function () use ($moveId, $token, $calendarId, $account, $googleCalendarId): void {
                 $calendarAtCutover = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
                 if ($calendarAtCutover === null) {
                     throw new \RuntimeException('The calendar disappeared before move completion');
@@ -321,8 +321,8 @@ final class GoogleMove
                 self::endUndoOf($this->db, $calendarId);
             });
             $count = (int) $this->db->scalar('SELECT done_count FROM calendar_moves WHERE id = ?', [$moveId]);
-            $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,
-                "Moved calendar '" . (string) $calendar['name'] . "' to Google (" . $count . ' event' . ($count === 1 ? '' : 's') . ')');
+            $this->undo->write((int) $move['user_id'], fn() => $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,
+                "Moved calendar '" . (string) $calendar['name'] . "' to Google (" . $count . ' event' . ($count === 1 ? '' : 's') . ')'));
             try {
                 $this->feeds->poll($calendarId);
             } catch (\Throwable $e) {
@@ -333,12 +333,12 @@ final class GoogleMove
             // Only the current owner may fail the move. A stale executor can
             // neither overwrite a newer owner nor turn a completed move back
             // into failed.
-            $this->db->run(
+            RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
                 "UPDATE calendar_moves
                  SET status = 'failed', error = ?, finished_at = ?, runner_token = NULL, lease_expires_at = NULL
                  WHERE id = ? AND status = 'running' AND runner_token = ? AND cancelled_at IS NULL",
                 [mb_substr($e->getMessage(), 0, 2000), Time::nowDb(), $moveId, $token]
-            );
+            ));
             return self::RESULT_DONE;
         }
     }
@@ -379,7 +379,7 @@ final class GoogleMove
         if ($googleId === '') {
             throw new \RuntimeException('Google accepted an event but returned no id for it');
         }
-        $this->db->tx(function () use ($moveId, $token, $eventId, $googleId, $trackedImport): void {
+        RequestAuthority::checkedTx($this->db, function () use ($moveId, $token, $eventId, $googleId, $trackedImport): void {
             $this->requireLease($moveId, $token);
             $updated = $this->db->update('events', ['google_event_id' => $googleId], 'id = ? AND google_event_id IS NULL', [$eventId]);
             if ($updated !== 1) {
@@ -404,12 +404,12 @@ final class GoogleMove
 
     private function beginImport(int $moveId, string $token, int $eventId, string $marker): void
     {
-        $started = $this->db->run(
+        $started = RequestAuthority::checkedTx($this->db, fn(): int => $this->db->run(
             "UPDATE calendar_moves SET current_event_id = ?, current_event_marker = ?
              WHERE id = ? AND status = 'running' AND runner_token = ? AND cancelled_at IS NULL
                AND current_event_id IS NULL",
             [$eventId, $marker, $moveId, $token]
-        )->rowCount();
+        )->rowCount());
         if ($started !== 1) {
             throw new \RuntimeException('A previous Google event import must be reconciled before another can start');
         }
@@ -462,7 +462,7 @@ final class GoogleMove
         if ($candidate === null) {
             return null;
         }
-        return $this->db->tx(function () use ($moveId, $candidate): ?array {
+        return RequestAuthority::checkedTx($this->db, function () use ($moveId, $candidate): ?array {
             CalendarMoveGuard::lockCalendar($this->db, (int) $candidate['calendar_id']);
             $token = bin2hex(random_bytes(32));
             $now = Time::nowDb();
@@ -493,11 +493,11 @@ final class GoogleMove
             throw new \RuntimeException('The Google move executor lease was lost');
         }
         $expires = Time::toDb(Time::nowUtc()->modify('+' . self::LEASE_SECONDS . ' seconds'));
-        $this->db->run(
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->run(
             "UPDATE calendar_moves SET lease_expires_at = ?
              WHERE id = ? AND status = 'running' AND runner_token = ? AND cancelled_at IS NULL",
             [$expires, $moveId, $token]
-        );
+        ));
         $fresh = $this->db->one('SELECT runner_token, lease_expires_at FROM calendar_moves WHERE id = ?', [$moveId]);
         if ($fresh === null || !hash_equals($token, (string) ($fresh['runner_token'] ?? ''))
             || (string) ($fresh['lease_expires_at'] ?? '') < $expires) {
@@ -507,7 +507,7 @@ final class GoogleMove
 
     private function updateOwnedMove(int $moveId, string $token, array $fields): void
     {
-        $updated = $this->db->update('calendar_moves', $fields, 'id = ? AND status = ? AND runner_token = ? AND cancelled_at IS NULL', [$moveId, 'running', $token]);
+        $updated = RequestAuthority::checkedTx($this->db, fn(): int => $this->db->update('calendar_moves', $fields, 'id = ? AND status = ? AND runner_token = ? AND cancelled_at IS NULL', [$moveId, 'running', $token]));
         if ($updated !== 1) {
             throw new \RuntimeException('The Google move executor lease was lost');
         }
@@ -515,11 +515,11 @@ final class GoogleMove
 
     private function continueLater(int $moveId, string $token): string
     {
-        $released = $this->db->run(
+        $released = RequestAuthority::checkedTx($this->db, fn(): int => $this->db->run(
             "UPDATE calendar_moves SET status = 'queued', runner_token = NULL, lease_expires_at = NULL
              WHERE id = ? AND status = 'running' AND runner_token = ? AND cancelled_at IS NULL",
             [$moveId, $token]
-        )->rowCount();
+        )->rowCount());
         return $released === 1 ? self::RESULT_MORE : self::RESULT_DONE;
     }
 
@@ -561,7 +561,7 @@ final class GoogleMove
                 $description,
             );
         }
-        $this->db->tx(function () use ($move, $moveId, $token, $account, $calendar, $googleCalendarId): void {
+        RequestAuthority::checkedTx($this->db, function () use ($move, $moveId, $token, $account, $calendar, $googleCalendarId): void {
             // A just-created/recovered id becomes a reserved target under the
             // same account-row lock used by existing-target moves and
             // subscriptions. A concurrently added subscription wins cleanly

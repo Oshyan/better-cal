@@ -576,7 +576,7 @@ final class Updates
      */
     private function saveAcceptedState(array $state, int $startingRevision): array
     {
-        return $this->db->tx(function () use ($state, $startingRevision): array {
+        return RequestAuthority::checkedTx($this->db, function () use ($state, $startingRevision): array {
             $lock = $this->db->forUpdate();
             $current = $this->db->one('SELECT * FROM app_update_state WHERE id = 1' . $lock) ?? ['id' => 1, 'revision' => 0];
             $incomingVersion = (string) ($state['latest_version'] ?? '');
@@ -621,20 +621,22 @@ final class Updates
     /** Do not let an older failed request overwrite a newer successful check. */
     private function saveError(string $message, int $startingRevision): void
     {
-        $this->db->update('app_update_state', [
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->update('app_update_state', [
             'checked_at' => Time::nowDb(),
             'last_error' => $message,
             'revision' => $startingRevision + 1,
-        ], 'id = 1 AND revision = ?', [$startingRevision]);
+        ], 'id = 1 AND revision = ?', [$startingRevision]));
     }
 
     private function saveNotice(int $userId, array $changes): void
     {
-        if ($this->db->scalar('SELECT user_id FROM user_update_notices WHERE user_id = ?', [$userId]) === null) {
-            $this->db->insert('user_update_notices', ['user_id' => $userId] + $changes);
-        } else {
-            $this->db->update('user_update_notices', $changes, 'user_id = ?', [$userId]);
-        }
+        RequestAuthority::checkedTx($this->db, function () use ($userId, $changes): void {
+            if ($this->db->scalar('SELECT user_id FROM user_update_notices WHERE user_id = ?', [$userId]) === null) {
+                $this->db->insert('user_update_notices', ['user_id' => $userId] + $changes);
+            } else {
+                $this->db->update('user_update_notices', $changes, 'user_id = ?', [$userId]);
+            }
+        });
     }
 
     private function notifySecurityFloor(array $state): void

@@ -79,7 +79,7 @@ final class OutFeeds
                 Ids::feedToken(),
                 (string) ($this->cfg['session_secret'] ?? '')
             );
-            return $this->db->insert('out_feeds', [
+            $id = $this->db->insert('out_feeds', [
                 'user_id' => $userId,
                 'token' => $protected['hash'],
                 'token_sealed' => $protected['sealed'],
@@ -88,9 +88,10 @@ final class OutFeeds
                 'description' => isset($in['description']) ? trim((string) $in['description']) : null,
                 'created_by_token_id' => $tokenId,
             ]);
+            (new Undo($this->db))->record($userId, 'outfeed', (int) $id, 'create', null, null,
+                'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')' . ($tokenId !== null ? ', with an API token' : ''));
+            return $id;
         });
-        (new Undo($this->db))->record($userId, 'outfeed', (int) $id, 'create', null, null,
-            'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')' . ($tokenId !== null ? ', with an API token' : ''));
         return $this->serialize($this->db->one('SELECT * FROM out_feeds WHERE id = ?', [$id]));
     }
 
@@ -103,7 +104,7 @@ final class OutFeeds
             $where .= ' AND created_by_token_id = ?';
             $params[] = $viewerTokenId;
         }
-        if ($this->db->run("DELETE FROM out_feeds WHERE $where", $params)->rowCount() !== 1) {
+        if (RequestAuthority::checkedTx($this->db, fn(): int => $this->db->run("DELETE FROM out_feeds WHERE $where", $params)->rowCount()) !== 1) {
             throw HttpError::notFound('Feed not found');
         }
     }

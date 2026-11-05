@@ -329,7 +329,8 @@ final class Filters
         if ($this->queue->hasPendingWithHash('filter_eval', $hash)) {
             return;
         }
-        $this->queue->enqueue('filter_eval', ['eventIds' => $ids, 'hash' => $hash]);
+        // Queued from a read too: in a checked transaction.
+        RequestAuthority::checkedTx($this->db, fn() => $this->queue->enqueue('filter_eval', ['eventIds' => $ids, 'hash' => $hash]));
     }
 
     /** Stable job identity for an event-id set: sha256 over the sorted unique ids. */

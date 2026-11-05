@@ -10,26 +10,20 @@
 //   first; from the first it is the same as all events). It is left out,
 //   its reason in one line (planwords.js UNOFFERED, beside the refusal
 //   panel's own sentence for the same code).
-// - A date edited on its own that moves to another calendar moves on its
-//   own or with all events, not with the following ones (#188).
 
 import { state } from './store.js';
 import { unofferedWords } from '../lib/planwords.js';
 
 /**
  * The scopes a change to occ can take, in the order they are offered, and
- * why "This and following" is missing when it is (null when it isn't, or
- * when there is nothing worth saying). calendarId: the calendar the change
- * moves the event to, when it does.
+ * why "This and following" is missing when it is (null when it isn't).
  *
  * @param {object} occ
- * @param {{calendarId?: number}} [opts]
  * @returns {{scopes: string[], why: string|null}}
  */
-export function seriesScopes(occ, { calendarId } = {}) {
+export function seriesScopes(occ) {
   const cal = occ ? state.calendars.find((c) => c.id === occ.calendarId) : null;
   if (cal && cal.provider === 'google') return { scopes: ['this', 'all'], why: unofferedWords('google') };
-  if (occ && occ.isException && calendarId != null && Number(calendarId) !== occ.calendarId) return { scopes: ['this', 'all'], why: null };
   return { scopes: ['this', 'following', 'all'], why: null };
 }
 
@@ -40,8 +34,8 @@ const CHIP_LABELS = { this: 'This event', following: 'This + following' };
  * at a drop point: the occurrence's scopes as buttons, and the reason for
  * one left out as its note. cb(scope) gets null for Cancel.
  */
-export function scopeDropChoice(at, occ, cb, { calendarId = null, allLabel = 'All events' } = {}) {
-  const { scopes, why } = seriesScopes(occ, { calendarId });
+export function scopeDropChoice(at, occ, cb, { allLabel = 'All events' } = {}) {
+  const { scopes, why } = seriesScopes(occ);
   const cal = occ ? state.calendars.find((c) => c.id === occ.calendarId) : null;
   return {
     x: at.x, y: at.y,

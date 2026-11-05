@@ -6117,9 +6117,7 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   eq('scopes: a series on a local calendar has this, following and all', seriesScopes(local), { scopes: ['this', 'following', 'all'], why: null });
   eq('scopes: on a Google calendar, no following, and the reason in its place', seriesScopes(google), { scopes: ['this', 'all'], why });
   eq('scopes: the reason is one short line', [typeof why, why.length < 60, /Google/.test(why)], ['string', true, true]);
-  eq('scopes: a date edited on its own moved to another calendar: this or all, nothing to say (#188)',
-    seriesScopes({ ...local, isException: true }, { calendarId: 33 }), { scopes: ['this', 'all'], why: null });
-  eq('scopes: the same date staying on its calendar keeps following', seriesScopes({ ...local, isException: true }, { calendarId: 31 }).scopes, ['this', 'following', 'all']);
+  eq('scopes: a date edited on its own has following too, a calendar move included', seriesScopes({ ...local, isException: true }), { scopes: ['this', 'following', 'all'], why: null });
 
   // The drop chip (drag, resize, reschedule, a calendar or a person drop).
   const chip = (occ, o) => scopeDropChoice({ x: 10, y: 20 }, occ, () => {}, o);
@@ -6230,6 +6228,19 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
       eq(`${what}, ${scope}: Change scope closes it and asks again`, [st.seriesChange, asked], [null, 1]);
     }
   }
+  // A date edited on its own, moved to another calendar with the following ones: its plan, as any other day's.
+  sent.length = 0;
+  plan = { ...needsSomeone };
+  const editedDay = { ...occ, instanceId: '93@1', eventId: 93, isException: true, seriesId: 91, seriesTitle: 'Sample run', seriesKey: '2027-05-11T14:00:00Z', start: '2027-05-11T07:30:00-07:00', end: '2027-05-11T08:30:00-07:00' };
+  eq('a calendar drop on an edited day: the chip offers following', scopeDropChoice({ x: 0, y: 0 }, editedDay, () => {}).options.map((o) => o.value), ['this', 'following', 'all', null]);
+  let askedAgain = 0;
+  await moveEventToCalendar(editedDay, 42, 'following', () => { askedAgain++; });
+  await tick();
+  eq('a calendar drop on an edited day, following: previewed with the calendar, the dialog shows its plan, Change scope there', [
+    sent.map(([m, p, b]) => [m, p, b.preview, b.scope, b.calendarId]), st.seriesChange && st.seriesChange.status, st.seriesChange && st.seriesChange.hidden, typeof (st.seriesChange && st.seriesChange.rescope),
+  ], [[['PATCH', '/events/93', true, 'following', 42]], 'ready', false, 'function']);
+  changeSeriesScope();
+  eq('a calendar drop on an edited day: Change scope asks again', [st.seriesChange, askedAgain], [null, 1]);
   // A change to all events whose plan needs no one commits at once, no panel.
   sent.length = 0;
   plan = { hash: 'p2', scope: 'all', direct: true, groups: [], refusals: [] };

@@ -183,6 +183,20 @@ return static function (Db $db): void {
         checkEq('one Undo makes the series whole again', $before, $rows($club));
     });
 
+    scenario('split: a trip flag from a day on reaches the part\'s edited days, so a day that is a stop refuses it', function () use ($d, $u, $db, $home, $rows, $error, $series, $choices): void {
+        $club = $series('Sample club', 'FREQ=WEEKLY;BYDAY=TU');
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-01-26T18:00:00+00:00', 'title' => 'Sample club, away day']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$club]);
+        $trip = (int) $d->events->create($u, eventAt($home, 'Sample trip', '2027-01-25'))['eventId'];
+        $d->events->patch($u, $trip, ['isContainer' => true]);
+        (new BetterCal\Domain\Trips($db, $d->undo))->attach($u, $trip, $day);
+        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'isContainer' => true];
+        $before = $rows($club);
+        $plan = $d->events->previewPatch($u, $club, $edit + ['preview' => true]);
+        checkEq('the part from 19 Jan made a trip, its edited day a stop of another trip: 400 trip_nested, nothing written', ['400 trip_nested', $before],
+            [$error(fn() => $d->events->patch($u, $club, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan)]]))[0], $rows($club)]);
+    });
+
     scenario('split: from the first day it is the whole series\' change and its plan', function () use ($d, $u, $db, $series, $choices, $col): void {
         $run = $series('Run', 'FREQ=WEEKLY;BYDAY=TU');
         $edit = ['scope' => 'following', 'instanceStart' => '2027-01-05T18:00:00+00:00', 'title' => 'Run, longer'];

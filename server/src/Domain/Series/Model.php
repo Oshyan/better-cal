@@ -1684,8 +1684,11 @@ final class Model
             }
         }
 
-        // The bound.
-        $separate = false;
+        // The bound. $actedFirst: the plan's own bound (a kept count) cuts
+        // off the day acted on, which it keeps on its own (The Day Acted On
+        // Comes First). A bound the person sent is their own statement, so a
+        // day acted on it cuts off is an ordinary day outside it.
+        $actedFirst = false;
         $r1 = $r1p;
         if ($unchanged) {
             $r1 = $this->r0;
@@ -1733,6 +1736,7 @@ final class Model
                 $bound = $this->pick('bound', 'Bound', $boundOptions, $default, ['count' => $wantN, 'splits' => $splits, 'counted' => $this->r0->count !== null]);
                 if ($bound === 'count') {
                     $r1 = $r1p->withBound($rawN, null);
+                    $actedFirst = $splits;
                 } else {
                     $r1 = $this->r0->count !== null ? $r1p->withBound($endCount, null) : $r1p->withBound(null, $untilAt((int) $latest));
                 }
@@ -1792,14 +1796,49 @@ final class Model
         };
         // A generated skip past the new end needs nothing (Bounds, gains at the edges).
         $genSkips = array_values(array_filter($genSkips, $inside));
-        // The occurrence acted on, where the request put it: in the series
-        // on its image, or, when that falls outside, an event of its own
-        // (never deleted: it is where the person just put it).
-        // On Google no exception gets an outcome, the day acted on included
-        // (Google, as a Contract).
-        if (!$this->google && $actedPlaced && $newKey($this->acted, $actedImg) === null) {
-            $separate = true;
+        // Days outside the new series (Bounds: Start, End and Days Outside):
+        // the edited days, and the day acted on where the request put it,
+        // that have no new key. The day acted on that the plan's own bound
+        // cut off is kept on its own (The Day Acted On Comes First); every
+        // other day outside, the day acted on under a bound the person sent
+        // included, takes the outside group's choice. On Google no exception
+        // gets an outcome, the day acted on included (Google, as a Contract).
+        $actedNk = $newKey($this->acted, $actedImg);
+        $actedOut = !$this->google && $actedPlaced && $actedNk === null;
+        $grouped = [];
+        if (!$this->google) {
+            foreach ($this->rows as $id => $row) {
+                $key = (string) $row['recurrence_instance_utc'];
+                if (!($id === $this->actedRowId && $actedPlaced) && $newKey($key, $imageOf($this->old->dnOf($key))) === null) {
+                    $grouped[] = $key;
+                }
+            }
+            if ($actedOut && !$actedFirst) {
+                $grouped[] = $this->acted;
+            }
         }
+        $outside = 'keep';
+        if ($grouped !== []) {
+            $one = count($grouped) === 1;
+            $outside = $this->pick('outside', 'Edited days outside the new series', [
+                ['id' => 'keep', 'label' => $one ? 'Keep it as an event of its own' : 'Keep them as events of their own'],
+                ['id' => 'delete', 'label' => $one ? 'Delete it' : 'Delete them'],
+            ], 'keep', ['count' => count($grouped)] + ($one ? ['day' => self::keyOut($grouped[0])] : []));
+        }
+        // Each day's one outcome, from this one function: in the series on
+        // its new key ('in'), or outside it an event of its own ('separate')
+        // or deleted ('deleted'). So no day is in two of the plan's lists.
+        $outcomeOf = function (string $key, ?int $img, bool $acted) use ($newKey, $actedFirst, $outside): array {
+            $nk = $newKey($key, $img);
+            return [$nk, match (true) {
+                $nk !== null => 'in',
+                $acted && $actedFirst, $outside === 'keep' => 'separate',
+                default => 'deleted',
+            }];
+        };
+        [, $actedOutcome] = $outcomeOf($this->acted, $actedImg, true);
+        $separate = $actedOut && $actedOutcome === 'separate';
+        $actedDeleted = $actedOut && $actedOutcome === 'deleted';
 
         // Skipped days.
         $newExdates = [];
@@ -1854,20 +1893,21 @@ final class Model
                 $key = (string) $row['recurrence_instance_utc'];
                 $odn = $this->old->dnOf($key);
                 $img = $imageOf($odn);
-                $nk = $newKey($key, $img);
+                $isActed = $id === $this->actedRowId && $actedPlaced;
+                [$nk, $outcome] = $outcomeOf($key, $img, $isActed);
                 $ownNow[$id] = $this->ownOf($row);
-                if ($id === $this->actedRowId && $actedPlaced) {
-                    if ($nk === null) {
-                        continue;
-                    }
+                if ($isActed && $outcome !== 'in') {
+                    continue; // the day acted on's own outcome, below
+                }
+                if ($isActed) {
                     $asSet[$id] = array_merge($row, $land['cols']);
                     $ownNow[$id] = OwnFields::normalize(array_merge(array_diff($ownNow[$id], self::PLACEMENT), $this->placementOwn($asSet[$id], $nk)));
                 }
                 $newKeys[$id] = $nk;
-                if ($nk !== null) {
+                if ($outcome === 'in') {
                     $placeRows[$id] = (int) $img;
                 } else {
-                    $outsideRows[$id] = $img;
+                    $outsideRows[$id] = $outcome;
                 }
             }
         }
@@ -1878,7 +1918,7 @@ final class Model
         // placement of its own makes it an edited day, so the plan creates its
         // row (Changing the Series from an Edited Day, 3).
         $createEdited = null;
-        if (!$this->google && $actedPlaced && $this->actedRowId === null && ($nk = $newKey($this->acted, $actedImg)) !== null) {
+        if (!$this->google && $actedPlaced && $this->actedRowId === null && ($nk = $actedNk) !== null) {
             $occ = ['override_fields' => '[]', 'recurrence_instance_utc' => $this->acted] + self::occurrenceOf($this->master, [], $this->acted, $this->len0);
             $put = array_merge($occ, $land['cols']);
             $own = OwnFields::normalize($this->placementOwn($put, $nk));
@@ -1893,14 +1933,6 @@ final class Model
                 $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => []] + $sides
                     + Words::dayParts('This one, ' . Words::date(self::dayOf($sides['after']), $this->thisYear), 'keeps where it was put', ', ');
             }
-        }
-        $outside = 'keep';
-        if ($outsideRows !== []) {
-            $one = count($outsideRows) === 1;
-            $outside = $this->pick('outside', 'Edited days outside the new series', [
-                ['id' => 'keep', 'label' => $one ? 'Keep it as an event of its own' : 'Keep them as events of their own'],
-                ['id' => 'delete', 'label' => $one ? 'Delete it' : 'Delete them'],
-            ], 'keep', ['count' => count($outsideRows)] + ($one ? ['day' => self::keyOut((string) $this->rows[array_key_first($outsideRows)]['recurrence_instance_utc'])] : []));
         }
         // Days on a date of their own from before this edit: kept, or moved
         // with their events this once. The acted day's date is the one the
@@ -2156,19 +2188,27 @@ final class Model
                 + array_intersect_key($sides['after'], ['at' => true, 'tz' => true]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
-        foreach ($outsideRows as $id => $img) {
+        foreach ($outsideRows as $id => $outcome) {
             $row = $this->rows[$id];
             // Deleted, it has no after; detached as it is, its after is the row itself.
-            $sides = $this->rowSides($row, $outside === 'delete' ? null : $row);
+            $sides = $this->rowSides($row, $outcome === 'deleted' ? null : $row);
             $label = "'" . (string) $row['title'] . "' " . Words::date($this->old->dnOf((string) $row['recurrence_instance_utc']), $this->thisYear);
-            if ($outside === 'delete') {
+            if ($outcome === 'deleted') {
                 $delete[] = $id;
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + $sides + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
             } else {
                 $detach[$id] = [];
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate'] + $sides + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
             }
-            unset($img);
+        }
+        if ($actedDeleted && $this->actedRowId !== null) {
+            // Cut off by a bound the person sent and deleted by the outside
+            // choice: its row goes, as any day outside does. With no row it
+            // is an occurrence past the new end, a loss.
+            $row = $this->rows[$this->actedRowId];
+            $delete[] = $this->actedRowId;
+            $label = "'" . (string) $row['title'] . "' " . Words::date($this->actedDn0, $this->thisYear);
+            $days[] = ['key' => $this->acted, 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + $this->rowSides($row, null) + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
         }
         if ($separate) {
             // Where the request put it, as an event of its own.
@@ -2217,7 +2257,7 @@ final class Model
         foreach ($outsideRows as $id => $_) {
             $outcomeDays[$this->old->dnOf((string) $this->rows[$id]['recurrence_instance_utc'])] = true;
         }
-        if ($separate) {
+        if ($separate || ($actedDeleted && $this->actedRowId !== null)) {
             $outcomeDays[$this->actedDn0] = true;
         }
         // A removed day is no event to lose: its skip's outcome names it.

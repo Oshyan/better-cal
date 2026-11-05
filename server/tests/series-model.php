@@ -1131,6 +1131,39 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('F1 (all-day): two days long with a count of 3: the day becomes an event of its own, no empty key', [true, 'separate'],
         [$keysOk($p), $dayOf($p, '2027-02-09T00:00:00Z')['outcome'] ?? null]);
 
+    // A bound the person sent that cuts off the day acted on: an ordinary
+    // day outside, with the outside group's choice, in exactly one list.
+    $standupWeekly = smSeries('Standup', 'FREQ=WEEKLY;BYDAY=MO', '2027-01-04 09:00', 60, false, [], 'UTC');
+    $standupWeekno = smSeries('Standup', 'FREQ=YEARLY;BYWEEKNO=17;BYDAY=TH', '2027-04-29 09:00', 60, false, [], 'UTC');
+    foreach ([
+        'weekly' => [$standupWeekly, '2027-02-01 09:00', '2027-02-01', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270125T235959Z'],
+        'week number' => [$standupWeekno, '2031-04-24 09:00', '2031-04-24', 'FREQ=YEARLY;BYWEEKNO=17;BYDAY=TH;UNTIL=20290430T235959Z'],
+    ] as $what => [$series, $keyLocal, $day, $rrule]) {
+        $row = smEdited($series, 2, $keyLocal, [], $day . ' 10:00', ['time']);
+        $edit = ['acted' => smAt($keyLocal, 'UTC'), 'rrule' => $rrule,
+            'landed' => ['start_utc' => smAt($day . ' 11:00', 'UTC'), 'end_utc' => smAt($day . ' 12:00', 'UTC'), 'all_day' => 0, 'tzid' => 'UTC']];
+        $iso = $day . 'T09:00:00Z';
+        $lists = static function (array $p) use ($iso): array {
+            $w = $p['writes'];
+            return [
+                count(array_filter($p['plan']['days'], static fn(array $d): bool => $d['key'] === $iso)),
+                array_key_exists(2, $w['detach']), in_array(2, $w['delete'], true), array_key_exists(2, $w['overrides']),
+            ];
+        };
+        $p = smPlan($series, [$row], $edit);
+        $g = smGroup($p, 'outside');
+        checkEq("Sent bound ($what): the edited day acted on, cut off by the UNTIL sent, is offered the outside choice, keep preselected, and is in one list", [
+            ['keep', 'delete'], 'keep', $iso, 'separate', [1, true, false, false],
+        ], [smOptions($p, 'outside'), $g['selected'] ?? null, $g['day'] ?? null, $dayOf($p, $iso)['outcome'] ?? null, $lists($p)]);
+        $p = smPlan($series, [$row], $edit, ['outside' => 'delete']);
+        checkEq("Sent bound ($what): with Delete it is deleted, and nothing detaches it", ['deleted', [1, false, true, false], []],
+            [$dayOf($p, $iso)['outcome'] ?? null, $lists($p), $p['writes']['detach']]);
+        $p = smPlan($series, [$row], $edit, ['outside' => 'keep']);
+        checkEq("Sent bound ($what): with Keep it is one event of its own where it was put, and nothing is deleted", [
+            'separate', [1, true, false, false], [], smAt($day . ' 11:00', 'UTC'),
+        ], [$dayOf($p, $iso)['outcome'] ?? null, $lists($p), $p['writes']['delete'], $p['writes']['detach'][2]['start_utc'] ?? null]);
+    }
+
     // F2: a rename of a rule the expander can't read keeps every row.
     $odd = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU;COUNT=10;RSCALE=GREGORIAN', '2027-01-05 19:00', 60, false, [], 'UTC');
     $oddRow = smEdited($odd, 2, '2027-02-09 19:00', ['location' => 'Sample Hall'], null, ['location']);

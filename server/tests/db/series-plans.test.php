@@ -729,6 +729,32 @@ return static function (Db $db): void {
         checkEq('undone: every row of the series as before', $before, $rows($daily));
     });
 
+    scenario('a bound sent from an edited day that cuts it off: kept or deleted by the outside choice, never both, and undone', function () use ($d, $u, $db, $rows, $home): void {
+        $standup = (int) $d->events->create($u, eventAt($home, 'Standup', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;BYDAY=MO']))['eventId'];
+        $d->events->patch($u, $standup, ['scope' => 'this', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'start' => '2027-02-01T19:00:00+00:00', 'end' => '2027-02-01T20:00:00+00:00']);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$standup]);
+        $before = $rows($standup);
+        $standalones = static fn(): int => (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Standup' AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL", [$u]);
+        $edit = ['scope' => 'all', 'start' => '2027-02-01T20:00:00+00:00', 'end' => '2027-02-01T21:00:00+00:00', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270125T235959Z'];
+        $state = static fn(): array => [
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$day]),
+            $db->scalar('SELECT recurrence_parent_id FROM events WHERE id = ?', [$day]), // null once it is detached or gone
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$standup]),
+            $standalones(),
+        ];
+        $plan = planned($d->events, $u, $day, $edit, ['outside' => 'delete']);
+        checkEq('sent bound, Delete: the day is in the plan once, deleted; its row is gone and no row was detached', [
+            ['deleted'], [0, null, 0, 0],
+        ], [array_column(array_values(array_filter($plan['days'], static fn(array $x): bool => $x['key'] === '2027-02-01T18:00:00Z')), 'outcome'), $state()]);
+        $d->undo->undoLatest($u);
+        checkEq('sent bound, Delete undone: every row as before', $before, $rows($standup));
+        planned($d->events, $u, $day, $edit, ['outside' => 'keep']);
+        checkEq('sent bound, Keep: one event of its own where it was put, nothing deleted', [[1, null, 0, 1], '2027-02-01 20:00:00'],
+            [$state(), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$day])]);
+        $d->undo->undoLatest($u);
+        checkEq('sent bound, Keep undone: every row as before', $before, $rows($standup));
+    });
+
     scenario('series plans: acceptance cases 8, 11 and 12 committed and undone', function () use ($d, $u, $db, $rows, $home): void {
         $col = static fn(int $id, string $c): mixed => $db->scalar("SELECT $c FROM events WHERE id = ?", [$id]);
         // Acceptance 8: sessions 1 and 2 removed, the start moved to session 3's date (no day named).

@@ -848,7 +848,7 @@ trait SeriesPlans
     }
 
     /**
-     * A Google series for all events, until 1.5.2: only edits that keep the
+     * A Google series for all events, until 1.5.3: only edits that keep the
      * rule text (the plan refuses the rest), sent as the master alone; what
      * Google does with edited days is read back by the next sync.
      */

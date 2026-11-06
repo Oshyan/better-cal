@@ -4,6 +4,21 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.2 (2026-11-06)
+
+Search ranks the way you'd expect, the measured comparison with 1.3 and 1.4.0 is in, and a batch of fixes that comparison and daily use turned up.
+
+- **Search ranks in tiers:** every word you type has to be in one field, the title or the description, and results come best first: the title holding your words as a phrase, then every word whole, then every word as the start of a word ("lab da" finds "Labor Day"), then the same three for the description. A tag or a person whose name holds every word ranks with the title. Within a tier, upcoming events come soonest first and past ones newest first. The address is no longer searched, operators like quotes and plus signs are just word breaks, and a published search feed matches the same way ([how it ranks](docs/design/search-ranking.md)).
+- **Search results keep the title:** the address takes only the room left after it instead of cutting it short.
+- **A one-hour event typed inside the skipped hour** on the spring-change day is accepted and is an hour long, on that day and on every other day of a series ([#222](https://github.com/Oshyan/better-cal/issues/222)).
+- **Activity says what a series change did:** a "this and following" edit names the day it starts from and what changed, a zone change names both zones and whether the clock or the moment was kept, and an edit of one date names that date rather than the series' first day ([#223](https://github.com/Oshyan/better-cal/issues/223)).
+- **Failure emails go where your reminders go** (Settings, Send email to; the account address when blank), and the app never reads its own reminders and alerts as event email.
+- **A failed model call says why:** Settings, System shows the provider's answer (a depleted credit, a quota limit), with "more" for the full message, and Review holds an "Event ranking paused" notice with a way to Settings. Filters, email reading and plugins report their reasons the same way.
+- **Settings, System:** recent starts are one list in time order.
+- **The measured comparison with 1.3 and 1.4.0** ([#203](https://github.com/Oshyan/better-cal/issues/203)): [the report](docs/design/comparison-1.5.md). Maintainers: `tools/compare/` (the scenarios, the replayed issues and the resource benchmark) and the series harness's `--product` adapter run it again.
+
+Operators: migration 065 adds two full-text indexes on events and drops the old combined one (about a quarter of a second for 20,000 events; writes wait while they build); `update.php` or the update page as usual.
+
 ## 1.5.1 (2026-11-05)
 
 "This and following" and deletes join the series model, with their plan shown first; a series can start in an hour the clocks skip; and the six Low findings of the 2026-11-04 security review are closed ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).

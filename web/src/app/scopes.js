@@ -5,7 +5,7 @@
 // refuses for every occurrence of that calendar. The server's refusal stays
 // the backstop; this only keeps a person from picking it and waiting.
 //
-// - On a Google calendar, "This and following" is refused until 1.5.2
+// - On a Google calendar, "This and following" is refused until 1.5.3
 //   (api-contract.md, "This and following": a split from a day after the
 //   first; from the first it is the same as all events). It is left out,
 //   its reason in one line (planwords.js UNOFFERED, beside the refusal

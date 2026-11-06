@@ -1542,7 +1542,7 @@ final class Events
             unset($in['plan']);
         }
         if ($google !== null) {
-            // A split on Google is refused until 1.5.2 (Series\Split), from
+            // A split on Google is refused until 1.5.3 (Series\Split), from
             // its first day it is the whole series'.
             match ($scope) {
                 'this' => $this->googlePatchThis($userId, $google, $event, $in, $authority),
@@ -1957,7 +1957,7 @@ final class Events
 
         // Delete following is a split with no new series (Series\Split);
         // from the series' first day it is delete all, and on Google it is
-        // refused until 1.5.2.
+        // refused until 1.5.3.
         $following = static fn(): array => ['instanceStart' => $instanceStart] + ($plan !== null ? ['plan' => $plan] : []);
         if ($google !== null) {
             match ($scope) {

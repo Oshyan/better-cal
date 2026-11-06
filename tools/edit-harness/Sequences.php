@@ -380,7 +380,7 @@ trait Sequences
     }
 
     /**
-     * A split on a Google calendar the account can write is refused until 1.5.2 (api-contract, This and following):
+     * A split on a Google calendar the account can write is refused until 1.5.3 (api-contract, This and following):
      * "this and following" from a day after the first, delete following and an answer from a day on each preview a plan
      * whose refusal is `google`, and the commit with its hash is 422 series_refused, writing nothing and calling no one
      * (`e-google`). The calendar and its series are written as a Google sync writes them; no Google stand-in is needed,

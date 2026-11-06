@@ -72,7 +72,7 @@ final class Split
         if ($before === []) {
             return ['whole' => true];
         }
-        // On a Google calendar until 1.5.2 (series-model.md, Google, as a
+        // On a Google calendar until 1.5.3 (series-model.md, Google, as a
         // Contract): a split is unavailable, its reason in place of the plan.
         if (!empty($opts['google'])) {
             return self::refused($master, $opts, 'google');

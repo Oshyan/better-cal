@@ -774,7 +774,7 @@ final class Rule
 
     /**
      * The pattern's text as a set of parts, each list part a set: what a
-     * calendar that keeps the rule text (Google until 1.5.2) stores, read
+     * calendar that keeps the rule text (Google until 1.5.3) stores, read
      * without the order of its parts or lists and without INTERVAL=1.
      */
     public function textKey(): string

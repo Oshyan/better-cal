@@ -1079,7 +1079,7 @@ final class Model
             return $this->refused('dayset');
         }
         foreach ($readings as $ri => $r) {
-            // On Google until 1.5.2: only a reading that keeps the rule text
+            // On Google until 1.5.3: only a reading that keeps the rule text
             // as written (a list only as its whole-pattern shift), whatever
             // moves: a new time written into BYHOUR changes the text too.
             // Marked on the list itself, so a refusal of every reading gives

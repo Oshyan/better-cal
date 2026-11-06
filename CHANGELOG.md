@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.1 (unreleased)
+## 1.5.1 (2026-11-05)
 
 "This and following" and deletes join the series model, with their plan shown first; a series can start in an hour the clocks skip; and the six Low findings of the 2026-11-04 security review are closed ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
 
@@ -31,6 +31,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - Tests pin the daily weekday list over a month boundary ([#201](https://github.com/Oshyan/better-cal/issues/201)) and mail admission's estimate of a rule with BY parts.
 
 Maintainers: the series harness runs a seed's cases on several processes at once (`--shards N`, each on a database of its own, merged into the report and findings one process gives), and the database suite's files run at once (`BC_TEST_JOBS`, the machine's CPUs by default): a 3,000-case seed in about two minutes on 4 shards and the database suite in under a minute, with the same cases, checks and totals as before. The harness drives "this and following", delete following and an answer from a day on through the plan API like every other change, with the part's own oracle and the split's whole or part count readings (the 1.4.6 following path is no longer an accepted cause), commits every option a plan offers from the same baseline in isolated state (`--every-option`), checks each group's preselection against the design's table, runs ten hand-written action sequences checked after every step (the five the 1.5.1 issue names among them: the same moment through a first-day split, a trip series' refusals and Undo by entry, a count undone by its entry, a stale plan's 409, a new weekday with moved days kept and moved), commits the interacting pairs of options first and counts unreachable combinations, sends the typed clock for a share of timed edits (`--typed`), checks a Google split's refusal and a deleted trip's flagged stop, and has a mutation for each.
+
+Operators: no database changes; `update.php` or the update page as usual.
 
 ## 1.5.0 (2026-11-04)
 

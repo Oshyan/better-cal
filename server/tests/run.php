@@ -6718,7 +6718,7 @@ checkEq('gw unconfigured: no failure to report, nothing was called', null, $gwUn
     $failing->reply = null;
     $gwF->rankEvents([], [$batchEvent]);
     checkEq('gw failure: a transport that cannot tell still gives a reason', 'Gemini gave no answer.', $gwF->lastFailureText());
-    checkEq('gw failure: Review words for a refusal', 'Gemini answered 402. That is a billing or quota limit on the Gemini account the key belongs to, and only that account can lift it.', Ranking::refusalNotice('Gemini answered 402.'));
+    checkEq('gw failure: Review words for a refusal', 'Gemini answered 402. This is a billing or quota limit on the Gemini account your key belongs to. Adding credit or raising the limit there lifts it, and ranking resumes on its own.', Ranking::refusalNotice('Gemini answered 402.'));
 }
 
 // ---------------------------------------------------------------------------

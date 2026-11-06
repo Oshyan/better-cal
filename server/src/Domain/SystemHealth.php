@@ -496,17 +496,31 @@ final class SystemHealth
         }));
     }
 
+    /**
+     * Where a failure email goes: a user's own subjects (their feeds, devices
+     * and jobs) to the address their reminders go to (Settings "Send email
+     * to", else the account address), so one setting says where this app's
+     * mail is read; system-wide subjects to BETTERCAL_ALERT_EMAIL when set,
+     * else to the owner by the same rule.
+     */
     private function recipientFor(array $row, ?string $alertEmail): ?string
     {
-        if ($row['user_id'] !== null) {
-            $e = $this->db->scalar('SELECT email FROM users WHERE id = ?', [(int) $row['user_id']]);
-            return $e !== null ? (string) $e : null;
-        }
-        if ($alertEmail !== null && trim($alertEmail) !== '') {
+        if ($row['user_id'] === null && $alertEmail !== null && trim($alertEmail) !== '') {
             return trim($alertEmail);
         }
-        $e = $this->db->scalar('SELECT email FROM users ORDER BY id LIMIT 1');
-        return $e !== null ? (string) $e : null;
+        $userId = $row['user_id'] !== null ? (int) $row['user_id'] : $this->ownerUserId();
+        return $userId === null ? null : self::userDestination($this->db, $userId);
+    }
+
+    /** The address a user's own mail from this app goes to (reminders and failure emails alike), or null without a user. */
+    public static function userDestination(Db $db, int $userId): ?string
+    {
+        $user = $db->one('SELECT email, settings_json FROM users WHERE id = ?', [$userId]);
+        if ($user === null) {
+            return null;
+        }
+        $stored = json_decode((string) ($user['settings_json'] ?? ''), true);
+        return Settings::notifyDestination(Settings::withDefaults(is_array($stored) ? $stored : []), (string) $user['email'], $db);
     }
 
     private function ownerUserId(): ?int

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\PushSubscriptions;
+use BetterCal\Domain\Settings;
 use BetterCal\Domain\SystemHealth;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
@@ -168,6 +169,11 @@ final class SystemController
         }
         unset($r);
         $alertTo = (string) ($this->cfg['alert_email'] ?? '');
+        // From the signed-in user's own row, as the worker reads it for the
+        // emails (SystemHealth::userDestination); without a database here an
+        // address set by an API token shows as the account address.
+        $stored = is_string($req->user['settings_json'] ?? null) ? json_decode((string) $req->user['settings_json'], true) : null;
+        $accountTo = Settings::notifyDestination(Settings::withDefaults(is_array($stored) ? $stored : []), (string) ($req->user['email'] ?? ''));
         $root = (string) $this->cfg['app_root'];
         $php = Setup::workerPhp($root);
         $result = [
@@ -185,10 +191,11 @@ final class SystemController
             ],
             'emailAlerts' => [
                 'configured' => $this->email->isConfigured(),
-                // Per-user subjects always go to the account email; this is
-                // where system-wide ones go.
-                'systemTo' => $alertTo !== '' ? $alertTo : (string) $req->user['email'],
-                'accountTo' => (string) $req->user['email'],
+                // Per-user subjects go where the user's reminders go (Settings
+                // "Send email to", else the account address); system-wide ones
+                // to BETTERCAL_ALERT_EMAIL when set, else the same.
+                'systemTo' => $alertTo !== '' ? $alertTo : $accountTo,
+                'accountTo' => $accountTo,
             ],
         ];
         return Response::json($req->authMethod === 'token' ? \BetterCal\Domain\HealthDiagnostics::forToken($result) : $result);

@@ -257,3 +257,65 @@ $dqRow($dqDaily, ['uid' => 'dq-daily@example.test', 'start_utc' => '2027-01-01 0
 $dqTen = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqDaily . '/', $dqQueryBody('20270101T000000Z', '20370101T000000Z')));
 checkEq('expand under the budget, daily over ten years: all 3,653, from Fri 1 Jan 2027 to Wed 31 Dec 2036', [3653, '20270101T070000Z 20270101T070000Z', '20361231T070000Z 20361231T070000Z'],
     [count($dqTen), $dqTen[0] ?? null, $dqTen[3652] ?? null]);
+
+// More occurrences at one moment than the cap: a window the cap still cuts at
+// its shortest is refused like a range past the budget, never answered short.
+// Every minute from Tue 1 Jun 2027 00:00 UTC, each 1,100 minutes long: at Thu
+// 3 Jun 00:00:30 the ones started from Wed 2 Jun 05:41 on are running, 1,100 of
+// them. The same series 1,000 minutes long has 1,000 running then (from Wed 2
+// Jun 07:21), exactly the cap.
+$dqStacked = $dqNewCalendar();
+$dqRow($dqStacked, ['uid' => 'dq-stacked@example.test', 'start_utc' => '2027-06-01 00:00:00', 'end_utc' => '2027-06-01 18:20:00', 'rrule' => 'FREQ=MINUTELY;COUNT=4000']);
+$dqAtCap = $dqNewCalendar();
+$dqRow($dqAtCap, ['uid' => 'dq-atcap@example.test', 'start_utc' => '2027-06-01 00:00:00', 'end_utc' => '2027-06-01 16:40:00', 'rrule' => 'FREQ=MINUTELY;COUNT=4000']);
+$dqStackedWords = [403, 'This report has too many events or repeating occurrences to answer safely (more occurrences at one moment than one answer can hold). Ask for a shorter time range.'];
+checkEq('1,100 occurrences running at one second, Thu 3 Jun 00:00:30 to 00:00:31: the time range and the expand are each refused, 403, never answered short', [$dqStackedWords, $dqStackedWords], [
+    $dqRefused(fn() => $dqQuery($dqStacked, '2027-06-03 00:00:30', '2027-06-03 00:00:31')),
+    $dqRefused(fn() => $dqReport('/calendars/sam@example.test/cal-' . $dqStacked . '/', $dqQueryBody('20270603T000030Z', '20270603T000031Z'))),
+]);
+checkEq('the same over the hour from Thu 3 Jun 00:00: refused, 403', 403, $dqRefused(fn() => $dqQuery($dqStacked, '2027-06-03 00:00:00', '2027-06-03 01:00:00'))[0] ?? null);
+$dqCapAll = $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqAtCap . '/', $dqQueryBody('20270603T000030Z', '20270603T000031Z')));
+checkEq('1,000 running at that second: the time range holds it and the expand lists all 1,000, each once, from Wed 2 Jun 07:21 to Thu 3 Jun 00:00', [
+    ['dq-atcap@example.test.ics'], 1000, 1000, '20270602T072100Z 20270602T072100Z', '20270603T000000Z 20270603T000000Z',
+], [$dqQuery($dqAtCap, '2027-06-03 00:00:30', '2027-06-03 00:00:31'), count($dqCapAll), count(array_unique($dqCapAll)), $dqCapAll[0] ?? null, $dqCapAll[999] ?? null]);
+
+// An occurrence with no length on the boundary between two windows. Daily at
+// 09:00 UTC from Thu 1 Jul 2027 with no length, 32 days (to Sun 1 Aug), the
+// first 31 skipped. A range from 09:00:01 on 1 Jul starts the first window at
+// 1 Jul 09:00:00, so it ends 31 days on, at Sun 1 Aug 09:00:00: the one left.
+$dqEdge = $dqNewCalendar();
+$dqEdgeSkips = [];
+for ($dqDay = 0; $dqDay < 31; $dqDay++) {
+    $dqEdgeSkips[] = $dqUtc('2027-07-01 09:00:00')->modify('+' . $dqDay . ' days')->format('Y-m-d H:i:s');
+}
+$dqRow($dqEdge, ['uid' => 'dq-edge@example.test', 'start_utc' => '2027-07-01 09:00:00', 'end_utc' => '2027-07-01 09:00:00', 'rrule' => 'FREQ=DAILY;COUNT=32', 'exdates_json' => json_encode($dqEdgeSkips)]);
+checkEq('a series whose one occurrence left, Sun 1 Aug 09:00 with no length, sits where the first window ends: the time range from 1 Jul 09:00:01 to 15 Aug holds it, and the expand lists it once', [
+    ['dq-edge@example.test.ics'], ['20270801T090000Z 20270801T090000Z'],
+], [
+    $dqQuery($dqEdge, '2027-07-01 09:00:01', '2027-08-15 00:00:00'),
+    $dqInstances($dqReport('/calendars/sam@example.test/cal-' . $dqEdge . '/', $dqQueryBody('20270701T090001Z', '20270815T000000Z'))),
+]);
+
+// The budget is charged for the occurrences the walk generates, skipped ones
+// too, not only those answered: hourly from Wed 1 Sep 2027, 1,000 events, the
+// first 900 skipped, leaves 100, from Fri 8 Oct 12:00 (900 hours on) to Tue 12
+// Oct 15:00. Through a budget of 100 it is refused; through the standard one
+// it is answered.
+$dqMostlySkipped = ['id' => 1, 'uid' => 'dq-mostly@example.test', 'start_utc' => '2027-09-01 00:00:00', 'end_utc' => '2027-09-01 00:30:00', 'tzid' => 'UTC', 'all_day' => 0,
+    'rrule' => 'FREQ=HOURLY;COUNT=1000', 'exdates_json' => json_encode(array_map(static fn(int $h): string => $dqUtc('2027-09-01 00:00:00')->modify('+' . $h . ' hours')->format('Y-m-d H:i:s'), range(0, 899)))];
+$dqBudgetRefusal = static function (BetterCal\Support\ExpansionBudget $budget) use ($dqMostlySkipped, $dqUtc) {
+    try {
+        return DavTimeRange::occurrences($dqMostlySkipped, [], $dqUtc('2027-09-01 00:00:00'), $dqUtc('2027-11-01 00:00:00'), false, $budget);
+    } catch (BetterCal\Support\WorkBudgetExceeded $e) {
+        return $e->getMessage();
+    }
+};
+$dqMostlyLeft = $dqBudgetRefusal(BetterCal\Support\ExpansionBudget::standard());
+checkEq('900 skipped occurrences through a budget of 100: refused; through the standard budget: the 100 left, from Fri 8 Oct 12:00 to Tue 12 Oct 15:00', [
+    'too many generated occurrences', 100, '2027-10-08 12:00:00', '2027-10-12 15:00:00',
+], [
+    $dqBudgetRefusal(new BetterCal\Support\ExpansionBudget(10, 100, 60.0)),
+    is_array($dqMostlyLeft) ? count($dqMostlyLeft) : $dqMostlyLeft,
+    is_array($dqMostlyLeft) ? $dqMostlyLeft[0]['start']->format('Y-m-d H:i:s') : null,
+    is_array($dqMostlyLeft) ? $dqMostlyLeft[99]['start']->format('Y-m-d H:i:s') : null,
+]);

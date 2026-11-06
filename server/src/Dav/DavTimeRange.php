@@ -59,12 +59,17 @@ final class DavTimeRange
      * halves, and each next window after a whole one is twice as long, so
      * every window kept is complete and the answer is every occurrence in
      * the range, however many, the calendar's window reading the same rows.
-     * A window never grows back to a length that was cut.
+     * A window never grows back to a length that was cut. A window still
+     * cut at the shortest length that holds a moment (two seconds) is
+     * refused, never kept short.
      *
-     * $budget is the request's (ExpansionBudget, as the calendar's window
-     * charges it): the object is one series, and every occurrence each
-     * window read is charged, a cut window's too, so a range past it throws
-     * WorkBudgetExceeded and is refused by the caller (refusal()), never cut.
+     * $budget is the request's (ExpansionBudget), passed into each window's
+     * Recurrence::expand, which charges it as the calendar's window does:
+     * the series for each window read, and every occurrence the walk
+     * generated, skipped, edited and cut ones included. So a range costs
+     * what reading it costs, and a range past the budget, or a window cut
+     * at its shortest, throws WorkBudgetExceeded and is refused by the
+     * caller (refusal()), never cut.
      *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides
@@ -78,9 +83,13 @@ final class DavTimeRange
         bool $first = false,
         ?ExpansionBudget $budget = null,
     ): array {
-        // The expander's window keeps what ends after its start, so it opens
-        // one second early to hold an occurrence with no length at the
-        // range's start; overlaps() then decides.
+        // The expander's window (from, until) keeps an occurrence that
+        // starts before until and ends after from, so one with no length is
+        // kept only strictly inside it. Every window therefore opens one
+        // second before the moment it is meant to start at: the range's
+        // start for the first, the last window's end for each next one, so
+        // no occurrence of any length falls between two windows; one held by
+        // both is kept once, by its instanceUtc, and overlaps() decides.
         $from = $rangeStart === null ? new \DateTimeImmutable('0001-01-01 00:00:00', Time::utc()) : self::utc($rangeStart)->modify('-1 second');
         $to = $rangeEnd === null ? new \DateTimeImmutable('9999-12-31 23:59:59', Time::utc()) : self::utc($rangeEnd);
         $out = [];
@@ -94,23 +103,21 @@ final class DavTimeRange
         $from = max($from, $earliest->modify('-1 second'));
         $step = self::FIRST_STEP_SECONDS;
         $ceiling = PHP_INT_MAX; // the shortest window cut so far
-        if (!empty($master['rrule'])) {
-            $budget?->beginSeries();
-        }
         while ($from < $to) {
             $until = $to->getTimestamp() - $from->getTimestamp() > $step ? $from->modify('+' . $step . ' seconds') : $to;
+            $span = $until->getTimestamp() - $from->getTimestamp();
             // A Recurrence of its own per window, so capped() says whether
             // this window was cut.
             $window = new Recurrence();
-            $occs = $window->expand($master, $overrides, $from, $until);
-            $span = $until->getTimestamp() - $from->getTimestamp();
-            $cut = $window->capped() !== [];
-            // Each window's work is bounded by the cap, so it is charged
-            // after it is read.
-            $budget?->occurrence($cut ? Recurrence::MAX_INSTANCES : count($occs));
-            if ($cut && $span > 1) {
+            $occs = $window->expand($master, $overrides, $from, $until, $budget);
+            if ($window->capped() !== []) {
+                // Two seconds is the shortest window holding a moment of its
+                // own (the second after it opens).
+                if ($span <= 2) {
+                    throw new WorkBudgetExceeded('more occurrences at one moment than one answer can hold');
+                }
                 $ceiling = $span;
-                $step = intdiv($span, 2);
+                $step = max(2, intdiv($span, 2));
                 continue;
             }
             foreach ($occs as $occ) {
@@ -118,10 +125,10 @@ final class DavTimeRange
                     $out[$occ['instanceUtc']] = $occ;
                 }
             }
-            if ($first && $out !== []) {
+            if (($first && $out !== []) || $until >= $to) {
                 break;
             }
-            $from = $until;
+            $from = $until->modify('-1 second');
             $step = $span * 2 < $ceiling ? $span * 2 : $span;
         }
         $out = array_values($out);

@@ -1017,6 +1017,9 @@ final class Driver
                     ? $this->events->deleteEvent($this->userId, $id, 'following', $inst)
                     : $this->events->setAttendance($this->userId, $id, 'going', 'following', $inst);
             } catch (HttpError | \InvalidArgumentException $e) {
+                if ($replay) {
+                    throw $e; // the edit applied again (f-redo) fails, as run() records it
+                }
                 $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
                 $this->fail('e-refusal', 'the edit was refused though the design allows it: ' . ($e instanceof HttpError ? $e->errorCode : 'bad request') . ' ' . mb_substr($e->getMessage(), 0, 200), []);
                 return null;

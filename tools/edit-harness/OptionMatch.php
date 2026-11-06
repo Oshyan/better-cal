@@ -43,11 +43,11 @@ trait OptionMatch
         try {
             $this->events->patch($this->userId, $target, $in);
         } catch (HttpError | \InvalidArgumentException $e) {
-            if ($e instanceof HttpError && $e->errorCode === 'trip_nested') {
-                throw $e;
+            if ($replay || ($e instanceof HttpError && $e->errorCode === 'trip_nested')) {
+                throw $e; // a replay's refusal is f-redo's (run), a trip's the case's own (run)
             }
             $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
-            if ($slot === 'edit' && !$replay) {
+            if ($slot === 'edit') {
                 $err = $e instanceof HttpError ? $e : HttpError::badRequest($e->getMessage());
                 $whole = $v['scope'] === 'all' || self::isFirstDay($st, $edit['actedKey']);
                 if ($whole) {

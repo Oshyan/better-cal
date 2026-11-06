@@ -1712,6 +1712,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-sys-ok { color: var(--fg-muted); }
 .bc-sys-bad { color: var(--danger); font-weight: 600; }
 .bc-sys-err { color: var(--fg-muted); overflow-wrap: anywhere; }
+.bc-sys-more { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 /* Settings, System: blocks with their title above (SettingsPage.js Block). */
 .bc-set-block { padding: 10px 0 12px; }

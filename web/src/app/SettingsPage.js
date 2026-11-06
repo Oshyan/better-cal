@@ -119,7 +119,7 @@ function SystemSection() {
             ? html`<span class="bc-sys-bad">failing (${r.consecutiveFailures}×)</span>`
             : html`<span class="bc-sys-ok">${r.off || 'ok'}</span>`}</td>
           <td class=${'bc-sys-when' + (r.status === 'failing' ? ' bc-sys-bad' : '')} title=${when(r.lastOkAt)}>${r.off ? '' : (r.lastOkAt ? fmtSince(r.lastOkAt) : 'never')}</td>
-          <td class="bc-sys-err">${r.status === 'failing' && r.lastError ? r.lastError : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
+          <td class="bc-sys-err">${r.status === 'failing' && r.lastError ? html`<${ErrText} text=${r.lastError} />` : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
         </tr>`)}</tbody>
       </table></div>`}
     <//>
@@ -235,6 +235,17 @@ const START_WORDS = {
   reload: 'reloaded (pulled down or refreshed)',
   launch: 'opened',
 };
+
+// A job's last error on one line, the rest behind "more": a provider's
+// message can run to a few hundred characters, and the table must stay
+// readable with the other rows in view. Only the row asked for grows.
+const ERR_SHOWN = 90;
+function ErrText({ text }) {
+  const [open, setOpen] = useState(false);
+  if (text.length <= ERR_SHOWN) return text;
+  return html`${open ? text : text.slice(0, ERR_SHOWN).trimEnd() + '…'} <button type="button" class="bc-sys-more" onClick=${() => setOpen(!open)}>${open ? 'less' : 'more'}</button>`;
+}
+
 function StartsRow() {
   // One list in time order: a start that never finished sits among the
   // others at its own time, so later starts that did finish read as the

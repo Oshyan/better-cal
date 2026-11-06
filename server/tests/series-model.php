@@ -2505,6 +2505,25 @@ foreach (['whole' => [2, '2027-02-01'], 'part' => [5, '2027-02-22']] as $b => [$
 $p = smPlan($m, [$own], array_diff_key($edit, ['rrule' => 1]));
 checkEq('Split all-day drag with a count: the same drag for all events is Mondays too', 'FREQ=WEEKLY;BYDAY=MO', $p['writes']['master']['rrule'] ?? null);
 
+// An editor save that moves the date (#199): the editor sends no rule when
+// the repeat controls weren't touched, and the rule as it shows it when an
+// older client sends it anyway. Either way it is the drag: the end date
+// moves with the series, and a split follows the day, keyed and shown on it.
+$m = smSeries('Sample standup', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270125T235959Z', '2027-01-04 09:00');
+$move = smDrag($m, '2027-01-04 09:00', '2027-01-05 09:00');
+foreach (['no rule' => $move, 'the rule sent back' => $move + ['rrule' => 'FREQ=WEEKLY;INTERVAL=1;BYDAY=MO;UNTIL=20270126T075959Z']] as $how => $e) {
+    $p = smPlan($m, [], $e);
+    checkEq("Editor date move, $how: every Monday until 25 Jan a day later is Tuesdays until 26 Jan, four events", ['FREQ=WEEKLY;BYDAY=TU;UNTIL=20270126T170000Z', ['2027-01-05', '2027-01-12', '2027-01-19', '2027-01-26']],
+        [$p['writes']['master']['rrule'] ?? null, smNext($p)]);
+}
+$m = smSeries('Sample standup', 'FREQ=WEEKLY;BYDAY=MO;COUNT=6', '2027-01-04 09:00');
+$move = smDrag($m, '2027-01-11 09:00', '2027-01-12 09:00');
+foreach (['no rule' => $move, 'the rule sent back' => $move + ['rrule' => 'FREQ=WEEKLY;INTERVAL=1;BYDAY=MO;COUNT=6']] as $how => $e) {
+    $s = BetterCal\Domain\Series\Split::plan($m, [], $e, [], ['today' => '2027-01-01'], BetterCal\Domain\Series\Split::EDIT);
+    checkEq("Editor date move this and following, $how: the part starts on Tue 12 Jan with the five events left", ['FREQ=WEEKLY;BYDAY=TU;COUNT=5', smAt('2027-01-12 09:00'), '2027-01-12'],
+        [$s['writes']['plan']['master']['rrule'] ?? null, $s['writes']['plan']['master']['start_utc'] ?? null, substr($s['plan']['next'][0]['start'] ?? '', 0, 10)]);
+}
+
 // The walk cache is bounded by what it holds, not only by how many forms:
 // a walk over CACHE_ENTRY_MAX_BYTES is not kept, and the oldest forms go
 // once the rest cost more than CACHE_BYTES.

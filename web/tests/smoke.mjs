@@ -6044,6 +6044,14 @@ console.log('--- the editor\'s save: only what changed (#199), all events throug
   eq('editor payload: a rename sends the title alone, no rule', changedFields({ ...was, title: 'Sample chorus' }, was), { title: 'Sample chorus' });
   eq('editor payload: a rule built differently but untouched is not sent', changedFields({ ...was, rrule: 'FREQ=WEEKLY;INTERVAL=1;BYDAY=TU' }, was), {});
   eq('editor payload: the repeat controls touched send the rule', changedFields({ ...was, rrule: 'FREQ=WEEKLY;BYDAY=WE' }, was, { rruleTouched: true }), { rrule: 'FREQ=WEEKLY;BYDAY=WE' });
+  // A date moved a day with the repeat controls untouched: the time alone,
+  // so the server moves the rule and its end with the day as a drag does,
+  // even where the form would build the rule for the new date differently.
+  const moved = { ...was, start: '2027-03-10T19:00:00-08:00', end: '2027-03-10T20:30:00-08:00', rrule: 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270331T065959Z' };
+  eq('editor payload: a date move, repeat untouched, sends the time and no rule', changedFields(moved, { ...was, rrule: 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20270330T065959Z' }),
+    { start: moved.start, end: moved.end, allDay: false });
+  eq('editor payload: a date move with the repeat controls touched sends the rule with the time', changedFields(moved, was, { rruleTouched: true }),
+    { start: moved.start, end: moved.end, allDay: false, rrule: moved.rrule });
   eq('editor payload: a new end time sends the whole time', changedFields({ ...was, end: '2027-03-09T21:00:00-08:00' }, was),
     { end: '2027-03-09T21:00:00-08:00', start: was.start, allDay: false });
   eq('editor payload: a zone picked sends the time with it', Object.keys(changedFields({ ...was, tzid: 'Europe/Berlin' }, was)), ['tzid', 'start', 'end', 'allDay']);

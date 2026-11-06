@@ -68,6 +68,12 @@ For a one-person project, taking security seriously means doing the work in publ
 
 Releases are tagged (`v1.0.0`) and listed on GitHub, and [CHANGELOG.md](CHANGELOG.md) says what changed. Settings shows the version you're running and tells you when there's a new one. Minor versions bring features; patch versions bring fixes and refinements. A major version means a change you may need to act on, such as a changed install layout or a dropped PHP version; within 1.x, any version updates from any earlier one, with the database migrations run forward. Each release page says what the update needs, and [Updating](docs/install.md#updating) has the steps.
 
+### Lost edits in versions before 1.4.6
+
+A bug worth knowing about if you ran a version before 1.4.6 (1 November 2026). "This and following" on a repeating event deleted every day from that day on that you had edited on its own. A day you had renamed, moved to another time or date, or given its own place, people or tags went back to what the series said, with nothing to tell you. Answering an invitation or moving to another calendar from a day on did the same, since they split the series the same way. Undo could put the days back for seven days; after that they were gone.
+
+1.4.6 keeps those days. The new part still dropped the series' tags and people until 1.5.1, which carries them over. If you used "This and following" on a series with edited days before 1.4.6, those edits may be missing, and only a database backup from before the change can bring them back. I found this on 6 November 2026 while measuring 1.5.1 against 1.3 and 1.4 ([#203](https://github.com/Oshyan/better-cal/issues/203)); the scenarios that show it are in `tools/compare`.
+
 ## License
 
 MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build something on it, a link back here is appreciated but not required. Bundled third-party software keeps its own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

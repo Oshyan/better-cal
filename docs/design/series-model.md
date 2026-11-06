@@ -168,7 +168,7 @@ A new series needs no dialog, but it gets the plan's information where it's made
 
 ### After: Toast and Activity
 
-The toast stays short ("Choir · changed how it repeats", with Undo). The Activity entry carries the plan's summary, ownership changes included ("Two edited days became events of their own: 'Rehearsal' on 13 Apr and 'Rehearsal' on 11 May"). Undoing it says what it put back the same way.
+The toast stays short ("Choir · changed how it repeats", with Undo). The Activity entry carries the plan's summary, ownership changes included ("Two edited days became events of their own: 'Rehearsal' on 13 Apr and 'Rehearsal' on 11 May"). One builder writes it for every whole-series change and the part of a split: its reach ("all events", or "from Tue 19 Jan on"), the rule where it changes, each clock with its zone when the zone changes and the choice made ("keeping the clock time", "keeping the same moment"), then each field changed by its values ("title from 'Choir' to 'Chorus'"). Undoing it says what it put back the same way.
 
 ### The API
 

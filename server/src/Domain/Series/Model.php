@@ -59,6 +59,9 @@ final class Model
         'duplicates' => 'duplicate decision', 'pluginData' => 'plugin data',
     ];
 
+    /** A changed field as its line and the Activity entry name it, where that isn't OWN_WORDS': as the editor labels it. */
+    private const FIELD_WORDS = ['location' => 'location'];
+
     public const REASONS = [
         'unreadable' => 'This repeat came from another app in a form Better-Cal can\'t read, so only its details can change here.',
         'several' => 'This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can\'t be moved or given another zone as a series. Move one event, or change its other details.',
@@ -2381,11 +2384,32 @@ final class Model
             'drag', 'start' => 'Moved', 'newrule', 'norule' => 'Changed how ' . $title . ' repeats', default => 'Changed',
         };
         $startAlone = $kind === 'start' && $words === $wordsBefore;
-        $summary = ($kind === 'newrule' || $kind === 'norule' ? $verb : $verb . ' ' . $title) . ' (all events): '
-            . ($startAlone
-                ? 'starts ' . Words::dayMonth($newStart, $this->thisYear) . ' (was ' . Words::dayMonth($this->old->startDn, $this->thisYear) . '), ' . Words::lower($words) . ', as before'
-                : (in_array($kind, ['drag', 'start', 'newrule', 'norule'], true) || $words !== $wordsBefore ? Words::lower($wordsBefore) . ', now ' . Words::lower($words) . ', from ' . Words::dayMonth($newStart, $this->thisYear) : Words::lower($words) . ', as before'))
-            . '.';
+        // The Activity entry: what was changed, its reach (every event, or
+        // the part from the day a split starts on, which Split passes), then
+        // the rule where it changes and each field changed. A zone changed
+        // is named beside each clock, with the choice between the clock
+        // time and the moment when one was offered.
+        $reach = isset($this->opts['splitDay']) ? 'from ' . Words::date((int) $this->opts['splitDay'], $this->thisYear) . ' on' : 'all events';
+        $zoneMoved = !$this->allDay0 && !$this->allDay1 && Time::normalizeTzid($this->tz0) !== Time::normalizeTzid($this->tz1);
+        $ruleFrom = $zoneMoved ? Words::rule($this->r0, $this->clock0, self::zoneName($this->tz0)) : $wordsBefore;
+        $ruleTo = $zoneMoved && $this->ruleDelta !== 'none' ? Words::rule($r1p, $clock1, self::zoneName($this->tz1)) : $words;
+        $zoneGroup = array_values(array_filter($this->groups, static fn(array $g): bool => $g['id'] === 'zone'))[0] ?? null;
+        $kept = $zoneGroup === null ? '' : ($zoneGroup['selected'] === 'moment' ? ', keeping the same moment' : ', keeping the clock time');
+        $ruleClause = match (true) {
+            $startAlone => 'starts ' . Words::dayMonth($newStart, $this->thisYear) . ' (was ' . Words::dayMonth($this->old->startDn, $this->thisYear) . '), ' . Words::lower($words) . ', as before',
+            in_array($kind, ['drag', 'start', 'newrule', 'norule'], true) || $ruleTo !== $ruleFrom => Words::lower($ruleFrom) . ', now ' . Words::lower($ruleTo) . $kept . ', from ' . Words::dayMonth($newStart, $this->thisYear),
+            default => null,
+        };
+        $clauses = $ruleClause === null ? [] : [$ruleClause];
+        foreach ($this->changed as $field => $cols) {
+            $clauses[] = $this->fieldClause($field, $cols);
+        }
+        foreach ($this->seriesCols as $col => $v) {
+            $clauses[] = Words::lower(self::SERIES_COLUMNS[$col]) . ' turned ' . ((int) $v === 1 ? 'on' : 'off');
+        }
+        // Nothing else to say (a calendar move alone): the rule, as before.
+        $summary = ($kind === 'newrule' || $kind === 'norule' ? $verb : $verb . ' ' . $title) . ' (' . $reach . '): '
+            . ($clauses === [] ? Words::lower($words) . ', as before' : implode('; ', $clauses)) . '.';
         $detachCount = count(array_filter($days, static fn(array $d): bool => $d['outcome'] === 'separate' && $d['kind'] === 'edited'));
         $ownership = null;
         if ($detachCount > 0) {
@@ -2790,24 +2814,46 @@ final class Model
     /** A changed field's line, before and after: "Title: Choir, now Chorus", "Reminder: 1 hour before, now 30 minutes". */
     private function fieldWords(string $field, array $cols): string
     {
-        $name = Words::upper(self::OWN_WORDS[$field]);
+        $p = $this->fieldParts($field, $cols);
+        if (!isset($p['was'])) {
+            return Words::upper($p['name']) . ($p['text'] === '' ? ' changed' : ': ' . $p['text']);
+        }
+        $now = $field === 'reminders' && str_ends_with($p['was'], ' before') && str_ends_with($p['now'], ' before') ? substr($p['now'], 0, -7) : $p['now'];
+        return Words::upper($p['name']) . ': ' . $p['was'] . ', now ' . $now;
+    }
+
+    /** A changed field in the Activity entry: "title from 'Choir' to 'Chorus'", "tags now Music, Weekly", "people changed". */
+    private function fieldClause(string $field, array $cols): string
+    {
+        $p = $this->fieldParts($field, $cols);
+        if (!isset($p['was'])) {
+            return $p['name'] . ($p['text'] === '' ? ' changed' : ' now ' . $p['text']);
+        }
+        $q = static fn(string $v): string => $field === 'title' && $v !== 'none' ? "'" . $v . "'" : $v;
+        return $p['name'] . ' from ' . $q($p['was']) . ' to ' . $q($p['now']);
+    }
+
+    /**
+     * A changed field's name and values as words, for its line and the
+     * Activity entry: ['name', 'was', 'now'], or ['name', 'text'] for tags
+     * (their names now) and people (no text).
+     *
+     * @return array{name:string,was?:string,now?:string,text?:string}
+     */
+    private function fieldParts(string $field, array $cols): array
+    {
         if ($field === 'tags') {
-            return 'Tags: ' . implode(', ', $cols['names']);
+            return ['name' => 'tags', 'text' => implode(', ', $cols['names'])];
         }
         if ($field === 'people') {
-            return 'People changed';
+            return ['name' => 'people', 'text' => ''];
         }
         $col = array_key_first($cols);
         $was = $this->master[$col] ?? null;
         $now = $cols[$col] ?? null;
         if ($field === 'reminders') {
-            $a = self::reminderWords($was);
-            $b = self::reminderWords($now);
             $one = count(\BetterCal\Domain\Reminders::decode($was) ?? [0]) <= 1 && count(\BetterCal\Domain\Reminders::decode($now) ?? [0]) <= 1;
-            if (str_ends_with($a, ' before') && str_ends_with($b, ' before')) {
-                $b = substr($b, 0, -7);
-            }
-            return ($one ? 'Reminder' : 'Reminders') . ': ' . $a . ', now ' . $b;
+            return ['name' => $one ? 'reminder' : 'reminders', 'was' => self::reminderWords($was), 'now' => self::reminderWords($now)];
         }
         $short = static function (?string $v): string {
             $v = trim(preg_replace('/\s+/', ' ', (string) $v) ?? '');
@@ -2819,7 +2865,7 @@ final class Model
         if ($field === 'status') {
             $short = static fn(?string $v): string => (string) $v === 'tentative' ? 'maybe' : 'planned';
         }
-        return $name . ': ' . $short($was === null ? null : (string) $was) . ', now ' . $short($now === null ? null : (string) $now);
+        return ['name' => self::FIELD_WORDS[$field] ?? self::OWN_WORDS[$field], 'was' => $short($was === null ? null : (string) $was), 'now' => $short($now === null ? null : (string) $now)];
     }
 
     /** "1 hour before", "30 minutes before and 1 day before at 18:00", "the default", "none". */

@@ -132,11 +132,14 @@ final class Words
      * A rule in words, with its clock time when timed: "Weekly on Tuesday
      * at 19:00". Null for a rule outside the drag table that isn't simple.
      *
+     * With $zone, the zone's name follows the clock: "Weekly on Tuesday at
+     * 19:00 in Berlin", for a sentence about a change of zone.
+     *
      * @param array{0:int,1:int,2:int}|null $clock
      */
-    public static function rule(Rule $r, ?array $clock = null): string
+    public static function rule(Rule $r, ?array $clock = null, ?string $zone = null): string
     {
-        $at = $clock !== null ? sprintf(' at %02d:%02d', $clock[0], $clock[1]) : '';
+        $at = $clock !== null ? sprintf(' at %02d:%02d', $clock[0], $clock[1]) . ($zone !== null ? ' in ' . $zone : '') : '';
         $n = $r->interval;
         $every = static fn(string $unit, string $adverb): string => $n === 1 ? $adverb : "Every $n {$unit}s";
         switch ($r->kind) {

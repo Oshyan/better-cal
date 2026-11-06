@@ -167,7 +167,7 @@ final class Split
             $plan = [
                 'scope' => 'following', 'action' => 'delete', 'direct' => false, 'split' => $split + ['after' => null],
                 'groups' => [], 'days' => $days, 'next' => [], 'nextMore' => false, 'refusals' => [], 'notes' => [],
-                'summary' => "Ended '" . (string) $master['title'] . "' before " . Cal::date($actedDn) . '.',
+                'summary' => "Ended '" . (string) $master['title'] . "' before " . Words::date($actedDn, self::thisYear($opts)) . '.',
             ];
             $plan = ['hash' => $hashOf(array_merge($seen, [array_map([self::class, 'row'], $partRows)]))] + $plan;
             return ['plan' => $plan, 'writes' => ['old' => $oldCols, 'part' => null, 'rows' => array_map(static fn(array $r): int => (int) $r['id'], $partRows), 'plan' => null],
@@ -175,8 +175,10 @@ final class Split
         }
 
         // The part as a series of its own, planned as a whole series: the
-        // edit for "this and following", no fields for an answer.
+        // edit for "this and following", no fields for an answer. Its words
+        // say its reach, the day it starts from.
         $partMaster = $partCols + $master;
+        $opts = ['splitDay' => $actedDn] + $opts;
         $partEdit = $mode === self::ANSWER ? ['acted' => $acted] : $edit;
 
         // The rule sent (decisions.md, a split's sent rule): compared with
@@ -282,6 +284,12 @@ final class Split
         $selected = isset($alts[$choices['bound'] ?? '']) ? (string) $choices['bound'] : (isset($alts['whole']) ? 'whole' : 'part');
         $group = ['id' => 'bound', 'label' => 'Bound', 'selected' => $selected, 'count' => $counts['part'], 'at' => Cal::date($actedDn), 'options' => $options, 'refusals' => $refusals];
         return [$alts[$selected], $group, $counts[$selected]];
+    }
+
+    /** The year whose dates the words leave without one: today's (opts today), as Model reads it. */
+    private static function thisYear(array $opts): int
+    {
+        return (int) substr((string) ($opts['today'] ?? Time::nowUtc()->format('Y-m-d')), 0, 4);
     }
 
     /** Whether a sent UNTIL ends before the day acted on: a date against its day, an instant against its key. */

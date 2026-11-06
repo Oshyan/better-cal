@@ -164,7 +164,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
   # Several zones, not just Pacific: see scripts/deploy.sh.
-  for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do
+  for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Asia/Tokyo Pacific/Auckland; do
     printf '%-20s ' "${zone}"
     TZ="${zone}" node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   done

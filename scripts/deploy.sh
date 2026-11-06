@@ -56,7 +56,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   # events moving a day for anyone east of their event's zone.
   # A run that fails shows its last lines, errors included: a rare failure
   # once stopped a deploy with nothing to go on but the last passing test.
-  for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do
+  for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Asia/Tokyo Pacific/Auckland; do
     printf '%-20s ' "${zone}"
     if ! smoke_out="$(TZ="${zone}" node "${DEPLOY_SNAPSHOT}/web/tests/smoke.mjs" 2>&1)"; then
       printf 'FAILED\n%s\n' "$(printf '%s\n' "${smoke_out}" | tail -40)"

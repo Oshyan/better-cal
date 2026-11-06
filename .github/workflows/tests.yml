@@ -165,9 +165,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - name: Smoke tests, three time zones
+      - name: Smoke tests, four time zones
         run: |
-          for zone in America/Los_Angeles UTC Pacific/Auckland; do
+          for zone in America/Los_Angeles UTC Asia/Tokyo Pacific/Auckland; do
             echo "== $zone =="
             TZ="$zone" node web/tests/smoke.mjs | tail -1
           done

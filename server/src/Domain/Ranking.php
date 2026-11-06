@@ -161,7 +161,7 @@ final class Ranking
     public static function refusalNotice(string $reason): string
     {
         return ($reason !== '' ? $reason . (str_ends_with($reason, '.') ? ' ' : '. ') : '')
-            . 'That is a billing or quota limit on the Gemini account the key belongs to, and only that account can lift it.';
+            . 'This is a billing or quota limit on the Gemini account your key belongs to. Adding credit or raising the limit there lifts it, and ranking resumes on its own.';
     }
 
     /**

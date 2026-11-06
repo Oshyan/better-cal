@@ -112,7 +112,7 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'mail_limit') {
         toast('Email automation notice dismissed');
       } else if (item.kind === 'model_limit') {
-        toast('AI filter notice dismissed');
+        toast('AI notice dismissed');
       } else if (item.kind === 'invite_new') {
         if (!accepted) {
           toast('Dismissed. Nothing was added.');

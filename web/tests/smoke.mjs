@@ -6014,9 +6014,13 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
   eq('field table: a field the table lacks is never sent', changedFields({ title: 'A', mystery: 2 }, { title: 'A', mystery: 1 }), {});
   eq('field table: a new time sends its typed clocks with it', Object.keys(changedFields({ start: 'b', end: 'c', allDay: false, typed: { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' } }, { start: 'a', end: 'c', allDay: false, typed: null })), ['start', 'typed', 'end', 'allDay']);
   eq('field table: every row but the rule has a label the panel says', EDIT_FIELDS.filter((r) => r.keys[0] !== 'rrule').every((r) => r.label && fieldLines(Object.fromEntries(r.keys.map((k) => [k, ['reminders', 'tagNames', 'personIds'].includes(k) ? [30] : 'x'])), {}, { timeWords: () => 'later', calendarName: (x) => x, personName: (x) => x }).length === 1), true);
-  // The typed clock from quick add's strip: the clocks, not the instants.
+  // The typed clock from quick add's strip: the clocks, not the instants. The
+  // range is the one the strip builds on this device, whatever its zone: a
+  // fixed offset here read the end's day in the device zone and failed on a
+  // device a day ahead of the fixture's zone.
+  const gapForm = { dateKey: '2027-03-14', startTime: '02:30', endTime: '03:30', allDay: false };
   eq('quick add typed clock: 02:30 on the spring change day reaches the server as 02:30',
-    typedRange({ dateKey: '2027-03-14', startTime: '02:30', endTime: '03:30', allDay: false }, { start: '2027-03-14T03:30:00-07:00', end: '2027-03-14T04:30:00-07:00' }, 'America/Los_Angeles'),
+    typedRange(gapForm, buildRange(gapForm, null, false), 'America/Los_Angeles'),
     { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' });
   eq('quick add typed clock: none for an all-day range', typedRange({ dateKey: '2027-03-14', allDay: true }, { start: 'x', end: 'y' }, 'UTC'), null);
   // A range typed across the skipped hour (#222): the end is its clock

@@ -166,26 +166,42 @@ final class Labels
     }
 
     /**
-     * Event ids whose linked people match the term (substring). Mirrors
-     * eventIdsForTagQuery for the search layer's people matching, including
-     * `@name` people-only queries.
+     * For search: events whose tag or linked person's name holds every word
+     * (Search::nameTier), each with its best tier. Names are matched in PHP
+     * against the account's whole list, which is short next to its events.
      *
-     * @return list<int>
+     * @param list<string> $words from Search::words()
+     * @return array<int,int> event id => tier (1 to 3)
      */
-    public function eventIdsForPersonQuery(int $userId, string $term): array
+    public function eventTiersForWords(int $userId, array $words, bool $tags, bool $people): array
     {
-        $term = trim($term);
-        if ($term === '') {
-            return [];
+        $sources = [];
+        if ($tags) {
+            $sources[] = ['SELECT id, name FROM tags WHERE user_id = ?', 'SELECT event_id, tag_id AS label_id FROM event_tags WHERE tag_id IN '];
         }
-        $like = '%' . addcslashes($term, '%_\\') . '%';
-        $rows = $this->db->all(
-            'SELECT DISTINCT ep.event_id FROM event_people ep
-             JOIN people p ON p.id = ep.person_id
-             WHERE p.user_id = ? AND p.name LIKE ?',
-            [$userId, $like]
-        );
-        return array_map(static fn(array $row): int => (int) $row['event_id'], $rows);
+        if ($people) {
+            $sources[] = ['SELECT id, name FROM people WHERE user_id = ?', 'SELECT event_id, person_id AS label_id FROM event_people WHERE person_id IN '];
+        }
+        $best = [];
+        foreach ($sources as [$namesSql, $linksSql]) {
+            $tierOf = [];
+            foreach ($this->db->all($namesSql, [$userId]) as $row) {
+                $tier = Search::nameTier($words, (string) $row['name']);
+                if ($tier !== null) {
+                    $tierOf[(int) $row['id']] = $tier;
+                }
+            }
+            if ($tierOf === []) {
+                continue;
+            }
+            [$in, $params] = Db::in(array_keys($tierOf));
+            foreach ($this->db->all($linksSql . $in, $params) as $link) {
+                $event = (int) $link['event_id'];
+                $tier = $tierOf[(int) $link['label_id']];
+                $best[$event] = min($best[$event] ?? $tier, $tier);
+            }
+        }
+        return $best;
     }
 
     /** Link rows for undo snapshots. @return array<string,list<array>> */

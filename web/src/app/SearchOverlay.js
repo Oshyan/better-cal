@@ -213,11 +213,10 @@ export function SearchOverlay() {
   // The server says which results are still to come (a running series is,
   // whatever its first date); the end decides for anything without the flag.
   const isUpcoming = (o) => (o.upcoming !== undefined ? o.upcoming : parseISO(o.end || o.start).getTime() >= now);
-  // Relevance picks which results come back; within each group they read
-  // in calendar order, the soonest upcoming first and the latest past first.
-  const at = (o) => parseISO(o.start).getTime();
-  const future = flat.filter(isUpcoming).sort((a, b) => at(a) - at(b));
-  const past = flat.filter((o) => !isUpcoming(o)).sort((a, b) => at(b) - at(a));
+  // The server's order stands within each group: best match first, then
+  // the soonest upcoming or the latest past (docs/design/search-ranking.md).
+  const future = flat.filter(isUpcoming);
+  const past = flat.filter((o) => !isUpcoming(o));
   const ordered = [...future, ...past];
 
   const go = (occ) => {

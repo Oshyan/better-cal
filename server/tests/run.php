@@ -4398,6 +4398,50 @@ foreach ([['f0'], ['folder1'], [12], 'all', ['x' => 'all']] as $bad) {
     $threw = false; try { \BetterCal\Domain\Settings::validate(['sidebarOrder' => $bad]); } catch (\Throwable) { $threw = true; }
     check('settings: sidebar order refuses ' . json_encode($bad), $threw);
 }
+// Search ranking (docs/design/search-ranking.md): the sanitizer, name
+// tiers, and the SQL the plan builds. What the database does with it is
+// in tests/db/search.test.php.
+$S = \BetterCal\Domain\Search::class;
+checkEq('search words: letters and digits, lowercased, anything else separates', ['labor', 'day', '5k'], $S::words('  Labor-Day!! 5K '));
+checkEq('search words: typed boolean operators never survive', ['foo', 'bar', 'baz'], $S::words('+foo -bar* "baz" (~<>)@'));
+checkEq('search words: an apostrophe splits a word, as the index does', ['o', 'brien'], $S::words("O'Brien"));
+checkEq('search words: each word once, at most MAX_WORDS', $S::MAX_WORDS, count($S::words('a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a1')));
+checkEq('search words: letters beyond ASCII are letters', ['café', 'zürich'], $S::words('Café, Zürich'));
+checkEq('search words: invalid UTF-8 is no words', [], $S::words("\xC3\x28"));
+checkEq('search phrase: an apostrophe inside a word stays, a curly one becomes straight', "pat o'brien", $S::phrase("Pat O\u{2019}Brien!"));
+checkEq('search phrase: quotes and operators go', 'labor day', $S::phrase('"labor" +day*'));
+checkEq('search name tier: the words in order', 1, $S::nameTier(['book', 'club'], 'Sample Book Club'));
+checkEq('search name tier: every word whole, apart', 2, $S::nameTier(['club', 'book'], 'Book Club'));
+checkEq('search name tier: every word starting a word', 3, $S::nameTier(['dan', 'day'], 'Dandelion Daytrip'));
+checkEq('search name tier: one word whole is the whole-word tier', 2, $S::nameTier(['alex'], 'Alex Example'));
+checkEq('search name tier: a word inside a word is no match', null, $S::nameTier(['xample'], 'Alex Example'));
+checkEq('search name tier: one word missing is no match', null, $S::nameTier(['alex', 'sample'], 'Alex Example'));
+$fm = $S::fieldMatch('title', ['labor', 'day'], 'labor day', 3, true);
+checkEq('search plan: title phrase is MATCH\'s phrase or the words together, plus every word required', ['(MATCH(title) AGAINST (? IN BOOLEAN MODE) OR title LIKE ?) AND MATCH(title) AGAINST (? IN BOOLEAN MODE)', ['"labor day"', '%labor day%', '+labor +day']], $fm['phrase']);
+checkEq('search plan: whole words are required words', ['MATCH(title) AGAINST (? IN BOOLEAN MODE)', ['+labor +day']], $fm['whole']);
+checkEq('search plan: word starts are required prefixes', ['MATCH(title) AGAINST (? IN BOOLEAN MODE)', ['+labor* +day*']], $fm['prefix']);
+$fm = $S::fieldMatch('description', ['the', 'tribute', '5k'], 'the tribute 5k', 3, true);
+checkEq('search plan: a stopword and a short word are required by LIKE on the same field', ['MATCH(description) AGAINST (? IN BOOLEAN MODE) AND description LIKE ? AND description LIKE ?', ['+tribute', '%the%', '%5k%']], $fm['whole']);
+checkEq('search plan: with the server keeping stopwords, a stopword goes to MATCH', ['+the +tribute', '%5k%'], $S::fieldMatch('title', ['the', 'tribute', '5k'], '', 3, false)['whole'][1]);
+checkEq('search plan: the minimum token length is the server\'s', ['+5k* +tribute*'], $S::fieldMatch('title', ['5k', 'tribute'], '', 2, true)['prefix'][1]);
+$fm = $S::fieldMatch('title', ['the', 'who'], 'the who', 3, true);
+checkEq('search plan: no indexed word is LIKE alone, every word in the field', ['title LIKE ? AND title LIKE ?', ['%the%', '%who%']], $fm['whole']);
+checkEq('search plan: and its phrase is the words together', ['title LIKE ?', ['%the who%']], $fm['phrase']);
+checkEq('search plan: one word has no phrase tier', null, $S::fieldMatch('title', ['labor'], 'labor', 3, true)['phrase']);
+checkEq('search plan: LIKE wildcards in a word are escaped', ['%a\\_b%'], $S::fieldMatch('title', ['a_b'], '', 9, true)['whole'][1]);
+$fields = ['title' => $S::fieldMatch('title', ['labor', 'day'], 'labor day', 3, true), 'description' => $S::fieldMatch('description', ['labor', 'day'], 'labor day', 3, true)];
+[$caseSql, $caseParams, $whereSql, $whereParams] = $S::rank($fields, [11 => 1, 12 => 3]);
+preg_match_all('/THEN (\d)/', $caseSql, $tierOrder);
+checkEq('search plan: tiers title phrase, label, whole, prefix, label, then description', ['1', '1', '2', '3', '3', '4', '5', '6'], $tierOrder[1]);
+check('search plan: a label tier is an id list', str_contains($caseSql, 'WHEN id IN (?) THEN 1') && str_contains($caseSql, 'WHEN id IN (?) THEN 3'));
+checkEq('search plan: matching is either field\'s word starts or a label, no OR of words', '((MATCH(title) AGAINST (? IN BOOLEAN MODE)) OR (MATCH(description) AGAINST (? IN BOOLEAN MODE)) OR id IN (?, ?))', $whereSql);
+checkEq('search plan: the matching params', ['+labor* +day*', '+labor* +day*', 11, 12], $whereParams);
+check('search plan: the address is never searched', !str_contains($caseSql . $whereSql, 'location'));
+check('search plan: no natural-language mode', !str_contains($caseSql . $whereSql, 'NATURAL'));
+[$caseSql, , $whereSql] = $S::rank([], [7 => 2]);
+checkEq('search plan: a tag or people only search is its labels', ['CASE WHEN id IN (?) THEN 2 ELSE 9 END', '(id IN (?))'], [$caseSql, $whereSql]);
+checkEq('search plan: nothing to match matches nothing', '0 = 1', $S::rank([], [])[2]);
+
 $nowSql = '2026-10-03 12:00:00';
 check('search upcoming: an event that has not ended', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 13:00:00', 'rrule' => null], $nowSql));
 check('search upcoming: one that ended is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 11:00:00', 'rrule' => null], $nowSql));

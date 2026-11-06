@@ -14,77 +14,37 @@ A major version should mean something you can say in one sentence. I have three 
 
 The releases below assume the first one, since it's the only change big enough to need a major version. Either of the others would move its issues forward and push the item work later.
 
-## 1.4.0 (released 2026-10-27)
+## Released
 
-- Month rows that grow to fit their fullest day, with a switch in the grid's corner ([#171](https://github.com/Oshyan/better-cal/issues/171))
-- A shared or pasted event page link becomes a quick-add draft ([#105](https://github.com/Oshyan/better-cal/issues/105)), and Cmd/Ctrl+V on the calendar opens quick add with what you copied
-- Quick add suggests calendars, tags and people after `/` `#` `@` ([#169](https://github.com/Oshyan/better-cal/issues/169))
-- Jump to date also takes a view, like "day view of June 9" ([#12](https://github.com/Oshyan/better-cal/issues/12))
-- A setting per calendar to hide events its source marks cancelled ([#135](https://github.com/Oshyan/better-cal/issues/135))
-- Edit the approved senders for email ingest as text, with wildcards ([#151](https://github.com/Oshyan/better-cal/issues/151))
-- A number on the installed app's icon: Review items waiting, events today, or events still to come today. Off by default ([#170](https://github.com/Oshyan/better-cal/issues/170))
-- Holidays marked with a stripe across the day's header, sidebar groups in any order, and Cmd/Ctrl+Enter to save from the editor
-- Plugins wait for their required settings, Run now runs right away, and an open page picks up a new version on its own
+What has shipped lives in the [changelog](CHANGELOG.md), one section per version with the fixes included. This list only says what each version was for, so the plan below can stay about what is next.
 
-The [changelog](CHANGELOG.md) has the full list, fixes included.
-
-## 1.4.1 (released 2026-10-29)
-
-- The sidebar stays beside Settings, Review and the other pages on a computer
-- Undo toasts name the event and say what they'd undo, like "Moved · Nov 6 → Nov 17"
-- A plugin's first run starts when you turn it on, and its form keeps later fields out of reach until the required ones are filled in
-- Plugin runs started by Run now or a settings save wait for the worker's lock, so they can't write during an update (a Low finding from the review of 1.0 to 1.4)
-- Feed problems in plain words, tides that are easier to see, times stored in UTC read on your own clock everywhere
-- The first round of fixes from a review of every view ([#183](https://github.com/Oshyan/better-cal/issues/183))
-
-## 1.4.2 (released 2026-10-30)
-
-- The second round of the view review's fixes ([#183](https://github.com/Oshyan/better-cal/issues/183)): overnight events, week view bar drags, an agenda that keeps loading, and smaller navigation and loading fixes
-
-## 1.4.3 (released 2026-10-30)
-
-- Calendar marks are discs in the calendar's color with its source inside, and the sidebar's width is remembered per screen
-- A second, independent review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)), and the last of [#183](https://github.com/Oshyan/better-cal/issues/183)'s findings
-
-## 1.4.4 (released 2026-10-31)
-
-- Fixes from a release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185))
-
-## 1.4.5 (released 2026-11-01)
-
-- Folders in the sidebar, with their own order of calendars ([#187](https://github.com/Oshyan/better-cal/issues/187))
-- Moving a repeating event to another calendar from the editor moves the series ([#186](https://github.com/Oshyan/better-cal/issues/186)), and the default calendar is always set
-- Undo is more careful and covers more; removing a person or a Review subscription undoes from its toast instead of asking first
-- Fixes from two reviews of that work: plugin refreshes on time, emailed one-day changes that outlive a series accept, migrations that wait out the worker
-
-## 1.4.6 (released 2026-11-02)
-
-- Quick add reads lists of ordinals, day ranges with a time range, and two-letter time zones ([#193](https://github.com/Oshyan/better-cal/issues/193))
-- Emailed changes and cancellations of one day of a repeating invitation wait for their series in any order ([#192](https://github.com/Oshyan/better-cal/issues/192)), approved senders with non-ASCII domains ([#196](https://github.com/Oshyan/better-cal/issues/196)), plugin calendars that clean up after themselves ([#195](https://github.com/Oshyan/better-cal/issues/195))
-- Updating from a version before 1.3.0 works again, a broken release signature is named, and a newer release this copy can't verify is no longer called "up to date" ([#194](https://github.com/Oshyan/better-cal/issues/194))
-- Repeating events: a series dragged across a month keeps its edited and skipped days on the right occurrences, its end date moves with it, nth-weekday and yearly series follow a drag, and "this and following" keeps the dates edited on their own ([#188](https://github.com/Oshyan/better-cal/issues/188))
-- Three rounds of independent review of all of the above, and a new harness that generates thousands of repeating series and edits and checks what every occurrence should do ([tools/edit-harness](tools/edit-harness/README.md)). Its first run names twelve remaining causes in series editing, all older than this release. That is what 1.5 is for.
-
-## 1.4.x (next)
-
-- Fixes and smaller things while 1.5 is built, each on its own
+- [1.5.0](CHANGELOG.md#150-2026-11-04) (2026-11-04): one engine under repeating events. Every whole-series change goes through one model that says what it will do before it does it, and the series harness measures it on every push. Also the loading rewrite ([#190](https://github.com/Oshyan/better-cal/issues/190)) and undo for very large calendar deletes ([#191](https://github.com/Oshyan/better-cal/issues/191)).
+- [1.4.6](CHANGELOG.md#146-2026-11-01) (2026-11-01): quick add reads more ([#193](https://github.com/Oshyan/better-cal/issues/193)), emailed one-day changes in any order ([#192](https://github.com/Oshyan/better-cal/issues/192)), updating across a signing-key change ([#194](https://github.com/Oshyan/better-cal/issues/194)), series drags that keep their edited days ([#188](https://github.com/Oshyan/better-cal/issues/188)), and the first series harness.
+- [1.4.5](CHANGELOG.md#145-2026-11-01) (2026-11-01): sidebar folders ([#187](https://github.com/Oshyan/better-cal/issues/187)), moving a series from the editor ([#186](https://github.com/Oshyan/better-cal/issues/186)), a more careful Undo.
+- [1.4.4](CHANGELOG.md#144-2026-10-31) (2026-10-31): fixes from the release review of 1.4.1 to 1.4.3 ([#185](https://github.com/Oshyan/better-cal/issues/185)).
+- [1.4.3](CHANGELOG.md#143-2026-10-30) (2026-10-30): calendar marks as discs, the sidebar's width remembered, the second review of every view ([#184](https://github.com/Oshyan/better-cal/issues/184)).
+- [1.4.2](CHANGELOG.md#142-2026-10-30) and [1.4.1](CHANGELOG.md#141-2026-10-29) (2026-10-29 and 30): the two rounds of the view review ([#183](https://github.com/Oshyan/better-cal/issues/183)), undo toasts that say what they would undo, plugin runs that wait for the worker's lock.
+- [1.4.0](CHANGELOG.md#140-2026-10-27) (2026-10-27): month rows that grow to fit ([#171](https://github.com/Oshyan/better-cal/issues/171)), event page links as quick-add drafts ([#105](https://github.com/Oshyan/better-cal/issues/105)), quick add suggestions ([#169](https://github.com/Oshyan/better-cal/issues/169)), jump to a view of a date ([#12](https://github.com/Oshyan/better-cal/issues/12)), hiding cancelled events per calendar ([#135](https://github.com/Oshyan/better-cal/issues/135)), approved senders as text ([#151](https://github.com/Oshyan/better-cal/issues/151)), a number on the app icon ([#170](https://github.com/Oshyan/better-cal/issues/170)).
+- Everything before 1.4.0 is in the changelog too, back to 0.1.
 
 ## 1.5: One engine under the calendar
 
-The fixes since 1.4.0 were made one reviewer's finding at a time, and each round's bugs came from the layer the round before had added. 1.5 replaces the layers with one rule per area, each with a test that measures it rather than a reviewer who happens to find a case. The heart of it is repeating events. Today a whole-series edit, "this and following", a delete, an attendance answer, a Google calendar and Undo each work out for themselves where every occurrence goes when a series moves, and they don't agree. 1.5 gives them one model, and the series harness that shipped with 1.4.6 decides when it's done: its first run named twelve remaining causes, and 1.5 ships when it names none.
+The fixes since 1.4.0 were made one reviewer's finding at a time, and each round's bugs came from the layer the round before had added. 1.5 replaces the layers with one rule per area, each with a test that measures it rather than a reviewer who happens to find a case. The heart of it is repeating events: a whole-series edit, "this and following", a delete, an attendance answer, a Google calendar and Undo used to work out for themselves where every occurrence goes when a series moves, and they didn't agree. 1.5 gives them one model, and the series harness decides when it's done.
 
 I'm keeping the higher bar rather than copying what other calendars do. Thunderbird and Nextcloud move a series' edited days by the same number of days as the series and leave the repeat rule alone; Better-Cal follows the drag for every kind of rule ("the second Tuesday" dragged to Wednesday becomes "the second Wednesday", an edited day lands on the occurrence it belongs to, the end date moves too). That is what the harness tests.
 
-- One model of how a series and its edited and skipped days move, used by every edit, by Google calendars and by Undo; the harness clean
-- "All events" from a date edited on its own changes the series ([#189](https://github.com/Oshyan/better-cal/issues/189)), and the editor sends only what changed, so a date change there behaves like a drag ([#199](https://github.com/Oshyan/better-cal/issues/199)). 1.5.0 moves the series the same way from an edited day; 1.5.1 adds the readings that make that day's date or time the series' own, moves "this and following" and deletes onto the model, lets the editor and quick add send a wall clock so a new series can start in an hour the clocks skip, and settles the loose ends 1.5.0 leaves ([#201](https://github.com/Oshyan/better-cal/issues/201), [#202](https://github.com/Oshyan/better-cal/issues/202))
-- The six Low findings of the review of 1.0.0 to 1.5.0, each closed by a rule rather than a fix per route: every write made under a request rechecks the credential at the write, every request a plugin sends during an edit rechecks it, and the mailbox search is bounded by the mailbox's size ([#202](https://github.com/Oshyan/better-cal/issues/202))
-- The CalDAV server answers time-range queries through the app's expander instead of the library's ([#202](https://github.com/Oshyan/better-cal/issues/202))
-- The other layers, one rule each: loading the calendar's events and what counts as fresh, the change check's retries, month view gliding, times when dragging, showing or hiding many calendars at once, plugin bands page by page ([#190](https://github.com/Oshyan/better-cal/issues/190))
-- Deleting a very large calendar keeps its undo ([#191](https://github.com/Oshyan/better-cal/issues/191))
-- Floating times, decided and built on the new model ([#167](https://github.com/Oshyan/better-cal/issues/167))
-- Undo for changes made on Google calendars, since Google series go through the same model ([#172](https://github.com/Oshyan/better-cal/issues/172))
+**1.5.0 shipped** (2026-11-04, above): the model under every whole-series edit, with its plan shown first, and the harness clean on every seed for those.
+
+**1.5.1, in progress** ([#202](https://github.com/Oshyan/better-cal/issues/202), closed with every line accounted for; the [changelog's unreleased section](CHANGELOG.md#151-unreleased) is the full list): "this and following", deletes and answers from a day on as splits on the same model; the readings that make an edited day's date, time or length the series' own ([#189](https://github.com/Oshyan/better-cal/issues/189)); the editor and quick add sending the clock typed, so a series can start in an hour the clocks skip; the six Low findings of the review of 1.0.0 to 1.5.0 closed by three rules; CalDAV time ranges answered from the app's own expander; the harness driving every path with every option. It ships when the external review of the release head is clean.
+
+**Still to come in 1.5:**
+
+- 1.5.2: Google calendars onto the same model after a probe (a second sync, the five exception kinds tested separately, behavior compared as well as rule text), with Undo for changes made on Google calendars; until then "this and following" waits on Google calendars ([#172](https://github.com/Oshyan/better-cal/issues/172))
+- 1.5.3: floating times, decided and built on the model ([#167](https://github.com/Oshyan/better-cal/issues/167))
+- How far an unbounded series is read: the rule is decided, the build needs the plan to report losses and gains by class ([#205](https://github.com/Oshyan/better-cal/issues/205))
 - The events window answers "unchanged" when nothing moved, which falls out of one idea of fresh ([#16](https://github.com/Oshyan/better-cal/issues/16))
-- **After 1.5.1 ships: an honest comparison with 1.3 and 1.4.0.** What was broken then, in which situations and actions, that now works, measured rather than argued: the same harness seeds and fixed cases run against a checkout of each old version through its own API (the driver speaks the plan API, so the old versions get a thin adapter that sends the same edits the old way), the same invented scenarios committed on dev installs of each version and their rows compared, and the issues the releases closed replayed on each. The report says what the dialog alone gained (the plan shown and a choice offered where there is one) apart from what the engine gained (occurrences that now land where the rule says, edited days that stay on their occurrence, Undo that puts back what was there), so the under-the-hood work is judged by results and not by its size. If the engine's column turns out thin, that is the finding.
+- **After 1.5.1 ships: an honest comparison with 1.3 and 1.4.0** ([#203](https://github.com/Oshyan/better-cal/issues/203)). What was broken then, in which situations and actions, that now works, measured rather than argued: the same harness seeds and fixed cases run against a checkout of each old version through its own API (the driver speaks the plan API, so the old versions get a thin adapter that sends the same edits the old way), the same invented scenarios committed on dev installs of each version and their rows compared, and the issues the releases closed replayed on each. The report says what the dialog alone gained (the plan shown and a choice offered where there is one) apart from what the engine gained (occurrences that now land where the rule says, edited days that stay on their occurrence, Undo that puts back what was there), so the under-the-hood work is judged by results and not by its size. It also accounts for what the work cost: the rounds and gate runs 1.5.0 and 1.5.1 took, before and after the harness was sharded, against the same for 1.3 and 1.4. If the engine's column turns out thin, that is the finding.
+- The 2026-11-05 audit of every closed issue filed fourteen small follow-ups ([#207](https://github.com/Oshyan/better-cal/issues/207) to [#220](https://github.com/Oshyan/better-cal/issues/220)), to be sorted into 1.5.x or later.
 
 Each piece ships as its own release with an independent review before it, so nothing waits on everything.
 

@@ -69,7 +69,9 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   # in the environment; server/tests/db/run.php). Without one here, CI must
   # have passed on this very commit, that suite included.
   if [ -n "${BC_TEST_DB:-}" ]; then
-    php "${DEPLOY_SNAPSHOT}/server/tests/db/run.php" | tail -1
+    # The snapshot has no history; the migration tests that seed through an
+    # older version's code archive it from this repository.
+    BC_TEST_REPO="${ROOT_DIR}" php "${DEPLOY_SNAPSHOT}/server/tests/db/run.php" | tail -1
   else
     ci="$(gh run list --repo Oshyan/better-cal --workflow tests.yml --commit "${DEPLOY_COMMIT}" --limit 1 \
       --json status,conclusion --jq '.[0] | [.status, .conclusion] | @tsv' 2>/dev/null || true)"

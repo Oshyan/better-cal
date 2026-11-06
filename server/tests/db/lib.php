@@ -315,8 +315,10 @@ function oldSource(string $revision): string
         }
     };
     // Named safe for this one command: a container's checkout may belong to
-    // another user than the test process, and git refuses it otherwise.
-    $repo = dirname(__DIR__, 3);
+    // another user than the test process, and git refuses it otherwise. A
+    // suite run from an exported tree with no history (the deploy's
+    // snapshot) names the repository it came from in BC_TEST_REPO.
+    $repo = getenv('BC_TEST_REPO') ?: dirname(__DIR__, 3);
     $run([getenv('BC_TEST_GIT') ?: 'git', '-c', 'safe.directory=' . $repo, '-C', $repo, 'archive', '--format=tar', '-o', $tar, $revision, 'server/src']);
     $run(['tar', '-xf', $tar, '-C', $dir]);
     unlink($tar);

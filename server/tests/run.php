@@ -7925,6 +7925,20 @@ checkEq(
     'Updated event',
     Undo::defaultSummary('event', 'update', null, null)
 );
+// A date of a series edited on its own (#223): the entry is written with
+// the series beside the date's row, the series as it was, so the line names
+// the date's row and its own day, never the series' first day.
+$sumSeries = ['id' => 7, 'title' => 'Sample choir', 'start_utc' => '2027-01-05 17:00:00', 'tzid' => 'America/Los_Angeles', 'all_day' => 0, 'rrule' => 'FREQ=WEEKLY;BYDAY=TU'];
+$sumDay = static fn(int $id, string $start): array => ['id' => $id, 'title' => 'Sample choir', 'start_utc' => $start, 'tzid' => 'America/Los_Angeles', 'all_day' => 0, 'recurrence_parent_id' => 7, 'recurrence_instance_utc' => $start];
+checkEq(
+    'activity summary: two dates of a series edited on their own are named by their own days',
+    ["Updated event 'Sample choir' (Jan 19)", "Updated event 'Sample choir' (Feb 2)", "Updated event 'Sample choir' (Feb 2)"],
+    [
+        Undo::defaultSummary('event', 'update', ['events' => [$sumSeries]], ['events' => [$sumSeries, $sumDay(8, '2027-01-19 17:00:00')]], 'America/Los_Angeles'),
+        Undo::defaultSummary('event', 'update', ['events' => [$sumSeries]], ['events' => [$sumSeries, $sumDay(9, '2027-02-02 17:00:00')]], 'America/Los_Angeles'),
+        Undo::defaultSummary('event', 'update', ['events' => [$sumDay(9, '2027-02-02 17:00:00')]], ['events' => [['location' => 'Example Hall'] + $sumDay(9, '2027-02-02 17:00:00')]], 'America/Los_Angeles'),
+    ]
+);
 checkEq(
     'activity summary: saved view underscores become spaces',
     "Added saved view 'Focus'",

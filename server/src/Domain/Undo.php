@@ -1051,6 +1051,24 @@ final class Undo
                 break;
             }
         }
+        // The line names the row the change made or changed: a date of a
+        // series edited on its own is written beside the series it belongs
+        // to, which stays as it was, so the first row would name the series
+        // and its first day for every date edited.
+        if ($table !== null && is_array($after[$table] ?? null) && is_array($before[$table] ?? null)) {
+            $was = [];
+            foreach ($before[$table] as $r) {
+                if (is_array($r) && isset($r['id'])) {
+                    $was[(string) $r['id']] = $r;
+                }
+            }
+            foreach ($after[$table] as $r) {
+                if (is_array($r) && (!isset($r['id']) || ($was[(string) $r['id']] ?? null) != $r)) {
+                    $row = $r;
+                    break;
+                }
+            }
+        }
         $name = is_array($row) ? (string) ($row['title'] ?? $row['name'] ?? '') : '';
         $line = $verb . ' ' . $noun . ($name !== '' ? " '" . $name . "'" : '');
         if ($entity === 'event' && is_array($row) && isset($row['start_utc'])) {

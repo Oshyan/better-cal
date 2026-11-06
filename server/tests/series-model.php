@@ -2553,6 +2553,43 @@ checkEq('Split all-day drag with a count: the same drag for all events is Monday
     $calcCache->setValue(null, []);
 }
 
+// The Activity entry (#223) from one builder: its reach (all events, or the
+// part from the day a split starts on), the rule where it changes, with the
+// zone beside each clock and the clock-or-moment choice when the zone
+// changes, and every field changed, by its values.
+{
+    $sm223 = smSeries('Sample choir', 'FREQ=WEEKLY;BYDAY=TU', '2027-01-05 09:00');
+    $sm223Day = smAt('2027-01-19 09:00');
+    $sm223Land = static fn(string $local, string $tz = 'America/Los_Angeles'): array => ['start_utc' => smAt($local, $tz), 'end_utc' => Time::toDb(Time::fromDb(smAt($local, $tz))->modify('+1 hour')), 'all_day' => 0, 'tzid' => $tz];
+    $sm223Split = static fn(array $edit, array $choices = [], string $mode = BetterCal\Domain\Series\Split::EDIT): string
+        => BetterCal\Domain\Series\Split::plan($sm223, [], ['acted' => $sm223Day] + $edit, $choices, ['today' => '2027-01-01'], $mode)['plan']['summary'];
+    $sm223Berlin = ['acted' => $sm223Day, 'landed' => $sm223Land('2027-01-19 09:00', 'Europe/Berlin')];
+    checkEq('Activity entry: a rename for all events names the new title, with no rule said as before', "Changed Sample choir (all events): title from 'Sample choir' to 'Sample chorus'.",
+        smPlan($sm223, [], ['columns' => ['title' => 'Sample chorus']])['plan']['summary']);
+    checkEq('Activity entry: a split says the day it starts from and what changed, and the part\'s rule only where it differs', [
+        "Changed Sample choir (from Tue 19 Jan on): title from 'Sample choir' to 'Sample chorus'.",
+        "Changed Sample choir (from Tue 19 Jan on): title from 'Sample choir' to 'Sample chorus'; location from none to Example Hall.",
+        'Changed how Sample choir repeats (from Tue 19 Jan on): weekly on Tuesday at 09:00, now weekly on Wednesday at 09:00, from 20 Jan.',
+        'Changed Sample choir (from Tue 19 Jan on): weekly on Tuesday at 09:00, now weekly on Tuesday at 10:30, from 19 Jan.',
+        "Ended 'Sample choir' before Tue 19 Jan.",
+    ], [
+        $sm223Split(['columns' => ['title' => 'Sample chorus']]),
+        $sm223Split(['columns' => ['title' => 'Sample chorus', 'location' => 'Example Hall']]),
+        $sm223Split(['rrule' => 'FREQ=WEEKLY;BYDAY=WE']),
+        $sm223Split(['landed' => $sm223Land('2027-01-19 10:30')]),
+        $sm223Split([], [], BetterCal\Domain\Series\Split::DELETE),
+    ]);
+    checkEq('Activity entry: a zone change names both zones and the choice, the clock time or the same moment, for all events and from a day on', [
+        'Changed Sample choir (all events): weekly on Tuesday at 09:00 in Los Angeles, now weekly on Tuesday at 09:00 in Berlin, keeping the clock time, from 5 Jan.',
+        'Changed Sample choir (all events): weekly on Tuesday at 09:00 in Los Angeles, now weekly on Tuesday at 18:00 in Berlin, keeping the same moment, from 5 Jan.',
+        'Changed Sample choir (from Tue 19 Jan on): weekly on Tuesday at 09:00 in Los Angeles, now weekly on Tuesday at 18:00 in Berlin, keeping the same moment, from 19 Jan.',
+    ], [
+        smPlan($sm223, [], $sm223Berlin, ['zone' => 'clock'])['plan']['summary'],
+        smPlan($sm223, [], $sm223Berlin, ['zone' => 'moment'])['plan']['summary'],
+        $sm223Split(['landed' => $sm223Berlin['landed']], ['zone' => 'moment']),
+    ]);
+}
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

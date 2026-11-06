@@ -96,13 +96,17 @@ export const zoneName = (tz) => tzCity(tz);
 
 // ---- the rule and its bound ------------------------------------------------
 
-/** A rule in words with its clock: "weekly on Tuesday at 7:00 PM". */
-export function ruleWords(part) {
+/**
+ * A rule in words with its clock: "weekly on Tuesday at 7:00 PM"; with
+ * `zoned`, its zone's name after the clock: "weekly on Tuesday at 7:00 PM
+ * in Berlin", for a sentence about a change of zone.
+ */
+export function ruleWords(part, zoned = false) {
   if (!part || !part.rrule) return '';
   const start = dayKeyOf(part.start);
   const words = describeRepeat(part.rrule, { start: start ? dateOfDayKey(start) : null, ends: false }) || 'on a custom schedule';
   const at = !part.allDay && part.start ? fmtClock(part.start, part.tz) : '';
-  const clock = at ? ' at ' + at : '';
+  const clock = at ? ' at ' + at + (zoned && part.tz ? ' in ' + zoneName(part.tz) : '') : '';
   // "on the 31st at 6:00 PM, skipping months without one", never the clock after the clause.
   const clause = /(, skipping months without one|, or the last day(?: in shorter months)?)$/.exec(words);
   if (clause) return lowerFirst(words.slice(0, clause.index)) + clock + clause[1];
@@ -138,10 +142,16 @@ export function boundPhrase(bound, opts = {}, rule = null) {
   return ending;
 }
 
-/** CHANGE: "From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00 PM, with no end, as before." */
+/**
+ * CHANGE: "From weekly on Tuesday at 7:00 PM to weekly on Wednesday at 7:00
+ * PM, with no end, as before." A timed series given another zone names
+ * each side's zone after its clock, as the Activity entry does.
+ */
 export function changeSentence(rule, bound, opts = {}) {
-  const from = ruleWords(rule && rule.from);
-  const to = ruleWords(rule && rule.to);
+  const a0 = rule && rule.from, b0 = rule && rule.to;
+  const zoned = !!(a0 && b0 && !a0.allDay && !b0.allDay && a0.tz && b0.tz && a0.tz !== b0.tz);
+  const from = ruleWords(a0, zoned);
+  const to = ruleWords(b0, zoned);
   const end = boundPhrase(bound, opts, rule);
   if (!from && !to) return upperFirst(end) + '.';
   const fromDay = dayKeyOf(rule && rule.from && rule.from.start), toDay = dayKeyOf(rule && rule.to && rule.to.start);

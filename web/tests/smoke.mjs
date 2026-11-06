@@ -4821,6 +4821,16 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     { id: 'moment', start: '2027-01-07T04:00:00+01:00', next: [{ start: '2027-03-11T03:00:00+01:00', allDay: false }] }] }] }, ctx());
   eq('series panel: a zone option\'s list entries give its dates, an all-day entry its date, and its start its clocks', zoned.readings[0].options.map((o) => [o.label, o.dates]), [
     ['Keep the clock time: 7:00 PM in Berlin', 'Wed, Mar 10 · Fri, Mar 12'], ['Keep the same moment: 7:00 PM in Los Angeles, 4:00 AM in Berlin', 'Thu, Mar 11']]);
+  // A zone change names each side's zone after its clock, as the Activity
+  // entry does (#223): the same clock time is no longer "as before".
+  const BERLIN = 'Europe/Berlin';
+  const toZone = (after, startAfter) => planView({ ...choir, zone: BERLIN, rule: { before: 'FREQ=WEEKLY;BYDAY=TU', after,
+    from: { rrule: 'FREQ=WEEKLY;BYDAY=TU', start: '2027-01-05T19:00:00-08:00', tz: LA, allDay: false },
+    to: { rrule: after, start: startAfter, tz: BERLIN, allDay: false } } }, ctx()).change;
+  eq('series panel: a zone change keeping the clock time names both zones', toZone('FREQ=WEEKLY;BYDAY=TU', '2027-01-05T19:00:00+01:00'),
+    'From weekly on Tuesday at 7:00 PM in Los Angeles to weekly on Tuesday at 7:00 PM in Berlin, with no end, as before.');
+  eq('series panel: a zone change keeping the same moment names both zones and the new clock', toZone('FREQ=WEEKLY;BYDAY=WE', '2027-01-06T04:00:00+01:00'),
+    'From weekly on Tuesday at 7:00 PM in Los Angeles to weekly on Wednesday at 4:00 AM in Berlin, with no end, as before.');
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' on Tue, Mar 23 was moved earlier to Fri, Mar 26 and stays where it is.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
@@ -5427,7 +5437,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
         '2 days that were changed earlier are no longer all-day.']);
       eq('verify: a clock that can\'t be said shows as unavailable: notes, the rule and the zone choice, beside the zone\'s name', [notes, rule, zone], [
         ['A clock time is skipped on Sun, Mar 14 in Olympus Mons; its time is unavailable.', 'A clock time happens twice on Sun, Nov 7 in Olympus Mons; its time is unavailable; this is the first, in daylight time.'],
-        ['weekly on Tuesday at time unavailable', 'From weekly on Tuesday at 7:00 PM to weekly on Tuesday at time unavailable, with no end, as before.'],
+        ['weekly on Tuesday at time unavailable', 'From weekly on Tuesday at 7:00 PM in Los Angeles to weekly on Tuesday at time unavailable in Olympus Mons, with no end, as before.'],
         [['Keep the clock time: time unavailable in Olympus Mons', 'Keep the same moment: 7:00 PM in Los Angeles, time unavailable in Olympus Mons']]]);
     }
 

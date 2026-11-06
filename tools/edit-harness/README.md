@@ -62,7 +62,7 @@ Every invariant is universal over the delta vector; none is keyed by an edit's n
 - **f** After Undo every row of events, event_tags, event_people and event_links the case made is byte-identical to before the edit (updated timestamps aside); the edit applied again gives the same rows under new ids; a second edit undone twice gives the state after the first, then before either.
 - **g** The stored start is the first raw occurrence and a day of its rule, at creation and after every edit, on the series and on a part a split made.
 - **h** Every skipped day and every edited day's key is a raw occurrence of its rule; none past a bounded series' end (`h-past-end`); one edited row per day.
-- **i** (worked out for every other case, the same rows read as a Google calendar's) Until 1.5.2 a Google calendar is offered only the edits that keep the rule text, and then as the local plan with no outcome claimed for edited days; an edit that keeps the text (not a list's member reading, no all-day change, no new pattern) is offered.
+- **i** (worked out for every other case, the same rows read as a Google calendar's) Until 1.5.3 a Google calendar is offered only the edits that keep the rule text, and then as the local plan with no outcome claimed for edited days; an edit that keeps the text (not a list's member reading, no all-day change, no new pattern) is offered.
 
 "This and following" is checked against the same oracle (the old part keeps exactly the days before the split, its earlier edited days untouched and no skipped day from the split on; the new part is the part from the split dragged as a whole series with the design's preselected options); delete this, delete following and the answers have their own checks, with the same universal ones around them.
 

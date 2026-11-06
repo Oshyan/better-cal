@@ -1083,7 +1083,7 @@ trait Invariants
     }
 
     /**
-     * (i) Until 1.5.2 a Google calendar is offered only edits that keep the
+     * (i) Until 1.5.3 a Google calendar is offered only edits that keep the
      * rule text, and then as the local plan with no outcome claimed for
      * edited days; an edit that keeps the text (not a list's member
      * reading, no all-day change) is offered.

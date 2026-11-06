@@ -72,8 +72,14 @@ return [
     [
         'id' => 'next-drops-detached-acted', 'file' => $model, 'checks' => ['c-next'],
         'what' => 'the detached acted day dropped from coming up',
-        'patch' => [["        if (\$separate !== null) {\n            // The day acted on, where it was put, on its own.", "        if (false && \$separate !== null) {\n            // The day acted on, where it was put, on its own."]],
+        'patch' => [["        if (\$separate !== null) {\n            // The day acted on, where it shows on its own.", "        if (false && \$separate !== null) {\n            // The day acted on, where it shows on its own."]],
         'cases' => ['mutation-acted-day-on-its-own'],
+    ],
+    [
+        'id' => 'next-drops-unplaced-acted', 'file' => $model, 'checks' => ['c-next'],
+        'what' => 'the day acted on, kept on its own past an UNTIL sent alone (no placement), dropped from coming up',
+        'patch' => [["                if (\$id === \$this->actedRowId && !\$newRule) {\n", "                if (false && \$id === \$this->actedRowId && !\$newRule) {\n"]],
+        'cases' => ['next-an-until-sent-alone-cuts-off-an-edited-day-kept', 'next-an-until-sent-alone-cuts-off-an-edited-day-deleted'],
     ],
     [
         'id' => 'next-drops-own-zone-row', 'file' => $model, 'checks' => ['c-next'],

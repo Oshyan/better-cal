@@ -265,7 +265,7 @@ const TOOLS = [
   },
   {
     name: 'search_events',
-    description: 'Full-text search across all events (past included), ranked by relevance, then newest first.',
+    description: 'Search all events (past included): every word in the title or the description, or in a tag or person name. Best matches first (title phrase, then all words, then word starts, then the same in the description), upcoming soonest first, then past newest first.',
     inputSchema: {
       type: 'object',
       properties: {

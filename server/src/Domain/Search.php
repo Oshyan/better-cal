@@ -13,8 +13,23 @@ use BetterCal\Support\WorkBudgetExceeded;
 final class Search
 {
     private const EXCERPT_CHARS = 200;
-    /** Below this length FULLTEXT (min token length 3, stopwords) is unreliable. */
-    private const MIN_FULLTEXT_LEN = 3;
+    /** A query's words past this many are ignored; it bounds the SQL a query builds. */
+    public const MAX_WORDS = 8;
+    /**
+     * InnoDB's built-in stopword list (MySQL and MariaDB ship the same one;
+     * the database suite checks it against the server's). A stopword is
+     * never indexed, and required in boolean mode it empties the result, so
+     * such a word is matched with LIKE instead.
+     */
+    public const STOPWORDS = [
+        'a', 'about', 'an', 'are', 'as', 'at', 'be', 'by', 'com', 'de', 'en', 'for',
+        'from', 'how', 'i', 'in', 'is', 'it', 'la', 'of', 'on', 'or', 'that', 'the',
+        'this', 'to', 'was', 'what', 'when', 'where', 'who', 'will', 'with', 'und',
+        'www',
+    ];
+
+    /** @var array{0:int,1:bool}|null the server's minimum token length, and whether it drops stopwords */
+    private ?array $fulltext = null;
 
     public function __construct(
         private readonly Db $db,
@@ -23,13 +38,17 @@ final class Search
     }
 
     /**
-     * FULLTEXT natural-language search with LIKE fallback for short or
-     * stopword-only queries. Ranked by relevance, then newest first.
-     * Tag and people names match too: events tagged with a name containing
-     * the query, or linked to a person whose name contains it, are included.
-     * A `#` prefix (e.g. "#work") searches tags only; an `@` prefix (e.g.
-     * "@alex") searches people only. $excerpt trims descriptions for
-     * list payloads; feed export passes false.
+     * Event search, ranked in tiers (docs/design/search-ranking.md): every
+     * word of the query must be in one field, the title or the description;
+     * the address is not searched. Best first: the title holding the query
+     * as a phrase, every word as a whole word, every word as a word start;
+     * then the same three for the description. A tag or linked person whose
+     * name matches the same way ranks with the title's tier. Within a tier,
+     * upcoming results run soonest first and past ones newest first, and
+     * upcoming come before past. A `#` prefix (e.g. "#work") searches tags
+     * only; an `@` prefix (e.g. "@alex") people only. Published search
+     * feeds match the same way. $excerpt trims descriptions for list
+     * payloads; feed export passes false.
      *
      * $opts (0.7.3, #60): 'when' => 'all' | 'upcoming' | 'past', applied in
      * the query, before the limit, so a term with a long history can't push
@@ -71,16 +90,13 @@ final class Search
             "SELECT $columns$select FROM events WHERE $where ORDER BY $order LIMIT $limit",
             [...$selectParams, ...$params]
         );
-        if ($rows === [] && $plan['fallback'] !== null) {
-            [$where, $params] = $plan['fallback'];
-            $rows = $this->db->all("SELECT $columns FROM events WHERE $where ORDER BY start_utc DESC LIMIT $limit", $params);
-        }
         $now = $this->nowSql($opts);
         $dayNow = $this->dayNowSql($userId, $now);
         $expansionBudget = ExpansionBudget::standard();
         $out = [];
         foreach ($rows as $row) {
-            unset($row['relevance']);
+            $row['_tier'] = (int) $row['search_tier'];
+            unset($row['search_tier']);
             $row['_upcoming'] = self::isUpcoming($row, $now, $dayNow);
             if (($opts['when'] ?? 'all') === 'upcoming' && !$row['_upcoming']) {
                 continue; // a series whose UNTIL has passed
@@ -119,6 +135,21 @@ final class Search
             }
             $out[] = $row;
         }
+        // A running series shows its next date, known only here, so the
+        // order within a tier is settled after the query.
+        usort($out, static function (array $a, array $b): int {
+            $c = [$a['_upcoming'] ? 0 : 1, $a['_tier']] <=> [$b['_upcoming'] ? 0 : 1, $b['_tier']];
+            if ($c !== 0) {
+                return $c;
+            }
+            return $a['_upcoming']
+                ? strcmp((string) $a['start_utc'], (string) $b['start_utc'])
+                : strcmp((string) $b['start_utc'], (string) $a['start_utc']);
+        });
+        foreach ($out as &$row) {
+            unset($row['_tier']);
+        }
+        unset($row);
         return $out;
     }
 
@@ -130,12 +161,7 @@ final class Search
             return 0;
         }
         [$where, $params] = $plan;
-        $n = (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE $where", $params);
-        if ($n === 0 && $plan['fallback'] !== null) {
-            [$where, $params] = $plan['fallback'];
-            $n = (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE $where", $params);
-        }
-        return $n;
+        return (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE $where", $params);
     }
 
     /**
@@ -236,8 +262,206 @@ final class Search
     }
 
     /**
-     * The WHERE for a query: [where, params, order, extraSelect, selectParams,
-     * 'fallback' => [where, params] | null]. Null when there is nothing to
+     * The query's words: runs of letters and digits, lowercased, at most
+     * MAX_WORDS, each once. Anything else separates words, so no typed
+     * operator ever reaches MATCH, and an apostrophe splits a word the way
+     * the index does ("o'brien" is "o" and "brien").
+     *
+     * @return list<string>
+     */
+    public static function words(string $text): array
+    {
+        if (preg_match_all('/[\p{L}\p{N}\p{M}]+/u', mb_strtolower($text), $m) === false) {
+            return [];
+        }
+        return array_slice(array_values(array_unique($m[0])), 0, self::MAX_WORDS);
+    }
+
+    /**
+     * The query as a phrase for MATCH: its words in order, an apostrophe
+     * inside a word kept, since that is how the index read the text it
+     * stored. Only letters, digits, apostrophes and spaces, so it can't end
+     * the quotes it goes in.
+     */
+    public static function phrase(string $text): string
+    {
+        $text = str_replace("\u{2019}", "'", mb_strtolower($text));
+        if (preg_match_all("/[\\p{L}\\p{N}\\p{M}]+(?:'[\\p{L}\\p{N}\\p{M}]+)*/u", $text, $m) === false) {
+            return '';
+        }
+        return implode(' ', array_slice($m[0], 0, self::MAX_WORDS));
+    }
+
+    /**
+     * How a name (a tag's, a person's) matches the words, by the title's
+     * tiers: 1 the words as a phrase (more than one word), 2 every word whole,
+     * 3 every word starting a word of the name; null when it doesn't.
+     *
+     * @param list<string> $words from words()
+     */
+    public static function nameTier(array $words, string $name): ?int
+    {
+        $tokens = preg_match_all('/[\p{L}\p{N}\p{M}]+/u', mb_strtolower($name), $m) === false ? [] : $m[0];
+        if ($words === [] || $tokens === []) {
+            return null;
+        }
+        $n = count($words);
+        if ($n > 1) {
+            for ($i = 0; $i + $n <= count($tokens); $i++) {
+                if (array_slice($tokens, $i, $n) === $words) {
+                    return 1;
+                }
+            }
+        }
+        if (array_diff($words, $tokens) === []) {
+            return 2;
+        }
+        foreach ($words as $w) {
+            $starts = false;
+            foreach ($tokens as $t) {
+                if (str_starts_with($t, $w)) {
+                    $starts = true;
+                    break;
+                }
+            }
+            if (!$starts) {
+                return null;
+            }
+        }
+        return 3;
+    }
+
+    /**
+     * One field's three conditions, each [sql, params] or null: 'phrase',
+     * 'whole' (every word whole), 'prefix' (every word a word start). Words
+     * the index holds (at least $minToken long, not a stopword when the
+     * server drops them) are required in one boolean-mode MATCH; the others
+     * are required with LIKE on the same field. With no indexed word at all
+     * the field is matched with LIKE alone, a word or the phrase anywhere in
+     * it. $field is a column name from this class, never input.
+     *
+     * @param list<string> $words from words()
+     * @return array{phrase:?array{0:string,1:list<string>},whole:array{0:string,1:list<string>},prefix:array{0:string,1:list<string>}}
+     */
+    public static function fieldMatch(string $field, array $words, string $phrase, int $minToken, bool $stopwords): array
+    {
+        $indexed = [];
+        $likeSql = [];
+        $likeParams = [];
+        foreach ($words as $w) {
+            if (mb_strlen($w) >= $minToken && !($stopwords && in_array($w, self::STOPWORDS, true))) {
+                $indexed[] = $w;
+            } else {
+                $likeSql[] = "$field LIKE ?";
+                $likeParams[] = '%' . addcslashes($w, '%_\\') . '%';
+            }
+        }
+        $multi = count($words) > 1;
+        if ($indexed === []) {
+            $all = [implode(' AND ', $likeSql), $likeParams];
+            return [
+                'phrase' => $multi ? ["$field LIKE ?", ['%' . addcslashes(implode(' ', $words), '%_\\') . '%']] : null,
+                'whole' => $all,
+                'prefix' => $all,
+            ];
+        }
+        $match = "MATCH($field) AGAINST (? IN BOOLEAN MODE)";
+        $with = static fn(string $against): array => [
+            implode(' AND ', [$match, ...$likeSql]),
+            [$against, ...$likeParams],
+        ];
+        $whole = $with(implode(' ', array_map(static fn(string $w): string => '+' . $w, $indexed)));
+        // A phrase is MATCH's (punctuation between the words ignored) or the
+        // words together as typed, which also holds a phrase whose last word
+        // is still being typed.
+        return [
+            'phrase' => $multi && $phrase !== '' ? [
+                "($match OR $field LIKE ?) AND " . $whole[0],
+                ['"' . $phrase . '"', '%' . addcslashes(implode(' ', $words), '%_\\') . '%', ...$whole[1]],
+            ] : null,
+            'whole' => $whole,
+            'prefix' => $with(implode(' ', array_map(static fn(string $w): string => '+' . $w . '*', $indexed))),
+        ];
+    }
+
+    /**
+     * The tier CASE and the matching condition from the fields' conditions
+     * (fieldMatch, title first then description) and the label matches
+     * (event id => its best name tier). Title tiers are 1 to 3 and a label
+     * shares its tier; description tiers are 4 to 6. Matching is the loosest
+     * condition of either field or a label: all the words in one field.
+     *
+     * @param array<string,array> $fields 'title' and/or 'description' => fieldMatch()
+     * @param array<int,int> $labelTiers
+     * @return array{0:string,1:list<mixed>,2:string,3:list<mixed>} [caseSql, caseParams, whereSql, whereParams]
+     */
+    public static function rank(array $fields, array $labelTiers): array
+    {
+        $byTier = [1 => [], 2 => [], 3 => []];
+        foreach ($labelTiers as $eventId => $tier) {
+            $byTier[$tier][] = (int) $eventId;
+        }
+        $when = [];
+        $offsets = ['title' => 0, 'description' => 3];
+        $steps = ['phrase' => 1, 'whole' => 2, 'prefix' => 3];
+        foreach ($fields as $field => $conds) {
+            foreach ($steps as $step => $n) {
+                $tier = $offsets[$field] + $n;
+                if ($conds[$step] !== null) {
+                    $when[] = [$conds[$step][0], $conds[$step][1], $tier];
+                }
+                if ($field === 'title' && $byTier[$n] !== []) {
+                    [$in, $inParams] = Db::in($byTier[$n]);
+                    $when[] = ["id IN $in", $inParams, $tier];
+                }
+            }
+        }
+        if (!isset($fields['title'])) {
+            foreach ($byTier as $n => $ids) {
+                if ($ids !== []) {
+                    [$in, $inParams] = Db::in($ids);
+                    $when[] = ["id IN $in", $inParams, $n];
+                }
+            }
+        }
+        $caseSql = 'CASE';
+        $caseParams = [];
+        foreach ($when as [$sql, $params, $tier]) {
+            $caseSql .= " WHEN $sql THEN $tier";
+            array_push($caseParams, ...$params);
+        }
+        $caseSql .= ' ELSE 9 END';
+        $where = [];
+        $whereParams = [];
+        foreach ($fields as $conds) {
+            $where[] = '(' . $conds['prefix'][0] . ')';
+            array_push($whereParams, ...$conds['prefix'][1]);
+        }
+        if ($labelTiers !== []) {
+            [$in, $inParams] = Db::in(array_map('intval', array_keys($labelTiers)));
+            $where[] = "id IN $in";
+            array_push($whereParams, ...$inParams);
+        }
+        return [$caseSql, $caseParams, $where === [] ? '0 = 1' : '(' . implode(' OR ', $where) . ')', $whereParams];
+    }
+
+    /** The server's innodb_ft_min_token_size and innodb_ft_enable_stopword, read once. @return array{0:int,1:bool} */
+    private function fulltextSettings(): array
+    {
+        if ($this->fulltext === null) {
+            try {
+                $row = $this->db->one('SELECT @@innodb_ft_min_token_size AS min_token, @@innodb_ft_enable_stopword AS stopwords');
+                $this->fulltext = [max(1, (int) ($row['min_token'] ?? 3)), (int) ($row['stopwords'] ?? 1) === 1];
+            } catch (\PDOException) {
+                $this->fulltext = [3, true];
+            }
+        }
+        return $this->fulltext;
+    }
+
+    /**
+     * The query: [where, params, order, extraSelect, selectParams]. The extra
+     * select is the row's tier as search_tier. Null when there is nothing to
      * search for.
      */
     private function plan(int $userId, string $q, array $opts): ?array
@@ -249,16 +473,11 @@ final class Search
         $tagOnly = str_starts_with($q, '#');
         $personOnly = str_starts_with($q, '@');
         $term = ($tagOnly || $personOnly) ? trim(mb_substr($q, 1)) : $q;
-        if ($term === '') {
+        $words = self::words($term);
+        if ($words === []) {
             return null;
         }
-        $tagEventIds = $personOnly ? [] : $this->labels->eventIdsForTagQuery($userId, $term);
-        if (!$tagOnly) {
-            $tagEventIds = array_values(array_unique([
-                ...$tagEventIds,
-                ...$this->labels->eventIdsForPersonQuery($userId, $term),
-            ]));
-        }
+        $labelTiers = $this->labels->eventTiersForWords($userId, $words, !$personOnly, !$tagOnly);
 
         // Shared narrowing: the owner, not deleted, the time choice, a calendar.
         $base = 'user_id = ? AND deleted_at IS NULL';
@@ -278,26 +497,25 @@ final class Search
             $baseParams[] = (int) $opts['calendarId'];
         }
 
-        if ($tagOnly || $personOnly) {
-            if ($tagEventIds === []) {
-                return null;
+        $fields = [];
+        if (!$tagOnly && !$personOnly) {
+            [$minToken, $stopwords] = $this->fulltextSettings();
+            $phrase = self::phrase($term);
+            foreach (['title', 'description'] as $field) {
+                $fields[$field] = self::fieldMatch($field, $words, $phrase, $minToken, $stopwords);
             }
-            [$in, $inParams] = Db::in($tagEventIds);
-            return [0 => "$base AND id IN $in", 1 => [...$baseParams, ...$inParams], 2 => 'start_utc DESC', 3 => '', 4 => [], 'fallback' => null];
+        } elseif ($labelTiers === []) {
+            return null;
         }
-        [$tagIn, $tagParams] = Db::in($tagEventIds !== [] ? $tagEventIds : [0]);
-        $like = '%' . addcslashes($term, '%_\\') . '%';
-        $fallback = ["$base AND (title LIKE ? OR description LIKE ? OR location LIKE ? OR id IN $tagIn)", [...$baseParams, $like, $like, $like, ...$tagParams]];
-        if (mb_strlen($term) >= self::MIN_FULLTEXT_LEN) {
-            return [
-                0 => "$base AND (MATCH(title, description, location) AGAINST (? IN NATURAL LANGUAGE MODE) OR id IN $tagIn)",
-                1 => [...$baseParams, $term, ...$tagParams],
-                2 => 'relevance DESC, start_utc DESC',
-                3 => ', MATCH(title, description, location) AGAINST (? IN NATURAL LANGUAGE MODE) AS relevance',
-                4 => [$term],
-                'fallback' => $fallback,
-            ];
-        }
-        return [0 => $fallback[0], 1 => $fallback[1], 2 => 'start_utc DESC', 3 => '', 4 => [], 'fallback' => null];
+        [$caseSql, $caseParams, $matchSql, $matchParams] = self::rank($fields, $labelTiers);
+        // The limit keeps the best tiers, and within one the dates nearest
+        // the side asked for; search() settles the final order.
+        return [
+            0 => "$base AND $matchSql",
+            1 => [...$baseParams, ...$matchParams],
+            2 => 'search_tier, start_utc ' . ($when === 'upcoming' ? 'ASC' : 'DESC'),
+            3 => ", $caseSql AS search_tier",
+            4 => $caseParams,
+        ];
     }
 }

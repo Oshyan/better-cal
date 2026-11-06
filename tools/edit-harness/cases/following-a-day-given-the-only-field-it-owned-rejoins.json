@@ -1,0 +1,61 @@
+{
+    "n": 2073,
+    "seed": 7,
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=12",
+        "import": false,
+        "bound": "none",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2026-06-12 01:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 16,
+            "kind": "edit",
+            "own": [
+                "url"
+            ],
+            "days": 3,
+            "mins": -240,
+            "zone": "America/New_York",
+            "len": -15
+        }
+    ],
+    "acted": 13,
+    "from": "later",
+    "vector": {
+        "scope": "following",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {
+            "url": "https://example.test/series"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=FR",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "ownUrl": "give"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

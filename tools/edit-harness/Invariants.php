@@ -1275,8 +1275,10 @@ trait Invariants
         $choices = ['reading' => $pre];
         $countFirst = $part['shape']->count !== null && ($x->outcome($reading, ['bound' => 'count'])['actedInside'] ?? false);
         $choices['bound'] = $countFirst || $part['shape']->count === null ? 'count' : 'end';
-        // The commit named an option for every group of the part's plan (api-contract, This and following).
-        $choices = array_merge($choices, array_intersect_key($sentChoices, array_flip(['reading', 'bound', 'edge', 'outside', 'movedDays', 'zone', 'day', 'time', 'length'])));
+        // The commit named an option for every group of the part's plan (api-contract, This and following), read as the
+        // whole-series check reads its own: every choice sent, the own-field ones among them, so a day given the new value
+        // of the only field it owned has nothing of its own and rejoins (series-model.md, This and following field edit).
+        $choices = array_merge($choices, $sentChoices);
         if ($this->splitCount !== null) {
             unset($choices['bound']); // the sent count, as the option committed reads it
         }

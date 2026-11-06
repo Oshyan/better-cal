@@ -82,6 +82,12 @@ return [
         'cases' => ['next-an-until-sent-alone-cuts-off-an-edited-day-kept', 'next-an-until-sent-alone-cuts-off-an-edited-day-deleted'],
     ],
     [
+        'id' => 'no-rejoin-after-give', 'file' => $model, 'checks' => ['5-edited'],
+        'what' => 'an edited day given the new value of the only field it owned keeps its row instead of rejoining the series',
+        'patch' => [["            if (!\$this->google && OwnFields::normalize(\$ownAfter) === []) {\n", "            if (false && !\$this->google && OwnFields::normalize(\$ownAfter) === []) {\n"]],
+        'cases' => ['following-a-day-given-the-only-field-it-owned-rejoins'],
+    ],
+    [
         'id' => 'next-drops-own-zone-row', 'file' => $model, 'checks' => ['c-next'],
         'what' => 'a timed row of an all-day plan, in its own zone, dropped from coming up',
         'patch' => [["if (!isset(\$skip[\$key]) && \$item['dn'] >= \$fromDn) {", "if (!isset(\$skip[\$key]) && \$item['dn'] >= \$fromDn && !isset(\$item['tz'])) {"]],

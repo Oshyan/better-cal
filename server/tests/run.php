@@ -57,6 +57,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\LlmTransport;
+use BetterCal\Infra\LlmFailure;
 use BetterCal\Infra\CurlLlmTransport;
 use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Ids;
@@ -6675,6 +6676,50 @@ checkEq('gw transport failure -> null', null, $gw->evaluateFilterBatch('x', null
 checkEq('gw empty batch short-circuits', null, $gw->evaluateFilterBatch('x', null, []));
 $gwUnconfigured = new LlmGateway(['gemini' => ['key' => '', 'model' => 'test-model']], $fakeTransport);
 checkEq('gw unconfigured -> null', null, $gwUnconfigured->rankEvents([], [$batchEvent]));
+checkEq('gw unconfigured: no failure to report, nothing was called', null, $gwUnconfigured->lastFailureText());
+{
+    // A failed call says why: the provider's status and message, or what was
+    // wrong with its reply, and never the key.
+    $failing = new class implements LlmTransport {
+        public string|LlmFailure|null $reply = null;
+        public function post(string $url, array $headers, string $body, int $timeoutSeconds): string|LlmFailure|null { return $this->reply; }
+    };
+    $secret = 'sample-key-abcdef0123456789';
+    $gwF = new LlmGateway(['gemini' => ['key' => $secret, 'model' => 'gemini-test-model']], $failing);
+    $failing->reply = LlmFailure::fromResponse(402, (string) json_encode(['error' => ['code' => 402, 'status' => 'RESOURCE_EXHAUSTED', 'message' => 'Your prepayment credits are depleted. Add credits to continue.']]));
+    checkEq('gw failure: a 402 still returns null', null, $gwF->rankEvents([], [$batchEvent]));
+    checkEq('gw failure: and says what the provider answered', 'Gemini answered 402 RESOURCE_EXHAUSTED: Your prepayment credits are depleted. Add credits to continue.', $gwF->lastFailureText());
+    check('gw failure: a 402 is an account refusal', $gwF->lastFailure()?->isAccountRefusal() === true);
+    $failing->reply = LlmFailure::fromResponse(429, '{"error":{"status":"UNAVAILABLE","message":"slow down"}}');
+    $gwF->evaluateFilterBatch('x', null, [$batchEvent]);
+    check('gw failure: a 429 is an account refusal too', $gwF->lastFailure()?->isAccountRefusal() === true);
+    $failing->reply = LlmFailure::fromResponse(400, '{"error":{"status":"INVALID_ARGUMENT","message":"API key not valid: ' . $secret . '"}}');
+    $gwF->completeJson('x');
+    checkEq('gw failure: a key echoed back by the provider is hidden', 'Gemini answered 400 INVALID_ARGUMENT: API key not valid: [key]', $gwF->lastFailureText());
+    check('gw failure: a bad request is not an account refusal', $gwF->lastFailure()?->isAccountRefusal() === false);
+    $failing->reply = LlmFailure::fromResponse(503, '<html>busy</html>');
+    $gwF->rankEvents([], [$batchEvent]);
+    checkEq('gw failure: a status with no JSON body says only the status', 'Gemini answered 503.', $gwF->lastFailureText());
+    $failing->reply = LlmFailure::fromResponse(402, (string) json_encode(['error' => ['status' => 'RESOURCE_EXHAUSTED', 'message' => str_repeat('long words ', 100)]]));
+    $gwF->rankEvents([], [$batchEvent]);
+    check('gw failure: a long provider message is clipped', mb_strlen((string) $gwF->lastFailureText()) < 300 && str_ends_with((string) $gwF->lastFailureText(), '...'));
+    $failing->reply = '{"candidates":[{"content":{"parts":[{"text":"not json"}]}}]}';
+    checkEq('gw failure: a 200 whose text is not JSON says so', ['Gemini answered, but its reply was not the JSON asked for.', false],
+        [$gwF->rankEvents([], [$batchEvent]) ?? $gwF->lastFailureText(), $gwF->lastFailure()?->isAccountRefusal()]);
+    $failing->reply = '{"promptFeedback":{"blockReason":"SAFETY"}}';
+    $gwF->rankEvents([], [$batchEvent]);
+    checkEq('gw failure: a blocked prompt names the reason', 'Gemini answered without any text (SAFETY).', $gwF->lastFailureText());
+    $failing->reply = $envelope(['nope' => true]);
+    $gwF->rankEvents([], [$batchEvent]);
+    checkEq('gw failure: a reply with no results list says so', 'Gemini answered, but its reply had no results list.', $gwF->lastFailureText());
+    $failing->reply = $envelope(['results' => []]);
+    $gwF->rankEvents([], [$batchEvent]);
+    checkEq('gw failure: a successful call clears the last failure', null, $gwF->lastFailureText());
+    $failing->reply = null;
+    $gwF->rankEvents([], [$batchEvent]);
+    checkEq('gw failure: a transport that cannot tell still gives a reason', 'Gemini gave no answer.', $gwF->lastFailureText());
+    checkEq('gw failure: Review words for a refusal', 'Gemini answered 402. That is a billing or quota limit on the Gemini account the key belongs to, and only that account can lift it.', Ranking::refusalNotice('Gemini answered 402.'));
+}
 
 // ---------------------------------------------------------------------------
 // Ids
@@ -9479,6 +9524,42 @@ require __DIR__ . '/plugins.php';
     ));
     checkEq('mail fetch: checkpoint and Seen precede one header and body', ['begin', 'seen', 'load', 'header', 'identify', 'body'], $trace);
     checkEq('mail fetch: normal decomposition preserved', ['safe@example.test', 'Dinner tomorrow'], [$normal[0]['messageId'], $normal[0]['text']]);
+    checkEq('mail fetch: a message without the app\'s header carries no mark', null, $normal[0]['appMail']);
+    // The app's own header (EmailSender::APP_HEADER) reaches the ingest as appMail.
+    $markedMessage = new class {
+        public function getMessageId(): string { return '<marked@example.test>'; }
+        public function getSubject(): string { return 'Sample-App: Event ranking has been failing'; }
+        public function getDate(): string { return 'today'; }
+        public function getFrom(): array { return [(object) ['mail' => 'owner@example.test']]; }
+        public function getHeader(): object
+        {
+            return new class {
+                public function has(string $name): bool { return strtolower($name) === 'x-better-cal'; }
+                public function get(string $name): string { return ' alert '; }
+            };
+        }
+        public function parseBody(): void {}
+        public function getAttachments(): array { return []; }
+        public function getRawBody(): string { return ''; }
+        public function hasHTMLBody(): bool { return false; }
+        public function hasTextBody(): bool { return true; }
+        public function getTextBody(): string { return 'Failing since Nov 5'; }
+    };
+    $marked = iterator_to_array($fetcher->processCandidates([[
+        'transportKey' => 'imap-marked', 'size' => 100,
+        'load' => static fn(): object => $markedMessage,
+        'markSeen' => static function (): void {},
+        'markUnseen' => static function (): void {},
+    ]]));
+    checkEq('mail fetch: the app\'s own header reaches the ingest', 'alert', $marked[0]['appMail']);
+    if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+        $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
+        EmailSender::markOwn($mailer, 'alert', true);
+        checkEq('email: an alert carries the app\'s header and Auto-Submitted', [['X-Better-Cal', 'alert'], ['Auto-Submitted', 'auto-generated']], $mailer->getCustomHeaders());
+        $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
+        EmailSender::markOwn($mailer, 'rsvp', false);
+        checkEq('email: an RSVP the owner chose carries only the app\'s header', [['X-Better-Cal', 'rsvp']], $mailer->getCustomHeaders());
+    }
 
     // Webklex messages and attachments form reference cycles. The decoded
     // object must be collectible before the generator suspends at yield, not

@@ -94,6 +94,7 @@ final class PromptEval
 
         $evaluated = 0;
         $failures = 0;
+        $reason = null;
         $calls = 0;
         $remaining = false;
         $retryAt = null;
@@ -133,6 +134,14 @@ final class PromptEval
             }
             if ($raw === null) {
                 $failures++;
+                $reason = $this->llm->lastFailureText() ?? $reason;
+                if ($this->llm->lastFailure()?->isAccountRefusal()) {
+                    // Billing or quota at the provider refuses every other
+                    // batch too; Review says so, as Ranking's does.
+                    $this->holdModelLimit($task, ['code' => 'provider_refused', 'retryAt' => '',
+                        'message' => Ranking::refusalNotice((string) $reason)]);
+                    break;
+                }
             } else {
                 $threshold = isset($task['config']['threshold']) ? (float) $task['config']['threshold'] : null;
                 $results = self::validateEvalResponse(['results' => $raw], array_column($payload, 'eventId'));
@@ -159,7 +168,8 @@ final class PromptEval
         }
 
         if ($failures > 0) {
-            throw new \RuntimeException("$failures prompt-eval LLM batch(es) failed; pairs left pending");
+            throw new \RuntimeException("$failures prompt-eval LLM batch(es) failed; pairs left pending"
+                . ($reason !== null ? ': ' . $reason : ''));
         }
         if ($remaining && $this->queue !== null) {
             $payload = [];

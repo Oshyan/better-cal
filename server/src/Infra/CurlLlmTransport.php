@@ -16,11 +16,11 @@ final class CurlLlmTransport implements LlmTransport
         $this->maxResponseBytes = $maxResponseBytes ?? Limits::get('MODEL_RESPONSE_BYTES');
     }
 
-    public function post(string $url, array $headers, string $body, int $timeoutSeconds): ?string
+    public function post(string $url, array $headers, string $body, int $timeoutSeconds): string|LlmFailure
     {
         $ch = curl_init($url);
         if ($ch === false) {
-            return null;
+            return new LlmFailure(0, localReason: 'Gemini could not be called: curl failed to start.');
         }
         $raw = '';
         $tooLarge = false;
@@ -42,9 +42,19 @@ final class CurlLlmTransport implements LlmTransport
         ]);
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $curlError = curl_error($ch);
         curl_close($ch);
-        if ($ok !== true || $tooLarge || $status !== 200) {
-            return null;
+        if ($tooLarge) {
+            return new LlmFailure($status, localReason: 'Gemini\'s answer was larger than ' . number_format($this->maxResponseBytes) . ' bytes and was not read.');
+        }
+        if ($status !== 0 && $status !== 200) {
+            // The status and the provider's own error object say why: an
+            // account out of credit, a quota, a bad key, a model name gone.
+            return LlmFailure::fromResponse($status, $raw);
+        }
+        if ($ok !== true || $status === 0) {
+            return new LlmFailure($status, localReason: ($status === 0 ? 'Gemini could not be reached' : 'Gemini\'s answer did not finish arriving')
+                . ($curlError !== '' ? ': ' . $curlError : '.'));
         }
         return $raw;
     }

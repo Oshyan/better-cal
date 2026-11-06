@@ -285,7 +285,7 @@ final class MailIngest
     /**
      * Process one fetched message (already decomposed by the transport).
      *
-     * @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string} $msg
+     * @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string,appMail?:?string} $msg (appMail: the value of the app's own header, EmailSender::APP_HEADER)
      * @return array{tier:?string,outcome:string,eventId:?int,error:?string}
      */
     public function ingestMessage(int $userId, array $msg, string $tz, ?string $hereTz = null): array
@@ -295,7 +295,13 @@ final class MailIngest
         }
 
         $result = ['tier' => 'none', 'outcome' => 'skipped', 'eventId' => null, 'error' => null];
-        if (isset($msg['oversize'])) {
+        if (($msg['appMail'] ?? null) !== null) {
+            // This app's own reminder, alert or RSVP (EmailSender::APP_HEADER)
+            // arriving in the mailbox it reads: never an event to add, and no
+            // tier runs on it. Auto-Submitted alone is not enough, since
+            // other senders' booking confirmations carry it too.
+            $result['error'] = self::OWN_MAIL;
+        } elseif (isset($msg['oversize'])) {
             // The fetcher never downloaded it (Limits::MAIL_BYTES). Logged like
             // any other message so "where did that invite go" has an answer.
             $result['error'] = 'message too large to ingest (' . number_format((int) $msg['oversize']) . ' bytes)';
@@ -316,6 +322,9 @@ final class MailIngest
     }
 
     public const OUTCOME_STARTED = 'started';
+
+    /** What mail_ingest records for a message this app sent itself. */
+    public const OWN_MAIL = 'sent by this Better-Cal (its own reminder, alert or reply), not read';
 
     /**
      * Record that a message is about to be downloaded and parsed, BEFORE doing
@@ -600,7 +609,9 @@ final class MailIngest
             $body = mb_substr(self::stripForwardPreamble($msg['subject']) . "\n\n" . $llmSource, 0, 4000);
             $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz, true, $hereTz);
             if ($parsed === null && $this->llm->isConfigured()) {
-                return ['tier' => 'llm', 'outcome' => 'error', 'eventId' => null, 'error' => 'The email reader could not return a usable event. Check the original message.'];
+                $why = $this->llm->lastFailureText();
+                return ['tier' => 'llm', 'outcome' => 'error', 'eventId' => null, 'error' => mb_substr('The email reader could not return a usable event'
+                    . ($why !== null ? ' (' . $why . ')' : '') . '. Check the original message.', 0, 500)];
             }
             if ($parsed !== null && !empty($parsed['title']) && $parsed['title'] !== 'New event') {
                 $result = ActivityContext::with('mail:llm', fn() => $this->createFromDraft($userId, $msg, [

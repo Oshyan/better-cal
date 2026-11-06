@@ -514,7 +514,12 @@ final class PluginHost
             $this->log('llm not configured; using fallback');
             return null;
         }
-        return $gateway->completeJson($prompt, $schemaHint);
+        $result = $gateway->completeJson($prompt, $schemaHint);
+        if ($result === null && ($why = $gateway->lastFailureText()) !== null) {
+            // The plugin still sees null; its run log says why.
+            $this->log('llm call failed; using fallback: ' . $why);
+        }
+        return $result;
     }
 
     // ---- proposals (C11) --------------------------------------------------

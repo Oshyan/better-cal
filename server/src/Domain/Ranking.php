@@ -46,6 +46,7 @@ final class Ranking
         }
         $scored = 0;
         $failures = 0;
+        $reason = null;
         $calls = 0;
         $remaining = false;
         $admission = $this->admission ?? new ModelAdmission($this->db);
@@ -92,6 +93,15 @@ final class Ranking
                     }
                     if ($raw === null) {
                         $failures++;
+                        $reason = $this->llm->lastFailureText() ?? $reason;
+                        if ($this->llm->lastFailure()?->isAccountRefusal()) {
+                            // Billing or quota at the provider: every other
+                            // calendar would be refused the same way, and only
+                            // the owner can fix it, so Review says so.
+                            $this->review?->holdModelLimit($userId, 'ranking_provider_refused', self::refusalNotice((string) $reason),
+                                '', (int) $calendar['id'], (string) $calendar['name'], count($batch), 'ranking');
+                            continue 3;
+                        }
                         continue; // events stay unscored/stale; retried via job backoff
                     }
                     $scores = self::validateRankResponse(['results' => $raw], array_column($payload, 'eventId'));
@@ -104,7 +114,10 @@ final class Ranking
         }
 
         if ($failures > 0) {
-            throw new \RuntimeException("$failures ranking LLM batch(es) failed; events left unscored");
+            // The provider's reason rides in the job error, which is what
+            // Settings, System shows as the ranking row's Detail.
+            throw new \RuntimeException("$failures ranking LLM batch(es) failed; events left unscored"
+                . ($reason !== null ? ': ' . $reason : ''));
         }
         if ($remaining && $this->queue !== null) {
             $this->queue->enqueue('rank_events', []);
@@ -143,6 +156,13 @@ final class Ranking
     }
 
     // ---- Pure helpers (unit-tested, no DB / no LLM) --------------------
+
+    /** Review's words for a provider that refused on billing or quota. */
+    public static function refusalNotice(string $reason): string
+    {
+        return ($reason !== '' ? $reason . (str_ends_with($reason, '.') ? ' ' : '. ') : '')
+            . 'That is a billing or quota limit on the Gemini account the key belongs to, and only that account can lift it.';
+    }
 
     /**
      * Serialize signal rows (newest first: event_id, kind, title) into compact

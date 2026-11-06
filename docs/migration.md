@@ -59,7 +59,7 @@ Only the live connection is Google-specific (connecting to iCloud and other CalD
 
 - **iCloud:** share a calendar as a public calendar (in the Calendar app, its share settings) and subscribe to that address here, or export it from Calendar on a Mac (**File, Export**) and import the file.
 - **Outlook and Microsoft 365:** publish a calendar (Outlook on the web, **Settings, Calendar, Shared calendars, Publish a calendar**) and subscribe to its ICS link, or export it as an `.ics` file.
-- **Fastmail, Nextcloud, Proton and the rest:** each can give a calendar's ICS address to subscribe to, or export a file. Better-Cal is a CalDAV server, not a client, so it can't sign in to another CalDAV account directly.
+- **Fastmail, Nextcloud, Proton and the rest:** each can give a calendar's ICS address to subscribe to, or export a file. A feed address on a private, loopback or link-local network is refused, so a calendar served only inside a home network (a Nextcloud at home, say) can't be subscribed to; export a file from it instead. Better-Cal is a CalDAV server, not a client, so it can't sign in to another CalDAV account directly.
 
 ### Keep the App You Already Use
 

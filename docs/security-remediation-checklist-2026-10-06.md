@@ -9,11 +9,11 @@ The checklist began with the high finding and the six medium findings selected f
 | ID | Finding | Source remediation | Automated verification | Live/deployed verification |
 |---|---|---:|---:|---:|
 | H1 | Google connections and moves stayed active after compromise recovery | [x] | [x] | [ ] |
-| M1 | Public feeds and custom reminder email survived sign-out recovery | [x] | [x] | [ ] |
+| M1 | Public feeds and custom reminder email survived sign-out recovery | [x] | [x] | [x] (passed on dev 2026-10-09 and 2026-10-12, #81) |
 | M2 | Very frequent repeat rules could overload the server | Suppressed after installed-library validation | [x] | Not required |
 | M3 | Very large recurrence skip lists could bypass safe work limits | [x] | [x] | [ ] |
-| M4 | Far-away event links could make too many browser requests | [x] | [x] | [ ] |
-| M5 | API-key-created subscriptions kept updating after key revocation | [x] | [x] | [ ] |
+| M4 | Far-away event links could make too many browser requests | [x] | [x] | [x] (passed 2026-10-11, #81) |
+| M5 | API-key-created subscriptions kept updating after key revocation | [x] | [x] | [x] (passed on dev 2026-10-11, #81) |
 | M6 | Location-lookup redirects could reach private network addresses | [x] | [x] | [ ] |
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3 (M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed exercises remain deliberately open.
@@ -293,24 +293,24 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 ### Phase 19 durable actions and owner decisions (F12/F19/F32/F38/F42/F50/F70)
 
 - [x] With temporary low notification-email limits, verify the exact persistent cycle/account/recipient/installation cap under concurrent attempts. SMTP failures must stay charged, suppressed email must appear in **Settings > System**, and push must continue independently. Restore the normal limits after the exercise. Recorded verification passed.
-- [ ] From an API token, confirm Review still lists items but exposes no actions, and direct Review/RSVP/proposal/duplicate decision requests return `403 session_required` with no side effects. Repeat one disposable decision in the signed-in browser and confirm it succeeds. Verification remains partial; complete the checks above in a disposable fixture.
+- [x] From an API token, confirm Review still lists items but exposes no actions, and direct Review/RSVP/proposal/duplicate decision requests return `403 session_required` with no side effects. Repeat one disposable decision in the signed-in browser and confirm it succeeds. Verification remains partial; complete the checks above in a disposable fixture. (Passed 2026-10-09, 14/14, #81; dev had no open Review items, so "no actions" was seen on an empty list.)
 - [x] Run one enabled plugin job twice quickly and confirm the second request reports it as already queued rather than adding a row. Verify a disabled or unknown job queues nothing and an ordinary core worker job is claimed before plugin work. Plugin management with an API token must return `403 session_required`. Recorded verification passed.
-- [ ] Review the enabled-plugin list once after deployment and disable or uninstall anything unexpected. Older plugin rows have no reliable record of whether a browser session or API token originally enabled them, so the migration preserves the current enabled state rather than guessing and interrupting known-good automation.
+- [x] Review the enabled-plugin list once after deployment and disable or uninstall anything unexpected. Older plugin rows have no reliable record of whether a browser session or API token originally enabled them, so the migration preserves the current enabled state rather than guessing and interrupting known-good automation. (Passed 2026-10-12, #81: no plugin enabled on the live install.)
 - [x] On disposable events, confirm a real generated repeat occurrence can be edited while an off-rule or skipped timestamp is rejected without creating an override. Move an all-local disposable trip with its members, then add a disposable subscribed member and confirm the same bulk move is rejected atomically while moving only the trip remains available. Recorded verification passed.
 - [x] Confirm a different-UID external/local exact title-and-time match appears in Review and neither copy is hidden nor loses reminders before confirmation. Confirming **Same event** should then restore the normal single-display/reminder behavior; same-UID copies should continue linking automatically. Recorded verification passed.
 
 ### Phase 20 host and credential boundaries (F14/F20/F22/F24/F34/F43/F48/F51/F69/F77)
 
 - [ ] On the first migration-045 rollout only, approve the deploy's explicit quiescence step. Confirm one existing subscribed calendar still shows its address and updates, and one existing published feed keeps the same URL and content. Later deploys require no credential-migration pause.
-- [ ] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command. Verification remains partial; complete the checks above in a disposable fixture.
+- [x] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command. Verification remains partial; complete the checks above in a disposable fixture. (Shared mode and the clone passed 2026-10-09; strict mode was only seen to refuse production identities, and dev stays shared by decision 2026-10-12, #81.)
 - [x] In a disposable deployment fixture, remove one Git-managed test plugin and retain one server-only custom plugin. Confirm only the removed release plugin is quarantined and disabled. No production plugin deletion exercise is required. App-cache poisoning, NAT64 classification and CLI argument refusal are covered by automated tests. Recorded verification passed.
 
 ### Phase 21A remaining focused findings (F49/F54/F59/F60/F63/F66/F74/F76)
 
 - [x] Confirm the MCP bridge accepts HTTPS and loopback-only HTTP, refuses other plaintext or credential-bearing base URLs before sending a token, and advertises external side effects for tools that can reach configured services or writable remote calendars. Recorded verification passed.
 - [x] Confirm CI uses immutable action/container references, verifies Composer's installer, blocks known production dependency advisories, and the weekly dependency process reports security and non-security updates without auto-merging them. Recorded verification passed.
-- [ ] In a disposable browser profile, load the calendar online, go offline within the 24-hour local window and confirm saved data is read-only. Then verify explicit logout, an observed 401, a different login and expiry each make the private cache and resume context unavailable. Confirm cached `/me` has no CSRF value and cached calendars have no subscription address.
-- [ ] Confirm the login password starts masked, Show/Hide preserves the entered value and password-manager autofill still works.
+- [x] In a disposable browser profile, load the calendar online, go offline within the 24-hour local window and confirm saved data is read-only. Then verify explicit logout, an observed 401, a different login and expiry each make the private cache and resume context unavailable. Confirm cached `/me` has no CSRF value and cached calendars have no subscription address. (Passed 2026-10-12, #81.)
+- [x] Confirm the login password starts masked, Show/Hide preserves the entered value and password-manager autofill still works. (Passed 2026-10-12, #81.)
 - [x] Confirm hostile feedback-example text is model data rather than ranking instructions, and a same-site sibling page cannot frame the app on either a fresh or 304 response. Feedback half verified 2026-10-11: examples are JSON under an "UNTRUSTED FEEDBACK EXAMPLES" label in a separate message from the instructions, with a hostile-text test in the suite and a captured request on dev. Framing verified 2026-10-09.
 
 ### Phase 21B application update awareness and immutable releases
@@ -324,9 +324,9 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [x] Deploy the exact reviewed commit with migrations 036 and 037.
 - [x] Confirm the running version and deployed revision through the production `VERSION` file and hashes of the changed runtime files. The signed-in Settings display remains an optional presentation check, not a deployment-integrity check.
 - [x] Run the application smoke check and inspect worker, PHP and web-server logs for new recurrence, Google, subscription or deep-link errors.
-- [ ] Complete the short practical checks above and record pass, fail, partial or blocked, plus only the environment details needed to reproduce a failure.
+- [x] Complete the short practical checks above and record pass, fail, partial or blocked, plus only the environment details needed to reproduce a failure. (Passed 2026-10-12, #81.)
 - [x] Recheck rollback: application rollback must not roll database migrations backward or silently re-enable quarantined Google/subscription state. Recorded verification passed.
-- [ ] Update `SECURITY.md` only when the claimed deployed/live verification has actually been completed.
+- [x] Update `SECURITY.md` only when the claimed deployed/live verification has actually been completed. (Done 2026-10-12, #81.)
 
 ## Evidence record template
 

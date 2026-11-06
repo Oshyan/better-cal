@@ -54,7 +54,7 @@ It's had less use on iPhone than on Android, so if you have one, I'd especially 
 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
-- **Five full scans** of the whole codebase before 1.0 (Codex Security and Claude Security). Every finding was independently verified, then fixed or, in a handful of cases, accepted with the reason recorded. Each fix commit names the finding it closes, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists each round, what it found and what remains.
+- **Five full scans** of the whole codebase before 1.0 (Codex Security and Claude Security). Every finding was independently verified, then fixed or, in a handful of cases, accepted with the reason recorded. Every finding is recorded with what was done about it in its round's record (for the last two rounds, `docs/security-remediation-checklist-<date>.md`), and a fix commit names its finding where it has one of its own; [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists each round, what it found and what remains.
 - **Latest review:** 2026-11-04, Codex Security (Daybreak Blue), of the changes from 1.0.0 to 1.5.0: 6 Low findings, fixed in 1.5.1. [Every review](SECURITY.md#what-has-been-reviewed).
 - **The fixes reviewed too**, for gaps, ways around them and anything they broke.
 - **Tests** run on every change and before every deploy, including a regression test for each security fix.
@@ -66,7 +66,7 @@ For a one-person project, taking security seriously means doing the work in publ
 
 ## Versions
 
-Releases are tagged (`v1.0.0`) and listed on GitHub, and [CHANGELOG.md](CHANGELOG.md) says what changed. Settings shows the version you're running and tells you when there's a new one. Minor versions bring features; patch versions bring fixes and refinements. Each release page says what the update needs, and [Updating](docs/install.md#updating) has the steps.
+Releases are tagged (`v1.0.0`) and listed on GitHub, and [CHANGELOG.md](CHANGELOG.md) says what changed. Settings shows the version you're running and tells you when there's a new one. Minor versions bring features; patch versions bring fixes and refinements. A major version means a change you may need to act on, such as a changed install layout or a dropped PHP version; within 1.x, any version updates from any earlier one, with the database migrations run forward. Each release page says what the update needs, and [Updating](docs/install.md#updating) has the steps.
 
 ## License
 

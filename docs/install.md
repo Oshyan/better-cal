@@ -1,6 +1,8 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory, which includes ordinary shared hosting. Installing takes about fifteen minutes once those are in place. With a command line on the server (SSH), follow [Install](#install); without one, [Install without a command line](#install-without-a-command-line) does it all from your host's control panel and the browser.
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory, which includes ordinary shared hosting. Installing takes about fifteen minutes once those are in place. The usual way is to [upload the zip and finish in the browser](#install-without-a-command-line), from your host's control panel; if you'd rather use SSH, [the command-line steps](#install-with-a-command-line) come after.
+
+It's sized for one person's calendar, run by its owner: one login, with everyone else reaching it through CalDAV, shared feeds and invitations. It isn't meant for a team on one install or for very heavy use (thousands of events a week, dozens of busy shared calendars); [Scale and limits](limits.md) has the numbers.
 
 ## What You Need
 
@@ -26,6 +28,23 @@ Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `p
 **If the hosting account also runs other sites, give Better-Cal its own hosting user** where the host allows (DreamHost and many others do, per domain). Every site under one user runs as the same account, so a compromised one could read Better-Cal's settings and database.
 
 ## Install
+
+There are two ways in. The browser one comes first: upload the zip and a setup page does the rest, no command line needed. If you have SSH and prefer it, the installer does the same from the shell.
+
+### Install Without a Command Line
+
+All it takes is a control panel and a file manager (or FTP), with or without SSH: a setup page in the browser does what the installer does. Uploading doesn't check the release's signature; you can [check the zip on your own computer first](#optional-verification-before-upload).
+
+1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and extract it into a folder named `better-cal`. Put it outside your web root if the host allows (beside `public_html`); if subdomains must point inside `public_html`, make it `public_html/better-cal`. If the panel already made that folder when you set up the subdomain, extract into it with overwrite on.
+2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
+3. **Point a domain or subdomain of its own at `better-cal/server/public`** ([why](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
+4. **Open the address in your browser.** The setup page asks for a code it has just written into `better-cal-code.php` in the `better-cal` folder: open that file in the file manager and type the code in. (It proves you can reach the server's files.)
+5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves `.env.php` (readable only by your account) and makes your account, and the setup page is then gone for good. If its check of your main domain finds a problem, the last page says so.
+6. **Add the cron job** it shows you, on the control panel's cron or scheduled-tasks page: set every schedule field to every (`*`), or pick "once per minute", and paste the command. If the panel has a "PHP" job type that fills in the start of the path, choose its "custom" type instead and paste the whole command, since that names the PHP version your site runs on. Then sign in.
+
+PHP needs to be able to write to the `better-cal` folder, which on shared hosting it normally can; if it can't, the page says so.
+
+### Install With a Command Line
 
 Run these as the account that will own Better-Cal's files (on shared hosting, simply your own login). PHP must be able to read them, and the worker's cron entry goes in this account's crontab. The examples install into `/srv/better-cal`; use any directory outside the web root.
 
@@ -74,27 +93,16 @@ Installing from a downloaded zip means trusting that download; to check it first
 
 6. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
 
+### Once It's Running
+
 That's a working install. The rest is optional:
 
-- **Push reminders** are set up by the installer; each person turns them on per device ([the app and reminders](app-and-reminders.md)).
+- **Push reminders** are set up by the setup page or the installer; each person turns them on per device ([the app and reminders](app-and-reminders.md)).
 - **Google Calendar** needs an OAuth client of your own, from a free Google Cloud project, in about ten minutes ([google-calendar.md](google-calendar.md#one-time-setup-the-operator)).
 - **Email** for reminders by mail and invitation replies: the SMTP settings in `.env.php`.
 - More under [After installing](#after-installing).
 
 If something here didn't work as written on your host, please [report it](https://github.com/Oshyan/better-cal/issues).
-
-### Install Without a Command Line
-
-For hosting with a control panel and a file manager (or FTP) but no SSH: a setup page in the browser does what the installer does. Uploading doesn't check the release's signature; you can [check the zip on your own computer first](#optional-verification-before-upload).
-
-1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and extract it into a folder named `better-cal`. Put it outside your web root if the host allows (beside `public_html`); if subdomains must point inside `public_html`, make it `public_html/better-cal`. If the panel already made that folder when you set up the subdomain, extract into it with overwrite on.
-2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
-3. **Point a domain or subdomain of its own at `better-cal/server/public`** ([why](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
-4. **Open the address in your browser.** The setup page asks for a code it has just written into `better-cal-code.php` in the `better-cal` folder: open that file in the file manager and type the code in. (It proves you can reach the server's files.)
-5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves `.env.php` (readable only by your account) and makes your account, and the setup page is then gone for good. If its check of your main domain finds a problem, the last page says so.
-6. **Add the cron job** it shows you, on the control panel's cron or scheduled-tasks page: set every schedule field to every (`*`), or pick "once per minute", and paste the command. If the panel has a "PHP" job type that fills in the start of the path, choose its "custom" type instead and paste the whole command, since that names the PHP version your site runs on. Then sign in.
-
-PHP needs to be able to write to the `better-cal` folder, which on shared hosting it normally can; if it can't, the page says so.
 
 ### From Git Instead of the Zip
 

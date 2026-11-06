@@ -58,14 +58,14 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Paste a Google Calendar template link into quick add and it becomes the event, recurrence and all.
 - Paste anywhere: Cmd/Ctrl+V on the calendar opens quick add with what you copied, already read, so Enter adds it.
 - Paste or share an event page's link (Luma, Partiful, Eventbrite, Meetup, Pie) into quick add and the page fills in the title, time, place and link. [Event links](docs/quick-add.md#event-links) lists the sites it handles.
-- Drag to create (opens the editor pre-filled), drag and resize to reschedule.
+- Drag to create (opens the editor pre-filled), drag and resize to reschedule. Hold Option (Alt on Windows) while dragging to drop a copy instead, leaving the original where it was; a copy of one day of a repeating event is a plain event.
 - Reschedule mode (`r`, or Move on an open event): the event follows your pointer as a ghost while you scroll or jump anywhere (months or years away), and a click drops it. For a repeating event it moves this occurrence only.
 - The editor: rich text descriptions, location with place search (biased to where your calendar puts you that day, then your device and Home), people, tags, per-event reminders, recurrence, a calendar picker in each calendar's color, trip membership, and For me (Planned, or Maybe, which saves the event as tentative).
 - Typed dates and times ("fri", "10/5", "7p", "noon"), a quarter-hour list for times, and an end that keeps the event's length when the start moves.
 - Per-event time zone: enter a time as it reads somewhere else ("3 PM New York" from a laptop in Lisbon). The editor shows what that is on your device before you save, the detail view shows both clocks, and a repeating event keeps its own zone's time across DST changes. All-day events are dates and stay on the same day in every zone.
 - A confirmation before unsaved details are lost.
 - Events open in a side panel on a desktop (the sheet on a phone) with everything: when, the invitation reply, where with Directions or Join, reminders, people, map, description, plugin data and the source. A fixed toolbar (Edit, Move, More, For me), and `[` / `]` to step through the day's events.
-- Copy an event to another calendar from More.
+- Duplicate, in More: a copy on the same calendar, opened in the editor with its date ready to change. Copy to another calendar is there too.
 - An undo toast after destructive actions, backed by the activity log. It names the event and says what happened to it, with the change itself when it's short ("Moved · Nov 6 → Nov 17").
 
 ### Trips
@@ -89,7 +89,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Local calendars with color, default reminders and per-calendar settings.
 - Calendar roles: Mine (things you do), Opportunities (things you could do) or Context (information). The role sets each event's default For me (Planned, Available or Context), and changing it re-reads every event at once. [Calendar roles and event relationships](docs/relationships.md) explains them.
 - Folders group calendars with collapse and folder-level visibility; a calendar can live in several folders.
-- ICS subscriptions with a poll interval per calendar (every 15 minutes to every 24 hours, hourly by default; the API allows 5 minutes), manual refresh, feed health in the sidebar, an option to hide events the feed cancels instead of striking them through, and adopt-as-local, which turns a feed into an editable calendar.
+- ICS subscriptions with a poll interval per calendar (every 15 minutes to every 24 hours, hourly by default; the API allows 5 minutes), manual refresh, feed health in the sidebar, an option to hide events the feed cancels instead of striking them through, and adopt-as-local, which turns a feed into an editable calendar. A feed address on a private, loopback or link-local network is refused, so a calendar served only inside a home network can't be subscribed to.
 - A "new" mark on events that arrived on their own (feed, email, import, agent, plugin) in the last 24 hours, never on a calendar's first load.
 - Near-duplicate grouping, where you turn it on: same-day listings whose titles differ only by a trailing parenthetical collapse into one stacked chip with a popover of members.
 - The same event, shown once: when an event reaches you by two routes (a feed and a forwarded confirmation, a Takeout import and its Google calendar), the most live copy shows, with "Also on" naming the others. Near-matches go to Review as possible duplicates. Nothing is merged or deleted, and "Not the same" undoes a wrong match.

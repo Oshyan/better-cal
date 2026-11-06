@@ -1031,6 +1031,24 @@ return static function (Db $db): void {
         ], [$db->one('SELECT rrule, tzid FROM events WHERE id = ?', [$lab]), $db->one('SELECT recurrence_instance_utc, start_utc, end_utc, tzid FROM events WHERE id = ?', [$day])]);
         $d->undo->undoLatest($u);
         checkEq('the new rule at the same moment undone: every row as before', $before, $rows($lab));
+
+        // From a day in a zone of its own: first Mondays at 06:00 in Auckland, Mon 7 Dec at its own 06:00 in New York, moved to 07:00
+        // and to Berlin at the same moment. The series repeats Mondays at 13:00 Berlin; Mon 1 Mar at its own 09:00 Auckland keeps that
+        // instant, 28 Feb 20:00Z, no day later.
+        $club = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample moment club', 'start' => '2026-10-05T06:00:00+13:00', 'end' => '2026-10-05T07:30:00+13:00',
+            'allDay' => false, 'tzid' => 'Pacific/Auckland', 'rrule' => 'FREQ=MONTHLY;BYDAY=1MO'])['eventId'];
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2026-12-06T17:00:00Z', 'tzid' => 'America/New_York', 'start' => '2026-12-07T06:00:00-05:00', 'end' => '2026-12-07T07:30:00-05:00']);
+        $d->events->patch($u, $club, ['scope' => 'this', 'instanceStart' => '2027-02-28T17:00:00Z', 'start' => '2027-03-01T09:00:00+13:00', 'end' => '2027-03-01T10:30:00+13:00']);
+        $march = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$club, '2027-02-28 17:00:00']);
+        $before = $rows($club);
+        planned($d->events, $u, $club, ['scope' => 'all', 'instanceStart' => '2026-12-06T17:00:00Z', 'tzid' => 'Europe/Berlin', 'start' => '2026-12-07T07:00:00+01:00', 'end' => '2026-12-07T08:30:00+01:00'],
+            ['zone' => 'moment']);
+        checkEq('the same moment from a day in its own zone: Mondays 13:00 Berlin, the day at its own time keeps 28 Feb 20:00Z', [
+            ['rrule' => 'FREQ=MONTHLY;BYDAY=1MO', 'tzid' => 'Europe/Berlin'],
+            ['start_utc' => '2027-02-28 20:00:00', 'end_utc' => '2027-02-28 21:30:00'],
+        ], [$db->one('SELECT rrule, tzid FROM events WHERE id = ?', [$club]), $db->one('SELECT start_utc, end_utc FROM events WHERE id = ?', [$march])]);
+        $d->undo->undoLatest($u);
+        checkEq('the same moment from a day in its own zone undone: every row as before', $before, $rows($club));
     });
     // #201: a day edited through a short window a year on, keyed as that
     // window gives it (the occurrence's start), shows once in a long window,

@@ -447,6 +447,33 @@ return static function (Db $db): void {
         checkEq('undone: every row as before, and the part is gone', [$before, 0], [$rows($club), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$new])]);
     });
 
+    scenario('split: a new pattern from a day on keeps an edited day years on, on its own date, re-keyed onto the part, and Undo puts it back', function () use ($d, $u, $db, $rows, $series, $choices, $newest, $col): void {
+        // The fourth Wednesday of May; the 2033 one moved to Tuesday 24 May on its own. From 2029 on, every other day from
+        // Sat 26 May at 17:00, renamed: 25 May 2033 is one of the part's days, so the day stays an edited day of the part,
+        // keyed there, on its own date at the part's time, renamed, far past any window a reader would look through.
+        $may = $series('Sample meeting', 'FREQ=YEARLY;BYMONTH=5;BYDAY=4WE', '2028-05-24');
+        $d->events->patch($u, $may, ['scope' => 'this', 'instanceStart' => '2033-05-25T18:00:00+00:00', 'start' => '2033-05-24T18:00:00+00:00', 'end' => '2033-05-24T19:00:00+00:00']);
+        $before = $rows($may);
+        $edit = ['scope' => 'following', 'instanceStart' => '2029-05-23T18:00:00+00:00', 'start' => '2029-05-26T17:00:00+00:00', 'end' => '2029-05-26T18:00:00+00:00',
+            'rrule' => 'FREQ=DAILY;INTERVAL=2', 'title' => 'Sample meeting, renamed'];
+        $plan = $d->events->previewPatch($u, $may, $edit + ['preview' => true, 'plan' => ['choices' => ['outside' => 'keep']]]);
+        $listed = array_values(array_filter($plan['days'], static fn(array $x): bool => $x['kind'] === 'edited'));
+        checkEq('the plan lists the day under the part, moving to its key\'s image', [['2033-05-25T18:00:00Z', '2033-05-25T17:00:00Z', 'moves']],
+            array_map(static fn(array $x): array => [$x['key'], $x['newKey'], $x['outcome']], $listed));
+        $d->events->patch($u, $may, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices($plan, ['outside' => 'keep'])]]);
+        $new = $newest($may);
+        checkEq('committed: the old part ends in 2028, the day is the part\'s, keyed on 25 May 2033 17:00Z, on its own 24 May, renamed', [
+            'FREQ=YEARLY;BYMONTH=5;BYDAY=4WE;UNTIL=20280524T180000Z', 'FREQ=DAILY;INTERVAL=2',
+            [['recurrence_instance_utc' => '2033-05-25 17:00:00', 'start_utc' => '2033-05-24 17:00:00', 'title' => 'Sample meeting, renamed']], 0,
+        ], [
+            $col($may, 'rrule'), $col($new, 'rrule'),
+            $db->all('SELECT recurrence_instance_utc, start_utc, title FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$new]),
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$may]),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('undone: every row as before, and the part is gone', [$before, 0], [$rows($may), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$new])]);
+    });
+
     // From an edited day's own row, delete following, an answer from a day
     // on and a relationship from a day on are the series' split at that
     // day's key (the row's recurrence_instance_utc), as an edit is; the

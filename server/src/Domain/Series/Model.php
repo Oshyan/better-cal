@@ -1332,8 +1332,12 @@ final class Model
      */
     private function carried(array $readings, int $at, int $days): array
     {
+        // Carried by no days, each reading is its own drag: a row placed on
+        // its own moves by it alone, never by its new key read on the old
+        // zone's calendar, which a day acted on in a zone of its own puts
+        // on another day than the drag does.
         if ($days === 0) {
-            return $readings;
+            return array_map(static fn(array $r): array => ['drag' => $r['image']] + $r, $readings);
         }
         $out = [];
         foreach ($readings as $r) {

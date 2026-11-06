@@ -2046,6 +2046,21 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         'FREQ=WEEKLY;BYDAY=WE,FR', '2027-01-06 02:00:00', 'Europe/Berlin', [],
     ], [$none['writes']['master']['rrule'] ?? null, $none['writes']['master']['start_utc'] ?? $class['start_utc'], $none['writes']['master']['tzid'] ?? null, $none['writes']['overrides'] ?? []]);
 
+    // The day acted on in a zone of its own: first Mondays at 06:00 in
+    // Auckland, the Mon 7 Dec day at its own 06:00 in New York, moved to
+    // 07:00 and to Berlin at the same moment. The series repeats at that
+    // instant read in Berlin (Mondays 13:00), no day dragged, and the Mon 1
+    // Mar day at its own 09:00 Auckland keeps its instant (was: a day later,
+    // its new key read on Auckland's calendar, Tue 2 Mar 01:00, as a drag).
+    $nzMonthly = smSeries('Sample club', 'FREQ=MONTHLY;BYDAY=1MO', '2026-10-05 06:00', 90, false, [], 'Pacific/Auckland');
+    $actedNy = smEdited($nzMonthly, 2, '2026-12-07 06:00', ['tzid' => 'America/New_York', 'start_utc' => smAt('2026-12-07 06:00', 'America/New_York'), 'end_utc' => smAt('2026-12-07 07:30', 'America/New_York')], null, ['time', 'zone']);
+    $ownTimeNz = smEdited($nzMonthly, 3, '2027-03-01 06:00', [], '2027-03-01 09:00', ['time']);
+    $moved = smPlan($nzMonthly, [$actedNy, $ownTimeNz], ['acted' => smAt('2026-12-07 06:00', 'Pacific/Auckland'),
+        'landed' => ['start_utc' => smAt('2026-12-07 07:00', 'Europe/Berlin'), 'end_utc' => smAt('2026-12-07 08:30', 'Europe/Berlin'), 'all_day' => 0, 'tzid' => 'Europe/Berlin']], ['zone' => 'moment']);
+    checkEq('Zone moment from a day in its own zone: first Mondays at 13:00 in Berlin, the day at its own 09:00 Auckland keeps that instant, Mon 1 Mar', [
+        'FREQ=MONTHLY;BYDAY=1MO', 'Europe/Berlin', smAt('2026-10-05 13:00', 'Europe/Berlin'), smAt('2027-03-01 09:00', 'Pacific/Auckland'),
+    ], [$moved['writes']['master']['rrule'] ?? 'FREQ=MONTHLY;BYDAY=1MO', $moved['writes']['master']['tzid'] ?? null, $moved['writes']['master']['start_utc'] ?? $nzMonthly['start_utc'], $moved['writes']['overrides'][3]['start_utc'] ?? smAt('2027-03-01 09:00', 'Pacific/Auckland')]);
+
     // Every day within the year whose clock is missing or doubled gets its
     // note: Sundays at 02:30 in Auckland happen twice on 4 Apr and not at
     // all on 26 Sep.

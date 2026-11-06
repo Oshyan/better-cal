@@ -1,0 +1,62 @@
+{
+  "id": "s14-following-rename-edited",
+  "about": "\"This and following\" rename from the third Tuesday, edited days before (own location) and after (own title) the cut.",
+  "expect151": "Old series ends 12 Jan keeping its edited 12 Jan; new series from 19 Jan, COUNT 6, title \"Sample sync\", carrying the edited 2 Feb with its own title (ownTitle preselected keep).",
+  "expectOld": "Old contract: following splits the series there; what happens to edited days is not stated.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=8"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-12T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "location": "Sample room 2"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-02-02T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "following",
+      "set": {
+        "title": "Sample sync"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

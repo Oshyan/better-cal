@@ -1,0 +1,45 @@
+{
+  "id": "s44-monthly-weekday-set",
+  "about": "Monthly on the first weekday (BYDAY=MO..FR;BYSETPOS=1); February's dragged to the next day.",
+  "expect151": "Every month's second weekday (BYSETPOS=2).",
+  "expectOld": "Old (series-model table, BYSETPOS over a set of days, Today): ignored, the start realigns back.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample payroll",
+        "start": "2027-01-01T17:00:00Z",
+        "end": "2027-01-01T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-02-02T17:00:00Z",
+        "end": "2027-02-02T17:30:00Z"
+      },
+      "on": "2027-02-01T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "s48-yearly-feb29",
+  "about": "Yearly on 28 Feb (BYMONTH=2;BYMONTHDAY=28); 2028's dragged to 29 Feb.",
+  "expect151": "Two readings, the last day of February (BYMONTH=2;BYMONTHDAY=-1) preselected over only in leap years.",
+  "expectOld": "Old (series-model table, YEARLY bare/BYMONTH, Today): from 29 Feb lands on the wrong day.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample renewal",
+        "start": "2027-02-28T17:00:00Z",
+        "end": "2027-02-28T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28;COUNT=3"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2028-02-29T17:00:00Z",
+        "end": "2028-02-29T17:30:00Z"
+      },
+      "on": "2028-02-28T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

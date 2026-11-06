@@ -1,0 +1,41 @@
+{
+  "id": "s19-delete-following-first",
+  "about": "Delete following from the first day.",
+  "expect151": "Delete all: the series is deleted; Undo restores it.",
+  "expectOld": "Old contract: delete following from the first day (not stated).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "following",
+      "on": "2027-01-05T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

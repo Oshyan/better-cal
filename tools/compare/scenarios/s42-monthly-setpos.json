@@ -1,0 +1,45 @@
+{
+  "id": "s42-monthly-setpos",
+  "about": "Monthly on the second Tuesday (BYDAY=TU;BYSETPOS=2); February's dragged to the second Wednesday.",
+  "expect151": "Every month's second Wednesday.",
+  "expectOld": "Old (series-model table, MONTHLY nth weekday, Today): whole-month drags leave exceptions and UNTIL behind; a day drag not detailed.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample board",
+        "start": "2027-01-12T17:00:00Z",
+        "end": "2027-01-12T18:00:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=MONTHLY;BYDAY=TU;BYSETPOS=2;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-02-10T17:00:00Z",
+        "end": "2027-02-10T18:00:00Z"
+      },
+      "on": "2027-02-09T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

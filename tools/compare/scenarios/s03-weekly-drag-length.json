@@ -1,0 +1,45 @@
+{
+  "id": "s03-weekly-drag-length",
+  "about": "Weekly Monday series lengthened from 30 to 60 minutes from its second occurrence.",
+  "expect151": "Every occurrence 09:00 to 10:00; nothing else changes.",
+  "expectOld": "Same: the new length applies to the series.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample review",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-18T17:00:00Z",
+        "end": "2027-01-18T18:00:00Z"
+      },
+      "on": "2027-01-18T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

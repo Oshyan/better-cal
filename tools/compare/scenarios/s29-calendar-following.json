@@ -1,0 +1,58 @@
+{
+  "id": "s29-calendar-following",
+  "about": "Move from the third Tuesday on to another calendar, an edited day after.",
+  "expect151": "Split at 19 Jan, the new part on B with the edited 2 Feb.",
+  "expectOld": "Same: following splits the series and the new part lives on the target.",
+  "steps": [
+    {
+      "do": "calendar",
+      "as": "B",
+      "name": "Sample work"
+    },
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-02-02T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "following",
+      "set": {
+        "calendar": "B"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

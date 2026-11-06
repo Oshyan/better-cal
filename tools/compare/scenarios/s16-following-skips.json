@@ -1,0 +1,56 @@
+{
+  "id": "s16-following-skips",
+  "about": "\"This and following\" rename from the third Tuesday with skipped days before (12 Jan) and after (2 Feb).",
+  "expect151": "Old part keeps the 12 Jan skip and ends 12 Jan; the new part (COUNT 4) carries the 2 Feb skip.",
+  "expectOld": "Old contract: split; skips not addressed.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-02-02T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "following",
+      "set": {
+        "title": "Sample sync"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

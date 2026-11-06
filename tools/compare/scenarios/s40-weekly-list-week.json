@@ -1,0 +1,45 @@
+{
+  "id": "s40-weekly-list-week",
+  "about": "Monday, Wednesday and Friday; a Monday dragged a whole week later.",
+  "expect151": "reading group for whole weeks (move every Monday a week later, or shift the whole pattern a week), preselected option.",
+  "expectOld": "Old contract: the series moves by the same number of days.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample gym",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T18:00:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-25T17:00:00Z",
+        "end": "2027-01-25T18:00:00Z"
+      },
+      "on": "2027-01-18T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

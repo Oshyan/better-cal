@@ -1,0 +1,49 @@
+{
+  "id": "s28-calendar-this",
+  "about": "Move the second Tuesday alone to another calendar.",
+  "expect151": "A standalone event on calendar B at 12 Jan; the series skips the day.",
+  "expectOld": "Same: this detaches that occurrence as a standalone event on the target calendar.",
+  "steps": [
+    {
+      "do": "calendar",
+      "as": "B",
+      "name": "Sample work"
+    },
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "this",
+      "set": {
+        "calendar": "B"
+      },
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

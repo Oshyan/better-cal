@@ -1,0 +1,44 @@
+{
+  "id": "s51-dst-gap-clock",
+  "about": "Daily 02:30 Los Angeles starting 13 Mar, across the skipped hour on 14 Mar; then renamed.",
+  "expect151": "The 14 Mar day at 03:30 (the clock plus the gap, decisions.md), the others at 02:30.",
+  "expectOld": "Old: not stated.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample night job",
+        "start": "2027-03-13T10:30:00Z",
+        "end": "2027-03-13T11:00:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=DAILY;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "title": "Sample night task"
+      },
+      "on": "2027-03-13T10:30:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

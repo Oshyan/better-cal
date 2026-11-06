@@ -1,0 +1,60 @@
+{
+  "id": "s38-drag-from-edited-row",
+  "about": "A whole-series drag one day later sent to an edited day's own row (scope all).",
+  "expect151": "The same as sending it to the master with the day's key: every event a day later, the edited day lands on 20 Jan keeping its title.",
+  "expectOld": "Old (series-model, Every Kind of Edit, last row, Today): the edit goes to the day's own row, which changes alone.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "alias",
+      "as": "E",
+      "of": "S",
+      "key": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "E",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-20T17:00:00Z",
+        "end": "2027-01-20T17:30:00Z"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

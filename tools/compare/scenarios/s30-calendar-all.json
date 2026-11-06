@@ -1,0 +1,58 @@
+{
+  "id": "s30-calendar-all",
+  "about": "Move a whole series with an edited day to another calendar.",
+  "expect151": "Series and edited day on B.",
+  "expectOld": "Same: all moves the series and its exceptions together.",
+  "steps": [
+    {
+      "do": "calendar",
+      "as": "B",
+      "name": "Sample work"
+    },
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "calendar": "B"
+      },
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

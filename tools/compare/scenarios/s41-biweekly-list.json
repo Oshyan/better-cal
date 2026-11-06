@@ -1,0 +1,45 @@
+{
+  "id": "s41-biweekly-list",
+  "about": "Every other Saturday and Sunday; a Sunday dragged to Monday.",
+  "expect151": "reading group, preselected option, with WKST written so each period's days stay in one week.",
+  "expectOld": "Old (series-model table, WEEKLY INTERVAL=2 list, Today): days crossing the week start land in the off weeks.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample hike",
+        "start": "2027-01-09T17:00:00Z",
+        "end": "2027-01-09T20:00:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=SA,SU;COUNT=6"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T20:00:00Z"
+      },
+      "on": "2027-01-10T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

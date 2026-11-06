@@ -1,0 +1,51 @@
+{
+  "id": "s24-attendance-all",
+  "about": "Attendance \"interested\" for all events of a series with an edited day.",
+  "expect151": "Master and the edited day interested.",
+  "expectOld": "Same: all sets the master and every override.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "answer",
+      "event": "S",
+      "scope": "all",
+      "on": "2027-01-12T17:00:00Z",
+      "attendance": "interested"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

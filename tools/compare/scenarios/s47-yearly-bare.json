@@ -1,0 +1,45 @@
+{
+  "id": "s47-yearly-bare",
+  "about": "Yearly from 10 Mar 2027; 2028's dragged a day later.",
+  "expect151": "Every 11 Mar from 2027.",
+  "expectOld": "Same per the old contract (days move by the same number).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample anniversary",
+        "start": "2027-03-10T17:00:00Z",
+        "end": "2027-03-10T18:00:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=YEARLY;COUNT=3"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2028-03-11T17:00:00Z",
+        "end": "2028-03-11T18:00:00Z"
+      },
+      "on": "2028-03-10T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

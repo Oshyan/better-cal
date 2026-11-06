@@ -1,0 +1,51 @@
+{
+  "id": "s35-skip-follows-time",
+  "about": "A daily series with a skipped 13 Jan moved to 10:00.",
+  "expect151": "Every day 10:00; the skip at the new time of 13 Jan.",
+  "expectOld": "Same: skipped dates keep their places when the series moves with its repeat days unchanged.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample walk",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=DAILY;COUNT=6"
+      }
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-01-13T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-12T18:00:00Z",
+        "end": "2027-01-12T18:30:00Z"
+      },
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

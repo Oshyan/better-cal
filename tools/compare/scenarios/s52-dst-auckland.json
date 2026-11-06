@@ -1,0 +1,45 @@
+{
+  "id": "s52-dst-auckland",
+  "about": "Weekly Monday 09:00 Auckland across the 4 Apr 2027 change, moved to 10:00 from 5 Apr.",
+  "expect151": "10:00 local every week: 21:00Z before the change, 22:00Z after.",
+  "expectOld": "Same: wall-clock time kept across DST.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample planning",
+        "start": "2027-03-28T20:00:00Z",
+        "end": "2027-03-28T20:30:00Z",
+        "tzid": "Pacific/Auckland",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-04-04T22:00:00Z",
+        "end": "2027-04-04T22:30:00Z"
+      },
+      "on": "2027-04-04T21:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

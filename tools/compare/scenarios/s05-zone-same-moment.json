@@ -1,0 +1,49 @@
+{
+  "id": "s05-zone-same-moment",
+  "about": "The same zone change as s04, with the \"same moment\" reading chosen.",
+  "expect151": "Zone group, moment: the 09:00 sent is read in the old zone, so the day keeps 17:00Z and the series repeats at 18:00 Berlin.",
+  "expectOld": "The old contract has no such reading: it takes the instant and zone sent (09:00 Berlin).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample call",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-18T08:00:00Z",
+        "end": "2027-01-18T08:30:00Z",
+        "tzid": "Europe/Berlin"
+      },
+      "on": "2027-01-18T17:00:00Z",
+      "choices": {
+        "zone": "moment"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

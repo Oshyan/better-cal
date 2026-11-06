@@ -1,0 +1,53 @@
+{
+  "id": "s11-count-shorter",
+  "about": "COUNT 6 cut to 4 from the first day, with an edited day on the fifth.",
+  "expect151": "Four events; the edited fifth day is outside the new end: preselected option of the outside group.",
+  "expectOld": "Old contract: nothing said about edited days past a shortened end.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-02-02T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=4"
+      },
+      "on": "2027-01-05T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

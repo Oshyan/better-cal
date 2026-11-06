@@ -1,0 +1,55 @@
+{
+  "id": "s55-time-and-day-from-own-time-day",
+  "about": "An edited day at its own 10:00 (26 Jan); the whole series dragged from it to Wednesday 11:00.",
+  "expect151": "Adoption groups: time adopt (preselected always), day as preselected; every event Wednesday, the series at 11:00.",
+  "expectOld": "Old: the edit goes to the day's own row (scope all with instanceStart on the master changes the series by the difference from the occurrence key).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-26T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "start": "2027-01-26T18:00:00Z",
+        "end": "2027-01-26T18:30:00Z"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-27T19:00:00Z",
+        "end": "2027-01-27T19:30:00Z"
+      },
+      "on": "2027-01-26T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

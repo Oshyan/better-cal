@@ -1,0 +1,45 @@
+{
+  "id": "s43-monthly-15-to-30",
+  "about": "Monthly on the 15th; January's dragged to the 30th.",
+  "expect151": "Month-end readings, clamp preselected (BYMONTHDAY=28,29,30;BYSETPOS=-1): February on the 28th.",
+  "expectOld": "Old (series-model table, BYMONTHDAY 1 to 28, Today): the 30th written as is, February loses its day.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample rent",
+        "start": "2027-01-15T17:00:00Z",
+        "end": "2027-01-15T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=15;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-30T17:00:00Z",
+        "end": "2027-01-30T17:30:00Z"
+      },
+      "on": "2027-01-15T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

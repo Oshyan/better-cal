@@ -1,0 +1,44 @@
+{
+  "id": "s13-until-longer",
+  "about": "A weekly Monday series with UNTIL 1 Feb extended to 1 Mar.",
+  "expect151": "UNTIL as sent; occurrences through 1 Mar.",
+  "expectOld": "Same.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample review",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;UNTIL=20270202T075959Z"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;UNTIL=20270302T075959Z"
+      },
+      "on": "2027-01-11T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

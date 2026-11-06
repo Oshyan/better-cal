@@ -1,0 +1,53 @@
+{
+  "id": "s10-new-rule",
+  "about": "A new rule (Tuesdays to Thursdays) sent from the second occurrence, with an edited day on the third.",
+  "expect151": "New rule from the first Thursday on or after the start; the new rule is the old one with its days shifted, so the drag's mapping is a reading (map, preselected: the edited Tuesday moves to its Thursday) beside keep.",
+  "expectOld": "Old contract: when its repeat days change, the series restarts on its first listed day; edited occurrences are not addressed.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=4"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "location": "Sample room"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "rrule": "FREQ=WEEKLY;BYDAY=TH;COUNT=4"
+      },
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

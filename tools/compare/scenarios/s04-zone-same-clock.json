@@ -1,0 +1,46 @@
+{
+  "id": "s04-zone-same-clock",
+  "about": "Weekly Monday 09:00 Los Angeles series moved to Europe/Berlin at 09:00 Berlin from its second occurrence (the preselected reading).",
+  "expect151": "Zone group, clock reading: every Monday at 09:00 Berlin (08:00Z), tzid Europe/Berlin, start Mon 11 Jan.",
+  "expectOld": "The old contract takes the new time of day and zone as sent: 09:00 Berlin, the same rows.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample call",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-18T08:00:00Z",
+        "end": "2027-01-18T08:30:00Z",
+        "tzid": "Europe/Berlin"
+      },
+      "on": "2027-01-18T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "id": "s09-master-start-onpattern",
+  "about": "From the series itself (no instanceStart): start moved to its third Tuesday, with an edited day on the second.",
+  "expect151": "Start only: the days stay where they are, COUNT counted from the new start (bound preselects count), the edited 12 Jan is outside (preselected: kept as an event of its own).",
+  "expectOld": "Old contract: start/end set the series' own first occurrence, so every day moves two weeks (series-model Every Kind of Edit, Start only, Today column).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-12T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup (room 2)"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-19T17:00:00Z",
+        "end": "2027-01-19T17:30:00Z"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "s22-attendance-this",
+  "about": "Attendance \"going\" for the second Tuesday only.",
+  "expect151": "An edited row for 12 Jan with attendance going (own field attendance); the series unchanged.",
+  "expectOld": "Same: this gives that occurrence its own override.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "answer",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-01-12T17:00:00Z",
+      "attendance": "going"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

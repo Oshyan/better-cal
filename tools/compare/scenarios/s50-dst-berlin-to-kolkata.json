@@ -1,0 +1,46 @@
+{
+  "id": "s50-dst-berlin-to-kolkata",
+  "about": "Weekly Monday 09:00 Berlin across the 28 Mar change, moved to Asia/Kolkata at 09:00 from 29 Mar.",
+  "expect151": "Clock reading: every Monday 09:00 Kolkata (03:30Z).",
+  "expectOld": "Same per the old contract.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample sync",
+        "start": "2027-03-22T08:00:00Z",
+        "end": "2027-03-22T08:30:00Z",
+        "tzid": "Europe/Berlin",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-03-29T03:30:00Z",
+        "end": "2027-03-29T04:00:00Z",
+        "tzid": "Asia/Kolkata"
+      },
+      "on": "2027-03-29T07:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

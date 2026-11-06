@@ -1,0 +1,45 @@
+{
+  "id": "s49-dst-daily-la",
+  "about": "Daily 09:00 Los Angeles across the 14 Mar 2027 spring change, moved to 10:00 from 16 Mar.",
+  "expect151": "10:00 local every day: 18:00Z before the change, 17:00Z after.",
+  "expectOld": "Same: a repeating event keeps its wall-clock time across DST.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample walk",
+        "start": "2027-03-10T17:00:00Z",
+        "end": "2027-03-10T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=DAILY;COUNT=10"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-03-16T17:00:00Z",
+        "end": "2027-03-16T17:30:00Z"
+      },
+      "on": "2027-03-16T16:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

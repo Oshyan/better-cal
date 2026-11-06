@@ -1,0 +1,64 @@
+{
+  "id": "s31-calendar-all-from-edited",
+  "about": "Move to another calendar with scope all, sent to an edited day's own row.",
+  "expect151": "The whole series moves with its edited dates; the rest of the edit stays the day's.",
+  "expectOld": "Old contract: an override patched with calendarId detaches (a standalone event on B, the series skips the day).",
+  "steps": [
+    {
+      "do": "calendar",
+      "as": "B",
+      "name": "Sample work"
+    },
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "alias",
+      "as": "E",
+      "of": "S",
+      "key": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "E",
+      "scope": "all",
+      "set": {
+        "calendar": "B"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

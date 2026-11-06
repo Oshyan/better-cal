@@ -1,0 +1,51 @@
+{
+  "id": "s21-delete-all-edited",
+  "about": "Delete all of a series that has an edited day, then Undo.",
+  "expect151": "Series and its edited day deleted; Undo puts both back with the edited day's own fields.",
+  "expectOld": "Same per the old contract.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-19T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo",
+        "location": "Sample room"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "all",
+      "on": "2027-01-05T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

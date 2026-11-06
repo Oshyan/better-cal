@@ -1,0 +1,45 @@
+{
+  "id": "s46-monthly-bare-31",
+  "about": "Monthly with no BYMONTHDAY from 31 Jan (so 31 Jan, 31 Mar, 31 May...); March's dragged to the 30th.",
+  "expect151": "Month-end readings on the 30th, its own form first: skip preselected (on the 30th, skipping months without one), written back bare; COUNT kept.",
+  "expectOld": "Old (series-model table, MONTHLY bare, Today): lands on another day across months of other lengths.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample report",
+        "start": "2027-01-31T17:00:00Z",
+        "end": "2027-01-31T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=MONTHLY;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-03-30T16:00:00Z",
+        "end": "2027-03-30T16:30:00Z"
+      },
+      "on": "2027-03-31T16:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

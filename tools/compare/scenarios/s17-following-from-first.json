@@ -1,0 +1,44 @@
+{
+  "id": "s17-following-from-first",
+  "about": "\"This and following\" rename from the first day.",
+  "expect151": "The whole series' change: one row renamed, no split.",
+  "expectOld": "Old contract: following from the first day (not stated; a split with an empty old part, or the whole).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "following",
+      "set": {
+        "title": "Sample sync"
+      },
+      "on": "2027-01-05T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

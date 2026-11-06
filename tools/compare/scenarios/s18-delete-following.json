@@ -1,0 +1,56 @@
+{
+  "id": "s18-delete-following",
+  "about": "Delete following from the third Tuesday, an edited day (26 Jan) and a skip (2 Feb) after it.",
+  "expect151": "Series ends 12 Jan; the edited 26 Jan is deleted; the 2 Feb skip dropped; Undo puts it all back.",
+  "expectOld": "Old contract: delete with scope following (not detailed).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-26T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-02-02T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "following",
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

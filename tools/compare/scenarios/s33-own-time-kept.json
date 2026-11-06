@@ -1,0 +1,55 @@
+{
+  "id": "s33-own-time-kept",
+  "about": "An edited day at its own 10:00; the series moved to 11:00 from another occurrence.",
+  "expect151": "The series at 11:00; the edited day keeps its own 10:00.",
+  "expectOld": "Old contract: edited occurrences keep their places in it when the series moves with its repeat days unchanged.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-26T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "start": "2027-01-26T18:00:00Z",
+        "end": "2027-01-26T18:30:00Z"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-12T19:00:00Z",
+        "end": "2027-01-12T19:30:00Z"
+      },
+      "on": "2027-01-12T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

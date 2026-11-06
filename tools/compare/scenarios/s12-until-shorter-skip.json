@@ -1,0 +1,50 @@
+{
+  "id": "s12-until-shorter-skip",
+  "about": "A daily series with UNTIL 20 Jan and a skipped 18 Jan, its UNTIL cut to 15 Jan.",
+  "expect151": "Ends 15 Jan; the skip outside the new end is dropped from exdates.",
+  "expectOld": "Old contract: UNTIL as sent; skipped dates not addressed.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample walk",
+        "start": "2027-01-11T17:00:00Z",
+        "end": "2027-01-11T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=DAILY;UNTIL=20270121T075959Z"
+      }
+    },
+    {
+      "do": "delete",
+      "event": "S",
+      "scope": "this",
+      "on": "2027-01-18T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "rrule": "FREQ=DAILY;UNTIL=20270116T075959Z"
+      },
+      "on": "2027-01-11T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

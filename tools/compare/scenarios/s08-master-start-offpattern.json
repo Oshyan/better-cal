@@ -1,0 +1,44 @@
+{
+  "id": "s08-master-start-offpattern",
+  "about": "From the series itself (no instanceStart): its start sent on Wednesday 6 Jan, a day the Tuesday pattern does not give.",
+  "expect151": "Read as the first occurrence dragged there: every occurrence a day later, BYDAY=WE.",
+  "expectOld": "Old contract: start/end set the series' own first occurrence.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=4"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "all",
+      "set": {
+        "start": "2027-01-06T17:00:00Z",
+        "end": "2027-01-06T17:30:00Z"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

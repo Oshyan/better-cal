@@ -1,0 +1,60 @@
+{
+  "id": "s23-attendance-following",
+  "about": "Attendance \"going\" from the third Tuesday on, with edited days before (12 Jan) and after (2 Feb).",
+  "expect151": "Split at 19 Jan: the new series and the edited 2 Feb are going, the old part and 12 Jan stay none; one Undo entry.",
+  "expectOld": "Same per the old contract (following splits the series there).",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=6"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-01-12T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup (early)"
+      }
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "on": "2027-02-02T17:00:00Z",
+      "scope": "this",
+      "set": {
+        "title": "Sample standup demo"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "answer",
+      "event": "S",
+      "scope": "following",
+      "on": "2027-01-19T17:00:00Z",
+      "attendance": "going"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

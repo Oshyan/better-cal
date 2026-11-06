@@ -1,0 +1,44 @@
+{
+  "id": "s54-following-count",
+  "about": "\"This and following\" from the third of 8 Tuesdays with COUNT=5 sent.",
+  "expect151": "bound group, whole preselected: the series' whole count is 5, the new part takes what is left (3).",
+  "expectOld": "Old contract: the rule as sent on the new part.",
+  "steps": [
+    {
+      "do": "create",
+      "as": "S",
+      "event": {
+        "title": "Sample standup",
+        "start": "2027-01-05T17:00:00Z",
+        "end": "2027-01-05T17:30:00Z",
+        "tzid": "America/Los_Angeles",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=8"
+      }
+    },
+    {
+      "do": "snapshot",
+      "name": "before"
+    },
+    {
+      "do": "edit",
+      "event": "S",
+      "scope": "following",
+      "set": {
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=5"
+      },
+      "on": "2027-01-19T17:00:00Z"
+    },
+    {
+      "do": "snapshot",
+      "name": "after"
+    },
+    {
+      "do": "undo"
+    },
+    {
+      "do": "snapshot",
+      "name": "undone",
+      "journal": true
+    }
+  ]
+}

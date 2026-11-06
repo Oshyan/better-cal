@@ -80,6 +80,7 @@ final class Product
             'notApplicable' => $counts['product']['na'] ?? [],
             'combos' => $counts['product']['combos'] ?? [],
             'target' => $counts['product']['target'] ?? [],
+            'matchOnRule' => $counts['product']['onRule'] ?? [],
         ];
     }
 
@@ -97,6 +98,7 @@ final class Product
             }
         };
         $line('Edits by how the outcome matched the design\'s options', $s['match']);
+        $line('The same, for series created on a day of their rule', $s['matchOnRule']);
         $line('Matching another option than the preselected one (the option that matched)', $s['otherOption']);
         $line('Matching no option (the preselected combination\'s failing checks)', $s['noOption']);
         $line('Edits sent to', $s['target']);

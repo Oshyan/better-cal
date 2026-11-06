@@ -126,6 +126,10 @@ trait OptionMatch
         $label = self::departures($combos[0], $combos[$use]);
         $this->spec['matched'] = $match === null ? 'none' : ($match === 0 ? 'preselected' : $label);
         $but = $once === [] ? '' : ', but a check no option reads failed (' . implode(', ', $once) . ')';
+        // The same split for the series created on a day of their rule (g-created passed): the old versions aligned only a weekly start.
+        if (!in_array('g-created', array_column($saved[0], 'invariant'), true)) {
+            $this->tally('onRule', $match === null ? 'no option' : ($match === 0 ? (count($combos) > 1 ? 'the preselected option' : 'the one outcome (no choice)') : 'another option') . $but);
+        }
         if ($match === 0) {
             $this->tally('match', (count($combos) > 1 ? 'the preselected option' : 'the one outcome (no choice)') . $but);
         } elseif ($match !== null) {

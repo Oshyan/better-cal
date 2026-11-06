@@ -88,6 +88,13 @@ return [
         'cases' => ['following-a-day-given-the-only-field-it-owned-rejoins'],
     ],
     [
+        // Left behind on the old part, the row also stands past that part's end (h-past-end).
+        'id' => 'split-drops-a-far-edited-day', 'file' => 'server/src/Domain/Series/Split.php', 'checks' => ['5-edited', 'h-past-end'],
+        'what' => 'a split leaves out of the part an edited day keyed more than 740 days after the day acted on, past any window a reader looks through',
+        'patch' => [["                \$partRows[] = \$row;\n", "                if (Time::fromDb((string) \$row['recurrence_instance_utc'])->getTimestamp() < Time::fromDb(\$acted)->getTimestamp() + 740 * 86400) {\n                    \$partRows[] = \$row;\n                }\n"]],
+        'cases' => ['following-a-new-pattern-keeps-an-edited-day-years-on'],
+    ],
+    [
         'id' => 'next-drops-own-zone-row', 'file' => $model, 'checks' => ['c-next'],
         'what' => 'a timed row of an all-day plan, in its own zone, dropped from coming up',
         'patch' => [["if (!isset(\$skip[\$key]) && \$item['dn'] >= \$fromDn) {", "if (!isset(\$skip[\$key]) && \$item['dn'] >= \$fromDn && !isset(\$item['tz'])) {"]],

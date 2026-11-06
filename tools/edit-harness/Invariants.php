@@ -725,23 +725,16 @@ trait Invariants
         foreach ($out['rows'] as $id => $r) {
             $ov0 = $before['overrides'][$id];
             $ov1 = $after['overrides'][$id] ?? null;
-            if ($ov1 === null) {
+            // A day beyond the window the series was read over is looked for where it is (README, The Oracle).
+            $key = $r['img'] === null ? null : Truth::keyOnDay($after, $byDay, (int) $r['img'], $tz1);
+            if ($ov1 === null && $key !== null) {
                 foreach ($after['overrides'] as $cand) {
-                    if ($r['img'] !== null && isset($byDay[$r['img']]) && (string) $cand['recurrence_instance_utc'] === $byDay[$r['img']] && (string) $cand['title'] === (string) $ov0['title']) {
+                    if ((string) $cand['recurrence_instance_utc'] === $key && (string) $cand['title'] === (string) $ov0['title']) {
                         $ov1 = $cand;
                     }
                 }
             }
             if ($r['inside']) {
-                // A day beyond the window the series was read over is looked for where it is (README, The Oracle).
-                $key = $byDay[$r['img']] ?? null;
-                if ($key === null && $r['img'] !== null && $after['through'] !== null) {
-                    foreach (Truth::keysFrom($after['row'], Days::date((int) $r['img'] - 1) . ' 00:00:00', 3) as $k) {
-                        if (Clock::dayOf($k, $tz1) === $r['img']) {
-                            $key = $k;
-                        }
-                    }
-                }
                 if ($key !== null && self::ownAfter($id, $before, $edit, $choices, ['key' => $key] + $placedAt) === []) {
                     $gone++;
                     $this->check($inv . '-edited', $ov1 === null, 'an edited day left with nothing of its own is an ordinary occurrence again, its row deleted', ['row' => $id, 'was' => $ov0['recurrence_instance_utc'], 'image' => Days::date((int) $r['img'])]);
@@ -782,14 +775,7 @@ trait Invariants
         $put = $edit['sent'];
         if ($put !== null && $edit['fromRow'] === null && $x->kind !== 'newrule' && $out['actedInside'] && !$x->allDay1) {
             $putAt = ($choices['zone'] ?? null) === 'moment' && $x->zoneGroup ? Clock::db($x->momentAt) : (string) $put['start'];
-            $k = $byDay[$x->landedDn] ?? null;
-            if ($k === null && $after['through'] !== null) {
-                foreach (Truth::keysFrom($after['row'], Days::date($x->landedDn - 1) . ' 00:00:00', 3) as $kk) {
-                    if (Clock::dayOf($kk, $tz1) === $x->landedDn) {
-                        $k = $kk;
-                    }
-                }
-            }
+            $k = Truth::keyOnDay($after, $byDay, $x->landedDn, $tz1);
             $createdActed = $k !== null && $k !== $putAt ? 1 : 0;
         }
         $keptRows = count(array_filter($out['rows'], static fn(array $r): bool => $r['inside'])) - $gone + $createdActed;
@@ -1304,9 +1290,12 @@ trait Invariants
         foreach ($new['raw'] as $o) {
             $dayKey[$o['dn']] = $o['key'];
         }
+        // Matched past the window the part was read over too, as compareSeries matches its own (README, The Oracle).
+        $tz1 = $x->allDay1 ? 'UTC' : $x->tz1;
         foreach ($out['rows'] as $id => $r) {
-            if ($r['img'] !== null && isset($dayKey[$r['img']], $byKey[$dayKey[$r['img']]])) {
-                $mapped['overrides'][$id] = $byKey[$dayKey[$r['img']]];
+            $key = $r['img'] === null ? null : Truth::keyOnDay($new, $dayKey, (int) $r['img'], $tz1);
+            if ($key !== null && isset($byKey[$key])) {
+                $mapped['overrides'][$id] = $byKey[$key];
             }
         }
         $this->compareSeries('5', $x, $out, $part, $mapped, $choices, null, $edit);

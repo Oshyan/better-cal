@@ -314,14 +314,7 @@ trait PlanUntouched
             if (!$inside) {
                 $actedOwn = 1;
             } elseif (!$x->allDay1) {
-                $k = $ctx['byDay'][$x->landedDn] ?? null;
-                if ($k === null && $after['through'] !== null) {
-                    foreach (Truth::keysFrom($after['row'], Days::date($x->landedDn - 1) . ' 00:00:00', 3) as $kk) {
-                        if (Clock::dayOf($kk, $ctx['tz1']) === $x->landedDn) {
-                            $k = $kk;
-                        }
-                    }
-                }
+                $k = Truth::keyOnDay($after, $ctx['byDay'], $x->landedDn, $ctx['tz1']);
                 $createdActed = $k !== null && $k !== $ctx['putAt'] ? 1 : 0;
             }
         }

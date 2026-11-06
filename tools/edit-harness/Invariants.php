@@ -283,6 +283,11 @@ trait Invariants
             $row = $this->db->one('SELECT id, deleted_at FROM events WHERE id = ?', [$dayId]);
             $live = $row !== null && $row['deleted_at'] === null;
             $now = $this->db->one('SELECT * FROM event_links WHERE id = ?', [(int) $link['id']]);
+            if (!$live && !Product::$plan && in_array($sent['kind'], ['all', 'following'], true)) {
+                // Whether a whole-series edit deletes the day is the plan's day outcome: none without a plan.
+                $this->noPlan('b-trip-links');
+                continue;
+            }
             $deletes = match ($sent['kind']) {
                 'deleteThis' => $key === $acted['key'],
                 'deleteFollowing' => $key >= $acted['key'],
@@ -452,7 +457,8 @@ trait Invariants
         }
         // A reading picked from an earlier preview names nothing when the final
         // plan has no reading group (another zone option left one reading).
-        $chosenId = isset($groups['reading']) ? ($choices['reading'] ?? null) : null;
+        // With no plan (Product), the reading is the option combination's being checked (OptionMatch).
+        $chosenId = isset($groups['reading']) || (!Product::$plan && isset($choices['reading'])) ? ($choices['reading'] ?? null) : null;
         if ($chosenId === null) {
             // No group: one reading, or readings with one plan (merged).
             $chosenId = Expect::preselected($readings);

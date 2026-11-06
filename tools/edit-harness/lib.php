@@ -12,6 +12,7 @@ namespace BetterCal\EditHarness;
 use BetterCal\Domain\Settings;
 use BetterCal\Infra\Db;
 
+require_once __DIR__ . '/Product.php';
 require_once __DIR__ . '/Base.php';
 require_once __DIR__ . '/Shape.php';
 require_once __DIR__ . '/Rfc.php';
@@ -26,6 +27,7 @@ require_once __DIR__ . '/PlanNext.php';
 require_once __DIR__ . '/PlanUntouched.php';
 require_once __DIR__ . '/PlanPreselect.php';
 require_once __DIR__ . '/Sequences.php';
+require_once __DIR__ . '/OptionMatch.php';
 require_once __DIR__ . '/Driver.php';
 
 /**
@@ -143,8 +145,15 @@ final class Revision
     public static function get(): string
     {
         if (self::$rev === null) {
+            if (Product::$root !== '' && realpath(Product::$root) !== realpath(dirname(__DIR__, 2))) {
+                // Another checkout (--product): its own commit, the harness's beside it.
+                self::$rev = 'product:' . (Product::commitOf(Product::$root) ?? 'unknown') . '+harness:' . self::commit();
+            }
+            if (!class_exists(\BetterCal\Domain\Series\Model::class)) {
+                return self::$rev ??= self::commit();
+            }
             $model = (new \ReflectionClass(\BetterCal\Domain\Series\Model::class))->getFileName();
-            self::$rev = self::commit() . '+model:' . substr((string) sha1_file((string) $model), 0, 10);
+            self::$rev = (self::$rev ?? self::commit()) . '+model:' . substr((string) sha1_file((string) $model), 0, 10);
         }
         return self::$rev;
     }
@@ -274,7 +283,7 @@ final class Runner
     {
         $u = \freshUser($this->db);
         $other = (int) $this->domains->calendars->create($u, ['name' => 'Sample other calendar'])['id'];
-        return new Driver($this->db, $this->domains->events, $this->domains->undo, $u, (int) Settings::defaultCalendarId($this->db, $u), $other);
+        return new Driver($this->db, $this->domains->events, $this->domains->undo, $u, Product::defaultCalendarId($this->db, $u), $other);
     }
 
     public function count(array $result): void
@@ -291,6 +300,12 @@ final class Runner
         }
         if ($path === 'none') {
             $this->bump(['skipped']);
+        }
+        // A product without the plan API (Product): how the outcome matched the options, no-plan skips, not applicable.
+        foreach ($result['product'] ?? [] as $kind => $byKey) {
+            foreach ($byKey as $k => $n) {
+                $this->bump(['product', $kind, $k], $n);
+            }
         }
         foreach ($result['runs'] ?? [] as $check => $byRole) {
             foreach ($byRole as $role => $n) {

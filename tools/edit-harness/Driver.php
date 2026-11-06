@@ -20,6 +20,7 @@ final class Driver
     use PlanUntouched;
     use PlanPreselect;
     use Sequences;
+    use OptionMatch;
 
     /**
      * The share of drawn whole-series cases that commit every option of every choice from the same baseline (README,
@@ -77,6 +78,8 @@ final class Driver
         $this->records = [];
         $this->unoracled = [];
         $this->runs = [];
+        $this->product = [];
+        $this->ownMade = [];
         $this->wide0 = null;
         $this->splitBaseline = null;
         $this->splitCount = null;
@@ -107,6 +110,11 @@ final class Driver
         $this->spec['everyOption'] ??= isset($this->spec['fixed']) || crc32('every:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$everyOption * 10000);
         // The wall clocks typed, for a share of the drawn cases (a fixed case names it), by seed and number alone.
         $this->spec['typed'] ??= !isset($this->spec['fixed']) && crc32('typed:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$typed * 10000);
+        if (!Product::$plan && !empty($this->spec['typed'])) {
+            // The wall clocks typed are a 1.5 request field: sent untyped to a product before it.
+            $this->na('typed wall clocks (a 1.5 request field): sent untyped');
+            $this->spec['typed'] = false;
+        }
         $spec = $this->spec;
         // A fixed case may act on the stored start itself (a rule the expander can't read has no occurrences to pick from).
         $atStart = !empty($spec['actedStart']);
@@ -193,7 +201,12 @@ final class Driver
         Prof::mark('snapshot');
         $s1 = $this->snapshot();
         Prof::mark('checks');
-        $this->checkEdit($before, $after, $acted, $v, $sent, $s0);
+        if (Product::$plan) {
+            $this->checkEdit($before, $after, $acted, $v, $sent, $s0);
+        } else {
+            // No plan: the outcome against every option combination of the design's choices (OptionMatch).
+            $this->matchOptions($before, $after, $acted, $v, $sent, $s0);
+        }
         $this->checkTripLinks($before, $acted, $sent);
         Prof::mark('undo');
         // Undo: every row as it was.
@@ -225,7 +238,7 @@ final class Driver
     private function result(string $path): array
     {
         Prof::mark('');
-        return ['spec' => $this->spec, 'records' => $this->records, 'path' => $path, 'unoracled' => $this->unoracled, 'runs' => $this->runs];
+        return ['spec' => $this->spec, 'records' => $this->records, 'path' => $path, 'unoracled' => $this->unoracled, 'runs' => $this->runs, 'product' => $this->product];
     }
 
     /** The occurrence on or after a local date (a fixed case acting on a day past the window the oracle reads). */
@@ -485,6 +498,16 @@ final class Driver
             }
             $this->events->patch($this->userId, $id, $in);
             $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $occ['key']]);
+            if (!Product::$plan) {
+                // A product before 1.5 keeps no own list (override_fields): the harness keeps what each "this event" edit
+                // changed, from the spec, for the oracle's reading of the day; the stored list is not applicable.
+                $this->check('b-this', $row !== null, 'a "this event" edit gives the day a row of its own', ['key' => $occ['key']]);
+                if ($row !== null) {
+                    $this->ownMade[(int) $row['id']] = array_values(array_unique(array_merge($this->ownMade[(int) $row['id']] ?? [], $want)));
+                }
+                $this->na('own fields per edited day (stored own list): kept by the harness from the "this event" edits');
+                continue;
+            }
             $list = $row === null ? [] : (json_decode((string) ($row['override_fields'] ?? '[]'), true) ?: []);
             $missing = array_values(array_diff(array_unique($want), $list));
             $this->check('b-this', $row !== null && $missing === [], 'a "this event" edit makes the fields it changed the day\'s own', ['changed' => array_values(array_unique($want)), 'own' => $list, 'key' => $occ['key']]);
@@ -524,7 +547,7 @@ final class Driver
             }
         }
         foreach ($overrides as $oid => $ov) {
-            $own[$oid] = json_decode((string) ($ov['override_fields'] ?? '[]'), true) ?: [];
+            $own[$oid] = Product::$plan ? (json_decode((string) ($ov['override_fields'] ?? '[]'), true) ?: []) : ($this->ownMade[$oid] ?? []);
             if (isset($linked[$oid])) {
                 $own[$oid][] = 'trip';
             }
@@ -891,6 +914,9 @@ final class Driver
         }
         [$target, $in, $edit] = $this->body($st, $acted, $v, $v['scope']);
         $this->spec['request'][$slot] = ['target' => $target === $id ? 'master' : 'edited day', 'body' => $in];
+        if (!Product::$plan) {
+            return $this->oldEdit($target, $in, $edit, $st, $v, $s0, $slot, $replay);
+        }
         // Whole series and "this and following" alike (api-contract, This and following): preview, pick one option per
         // group, commit with the hash. A split's plan is the part's plan with its split; from the series' first day it
         // is the whole series' (scope all), checked as one.
@@ -983,6 +1009,23 @@ final class Driver
     private function splitCommit(string $scope, int $id, string $inst, array $s0, string $slot, bool $replay): ?array
     {
         $delete = $scope === 'deleteFollowing';
+        if (!Product::$plan) {
+            // Before 1.5 (api-contract at that tag): DELETE /events/:id {scope:"following", instanceStart} and
+            // POST /events/:id/attendance {attendance, scope:"following", instanceStart}, as the controller passes them on.
+            try {
+                $delete
+                    ? $this->events->deleteEvent($this->userId, $id, 'following', $inst)
+                    : $this->events->setAttendance($this->userId, $id, 'going', 'following', $inst);
+            } catch (HttpError | \InvalidArgumentException $e) {
+                if ($replay) {
+                    throw $e; // the edit applied again (f-redo) fails, as run() records it
+                }
+                $this->same('e-refused', $s0, $this->snapshot(), 'a refused edit writes nothing');
+                $this->fail('e-refusal', 'the edit was refused though the design allows it: ' . ($e instanceof HttpError ? $e->errorCode : 'bad request') . ' ' . mb_substr($e->getMessage(), 0, 200), []);
+                return null;
+            }
+            return ['kind' => $scope, 'instanceStart' => $inst, '_plan' => null, '_choices' => []];
+        }
         $named = $this->spec['choices'][$slot] ?? [];
         $plan = $delete
             ? $this->events->previewDelete($this->userId, $id, 'following', $inst, $named)
@@ -1015,6 +1058,9 @@ final class Driver
     /** What a Google calendar would be offered for the same edit, from the same rows (invariant i). */
     private function googlePlan(int $target, array $in, array $choices): ?array
     {
+        if (!Product::$plan) {
+            return null;
+        }
         try {
             $row = $this->row($target);
             if (!empty($row['recurrence_parent_id'])) {
@@ -1246,19 +1292,37 @@ final class Driver
 
     private function check(string $invariant, bool $ok, string $what, array $detail = []): void
     {
-        if (!$ok) {
+        if (!$ok && !$this->noPlan($invariant)) {
             $this->records[] = ['invariant' => $invariant, 'what' => $what, 'detail' => $detail];
         }
     }
 
     private function fail(string $invariant, string $what, array $detail = []): void
     {
-        $this->records[] = ['invariant' => $invariant, 'what' => $what, 'detail' => $detail];
+        if (!$this->noPlan($invariant)) {
+            $this->records[] = ['invariant' => $invariant, 'what' => $what, 'detail' => $detail];
+        }
+    }
+
+    /** A plan check on a product without the plan API: counted as "no plan" (Product::NO_PLAN), never recorded. */
+    private function noPlan(string $invariant): bool
+    {
+        if (Product::$plan || !in_array($invariant, Product::NO_PLAN, true)) {
+            return false;
+        }
+        $this->product['noPlan'][$invariant] = ($this->product['noPlan'][$invariant] ?? 0) + 1;
+        return true;
+    }
+
+    /** Something the case would exercise that the product lacks, counted by reason (README, Other Products). */
+    private function na(string $why): void
+    {
+        $this->product['na'][$why] = ($this->product['na'][$why] ?? 0) + 1;
     }
 
     private function same(string $invariant, array $expected, array $actual, string $what): void
     {
-        if ($expected !== $actual) {
+        if ($expected !== $actual && !$this->noPlan($invariant)) {
             $this->records[] = ['invariant' => $invariant, 'what' => $what, 'detail' => ['diff' => self::diff($expected, $actual)]];
         }
     }

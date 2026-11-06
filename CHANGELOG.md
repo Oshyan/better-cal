@@ -1,6 +1,6 @@
 # Changelog
 
-Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring features, and patch versions generally bring bug fixes and refinements, security fixes included. Every release is a git tag (`v1.0.0`) and a GitHub release; the running version is the `VERSION` file at the repository root, which the Settings page shows. Database migrations always run forward, so you can skip versions. [Updating](docs/install.md#updating) has the steps, with a backup first and what to do if something goes wrong.
+Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring features, and patch versions generally bring bug fixes and refinements, security fixes included. Every release is a git tag (`v1.0.0`) and a GitHub release; the running version is the `VERSION` file at the repository root, which the Settings page shows. Database migrations always run forward, so you can skip versions. A major version is one you may need to act on, such as a changed install layout or a dropped PHP version; within 1.x any version updates from any earlier one. [Updating](docs/install.md#updating) has the steps, with a backup first and what to do if something goes wrong.
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 

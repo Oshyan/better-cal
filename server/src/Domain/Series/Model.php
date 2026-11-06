@@ -2228,6 +2228,11 @@ final class Model
                 + array_intersect_key($sides['after'], ['at' => true, 'tz' => true]) + $said + [
                 'kept' => OwnFields::normalize($ownAfter), 'takes' => OwnFields::normalize(array_diff($edited, $ownAfter))];
         }
+        // The day acted on as an event of its own, where the plan's days
+        // say it shows ('separate', whichever way it got that outcome): what
+        // `next` lists for it, so the two parts of the plan agree. Other days
+        // kept on their own leave the series and aren't listed.
+        $actedAlone = null;
         foreach ($outsideRows as $id => $outcome) {
             $row = $this->rows[$id];
             // Deleted, it has no after; detached as it is, its after is the row itself.
@@ -2238,7 +2243,12 @@ final class Model
                 $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'deleted'] + $sides + Words::dayParts($label, 'is deleted') + ['kept' => $this->ownOf($row)];
             } else {
                 $detach[$id] = [];
-                $days[] = ['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate'] + $sides + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
+                if ($id === $this->actedRowId && !$newRule) {
+                    // The day acted on as it is (the request didn't place it), outside a bound the person sent.
+                    // Under a new pattern it has no special place: an edited day like any other.
+                    $actedAlone = $row;
+                }
+                $days[] =['key' => (string) $row['recurrence_instance_utc'], 'newKey' => null, 'kind' => 'edited', 'title' => (string) $row['title'], 'outcome' => 'separate'] + $sides + Words::dayParts($label, 'becomes an event of its own') + ['kept' => $this->ownOf($row)];
             }
         }
         if ($actedDeleted && $this->actedRowId !== null) {
@@ -2261,6 +2271,7 @@ final class Model
             } else {
                 $create[] = $placed;
             }
+            $actedAlone = $placed;
             // Where it showed (its row, or the occurrence at its key) and the
             // standalone row the commit writes.
             $occ = $this->actedRowId !== null ? $this->rows[$this->actedRowId] : ['override_fields' => '[]', 'recurrence_instance_utc' => $this->acted] + self::occurrenceOf($this->master, [], $this->acted, $this->len0);
@@ -2325,7 +2336,7 @@ final class Model
         $putDn = $this->placed ? self::dayOf($this->placementOut($this->landedCols, $this->displayZone())) : $landedDn;
         // A rule the expander can't read lists nothing, and goes on past
         // that unless it has an end.
-        [$next, $nextMore, $cutDn] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $separate ? $land['cols'] : null, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none', $landedDn];
+        [$next, $nextMore, $cutDn] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $actedAlone, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none', $landedDn];
         // An option's next events: the same entries, without what only the plan's list says.
         $nextDates = array_map(static fn(array $n): array => array_intersect_key($n, ['start' => true, 'allDay' => true, 'tz' => true]), $next);
         if ($this->google) {
@@ -2646,6 +2657,10 @@ final class Model
             $e = $this->placementEntryOut($row, $this->displayZone());
             return $e + ['kind' => $kind, 'dn' => self::dayOf(['date' => substr($e['start'], 0, 10)])];
         };
+        if ($separate !== null) {
+            // The list starts where the day acted on shows on its own, when that is earlier.
+            $fromDn = min($fromDn, $entry($separate, 'acted')['dn']);
+        }
         foreach ($createdRows as $c) {
             $byKey[(string) $c['recurrence_instance_utc']] = $entry($c, 'acted');
             $fromDn = min($fromDn, $byKey[(string) $c['recurrence_instance_utc']]['dn']);
@@ -2688,7 +2703,7 @@ final class Model
         }
         $out = array_merge($rows, $plain);
         if ($separate !== null) {
-            // The day acted on, where it was put, on its own.
+            // The day acted on, where it shows on its own.
             $out[] = $this->placementEntryOut($separate, $this->displayZone()) + ['kind' => 'acted', 'words' => 'on its own', 'key' => ''];
         }
         // In the order they show: by the day each shows on, an all-day one

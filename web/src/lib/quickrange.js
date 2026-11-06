@@ -1,7 +1,7 @@
 // Quick add's strip (date, start, end, all day) -> the {start, end} it saves.
 // Pure, so the smoke tests can cover it.
 
-import { parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, fmtTime } from './dates.js';
+import { parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, fmtTime, typedInstants } from './dates.js';
 
 // Strip values -> {start, end} ISO strings, or null when incomplete. A parse
 // that ends on a later day keeps that day while the date is untouched: the
@@ -21,17 +21,18 @@ export function buildRange(form, draft, dateTouched) {
     };
   }
   if (!form.startTime || !form.endTime) return null;
-  const base = dateOfDayKey(form.dateKey);
-  const [sh, sm] = form.startTime.split(':').map(Number);
-  const [eh, em] = form.endTime.split(':').map(Number);
   // Preserve a parsed end on a later day ("Fri 5pm to Sun 2pm") the same way.
   let days = 0;
   if (draft && !draft.allDay && draft.start && draft.end && !dateTouched) {
     days = Math.round((dateOfDayKey(dayKeyOf(parseISO(draft.end))) - dateOfDayKey(dayKeyOf(parseISO(draft.start)))) / 86400000);
   }
-  const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sh, sm);
-  let e = new Date(base.getFullYear(), base.getMonth(), base.getDate() + Math.max(0, days), eh, em);
-  if (e <= s) e = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, eh, em); // overnight
+  // Overnight is read on the clocks typed, never the instants: 02:30 to 03:30
+  // on a spring change day is one hour that day, though 02:30 is the instant
+  // of 03:30, and the end is read by the server's rule (typedInstants, #222).
+  const startWall = form.dateKey + 'T' + form.startTime;
+  let endWall = addDaysKey(form.dateKey, Math.max(0, days)) + 'T' + form.endTime;
+  if (endWall <= startWall) endWall = addDaysKey(form.dateKey, 1) + 'T' + form.endTime; // overnight
+  const [s, e] = typedInstants(startWall, endWall, null);
   return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
 }
 

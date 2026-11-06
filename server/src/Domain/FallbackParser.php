@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Domain\Series\Cal;
+use BetterCal\Domain\Series\Wall;
 use BetterCal\Support\Time;
 
 /**
@@ -291,8 +293,16 @@ final class FallbackParser
             if ($stretch !== null) {
                 $end = $stretch[1];
             } elseif ($endTime !== null) {
+                // The end clock by the one rule for typed clocks (Wall::typedEnd,
+                // what the editor and quick add's save send): read on its own
+                // day, overnight when not after the start, and moved by the push
+                // a skipped start clock was given, so "2:30-3:30am" on the spring
+                // change day is an hour and "1-4am" there ends at 04:00 (#222).
                 $minutes = ($endTime[0] * 60 + $endTime[1]) - ($startTime[0] * 60 + $startTime[1]);
-                $end = $start->add(new \DateInterval('PT' . ($minutes > 0 ? $minutes : $minutes + 1440) . 'M'));
+                $typedIn = $zoneOf ?? $tz;
+                $local = $start->setTimezone($typedIn);
+                $typedStart = Wall::asUtc(Cal::dn((int) $local->format('Y'), (int) $local->format('n'), (int) $local->format('j')), [$startTime[0], $startTime[1], 0]);
+                $end = Wall::typedEnd($start, $typedStart, $typedStart + 60 * ($minutes > 0 ? $minutes : $minutes + 1440), $typedIn)->setTimezone($tz);
             } elseif ($span !== null) {
                 $end = $start->modify('+' . $span['n'] . ' ' . $span['unit']);
             } else {

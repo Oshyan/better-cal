@@ -11,6 +11,7 @@ use BetterCal\Domain\Series\Rule;
 use BetterCal\Domain\Series\Split;
 use BetterCal\Domain\Series\Cal;
 use BetterCal\Domain\Series\Calc;
+use BetterCal\Domain\Series\Wall;
 use BetterCal\Domain\Series\Words;
 use BetterCal\Http\HttpError;
 use BetterCal\Support\Ids;
@@ -353,13 +354,16 @@ trait SeriesPlans
     /**
      * A request's typed clock (api-contract.md, Writing Events): `typed:
      * {start, end, tz}` are the wall clocks the person typed, with no
-     * offset, in the zone they were typed in. They are the request's `start`
-     * and `end`, each the instant of its clock by the one wall-clock rule
-     * (Calc::at: a skipped clock is the clock plus the gap, a repeated one
-     * its first instant), and the start's clock is kept beside them as
-     * `typed.clock`, since 02:30 on the spring change day is a clock its
-     * instant (03:30) can't hold. `tz` defaults to the request's `tzid`,
-     * then the event's zone ($eventTz), then the person's.
+     * offset, in the zone they were typed in. The start is the instant of
+     * its clock by the one wall-clock rule (Calc::at: a skipped clock is the
+     * clock plus the gap, a repeated one its first instant), and its clock
+     * is kept beside it as `typed.clock`, since 02:30 on the spring change
+     * day is a clock its instant (03:30) can't hold. The end is its clock
+     * moved by the push the gap gave the start, then read by the same rule
+     * (Wall::typedEnd), so 02:30 to 03:30 there is an hour, 03:30 to 04:30,
+     * and an end at or before the start on the clocks is refused. `tz`
+     * defaults to the request's `tzid`, then the event's zone ($eventTz),
+     * then the person's.
      */
     private function typedTimes(int $userId, array $in, ?string $eventTz): array
     {
@@ -374,10 +378,16 @@ trait SeriesPlans
             throw HttpError::badRequest('typed.start and typed.end are wall clocks, YYYY-MM-DDTHH:MM[:SS] with no offset', 'invalid_typed');
         }
         $tz = Time::normalizeTzid((string) ($t['tz'] ?? $in['tzid'] ?? $eventTz ?? $this->userTzid($userId)));
-        $at = static fn(array $m): \DateTimeImmutable => Calc::at(Cal::dn((int) $m[1], (int) $m[2], (int) $m[3]), [(int) $m[4], (int) $m[5], (int) ($m[6] ?? 0)], $tz);
-        $in['start'] = Time::iso($at($s)->setTimezone(Time::zone($tz)));
+        $zone = Time::zone($tz);
+        $asUtc = static fn(array $m): int => Wall::asUtc(Cal::dn((int) $m[1], (int) $m[2], (int) $m[3]), [(int) $m[4], (int) $m[5], (int) ($m[6] ?? 0)]);
+        $start = Calc::at(Cal::dn((int) $s[1], (int) $s[2], (int) $s[3]), [(int) $s[4], (int) $s[5], (int) ($s[6] ?? 0)], $tz);
+        $in['start'] = Time::iso($start->setTimezone($zone));
         if (isset($e)) {
-            $in['end'] = Time::iso($at($e)->setTimezone(Time::zone($tz)));
+            $end = Wall::typedEnd($start, $asUtc($s), $asUtc($e), $zone);
+            if ($end === null) {
+                throw HttpError::badRequest('end must be after start');
+            }
+            $in['end'] = Time::iso($end->setTimezone($zone));
         }
         $in['typed'] = ['clock' => [(int) $s[4], (int) $s[5], (int) ($s[6] ?? 0)], 'tz' => $tz];
         return $in;

@@ -25,8 +25,8 @@ import {
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
-  dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, fmtRange,
-  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey,
+  dateOfDayKey, eventDuration, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, fmtRange,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey, typedInstants,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -126,6 +126,9 @@ function parseRrule(rrule, tz = null, start = null) {
 // on this device's clock unless the owner picked a zone (form.tzTouched), in
 // which case "3:00 PM" means 3:00 PM there. Untouched stays on the exact old
 // path, so drafts saved before the zone picker existed behave as they did.
+// Both read the end by the server's rule for typed clocks (typedInstants): a
+// start in a spring-forward gap carries its push to the end, so 02:30 to
+// 03:30 that day is an hour, never an end on the start's instant (#222).
 function formInstants(form) {
   if (form.allDay) {
     // Whole days at local midnight, end exclusive, whatever times the fields
@@ -134,10 +137,7 @@ function formInstants(form) {
     const v = allDayInputs(f.start, f.end);
     return [fromInputValue(v.start), fromInputValue(v.end)];
   }
-  if (form.tzTouched && form.tz && !form.allDay) {
-    return [instantFromWallTime(form.start, form.tz), instantFromWallTime(form.end, form.tz)];
-  }
-  return [fromInputValue(form.start), fromInputValue(form.end)];
+  return typedInstants(form.start, form.end, form.tzTouched && form.tz ? form.tz : null);
 }
 
 // The quiet zone control on the duration line. A link until clicked, because

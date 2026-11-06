@@ -2486,6 +2486,79 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $half = null;
     try { $eventsA->copyTo(1, $picked, 0, 'all', null, '2026-12-10T09:00:00+00:00', null, true); } catch (HttpError $e) { $half = $e->status; }
     checkEq('drag copy: a start without an end is refused', 400, $half);
+    // A range typed across the spring change's skipped hour (#222;
+    // decisions.md, "An end typed after a start in the skipped hour"): the
+    // end is its clock moved by the push the gap gave the start, one rule
+    // for the create, the edit and quick add's parse. A northern zone, a
+    // southern one (its spring in October) and one on a half-hour offset,
+    // each skipping 02:00 to 03:00 that day, with invented events.
+    foreach (['America/Los_Angeles' => ['2027-03-14', 'Mar 14', '2027-03-01'], 'Australia/Sydney' => ['2027-10-03', 'Oct 3', '2027-09-20'],
+        'Australia/Adelaide' => ['2027-10-03', 'Oct 3', '2027-09-20']] as $gz => [$gd, $gText, $gNow]) {
+        $gZone = new DateTimeZone($gz);
+        $gLocal = static fn(string $iso): string => Time::parseIso($iso)->setTimezone($gZone)->format('Y-m-d H:i');
+        $gNext = static fn(int $days): string => (new DateTimeImmutable($gd))->modify("+$days days")->format('Y-m-d');
+        $gTyped = static fn(string $from, string $to): array => ['calendarId' => 10, 'title' => 'Sample gap hour', 'start' => $gd . 'T12:00:00Z', 'end' => $gd . 'T13:00:00Z',
+            'typed' => ['start' => $gd . 'T' . $from, 'end' => $gd . 'T' . $to, 'tz' => $gz], 'allDay' => false, 'tzid' => $gz];
+        $gSpan = static fn(array $o): array => [$gLocal($o['start']), $gLocal($o['end'])];
+        $gRefused = static function (callable $f): ?string {
+            try { $f(); } catch (HttpError $e) { return $e->status . ' ' . $e->getMessage(); }
+            return null;
+        };
+        $made = [];
+        $one = $eventsA->create(1, $gTyped('02:30', '03:30'));
+        $made[] = (int) $one['eventId'];
+        checkEq("typed across the gap ($gz): 02:30 to 03:30 is accepted, an hour, 03:30 to 04:30 that day", ["$gd 03:30", "$gd 04:30"], $gSpan($one));
+        $long = $eventsA->create(1, $gTyped('01:30', '04:00'));
+        $made[] = (int) $long['eventId'];
+        checkEq("typed across the gap ($gz): 01:30 to 04:00, a start that exists, is its two clocks as before", ["$gd 01:30", "$gd 04:00"], $gSpan($long));
+        $late = $eventsA->create(1, $gTyped('02:30', '05:00'));
+        $made[] = (int) $late['eventId'];
+        checkEq("typed across the gap ($gz): 02:30 to 05:00 keeps its two and a half hours, 03:30 to 06:00", ["$gd 03:30", "$gd 06:00"], $gSpan($late));
+        checkEq("typed across the gap ($gz): an end at or before the start on the clocks is still refused", array_fill(0, 3, '400 end must be after start'), [
+            $gRefused(fn() => $eventsA->create(1, $gTyped('02:30', '02:30'))),
+            $gRefused(fn() => $eventsA->create(1, $gTyped('02:30', '02:15'))),
+            $gRefused(fn() => $eventsA->create(1, $gTyped('03:10', '02:45'))),
+        ]);
+        // A series typed there: an hour every week, 02:30 on every other day.
+        $weekly = $eventsA->create(1, $gTyped('02:30', '03:30') + ['title' => 'Sample gap series', 'rrule' => 'FREQ=WEEKLY;COUNT=3']);
+        $made[] = (int) $weekly['eventId'];
+        // The days it shows: the stored expansion less its skips (the anchor day a week before).
+        $gRow = $adb->one('SELECT * FROM events WHERE id = ?', [(int) $weekly['eventId']]);
+        $gSkips = Recurrence::decodeExdates($gRow['exdates_json']);
+        $gShown = array_values(array_map(static fn(array $o): array => [$o['start']->setTimezone($gZone)->format('Y-m-d H:i'), $o['end']->setTimezone($gZone)->format('Y-m-d H:i')],
+            array_filter(Recurrence::sabreExpand($gRow, new DateTimeImmutable($gNext(-10) . 'T00:00:00', $gZone), new DateTimeImmutable($gNext(30) . 'T00:00:00', $gZone)),
+                static fn(array $o): bool => !in_array(Time::toDb($o['start']), $gSkips, true))));
+        checkEq("typed across the gap ($gz): a weekly series typed 02:30 to 03:30 is 03:30 to 04:30 that day, then 02:30 to 03:30", [
+            ["$gd 03:30", "$gd 04:30"], [$gNext(7) . ' 02:30', $gNext(7) . ' 03:30'], [$gNext(14) . ' 02:30', $gNext(14) . ' 03:30'],
+        ], $gShown);
+        // The edit path: an event a week earlier moved onto the gap by typed clocks.
+        $moved = (int) $eventsA->create(1, ['calendarId' => 10, 'title' => 'Sample moved hour', 'start' => $gNext(-7) . 'T10:00:00', 'end' => $gNext(-7) . 'T11:00:00',
+            'allDay' => false, 'tzid' => $gz])['eventId'];
+        $made[] = $moved;
+        $gStored = fn(): array => $gSpan($eventsA->serializeSingle($eventsA->get(1, $moved)));
+        $gPatch = static fn(string $from, string $to): array => ['typed' => ['start' => $gd . 'T' . $from, 'end' => $gd . 'T' . $to, 'tz' => $gz], 'start' => $gd . 'T12:00:00Z', 'end' => $gd . 'T13:00:00Z', 'allDay' => false];
+        $eventsA->patch(1, $moved, $gPatch('02:30', '03:30'));
+        $edited = $gStored();
+        $eventsA->patch(1, $moved, $gPatch('01:30', '04:00'));
+        $editedLong = $gStored();
+        $editRefused = $gRefused(fn() => $eventsA->patch(1, $moved, $gPatch('02:30', '02:15')));
+        checkEq("typed across the gap ($gz), edited: 02:30 to 03:30 is 03:30 to 04:30, 01:30 to 04:00 as typed, an end before the start refused and nothing changed",
+            [["$gd 03:30", "$gd 04:30"], ["$gd 01:30", "$gd 04:00"], '400 end must be after start', ["$gd 01:30", "$gd 04:00"]], [$edited, $editedLong, $editRefused, $gStored()]);
+        // Quick add's parse reads the end by the same rule; an end before the start is the next day there, as its strip reads it.
+        $gParse = static fn(string $t): array => FallbackParser::parse($t, $gz, new DateTimeImmutable($gNow . 'T09:00:00', $gZone));
+        checkEq("typed across the gap ($gz), quick add: 2:30-3:30am is 03:30 to 04:30, 1:30-4am as typed, 2:30-5am 03:30 to 06:00, 2:30-2:15am the next day by the same push", [
+            ["$gd 03:30", "$gd 04:30"], ["$gd 01:30", "$gd 04:00"], ["$gd 03:30", "$gd 06:00"], ["$gd 03:30", $gNext(1) . ' 03:15'],
+        ], [$gSpan($gParse("Sample practice $gText 2:30am-3:30am")), $gSpan($gParse("Sample practice $gText 1:30am-4am")),
+            $gSpan($gParse("Sample practice $gText 2:30am-5am")), $gSpan($gParse("Sample practice $gText 2:30am-2:15am"))]);
+        [$inSql, $inParams] = BetterCal\Infra\Db::in($made);
+        $adb->run("DELETE FROM events WHERE id IN $inSql OR recurrence_parent_id IN $inSql", array_merge($inParams, $inParams));
+    }
+    // The half-hour gap (Lord Howe Island, 02:00 to 02:30): the push is half an hour.
+    $lh = $eventsA->create(1, ['calendarId' => 10, 'title' => 'Sample half hour', 'start' => '2027-10-03T12:00:00Z', 'end' => '2027-10-03T13:00:00Z',
+        'typed' => ['start' => '2027-10-03T02:15', 'end' => '2027-10-03T02:45', 'tz' => 'Australia/Lord_Howe'], 'allDay' => false, 'tzid' => 'Australia/Lord_Howe']);
+    checkEq('typed across a half-hour gap: 02:15 to 02:45 is 02:45 to 03:15, half an hour', ['2027-10-03 02:45', '2027-10-03 03:15'],
+        array_map(static fn(string $iso): string => Time::parseIso($iso)->setTimezone(new DateTimeZone('Australia/Lord_Howe'))->format('Y-m-d H:i'), [$lh['start'], $lh['end']]));
+    $adb->run('DELETE FROM events WHERE id = ?', [(int) $lh['eventId']]);
     // A "this and following" change reports the event that now holds the
     // occurrence, so the app can keep it open (it used to go blank). Needs
     // sabre/vobject to prove the occurrence (the install job runs it).
@@ -2501,11 +2574,12 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
             'typed' => ['start' => '2027-03-14T02:30', 'end' => '2027-03-14T04:30', 'tz' => $gapTz], 'allDay' => false, 'tzid' => $gapTz, 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
         $gapId = (int) $gap['eventId'];
         $gapRow = $adb->one('SELECT rrule, start_utc, end_utc, exdates_json FROM events WHERE id = ?', [$gapId]);
-        checkEq('first day in the skipped hour: stored from 7 Mar at 02:30, a skip there, COUNT=5', ['FREQ=WEEKLY;COUNT=5', '2027-03-07 10:30:00', '2027-03-07 11:30:00', ['2027-03-07 10:30:00']],
+        // 02:30 to 04:30 typed is two hours (#222): the end moves with the start's push.
+        checkEq('first day in the skipped hour: stored from 7 Mar at 02:30 to 04:30, a skip there, COUNT=5', ['FREQ=WEEKLY;COUNT=5', '2027-03-07 10:30:00', '2027-03-07 12:30:00', ['2027-03-07 10:30:00']],
             [$gapRow['rrule'], $gapRow['start_utc'], $gapRow['end_utc'], json_decode((string) $gapRow['exdates_json'], true)]);
         $read = static fn(array $o): array => [$o['start'], $o['end'], $o['rrule'] ?? null, $o['instanceId']];
-        checkEq('first day in the skipped hour: the create answers 14 Mar at 03:30 for an hour, COUNT=4, its instance that day',
-            ['2027-03-14T03:30:00-07:00', '2027-03-14T04:30:00-07:00', 'FREQ=WEEKLY;COUNT=4', Recurrence::instanceId($gapId, Time::fromDb('2027-03-14 10:30:00'))], $read($gap));
+        checkEq('first day in the skipped hour: the create answers 14 Mar at 03:30 for the two hours typed, COUNT=4, its instance that day',
+            ['2027-03-14T03:30:00-07:00', '2027-03-14T05:30:00-07:00', 'FREQ=WEEKLY;COUNT=4', Recurrence::instanceId($gapId, Time::fromDb('2027-03-14 10:30:00'))], $read($gap));
         checkEq('first day in the skipped hour: the single-event fetch agrees with the create', $read($gap), $read($eventsA->serializeSingle($eventsA->get(1, $gapId))));
         $listed = $eventsA->serializeRows([$eventsA->get(1, $gapId)])[0];
         checkEq('first day in the skipped hour: the list shape (search, links) says the same start and end', [$gap['start'], $gap['end']], [$listed['start'], $listed['end']]);

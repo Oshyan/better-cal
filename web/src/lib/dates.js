@@ -426,6 +426,32 @@ export function wallTimeInZone(date, tz) {
     'T' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
 }
 
+// A typed range's two instants, by the server's one rule (api-contract.md,
+// `typed`; decisions.md, "An end typed after a start in the skipped hour"):
+// the start is its clock's instant (a skipped clock the clock plus the gap),
+// and the end is its clock's instant after the push the gap gave the start,
+// so 02:30 to 03:30 on a spring change day is 03:30 to 04:30, an hour, where
+// reading the end alone would put both on one instant. A start that exists
+// has no push. An end at or before the start on the clocks is the start's
+// own instant, so every check reads it as backwards. `tz` null is this
+// device's zone; the values are 'YYYY-MM-DDTHH:MM' wall clocks.
+export function typedInstants(startWall, endWall, tz) {
+  const at = (w) => (tz ? instantFromWallTime(w, tz) : fromInputValue(w));
+  const shownWall = (d) => (tz ? wallTimeInZone(d, tz) : isNaN(d) ? '' : toInputValue(d));
+  const asUtc = (w) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(w || ''));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN;
+  };
+  const s = at(startWall);
+  const ts = asUtc(startWall);
+  const te = asUtc(endWall);
+  if (isNaN(s) || isNaN(ts) || isNaN(te)) return [s, new Date(NaN)];
+  if (te <= ts) return [s, new Date(s.getTime())];
+  const push = asUtc(shownWall(s)) - ts;
+  const e = new Date(te + push);
+  return [s, at(e.getUTCFullYear() + '-' + pad(e.getUTCMonth() + 1) + '-' + pad(e.getUTCDate()) + 'T' + pad(e.getUTCHours()) + ':' + pad(e.getUTCMinutes()))];
+}
+
 // "Thu, Jun 4, 3:00 PM to 4:00 PM in New York" for a timed event whose own zone
 // keeps a different clock from this device; '' otherwise. UTC is what imports
 // write when the zone is unknown, so it is never announced as a place.

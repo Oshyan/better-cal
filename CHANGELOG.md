@@ -25,7 +25,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **For API callers:** a series' `rrule` COUNT and its `start` and `end` as read are what the series shows; a split (`scope:"following"` on PATCH, DELETE, `/attendance` and `/relationship`) takes `preview` and a `plan` like every other series change, and a plan-less one is 409 `series_plan_required`; on a Google calendar it is 422 `series_refused` until 1.5.2 ([contract](docs/api-contract.md)).
 - A Google calendar shows its G once, in its disc (the extra colored G after its name in the sidebar is gone), and the G is redrawn and centered at every size, the event editor's calendar picker included.
 - Delete, an answer or a relationship for all events from an edited day now changes the whole series, as an edit does.
-- CalDAV refuses a time range holding more repeating occurrences than one request may work out (403, with the reason), instead of answering it short.
+- CalDAV counts every occurrence a time range has to work through, skipped ones included, against the request's budget, never misses an occurrence with no length at the edge of a window it reads, and refuses a range past the budget or with more than a thousand occurrences of one series at one moment (403, with the reason) instead of answering it short.
 - A plugin's sync, a move on its calendar and that move's undo read a time without an offset on the same clock: the Home zone, else the zone your own events use, else UTC.
 - Tests pin the daily weekday list over a month boundary ([#201](https://github.com/Oshyan/better-cal/issues/201)) and mail admission's estimate of a rule with BY parts.
 

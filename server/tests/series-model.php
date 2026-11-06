@@ -1162,6 +1162,26 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         checkEq("Sent bound ($what): with Keep it is one event of its own where it was put, and nothing is deleted", [
             'separate', [1, true, false, false], [], smAt($day . ' 11:00', 'UTC'),
         ], [$dayOf($p, $iso)['outcome'] ?? null, $lists($p), $p['writes']['delete'], $p['writes']['detach'][2]['start_utc'] ?? null]);
+        $acted = array_values(array_filter($p['plan']['next'], static fn(array $n): bool => $n['kind'] === 'acted'));
+        checkEq("Sent bound ($what): with Keep, coming up lists it once, where it was put", [[$day . 'T11:00:00+00:00']], [array_column($acted, 'start')]);
+    }
+
+    // The same with only the UNTIL sent (nothing places the day acted on):
+    // coming up is read from the days' outcomes, so the edited day kept on
+    // its own is listed once, where it shows, and nothing when it is deleted.
+    $monthEnd = smSeries('Sample review', 'FREQ=MONTHLY;BYMONTHDAY=-1', '2027-04-30 09:30', 30, false, [], 'Asia/Kolkata');
+    $endRow = smEdited($monthEnd, 2, '2029-02-28 09:30', ['description' => 'Sample note', 'end_utc' => smAt('2029-02-25 09:45', 'Asia/Kolkata')], '2029-02-25 09:30', ['description', 'date', 'length']);
+    $untilOnly = ['acted' => smAt('2029-02-28 09:30', 'Asia/Kolkata'), 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=-1;UNTIL=20271231T182959Z'];
+    $endIso = '2029-02-28T04:00:00Z';
+    foreach (['keep' => ['separate', ['2029-02-25T09:30:00+05:30']], 'delete' => ['deleted', []]] as $choice => [$outcome, $starts]) {
+        $p = smPlan($monthEnd, [$endRow], $untilOnly, ['outside' => $choice]);
+        $acted = array_values(array_filter($p['plan']['next'], static fn(array $n): bool => $n['kind'] === 'acted'));
+        checkEq("Sent bound (UNTIL alone), $choice: the edited day past the new end is $outcome in the days and coming up agrees", [
+            [$outcome], $starts, $choice === 'keep', in_array(2, $p['writes']['delete'], true) === ($choice === 'delete'),
+        ], [
+            array_column(array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['key'] === $endIso)), 'outcome'),
+            array_column($acted, 'start'), array_key_exists(2, $p['writes']['detach']), true,
+        ]);
     }
 
     // F2: a rename of a rule the expander can't read keeps every row.

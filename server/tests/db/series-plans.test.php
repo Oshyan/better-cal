@@ -753,6 +753,31 @@ return static function (Db $db): void {
             [$state(), $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$day])]);
         $d->undo->undoLatest($u);
         checkEq('sent bound, Keep undone: every row as before', $before, $rows($standup));
+
+        // Only an UNTIL sent from an edited day with a date of its own: coming
+        // up lists the day kept on its own once, where it shows, as the commit keeps it.
+        $review = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample review', 'start' => '2027-04-30T09:30:00+05:30', 'end' => '2027-04-30T10:00:00+05:30', 'allDay' => false, 'tzid' => 'Asia/Kolkata', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=-1'])['eventId'];
+        $d->events->patch($u, $review, ['scope' => 'this', 'instanceStart' => '2029-02-28T09:30:00+05:30', 'start' => '2029-02-25T09:30:00+05:30', 'end' => '2029-02-25T09:45:00+05:30', 'description' => 'Sample note']);
+        $own = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$review]);
+        $before = $rows($review);
+        $until = ['scope' => 'all', 'instanceStart' => '2029-02-28T09:30:00+05:30', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=-1;UNTIL=20271231T182959Z'];
+        $acted = static fn(array $plan): array => array_column(array_values(array_filter($plan['next'], static fn(array $n): bool => $n['kind'] === 'acted')), 'start');
+        $plan = planned($d->events, $u, $review, $until, ['outside' => 'keep']);
+        checkEq('sent UNTIL alone, Keep: coming up lists the edited day once where it shows, and the commit keeps it there on its own', [
+            ['separate'], ['2029-02-25T09:30:00+05:30'], [null, null, '2029-02-25 04:00:00', null],
+        ], [
+            array_column(array_values(array_filter($plan['days'], static fn(array $x): bool => $x['key'] === '2029-02-28T04:00:00Z')), 'outcome'), $acted($plan),
+            array_values($db->one('SELECT recurrence_parent_id, rrule, start_utc, deleted_at FROM events WHERE id = ?', [$own])),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('sent UNTIL alone, Keep undone: every row as before', $before, $rows($review));
+        $plan = planned($d->events, $u, $review, $until, ['outside' => 'delete']);
+        checkEq('sent UNTIL alone, Delete: coming up lists nothing for it, and its row is gone', [['deleted'], [], 0], [
+            array_column(array_values(array_filter($plan['days'], static fn(array $x): bool => $x['key'] === '2029-02-28T04:00:00Z')), 'outcome'), $acted($plan),
+            (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND deleted_at IS NULL', [$own]),
+        ]);
+        $d->undo->undoLatest($u);
+        checkEq('sent UNTIL alone, Delete undone: every row as before', $before, $rows($review));
     });
 
     scenario('series plans: acceptance cases 8, 11 and 12 committed and undone', function () use ($d, $u, $db, $rows, $home): void {

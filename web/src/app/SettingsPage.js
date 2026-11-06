@@ -236,15 +236,20 @@ const START_WORDS = {
   launch: 'opened',
 };
 function StartsRow() {
-  const starts = recentStarts().slice(0, 10);
+  // One list in time order: a start that never finished sits among the
+  // others at its own time, so later starts that did finish read as the
+  // recovery they were, instead of the failure pinned above them.
   const stalled = stalledStart();
-  if (starts.length === 0 && !stalled) return null;
+  const rows = [...recentStarts(), ...(stalled ? [{ at: stalled.at, stalled }] : [])]
+    .sort((a, b) => b.at - a.at).slice(0, 10);
+  if (rows.length === 0) return null;
   return html`<${Block} title="Recent starts on this device">
     <ul class="bc-sys-starts">
-      ${stalled && html`<li class="is-stalled"><span class="bc-sys-starts-when">${fmtDayMedium(new Date(stalled.at))}, ${fmtTime(new Date(stalled.at))}</span> didn't finish starting (${stalled.failed ? 'couldn’t load ' + stalled.failed.split('/').pop() : 'a download probably hung'})</li>`}
-      ${starts.map((st) => html`<li key=${st.at}><span class="bc-sys-starts-when">${fmtDayMedium(new Date(st.at))}, ${fmtTime(new Date(st.at))}</span> ${START_WORDS[st.reason] || st.reason}</li>`)}
+      ${rows.map((st) => html`<li key=${st.at} class=${st.stalled ? 'is-stalled' : ''}><span class="bc-sys-starts-when">${fmtDayMedium(new Date(st.at))}, ${fmtTime(new Date(st.at))}</span> ${st.stalled
+        ? `didn't finish starting (${st.stalled.failed ? 'couldn’t load ' + st.stalled.failed.split('/').pop() : 'a download probably hung'})`
+        : (START_WORDS[st.reason] || st.reason)}</li>`)}
     </ul>
-  <p class="bc-set-block-note">Why the app last started here, most recent first. Kept on this device only; a start that never finished is also noted in the server's log.</p>
+  <p class="bc-set-block-note">Each time the app started on this device and why, most recent first. Kept on this device only; a start that never finished is also noted in the server's log.</p>
   <//>`;
 }
 

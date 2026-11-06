@@ -2284,6 +2284,10 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     ], [[$p['plan']['next'], $p['plan']['nextMore'], $p['plan']['bound']['kind'], $p['plan']['bound']['count'] ?? null, $p['plan']['bound']['events'], $p['plan']['bound']['last']],
         [$q['plan']['next'], $q['plan']['nextMore'], $q['plan']['bound']['kind'], $q['plan']['bound']['events']], $p['writes']['master']['title'] ?? null]);
     $cache->setValue(null, []);
+    // The copy of the cache read above holds every walk this file made (an
+    // hourly one over eight years among them, about 50 MB), and a block is
+    // no scope: let it go with the cache, not at the end of the suite.
+    unset($entries, $entry, $stub);
 }
 
 // Reading dates: two readings differ only where their days differ, through

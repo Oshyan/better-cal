@@ -123,6 +123,16 @@ class RuleIterator extends Walk
     private ?array $fail = null;
     /** @var ?\Generator<int,array{0:?int,1:int}> the candidates, period by period (candidates) */
     private ?\Generator $stream = null;
+    /**
+     * The walker the stream runs on: a copy of this iterator made once its
+     * rule is read, which never holds a stream (or a walker) of its own. A
+     * generator holds the object it runs on, so a stream run on the
+     * iterator itself would make the two a cycle that only the cycle
+     * collector frees, one per iterator, suspended or never started; run on
+     * the walker, dropping the iterator frees all of it at once. The
+     * walker's period is the period the stream stands in.
+     */
+    private ?self $walker = null;
     /** The stream's current item has been read into the merge. */
     private bool $taken = false;
     /** @var \SplMinHeap<int> candidates read and not yet yielded */
@@ -205,6 +215,7 @@ class RuleIterator extends Walk
             $g = self::gcd($this->interval, 24);
             $this->never = $this->never || array_filter($this->byHour, fn(int $h): bool => ($h - $clock[0]) % $g === 0) === [];
         }
+        $this->walker = clone $this;
         $this->rewind();
     }
 
@@ -250,7 +261,7 @@ class RuleIterator extends Walk
     {
         if ($this->count === null && $this->stream !== null && $this->currentDate !== null && $ts > $this->last) {
             $k = $this->seekPeriod($ts);
-            if ($k > $this->period) {
+            if ($k > $this->walker->period) {
                 // Every candidate of the periods before $k is before $ts, so
                 // none the merge holds is still to be read.
                 $this->restart($k);
@@ -268,10 +279,10 @@ class RuleIterator extends Walk
         $this->merge = new \SplMinHeap();
         $this->floor = PHP_INT_MIN;
         $this->taken = false;
-        $this->fail = null;
         $this->last = $this->currentDate?->getTimestamp() ?? 0;
-        $this->period = $k ?? $this->period;
-        $this->stream = $k === null ? null : $this->candidates($k);
+        $this->walker->period = $k ?? $this->walker->period;
+        $this->walker->fail = null;
+        $this->stream = $k === null ? null : $this->walker->candidates($k);
     }
 
     /**

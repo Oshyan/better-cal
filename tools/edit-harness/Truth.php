@@ -131,6 +131,31 @@ final class Truth
         return array_values(array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), array_filter($ev->through($b), static fn(array $o): bool => $o[0] >= $a)));
     }
 
+    /**
+     * The key of a stored series' occurrence on local day $dn (in zone $tz), or null: from $byDay, its listed days by
+     * key, and past the window it was read over where the series runs on (README, The Oracle). The window bounds what
+     * is listed, never what is matched.
+     *
+     * @param array{row:array,through:?string} $st
+     * @param array<int,string> $byDay
+     */
+    public static function keyOnDay(array $st, array $byDay, int $dn, string $tz): ?string
+    {
+        if (isset($byDay[$dn])) {
+            return $byDay[$dn];
+        }
+        if ($st['through'] === null) {
+            return null;
+        }
+        $key = null;
+        foreach (self::keysFrom($st['row'], Days::date($dn - 1) . ' 00:00:00', 3) as $k) {
+            if (Clock::dayOf($k, $tz) === $dn) {
+                $key = $k;
+            }
+        }
+        return $key;
+    }
+
     /** Whether a key is an occurrence of an expansion, looked for beyond its window when needed. */
     public static function member(array $exp, array $row, string $key): bool
     {

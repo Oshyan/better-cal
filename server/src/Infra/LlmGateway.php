@@ -11,6 +11,7 @@ use BetterCal\Support\Time;
 /**
  * Gemini-backed LLM gateway. Every method returns null on any failure so
  * callers can fall back deterministically; nothing here ever throws upward.
+ * lastFailureText() then says why, for the caller's job error or notice.
  */
 final class LlmGateway
 {
@@ -22,6 +23,31 @@ final class LlmGateway
         private readonly array $cfg,
         private readonly ?LlmTransport $transport = null,
     ) {
+    }
+
+    /** Why the latest call returned null; cleared when a call starts. */
+    private ?LlmFailure $lastFailure = null;
+
+    /**
+     * Why the latest call came back empty, or null when it succeeded or was
+     * never made (not configured, nothing to send). Callers put describe()
+     * in their job error so the owner reads the provider's reason.
+     */
+    public function lastFailure(): ?LlmFailure
+    {
+        return $this->lastFailure;
+    }
+
+    /** The latest failure as one safe sentence (the key removed), or null. */
+    public function lastFailureText(): ?string
+    {
+        return $this->lastFailure?->describe((string) ($this->cfg['gemini']['key'] ?? ''));
+    }
+
+    private function fail(string $reason): null
+    {
+        $this->lastFailure = new LlmFailure(0, localReason: $reason);
+        return null;
     }
 
     public function isConfigured(): bool
@@ -47,6 +73,7 @@ final class LlmGateway
      */
     public function parseEvent(string $text, \DateTimeImmutable $now, string $tz, bool $placeZone = false, ?string $hereTz = null, bool $repeat = false): ?array
     {
+        $this->lastFailure = null;
         if (!$this->isConfigured()) {
             return null;
         }
@@ -121,7 +148,7 @@ final class LlmGateway
             $start = Time::parseIso($wall($parsed['start'] ?? ''), $zoneId);
             $end = Time::parseIso($wall($parsed['end'] ?? ''), $zoneId);
         } catch (\InvalidArgumentException) {
-            return null;
+            return $this->fail('Gemini answered, but its start or end was not a date and time.');
         }
         if ($end <= $start) {
             $end = $start->add(new \DateInterval('PT1H'));
@@ -222,6 +249,7 @@ final class LlmGateway
 
     public function evaluateFilterBatch(string $prompt, ?string $negativePrompt, array $events): ?array
     {
+        $this->lastFailure = null;
         if (!$this->isConfigured() || $events === []) {
             return null;
         }
@@ -261,7 +289,7 @@ final class LlmGateway
                 'temperature' => 0.0,
             ],
         ], self::BATCH_TIMEOUT_SECONDS);
-        return is_array($parsed['results'] ?? null) ? $parsed['results'] : null;
+        return $this->resultsOf($parsed);
     }
 
     /**
@@ -275,6 +303,7 @@ final class LlmGateway
      */
     public function rankEvents(array $examples, array $events): ?array
     {
+        $this->lastFailure = null;
         if (!$this->isConfigured() || $events === []) {
             return null;
         }
@@ -312,10 +341,10 @@ final class LlmGateway
                 'temperature' => 0.0,
             ],
         ], self::BATCH_TIMEOUT_SECONDS);
-        return is_array($parsed['results'] ?? null) ? $parsed['results'] : null;
+        return $this->resultsOf($parsed);
     }
 
-    /** POST to Gemini and decode the forced-JSON reply; null on any failure. */
+    /** POST to Gemini and decode the forced-JSON reply; null on any failure, its reason in lastFailure(). */
     /**
      * Generic JSON completion for plugins (permission 'llm'). The model is
      * asked for JSON and the decoded object is returned; null on any failure,
@@ -326,6 +355,7 @@ final class LlmGateway
      */
     public function completeJson(string $prompt, array $schemaHint = [], int $timeoutSeconds = self::BATCH_TIMEOUT_SECONDS): ?array
     {
+        $this->lastFailure = null;
         if (!$this->isConfigured()) {
             return null;
         }
@@ -347,15 +377,34 @@ final class LlmGateway
             'Content-Type: application/json',
             'x-goog-api-key: ' . $this->cfg['gemini']['key'],
         ], (string) json_encode($body), $timeoutSeconds);
-        if ($raw === null) {
+        if ($raw instanceof LlmFailure) {
+            $this->lastFailure = $raw;
             return null;
+        }
+        if ($raw === null) {
+            return $this->fail('Gemini gave no answer.');
         }
         $envelope = json_decode($raw, true);
-        $text = $envelope['candidates'][0]['content']['parts'][0]['text'] ?? null;
+        $text = is_array($envelope) ? ($envelope['candidates'][0]['content']['parts'][0]['text'] ?? null) : null;
         if (!is_string($text)) {
-            return null;
+            // A blocked prompt or a cut-off answer says so in its envelope.
+            $why = is_array($envelope)
+                ? ($envelope['promptFeedback']['blockReason'] ?? $envelope['candidates'][0]['finishReason'] ?? null)
+                : null;
+            return $this->fail(!is_array($envelope)
+                ? 'Gemini answered, but not with JSON.'
+                : 'Gemini answered without any text' . (is_string($why) && $why !== '' ? ' (' . $why . ').' : '.'));
         }
         $parsed = json_decode($text, true);
-        return is_array($parsed) ? $parsed : null;
+        return is_array($parsed) ? $parsed : $this->fail('Gemini answered, but its reply was not the JSON asked for.');
+    }
+
+    /** The results list of a batch reply, or null with the reason kept. */
+    private function resultsOf(?array $parsed): ?array
+    {
+        if ($parsed === null) {
+            return null;
+        }
+        return is_array($parsed['results'] ?? null) ? $parsed['results'] : $this->fail('Gemini answered, but its reply had no results list.');
     }
 }

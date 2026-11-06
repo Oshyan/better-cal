@@ -148,6 +148,11 @@ function ReviewCard({ item, onChanged }) {
   const openOptions = item.kind === 'subscription' && d.calendarId
     ? () => set({ route: 'calendar', manageCal: d.calendarId })
     : null;
+  // The provider refused on billing or quota: the fix is outside the app,
+  // and Settings, System shows the job's last answer from it.
+  const openSystem = item.kind === 'model_limit' && /provider_refused$/.test(d.reason || '')
+    ? () => set({ route: 'settings', settingsTab: 'system' })
+    : null;
   const open = item.link ? () => { set({ route: 'calendar' }); openOccurrence(item.link.instanceId, item.link.at); } : openOptions;
   return html`<div class=${'bc-review-card' + (item.status !== 'open' ? ' is-decided' : '')}>
     ${stepUp.prompt}
@@ -163,11 +168,11 @@ function ReviewCard({ item, onChanged }) {
     </div>
     <div class="bc-review-body">
       <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${item.kind === 'invite_change' ? html` <span class="bc-review-sender" title="The organizer's calendar numbers each version of an invitation, raising it when the time, place or details change. A version older than the one on your calendar is not applied.">${d.method === 'CANCEL' ? 'Cancellation' : 'Updated invitation'} (v${(d.sequence || 0) + 1})</span>` : ''}</span>
-      ${(item.actions.length > 0 || openOptions) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
+      ${(item.actions.length > 0 || openOptions || openSystem) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
         class=${a.quiet ? 'bc-link-btn bc-review-quiet' : 'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}
         onClick=${() => run(a)}
-      >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}</span>`}
+      >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}${openSystem && html`<button type="button" class="bc-btn" onClick=${openSystem}>System settings</button>`}</span>`}
     </div>
     ${item.kind === 'invite_new' && item.actions.some((a) => a.name.startsWith('approve_')) && html`<p class="bc-muted">Always add also adds this event, without sending a reply.</p>`}
     ${waitsForSeries && item.status === 'open' && html`<p class="bc-muted">Nothing to accept until the series is added.</p>`}

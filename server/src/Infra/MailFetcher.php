@@ -283,7 +283,7 @@ final class MailFetcher
         return false;
     }
 
-    /** @return array{messageId:string,subject:string,from:string} from headers alone */
+    /** @return array{messageId:string,subject:string,from:string,appMail:?string} from headers alone */
     private static function envelope(object $message): array
     {
         $messageId = trim((string) $message->getMessageId(), " \t<>");
@@ -302,7 +302,19 @@ final class MailFetcher
             'messageId' => mb_substr($messageId, 0, 255),
             'subject' => mb_substr((string) $message->getSubject(), 0, 500),
             'from' => $from,
+            'appMail' => self::appMark($message),
         ];
+    }
+
+    /** The value of this app's own header (EmailSender::APP_HEADER), or null when the message has none. */
+    private static function appMark(object $message): ?string
+    {
+        $header = method_exists($message, 'getHeader') ? $message->getHeader() : null;
+        if (!is_object($header) || !method_exists($header, 'has') || !$header->has(EmailSender::APP_HEADER)) {
+            return null;
+        }
+        $value = trim((string) $header->get(EmailSender::APP_HEADER));
+        return $value !== '' ? mb_substr($value, 0, 40) : null;
     }
 
     /**

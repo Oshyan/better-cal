@@ -319,3 +319,36 @@ checkEq('900 skipped occurrences through a budget of 100: refused; through the s
     is_array($dqMostlyLeft) ? $dqMostlyLeft[0]['start']->format('Y-m-d H:i:s') : null,
     is_array($dqMostlyLeft) ? $dqMostlyLeft[99]['start']->format('Y-m-d H:i:s') : null,
 ]);
+
+// The series charge is per series, not per window: a range with no end reads
+// each object over many windows (a series from 2020 read to the year 9999
+// takes about twenty), and each series counts once against the request's
+// limit. The limit lowered to 30, and 30 daily series of three days each in
+// January 2020, all long over, and one event on Mon 1 Mar 2027: a range from
+// Fri 1 Jan 2027 with no end holds the event alone, not refused. (At the
+// standard 5,000 the same holds for 300 series; 30 keeps the suite's memory
+// down.)
+BetterCal\Support\Limits::configure(['EXPANSION_SERIES' => 30]);
+$dqExpired = $dqNewCalendar();
+$dqExpiredMasters = [];
+for ($dqN = 0; $dqN < 30; $dqN++) {
+    $dqAt = $dqUtc('2020-01-01 09:00:00')->modify('+' . $dqN . ' minutes')->format('Y-m-d H:i:s');
+    $dqExpiredId = $dqRow($dqExpired, ['uid' => 'dq-expired-' . $dqN . '@example.test', 'start_utc' => $dqAt, 'end_utc' => $dqAt, 'rrule' => 'FREQ=DAILY;COUNT=3']);
+    $dqExpiredMasters[] = $dqDb->one('SELECT * FROM events WHERE id = ?', [$dqExpiredId]);
+}
+$dqRow($dqExpired, ['uid' => 'dq-upcoming@example.test', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00']);
+checkEq('30 series ended in January 2020 and one event on Mon 1 Mar 2027, under a limit of 30 series: a range from Fri 1 Jan 2027 with no end holds the event alone, not refused', [
+    'dq-upcoming@example.test.ics',
+], (static function () use ($dqQuery, $dqExpired) {
+    try {
+        return $dqQuery($dqExpired, '2027-01-01 00:00:00', null);
+    } catch (\Sabre\DAV\Exception\TooManyMatches $e) {
+        return [$e->getHTTPCode(), $e->getMessage()];
+    }
+})());
+$dqPerSeries = BetterCal\Support\ExpansionBudget::standard();
+foreach ($dqExpiredMasters as $dqMaster) {
+    DavTimeRange::occurrences($dqMaster, [], $dqUtc('2027-01-01 00:00:00'), null, true, $dqPerSeries);
+}
+checkEq('the same 30 read over every window to the year 9999 through one budget: 30 series charged, one each, and no occurrences', ['series' => 30, 'occurrences' => 0], $dqPerSeries->usage());
+BetterCal\Support\Limits::reset();

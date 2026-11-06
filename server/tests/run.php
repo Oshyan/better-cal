@@ -4911,6 +4911,28 @@ checkEq('non-recurring outside window emits none', 0, count($occs));
     } catch (WorkBudgetExceeded) {
         check('recurrence budget: separate series cannot reset the operation cap', true);
     }
+
+    // The series charge is per series, not per expansion: the same id read
+    // again (another window of it) is free, a second id is charged, and a
+    // call with no id is a series of its own each time.
+    $once = new ExpansionBudget(2, 10, 60.0);
+    $once->beginSeries(7);
+    $once->beginSeries(7);
+    $once->beginSeries(7);
+    checkEq('recurrence budget: one series id read three times is one series', 1, $once->usage()['series']);
+    $once->beginSeries(8);
+    checkEq('recurrence budget: a second series id is charged again', 2, $once->usage()['series']);
+    $once->beginSeries(7);
+    try {
+        $once->beginSeries(9);
+        check('recurrence budget: a third id past a limit of two is refused, the repeats of the first never counted', false);
+    } catch (WorkBudgetExceeded) {
+        check('recurrence budget: a third id past a limit of two is refused, the repeats of the first never counted', true);
+    }
+    $windows = new ExpansionBudget(10, 10, 60.0);
+    $oneOccurrence->expand($repeat, [], $win[0], $win[1], $windows);
+    $oneOccurrence->expand($repeat, [], $win[1], $win[1]->modify('+1 month'), $windows);
+    checkEq('recurrence budget: one series expanded over two windows is one series, its occurrences charged per window', ['series' => 1, 'occurrences' => 2], $windows->usage());
 }
 
 // Dense stored rows are refused by bounded SQL reads, before expansion or

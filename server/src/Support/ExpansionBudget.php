@@ -13,6 +13,8 @@ namespace BetterCal\Support;
 final class ExpansionBudget
 {
     private int $series = 0;
+    /** @var array<string,true> the series already counted, by their id */
+    private array $seen = [];
     private int $occurrences = 0;
     private readonly float $startedAt;
 
@@ -34,9 +36,23 @@ final class ExpansionBudget
         );
     }
 
-    public function beginSeries(): void
+    /**
+     * Count a repeating series the first time this budget sees it. A reader
+     * that expands one series over several windows (CalDAV's time ranges)
+     * names the same id each time and is charged once; occurrences and
+     * elapsed time are still charged per window. With no id, every call is
+     * a series of its own.
+     */
+    public function beginSeries(int|string|null $seriesId = null): void
     {
         $this->checkTime();
+        if ($seriesId !== null) {
+            $key = (string) $seriesId;
+            if (isset($this->seen[$key])) {
+                return;
+            }
+            $this->seen[$key] = true;
+        }
         if (++$this->series > $this->maxSeries) {
             throw new WorkBudgetExceeded('too many repeating series');
         }

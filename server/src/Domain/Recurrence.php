@@ -198,7 +198,7 @@ final class Recurrence
         $consumed = [];
 
         if (!empty($master['rrule'])) {
-            $budget?->beginSeries();
+            $budget?->beginSeries(isset($master['id']) ? (int) $master['id'] : null);
         }
 
         $ovByInstance = [];

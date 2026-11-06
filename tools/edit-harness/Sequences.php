@@ -38,9 +38,17 @@ trait Sequences
         $this->records = [];
         $this->unoracled = [];
         $this->runs = [];
+        $this->product = [];
+        $this->ownMade = [];
         $this->wide0 = null;
         $spec += ['n' => 0, 'seed' => 0, 'exceptions' => [], 'everyOption' => true];
         $this->spec = $spec;
+        if (!Product::$plan && array_intersect(array_column($spec['steps'], 'do'), ['preview', 'commitHeld']) !== []) {
+            // A plan held and committed stale (series_plan_changed) needs the plan API.
+            $this->na('sequence: a plan previewed, held and committed stale needs the plan API');
+            $this->spec['path'] = 'sequence';
+            return $this->result('sequence');
+        }
         $this->rng = null;
         $this->controls = $this->makeControls();
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
@@ -176,7 +184,11 @@ trait Sequences
         if ($sent === null) {
             return 'series_refused';
         }
-        $this->checkEdit($before, $this->state($master), $acted, $v, $sent, $s0);
+        if (Product::$plan) {
+            $this->checkEdit($before, $this->state($master), $acted, $v, $sent, $s0);
+        } else {
+            $this->matchOptions($before, $this->state($master), $acted, $v, $sent, $s0);
+        }
         $this->checkTripLinks($before, $acted, $sent);
         return null;
     }
@@ -379,7 +391,14 @@ trait Sequences
         $this->records = [];
         $this->unoracled = [];
         $this->runs = [];
+        $this->product = [];
         $this->spec = $spec + ['n' => 0, 'seed' => 0];
+        if (!Product::$plan) {
+            // The split's refusal on a Google calendar is the plan's (`google`, series_refused): none before 1.5.
+            $this->na('Google split refusal (a plan refusal)');
+            $this->spec['path'] = 'google-split';
+            return $this->result('google-split');
+        }
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $account = $this->db->insert('google_accounts', ['user_id' => $this->userId, 'email' => 'owner@example.test', 'refresh_token_enc' => 'sealed-sample', 'scopes' => 'calendar']);
         $cal = $this->db->insert('calendars', ['user_id' => $this->userId, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',

@@ -22,7 +22,7 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'product:']);
 if (isset($opts['help'])) {
     echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]\n";
     exit(0);
@@ -57,6 +57,17 @@ if ($everyOption !== null && ($everyOption < 0 || $everyOption > 1)) {
 }
 
 $root = dirname(__DIR__, 2);
+// --product DIR: the product checked is that checkout's (its server/src through its own server/vendor autoload, its
+// migrations); the harness's own classes and the database suite's helpers stay this tree's (README, Other Products).
+$harnessRoot = $root;
+if (isset($opts['product'])) {
+    $product = realpath((string) $opts['product']);
+    if ($product === false || !is_file($product . '/server/src/bootstrap.php')) {
+        fwrite(STDERR, "--product needs a checkout with server/src/bootstrap.php.\n");
+        exit(1);
+    }
+    $root = $product;
+}
 if (!is_file($root . '/server/vendor/autoload.php')) {
     fwrite(STDERR, "Needs Composer's libraries: composer install in server/.\n");
     exit(1);
@@ -70,14 +81,19 @@ if (isset($opts['model'])) {
     // Declared before anything autoloads the tree's, so this copy is the model every call reaches.
     require (string) $opts['model'];
 }
-require $root . '/server/tests/db/lib.php';
+require $harnessRoot . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
+BetterCal\EditHarness\Product::use($root);
 if ($everyOption !== null) {
     BetterCal\EditHarness\Driver::$everyOption = $everyOption;
 }
 // --typed F: the share of drawn cases whose timed edits send the wall clocks typed (README, The Delta Vector).
 if (isset($opts['typed'])) {
     BetterCal\EditHarness\Driver::$typed = (float) $opts['typed'];
+}
+if (!BetterCal\EditHarness\Product::$plan) {
+    // No plan API: the wall clocks typed are a 1.5 request field, so every case is sent untyped (counted as not applicable).
+    BetterCal\EditHarness\Driver::$typed = 0.0;
 }
 
 use BetterCal\EditHarness\Known;
@@ -143,7 +159,7 @@ $runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onl
             $runner->runFixed();
         }
         $casesSeconds = round(microtime(true) - $started, 1);
-        $misuses = BetterCal\Domain\Undo::misuses();
+        $misuses = method_exists(BetterCal\Domain\Undo::class, 'misuses') ? BetterCal\Domain\Undo::misuses() : [];
 
         // One shrunk reproduction per failure signature outside the known paths.
         $minimal = [];
@@ -258,7 +274,9 @@ $report = static function (array $p, float $casesSeconds, float $elapsed) use ($
         'revision' => Revision::get(),
         'tally' => Report::tallyOf($counts, $p['failures']),
     ];
-    $missingFails = $full && $out['tally']['missing'] !== [];
+    // A product without the plan API never runs the plan's categories (README, Other Products): reported, not failed.
+    $missingFails = $full && $out['tally']['missing'] !== [] && BetterCal\EditHarness\Product::$plan;
+    $out['product'] = BetterCal\EditHarness\Product::summary($counts);
     file_put_contents($findingsFile, json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR));
 
     echo "\n{$counts['cases']} cases in {$casesSeconds}s, {$elapsed}s with shrinking (seed $seed)\n";
@@ -297,6 +315,7 @@ $report = static function (array $p, float $casesSeconds, float $elapsed) use ($
     // The executions table first, then the tallies, so the last lines of the output are the verdict.
     echo "\n" . Report::runsText($out['tally']);
     echo "\n" . Report::summaryText($out['tally']);
+    echo "\n" . BetterCal\EditHarness\Product::text($out['product']);
     echo "Revision {$out['revision']}\n";
     echo ($new === 0 && $misuses === [] && !$missingFails ? 'Clean: every failure is under a known code path.' : ($new > 0 ? "$new signature(s) outside the known code paths." : ($missingFails ? 'Not clean: a required category never ran.' : 'Not clean: journal misuses.'))) . "\n";
     echo "findings.json has every record" . ($shrink ? ' and a shrunk reproduction per finding' : '') . ".\n";
@@ -342,6 +361,9 @@ try {
     }
     if (isset($opts['model'])) {
         array_push($pass, '--model', (string) $opts['model']);
+    }
+    if (isset($opts['product'])) {
+        array_push($pass, '--product', (string) $opts['product']);
     }
     if ($saveSpec !== null) {
         array_push($pass, '--save-spec', $saveSpec);

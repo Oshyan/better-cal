@@ -94,6 +94,8 @@ if (isset($opts['typed'])) {
 if (!BetterCal\EditHarness\Product::$plan) {
     // No plan API: the wall clocks typed are a 1.5 request field, so every case is sent untyped (counted as not applicable).
     BetterCal\EditHarness\Driver::$typed = 0.0;
+    // An old product fails thousands of checks, each record with its case's spec: the merge holds them all.
+    ini_set('memory_limit', '4096M');
 }
 
 use BetterCal\EditHarness\Known;

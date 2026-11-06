@@ -18,6 +18,7 @@ The releases below assume the first one, since it's the only change big enough t
 
 What has shipped lives in the [changelog](CHANGELOG.md), one section per version with the fixes included. This list only says what each version was for, so the plan below can stay about what is next.
 
+- [1.5.1](CHANGELOG.md#151-2026-11-05) (2026-11-05): "this and following", deletes and answers from a day on as splits on the series model; an edited day's date, time or length as the series' own; the typed clock; the six Low security findings closed by three rules; CalDAV time ranges from the app's own expander; memory bounds for small hosts.
 - [1.5.0](CHANGELOG.md#150-2026-11-04) (2026-11-04): one engine under repeating events. Every whole-series change goes through one model that says what it will do before it does it, and the series harness measures it on every push. Also the loading rewrite ([#190](https://github.com/Oshyan/better-cal/issues/190)) and undo for very large calendar deletes ([#191](https://github.com/Oshyan/better-cal/issues/191)).
 - [1.4.6](CHANGELOG.md#146-2026-11-01) (2026-11-01): quick add reads more ([#193](https://github.com/Oshyan/better-cal/issues/193)), emailed one-day changes in any order ([#192](https://github.com/Oshyan/better-cal/issues/192)), updating across a signing-key change ([#194](https://github.com/Oshyan/better-cal/issues/194)), series drags that keep their edited days ([#188](https://github.com/Oshyan/better-cal/issues/188)), and the first series harness.
 - [1.4.5](CHANGELOG.md#145-2026-11-01) (2026-11-01): sidebar folders ([#187](https://github.com/Oshyan/better-cal/issues/187)), moving a series from the editor ([#186](https://github.com/Oshyan/better-cal/issues/186)), a more careful Undo.
@@ -35,7 +36,7 @@ I'm keeping the higher bar rather than copying what other calendars do. Thunderb
 
 **1.5.0 shipped** (2026-11-04, above): the model under every whole-series edit, with its plan shown first, and the harness clean on every seed for those.
 
-**1.5.1, in progress** ([#202](https://github.com/Oshyan/better-cal/issues/202), closed with every line accounted for; the [changelog's unreleased section](CHANGELOG.md#151-unreleased) is the full list): "this and following", deletes and answers from a day on as splits on the same model; the readings that make an edited day's date, time or length the series' own ([#189](https://github.com/Oshyan/better-cal/issues/189)); the editor and quick add sending the clock typed, so a series can start in an hour the clocks skip; the six Low findings of the review of 1.0.0 to 1.5.0 closed by three rules; CalDAV time ranges answered from the app's own expander; the harness driving every path with every option. It ships when the external review of the release head is clean.
+**1.5.1 shipped** (2026-11-05, above; [#202](https://github.com/Oshyan/better-cal/issues/202) closed with every line accounted for): the splits on the same model, the adoption readings ([#189](https://github.com/Oshyan/better-cal/issues/189)), the typed clock, the security rules, CalDAV ranges, and the harness driving every path with every option, clean on six seeds after two rounds of external review.
 
 **Still to come in 1.5:**
 

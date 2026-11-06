@@ -58,7 +58,7 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
         $name = '{' . self::NS_CALDAV . '}calendar-data';
         if ($this->expand !== null && $node instanceof \Sabre\CalDAV\ICalendarObject && is_string($data = $propFind->get($name))) {
             try {
-                $expanded = DavTimeRange::expandObject($data, $this->expand['start'], $this->expand['end'], $this->budget);
+                $expanded = DavTimeRange::expandObject($data, $this->expand['start'], $this->expand['end'], $this->budget, 'uri:' . $propFind->getPath());
             } catch (\BetterCal\Support\WorkBudgetExceeded $e) {
                 throw DavTimeRange::refusal($e);
             }

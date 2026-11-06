@@ -363,3 +363,53 @@ foreach ($dqExpiredMasters as $dqMaster) {
     DavTimeRange::occurrences($dqMaster, [], $dqUtc('2027-01-01 00:00:00'), null, true, $dqPerSeries);
 }
 checkEq('the same 300 read over every window to the year 9999 through one budget: 300 series charged, one each, and no occurrences', ['series' => 300, 'occurrences' => 0], $dqPerSeries->usage());
+
+// The series charge in an expand REPORT is per object: each object served
+// expanded is parsed, with no stored id, and is charged under its own path,
+// so a calendar-multiget (which never passes through calendarQuery's budget)
+// counts every object it expands, and one object read over many windows
+// counts once. Three daily series of two days from Fri 1 Jan 2027 at 10:00,
+// read 1 to 4 Jan.
+$dqTrio = $dqNewCalendar();
+$dqTrioUids = ['dq-trio-one@example.test', 'dq-trio-two@example.test', 'dq-trio-three@example.test'];
+foreach ($dqTrioUids as $dqUid) {
+    $dqRow($dqTrio, ['uid' => $dqUid, 'start_utc' => '2027-01-01 10:00:00', 'end_utc' => '2027-01-01 11:00:00', 'rrule' => 'FREQ=DAILY;COUNT=2']);
+}
+$dqTrioPath = '/calendars/sam@example.test/cal-' . $dqTrio . '/';
+$dqMultiget = static fn(string $path, array $uids, string $start, string $end): string => '<?xml version="1.0" encoding="utf-8"?>'
+    . '<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop>' . sprintf($dqExpand, $start, $end) . '</D:prop>'
+    . implode('', array_map(static fn(string $uid): string => '<D:href>' . $path . $uid . '.ics</D:href>', $uids)) . '</C:calendar-multiget>';
+$dqSeriesAt = static function (int $series, callable $fn) use ($dqRefused) {
+    $prior = BetterCal\Support\Limits::get('EXPANSION_SERIES');
+    BetterCal\Support\Limits::configure(['EXPANSION_SERIES' => $series]);
+    try {
+        return $dqRefused($fn);
+    } finally {
+        BetterCal\Support\Limits::configure(['EXPANSION_SERIES' => $prior]);
+    }
+};
+$dqSeriesRefusal = [403, 'This report has too many events or repeating occurrences to answer safely (too many repeating series). Ask for a shorter time range.'];
+$dqPair = static fn() => $dqReport($dqTrioPath, $dqMultiget($dqTrioPath, array_slice($dqTrioUids, 0, 2), '20270101T000000Z', '20270104T000000Z'));
+checkEq('calendar-multiget with expand of two repeating objects, a series limit of 1: refused, two series', $dqSeriesRefusal, $dqSeriesAt(1, $dqPair));
+$dqPairXml = null;
+checkEq('the same multiget, a series limit of 2: answered, both objects\' two days', [null, 4], [
+    $dqSeriesAt(2, static function () use ($dqPair, &$dqPairXml) { $dqPairXml = $dqPair(); }), substr_count((string) $dqPairXml, 'BEGIN:VEVENT'),
+]);
+$dqTrioAll = static fn() => $dqReport($dqTrioPath, $dqMultiget($dqTrioPath, $dqTrioUids, '20270101T000000Z', '20270104T000000Z'));
+$dqTrioXml = null;
+checkEq('calendar-multiget with expand of three repeating objects counts three: refused at a limit of 2, answered at 3 with six days', [$dqSeriesRefusal, null, 6], [
+    $dqSeriesAt(2, $dqTrioAll), $dqSeriesAt(3, static function () use ($dqTrioAll, &$dqTrioXml) { $dqTrioXml = $dqTrioAll(); }), substr_count((string) $dqTrioXml, 'BEGIN:VEVENT'),
+]);
+$dqHourlyOnce = null;
+checkEq('calendar-multiget with expand of the hourly object over March and April, read in many windows, a series limit of 1: answered, all 1,100', [null, 1100], [
+    $dqSeriesAt(1, static function () use ($dqReport, $dqMultiget, $dqHourly, &$dqHourlyOnce) {
+        $dqHourlyOnce = $dqReport('/calendars/sam@example.test/cal-' . $dqHourly . '/', $dqMultiget('/calendars/sam@example.test/cal-' . $dqHourly . '/', ['dq-hourly@example.test'], '20270301T000000Z', '20270501T000000Z'));
+    }),
+    substr_count((string) $dqHourlyOnce, 'BEGIN:VEVENT'),
+]);
+$dqTrioBudget = BetterCal\Support\ExpansionBudget::standard();
+foreach ($dqTrioUids as $dqUid) {
+    $dqObject = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:" . $dqUid . "\r\nDTSTART:20270101T100000Z\r\nDTEND:20270101T110000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Sample\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    DavTimeRange::expandObject($dqObject, $dqUtc('2027-01-01 00:00:00'), $dqUtc('2027-01-04 00:00:00'), $dqTrioBudget);
+}
+checkEq('three parsed objects expanded through one budget with no path given: three series, by their UIDs, and six occurrences', ['series' => 3, 'occurrences' => 6], $dqTrioBudget->usage());

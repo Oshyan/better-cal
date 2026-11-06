@@ -187,8 +187,13 @@ final class DavTimeRange
      * dates kept as dates. The occurrences are the expander's, read from the
      * object as a PUT of it is read (Ics::parse, DavIcs::eventColumns), and an
      * edited day carries its own VEVENT's properties.
+     *
+     * A parsed object has no stored id, so the budget charges its series
+     * under $seriesKey, the object's own identity (the REPORT names it by
+     * its path); without one, under its UID. Every object in a report is a
+     * series of its own, counted once however many windows read it.
      */
-    public static function expandObject(string $data, \DateTimeInterface $rangeStart, \DateTimeInterface $rangeEnd, ?ExpansionBudget $budget = null): string
+    public static function expandObject(string $data, \DateTimeInterface $rangeStart, \DateTimeInterface $rangeEnd, ?ExpansionBudget $budget = null, ?string $seriesKey = null): string
     {
         $data = (string) preg_replace("/\r?\n/", "\r\n", $data);
         $master = null;
@@ -196,7 +201,7 @@ final class DavTimeRange
         foreach (Ics::parse($data, 'UTC') as $parsed) {
             $cols = DavIcs::eventColumns($parsed) + ['id' => 0];
             if ($cols['recurrence_instance_utc'] === null) {
-                $master ??= $cols;
+                $master ??= $cols + ['series_key' => $seriesKey ?? 'uid:' . (string) ($parsed['uid'] ?? '')];
             } else {
                 $overrides[] = $cols;
             }

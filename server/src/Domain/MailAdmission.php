@@ -249,7 +249,7 @@ final class MailAdmission
     public static function seriesStillActive(array $master, array $overrides, \DateTimeImmutable $now, ?ExpansionBudget $budget = null): bool
     {
         $budget ??= ExpansionBudget::standard();
-        $budget->beginSeries(isset($master['id']) ? (int) $master['id'] : null);
+        $budget->beginSeries(ExpansionBudget::seriesKey($master));
         $skip = array_fill_keys(Recurrence::decodeExdates($master['exdates_json'] ?? null), true);
         foreach ($overrides as $override) {
             if (($override['deleted_at'] ?? null) === null && Time::fromDb((string) $override['end_utc']) > $now) return true;

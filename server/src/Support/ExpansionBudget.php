@@ -58,6 +58,24 @@ final class ExpansionBudget
         }
     }
 
+    /**
+     * The identity a master row is charged under, stable across the windows
+     * that read it: its series_key when the row names one (an object parsed
+     * from a request, which has no stored id), else its stored id. A row
+     * with neither (or id 0) has no identity, and every call is a series of
+     * its own.
+     *
+     * @param array<string,mixed> $master
+     */
+    public static function seriesKey(array $master): ?string
+    {
+        if (isset($master['series_key']) && (string) $master['series_key'] !== '') {
+            return (string) $master['series_key'];
+        }
+        $id = isset($master['id']) ? (int) $master['id'] : 0;
+        return $id > 0 ? 'id:' . $id : null;
+    }
+
     /** Charge iterator/output work, including suppressed and overridden instances. */
     public function occurrence(int $count = 1): void
     {

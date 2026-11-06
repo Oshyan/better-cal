@@ -68,6 +68,31 @@ final class Wall
         return new \DateTimeImmutable(sprintf('%s %02d:%02d:%02d', Cal::date($dn), ...$clock), $zone);
     }
 
+    /**
+     * The end of a range typed as two wall clocks, its start already read
+     * (decisions.md, "An end typed after a start in the skipped hour"): the
+     * end clock moved by the push the gap gave the start, then read by the
+     * one rule (resolve). The push is the start's clock as shown less its
+     * clock typed: the gap for a start in a skipped hour, nothing for any
+     * start that exists. So the range moves as one, 02:30 to 03:30 on the
+     * spring change day being 03:30 to 04:30, an hour, and every other range
+     * is its two clocks' own instants. Null for an end at or before the
+     * start on the clocks typed, which the push could otherwise carry past it.
+     *
+     * @param int $typedStart the start's clock typed, as asUtc gives it
+     * @param int $typedEnd the end's clock typed, as asUtc gives it
+     * @return \DateTimeImmutable|null in the zone
+     */
+    public static function typedEnd(\DateTimeImmutable $start, int $typedStart, int $typedEnd, \DateTimeZone $zone): ?\DateTimeImmutable
+    {
+        if ($typedEnd <= $typedStart) {
+            return null;
+        }
+        $w = $typedEnd + $start->getTimestamp() + $zone->getOffset($start) - $typedStart;
+        $sec = (($w % 86400) + 86400) % 86400;
+        return self::resolve(intdiv($w - $sec, 86400), [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60], $zone);
+    }
+
     /** The wall clock's seconds as if it were UTC. @param array{0:int,1:int,2:int} $clock */
     public static function asUtc(int $dn, array $clock): int
     {

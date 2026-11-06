@@ -6016,9 +6016,34 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
   eq('field table: every row but the rule has a label the panel says', EDIT_FIELDS.filter((r) => r.keys[0] !== 'rrule').every((r) => r.label && fieldLines(Object.fromEntries(r.keys.map((k) => [k, ['reminders', 'tagNames', 'personIds'].includes(k) ? [30] : 'x'])), {}, { timeWords: () => 'later', calendarName: (x) => x, personName: (x) => x }).length === 1), true);
   // The typed clock from quick add's strip: the clocks, not the instants.
   eq('quick add typed clock: 02:30 on the spring change day reaches the server as 02:30',
-    typedRange({ dateKey: '2027-03-14', startTime: '02:30', endTime: '03:30', allDay: false }, { start: '2027-03-14T03:30:00-07:00', end: '2027-03-14T03:30:00-07:00' }, 'America/Los_Angeles'),
+    typedRange({ dateKey: '2027-03-14', startTime: '02:30', endTime: '03:30', allDay: false }, { start: '2027-03-14T03:30:00-07:00', end: '2027-03-14T04:30:00-07:00' }, 'America/Los_Angeles'),
     { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' });
   eq('quick add typed clock: none for an all-day range', typedRange({ dateKey: '2027-03-14', allDay: true }, { start: 'x', end: 'y' }, 'UTC'), null);
+  // A range typed across the skipped hour (#222): the end is its clock
+  // moved by the push the gap gave the start, the server's rule, for the
+  // editor (typedInstants) and quick add's strip (buildRange). A northern
+  // zone, a southern one, one on a half-hour offset, one with a half-hour gap.
+  {
+    const { typedInstants, wallTimeInZone } = await import('../src/lib/dates.js');
+    const span = (z, a, b) => typedInstants(a, b, z).map((d) => (isNaN(d) ? 'none' : wallTimeInZone(d, z)));
+    for (const [z, day] of [['America/Los_Angeles', '2027-03-14'], ['Australia/Sydney', '2027-10-03'], ['Australia/Adelaide', '2027-10-03']]) {
+      eq(`typed across the gap (${z}): 02:30 to 03:30 is 03:30 to 04:30, 01:30 to 04:00 as typed, 02:30 to 05:00 is 03:30 to 06:00`,
+        [span(z, day + 'T02:30', day + 'T03:30'), span(z, day + 'T01:30', day + 'T04:00'), span(z, day + 'T02:30', day + 'T05:00')],
+        [[day + 'T03:30', day + 'T04:30'], [day + 'T01:30', day + 'T04:00'], [day + 'T03:30', day + 'T06:00']]);
+      const [s0, e0] = typedInstants(day + 'T02:30', day + 'T02:15', z);
+      const [s1, e1] = typedInstants(day + 'T03:10', day + 'T02:45', z);
+      eq(`typed across the gap (${z}): an end before the start on the clocks reads as backwards`, [e0 <= s0, e1 <= s1], [true, true]);
+    }
+    eq('typed across a half-hour gap (Lord Howe Island): 02:15 to 02:45 is 02:45 to 03:15', span('Australia/Lord_Howe', '2027-10-03T02:15', '2027-10-03T02:45'), ['2027-10-03T02:45', '2027-10-03T03:15']);
+    // This device's zone (null): the spring day of whichever zone the suite runs in is one of these.
+    for (const day of ['2027-03-14', '2027-10-03']) {
+      const r = buildRange({ dateKey: day, startTime: '02:30', endTime: '03:30', allDay: false }, null, false);
+      eq(`quick range across the gap (${day}, this device): 02:30 to 03:30 is an hour that day, never the next`,
+        [(parseISO(r.end) - parseISO(r.start)) / 60000, dayKeyOf(parseISO(r.end))], [60, day]);
+      const [ls, le] = typedInstants(day + 'T02:30', day + 'T03:30', null);
+      eq(`typed across the gap (${day}, this device): the editor's reading is quick add's`, [toISOWithOffset(ls), toISOWithOffset(le)], [r.start, r.end]);
+    }
+  }
   // Quick add's other reading: one tap, and a second puts it back.
   const stretch = { title: 'Workshop', start: '2026-08-03T09:00:00-07:00', end: '2026-08-07T17:00:00-07:00', allDay: false, rrule: null,
     other: { reading: 'each', start: '2026-08-03T09:00:00-07:00', end: '2026-08-03T17:00:00-07:00', allDay: false, rrule: 'FREQ=DAILY;COUNT=5', days: 5 } };

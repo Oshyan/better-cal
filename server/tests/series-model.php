@@ -2587,7 +2587,7 @@ foreach (['no rule' => $move, 'the rule sent back' => $move + ['rrule' => 'FREQ=
         smPlan($sm223, [], ['columns' => ['title' => 'Sample chorus']])['plan']['summary']);
     checkEq('Activity entry: a split says the day it starts from and what changed, and the part\'s rule only where it differs', [
         "Changed Sample choir (from Tue 19 Jan on): title from 'Sample choir' to 'Sample chorus'.",
-        "Changed Sample choir (from Tue 19 Jan on): title from 'Sample choir' to 'Sample chorus'; location from none to Example Hall.",
+        "Changed Sample choir (from Tue 19 Jan on): title from 'Sample choir' to 'Sample chorus'; place from none to Example Hall.",
         'Changed how Sample choir repeats (from Tue 19 Jan on): weekly on Tuesday at 09:00, now weekly on Wednesday at 09:00, from 20 Jan.',
         'Changed Sample choir (from Tue 19 Jan on): weekly on Tuesday at 09:00, now weekly on Tuesday at 10:30, from 19 Jan.',
         "Ended 'Sample choir' before Tue 19 Jan.",

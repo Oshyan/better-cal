@@ -48,7 +48,7 @@ The plan the dialog above was drawn from, trimmed:
             "outcome": "stays", "words": "Tue 23 Mar, moved to Fri 26 Mar: stays there"},
            {"key": "2027-03-31T02:00:00Z", "newKey": "2027-04-01T02:00:00Z", "kind": "skipped", "outcome": "moves"}],
   "losses": [], "gains": [], "refusals": [], "notes": [],
-  "summary": "Moved Choir (all events): weekly on Tuesday, now Wednesday, from 6 Jan."
+  "summary": "Moved Choir (all events): weekly on Tuesday at 19:00, now weekly on Wednesday at 19:00, from 6 Jan."
 }}
 ```
 

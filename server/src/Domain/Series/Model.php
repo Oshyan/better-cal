@@ -59,9 +59,6 @@ final class Model
         'duplicates' => 'duplicate decision', 'pluginData' => 'plugin data',
     ];
 
-    /** A changed field as its line and the Activity entry name it, where that isn't OWN_WORDS': as the editor labels it. */
-    private const FIELD_WORDS = ['location' => 'location'];
-
     public const REASONS = [
         'unreadable' => 'This repeat came from another app in a form Better-Cal can\'t read, so only its details can change here.',
         'several' => 'This repeat happens several times a day, and on a day the clocks change two of its times can fall on one moment, so it can\'t be moved or given another zone as a series. Move one event, or change its other details.',
@@ -2865,7 +2862,7 @@ final class Model
         if ($field === 'status') {
             $short = static fn(?string $v): string => (string) $v === 'tentative' ? 'maybe' : 'planned';
         }
-        return ['name' => self::FIELD_WORDS[$field] ?? self::OWN_WORDS[$field], 'was' => $short($was === null ? null : (string) $was), 'now' => $short($now === null ? null : (string) $now)];
+        return ['name' => self::OWN_WORDS[$field], 'was' => $short($was === null ? null : (string) $was), 'now' => $short($now === null ? null : (string) $now)];
     }
 
     /** "1 hour before", "30 minutes before and 1 day before at 18:00", "the default", "none". */

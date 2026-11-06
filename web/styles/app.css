@@ -1994,7 +1994,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-search-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A cancelled result reads as one (#184). */
 .bc-search-row.is-cancelled .bc-search-title { text-decoration: line-through; opacity: 0.75; }
-.bc-search-loc { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The title keeps its full width; the address takes only what is left after it and shrinks first. */
+.bc-search-loc { flex: 1 1 0; min-width: 0; color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-search-date { margin-left: auto; color: var(--fg-muted); font-size: 12px; flex: none; }
 .bc-search-opts { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
 .bc-search-opts .bc-seg-btn { font-size: 13px; padding: 4px 10px; }

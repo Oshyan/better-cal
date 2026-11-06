@@ -70,9 +70,11 @@ Releases are tagged (`v1.0.0`) and listed on GitHub, and [CHANGELOG.md](CHANGELO
 
 ### Lost edits in versions before 1.4.6
 
-A bug worth knowing about if you ran a version before 1.4.6 (1 November 2026). "This and following" on a repeating event deleted every day from that day on that you had edited on its own. A day you had renamed, moved to another time or date, or given its own place, people or tags went back to what the series said, with nothing to tell you. Answering an invitation or moving to another calendar from a day on did the same, since they split the series the same way. Undo could put the days back for seven days; after that they were gone.
+If you ran a version before 1.4.6 (1 November 2026), "This and following" on a repeating event deleted every day from that day on that you had edited on its own. A day you had renamed, moved, or given its own place, people or tags went back to what the series said, with nothing to tell you. Answering or changing calendars from a day on did the same. Undo could put the days back for seven days; after that they were gone.
 
-1.4.6 keeps those days. The new part still dropped the series' tags and people until 1.5.1, which carries them over. If you used "This and following" on a series with edited days before 1.4.6, those edits may be missing, and only a database backup from before the change can bring them back. I found this on 6 November 2026 while measuring 1.5.1 against 1.3 and 1.4 ([#203](https://github.com/Oshyan/better-cal/issues/203)); the scenarios that show it are in `tools/compare`.
+1.4.6 keeps those days, and 1.5.1 also carries the series' tags and people onto the new part. If you used "This and following" on a series with edited days before 1.4.6, those edits may be missing, and only a database backup from before the change can bring them back. Found on 6 November 2026 while measuring 1.5.1 against 1.3 and 1.4 ([#203](https://github.com/Oshyan/better-cal/issues/203)).
+
+My apologies if you experienced any data loss. While I was always doing my best to make a reliable system, this kind of thing is an important lesson for a developer and I'm taking it very seriously. I'm adopting extra precautions moving forward. Always keep backups, and enjoy the fact that you can do so easily with a self-hosted, open source system!
 
 ## License
 

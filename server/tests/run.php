@@ -8098,9 +8098,10 @@ checkEq('plugin timed: a time with no offset is the owner\'s local time',
 
 // ---------------------------------------------------------------------------
 // columnPatch's forOverride gate. An instance override row must never take
-// the series RRULE or the trip flag from a patch payload, because the editor
-// always sends the rrule it seeded from; the existing-override branch of
-// patchThis once forgot the flag and stamped FREQ=... onto a moved instance.
+// the series RRULE or the trip flag from a patch payload, whether or not the
+// editor sends the rrule (since #199 it sends one only when the repeat controls
+// were touched); the existing-override branch of patchThis once forgot the
+// flag and stamped FREQ=... onto a moved instance.
 // columnPatch reads only $current/$in and static helpers unless `status` is
 // sent, so it is callable on an Events built without its constructor.
 {

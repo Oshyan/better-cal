@@ -133,13 +133,15 @@ trait PlanChecks
         }
         $standalones = $this->standalones();
         // The day acted on as an event of its own: its own row detached, or
-        // a row made where the request put it. Only where the request put it
-        // somewhere and sent no new pattern (Every Kind of Edit); otherwise its
-        // row is an edited day like any other, kept on its own by the outside
-        // choice. Cut off by a bound the person sent, it is a day outside like
-        // any other (decisions.md, a bound the person sent that cuts off the
-        // day acted on): kept on its own where it was put, or deleted.
-        $special = $edit['sent'] !== null && $x->kind !== 'newrule' && !($edit['boundSent'] !== null && ($choices['outside'] ?? 'keep') === 'delete');
+        // a row made where the request put it (which needs a placement sent,
+        // $putAt). Not under a new pattern (Every Kind of Edit), where its row
+        // is an edited day like any other, kept on its own by the outside
+        // choice and not listed. Cut off by a bound the person sent, it takes
+        // the outside choice (decisions.md, a bound the person sent that cuts
+        // off the day acted on): kept, it is listed once where it shows,
+        // whether the request placed it or sent the bound alone; deleted, not
+        // at all. With no placement and no bound sent nothing can cut it off.
+        $special = $x->kind !== 'newrule' && !($edit['boundSent'] !== null && ($choices['outside'] ?? 'keep') === 'delete');
         $actedAlone = null;
         foreach ($special ? $standalones : [] as $s) {
             $sid = (int) $s['id'];

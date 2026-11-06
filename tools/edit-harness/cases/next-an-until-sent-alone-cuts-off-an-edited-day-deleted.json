@@ -1,0 +1,64 @@
+{
+    "n": 308,
+    "seed": 31,
+    "series": {
+        "family": "monthly_from_end",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=-1",
+        "import": false,
+        "bound": "none",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2027-04-07 09:30",
+        "length": 30
+    },
+    "exceptions": [
+        {
+            "at": 22,
+            "kind": "edit",
+            "own": [
+                "description",
+                "tags",
+                "date",
+                "length"
+            ],
+            "days": -3,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": -15
+        }
+    ],
+    "acted": 22,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=MONTHLY;BYMONTHDAY=20",
+        "bound": {
+            "untilAt": 8
+        },
+        "via": "master"
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "outside": "delete"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

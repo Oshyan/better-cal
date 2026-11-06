@@ -33,6 +33,24 @@ final class Calc
      */
     public const MAX_STEPS = 400000;
 
+    /**
+     * The walk cache is bounded by what it costs, not only by how many forms
+     * it holds. Measured on PHP 8.4: a kept day costs about 550 bytes (its
+     * [day, key] pair, the key's string and the list's slot), and a form
+     * about 12 KB on its own (its iterator and the iterator's walker), so 256
+     * small forms are about 3 MB. A request on 128 MB hosting can spare a
+     * few MB for the cache: 6 MiB in all, about 11,000 days across the forms
+     * held. One walk over 2 MiB (about 3,800 days, ten years of a daily
+     * series) is not kept at all: it would push out every other form, and
+     * one that long is rarely read twice in a request. An eight-year hourly
+     * walk (70,000 days, about 38 MB) was the case that showed it.
+     */
+    public const CACHE_BYTES = 6 * 1024 * 1024;
+    public const CACHE_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
+    public const CACHE_ENTRIES = 256;
+    private const KEY_BYTES = 550;
+    private const ENTRY_BYTES = 12288;
+
     /** @var array{0:int,1:int,2:int} the series' clock time (BYHOUR and BYMINUTE win) */
     public array $clock;
 
@@ -280,8 +298,7 @@ final class Calc
         while (!$this->complete && ($this->readTo === null || $this->readTo < $maxDn) && ($max === PHP_INT_MAX || $have() < $max)) {
             $from = $this->readTo ?? $this->startDn;
             $to = min($maxDn, $from + max(400, 2 * ($from - $this->startDn)));
-            $ck = self::cacheKey($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay);
-            $raw = self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $to, PHP_INT_MAX);
+            $raw = self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $to, PHP_INT_MAX, $state);
             $this->list = [];
             $this->byDay = [];
             foreach ($raw as $k) {
@@ -292,7 +309,7 @@ final class Calc
                 $this->byDay[$k[0]][] = $k[1];
             }
             $this->readTo = $to;
-            $this->complete = self::$cache[$ck]['done'] && count($raw) === count(self::$cache[$ck]['keys']);
+            $this->complete = $state['whole'];
             if ($to >= $limit) {
                 $this->complete = true;
             }
@@ -302,8 +319,8 @@ final class Calc
     /** Whether the expander reads the stored rule at all. */
     public function expandable(): bool
     {
-        self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $this->startDn, 1);
-        return self::$cache[self::cacheKey($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay)]['ok'];
+        self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $this->startDn, 1, $state);
+        return $state['ok'];
     }
 
     /**
@@ -421,20 +438,19 @@ final class Calc
     /**
      * The expander's raw occurrences of a stored rule from a stored start, as
      * [local day, key], through $maxDn and at most $max, extended on demand
-     * and kept per stored form. A rule the expander can't read
-     * (RuleNotReadable) gives none and reads as not expandable.
+     * and kept per stored form while the cache can afford it (CACHE_BYTES).
+     * A rule the expander can't read (RuleNotReadable) gives none and reads
+     * as not expandable. $state says whether the answer is the whole series
+     * (the walk is done and every day it holds was returned) and whether the
+     * expander reads the rule.
      *
+     * @param-out array{whole:bool,ok:bool} $state
      * @return list<array{0:int,1:string}>
      */
-    private static function expansion(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay, int $maxDn, int $max): array
+    private static function expansion(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay, int $maxDn, int $max, ?array &$state = null): array
     {
         $ck = self::cacheKey($rrule, $start, $tz, $allDay);
         if (!isset(self::$cache[$ck])) {
-            // A memory guard on the cache: an evicted form is expanded again,
-            // the same days, never fewer.
-            if (count(self::$cache) > 256) {
-                self::$cache = array_slice(self::$cache, -128, null, true);
-            }
             $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
             try {
                 $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
@@ -482,8 +498,47 @@ final class Calc
             }
             $out[] = $k;
         }
+        $state = ['whole' => $e['done'] && count($out) === count($e['keys']), 'ok' => $e['ok']];
         unset($e);
+        self::bound($ck);
         return $out;
+    }
+
+    /**
+     * Keeps the cache within its bounds after form $ck was read: a form
+     * costing more than CACHE_ENTRY_MAX_BYTES is dropped (read again, the
+     * same days, never fewer, if it is asked for again), then the oldest
+     * forms go until the rest fit CACHE_BYTES and CACHE_ENTRIES.
+     */
+    private static function bound(string $ck): void
+    {
+        if (isset(self::$cache[$ck]) && self::cost(self::$cache[$ck]) > self::CACHE_ENTRY_MAX_BYTES) {
+            unset(self::$cache[$ck]);
+        }
+        // Summed each time rather than kept as a running total, so nothing
+        // that replaces the cache can leave a stale count behind; 256 forms
+        // at most.
+        $bytes = 0;
+        foreach (self::$cache as $entry) {
+            $bytes += self::cost($entry);
+        }
+        while (self::$cache !== [] && ($bytes > self::CACHE_BYTES || count(self::$cache) > self::CACHE_ENTRIES)) {
+            $oldest = array_key_first(self::$cache);
+            $bytes -= self::cost(self::$cache[$oldest]);
+            unset(self::$cache[$oldest]);
+        }
+    }
+
+    /** @param array{keys:list<array{0:int,1:string}>} $entry */
+    private static function cost(array $entry): int
+    {
+        return self::ENTRY_BYTES + count($entry['keys']) * self::KEY_BYTES;
+    }
+
+    /** @return array{forms:int,bytes:int,days:int} what the walk cache holds, for tests and diagnostics */
+    public static function cacheUsage(): array
+    {
+        return ['forms' => count(self::$cache), 'bytes' => array_sum(array_map(self::cost(...), self::$cache)), 'days' => array_sum(array_map(static fn(array $e): int => count($e['keys']), self::$cache))];
     }
 
     // ---- wall clocks -------------------------------------------------------

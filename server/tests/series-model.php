@@ -2470,6 +2470,54 @@ foreach (['whole' => [2, '2027-02-01'], 'part' => [5, '2027-02-22']] as $b => [$
 $p = smPlan($m, [$own], array_diff_key($edit, ['rrule' => 1]));
 checkEq('Split all-day drag with a count: the same drag for all events is Mondays too', 'FREQ=WEEKLY;BYDAY=MO', $p['writes']['master']['rrule'] ?? null);
 
+// The walk cache is bounded by what it holds, not only by how many forms:
+// a walk over CACHE_ENTRY_MAX_BYTES is not kept, and the oldest forms go
+// once the rest cost more than CACHE_BYTES.
+{
+    $calcCache = new ReflectionProperty(BetterCal\Domain\Series\Calc::class, 'cache');
+    $calcCache->setValue(null, []);
+    gc_collect_cycles();
+    $calcMemBefore = memory_get_usage();
+    // Hourly from Sat 5 Jan 2019 08:00 UTC, read to Tue 5 Jan 2027: 70,128
+    // hours, about 38 MB of kept days. One per day is 2,923 days.
+    $calcHourly = smSeries('Sample check-in', 'FREQ=HOURLY', '2019-01-05 08:00', 15, false, [], 'UTC');
+    $calcDays = BetterCal\Domain\Series\Calc::fromRow($calcHourly)->occurrences(Cal::dn(2027, 1, 5));
+    checkEq('Walk cache: an eight-year hourly walk is read whole, 2,923 days from Sat 5 Jan 2019 to Tue 5 Jan 2027, and not kept', [2923, '2019-01-05', '2027-01-05', 0],
+        [count($calcDays), Cal::date($calcDays[0] ?? 0), Cal::date($calcDays[2922] ?? 0), BetterCal\Domain\Series\Calc::cacheUsage()['forms']]);
+    $p = smPlan($calcHourly, [], ['acted' => smAt('2027-01-05 00:00', 'UTC'), 'columns' => ['title' => 'Sample check-in, renamed']]);
+    checkEq('Walk cache: the plan for it still lists the first four hours of the day acted on, and keeps nothing', [['2027-01-05T00:00:00+00:00', '2027-01-05T01:00:00+00:00', '2027-01-05T02:00:00+00:00', '2027-01-05T03:00:00+00:00'], 0],
+        [array_column($p['plan']['next'], 'start'), BetterCal\Domain\Series\Calc::cacheUsage()['forms']]);
+    // Twenty daily series of three years each (1,096 days, about 600 KB by
+    // the estimate): all twenty would be about 12 MB, so the oldest go and
+    // the last ones read stay.
+    $calcFirst = null;
+    for ($calcN = 0; $calcN < 20; $calcN++) {
+        $calcDaily = smSeries('Sample walk', 'FREQ=DAILY', '2024-01-01 ' . sprintf('07:%02d', $calcN), 30, false, [], 'UTC');
+        $calcRead = BetterCal\Domain\Series\Calc::fromRow($calcDaily)->occurrences(Cal::dn(2026, 12, 31));
+        $calcFirst ??= count($calcRead);
+    }
+    $calcKeys = array_keys($calcCache->getValue());
+    $calcUsage = BetterCal\Domain\Series\Calc::cacheUsage();
+    $calcMemFull = memory_get_usage() - $calcMemBefore;
+    check('Walk cache: twenty three-year daily walks, each read whole (1,096 days), keep only what fits 6 MiB, the newest kept and the oldest gone',
+        $calcFirst === 1096 && $calcUsage['bytes'] <= BetterCal\Domain\Series\Calc::CACHE_BYTES && $calcUsage['forms'] < 20 && $calcUsage['forms'] >= 5
+        && str_contains((string) end($calcKeys), (string) strtotime('2024-01-01 07:19:00 UTC')) && !str_contains(implode(' ', $calcKeys), (string) strtotime('2024-01-01 07:00:00 UTC')),
+        json_encode($calcUsage));
+    // 600 weekly series read four weeks each: at most 256 forms kept.
+    for ($calcN = 0; $calcN < 600; $calcN++) {
+        $calcWeekly = smSeries('Sample walk', 'FREQ=WEEKLY', '2026-01-05 ' . sprintf('%02d:%02d', intdiv($calcN, 60), $calcN % 60), 30, false, [], 'UTC');
+        BetterCal\Domain\Series\Calc::fromRow($calcWeekly)->occurrences(Cal::dn(2026, 1, 31));
+    }
+    $calcUsage = BetterCal\Domain\Series\Calc::cacheUsage();
+    check('Walk cache: 600 small walks keep at most 256 forms, within 6 MiB', $calcUsage['forms'] <= BetterCal\Domain\Series\Calc::CACHE_ENTRIES && $calcUsage['bytes'] <= BetterCal\Domain\Series\Calc::CACHE_BYTES, json_encode($calcUsage));
+    unset($calcDays, $calcRead, $p, $calcKeys);
+    gc_collect_cycles();
+    $calcMemGrowth = memory_get_usage() - $calcMemBefore;
+    check('Walk cache: filled by the daily walks and again by the small ones, the cache holds under 8 MiB of memory', max($calcMemFull, $calcMemGrowth) < 8 * 1024 * 1024,
+        'grew ' . number_format($calcMemFull) . ' and ' . number_format($calcMemGrowth) . ' bytes');
+    $calcCache->setValue(null, []);
+}
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

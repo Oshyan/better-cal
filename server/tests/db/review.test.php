@@ -5,6 +5,8 @@ declare(strict_types=1);
 // Review decisions and their undo: undoing an accept puts back all of it,
 // the event, the invitation stored on it and the item open in Review, so
 // the person can decide again; an answer that never left undoes with it.
+// Each block is a scenario(), with an account of its own: a throw fails
+// that block, and the next still runs.
 
 use BetterCal\Domain\ActivityContext;
 use BetterCal\Domain\ReviewQueue;
@@ -32,118 +34,130 @@ return static function (Db $db): void {
 
     // A new invitation added from Review, then undone: off the calendar and
     // back in Review, to add or dismiss again.
-    $u = freshUser($db);
-    $d = domains($db);
-    $review = new ReviewQueue($db, $d->events);
-    $item = $review->holdNewInvitation($u, 'potluck-a@example.test', $fields, $invite, 'host@example.test');
-    ActivityContext::takeEntries();
-    $added = $review->accept($u, $item);
-    $entries = $toast();
-    checkEq('review: adding an invitation is one entry to undo', 1, count($entries));
-    foreach ($entries as $e) {
-        $d->undo->undoById($u, $e);
-    }
-    checkEq('review: the add undone, the event is gone and the item open in Review again', [0, 'open'], [$live((int) $added['eventId']), $status($item)]);
-    $again = $review->accept($u, $item);
-    checkEq('review: and it can be added again', 1, $live((int) $again['eventId']));
+    scenario('review: an invitation added, then undone', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $review = new ReviewQueue($db, $d->events);
+        $item = $review->holdNewInvitation($u, 'potluck-a@example.test', $fields, $invite, 'host@example.test');
+        ActivityContext::takeEntries();
+        $added = $review->accept($u, $item);
+        $entries = $toast();
+        checkEq('review: adding an invitation is one entry to undo', 1, count($entries));
+        foreach ($entries as $e) {
+            $d->undo->undoById($u, $e);
+        }
+        checkEq('review: the add undone, the event is gone and the item open in Review again', [0, 'open'], [$live((int) $added['eventId']), $status($item)]);
+        $again = $review->accept($u, $item);
+        checkEq('review: and it can be added again', 1, $live((int) $again['eventId']));
+    });
 
     // "Add and accept" with no reply sent (no mail set up here): the answer
     // stayed here, so the toast undoes the answer and the add.
-    $v = freshUser($db);
-    $dv = domains($db);
-    $rv = new ReviewQueue($db, $dv->events);
-    $item = $rv->holdNewInvitation($v, 'potluck-b@example.test', $fields, $invite, 'host@example.test');
-    ActivityContext::takeEntries();
-    $added = $rv->accept($v, $item);
-    $token = bin2hex(random_bytes(16));
-    $db->insert('sessions', ['token_hash' => hash('sha256', $token), 'user_id' => $v, 'csrf' => 'x', 'authenticated_at' => Time::nowDb(), 'expires_at' => '2030-01-01 00:00:00']);
-    $reply = (new Rsvp($db, new EmailSender([]), []))->answer($v, (int) $added['eventId'], 'accepted', $token);
-    $entries = $toast();
-    checkEq('review: add and accept, no reply sent: two entries, the answer and the add', [false, 2], [$reply['sent'], count($entries)]);
-    $refused = [];
-    foreach ($entries as $e) {
-        $refused[] = refusal(fn() => $dv->undo->undoById($v, $e));
-    }
-    checkEq('review: undone, newest first: the answer, then the add; the item open again', [[null, null], 0, 'open'],
-        [$refused, $live((int) $added['eventId']), $status($item)]);
+    scenario('review: add and accept, no reply sent, then undone', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $v = freshUser($db);
+        $dv = domains($db);
+        $rv = new ReviewQueue($db, $dv->events);
+        $item = $rv->holdNewInvitation($v, 'potluck-b@example.test', $fields, $invite, 'host@example.test');
+        ActivityContext::takeEntries();
+        $added = $rv->accept($v, $item);
+        $token = bin2hex(random_bytes(16));
+        $db->insert('sessions', ['token_hash' => hash('sha256', $token), 'user_id' => $v, 'csrf' => 'x', 'authenticated_at' => Time::nowDb(), 'expires_at' => '2030-01-01 00:00:00']);
+        $reply = (new Rsvp($db, new EmailSender([]), []))->answer($v, (int) $added['eventId'], 'accepted', $token);
+        $entries = $toast();
+        checkEq('review: add and accept, no reply sent: two entries, the answer and the add', [false, 2], [$reply['sent'], count($entries)]);
+        $refused = [];
+        foreach ($entries as $e) {
+            $refused[] = refusal(fn() => $dv->undo->undoById($v, $e));
+        }
+        checkEq('review: undone, newest first: the answer, then the add; the item open again', [[null, null], 0, 'open'],
+            [$refused, $live((int) $added['eventId']), $status($item)]);
+    });
 
     // A change to an invitation accepted, then undone: the event as it was,
     // its stored invitation as it was, and the change back in Review.
-    $w = freshUser($db);
-    $dw = domains($db);
-    $rw = new ReviewQueue($db, $dw->events);
-    $item = $rw->holdNewInvitation($w, 'potluck-c@example.test', $fields, $invite, 'host@example.test');
-    $event = (int) $rw->accept($w, $item)['eventId'];
-    $storedBefore = $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]);
-    $moved = ['start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00'] + $fields;
-    $change = (int) $rw->holdInviteChange($w, $db->one('SELECT * FROM events WHERE id = ?', [$event]), 'potluck-c@example.test', 'REQUEST', $moved, ['sequence' => 1] + $invite, 'host@example.test');
-    ActivityContext::takeEntries();
-    $rw->accept($w, $change);
-    checkEq('review: the change accepted moves the event and stores the newer invitation', ['2026-12-13 01:00:00', 1],
-        [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$event]), json_decode((string) $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]), true)['sequence'] ?? null]);
-    foreach ($toast() as $e) {
-        $dw->undo->undoById($w, $e);
-    }
-    checkEq('review: the change undone: the event and its invitation as they were, and the change open in Review', ['2026-12-12 01:00:00', $storedBefore, 'open'], [
-        $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$event]),
-        $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]),
-        $status($change),
-    ]);
+    scenario('review: a change accepted, then undone', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $w = freshUser($db);
+        $dw = domains($db);
+        $rw = new ReviewQueue($db, $dw->events);
+        $item = $rw->holdNewInvitation($w, 'potluck-c@example.test', $fields, $invite, 'host@example.test');
+        $event = (int) $rw->accept($w, $item)['eventId'];
+        $storedBefore = $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]);
+        $moved = ['start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00'] + $fields;
+        $change = (int) $rw->holdInviteChange($w, $db->one('SELECT * FROM events WHERE id = ?', [$event]), 'potluck-c@example.test', 'REQUEST', $moved, ['sequence' => 1] + $invite, 'host@example.test');
+        ActivityContext::takeEntries();
+        $rw->accept($w, $change);
+        checkEq('review: the change accepted moves the event and stores the newer invitation', ['2026-12-13 01:00:00', 1],
+            [$db->scalar('SELECT start_utc FROM events WHERE id = ?', [$event]), json_decode((string) $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]), true)['sequence'] ?? null]);
+        foreach ($toast() as $e) {
+            $dw->undo->undoById($w, $e);
+        }
+        checkEq('review: the change undone: the event and its invitation as they were, and the change open in Review', ['2026-12-12 01:00:00', $storedBefore, 'open'], [
+            $db->scalar('SELECT start_utc FROM events WHERE id = ?', [$event]),
+            $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$event]),
+            $status($change),
+        ]);
+    });
 
     // Two versions of one invitation held side by side: adding one turns
     // the other into a change of it; undone, both are as they were.
-    $x = freshUser($db);
-    $dx = domains($db);
-    $rx = new ReviewQueue($db, $dx->events);
-    $first = $rx->holdNewInvitation($x, 'potluck-d@example.test', $fields, $invite, 'host@example.test');
-    $second = $rx->holdNewInvitation($x, 'potluck-d@example.test', ['title' => 'Sample potluck, moved indoors'] + $fields, $invite, 'host@example.test');
-    $kind = static fn(int $item): array => array_values($db->one('SELECT kind, status, event_id FROM review_items WHERE id = ?', [$item]));
-    $secondBefore = $kind($second);
-    ActivityContext::takeEntries();
-    $rx->accept($x, $first);
-    checkEq('review: adding one version makes the other a change of it', ['invite_change', 'open'], array_slice($kind($second), 0, 2));
-    foreach ($toast() as $e) {
-        $dx->undo->undoById($x, $e);
-    }
-    checkEq('review: undone, the other version is a new invitation again, not a change of a removed event', [$secondBefore, 'open'], [$kind($second), $status($first)]);
+    scenario('review: two versions of one invitation', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $x = freshUser($db);
+        $dx = domains($db);
+        $rx = new ReviewQueue($db, $dx->events);
+        $first = $rx->holdNewInvitation($x, 'potluck-d@example.test', $fields, $invite, 'host@example.test');
+        $second = $rx->holdNewInvitation($x, 'potluck-d@example.test', ['title' => 'Sample potluck, moved indoors'] + $fields, $invite, 'host@example.test');
+        $kind = static fn(int $item): array => array_values($db->one('SELECT kind, status, event_id FROM review_items WHERE id = ?', [$item]));
+        $secondBefore = $kind($second);
+        ActivityContext::takeEntries();
+        $rx->accept($x, $first);
+        checkEq('review: adding one version makes the other a change of it', ['invite_change', 'open'], array_slice($kind($second), 0, 2));
+        foreach ($toast() as $e) {
+            $dx->undo->undoById($x, $e);
+        }
+        checkEq('review: undone, the other version is a new invitation again, not a change of a removed event', [$secondBefore, 'open'], [$kind($second), $status($first)]);
+    });
 
     // A sender approved with an add, then another approved: undoing the add
     // takes back only the one it approved.
-    $y = freshUser($db);
-    $dy = domains($db);
-    $ry = new ReviewQueue($db, $dy->events);
-    $held = $ry->holdNewInvitation($y, 'potluck-e@example.test', $fields, $invite, 'host@example.test');
-    ActivityContext::takeEntries();
-    $ry->accept($y, $held, 'address');
-    $entries = $toast();
-    $dy->undo->write($y, fn() => \BetterCal\Domain\MailPolicy::approve($db, $y, 'friend@example.test', 'address'));
-    foreach ($entries as $e) {
-        $dy->undo->undoById($y, $e);
-    }
-    $senders = (new \BetterCal\Domain\Settings($db))->forUser($y)['mailApprovedSenders'] ?? [];
-    checkEq('review: undoing an add takes back its sender approval, and keeps one approved since', [false, true],
-        [in_array('host@example.test', $senders, true), in_array('friend@example.test', $senders, true)]);
+    scenario('review: a sender approved with an add', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $y = freshUser($db);
+        $dy = domains($db);
+        $ry = new ReviewQueue($db, $dy->events);
+        $held = $ry->holdNewInvitation($y, 'potluck-e@example.test', $fields, $invite, 'host@example.test');
+        ActivityContext::takeEntries();
+        $ry->accept($y, $held, 'address');
+        $entries = $toast();
+        $dy->undo->write($y, fn() => \BetterCal\Domain\MailPolicy::approve($db, $y, 'friend@example.test', 'address'));
+        foreach ($entries as $e) {
+            $dy->undo->undoById($y, $e);
+        }
+        $senders = (new \BetterCal\Domain\Settings($db))->forUser($y)['mailApprovedSenders'] ?? [];
+        checkEq('review: undoing an add takes back its sender approval, and keeps one approved since', [false, true],
+            [in_array('host@example.test', $senders, true), in_array('friend@example.test', $senders, true)]);
+    });
 
     // A newer emailed version held after the add stands on it: the add no
     // longer undoes, so that version isn't overwritten or left pointing at
     // an event undo removed. Once in a slot of its own, once rewriting the
     // newest slot when the meeting's are full.
     foreach ([1 => 'its own slot', 3 => 'the newest slot rewritten'] as $others => $how) {
-        $z = freshUser($db);
-        $dz = domains($db);
-        $rz = new ReviewQueue($db, $dz->events);
-        $uid = 'potluck-f' . $others . '@example.test';
-        $added = $rz->holdNewInvitation($z, $uid, $fields, $invite, 'host@example.test');
-        for ($i = 1; $i <= $others; $i++) {
-            $rz->holdNewInvitation($z, $uid, ['title' => "Sample potluck, version $i"] + $fields, $invite, 'host@example.test');
-        }
-        ActivityContext::takeEntries();
-        $event = (int) $rz->accept($z, $added)['eventId'];
-        $entries = $toast();
-        $later = ['start' => '2026-12-14T01:00:00+00:00', 'end' => '2026-12-14T03:00:00+00:00'] + $fields;
-        $rz->holdInviteChange($z, $db->one('SELECT * FROM events WHERE id = ?', [$event]), $uid, 'REQUEST', $later, ['sequence' => 2] + $invite, 'host@example.test');
-        checkEq("review: a newer version held after an add ($how): the add is stale, the event stays", ['stale_undo', 1],
-            [refusal(fn() => $dz->undo->undoById($z, $entries[0])), $live($event)]);
+        scenario("review: a newer version held after an add ($how)", function () use ($db, $toast, $invite, $fields, $status, $live, $others, $how): void {
+            $z = freshUser($db);
+            $dz = domains($db);
+            $rz = new ReviewQueue($db, $dz->events);
+            $uid = 'potluck-f' . $others . '@example.test';
+            $added = $rz->holdNewInvitation($z, $uid, $fields, $invite, 'host@example.test');
+            for ($i = 1; $i <= $others; $i++) {
+                $rz->holdNewInvitation($z, $uid, ['title' => "Sample potluck, version $i"] + $fields, $invite, 'host@example.test');
+            }
+            ActivityContext::takeEntries();
+            $event = (int) $rz->accept($z, $added)['eventId'];
+            $entries = $toast();
+            $later = ['start' => '2026-12-14T01:00:00+00:00', 'end' => '2026-12-14T03:00:00+00:00'] + $fields;
+            $rz->holdInviteChange($z, $db->one('SELECT * FROM events WHERE id = ?', [$event]), $uid, 'REQUEST', $later, ['sequence' => 2] + $invite, 'host@example.test');
+            checkEq("review: a newer version held after an add ($how): the add is stale, the event stays", ['stale_undo', 1],
+                [refusal(fn() => $dz->undo->undoById($z, $entries[0])), $live($event)]);
+        });
     }
 
     // A day of a series that isn't on the calendar yet, held before its
@@ -151,91 +165,97 @@ return static function (Db $db): void {
     // day and offers only Dismiss, since accepting it has nothing to apply
     // until the series is added. Once it is, the item is a change to that
     // occurrence and offers its action.
-    $q = freshUser($db);
-    $dq = domains($db);
-    $rq = new ReviewQueue($db, $dq->events);
-    $controller = new \BetterCal\Http\Controllers\ReviewController($rq, new \BetterCal\Domain\Proposals($db, $dq->events, new \BetterCal\Domain\Trips($db, $dq->undo)), $dq->calendars);
-    $listed = static function () use ($controller, $q): array {
-        $req = new \BetterCal\Http\Request('GET', '/review');
-        $req->user = ['id' => $q];
-        $req->authMethod = 'session';
-        $out = [];
-        foreach (json_decode($controller->index($req)->body, true)['items'] as $item) {
-            $out[$item['key']] = $item;
-        }
-        return $out;
-    };
-    $weekly = ['rrule' => 'FREQ=WEEKLY'] + $fields;
-    $cancelledDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['title' => 'Sample reading group'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
-    $changedDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['start' => '2026-12-26T02:00:00+00:00', 'end' => '2026-12-26T04:00:00+00:00'] + $fields, $invite, 'host@example.test', 'imip', 'approved', '2026-12-26 01:00:00');
-    $cards = $listed();
-    checkEq('review page: a cancelled day held before its series is a cancellation of that day with only Dismiss to decide', ['invite_new', 'CANCEL', '2026-12-19T01:00:00+00:00', ['Dismiss']], [
-        $cards["invite_new:$cancelledDay"]['kind'] ?? null, $cards["invite_new:$cancelledDay"]['detail']['method'] ?? null,
-        $cards["invite_new:$cancelledDay"]['detail']['occurrence'] ?? null, array_column($cards["invite_new:$cancelledDay"]['actions'] ?? [], 'label'),
-    ]);
-    checkEq('review page: a changed day held before its series offers only Dismiss too', ['REQUEST', '2026-12-26T01:00:00+00:00', ['Dismiss']], [
-        $cards["invite_new:$changedDay"]['detail']['method'] ?? null, $cards["invite_new:$changedDay"]['detail']['occurrence'] ?? null,
-        array_column($cards["invite_new:$changedDay"]['actions'] ?? [], 'label'),
-    ]);
-    $rq->accept($q, $rq->holdNewInvitation($q, 'reading-group@example.test', $weekly, ['sequence' => 1] + $invite, 'host@example.test'));
-    $cards = $listed();
-    checkEq('review page: once the series is added, the held days are changes to their occurrences, with their actions', [['Skip that occurrence', 'Dismiss'], ['Accept change', 'Dismiss']], [
-        array_column($cards["invite_change:$cancelledDay"]['actions'] ?? [], 'label'), array_column($cards["invite_change:$changedDay"]['actions'] ?? [], 'label'),
-    ]);
-    // The same when the series is added automatically, from an approved
-    // sender: the page never shows a day waiting for a series that is on
-    // the calendar, and a day left waiting by another path is converted as
-    // the page is read.
-    \BetterCal\Domain\MailIngest::ensureInviteCalendar($db, $q);
-    \BetterCal\Domain\Settings::put($db, $q, ['mailApprovedSenders' => ['host@example.test'], 'mailEventMode' => 'approved']);
-    $mailQ = new \BetterCal\Domain\MailIngest($db, $dq->events, null, new \BetterCal\Domain\MailAdmission($db));
-    $ics = static fn(string $method, string $vevent): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:$method\r\n$vevent" . "END:VCALENDAR\r\n";
-    $message = static fn(string $id, string $body): array => ['messageId' => "$id@example.test", 'subject' => 'Sample reading group', 'from' => 'host@example.test', 'icsParts' => [$body], 'html' => null, 'text' => null];
-    $autoUid = 'reading-group-auto@example.test';
-    $mailQ->ingestMessage($q, $message('auto-day', $ics('CANCEL', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300102T000000Z\r\nRECURRENCE-ID:20300114T180000Z\r\nDTSTART:20300114T180000Z\r\nDTEND:20300114T190000Z\r\nSUMMARY:Sample reading group\r\nSTATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nEND:VEVENT\r\n")), 'UTC');
-    $autoDay = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND source_key = ? AND status = 'open'", [$q, $autoUid]);
-    $added = $mailQ->ingestMessage($q, $message('auto-series', $ics('REQUEST', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300101T000000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Sample reading group\r\nSEQUENCE:0\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\n")), 'UTC');
-    $cards = $listed();
-    checkEq('review page: a day held before its series, the series added automatically: a cancellation of that occurrence with its action, not a day waiting', ['created', ['Skip that occurrence', 'Dismiss'], false], [
-        $added['outcome'], array_column($cards["invite_change:$autoDay"]['actions'] ?? [], 'label'), isset($cards["invite_new:$autoDay"]),
-    ]);
-    $waitingListed = static fn(array $cards): array => array_values(array_filter($cards, static fn(array $c): bool => $c['kind'] === 'invite_new' && !empty($c['detail']['occurrence'])));
-    $staleDay = $rq->holdNewInvitation($q, $autoUid, ['title' => 'Sample reading group'], ['method' => 'CANCEL', 'sequence' => 2] + $invite, 'host@example.test', 'imip', 'approved', '2030-01-21 18:00:00');
-    $cursor = new \BetterCal\Domain\ChangeCursor($db);
-    $cursorBefore = $cursor->review($q);
-    $cards = $listed();
-    checkEq('review page: a day held before a series that is on the calendar by now is listed as a cancellation of that occurrence, never as waiting', [['Skip that occurrence', 'Dismiss'], []], [
-        array_column($cards["invite_change:$staleDay"]['actions'] ?? [], 'label'), $waitingListed($cards),
-    ]);
-    // Another open tab holds the waiting card: the change cursor's review
-    // part moves on the conversion, so it refetches, and stays put after.
-    $cursorAfter = $cursor->review($q);
-    $listed();
-    checkEq('review page: converting a held day as the page is read moves the change cursor once', [true, true], [$cursorAfter !== $cursorBefore, $cursor->review($q) === $cursorAfter]);
+    // The automatic add below reads the same account's page, with the days
+    // held above still on it: one block.
+    scenario('review page: a day held before its series', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $q = freshUser($db);
+        $dq = domains($db);
+        $rq = new ReviewQueue($db, $dq->events);
+        $controller = new \BetterCal\Http\Controllers\ReviewController($rq, new \BetterCal\Domain\Proposals($db, $dq->events, new \BetterCal\Domain\Trips($db, $dq->undo)), $dq->calendars);
+        $listed = static function () use ($controller, $q): array {
+            $req = new \BetterCal\Http\Request('GET', '/review');
+            $req->user = ['id' => $q];
+            $req->authMethod = 'session';
+            $out = [];
+            foreach (json_decode($controller->index($req)->body, true)['items'] as $item) {
+                $out[$item['key']] = $item;
+            }
+            return $out;
+        };
+        $weekly = ['rrule' => 'FREQ=WEEKLY'] + $fields;
+        $cancelledDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['title' => 'Sample reading group'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
+        $changedDay = $rq->holdNewInvitation($q, 'reading-group@example.test', ['start' => '2026-12-26T02:00:00+00:00', 'end' => '2026-12-26T04:00:00+00:00'] + $fields, $invite, 'host@example.test', 'imip', 'approved', '2026-12-26 01:00:00');
+        $cards = $listed();
+        checkEq('review page: a cancelled day held before its series is a cancellation of that day with only Dismiss to decide', ['invite_new', 'CANCEL', '2026-12-19T01:00:00+00:00', ['Dismiss']], [
+            $cards["invite_new:$cancelledDay"]['kind'] ?? null, $cards["invite_new:$cancelledDay"]['detail']['method'] ?? null,
+            $cards["invite_new:$cancelledDay"]['detail']['occurrence'] ?? null, array_column($cards["invite_new:$cancelledDay"]['actions'] ?? [], 'label'),
+        ]);
+        checkEq('review page: a changed day held before its series offers only Dismiss too', ['REQUEST', '2026-12-26T01:00:00+00:00', ['Dismiss']], [
+            $cards["invite_new:$changedDay"]['detail']['method'] ?? null, $cards["invite_new:$changedDay"]['detail']['occurrence'] ?? null,
+            array_column($cards["invite_new:$changedDay"]['actions'] ?? [], 'label'),
+        ]);
+        $rq->accept($q, $rq->holdNewInvitation($q, 'reading-group@example.test', $weekly, ['sequence' => 1] + $invite, 'host@example.test'));
+        $cards = $listed();
+        checkEq('review page: once the series is added, the held days are changes to their occurrences, with their actions', [['Skip that occurrence', 'Dismiss'], ['Accept change', 'Dismiss']], [
+            array_column($cards["invite_change:$cancelledDay"]['actions'] ?? [], 'label'), array_column($cards["invite_change:$changedDay"]['actions'] ?? [], 'label'),
+        ]);
+        // The same when the series is added automatically, from an approved
+        // sender: the page never shows a day waiting for a series that is on
+        // the calendar, and a day left waiting by another path is converted as
+        // the page is read.
+        \BetterCal\Domain\MailIngest::ensureInviteCalendar($db, $q);
+        \BetterCal\Domain\Settings::put($db, $q, ['mailApprovedSenders' => ['host@example.test'], 'mailEventMode' => 'approved']);
+        $mailQ = new \BetterCal\Domain\MailIngest($db, $dq->events, null, new \BetterCal\Domain\MailAdmission($db));
+        $ics = static fn(string $method, string $vevent): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:$method\r\n$vevent" . "END:VCALENDAR\r\n";
+        $message = static fn(string $id, string $body): array => ['messageId' => "$id@example.test", 'subject' => 'Sample reading group', 'from' => 'host@example.test', 'icsParts' => [$body], 'html' => null, 'text' => null];
+        $autoUid = 'reading-group-auto@example.test';
+        $mailQ->ingestMessage($q, $message('auto-day', $ics('CANCEL', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300102T000000Z\r\nRECURRENCE-ID:20300114T180000Z\r\nDTSTART:20300114T180000Z\r\nDTEND:20300114T190000Z\r\nSUMMARY:Sample reading group\r\nSTATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nEND:VEVENT\r\n")), 'UTC');
+        $autoDay = (int) $db->scalar("SELECT id FROM review_items WHERE user_id = ? AND source_key = ? AND status = 'open'", [$q, $autoUid]);
+        $added = $mailQ->ingestMessage($q, $message('auto-series', $ics('REQUEST', "BEGIN:VEVENT\r\nUID:$autoUid\r\nDTSTAMP:20300101T000000Z\r\nDTSTART:20300107T180000Z\r\nDTEND:20300107T190000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Sample reading group\r\nSEQUENCE:0\r\nORGANIZER;CN=Sample Host:mailto:host@example.test\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:owner@example.test\r\nEND:VEVENT\r\n")), 'UTC');
+        $cards = $listed();
+        checkEq('review page: a day held before its series, the series added automatically: a cancellation of that occurrence with its action, not a day waiting', ['created', ['Skip that occurrence', 'Dismiss'], false], [
+            $added['outcome'], array_column($cards["invite_change:$autoDay"]['actions'] ?? [], 'label'), isset($cards["invite_new:$autoDay"]),
+        ]);
+        $waitingListed = static fn(array $cards): array => array_values(array_filter($cards, static fn(array $c): bool => $c['kind'] === 'invite_new' && !empty($c['detail']['occurrence'])));
+        $staleDay = $rq->holdNewInvitation($q, $autoUid, ['title' => 'Sample reading group'], ['method' => 'CANCEL', 'sequence' => 2] + $invite, 'host@example.test', 'imip', 'approved', '2030-01-21 18:00:00');
+        $cursor = new \BetterCal\Domain\ChangeCursor($db);
+        $cursorBefore = $cursor->review($q);
+        $cards = $listed();
+        checkEq('review page: a day held before a series that is on the calendar by now is listed as a cancellation of that occurrence, never as waiting', [['Skip that occurrence', 'Dismiss'], []], [
+            array_column($cards["invite_change:$staleDay"]['actions'] ?? [], 'label'), $waitingListed($cards),
+        ]);
+        // Another open tab holds the waiting card: the change cursor's review
+        // part moves on the conversion, so it refetches, and stays put after.
+        $cursorAfter = $cursor->review($q);
+        $listed();
+        checkEq('review page: converting a held day as the page is read moves the change cursor once', [true, true], [$cursorAfter !== $cursorBefore, $cursor->review($q) === $cursorAfter]);
+    });
 
     // A held day the series never had (its RECURRENCE-ID names no occurrence
     // of the rule the organizer sent) closes when the series is added, saying
     // so, instead of becoming a change whose accept blames a move. A day that
     // was an occurrence when it converted, and isn't once the owner moved the
     // series, still closes on accept with that reason.
-    $h = freshUser($db);
-    $dh = domains($db);
-    $rh = new ReviewQueue($db, $dh->events);
-    $fourWeeks = ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $fields; // 12, 19, 26 Dec and 2 Jan
-    $neverDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2027-01-16 01:00:00');
-    $wasDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
-    $choir = (int) $rh->accept($h, $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'] + $fourWeeks, ['sequence' => 1] + $invite, 'host@example.test'))['eventId'];
-    $item = static fn(int $id): array => $db->one('SELECT kind, status, summary FROM review_items WHERE id = ?', [$id]) ?? [];
-    checkEq('review: a held day the series never had closes as the series is added, saying the series has no such day; one it has becomes a change to it', [
-        ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the series you added has no such day, so there is nothing to skip.'],
-        ['invite_change', 'open'],
-    ], [array_values($item($neverDay)), array_slice(array_values($item($wasDay)), 0, 2)]);
-    planned($dh->events, $h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);
-    $refused = null;
-    try {
-        $rh->accept($h, $wasDay);
-    } catch (\BetterCal\Http\HttpError $e) {
-        $refused = [$e->errorCode, str_contains($e->getMessage(), 'moved or changed since this email arrived')];
-    }
-    checkEq('review: a converted day the owner moved the series away from closes on accept, saying the series was moved', [['review_stale', true], 'superseded'], [$refused, $item($wasDay)['status'] ?? null]);
+    scenario('review: a held day the series never had', function () use ($db, $toast, $invite, $fields, $status, $live): void {
+        $h = freshUser($db);
+        $dh = domains($db);
+        $rh = new ReviewQueue($db, $dh->events);
+        $fourWeeks = ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $fields; // 12, 19, 26 Dec and 2 Jan
+        $neverDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2027-01-16 01:00:00');
+        $wasDay = $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'], ['method' => 'CANCEL'] + $invite, 'host@example.test', 'imip', 'approved', '2026-12-19 01:00:00');
+        $choir = (int) $rh->accept($h, $rh->holdNewInvitation($h, 'choir-h@example.test', ['title' => 'Sample choir'] + $fourWeeks, ['sequence' => 1] + $invite, 'host@example.test'))['eventId'];
+        $item = static fn(int $id): array => $db->one('SELECT kind, status, summary FROM review_items WHERE id = ?', [$id]) ?? [];
+        checkEq('review: a held day the series never had closes as the series is added, saying the series has no such day; one it has becomes a change to it', [
+            ['invite_new', 'superseded', 'Sample Host cancelled the Sat 16 Jan 2027 occurrence, but the series you added has no such day, so there is nothing to skip.'],
+            ['invite_change', 'open'],
+        ], [array_values($item($neverDay)), array_slice(array_values($item($wasDay)), 0, 2)]);
+        planned($dh->events, $h, $choir, ['scope' => 'all', 'instanceStart' => '2026-12-12T01:00:00+00:00', 'start' => '2026-12-13T01:00:00+00:00', 'end' => '2026-12-13T03:00:00+00:00']);
+        $refused = null;
+        try {
+            $rh->accept($h, $wasDay);
+        } catch (\BetterCal\Http\HttpError $e) {
+            $refused = [$e->errorCode, str_contains($e->getMessage(), 'moved or changed since this email arrived')];
+        }
+        checkEq('review: a converted day the owner moved the series away from closes on accept, saying the series was moved', [['review_stale', true], 'superseded'], [$refused, $item($wasDay)['status'] ?? null]);
+    });
 };

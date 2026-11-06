@@ -8,7 +8,8 @@ declare(strict_types=1);
 // added since 1.0 that carried no credential of their own (a calendar's
 // place in the list, filing a calendar in a folder and taking it out, an
 // event's looked-up place). With the credential still valid, each goes
-// through.
+// through. Each block is a scenario(): a throw fails that block, and the
+// next still runs.
 
 use BetterCal\Domain\RequestAuthority;
 use BetterCal\Infra\Db;
@@ -33,66 +34,76 @@ return static function (Db $db): void {
         'DELETE /folders/:id/calendars/:calendarId' => static fn() => $d->folders->unfile($u, $folder, $home),
         'POST /events/:id/place' => static fn() => $d->events->placeFromLookup($u, $event, 'Sample Hall', 45.5, -122.6, 'photon'),
     ];
-    foreach ($routes as $route => $call) {
-        foreach (requestCredentials($db, $u) as $label => [$authority, $revoke, $code]) {
-            $revoke();
-            $before = $state();
-            checkEq("revocation ($label): $route revoked after signing in, before its write, is refused", $code,
-                refusal(fn() => RequestAuthority::during($authority, $call)));
-            checkEq("revocation ($label): $route commits nothing", $before, $state());
+    scenario('revocation: each route revoked before its write', function () use ($db, $u, $routes, $state): void {
+        foreach ($routes as $route => $call) {
+            foreach (requestCredentials($db, $u) as $label => [$authority, $revoke, $code]) {
+                $revoke();
+                $before = $state();
+                checkEq("revocation ($label): $route revoked after signing in, before its write, is refused", $code,
+                    refusal(fn() => RequestAuthority::during($authority, $call)));
+                checkEq("revocation ($label): $route commits nothing", $before, $state());
+            }
         }
-    }
-    foreach ($routes as $route => $call) {
-        [$authority] = requestCredentials($db, $u)['API key'];
-        $before = $state();
-        checkEq("revocation: $route with the credential still valid goes through", null, refusal(fn() => RequestAuthority::during($authority, $call)));
-        check("revocation: $route changes what it says", $state() !== $before);
-    }
+    });
+    scenario('revocation: each route with the credential still valid', function () use ($db, $u, $routes, $state): void {
+        foreach ($routes as $route => $call) {
+            [$authority] = requestCredentials($db, $u)['API key'];
+            $before = $state();
+            checkEq("revocation: $route with the credential still valid goes through", null, refusal(fn() => RequestAuthority::during($authority, $call)));
+            check("revocation: $route changes what it says", $state() !== $before);
+        }
+    });
 
     // A change the journal doesn't keep goes through the other boundary
     // (RequestAuthority::checkedTx), with the same check: a thumbs signal.
-    $feed = (int) $d->calendars->create($u, ['name' => 'Sample feed'])['id'];
-    $db->run("UPDATE calendars SET kind = 'subscribed' WHERE id = ?", [$feed]);
-    $fed = (int) $d->events->create($u, eventAt($home, 'Sample talk', '2026-12-18'))['eventId'];
-    $db->run("UPDATE events SET calendar_id = ?, source = 'feed' WHERE id = ?", [$feed, $fed]);
-    $signals = static fn(): int => (int) $db->scalar('SELECT COUNT(*) FROM feedback_signals WHERE event_id = ?', [$fed]);
-    foreach (requestCredentials($db, $u) as $label => [$authority, $revoke, $code]) {
-        $revoke();
-        checkEq("revocation ($label): POST /events/:id/feedback revoked before its write is refused, nothing written", [$code, 0],
-            [refusal(fn() => RequestAuthority::during($authority, fn() => $d->events->recordFeedback($u, $fed, 'up'))), $signals()]);
-    }
-    [$authority] = requestCredentials($db, $u)['session'];
-    RequestAuthority::during($authority, fn() => $d->events->recordFeedback($u, $fed, 'up'));
-    checkEq('revocation: with the credential valid, the signal is written', 1, $signals());
+    scenario('revocation: a change the journal does not keep', function () use ($db, $d, $u, $home): void {
+        $feed = (int) $d->calendars->create($u, ['name' => 'Sample feed'])['id'];
+        $db->run("UPDATE calendars SET kind = 'subscribed' WHERE id = ?", [$feed]);
+        $fed = (int) $d->events->create($u, eventAt($home, 'Sample talk', '2026-12-18'))['eventId'];
+        $db->run("UPDATE events SET calendar_id = ?, source = 'feed' WHERE id = ?", [$feed, $fed]);
+        $signals = static fn(): int => (int) $db->scalar('SELECT COUNT(*) FROM feedback_signals WHERE event_id = ?', [$fed]);
+        foreach (requestCredentials($db, $u) as $label => [$authority, $revoke, $code]) {
+            $revoke();
+            checkEq("revocation ($label): POST /events/:id/feedback revoked before its write is refused, nothing written", [$code, 0],
+                [refusal(fn() => RequestAuthority::during($authority, fn() => $d->events->recordFeedback($u, $fed, 'up'))), $signals()]);
+        }
+        [$authority] = requestCredentials($db, $u)['session'];
+        RequestAuthority::during($authority, fn() => $d->events->recordFeedback($u, $fed, 'up'));
+        checkEq('revocation: with the credential valid, the signal is written', 1, $signals());
+    });
 
     // A change a request (not a read) makes moves the account's change
     // marker in the transaction that checks it, once; a read's does not.
     $marker = static fn(): int => (int) $db->scalar('SELECT change_seq FROM users WHERE id = ?', [$u]);
-    [$authority] = requestCredentials($db, $u)['API key'];
-    $was = $marker();
-    RequestAuthority::during($authority, fn() => $d->folders->place($u, $folder, $two, 1), true);
-    checkEq('marker: a request\'s change moves the change marker once', $was + 1, $marker());
-    $was = $marker();
-    RequestAuthority::during($authority, fn() => $d->folders->place($u, $folder, $two, 0), false);
-    checkEq('marker: a read\'s write does not', $was, $marker());
+    scenario('marker: a request moves the change marker', function () use ($db, $d, $u, $folder, $two, $marker): void {
+        [$authority] = requestCredentials($db, $u)['API key'];
+        $was = $marker();
+        RequestAuthority::during($authority, fn() => $d->folders->place($u, $folder, $two, 1), true);
+        checkEq('marker: a request\'s change moves the change marker once', $was + 1, $marker());
+        $was = $marker();
+        RequestAuthority::during($authority, fn() => $d->folders->place($u, $folder, $two, 0), false);
+        checkEq('marker: a read\'s write does not', $was, $marker());
+    });
 
     // A flow that ends its own credential checks it, then ends it, in one
     // transaction, and writes nothing after: signing out, and a key
     // revoking itself.
-    $auth = new BetterCal\Domain\Auth($db, ['session_secret' => str_repeat('t', 32)]);
-    $session = 'sample-signout-' . bin2hex(random_bytes(6));
-    $db->run('INSERT INTO sessions (token_hash, user_id, csrf, expires_at) VALUES (?, ?, ?, ?)', [hash('sha256', $session), $u, str_repeat('c', 32), '2099-01-01 00:00:00']);
-    $was = $marker();
-    RequestAuthority::during(RequestAuthority::credential($u, null, $session), fn() => $auth->logout($session), true);
-    checkEq('self-revoking: sign-out ends its session, the marker moved in the same transaction', [0, $was + 1],
-        [(int) $db->scalar('SELECT COUNT(*) FROM sessions WHERE token_hash = ?', [hash('sha256', $session)]), $marker()]);
-    checkEq('self-revoking: signing out a session already ended is still a quiet success', 0,
-        RequestAuthority::during(RequestAuthority::credential($u, null, $session), fn() => $auth->logout($session), true));
-    $tokens = new BetterCal\Domain\ApiTokens($db);
-    [$keyAuthority] = requestCredentials($db, $u)['API key'];
-    $keyId = (int) $keyAuthority->tokenId();
-    check('self-revoking: a key revokes itself', RequestAuthority::during($keyAuthority, fn() => $tokens->revoke($u, $keyId), true));
-    checkEq('self-revoking: and is gone', 0, (int) $db->scalar('SELECT COUNT(*) FROM api_tokens WHERE id = ?', [$keyId]));
+    scenario('self-revoking: sign-out and a key revoking itself', function () use ($db, $u, $marker): void {
+        $auth = new BetterCal\Domain\Auth($db, ['session_secret' => str_repeat('t', 32)]);
+        $session = 'sample-signout-' . bin2hex(random_bytes(6));
+        $db->run('INSERT INTO sessions (token_hash, user_id, csrf, expires_at) VALUES (?, ?, ?, ?)', [hash('sha256', $session), $u, str_repeat('c', 32), '2099-01-01 00:00:00']);
+        $was = $marker();
+        RequestAuthority::during(RequestAuthority::credential($u, null, $session), fn() => $auth->logout($session), true);
+        checkEq('self-revoking: sign-out ends its session, the marker moved in the same transaction', [0, $was + 1],
+            [(int) $db->scalar('SELECT COUNT(*) FROM sessions WHERE token_hash = ?', [hash('sha256', $session)]), $marker()]);
+        checkEq('self-revoking: signing out a session already ended is still a quiet success', 0,
+            RequestAuthority::during(RequestAuthority::credential($u, null, $session), fn() => $auth->logout($session), true));
+        $tokens = new BetterCal\Domain\ApiTokens($db);
+        [$keyAuthority] = requestCredentials($db, $u)['API key'];
+        $keyId = (int) $keyAuthority->tokenId();
+        check('self-revoking: a key revokes itself', RequestAuthority::during($keyAuthority, fn() => $tokens->revoke($u, $keyId), true));
+        checkEq('self-revoking: and is gone', 0, (int) $db->scalar('SELECT COUNT(*) FROM api_tokens WHERE id = ?', [$keyId]));
+    });
 
     // A plugin job run after the response runs under the request's
     // credential, and its work is checked at its writes; the queue's state
@@ -118,21 +129,25 @@ return new class implements BetterCal\\Plugin\\PluginInterface {
         $queue = new BetterCal\Infra\JobQueue($db);
         $job = static fn(int $id): array => $db->one('SELECT status, attempts FROM jobs WHERE id = ?', [$id]);
 
-        foreach (requestCredentials($db, $u) as $label => [$authority, $revoke]) {
-            $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
-            $GLOBALS['sampleSyncDuring'] = $revoke;
-            try {
-                $ran = refusal(fn() => RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false));
-            } finally {
-                unset($GLOBALS['sampleSyncDuring']);
+        scenario('revocation: a plugin job whose credential is revoked mid-run', function () use ($db, $u, $queue, $plugins, $job): void {
+            foreach (requestCredentials($db, $u) as $label => [$authority, $revoke]) {
+                $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
+                $GLOBALS['sampleSyncDuring'] = $revoke;
+                try {
+                    $ran = refusal(fn() => RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false));
+                } finally {
+                    unset($GLOBALS['sampleSyncDuring']);
+                }
+                checkEq("revocation ($label): a plugin job whose credential is revoked mid-run ends failed, once, nothing left running or queued", [null, ['status' => 'failed', 'attempts' => 1]],
+                    [$ran, $job($id)]);
             }
-            checkEq("revocation ($label): a plugin job whose credential is revoked mid-run ends failed, once, nothing left running or queued", [null, ['status' => 'failed', 'attempts' => 1]],
-                [$ran, $job($id)]);
-        }
-        [$authority] = requestCredentials($db, $u)['session'];
-        $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
-        checkEq('revocation: with the credential valid, the job runs and is done', [1, ['status' => 'done', 'attempts' => 1]],
-            [RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false), $job($id)]);
+        });
+        scenario('revocation: a plugin job with the credential valid', function () use ($db, $u, $queue, $plugins, $job): void {
+            [$authority] = requestCredentials($db, $u)['session'];
+            $id = $queue->enqueue('plugin_job', ['userId' => $u, 'plugin' => 'sample-sync', 'job' => 'sync']);
+            checkEq('revocation: with the credential valid, the job runs and is done', [1, ['status' => 'done', 'attempts' => 1]],
+                [RequestAuthority::during($authority, fn() => $plugins->runQueuedNow([$id]), false), $job($id)]);
+        });
     } finally {
         $db->run("DELETE FROM plugins WHERE id = 'sample-sync'");
         array_map('unlink', glob($dir . '/sample-sync/*') ?: []);

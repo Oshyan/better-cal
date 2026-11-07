@@ -336,6 +336,10 @@ final class Feeds
                 if (array_key_exists('invite_json', $ev)) {
                     $columns['invite_json'] = $ev['invite_json'];
                 }
+                // Google's etag (GoogleSync::toParsed) is kept, not compared:
+                // every write to a series changes every row's etag (probe,
+                // group 5), and a new etag alone is no change to the event.
+                $etag = isset($ev['google_etag']) && $ev['google_etag'] !== '' ? (string) $ev['google_etag'] : null;
 
                 $current = $existingByKey[$key] ?? null;
                 $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
@@ -344,7 +348,7 @@ final class Feeds
                     $columns['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode($own);
                 }
                 if ($current === null) {
-                    $id = $this->db->insert('events', $columns + [
+                    $id = $this->db->insert('events', $columns + ($etag !== null ? ['google_etag' => $etag] : []) + [
                         'user_id' => $userId,
                         'calendar_id' => $calendarId,
                         'uid' => $ev['uid'],
@@ -393,10 +397,17 @@ final class Feeds
                         $touches[] = [Undo::keyOf('events', ['id' => (int) $current['id']]), (string) $col];
                     }
                     $changed['updated_at'] = Time::nowDb();
+                    if ($etag !== null && $etag !== ($current['google_etag'] ?? null)) {
+                        $changed['google_etag'] = $etag;
+                    }
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);
                     $changedUids[(string) $current['uid']] = true;
                     $updatedEventIds[] = (int) $current['id'];
                     $upserts++;
+                } elseif ($etag !== null && $etag !== ($current['google_etag'] ?? null)) {
+                    // Only the etag: stored quietly, the row's updated_at
+                    // (and so its CalDAV ETag) left as it was.
+                    $this->db->run('UPDATE events SET google_etag = ?, updated_at = updated_at WHERE id = ?', [$etag, (int) $current['id']]);
                 }
             }
 
@@ -437,10 +448,12 @@ final class Feeds
                 $updatedEventIds !== [] ? count($updatedEventIds) . ' updated' : null,
                 $removedCount > 0 ? $removedCount . ' removed' : null,
             ]);
+            // A Google calendar's poll is Google's change, and says so.
+            $fromGoogle = ($calendar['provider'] ?? 'ics') === 'google';
             if ($journal && $parts !== []) {
-                ActivityContext::with('feed', fn() => $undo->record(
+                ActivityContext::with($fromGoogle ? 'google' : 'feed', fn() => $undo->record(
                     $userId, 'calendar', $calendarId, 'update', null, null,
-                    "Feed '" . (string) $calendar['name'] . "': " . implode(', ', $parts),
+                    ($fromGoogle ? "From Google calendar '" : "Feed '") . (string) $calendar['name'] . "': " . implode(', ', $parts),
                     ['addedTitles' => array_slice($addedTitles, 0, 20)],
                     touches: $touches
                 ));

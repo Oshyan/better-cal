@@ -413,7 +413,10 @@ final class Rsvp
         }
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
         // answer to the organizer by itself; nobody else gets mail.
-        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false));
+        // Conditional on the version just read, not the one stored here, so
+        // a change at Google between the read and the write answers 412.
+        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false),
+            isset($current['etag']) && is_string($current['etag']) ? $current['etag'] : null);
         (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal): void {
             $check(true);
             $this->google->apply($calendar, [$resp]);

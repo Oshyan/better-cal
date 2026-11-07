@@ -8954,7 +8954,8 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $googleCalls = [];
     (new ReflectionProperty($gev, 'splitEventId'))->setValue($gev, null);
     $gev->patch(1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00'], $kinds['session'][0]);
-    checkEq('google following from the first day: the series itself is edited, nothing inserted, its rule and start kept', [['PATCH'], 'From the start', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null], [
+    // The PATCH, then the series' etags read back (GoogleWriter::refreshEtags).
+    checkEq('google following from the first day: the series itself is edited, nothing inserted, its rule and start kept', [['PATCH', 'GET'], 'From the start', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null], [
         $googleCalls,
         $gw->scalar('SELECT title FROM events WHERE id = 11'),
         $gw->scalar('SELECT rrule FROM events WHERE id = 11'),
@@ -11624,7 +11625,7 @@ use BetterCal\Infra\Secrets;
         calendar_id INTEGER, deleted_at TEXT, uid TEXT, title TEXT, description TEXT, location TEXT,
         url TEXT, tzid TEXT, rrule TEXT, exdates_json TEXT, status TEXT, source TEXT, attendance TEXT,
         style_json TEXT, dynamic_json TEXT, reminders_json TEXT, invite_json TEXT, created_via TEXT,
-        google_event_id TEXT, icon TEXT
+        google_event_id TEXT, google_etag TEXT, icon TEXT
     )');
     $memoryDb->run("INSERT INTO events (calendar_id, uid, title, description, tzid, status, source, attendance, created_via)
         VALUES (7, 'u', 'T', 'ordinary text', 'UTC', 'confirmed', 'feed', 'none', 'feed')");
@@ -11889,6 +11890,55 @@ use BetterCal\Infra\Secrets;
     ]]);
     checkEq('rows->parsed: exdates decoded', ['2026-09-28 08:00:00'], $rows[0]['exdates']);
     checkEq('rows->parsed: all_day is an int', 0, $rows[0]['all_day']);
+
+    // Etags (#172): kept on every row Google sends, master and exception,
+    // and carried through the incremental merge.
+    $etagMaster = GoogleSync::toParsed([
+        'id' => 'probe1a2b3c', 'iCalUID' => 'probe1a2b3c@google.com', 'etag' => '"3500000000000000"', 'summary' => 'Sample standup',
+        'start' => ['dateTime' => '2027-03-01T10:00:00-08:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-01T10:30:00-08:00', 'timeZone' => 'America/Los_Angeles'],
+        'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10'],
+    ]);
+    $etagException = GoogleSync::toParsed([
+        'id' => 'probe1a2b3c_20270308T180000Z', 'iCalUID' => 'probe1a2b3c@google.com', 'etag' => '"3500000000000000"', 'summary' => 'Sample standup (moved)',
+        'recurringEventId' => 'probe1a2b3c', 'originalStartTime' => ['dateTime' => '2027-03-08T10:00:00-08:00', 'timeZone' => 'America/Los_Angeles'],
+        'start' => ['dateTime' => '2027-03-09T10:00:00-08:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-09T10:30:00-08:00', 'timeZone' => 'America/Los_Angeles'],
+    ]);
+    checkEq('google->parsed: the etag is kept on the master and on an exception', ['"3500000000000000"', '"3500000000000000"'], [$etagMaster['google_etag'], $etagException['google_etag']]);
+    check('google->parsed: no etag sent, no etag key, so a stored one stays', !array_key_exists('google_etag', $exception));
+    $etagBack = GoogleSync::rowsToParsed([[
+        'uid' => 'probe1a2b3c@google.com', 'title' => 'Sample standup', 'description' => null, 'location' => null, 'url' => null,
+        'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 18:30:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
+        'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => null, 'status' => 'confirmed', 'recurrence_instance_utc' => null,
+        'google_event_id' => 'probe1a2b3c', 'google_etag' => '"3400000000000000"',
+    ]]);
+    checkEq('google rows->parsed: the stored etag rides an incremental merge', '"3400000000000000"', $etagBack[0]['google_etag']);
+
+    // Skipped days on a changed master (probe 7.2): a delta keeps every
+    // stored skip it doesn't contradict; a write's answer is the whole list.
+    $skippedMaster = array_merge($etagMaster, ['exdates' => ['2027-03-15 17:00:00', '2027-03-22 17:00:00']]);
+    $renamed = array_merge($etagMaster, ['title' => 'Sample standup renamed', 'google_etag' => '"3600000000000000"']);
+    $byKeyOf = static function (array $list): array {
+        $out = [];
+        foreach ($list as $ev) {
+            $out[$ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '')] = $ev;
+        }
+        return $out;
+    };
+    $deltaMerged = $byKeyOf(GoogleSync::applyChanges([$skippedMaster, $etagException], [$renamed], delta: true));
+    checkEq('merge delta: a changed master keeps the stored skips and the exception the delta did not carry', [
+        'Sample standup renamed', ['2027-03-15 17:00:00', '2027-03-22 17:00:00'], true, '"3600000000000000"',
+    ], [
+        $deltaMerged['probe1a2b3c@google.com|']['title'], $deltaMerged['probe1a2b3c@google.com|']['exdates'],
+        isset($deltaMerged['probe1a2b3c@google.com|2027-03-08 18:00:00']), $deltaMerged['probe1a2b3c@google.com|']['google_etag'],
+    ]);
+    $resent = GoogleSync::toParsed(['id' => 'probe1a2b3c_20270315T170000Z', 'iCalUID' => 'probe1a2b3c@google.com', 'status' => 'cancelled',
+        'recurringEventId' => 'probe1a2b3c', 'originalStartTime' => ['dateTime' => '2027-03-15T10:00:00-07:00']]);
+    $backAtGoogle = array_merge($etagException, ['recurrence_instance_utc' => '2027-03-22 17:00:00', 'start_utc' => '2027-03-22 17:00:00', 'end_utc' => '2027-03-22 17:30:00']);
+    $deltaContradicted = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$renamed, $resent, $backAtGoogle], delta: true));
+    checkEq('merge delta: a cancelled instance re-sent stays skipped; a day the delta brings back live is no longer skipped', ['2027-03-15 17:00:00'],
+        $deltaContradicted['probe1a2b3c@google.com|']['exdates']);
+    $answer = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($renamed, ['exdates' => ['2027-03-15 17:00:00']])]));
+    checkEq('merge answer: a write\'s answer is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
 }
 
 // --- Google write-through: body shape, instance ids, writability -----------------

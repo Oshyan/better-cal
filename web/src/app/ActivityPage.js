@@ -21,6 +21,7 @@ const SOURCES = [
   ['review', 'Review', 'manual'],
   ['api', 'Agent/API', 'auto'],
   ['feed', 'Feeds', 'auto'],
+  ['google', 'Google', 'auto'],
   ['mail', 'Email', 'auto'],
   ['import', 'Import', 'auto'],
   ['geocode', 'Geocoding', 'auto'],

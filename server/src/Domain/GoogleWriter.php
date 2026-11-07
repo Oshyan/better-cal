@@ -20,11 +20,21 @@ use BetterCal\Support\Time;
  * changes. Attendees and reminders are not sent (attendees would mail
  * people; reminders are per-user on Google's side), so a body never
  * touches them.
+ *
+ * Every PATCH and DELETE carries the row's stored etag as If-Match when one
+ * is known, so a change made at Google since the row was read answers 412,
+ * shown as 409 google_conflict, and nothing is overwritten or written here.
+ * Any write to a series changes the etag of its master and of every
+ * instance (the probe, 2026-11-07, group 5), so a write to one row of a
+ * series is followed by refreshEtags for the rest.
  */
 final class GoogleWriter
 {
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
     private const MOVE_RECOVERY_PROPERTY = 'betterCalMove';
+    /** Pages refreshEtags reads for one series at most (2,500 rows each). */
+    private const ETAG_PAGES = 4;
+    public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
     /** Event columns Google owns; everything else on a row is local metadata. */
     public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
 
@@ -200,14 +210,127 @@ final class GoogleWriter
         return $this->call($calendar, 'GET', '/' . rawurlencode($googleId), null);
     }
 
-    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null): array
+    /**
+     * $etag: the If-Match to send, when the caller has just read the
+     * resource (Rsvp); null sends the row's stored one, if any. $refresh:
+     * re-read the series' etags after a write to one of its rows.
+     */
+    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null, ?string $etag = null, bool $refresh = true): array
     {
-        return $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend);
+        $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
+        $resp = $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend, ifMatch: $etag ?? $this->storedEtag($calendar, $googleId));
+        if ($refresh && ($series !== null || !empty($resp['recurringEventId']) || !empty($resp['recurrence']))) {
+            $this->refreshAfterWrite($calendar, (string) ($resp['iCalUID'] ?? $series ?? ''));
+        }
+        return $resp;
     }
 
-    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null): void
+    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?string $etag = null, bool $refresh = true): void
     {
-        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend);
+        $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
+        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend, ifMatch: $etag ?? $this->storedEtag($calendar, $googleId));
+        $this->refreshAfterWrite($calendar, $series);
+    }
+
+    /** The stored etag of the row Google knows by $googleId on this calendar, or null. */
+    public function storedEtag(array $calendar, string $googleId): ?string
+    {
+        if (!isset($calendar['id']) || $googleId === '') {
+            return null; // a calendar not yet bound here (a move under way)
+        }
+        $etag = $this->rowByGoogleId((int) $calendar['id'], $googleId)['google_etag'] ?? null;
+        return is_string($etag) && $etag !== '' ? $etag : null;
+    }
+
+    /**
+     * The iCalendar UID of the series $googleId belongs to here, or null for
+     * an event in no series: its row's when it has one, else (an occurrence
+     * not yet changed, addressed by its instance id) its series' row's.
+     */
+    private function seriesOf(array $calendar, string $googleId): ?string
+    {
+        if (!isset($calendar['id'], $calendar['user_id'])) {
+            return null;
+        }
+        $row = $this->rowByGoogleId((int) $calendar['id'], $googleId);
+        if ($row !== null) {
+            return !empty($row['rrule']) || $row['recurrence_instance_utc'] !== null ? (string) $row['uid'] : null;
+        }
+        $cut = strrpos($googleId, '_');
+        $master = $cut !== false ? $this->rowByGoogleId((int) $calendar['id'], substr($googleId, 0, $cut)) : null;
+        return $master !== null ? (string) $master['uid'] : null;
+    }
+
+    /**
+     * After a write that succeeded at Google: the series' other rows' etags.
+     * A failure to read them changes nothing: the write stands, and the next
+     * poll's delta lists the series' rows with their new etags (probe 5.2).
+     */
+    private function refreshAfterWrite(array $calendar, ?string $series): void
+    {
+        if ($series === null || $series === '' || !isset($calendar['id'], $calendar['user_id'])) {
+            return;
+        }
+        try {
+            $etags = $this->seriesEtags($calendar, $series);
+        } catch (HttpError | \RuntimeException) {
+            return;
+        }
+        $this->storeEtags($calendar, $etags);
+    }
+
+    /**
+     * Read the current etag of every row of one series from Google and store
+     * each on the row here that Google knows by that id: one list request
+     * (singleEvents=false, filtered to the series' iCalendar UID), never
+     * events.instances. Only etags change; no content, no updated_at.
+     *
+     * @return int rows whose etag changed
+     */
+    public function refreshEtags(array $calendar, string $icalUid): int
+    {
+        return $this->storeEtags($calendar, $this->seriesEtags($calendar, $icalUid));
+    }
+
+    /** @return array<string,string> Google id => etag, for the series' live resources */
+    private function seriesEtags(array $calendar, string $icalUid): array
+    {
+        $out = [];
+        $pageToken = null;
+        $pages = 0;
+        do {
+            $query = ['iCalUID' => $icalUid, 'singleEvents' => 'false', 'showDeleted' => 'false', 'maxResults' => '2500'];
+            if ($pageToken !== null) {
+                $query['pageToken'] = $pageToken;
+            }
+            $data = $this->call($calendar, 'GET', '', null, $query);
+            foreach ((array) ($data['items'] ?? []) as $item) {
+                if (is_array($item) && isset($item['id'], $item['etag']) && is_string($item['etag']) && $item['etag'] !== '' && strlen($item['etag']) <= 255) {
+                    $out[(string) $item['id']] = $item['etag'];
+                }
+            }
+            $pageToken = isset($data['nextPageToken']) && is_string($data['nextPageToken']) && $data['nextPageToken'] !== '' ? $data['nextPageToken'] : null;
+        } while ($pageToken !== null && ++$pages < self::ETAG_PAGES);
+        return $out;
+    }
+
+    /** @param array<string,string> $etags Google id => etag */
+    private function storeEtags(array $calendar, array $etags): int
+    {
+        if ($etags === []) {
+            return 0;
+        }
+        return (int) (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($calendar, $etags): int {
+            $changed = 0;
+            foreach ($etags as $googleId => $etag) {
+                $changed += $this->db->run(
+                    'UPDATE events SET google_etag = ?, updated_at = updated_at
+                     WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL AND (google_etag IS NULL OR google_etag <> ?)',
+                    [$etag, (int) $calendar['id'], (string) $googleId, $etag]
+                )->rowCount();
+            }
+            return $changed;
+        });
     }
 
     /**
@@ -243,7 +366,7 @@ final class GoogleWriter
         return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instanceUtc];
     }
 
-    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null): array
+    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null, ?string $ifMatch = null): array
     {
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
@@ -263,15 +386,22 @@ final class GoogleWriter
         if ($query !== []) {
             $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
+        // Only a write is conditional: what it changes must be what was read.
+        $headers = ($method === 'PATCH' || $method === 'DELETE') && $ifMatch !== null && $ifMatch !== ''
+            ? ['If-Match: ' . $ifMatch]
+            : [];
         $http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));
         // Refreshing a token is network work too. Recheck after it, not before it.
         if ($beforeSend !== null) $beforeSend();
         try {
             $r = $this->jsonTransport !== null
-                ? ($this->jsonTransport)($method, $url, $payload)
-                : $http->json($method, $url, $payload, ['Authorization: Bearer ' . $access]);
+                ? ($this->jsonTransport)($method, $url, $payload, $headers)
+                : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+        }
+        if ($r['status'] === 412) {
+            throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
         }
         if ($r['status'] === 204 || ($method === 'DELETE' && $r['status'] === 410)) {
             return []; // deleted, or already gone

@@ -32,6 +32,11 @@ final class GoogleSync
         private readonly Db $db,
         private readonly GoogleAuth $auth,
         private readonly Feeds $feeds,
+        // Stands in for the network in the database suite, which replays
+        // recorded Google answers: fn(string $url, array $headers):
+        // array{status:int,body:string}, called where the real HttpClient's
+        // get() would be. Null (the app) uses the real client.
+        private readonly ?\Closure $transport = null,
     ) {
     }
 
@@ -128,7 +133,7 @@ final class GoogleSync
             );
             $cached = self::rowsToParsed($rows, $eventLimit, $deadline);
             unset($rows);
-            $snapshot = self::applyChanges($cached, $changes, $eventLimit, $deadline);
+            $snapshot = self::applyChanges($cached, $changes, $eventLimit, $deadline, delta: true);
             unset($cached);
         }
         unset($changes);
@@ -230,7 +235,8 @@ final class GoogleSync
             }
             $url = sprintf(self::EVENTS_URL, rawurlencode($googleCalendarId)) . '?' . http_build_query($params);
             try {
-                $r = $http->get($url, ['Authorization: Bearer ' . $access, 'Accept: application/json']);
+                $headers = ['Authorization: Bearer ' . $access, 'Accept: application/json'];
+                $r = $this->transport !== null ? ($this->transport)($url, $headers) : $http->get($url, $headers);
             } catch (\RuntimeException $e) {
                 // Translate the shared transport's intentionally generic
                 // ceilings into the calendar error the owner will actually see.
@@ -404,7 +410,12 @@ final class GoogleSync
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
             'google_event_id' => $googleId,
-        ] + (isset($item['attendees'])
+        ] + (isset($item['etag']) && is_string($item['etag']) && $item['etag'] !== '' && strlen($item['etag']) <= 255
+            // Google's version of the resource, sent back as If-Match on the
+            // next write (GoogleWriter). Only when Google sends one, so an
+            // answer without it leaves the stored one alone.
+            ? ['google_etag' => $item['etag']]
+            : []) + (isset($item['attendees'])
             // A guest list: an invitation to answer when someone else asked
             // this account (Rsvp::fromGoogle). Only when Google sends one, so
             // an event without guests keeps whatever block it had.
@@ -417,6 +428,20 @@ final class GoogleSync
      * uid|instance, like Feeds::sync. A cancelled master removes its whole
      * series; a cancelled instance removes its override and becomes an
      * EXDATE on the master, which is how Google says "this one is skipped".
+     * A live instance in the changes is a day that isn't skipped, whatever
+     * the master said before (a cancelled day put back at Google).
+     *
+     * $delta: the changes are a sync-token delta, not the whole calendar
+     * and not a write's own answer. Google keeps a skipped day as a
+     * cancelled instance, not an EXDATE line, so a changed master arriving
+     * in a delta carries none of them; the probe (2026-11-07, case 7.2)
+     * found Google lists the series' cancelled instances again in the same
+     * delta. The skipped days of a changed master are then: the cancelled
+     * instances in the delta, the master's own EXDATE lines, and every skip
+     * stored here that the delta doesn't contradict with a live instance on
+     * that day. A write's answer (GoogleWriter::apply) is not a delta: the
+     * master was just sent with every skip as an EXDATE line, so its lines
+     * are the whole list, and a skip it left out was put back.
      *
      * @param list<array> $snapshot
      * @param list<array> $changes
@@ -427,6 +452,7 @@ final class GoogleSync
         array $changes,
         ?int $maxEvents = null,
         ?float $deadline = null,
+        bool $delta = false,
     ): array
     {
         $maxEvents ??= PHP_INT_MAX;
@@ -436,6 +462,8 @@ final class GoogleSync
         Recurrence::assertExdateBatch($snapshot);
         $byKey = [];
         $keysByUid = [];
+        // The skipped days stored here, per series, before any change.
+        $storedSkips = [];
         foreach ($snapshot as $index => $ev) {
             if (($index & 127) === 0) {
                 self::assertWithinDeadline($deadline);
@@ -443,22 +471,31 @@ final class GoogleSync
             $key = self::key($ev);
             $byKey[$key] = $ev;
             $keysByUid[(string) $ev['uid']][$key] = true;
+            if ($ev['recurrence_instance_utc'] === null) {
+                $storedSkips[(string) $ev['uid']] = $ev['exdates'] ?? [];
+            }
         }
-        $pendingExdates = [];
+        // Per series: the days the changes skip, and the days they say
+        // happen (a live instance), each the last word on its day.
+        $skipped = [];
+        $live = [];
+        $changedMasters = [];
         foreach ($changes as $index => $ev) {
             if (($index & 127) === 0) {
                 self::assertWithinDeadline($deadline);
             }
+            $uid = (string) $ev['uid'];
+            $instance = $ev['recurrence_instance_utc'];
             if (!empty($ev['cancelled'])) {
-                if ($ev['recurrence_instance_utc'] === null) {
-                    foreach (array_keys($keysByUid[(string) $ev['uid']] ?? []) as $key) {
+                if ($instance === null) {
+                    foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
                         unset($byKey[$key]);
                     }
-                    unset($keysByUid[(string) $ev['uid']]);
+                    unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid]);
                 } else {
                     $key = self::key($ev);
-                    unset($byKey[$key], $keysByUid[(string) $ev['uid']][$key]);
-                    $pendingExdates[$ev['uid']][] = $ev['recurrence_instance_utc'];
+                    unset($byKey[$key], $keysByUid[$uid][$key], $live[$uid][$instance]);
+                    $skipped[$uid][$instance] = true;
                 }
                 continue;
             }
@@ -467,14 +504,27 @@ final class GoogleSync
                 throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'Google calendar'));
             }
             $byKey[$key] = $ev;
-            $keysByUid[(string) $ev['uid']][$key] = true;
+            $keysByUid[$uid][$key] = true;
+            if ($instance === null) {
+                $changedMasters[$uid] = true;
+            } else {
+                unset($skipped[$uid][$instance]);
+                $live[$uid][$instance] = true;
+            }
         }
-        foreach ($pendingExdates as $uid => $dates) {
+        foreach (array_keys($changedMasters + $skipped + $live) as $uid) {
+            $uid = (string) $uid;
             $masterKey = $uid . '|';
             if (!isset($byKey[$masterKey])) {
                 continue;
             }
-            $byKey[$masterKey]['exdates'] = Recurrence::validateExdates(array_merge($byKey[$masterKey]['exdates'] ?? [], $dates));
+            $dates = $byKey[$masterKey]['exdates'] ?? [];
+            if ($delta && isset($changedMasters[$uid])) {
+                $dates = array_merge($dates, $storedSkips[$uid] ?? []);
+            }
+            $dates = array_merge($dates, array_keys($skipped[$uid] ?? []));
+            $dates = array_values(array_filter($dates, static fn(string $d): bool => !isset($live[$uid][$d])));
+            $byKey[$masterKey]['exdates'] = Recurrence::validateExdates($dates);
         }
         $result = array_values($byKey);
         if (count($result) > $maxEvents) {
@@ -529,7 +579,9 @@ final class GoogleSync
                 'recurrence_instance_utc' => $r['recurrence_instance_utc'] !== null ? (string) $r['recurrence_instance_utc'] : null,
                 'reminders' => [],
                 'google_event_id' => isset($r['google_event_id']) && $r['google_event_id'] !== null ? (string) $r['google_event_id'] : null,
-            ] + (isset($r['invite_json']) && $r['invite_json'] !== null
+            ] + (isset($r['google_etag']) && $r['google_etag'] !== ''
+                ? ['google_etag' => (string) $r['google_etag']]
+                : []) + (isset($r['invite_json']) && $r['invite_json'] !== null
                 ? ['invite_json' => is_array($r['invite_json']) ? json_encode($r['invite_json']) : (string) $r['invite_json']]
                 : []);
         }
@@ -562,7 +614,7 @@ final class GoogleSync
                     + COALESCE(LENGTH(attendance), 0) + COALESCE(LENGTH(style_json), 0)
                     + COALESCE(LENGTH(dynamic_json), 0) + COALESCE(LENGTH(reminders_json), 0)
                     + COALESCE(LENGTH(invite_json), 0) + COALESCE(LENGTH(created_via), 0)
-                    + COALESCE(LENGTH(google_event_id), 0) + COALESCE(LENGTH(icon), 0)
+                    + COALESCE(LENGTH(google_event_id), 0) + COALESCE(LENGTH(google_etag), 0) + COALESCE(LENGTH(icon), 0)
                 ), 0) AS payload_bytes
              FROM events WHERE calendar_id = ?",
             [$calendarId],

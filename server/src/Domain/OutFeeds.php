@@ -274,7 +274,13 @@ final class OutFeeds
     {
         $scope = json_decode((string) $row['scope_json'], true) ?: ['type' => 'all'];
         if (($scope['type'] ?? 'all') === 'search') {
-            return ['eventCount' => null, 'eventLimit' => self::SEARCH_LIMIT];
+            // The feed holds search()'s top SEARCH_LIMIT matches; this counts
+            // the same query with no limit (one COUNT(*), as for the other
+            // scopes, and no recurrence expansion).
+            return [
+                'eventCount' => $this->search->count((int) $row['user_id'], (string) ($scope['q'] ?? '')),
+                'eventLimit' => self::SEARCH_LIMIT,
+            ];
         }
         [$where, $params] = $this->coverage((int) $row['user_id'], $scope);
         return [

@@ -11,9 +11,11 @@ declare(strict_types=1);
 // block, and the next still runs.
 
 use BetterCal\Domain\Labels;
+use BetterCal\Domain\OutFeeds;
 use BetterCal\Domain\Search;
 use BetterCal\Domain\Settings;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\FeedCredentials;
 
 return static function (Db $db): void {
     $d = domains($db);
@@ -188,5 +190,48 @@ return static function (Db $db): void {
         $report[] = sprintf('both indexes built over %d rows in %.0f ms', $total + 1, (hrtime(true) - $t) / 1e6);
         $db->run('DROP TABLE search_copy');
         echo '    search timing (median of 5): ' . implode('; ', $report) . "\n";
+    });
+
+    // #217: a feed made from a saved search holds its top 500 matches, and
+    // its card in Settings says how many there are, so one past the cap
+    // shows the trimmed note as the other feeds do.
+    scenario('search: a published search feed over its cap reports its matches', function () use ($db, $make, $search): void {
+        $u = freshUser($db);
+        $first = $make($u, 'Sample search night 0', '2027-01-01');
+        $make($u, 'Alex Example lunch', '2027-01-02');
+        $template = $db->one('SELECT * FROM events WHERE id = ?', [$first]);
+        unset($template['id']);
+        $cols = array_keys($template);
+        $rowSql = '(' . implode(', ', array_fill(0, count($cols), '?')) . ')';
+        $params = [];
+        for ($i = 1; $i <= OutFeeds::SEARCH_LIMIT + 2; $i++) {
+            $day = (new DateTimeImmutable('2027-01-01 18:00:00'))->modify('+' . $i . ' days');
+            $row = ['uid' => 'search-feed-sample-' . $i . '@example.test', 'title' => 'Sample search night ' . $i,
+                'start_utc' => $day->format('Y-m-d H:i:s'), 'end_utc' => $day->modify('+1 hour')->format('Y-m-d H:i:s')] + $template;
+            foreach ($cols as $c) {
+                $params[] = $row[$c];
+            }
+        }
+        $db->run('INSERT INTO events (`' . implode('`, `', $cols) . '`) VALUES ' . implode(', ', array_fill(0, OutFeeds::SEARCH_LIMIT + 2, $rowSql)), $params);
+        $matches = OutFeeds::SEARCH_LIMIT + 3;
+
+        $secret = str_repeat('s', 32);
+        $feeds = new OutFeeds($db, $search, ['base_url' => 'https://calendar.example.test', 'session_secret' => $secret]);
+        $tokens = [];
+        foreach (['Sample search' => 'search night', 'Sample lunch search' => 'lunch'] as $name => $q) {
+            $tokens[$name] = 'sample-feed-token-' . bin2hex(random_bytes(8));
+            $protected = FeedCredentials::protectOutboundToken($tokens[$name], $secret);
+            $db->insert('out_feeds', ['user_id' => $u, 'token' => $protected['hash'], 'token_sealed' => $protected['sealed'],
+                'name' => $name, 'scope_json' => json_encode(['type' => 'search', 'q' => $q])]);
+        }
+        $size = [];
+        foreach ($feeds->listAll($u) as $f) {
+            $size[$f['name']] = [$f['eventCount'], $f['eventLimit']];
+        }
+        checkEq('search feed: the card counts every match, past the cap of the feed', [$matches, OutFeeds::SEARCH_LIMIT], $size['Sample search']);
+        checkEq('search feed: the count is the search\'s own', $matches, $search->count($u, 'search night'));
+        checkEq('search feed: one under the cap counts what it holds', [1, OutFeeds::SEARCH_LIMIT], $size['Sample lunch search']);
+        checkEq('search feed: the feed itself holds the cap', OutFeeds::SEARCH_LIMIT,
+            substr_count((string) $feeds->renderByToken($tokens['Sample search']), 'BEGIN:VEVENT'));
     });
 };

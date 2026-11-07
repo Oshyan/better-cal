@@ -375,7 +375,7 @@ Named snapshots of client view state. `config` is client-defined: `{viewType, vi
 
 A feed URL reads events without signing in. Creation is written to Activity. Feeds made with a token belong to it (see [Personal Access Tokens](#personal-access-tokens)). `seed.php --revoke-tokens` gives every remaining feed a new address, and `POST /auth/sign-out-others` does so for every feed created from a browser.
 
-- `GET /outfeeds` → `{feeds:[{id, name, url, viaToken, scope, description, eventCount, eventLimit}]}`. A token sees `url` only for feeds it created (others are `url: null`). `eventCount` is how many events an all or calendar feed covers (null for a search feed); past `eventLimit` (`BETTERCAL_LIMIT_OUTFEED_EVENTS`, 5,000 by default; 500 for a search feed) the oldest past events are left off first.
+- `GET /outfeeds` → `{feeds:[{id, name, url, viaToken, scope, description, eventCount, eventLimit}]}`. A token sees `url` only for feeds it created (others are `url: null`). `eventCount` is how many events an all or calendar feed covers, or how many events a search feed's search matches; past `eventLimit` (`BETTERCAL_LIMIT_OUTFEED_EVENTS`, 5,000 by default) the oldest past events are left off first, and past a search feed's 500 the lowest-ranked matches are.
 - `POST /outfeeds` `{name, scope:{type:"all"|"calendar"|"search", calendarId?, q?}, description?}` → `{id, name, url, viaToken, scope, description}` (201).
 - `DELETE /outfeeds/:id`. A browser session can remove any feed on the account; a token only one it created. Other and nonexistent ids both return 404.
 - `GET /feed/{token}.ics` (public, no auth): the feed, with `X-WR-CALNAME` and description embedded.

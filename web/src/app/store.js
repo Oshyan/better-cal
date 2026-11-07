@@ -563,11 +563,10 @@ function mergeRanges(ranges) {
   return out;
 }
 
-// Insert one occurrence fetched outside the window pipeline (notification
-// deep links). Deliberately does NOT register a loaded range: the occurrence
-// may come from an includeHidden fetch, and views must still do a full load
-// for that range later.
-// An occurrence fetched on its own, to open (see mergeWindow).
+// An occurrence fetched on its own, to open (a notification's link): fields
+// arriving, not a change, so it gets no local mark (patchOccurrence), and
+// holds no stretch: it may come from a fetch that includes hidden ones, and
+// its stretch is still loaded in full when a view needs it (mergeWindow).
 export function insertOccurrence(occ) {
   // Already on the calendar from a window: refresh its fields and keep it
   // there. Only one the windows don't hold (another stretch, or hidden by a
@@ -577,13 +576,15 @@ export function insertOccurrence(occ) {
   set({ occVersion: state.occVersion + 1 });
 }
 
-// edit: false for what isn't a change (an event's full record arriving,
-// map coordinates found): those must not hold the occurrence against the
-// next refresh (#184: hovering an event froze it until the next change).
-// An edit is a local change until its save lands (localSaved) and an answer
+// What counts as an edit of an event, decided here and nowhere else (the
+// loading model's Local Changes): a patch is a change made here, shown at
+// once and marked local until its save lands (localSaved) and an answer
 // carries it, or it fails and restoreOccurrence puts back what was there.
-// Returns what it replaced: the save's own name for localSaved and
-// restoreOccurrence.
+// Fields that arrived or were found (an event's full record, map
+// coordinates) are not a change: edit: false, no mark, since a mark holds
+// the occurrence against the next refresh (#184: hovering an event froze it
+// until the next change). Returns what it replaced: the save's own name for
+// localSaved and restoreOccurrence.
 export function patchOccurrence(instanceId, patch, { edit = true } = {}) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;

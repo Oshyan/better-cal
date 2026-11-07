@@ -173,7 +173,7 @@ final class OwnFields
         if ($key !== '') {
             $keyLocal = Time::fromDb($key)->setTimezone($tzM);
             $rowAllDay = (int) ($row['all_day'] ?? 0) === 1;
-            $shownDay = $rowAllDay ? $start->setTimezone(Time::utc())->format('Y-m-d') : $start->setTimezone($tzR)->format('Y-m-d');
+            $shownDay = Time::dayOf($start, $rowAllDay, $tzR);
             if ($shownDay !== $keyLocal->format('Y-m-d')) {
                 $own[] = 'date';
             }
@@ -313,11 +313,10 @@ final class OwnFields
         return self::normalize($out);
     }
 
-    /** The day a row shows on: its local date, in UTC for an all-day row. */
+    /** The day a row shows on (Time::dayOf). */
     private static function shownDay(array $r): string
     {
-        $tz = (int) ($r['all_day'] ?? 0) === 1 ? 'UTC' : (string) ($r['tzid'] ?? 'UTC');
-        return Time::fromDb((string) $r['start_utc'])->setTimezone(Time::zone($tz))->format('Y-m-d');
+        return Time::dayOf(Time::fromDb((string) $r['start_utc']), (int) ($r['all_day'] ?? 0) === 1, (string) ($r['tzid'] ?? 'UTC'));
     }
 
     /** A row's time: its clock and zone, none for an all-day row. */

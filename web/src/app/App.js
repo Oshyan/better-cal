@@ -97,6 +97,19 @@ const MONTH_MIN_ROWS = { month: 4 };
 // enough that the 3-day ribbon takes over automatically on desktop.
 const VIEW_AREA_MIN = 560;
 
+// The agenda's window, the one definition of the stretch it loads, follows
+// and fetches bands for: 60 days before a day and 150 after, a year before
+// with "Show past events". It was defined three ways (90 back and 120 ahead
+// of the day moved to on arrival, 60 back and 150 ahead of the top while
+// reading, the bands around the top); the reading spans win, being what the
+// window is for as long as you're in the view, and the arrival load is the
+// same window before the top has landed. The year back (the arrival's)
+// stays: with past events shown, the stretch holds them by rule instead of
+// by the cache not having pruned them yet.
+function agendaWindow(dayKey, showPast) {
+  return { start: dateOfDayKey(addDaysKey(dayKey, showPast ? -365 : -60)), end: dateOfDayKey(addDaysKey(dayKey, 150)) };
+}
+
 function matchesFilter(occ, needle) {
   return (occ.title || '').toLowerCase().includes(needle) ||
     (occ.location || '').toLowerCase().includes(needle) ||
@@ -357,14 +370,16 @@ export function App() {
   const visMonthKey = useStore((st) => (st.view !== 'day' && st.visibleMonth
     ? st.visibleMonth.year * 100 + st.visibleMonth.month
     : (st.anchor ? Number(st.anchor.slice(0, 4)) * 100 + Number(st.anchor.slice(5, 7)) : 0)));
+  // The day the agenda is read around: the top of the list once it has
+  // landed, else the day you're on (after a jump, the day moved to).
+  const agendaKey = s.agendaTop || s.anchor;
   // The months the away times and plugin bands are fetched for: three around
   // the month on screen, or in the agenda its whole loaded stretch, which
   // reaches much further (it lists them too).
   const bandWin = (() => {
     if (s.view === 'agenda') {
-      // The months around the agenda's top, as far as its window reaches.
-      const a = dateOfDayKey(addDaysKey(s.agendaTop || s.anchor, -60));
-      const b = dateOfDayKey(addDaysKey(s.agendaTop || s.anchor, 150));
+      // The agenda's own window (agendaWindow), widened to whole months.
+      const { start: a, end: b } = agendaWindow(agendaKey, s.agendaShowPast);
       return { start: toISOWithOffset(new Date(a.getFullYear(), a.getMonth(), 1)), end: toISOWithOffset(new Date(b.getFullYear(), b.getMonth() + 1, 1)) };
     }
     const vm = visMonthKey
@@ -552,20 +567,19 @@ export function App() {
     return dim;
   }, [occurrences, s.filterText]);
 
-  // Window demand for the agenda view (month, the infinite week, and the day
-  // stack all drive their own from scroll position).
+  // The agenda's window (agendaWindow) around agendaKey: loaded on arrival
+  // around the day moved to, and again around the top as you scroll, as the
+  // other views' windows follow what they show (month, the infinite week
+  // and the day stack drive theirs from scroll position), so what a save or
+  // the change check refreshes stays the stretch around what you're reading
+  // (#183).
   useEffect(() => {
-    if (s.view === 'agenda') {
-      // Anchor-aware window: follow the anchor (navigation/jump) rather than
-      // always loading today-forward; "show past" widens the lookback.
-      const from = addDaysKey(s.anchor, s.agendaShowPast ? -365 : -90);
-      agendaMoreRef.current = null;
-      loadWindow(
-        toISOWithOffset(dateOfDayKey(from)),
-        toISOWithOffset(dateOfDayKey(addDaysKey(s.anchor, 120))),
-      );
-    }
-  }, [s.view, s.anchor, s.agendaShowPast]);
+    if (s.view !== 'agenda') return;
+    const { start, end } = agendaWindow(agendaKey, s.agendaShowPast);
+    loadWindow(toISOWithOffset(start), toISOWithOffset(end));
+  }, [s.view, agendaKey, s.agendaShowPast]);
+  // A move or the toggle forgets which end was asked for more: the window is new.
+  useEffect(() => { agendaMoreRef.current = null; }, [s.view, s.anchor, s.agendaShowPast]);
   // The month label follows a move, not "Show past events": toggling that
   // reset the label while the list stayed where it was (#183). Not when the
   // list already shows the day moved to: a month starting with empty days
@@ -580,16 +594,6 @@ export function App() {
     const [y, m] = s.anchor.split('-').map(Number);
     set({ visibleMonth: { year: y, month: m } });
   }, [s.view, s.anchor]);
-  // The agenda's window follows its top as you scroll, as the other views'
-  // follow what they show: what a save or the change poll refreshes stays
-  // the stretch around what you're reading (#183).
-  useEffect(() => {
-    if (!s.agendaTop) return;
-    loadWindow(
-      toISOWithOffset(dateOfDayKey(addDaysKey(s.agendaTop, -60))),
-      toISOWithOffset(dateOfDayKey(addDaysKey(s.agendaTop, 150))),
-    );
-  }, [s.agendaTop]);
   // Near the agenda's end, 120 more days, fetched without becoming the
   // view's window. Once per end; a failure lets the next scroll ask again.
   // Not more than two years past the top: a short list that never fills the

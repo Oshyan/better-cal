@@ -259,7 +259,7 @@ final class DavTimeRange
             $event->remove($name);
         }
         $allDay = (int) ($occ['row']['all_day'] ?? 0) === 1;
-        $date = static fn(\DateTimeImmutable $at): \DateTimeImmutable => new \DateTimeImmutable($at->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc());
+        $date = static fn(\DateTimeImmutable $at): \DateTimeImmutable => new \DateTimeImmutable(Time::dayOf($at, true, null) . ' 00:00:00', Time::utc());
         $value = static fn(\DateTimeImmutable $at): \DateTimeImmutable => $allDay ? $date($at) : $at->setTimezone(Time::utc());
         $params = $allDay ? ['VALUE' => 'DATE'] : [];
         $event->remove('DTSTART');

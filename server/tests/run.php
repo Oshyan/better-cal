@@ -811,6 +811,7 @@ foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
     checkEq("phrase '$text'", [$title, $start, $end, $reminders], [$d['title'], substr($d['start'], 0, 16), substr($d['end'], 0, 16), $d['reminders']]);
 }
 require __DIR__ . '/quickadd-golden.php';
+require __DIR__ . '/event-day.php';
 
 $invalid = [];
 foreach ($repeatCases as [$text, , , $rrule]) {
@@ -3616,10 +3617,14 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     checkEq('dup when: 20 minutes apart is near', 'near', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 02:20:00')));
     check('dup when: two hours apart is not', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 04:00:00')) === null);
     checkEq('dup when: all-day on the timed one\'s local date', 'near', $D::when($ev(1, 1, 'x', '2026-10-09 00:00:00', 1, 'UTC'), $ev(2, 2, 'x', '2026-10-10 02:00:00')));
-    // Audit #9 (0.9.14): all-day dates are read in each event's own zone.
-    checkEq('dup when: an app all-day day and its Google copy are the same', 'same', $D::when($ev(1, 1, 'x', '2026-10-10 07:00:00', 1), $ev(2, 2, 'x', '2026-10-10 00:00:00', 1, 'UTC')));
-    checkEq('dup when: a Tokyo all-day day and a Tokyo morning on it', 'near', $D::when($ev(1, 1, 'x', '2026-10-09 15:00:00', 1, 'Asia/Tokyo'), $ev(2, 2, 'x', '2026-10-10 01:00:00', 0, 'Asia/Tokyo')));
-    check('dup when: all-day days a day apart are not the same', $D::when($ev(1, 1, 'x', '2026-10-10 07:00:00', 1), $ev(2, 2, 'x', '2026-10-11 00:00:00', 1, 'UTC')) === null);
+    // All-day days are compared as dates (audit #9, 0.9.14), read as every
+    // path reads them (Time::dayOf): the UTC date they are stored as since
+    // 0.9.16, whatever zone the row or the comparison names. A timed event
+    // is on its own clock's day, so a Tokyo morning whose UTC date is the
+    // day before still pairs with the all-day day it is on.
+    checkEq('dup when: an app all-day day and its Google copy are the same', 'same', $D::when($ev(1, 1, 'x', '2026-10-10 00:00:00', 1, 'UTC'), $ev(2, 2, 'x', '2026-10-10 00:00:00', 1, 'UTC')));
+    checkEq('dup when: a Tokyo all-day day and a Tokyo morning on it', 'near', $D::when($ev(1, 1, 'x', '2026-10-10 00:00:00', 1, 'UTC'), $ev(2, 2, 'x', '2026-10-09 23:00:00', 0, 'Asia/Tokyo')));
+    check('dup when: all-day days a day apart are not the same', $D::when($ev(1, 1, 'x', '2026-10-10 00:00:00', 1, 'UTC'), $ev(2, 2, 'x', '2026-10-11 00:00:00', 1, 'UTC')) === null);
     checkEq('dup classify: same title, same moment, two calendars links', 'linked', $D::classify($ev(1, 1, 'Reservation at Vela', '2026-10-10 02:00:00'), $ev(2, 2, 'Vela', '2026-10-10 02:00:00'))['status']);
     checkEq('dup classify: external different-UID match waits for owner review', 'possible', $D::classify(
         $ev(1, 1, 'Reservation at Vela', '2026-10-10 02:00:00'),

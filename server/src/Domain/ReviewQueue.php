@@ -74,8 +74,8 @@ final class ReviewQueue
         $tz = Time::zone((string) ($row['tzid'] ?? 'UTC'));
         $allDay = (int) ($row['all_day'] ?? 0) === 1;
         $stored = static function (string $col) use ($row, $tz, $allDay): string {
-            $local = Time::fromDb((string) $row[$col])->setTimezone($tz);
-            return $allDay ? $local->format('Y-m-d') : Time::iso($local);
+            $at = Time::fromDb((string) $row[$col]);
+            return $allDay ? Time::dayOf($at, true, null) : Time::iso($at->setTimezone($tz));
         };
         $instant = static fn(string $iso): int => (new \DateTimeImmutable($iso))->getTimestamp();
 
@@ -814,7 +814,7 @@ final class ReviewQueue
             $tz = Time::zone((string) $row['tzid']);
             $allDay = (int) $row['all_day'] === 1;
             $fmt = static fn(\DateTimeImmutable $at): string => $allDay
-                ? $at->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                ? Time::dayOf($at, true, null) . 'T00:00:00+00:00'
                 : Time::iso($at->setTimezone($tz));
             // A series' start as the API reads it: its first shown day (Events::shownSpan).
             [$shownStart, $shownEnd] = Events::shownSpan($row);
@@ -1049,7 +1049,7 @@ final class ReviewQueue
             $fields = (array) ($payload['fields'] ?? []);
             $cancel = $method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled';
             $instance = (int) ($event['all_day'] ?? 0) === 1
-                ? Time::fromDb($occurrence)->setTimezone(Time::zone((string) $event['tzid']))->format('Y-m-d')
+                ? Time::dayOf(Time::fromDb($occurrence), true, null)
                 : Time::iso(Time::fromDb($occurrence));
             $currentDiff = self::occurrenceDiff($event, $occurrence, $cancel ? 'CANCEL' : 'REQUEST', $fields, $overrideRow, Settings::homeTzid($this->db, $userId));
             if ($currentDiff === []) {

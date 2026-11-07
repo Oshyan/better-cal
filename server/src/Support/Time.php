@@ -53,6 +53,35 @@ final class Time
         return self::zone($homeTzid);
     }
 
+    /**
+     * The clock an event's day is read on: which day an event belongs to is
+     * its start read on this clock (dayOf). An all-day event is a date,
+     * stored as a UTC midnight with tzid UTC (0.9.16, migration 035; the
+     * series model's "Zones, DST and All-Day Days": an all-day series' local
+     * day is its UTC date), so its day is its UTC date whatever zone is
+     * passed. A timed event's day is the date of its instant on $tz: its own
+     * zone, or the clock a caller reads it on (the Home clock when two copies
+     * of one event are compared). Before this, the window's serializer,
+     * Review and the duplicate check read an all-day day in the row's zone
+     * instead; every all-day row is stored with tzid UTC, so the two readings
+     * agreed on every row, and the UTC date is the one kept because it is the
+     * stored form. Every "which day is this on" reads it here; nothing else
+     * formats a stored boundary as a date.
+     */
+    public static function dayZone(bool $allDay, \DateTimeZone|string|null $tz): \DateTimeZone
+    {
+        if ($allDay) {
+            return self::utc();
+        }
+        return $tz instanceof \DateTimeZone ? $tz : self::zone($tz);
+    }
+
+    /** The day a boundary is on, as "Y-m-d": its instant read on dayZone. */
+    public static function dayOf(\DateTimeImmutable $at, bool $allDay, \DateTimeZone|string|null $tz): string
+    {
+        return $at->setTimezone(self::dayZone($allDay, $tz))->format('Y-m-d');
+    }
+
     /** Normalize a tzid string to a valid IANA identifier ('UTC' fallback). */
     public static function normalizeTzid(?string $tzid): string
     {

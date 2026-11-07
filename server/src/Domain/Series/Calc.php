@@ -453,7 +453,7 @@ final class Calc
         if (!isset(self::$cache[$ck])) {
             $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
             try {
-                $local = $allDay ? new \DateTimeImmutable($start->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
+                $local = $allDay ? new \DateTimeImmutable(Time::dayOf($start, true, null) . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
                 // An all-day series is read in its own form: no clock parts.
                 $entry['it'] = new RuleIterator($allDay ? \BetterCal\Domain\Recurrence::inForm($rrule, true, 'UTC') : $rrule, $local);
             } catch (RuleNotReadable) {

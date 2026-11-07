@@ -962,9 +962,9 @@ trait SeriesPlans
         $key = Time::fromDb((string) $row['recurrence_instance_utc']);
         $len = Recurrence::durationSeconds($master);
         if (array_intersect($fields, ['date', 'time', 'length', 'allDay']) !== []) {
-            $tz = Time::zone((int) $master['all_day'] === 1 ? 'UTC' : (string) $master['tzid']);
+            $tz = Time::dayZone((int) $master['all_day'] === 1, (string) $master['tzid']);
             $rowAllDay = (int) $row['all_day'] === 1;
-            $rowTz = Time::zone($rowAllDay ? 'UTC' : (string) $row['tzid']);
+            $rowTz = Time::dayZone($rowAllDay, (string) $row['tzid']);
             $allDay = in_array('allDay', $left, true) ? $rowAllDay : (int) $master['all_day'] === 1;
             if ($allDay !== $rowAllDay) {
                 // A day given the series' all-day setting leaves its own

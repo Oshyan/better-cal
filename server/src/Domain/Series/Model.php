@@ -2963,7 +2963,7 @@ final class Model
     /** A value that names its zone beside itself: ISO in $tz, or a date when it has none (all-day). */
     private static function inZoneOut(\DateTimeImmutable $at, ?string $tz): string
     {
-        return $tz === null ? $at->setTimezone(Time::utc())->format('Y-m-d') : Time::iso($at->setTimezone(Time::zone($tz)));
+        return $tz === null ? Time::dayOf($at, true, null) : Time::iso($at->setTimezone(Time::zone($tz)));
     }
 
     /** The zone a shown placement is written in (One zone): the plan's, or none in an all-day plan, where each timed row is in its own. */
@@ -2981,8 +2981,7 @@ final class Model
     /** $row's start as it is written: an all-day row's date as itself; a timed one in $zone, or its own zone when $zone is null. */
     private static function localOf(array $row, ?string $zone): \DateTimeImmutable
     {
-        $tz = (int) $row['all_day'] === 1 ? 'UTC' : ($zone ?? self::rowZone($row));
-        return Time::fromDb((string) $row['start_utc'])->setTimezone(Time::zone($tz));
+        return Time::fromDb((string) $row['start_utc'])->setTimezone(Time::dayZone((int) $row['all_day'] === 1, $zone ?? self::rowZone($row)));
     }
 
     /** The zone named beside a timed value written in $tz: present whenever $tz isn't the plan's zone. */

@@ -18,10 +18,12 @@ import {
 import { api, entriesOf, loadPeople } from './api.js';
 import { localTz, todayKey } from '../lib/dates.js';
 import { parseJumpTarget } from '../lib/jumpparse.js';
+import { isMobile } from '../ui/DayExpand.js';
 
 // Which context a `needs` gate is asking about.
 function hasContext(need) {
   if (need === 'popover') return !!state.popover;
+  if (need === 'sheet') return !!state.popover && isMobile();
   if (need === 'occ') {
     const src = state.popover;
     return !!(src && state.occ.get(src.instanceId));

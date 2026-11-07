@@ -160,6 +160,10 @@ export function EventPopover() {
   const steps = sheet ? (full ? 1 : 0) + (popover && popover.backTo && !popover.backTo.search ? 1 : 0) : 0;
 
   useEffect(() => { if (!open) setFull(false); }, [open]);
+  // The o key asks for the full sheet by counting up popover.grow
+  // (keyboard.js); stepping through the day carries the count unchanged.
+  const grow = popover && popover.grow;
+  useEffect(() => { if (sheet && grow) setFull(true); }, [grow]); // eslint-disable-line
   // One bar at the bottom at a time: while the sheet is open its actions
   // take the place of the app's bottom bar, which slides down under it and
   // back when the sheet closes.

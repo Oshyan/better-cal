@@ -995,7 +995,11 @@ eq('commands: ids are unique', new Set(STATIC_COMMANDS.map((c) => c.id)).size, S
 assert('commands: every entry has a label and group',
   STATIC_COMMANDS.every((c) => typeof c.label === 'string' && c.label.length > 0 && COMMAND_GROUPS.includes(c.group)));
 assert('commands: needs gates are known contexts',
-  STATIC_COMMANDS.every((c) => c.needs === undefined || c.needs === 'occ' || c.needs === 'popover'));
+  STATIC_COMMANDS.every((c) => c.needs === undefined || c.needs === 'occ' || c.needs === 'popover' || c.needs === 'sheet'));
+// #207: o shows all of an open event's details, from the keyboard and the palette.
+eq('hotkeys: o shows all details', HOTKEYS.find((h) => !h.mod && h.keys.includes('o'))?.id, 'fullDetails');
+assert('commands: all details is in the palette while the sheet is open',
+  STATIC_COMMANDS.some((c) => c.hotkey === 'fullDetails' && c.needs === 'sheet'));
 assert('commands: prompting entries are labelled with an ellipsis',
   STATIC_COMMANDS.every((c) => !c.prompt || c.label.endsWith('\u2026')));
 assert('commands: the palette itself has a hotkey', hotkeyIds.has('palette'));

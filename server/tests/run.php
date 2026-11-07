@@ -553,6 +553,7 @@ $repeatCases = [
     ['Vitamins daily', 'Vitamins', '2026-07-30T00:00', 'FREQ=DAILY'],
     ['Journal everyday at 9pm', 'Journal', '2026-07-30T21:00', 'FREQ=DAILY'],
     ['Gym every morning', 'Gym', '2026-07-31T09:00', 'FREQ=DAILY'],
+    ['Tea every afternoon', 'Tea', '2026-07-30T14:00', 'FREQ=DAILY'],
     ['Stretch every evening', 'Stretch', '2026-07-30T18:00', 'FREQ=DAILY'],
     ['Read every night', 'Read', '2026-07-30T20:00', 'FREQ=DAILY'],
     // Weekdays and weekends
@@ -635,6 +636,7 @@ $repeatCases = [
     ['Anniversary every Jan 27', 'Anniversary', '2027-01-27T00:00', 'FREQ=YEARLY'],
     // Start and end
     ['Class every Wednesday starting Nov 3 at 6pm', 'Class', '2026-11-04T18:00', 'FREQ=WEEKLY;BYDAY=WE'],
+    ['Pottery every Saturday from Sep 9', 'Pottery', '2026-09-12T00:00', 'FREQ=WEEKLY;BYDAY=SA'],
     ['Yoga every Monday from Sep 7 to Dec 14', 'Yoga', '2026-09-07T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20261214'],
     ['Yoga every Monday Sep 7 to Dec 14', 'Yoga', '2026-09-07T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20261214'],
     ['Swim every Tuesday until Dec 15', 'Swim', '2026-08-04T00:00', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215'],

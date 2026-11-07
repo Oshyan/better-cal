@@ -1,6 +1,6 @@
 # Vendored libraries
 
-This folder holds the open-source libraries the web app uses, copied from their published npm packages and changed only as listed under Changes below. There's no build step, so they're committed as published, which for several of them means minified. Nothing here is our own code in minified form: ours are `index.js` (it re-exports the UI runtime), `manifest.json` and this file.
+This folder holds the open-source libraries the web app uses, copied from their published npm packages and changed only as listed under Changes below. There's no build step, so they're committed as published, which for several of them means minified. Nothing here is our own code in minified form: ours are `index.js` (it re-exports the UI runtime), `manifest.json` and this file. Each library's license text, as its package publishes it, is here as `LICENSE-<library>.txt`, pinned and checked like its code.
 
 This file is written from `manifest.json` by `node scripts/vendor.mjs --readme`; don't edit it by hand.
 
@@ -26,6 +26,11 @@ Fingerprints are SHA-256. "In the tree" differs from upstream only where the fil
 | `leaflet/images/marker-icon.png` | [leaflet](https://www.npmjs.com/package/leaflet/v/1.9.4) 1.9.4 | BSD-2-Clause | [`dist/images/marker-icon.png`](https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon.png) | `574c3a5cca85f4114085b6841596d62f00d7c892c7b03f28cbfa301deb1dc437` | same |
 | `leaflet/images/marker-icon-2x.png` | [leaflet](https://www.npmjs.com/package/leaflet/v/1.9.4) 1.9.4 | BSD-2-Clause | [`dist/images/marker-icon-2x.png`](https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon-2x.png) | `00179c4c1ee830d3a108412ae0d294f55776cfeb085c60129a39aa6fc4ae2528` | same |
 | `leaflet/images/marker-shadow.png` | [leaflet](https://www.npmjs.com/package/leaflet/v/1.9.4) 1.9.4 | BSD-2-Clause | [`dist/images/marker-shadow.png`](https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-shadow.png) | `264f5c640339f042dd729062cfc04c17f8ea0f29882b538e3848ed8f10edb4da` | same |
+| `LICENSE-preact.txt` | [preact](https://www.npmjs.com/package/preact/v/11.0.2) 11.0.2 | MIT | [`LICENSE`](https://cdn.jsdelivr.net/npm/preact@11.0.2/LICENSE) | `1fe6958409c8c257a70c587a18b6f7f412b179b456630790d30b2ec9a8e4b7d4` | same |
+| `LICENSE-htm.txt` | [htm](https://www.npmjs.com/package/htm/v/3.1.1) 3.1.1 | Apache-2.0 | [`LICENSE`](https://cdn.jsdelivr.net/npm/htm@3.1.1/LICENSE) | `740725f7252e750af735d0028cc534970772f513331e9f68150fede8fb3ce00f` | same |
+| `LICENSE-squire.txt` | [squire-rte](https://www.npmjs.com/package/squire-rte/v/2.4.10) 2.4.10 | MIT | [`LICENSE`](https://cdn.jsdelivr.net/npm/squire-rte@2.4.10/LICENSE) | `dfc8ece415ad5f0d71c5d40165465854e087ac3f4e150fa25bd169b4b48cad69` | same |
+| `LICENSE-dompurify.txt` | [dompurify](https://www.npmjs.com/package/dompurify/v/3.4.17) 3.4.17 | (MPL-2.0 OR Apache-2.0) | [`LICENSE`](https://cdn.jsdelivr.net/npm/dompurify@3.4.17/LICENSE) | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` | same |
+| `LICENSE-leaflet.txt` | [leaflet](https://www.npmjs.com/package/leaflet/v/1.9.4) 1.9.4 | BSD-2-Clause | [`LICENSE`](https://cdn.jsdelivr.net/npm/leaflet@1.9.4/LICENSE) | `53e8dc25862014e4324741ca18fbe3611e11d42ef69f59f86ea8c5389647d4cb` | same |
 
 ## Changes
 

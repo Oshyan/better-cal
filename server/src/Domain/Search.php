@@ -156,7 +156,17 @@ final class Search
     /** How many matches lie in the past, for "N past matches" under an Upcoming search. */
     public function countPast(int $userId, string $q, array $opts = []): int
     {
-        $plan = $this->plan($userId, $q, ['when' => 'past'] + $opts);
+        return $this->count($userId, $q, ['when' => 'past'] + $opts);
+    }
+
+    /**
+     * How many events match, before any limit: the query search() runs,
+     * counted. Under 'when' => 'all' search() keeps every row that query
+     * returns, so this is how many it would list with no limit.
+     */
+    public function count(int $userId, string $q, array $opts = []): int
+    {
+        $plan = $this->plan($userId, $q, $opts);
         if ($plan === null) {
             return 0;
         }

@@ -10,7 +10,7 @@ namespace BetterCal\Domain\Series;
  * offers, each a transformation of the rule's members. A reading is an
  * array: id, label, rule (the new pattern, no bound), image (old day and
  * member to the new day, null for a loss), textKept (the rule text as
- * written stays, what a Google series allows until 1.5.3), and disabled
+ * written stays), and disabled
  * with code and reason when it can't be applied.
  *
  * Images are found by member (Correspondence, by Member), never by sorted

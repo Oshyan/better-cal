@@ -5,11 +5,11 @@
 // refuses for every occurrence of that calendar. The server's refusal stays
 // the backstop; this only keeps a person from picking it and waiting.
 //
-// - On a Google calendar, "This and following" is refused until 1.5.3
-//   (api-contract.md, "This and following": a split from a day after the
-//   first; from the first it is the same as all events). It is left out,
-//   its reason in one line (planwords.js UNOFFERED, beside the refusal
-//   panel's own sentence for the same code).
+// - Every calendar that takes edits takes every scope: since 1.5.4 a Google
+//   calendar's series goes through the model like any other (GoogleSeries),
+//   "This and following" included. A scope a calendar kind refused for
+//   every occurrence would be left out here with its reason in one line
+//   (planwords.js UNOFFERED); none is.
 
 import { state } from './store.js';
 import { unofferedWords } from '../lib/planwords.js';
@@ -23,8 +23,8 @@ import { unofferedWords } from '../lib/planwords.js';
  */
 export function seriesScopes(occ) {
   const cal = occ ? state.calendars.find((c) => c.id === occ.calendarId) : null;
-  if (cal && cal.provider === 'google') return { scopes: ['this', 'all'], why: unofferedWords('google') };
-  return { scopes: ['this', 'following', 'all'], why: null };
+  const why = cal && cal.provider === 'google' ? unofferedWords('google') : null;
+  return { scopes: why ? ['this', 'all'] : ['this', 'following', 'all'], why };
 }
 
 const CHIP_LABELS = { this: 'This event', following: 'This + following' };
@@ -39,7 +39,7 @@ export function scopeDropChoice(at, occ, cb, { allLabel = 'All events' } = {}) {
   const cal = occ ? state.calendars.find((c) => c.id === occ.calendarId) : null;
   return {
     x: at.x, y: at.y,
-    title: cal && cal.provider === 'google' ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
+    title: cal && cal.provider === 'google' ? "Repeating event (goes to Google; can't be undone yet)" : 'Repeating event',
     options: [...scopes.map((s) => ({ label: CHIP_LABELS[s] || allLabel, value: s })), { label: 'Cancel', value: null }],
     note: why,
     cb,

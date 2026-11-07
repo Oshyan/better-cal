@@ -88,11 +88,11 @@ For a calendar that started in Better-Cal and now needs to be seen by people who
 
 Title, description, location, start and end (dates for all-day, RFC 3339 with the time zone otherwise), status, the recurrence rule with its exceptions, and the event's link as Google's `source`, which polls read back so the link isn't replaced by Google's own page for the event. Not sent: attendees (they would mail people), reminders (per-user at Google) and color. Tags, people, reminders and the trip flag stay local and survive polls.
 
-Recurring edits: "this occurrence" patches Google's instance and comes back as an exception; "this and following" ends the series at Google with `UNTIL` and inserts a new one; deleting one occurrence deletes the instance at Google, which comes back as an `EXDATE`.
+Recurring edits: "this occurrence" patches Google's instance and comes back as an exception; deleting one occurrence cancels the instance at Google, which is stored here as a skipped day. A change to all events, or to this and following, goes through the same dialog as on a local calendar, and then to Google in steps: the series itself, then each edited or skipped day Google didn't keep as the plan said (Google drops every exception when a series' time, zone, start day or rule changes, and overwrites their fields when a field changes for all events), each sent again on its own; "this and following" ends the old series at Google and inserts the new one with the edited days after the cut. The series is read back after the writes, and the calendar shows what Google stores; where that differs from the plan, the Activity entry and a Review notice say so. A day of an all-day series can't be given a clock time at Google, so that one change is refused with its reason. A change that stops half way (Google unreachable, or the series changed there meanwhile) is listed in Review as "Half done at Google", with **Finish** (the rest of it, from what Google has now) and **Put back** (the steps done, reversed, each only while nothing changed since).
 
 Moving an event between a Google calendar and any other calendar is refused, because half of such a move could never be undone here. Use **Copy to** (the stack icon on an event), then delete the original if you meant a move. A trip on a Google calendar moves one event at a time.
 
-Activity records each write as a plain entry ("Updated 'Team lunch' on Google calendar 'Book club'"), with no Undo, since undoing would be a second write to Google.
+Activity records each write as a plain entry ("Updated 'Team lunch' on Google calendar 'Book club'"), with no Undo yet: undoing is a second write to Google, which a later version adds ([#172](https://github.com/Oshyan/better-cal/issues/172)).
 
 ## Invitations
 

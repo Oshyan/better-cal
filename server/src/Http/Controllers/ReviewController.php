@@ -31,6 +31,8 @@ use BetterCal\Support\Time;
  *   duplicate      two events that may be one, arriving by two routes (#9)
  *   subscription   an ICS feed whose updates need an owner decision
  *   plugin         a plugin turned off because the API key that enabled it was revoked
+ *   google_half    a series change that stopped half way at Google (Finish, Put back)
+ *   google_differs Google kept something else than a series change said (a notice)
  *
  * invite_new, invite_change, mail_limit and model_limit are stored by the queue itself;
  * the others live where they always did and keep their own endpoints,
@@ -45,6 +47,7 @@ final class ReviewController
         private readonly ?Duplicates $duplicates = null,
         private readonly ?Rsvp $rsvp = null,
         private readonly ?Plugins $plugins = null,
+        private readonly ?\BetterCal\Domain\Events $events = null,
     )
     {
     }
@@ -62,10 +65,13 @@ final class ReviewController
         $mailSettings = $this->queue->mailSettings($userId);
         foreach ($storedItems as $c) {
             $open = $c['status'] === 'open';
-            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR], true)) {
+            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS], true)) {
                 $isModel = $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT;
-                $dismissPath = $c['kind'] === ReviewQueue::KIND_MAIL_ERROR ? "/review/mail-errors/{$c['id']}/dismiss"
-                    : ($isModel ? "/review/model-limits/{$c['id']}/dismiss" : "/review/mail-limits/{$c['id']}/dismiss");
+                $dismissPath = match ($c['kind']) {
+                    ReviewQueue::KIND_MAIL_ERROR => "/review/mail-errors/{$c['id']}/dismiss",
+                    ReviewQueue::KIND_GOOGLE_DIFFERS => "/review/google-differences/{$c['id']}/dismiss",
+                    default => $isModel ? "/review/model-limits/{$c['id']}/dismiss" : "/review/mail-limits/{$c['id']}/dismiss",
+                };
                 $items[] = [
                     'key' => $c['kind'] . ':' . $c['id'],
                     'kind' => $c['kind'],
@@ -73,7 +79,7 @@ final class ReviewController
                     'title' => $c['title'],
                     'summary' => $c['summary'],
                     'createdAt' => $c['createdAt'],
-                    'eventId' => null,
+                    'eventId' => $c['kind'] === ReviewQueue::KIND_GOOGLE_DIFFERS ? $c['eventId'] : null,
                     'detail' => $c['detail'],
                     'actions' => $open && $canDecide ? [
                         self::action('dismiss', 'Dismiss', $dismissPath),
@@ -208,6 +214,23 @@ final class ReviewController
                 ] : [],
             ];
         }
+        foreach ($this->queue->googleHalfDone($userId) as $half) {
+            $items[] = [
+                'key' => 'google_half:' . $half['id'],
+                'kind' => 'google_half',
+                'status' => 'open',
+                'title' => $half['title'],
+                'summary' => 'Half done at Google: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
+                    . ' Finish sends the rest from what Google has now; Put back reverses the steps done (an event changed since is left as it is).',
+                'createdAt' => $half['createdAt'],
+                'eventId' => $half['eventId'],
+                'detail' => $half,
+                'actions' => $canDecide ? [
+                    self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish"),
+                    self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back"),
+                ] : [],
+            ];
+        }
         foreach ($this->plugins?->turnedOffByRevokedKey() ?? [] as $plugin) {
             $items[] = [
                 'key' => 'plugin:' . $plugin['id'],
@@ -322,6 +345,8 @@ final class ReviewController
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
             'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
+            'google_half' => count($this->queue->googleHalfDone($userId)),
+            'google_differs' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_DIFFERS),
         ];
     }
 
@@ -390,6 +415,30 @@ final class ReviewController
     {
         $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismissMailError((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    public function dismissGoogleDifferences(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->dismissGoogleDifferences((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    /** Finish a series change half done at Google: the rest of it from Google's state (GoogleSeries). */
+    public function finishGoogle(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        $out = $this->events->googleFinish((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
+        $this->events->throwDeferred();
+        return Response::json($out);
+    }
+
+    /** Put back a series change half done at Google: the steps done, reversed, each after an etag check. */
+    public function putBackGoogle(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        $out = $this->events->googlePutBack((int) $req->user['id'], (int) $params['id'], \BetterCal\Domain\RequestAuthority::request($req));
+        $this->events->throwDeferred();
+        return Response::json($out);
     }
 
     /** @return array{name:string,label:string,method:string,path:string,body?:array<string,mixed>} */

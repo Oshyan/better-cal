@@ -35,7 +35,6 @@ final class Split
     public const ANSWER = 'answer';
 
     public const REASONS = [
-        'google' => 'On a Google calendar, splitting a series from a day on comes in a later version. Change only this one, or all events.',
         'unreadable' => Model::REASONS['unreadable'],
         'shape' => 'This repeat can\'t be split on this day: started there, it wouldn\'t give the same days. Change only this one, or all events.',
         'empty' => Model::REASONS['empty'],
@@ -71,11 +70,6 @@ final class Split
         $before = array_values(array_filter($old->keys($actedDn), static fn(array $k): bool => $k[1] < $acted));
         if ($before === []) {
             return ['whole' => true];
-        }
-        // On a Google calendar until 1.5.3 (series-model.md, Google, as a
-        // Contract): a split is unavailable, its reason in place of the plan.
-        if (!empty($opts['google'])) {
-            return self::refused($master, $opts, 'google');
         }
         $last = $before[count($before) - 1][1];
         // UNTIL at the old part's last occurrence, in the series' own form:
@@ -306,7 +300,7 @@ final class Split
     private static function refused(array $master, array $opts, string $code): array
     {
         $plan = Model::refusedPlan($master, 'dayset', 'following', $opts);
-        $plan['refusals'] = [['code' => $code === 'google' ? 'google' : $code, 'words' => self::REASONS[$code]]];
+        $plan['refusals'] = [['code' => $code, 'words' => self::REASONS[$code]]];
         $plan['summary'] = 'Not changed: ' . self::REASONS[$code];
         $plan['split'] = null;
         $plan['hash'] = substr(sha1(json_encode([self::row($master), $code])), 0, 10);

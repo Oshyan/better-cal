@@ -84,7 +84,7 @@ return [
     [
         'id' => 'no-rejoin-after-give', 'file' => $model, 'checks' => ['5-edited'],
         'what' => 'an edited day given the new value of the only field it owned keeps its row instead of rejoining the series',
-        'patch' => [["            if (!\$this->google && OwnFields::normalize(\$ownAfter) === []) {\n", "            if (false && !\$this->google && OwnFields::normalize(\$ownAfter) === []) {\n"]],
+        'patch' => [["            if (OwnFields::normalize(\$ownAfter) === []) {\n", "            if (false && OwnFields::normalize(\$ownAfter) === []) {\n"]],
         'cases' => ['following-a-day-given-the-only-field-it-owned-rejoins'],
     ],
     [

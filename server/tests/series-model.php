@@ -402,17 +402,28 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p3 = smPlan($saved, [], smDrag($saved, '2027-04-05 19:00', '2027-04-07 19:00'), ['reading' => 'pattern']);
     checkEq('Acceptance 4: shifting the whole pattern keeps each weekday\'s offset: the first Wednesday and third Thursday', 'FREQ=MONTHLY;BYDAY=1WE,3TH', $p3['writes']['master']['rrule'] ?? null);
 
-    // Acceptance 5: Google before the probe.
+    // Acceptance 5: Google on the model (1.5.4): the same plan as locally,
+    // with the Google note; only a timed day under an all-day series is refused.
     $practice = smSeries('Practice', 'FREQ=WEEKLY;BYDAY=TH', '2027-01-07 18:00');
     $practiceRows = [smEdited($practice, 2, '2027-03-04 18:00', [], '2027-03-05 18:00', ['date'])];
     $g = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-11 18:30'), [], ['google' => true]);
-    checkEq('Acceptance 5: 18:30 for all events on Google is offered, notes Google, claims nothing for Fri 5 Mar', [[], ['google'], [], smAt('2027-01-07 18:30')],
-        [$g['plan']['refusals'], array_column($g['plan']['notes'], 'kind'), $g['plan']['days'], $g['writes']['master']['start_utc'] ?? null]);
+    $local = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-11 18:30'));
+    checkEq('Acceptance 5: 18:30 for all events on Google is the local plan with the Google note: Fri 5 Mar moves to 18:30 on its own date', [[], ['google'], [['edited', 'moves', smAt('2027-03-05 18:30')]], smAt('2027-01-07 18:30'), $local['writes']],
+        [$g['plan']['refusals'], array_column($g['plan']['notes'], 'kind'), array_map(static fn(array $d): array => [$d['kind'], $d['outcome'], smAt(substr((string) $d['at'], 0, 16))], $g['plan']['days']), $g['writes']['master']['start_utc'] ?? null, $g['writes']]);
     $g = smPlan($practice, $practiceRows, ['rrule' => 'FREQ=WEEKLY;BYDAY=TH;UNTIL=20270520T235959Z'], [], ['google' => true]);
     checkEq('Acceptance 5: ends changed on Google is offered with the same note', [[], ['google']], [$g['plan']['refusals'], array_column($g['plan']['notes'], 'kind')]);
     $g = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-12 18:00'), [], ['google' => true]);
-    checkEq('Acceptance 5: a drag to Friday on Google is unavailable, with the Google reason', [true, Model::REASONS['google']],
-        [$g['refused'], $g['plan']['refusals'][0]['words'] ?? null]);
+    checkEq('Acceptance 5: a drag to Friday on Google is offered as locally, every Thursday becoming Friday', [false, 'FREQ=WEEKLY;BYDAY=FR', ['movedDays']],
+        [$g['refused'], $g['writes']['master']['rrule'] ?? null, array_column($g['plan']['groups'], 'id')]);
+    // A day deliberately timed in an all-day series (its all-day setting and
+    // time its own) can't be held at Google (probe 2.2a): any change to such
+    // a series is refused there with its reason, and offered locally.
+    $allDay = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=SA', '2027-01-09 00:00', 60, true);
+    $timedDay = smEdited($allDay, 3, '2027-01-23 00:00', ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => smAt('2027-01-23 09:00'), 'end_utc' => smAt('2027-01-23 10:00')], null, ['allDay', 'time']);
+    $g = smPlan($allDay, [$timedDay], ['columns' => ['title' => 'Sample market']], [], ['google' => true]);
+    $local = smPlan($allDay, [$timedDay], ['columns' => ['title' => 'Sample market']]);
+    checkEq('Acceptance 5: a timed day under an all-day series refuses the change on Google, with its reason; locally the rename goes through', [true, 'googleAllDay', Model::REASONS['googleAllDay'], false],
+        [$g['refused'], $g['plan']['refusals'][0]['code'] ?? null, $g['plan']['refusals'][0]['words'] ?? null, $local['refused']]);
 
     // Acceptance 6: a rule the expander can't read.
     $holiday = smSeries('Holiday dinner', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L', '2027-02-10 18:00');
@@ -801,10 +812,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         '5 scheduled occurrences, 1 skipped, ends 22 Jan (was 20 Jan)', '5 scheduled occurrences, 1 skipped, ends 20 Jan; Fri 22 Jan has no place',
     ], [$p['plan']['bound']['words'], smGroup($p, 'edge')['options'][1]['bound']['words'] ?? null]);
 
-    // P2-4: on Google, the whole-plan refusal of a drag gives the Google reason.
-    $g = smPlan($practice, $practiceRows, smDrag($practice, '2027-03-11 18:00', '2027-03-12 18:00'), [], ['google' => true]);
-    checkEq('Acceptance 5: every refusal of the Google drag, the plan\'s own included, says the Google reason', [['google'], [Model::REASONS['google']]],
-        [array_values(array_unique(array_column($g['plan']['refusals'], 'code'))), array_values(array_unique(array_column($g['plan']['refusals'], 'words')))]);
+    // P2-4: on Google, a series made all-day while a day keeps its own time is refused with the one Google reason.
+    $g = smPlan($practice, $practiceRows, ['acted' => smAt('2027-03-11 18:00'), 'landed' => ['start_utc' => smAt('2027-03-11 00:00:00', 'UTC'), 'end_utc' => smAt('2027-03-12 00:00:00', 'UTC'), 'all_day' => 1, 'tzid' => 'UTC']], [], ['google' => true]);
+    checkEq('Acceptance 5: made all-day on Google, a series whose edited day has no time of its own is offered (the day follows the toggle)', [false, 1], [$g['refused'], $g['writes']['master']['all_day'] ?? null]);
 
     // P2-5: readings and zones say their consequence.
     $book = smSeries('Book club', 'FREQ=MONTHLY;BYMONTHDAY=15', '2027-01-15 19:00');
@@ -1382,17 +1392,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($nine, [], ['acted' => $nine['start_utc'], 'landed' => ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']]);
     checkEq('C3: a BYHOUR rule made all-day is written without BYHOUR and BYMINUTE', 'FREQ=WEEKLY;BYDAY=MO', $p['writes']['master']['rrule'] ?? null);
 
-    // Cause 4: on Google, a new hour written into the rule changes its text, so it isn't offered.
+    // Cause 4: on Google, a new hour written into the rule is written as locally (the rule is carried and read back).
     $late = smSeries('Sample call', 'FREQ=WEEKLY;BYDAY=WE;BYHOUR=23;BYMINUTE=30', '2027-03-31 23:30', 60, false, [], 'Europe/Berlin');
     $p = smPlan($late, [], smDrag($late, '2027-04-07 23:30', '2027-04-07 23:00'), [], ['google' => true]);
-    checkEq('C4: a Google series that names its hour refuses a time change', [true, 'google'], [$p['refused'], $p['plan']['refusals'][0]['code'] ?? null]);
+    checkEq('C4: a Google series that names its hour takes a time change, its hour rewritten', [false, 'FREQ=WEEKLY;BYDAY=WE;BYHOUR=23;BYMINUTE=0'], [$p['refused'], $p['writes']['master']['rrule'] ?? null]);
 
-    // Cause 5: on Google no exception has an outcome, the day acted on included.
+    // Cause 5: on Google every exception has its outcome, the day acted on included: cut off by a sent count, it is kept on its own.
     $daily = smSeries('Sample walk', 'FREQ=DAILY', '2027-01-30 21:15', 30, false, [], 'Asia/Kolkata');
     $row = smEdited($daily, 2, '2027-02-09 21:15', ['title' => 'Sample walk, edited'], null, ['title']);
     $p = smPlan($daily, [$row], smDrag($daily, '2027-02-09 21:15', '2027-02-19 21:15', ['rrule' => 'FREQ=DAILY;COUNT=2']), [], ['google' => true]);
-    checkEq('C5: a Google plan whose count ends before the day acted on claims nothing for it', [[], []],
-        [array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited')), $p['writes']['detach']]);
+    checkEq('C5: a Google plan whose count ends before the day acted on keeps it as an event of its own, as locally', [['separate'], [2]],
+        [array_column(array_values(array_filter($p['plan']['days'], static fn(array $d): bool => $d['kind'] === 'edited')), 'outcome'), array_keys($p['writes']['detach'])]);
 
     // Cause 6: a list sent back in another order is the same rule, so a day-set rule still refuses the drag.
     $dayset = smSeries('Sample market', 'FREQ=WEEKLY;BYMONTH=1,2;BYDAY=MO,FR', '2027-01-04 09:00');

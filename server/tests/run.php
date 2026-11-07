@@ -8855,9 +8855,10 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT,
         status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
         style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
-        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT,
+        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT, google_etag TEXT,
         location_source TEXT, location_provider TEXT, location_placed_at TEXT
     )");
+    $gw->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER, event_id INTEGER, title TEXT, summary TEXT, status TEXT, error TEXT, targets_json TEXT, befores_json TEXT, steps_json TEXT, created_at TEXT, updated_at TEXT)');
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, google_event_id) VALUES
         (10, 1, 2, 'single@google', 'Sample meeting', '2030-06-01 10:00:00', '2030-06-01 11:00:00', 0, 'UTC', 'feed', 'g-single')");
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, rrule, source, google_event_id) VALUES
@@ -8876,16 +8877,28 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     eventLinkTables($gw);
     $gw->run('CREATE TABLE filter_evals (id INTEGER PRIMARY KEY, filter_id INTEGER, event_id INTEGER, verdict TEXT, score REAL, evaluated_at TEXT)');
 
-    // Google stand-in: every call is recorded, a hook can run while it's
-    // "in flight", and a write answers with what was sent plus an id.
+    // Google stand-in: the probe's fake Google (tools/google-probe), holding
+    // the calendar's three events; every call is recorded, and a hook can
+    // run while one is "in flight", in which case the call is answered as
+    // sent without reaching the fake (what is checked is the save here).
+    require_once dirname(__DIR__, 2) . '/tools/google-probe/lib/FakeGoogle.php';
+    $fakeGoogle = new BetterCal\GoogleProbe\FakeGoogle('team@example.test');
+    $fakeGoogle->token = null;
+    $fakeGoogle->zone = 'UTC';
+    $fakeGoogle->seed(['id' => 'g-single', 'iCalUID' => 'single@google', 'summary' => 'Sample meeting', 'start' => ['dateTime' => '2030-06-01T10:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2030-06-01T11:00:00+00:00', 'timeZone' => 'UTC']]);
+    $fakeGoogle->seed(['id' => 'g-series', 'iCalUID' => 'series@google', 'summary' => 'Sample standup', 'start' => ['dateTime' => '2030-06-01T09:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2030-06-01T09:30:00+00:00', 'timeZone' => 'UTC'], 'recurrence' => ['RRULE:FREQ=DAILY;COUNT=6']]);
+    $fakeGoogle->seed(['id' => 'g-series_20300602T090000Z', 'iCalUID' => 'series@google', 'summary' => 'Sample standup, later', 'recurringEventId' => 'g-series',
+        'originalStartTime' => ['dateTime' => '2030-06-02T09:00:00+00:00', 'timeZone' => 'UTC'], 'start' => ['dateTime' => '2030-06-02T10:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2030-06-02T10:30:00+00:00', 'timeZone' => 'UTC']]);
     $googleCalls = [];
     $googleDuring = null;
     $googleUids = ['g-single' => 'single@google', 'g-series' => 'series@google'];
-    $transport = static function (string $method, string $url, ?array $payload) use (&$googleCalls, &$googleDuring, $googleUids): array {
+    $fakeTransport = $fakeGoogle->writerTransport();
+    $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use (&$googleCalls, &$googleDuring, $googleUids, $fakeTransport): array {
         $googleCalls[] = $method;
-        if ($googleDuring !== null) {
-            ($googleDuring)();
+        if ($googleDuring === null) {
+            return $fakeTransport($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
         }
+        ($googleDuring)();
         if ($method === 'DELETE') {
             return ['status' => 204, 'body' => ''];
         }
@@ -8950,19 +8963,29 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
 
     // "This and following" from a Google series' first day is the whole
     // series, as locally: one edit of the series, nothing inserted, and the
-    // rule is not bounded before its own start (#193 review).
+    // rule is not bounded before its own start (#193 review). It goes
+    // through GoogleSeries: the master's PATCH, the series read back, the
+    // exception's own title (which Google's rename overwrote) sent again,
+    // and the series read back once more.
     $googleCalls = [];
     (new ReflectionProperty($gev, 'splitEventId'))->setValue($gev, null);
-    $gev->patch(1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00'], $kinds['session'][0]);
-    // The PATCH, then the series' etags read back (GoogleWriter::refreshEtags).
-    checkEq('google following from the first day: the series itself is edited, nothing inserted, its rule and start kept', [['PATCH', 'GET'], 'From the start', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null], [
+    // As a poll leaves them: the series' etag on the master and its exception.
+    $gw->run('UPDATE events SET google_etag = ? WHERE id IN (11, 12)', [$fakeGoogle->events['g-series']['etag']]);
+    BetterCal\Domain\RequestAuthority::during($kinds['session'][0], fn() => planned($gev, 1, 11, ['title' => 'From the start', 'scope' => 'following', 'instanceStart' => '2030-06-01T09:00:00+00:00']));
+    checkEq('google following from the first day: the series itself is edited through GoogleSeries, nothing inserted, its rule and start kept, the edited day keeps its own title', [
+        ['PATCH', 'GET', 'PATCH', 'GET'], 'From the start', 'Sample standup, later', 'FREQ=DAILY;COUNT=6', '2030-06-01 09:00:00', 1, null, 0,
+    ], [
         $googleCalls,
         $gw->scalar('SELECT title FROM events WHERE id = 11'),
+        $gw->scalar('SELECT title FROM events WHERE id = 12'),
         $gw->scalar('SELECT rrule FROM events WHERE id = 11'),
         $gw->scalar('SELECT start_utc FROM events WHERE id = 11'),
         (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = 2 AND recurrence_parent_id IS NULL AND deleted_at IS NULL'),
         $gev->splitEventId(),
+        (int) $gw->scalar('SELECT COUNT(*) FROM google_pending'),
     ]);
+    checkEq('google following from the first day: the stand-in holds the rename on the series and the own title on the exception', ['From the start', 'Sample standup, later'],
+        [$fakeGoogle->events['g-series']['summary'], $fakeGoogle->events['g-series_20300602T090000Z']['summary']]);
 }
 
 // A plugin with required settings waits for them: no scheduled runs, no
@@ -14200,6 +14223,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 }
 
 require __DIR__ . '/series-model.php';
+require __DIR__ . '/google-series.php';
 require __DIR__ . '/expander.php';
 require __DIR__ . '/dav-query.php';
 require __DIR__ . '/files-security.php';

@@ -125,7 +125,7 @@ $c54 = array_values(array_filter($cases, static fn(array $c) => $c['id'] === '5.
 check('full run: a 412 is reported as a conflict', $c54 !== null && str_contains($c54['finding'], 'stale If-Match: 412 conflict') && str_contains($c54['finding'], 'current If-Match: 200'), $c54['finding'] ?? '');
 $c57 = array_values(array_filter($cases, static fn(array $c) => $c['id'] === '5.7'))[0] ?? null;
 check('full run: a 412 on an instance DELETE too', $c57 !== null && str_contains($c57['finding'], 'stale If-Match: 412 conflict'), $c57['finding'] ?? '');
-check('full run: a refused rule is reported with its error', str_contains((string) (array_values(array_filter($cases, static fn(array $c) => $c['id'] === '1.13'))[0]['finding'] ?? ''), 'refused: HTTP 400'));
+check('full run: a refused rule is reported with its error', str_contains((string) (array_values(array_filter($cases, static fn(array $c) => $c['id'] === '1.12'))[0]['finding'] ?? ''), 'refused: HTTP 400'));
 $c21 = array_values(array_filter($cases, static fn(array $c) => $c['id'] === '2.1t'))[0] ?? null;
 check('full run: the instance id form is compared with GoogleWriter::instanceId', $c21 !== null && str_contains($c21['finding'], 'GoogleWriter::instanceId predicts the same'), $c21['finding'] ?? '');
 check('full run: the exception read-back is in the finding', $c21 !== null && str_contains($c21['finding'], 'occurrence 3 (moved)'), $c21['finding'] ?? '');

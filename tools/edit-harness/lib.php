@@ -28,6 +28,7 @@ require_once __DIR__ . '/PlanUntouched.php';
 require_once __DIR__ . '/PlanPreselect.php';
 require_once __DIR__ . '/Sequences.php';
 require_once __DIR__ . '/OptionMatch.php';
+require_once __DIR__ . '/GoogleStand.php';
 require_once __DIR__ . '/Driver.php';
 
 /**
@@ -201,7 +202,8 @@ final class Runner
     private array $at = [0, 0];
     private int $seen = 0;
 
-    public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed)
+    /** $google: every case's series lives on a Google calendar served by the stand-in (harness.php --google; README, Google). */
+    public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed, private readonly bool $google = false)
     {
         // The evaluator every check reads must give its hand-listed examples first (rfc-examples.php): a run on a wrong oracle stops.
         $bad = Rfc::examples();
@@ -283,6 +285,10 @@ final class Runner
     {
         $u = \freshUser($this->db);
         $other = (int) $this->domains->calendars->create($u, ['name' => 'Sample other calendar'])['id'];
+        if ($this->google) {
+            $stand = GoogleStand::make($this->db, $this->domains->undo, $u);
+            return new Driver($this->db, $stand->events, $this->domains->undo, $u, $stand->calendarId, $other, $stand);
+        }
         return new Driver($this->db, $this->domains->events, $this->domains->undo, $u, Product::defaultCalendarId($this->db, $u), $other);
     }
 

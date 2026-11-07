@@ -57,6 +57,12 @@ final class Driver
     /** Parts of the design the oracle had no answer for in this case. */
     public array $unoracled = [];
 
+    /**
+     * The case's calendar is a Google calendar served by the stand-in
+     * (GoogleStand, README: Google): $events writes through to it, and
+     * after every edit what it holds is compared with the rows here and a
+     * poll of it must change nothing (8-google). Null: a local calendar.
+     */
     public function __construct(
         private readonly Db $db,
         private readonly Events $events,
@@ -64,6 +70,7 @@ final class Driver
         private readonly int $userId,
         private readonly int $calendarId,
         private readonly int $otherCalendarId = 0,
+        private readonly ?GoogleStand $google = null,
     ) {
     }
 
@@ -91,6 +98,8 @@ final class Driver
         $this->tripLinks = [];
         Prof::mark('create');
         $id = $this->createSeries($spec['series']);
+        // A rule or start the harness wrote straight into the row goes to the stand-in too, as if Google had it so.
+        $this->google?->adopt($this->row($id));
         Prof::mark('state');
         $st = $this->state($id);
         $this->checkSeries('g-created', $st);
@@ -107,7 +116,11 @@ final class Driver
         }
         // Every option committed from the same baseline: always for a fixed case, for a share of the drawn ones chosen
         // from the case's seed and number alone (so the drawn space is untouched), kept in the spec so a shrink replays it.
-        $this->spec['everyOption'] ??= isset($this->spec['fixed']) || crc32('every:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$everyOption * 10000);
+        $this->spec['everyOption'] ??= $this->google === null && (isset($this->spec['fixed']) || crc32('every:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$everyOption * 10000));
+        if ($this->google !== null) {
+            // The stand-in keeps what a trial commit sends it: the options are committed from the baseline on local cases only.
+            $this->spec['everyOption'] = false;
+        }
         // The wall clocks typed, for a share of the drawn cases (a fixed case names it), by seed and number alone.
         $this->spec['typed'] ??= !isset($this->spec['fixed']) && crc32('typed:' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round(self::$typed * 10000);
         if (!Product::$plan && !empty($this->spec['typed'])) {
@@ -223,6 +236,13 @@ final class Driver
             $this->matchOptions($before, $after, $acted, $v, $sent, $s0);
         }
         $this->checkTripLinks($before, $acted, $sent);
+        if ($this->google !== null) {
+            // What the stand-in holds equals the rows here, and a poll changes nothing (8-google). Undo on a Google
+            // calendar is the undo stage's (#172), so the undo, redo and stack checks are not applicable here.
+            $this->checkGoogleHeld($id);
+            $this->na('Undo on a Google calendar (the undo stage of #172)');
+            return $this->result($path);
+        }
         Prof::mark('undo');
         // Undo: every row as it was.
         if ($this->undoLatest('f-undo', 'undo')) {
@@ -511,7 +531,17 @@ final class Driver
                     $in += ['start' => Clock::iso($local), 'end' => Clock::iso(Clock::plus($local, max(0, $l)))];
                 }
             }
-            $this->events->patch($this->userId, $id, $in);
+            try {
+                $this->events->patch($this->userId, $id, $in);
+            } catch (HttpError $e) {
+                if ($this->google !== null && $e->errorCode === 'google_all_day') {
+                    // A day of an all-day series given a clock time: Google can't hold one (probe 2.2a), and the
+                    // product refuses it before sending; the case goes on without that day.
+                    $this->na('a timed day in an all-day series: Google can\'t hold one (refused google_all_day)');
+                    continue;
+                }
+                throw $e;
+            }
             $row = $this->db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$id, $occ['key']]);
             if (!Product::$plan) {
                 // A product before 1.5 keeps no own list (override_fields): the harness keeps what each "this event" edit
@@ -996,7 +1026,7 @@ final class Driver
         if (!$replay) {
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
-        $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
+        $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && $this->google === null && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
         try {
             $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         } catch (HttpError $e) {
@@ -1069,6 +1099,39 @@ final class Driver
             return null;
         }
         return ['kind' => $scope, 'instanceStart' => $inst, '_plan' => $plan, '_choices' => $choices];
+    }
+
+    /**
+     * (8-google) After an edit on a Google calendar: what the stand-in holds for every live series of the case (the
+     * rule as parts, the start and end, the all-day flag, each record by its key with its title, placement and status,
+     * the skipped keys) equals the rows here, every event of its own the case made at Google is a row here, and a poll
+     * of the stand-in (a sync-token delta) changes no row.
+     */
+    private function checkGoogleHeld(int $id): void
+    {
+        $masters = $this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND calendar_id = ? AND rrule IS NOT NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId, $this->calendarId]);
+        foreach ($masters as $m) {
+            $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $m['id']]);
+            $held = $this->google->held((string) $m['google_event_id']);
+            $stored = GoogleStand::stored($m, $rows);
+            if (getenv('HARNESS_GOOGLE_TRACE') !== false) {
+                fwrite(STDERR, 'google held: ' . json_encode($held) . "\ngoogle stored: " . json_encode($stored) . "\n");
+            }
+            $this->check('8-google', $held === $stored, 'the stand-in holds the series as the rows here hold it: rule, start, end, every exception and skip', ['held' => $held, 'stored' => $stored, 'googleId' => $m['google_event_id']]);
+        }
+        foreach ($this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND calendar_id = ? AND rrule IS NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId, $this->calendarId]) as $single) {
+            $e = $this->google->fake->events[(string) $single['google_event_id']] ?? null;
+            $this->check('8-google', $e !== null && ($e['status'] ?? '') !== 'cancelled' && (string) ($e['summary'] ?? '') === (string) $single['title'] && (string) ($e['iCalUID'] ?? '') === (string) $single['uid'],
+                'an event of its own here is one the stand-in holds under the same id, uid and title', ['googleId' => $single['google_event_id'], 'held' => $e === null ? null : [$e['summary'] ?? null, $e['status'] ?? null, $e['iCalUID'] ?? null]]);
+        }
+        $before = $this->snapshot();
+        try {
+            $this->google->poll();
+        } catch (\Throwable $e) {
+            $this->fail('8-google', 'a poll after the edit failed: ' . get_class($e), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+            return;
+        }
+        $this->same('8-google', $before, $this->snapshot(), 'a poll after the edit changes no row');
     }
 
     /** What a Google calendar would be offered for the same edit, from the same rows (invariant i). */

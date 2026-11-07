@@ -5252,9 +5252,11 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     ['Change all events', 'Move only this one']);
 
   // Refusals and notes, by code.
-  const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'google', words: 'Server words' }] }, ctx());
+  const gRefused = planView({ hash: 'e1', rule: rule('FREQ=WEEKLY;BYDAY=TU', 'FREQ=WEEKLY;BYDAY=WE', '2027-01-05T19:00:00-08:00', '2027-01-06T19:00:00-08:00'), refusals: [{ code: 'googleAllDay', words: 'Server words' }] }, ctx());
   eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
-    ['On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.', false, '']);
+    ['At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.', false, '']);
+  const gNote = planView({ ...choir, notes: [{ kind: 'google', words: 'Server note' }] }, ctx());
+  eq('series panel: the Google note says the change is sent to Google and read back, and can\'t be undone yet', gNote.notes, ['This change is sent to Google and read back from it: the calendar shows what Google stores. It can’t be undone yet.']);
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
   eq('series panel: a note in the user\'s format', gap.notes, ['There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.']);
 
@@ -6605,31 +6607,28 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   const base = { eventId: 81, title: 'Sample swim', recurring: true, rrule: 'FREQ=WEEKLY', start: '2027-04-06T18:00:00-07:00', end: '2027-04-06T19:00:00-07:00' };
   const local = { ...base, instanceId: '81@1', calendarId: 31 };
   const google = { ...base, instanceId: '82@1', eventId: 82, calendarId: 32 };
-  const why = unofferedWords('google');
-
   eq('scopes: a series on a local calendar has this, following and all', seriesScopes(local), { scopes: ['this', 'following', 'all'], why: null });
-  eq('scopes: on a Google calendar, no following, and the reason in its place', seriesScopes(google), { scopes: ['this', 'all'], why });
-  eq('scopes: the reason is one short line', [typeof why, why.length < 60, /Google/.test(why)], ['string', true, true]);
+  eq('scopes: on a Google calendar too, since 1.5.4 (GoogleSeries carries a split)', seriesScopes(google), { scopes: ['this', 'following', 'all'], why: null });
+  eq('scopes: no scope is left unoffered for a calendar kind', unofferedWords('google'), null);
   eq('scopes: a date edited on its own has following too, a calendar move included', seriesScopes({ ...local, isException: true }), { scopes: ['this', 'following', 'all'], why: null });
 
   // The drop chip (drag, resize, reschedule, a calendar or a person drop).
   const chip = (occ, o) => scopeDropChoice({ x: 10, y: 20 }, occ, () => {}, o);
   eq('drop chip: local, three scopes and Cancel, no note', [chip(local).options.map((x) => x.value), chip(local).note], [['this', 'following', 'all', null], null]);
-  eq('drop chip: Google, no following, the reason as its note, the title says Google', [chip(google).options.map((x) => x.value), chip(google).note, /Google/.test(chip(google).title)],
-    [['this', 'all', null], why, true]);
+  eq('drop chip: Google, three scopes too, no note, the title says Google and that it can\'t be undone yet', [chip(google).options.map((x) => x.value), chip(google).note, /Google/.test(chip(google).title), /undone yet/.test(chip(google).title)],
+    [['this', 'following', 'all', null], null, true, true]);
   eq('drop chip: the all label the caller gives', chip(local, { allLabel: 'All events…' }).options.map((x) => x.label), ['This event', 'This + following', 'All events…', 'Cancel']);
 
   // The delete, answer and new-time row.
   const texts = (v) => (v == null || v === false ? [] : typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(texts) : v.props ? texts(v.props.children) : []);
   const row = (occ) => texts(ScopeChoice({ occ, verb: 'Delete', onPick: () => {}, onCancel: () => {} }));
   eq('scope row: local offers This and following', row(local).includes('This and following'), true);
-  eq('scope row: Google leaves the button out and says why in its place', [row(google).includes('This and following'), row(google).includes(why)], [false, true]);
+  eq('scope row: Google offers This and following too', row(google).includes('This and following'), true);
 
-  // The refusal panel's sentence for a split is the split's, beside the short line.
-  eq('refusal words: a split refused on Google says so, not the day change\'s sentence', [
-    planRefusal({ scope: 'following', refusals: [{ code: 'google' }] }), planRefusal({ scope: 'all', refusals: [{ code: 'google' }] }) === refusalWords('google'),
-  ], [refusalWords('google', 'following'), true]);
-  eq('refusal words: the split\'s Google sentence differs from a day change\'s', refusalWords('google', 'following') !== refusalWords('google'), true);
+  // The refusal panel's sentence for a split is the split's where it has one, else the change's.
+  eq('refusal words: a split\'s own refusal (its shape) has its own sentence; the all-day Google reason reads the same under either scope', [
+    planRefusal({ scope: 'following', refusals: [{ code: 'shape' }] }) !== refusalWords('shape'), planRefusal({ scope: 'following', refusals: [{ code: 'googleAllDay' }] }) === refusalWords('googleAllDay'),
+  ], [true, true]);
 
   // Delete following and an answer from a day on carry "Change scope".
   let asked = 0;
@@ -6761,10 +6760,10 @@ console.log('--- a change for more than one occurrence goes through its plan, wh
   ], [[['POST', '/events/91/relationship', false], ['POST', '/events/91/relationship', true]], { relationship: 'maybe' }, 'function']);
   cancelSeriesChange();
   refuseWithoutPlan = false;
-  // On a Google calendar the rows don't offer following.
+  // On a Google calendar the rows offer every scope, as on a local one (1.5.4).
   const texts = (v) => (v == null || v === false ? [] : typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(texts) : v.props ? texts(v.props.children) : []);
-  eq('the New time row on Google: no This and following', texts(ScopeChoice({ occ: google, verb: 'New time for', onPick: () => {}, onCancel: () => {} })).includes('This and following'), false);
-  eq('a calendar or person drop on Google: no following in the chip', scopeDropChoice({ x: 0, y: 0 }, google, () => {}).options.map((o) => o.value), ['this', 'all', null]);
+  eq('the New time row on Google: This and following too', texts(ScopeChoice({ occ: google, verb: 'New time for', onPick: () => {}, onCancel: () => {} })).includes('This and following'), true);
+  eq('a calendar or person drop on Google: following in the chip too', scopeDropChoice({ x: 0, y: 0 }, google, () => {}).options.map((o) => o.value), ['this', 'following', 'all', null]);
   put({ calendars: savedCalendars, people: savedPeople, config: { ...st.config, seriesPlans: false } });
   globalThis.fetch = realFetch;
 }

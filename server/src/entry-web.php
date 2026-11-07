@@ -145,7 +145,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
-        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp, $pluginsDomain);
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp, $pluginsDomain, $events);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $badgeController = new Controllers\BadgeController($db, $settings, $events, $reviewController);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
@@ -289,6 +289,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/review/mail-limits/:id/dismiss", [$reviewController, 'dismissMailLimit']);
         $router->add('POST', "$base/review/mail-errors/:id/dismiss", [$reviewController, 'dismissMailError']);
         $router->add('POST', "$base/review/model-limits/:id/dismiss", [$reviewController, 'dismissModelLimit']);
+        $router->add('POST', "$base/review/google-differences/:id/dismiss", [$reviewController, 'dismissGoogleDifferences']);
+        $router->add('POST', "$base/review/google-half/:id/finish", [$reviewController, 'finishGoogle']);
+        $router->add('POST', "$base/review/google-half/:id/put-back", [$reviewController, 'putBackGoogle']);
         $router->add('POST', "$base/duplicates/:id", [$reviewController, 'decideDuplicate']);
 
         // Proposals (C11): a plugin suggests, the user decides.

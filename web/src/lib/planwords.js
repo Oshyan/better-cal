@@ -878,7 +878,7 @@ const REFUSALS = {
   weekno: 'This repeat counts weeks of the year, so its days can’t follow a drag.',
   overlap: 'Two of its days are the same day in some months, so its days can’t follow a drag.',
   dayset: 'This repeat came from another app and picks its days in a way a drag can’t follow. Move only this one, or open the series to choose its days.',
-  google: 'On a Google calendar, changing which days this repeats on comes in a later version. Move only this one, or change its time or details for all events.',
+  googleAllDay: 'At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.',
   empty: 'This would leave the series with no events. Delete it instead?',
   member_taken: 'That day is already one of its days.',
   off_weeks: 'Those days would fall in weeks this repeat skips.',
@@ -887,18 +887,15 @@ const REFUSALS = {
   count_range: 'A day would have no place in some months.',
 };
 // A split's own refusals (this and following, delete following, an answer
-// from a day on: Series\Split::REASONS). Its plan carries scope
-// 'following'; "google" there is the split's, not the day change's.
+// from a day on: Series\Split::REASONS). Its plan carries scope 'following'.
 const SPLIT_REFUSALS = {
-  google: 'On a Google calendar, splitting a series from a day on comes in a later version. Change only this one, or all events.',
   shape: 'This repeat can’t be split on this day: started there, it wouldn’t give the same days. Change only this one, or all events.',
 };
-// The same reason in one line, where a scope chooser leaves the scope out
+// The same reason in one line, where a scope chooser leaves a scope out
 // (app/scopes.js): a scope refused for every occurrence of a calendar kind
-// is not offered there, and these say why in its place.
-const UNOFFERED = {
-  google: 'This and following comes later on Google calendars',
-};
+// is not offered there, and these say why in its place. None since 1.5.4:
+// a Google calendar takes every scope.
+const UNOFFERED = {};
 /** A refusal's sentence, by its code (and the plan's scope: a split's are its own). */
 export const refusalWords = (code, scope) => (scope === 'following' && SPLIT_REFUSALS[code]) || REFUSALS[code] || 'This change can’t be made to the series.';
 /** Why a scope chooser leaves "This and following" out, by the split refusal's code. */
@@ -907,7 +904,7 @@ export const unofferedWords = (code) => UNOFFERED[code] || null;
 /** A note's sentence, by its kind and data. */
 export function noteWords(n, opts = {}) {
   if (!n) return '';
-  if (n.kind === 'google') return 'Google decides what happens to edited days, and Better-Cal hasn’t checked what it does yet. This can’t be undone.';
+  if (n.kind === 'google') return 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can’t be undone yet.';
   // A note's clocks are its point. Its subject is its clock when that can be
   // said, and "a clock time" with its time unavailable when its zone can't be
   // read (never the device's clock); a note with no instant says what it can.

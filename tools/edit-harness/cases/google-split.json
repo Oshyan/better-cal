@@ -1,0 +1,11 @@
+{
+    "about": "A split on a Google calendar the account can write, from a day after the first: this and following, delete following and an answer from a day on, each carried to the stand-in Google (GoogleSeries, 1.5.4) and read back equal, a poll changing nothing.",
+    "googleSplit": true,
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU",
+        "start": "2027-01-05 18:00",
+        "length": 60
+    },
+    "actedAt": "2027-01-19T18:00:00+00:00"
+}

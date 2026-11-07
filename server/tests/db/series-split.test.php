@@ -232,44 +232,7 @@ return static function (Db $db): void {
             [$rows($choir), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$new])]);
     });
 
-    scenario('split: on a Google calendar it is 422 series_refused with the reason google, and nothing is sent or written', function () use ($db, $error): void {
-        $u = freshUser($db);
-        $d = domains($db);
-        $calls = [];
-        $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
-        $auth = new BetterCal\Domain\GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use (&$calls): array {
-            $calls[] = 'token';
-            return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
-        });
-        $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
-            $calls[] = $method;
-            return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample-series', 'iCalUID' => 'sample-series@google', 'status' => 'confirmed'])];
-        };
-        $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
-            new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
-            new BetterCal\Domain\GoogleWriter($db, $auth, new BetterCal\Domain\Feeds($db), $transport));
-        $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'owner@example.test',
-            'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', $cfg['session_secret']), 'scopes' => BetterCal\Domain\GoogleAuth::SCOPES]);
-        $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
-            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
-            'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
-        $now = BetterCal\Support\Time::nowDb();
-        $weekly = $db->insert('events', ['user_id' => $u, 'calendar_id' => $googleCal, 'uid' => 'sample-series@google', 'title' => 'Sample standup',
-            'start_utc' => '2027-01-05 18:00:00', 'end_utc' => '2027-01-05 19:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'source' => 'feed',
-            'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', 'google_event_id' => 'g-sample-series', 'created_at' => $now, 'updated_at' => $now]);
-        $state = static fn(): array => [$db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ?', [$weekly, $weekly]), (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$u])];
-        $before = $state();
-        $edit = ['scope' => 'following', 'instanceStart' => '2027-01-19T18:00:00+00:00', 'title' => 'Sample standup, new room'];
-        $plan = $events->previewPatch($u, $weekly, $edit + ['preview' => true]);
-        [$code, $refused] = $error(fn() => $events->patch($u, $weekly, $edit + ['plan' => ['hash' => $plan['hash'] ?? '', 'choices' => []]]));
-        [$deleteCode, $deleteRefused] = $error(fn() => $events->deleteEvent($u, $weekly, 'following', '2027-01-19T18:00:00+00:00', null, ['hash' => '', 'choices' => []]));
-        checkEq('the preview names the refusal, and the commit of an edit or a delete from a later day is 422 series_refused with the reason google; no call, nothing written', [
-            ['google'], '422 series_refused', ['google'], '422 series_refused', ['google'], [], $before,
-        ], [
-            array_column($plan['refusals'], 'code'), $code, array_column($refused['refusals'] ?? [], 'code'),
-            $deleteCode, array_column($deleteRefused['refusals'] ?? [], 'code'), $calls, $state(),
-        ]);
-    });
+    // A split on a Google calendar goes to Google through GoogleSeries since 1.5.4: server/tests/db/google-series.test.php.
 
     scenario('split: a relationship from a day on, previewed and committed, is the status edit on an own calendar and the answer on an opportunities one', function () use ($db, $d, $u, $series, $choices, $newest, $col): void {
         $own = $series('Sample rehearsal', 'FREQ=WEEKLY;BYDAY=TU');

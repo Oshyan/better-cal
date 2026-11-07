@@ -380,11 +380,12 @@ trait Sequences
     }
 
     /**
-     * A split on a Google calendar the account can write is refused until 1.5.3 (api-contract, This and following):
-     * "this and following" from a day after the first, delete following and an answer from a day on each preview a plan
-     * whose refusal is `google`, and the commit with its hash is 422 series_refused, writing nothing and calling no one
-     * (`e-google`). The calendar and its series are written as a Google sync writes them; no Google stand-in is needed,
-     * since nothing may reach it.
+     * A split on a Google calendar the account can write goes to Google through GoogleSeries (api-contract, This and
+     * following; 1.5.4): the series is made on the stand-in's calendar through the product, "this and following" from a
+     * day after the first with a rename is previewed (no refusal) and committed, and then the stand-in holds the old
+     * series ended before the cut and a new series from the day acted on with the exceptions after it, as the rows here
+     * do (`e-google`); a poll of the stand-in changes nothing. Delete following and an answer from a day on go the same
+     * way on series of their own.
      */
     public function runGoogleSplit(array $spec): array
     {
@@ -394,51 +395,76 @@ trait Sequences
         $this->product = [];
         $this->spec = $spec + ['n' => 0, 'seed' => 0];
         if (!Product::$plan) {
-            // The split's refusal on a Google calendar is the plan's (`google`, series_refused): none before 1.5.
-            $this->na('Google split refusal (a plan refusal)');
+            $this->na('a split on a Google calendar (GoogleSeries): none before 1.5');
             $this->spec['path'] = 'google-split';
             return $this->result('google-split');
         }
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
-        $account = $this->db->insert('google_accounts', ['user_id' => $this->userId, 'email' => 'owner@example.test', 'refresh_token_enc' => 'sealed-sample', 'scopes' => 'calendar']);
-        $cal = $this->db->insert('calendars', ['user_id' => $this->userId, 'name' => 'Google sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
-            'google_account_id' => $account, 'google_calendar_id' => 'sample@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
-            'position' => \BetterCal\Domain\Order::endOfList($this->db, $this->userId), 'role' => 'mine']);
-        $now = \BetterCal\Support\Time::nowDb();
+        $stand = GoogleStand::make($this->db, $this->undo, $this->userId);
         $s = $spec['series'];
-        $id = $this->db->insert('events', ['user_id' => $this->userId, 'calendar_id' => $cal, 'uid' => 'sample-series@google', 'title' => 'Sample series',
-            'start_utc' => $s['start'] . ':00', 'end_utc' => date('Y-m-d H:i:s', strtotime($s['start'] . ':00 UTC') + 60 * (int) $s['length']), 'all_day' => 0, 'tzid' => 'UTC',
-            'rrule' => $s['rrule'], 'source' => 'feed', 'google_event_id' => 'g-sample-series', 'created_at' => $now, 'updated_at' => $now]);
+        $start = new \DateTimeImmutable($s['start'] . ':00', Clock::utc());
+        $make = function (string $title) use ($stand, $s, $start): int {
+            $id = (int) $stand->events->create($this->userId, ['calendarId' => $stand->calendarId, 'title' => $title, 'rrule' => $s['rrule'], 'allDay' => false, 'tzid' => 'UTC',
+                'start' => Clock::iso($start), 'end' => Clock::iso(Clock::plus($start, 60 * (int) $s['length']))])['eventId'];
+            // An edited day before the cut and one after it, and a skipped day after it.
+            $row = $this->row($id);
+            $occ = Truth::expand($row, 6)['occ'];
+            $stand->events->patch($this->userId, $id, ['scope' => 'this', 'instanceStart' => Clock::iso(Clock::parse($occ[1]['key'])), 'title' => $title . ', early day']);
+            $stand->events->patch($this->userId, $id, ['scope' => 'this', 'instanceStart' => Clock::iso(Clock::parse($occ[3]['key'])), 'title' => $title . ', late day']);
+            $stand->events->deleteEvent($this->userId, $id, 'this', Clock::iso(Clock::parse($occ[4]['key'])));
+            return $id;
+        };
         $at = (string) $spec['actedAt'];
-        $s0 = $this->snapshot();
-        $refused = function (string $what, callable $preview, callable $commit) use ($s0): void {
-            try {
-                $plan = $preview();
-            } catch (\Throwable $e) {
-                $this->fail('e-google', "$what: the preview failed with " . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
-                return;
+        $after = function (string $what, int $id) use ($stand): void {
+            foreach ($this->db->all('SELECT * FROM events WHERE user_id = ? AND id >= ? AND calendar_id = ? AND rrule IS NOT NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->firstId, $stand->calendarId]) as $m) {
+                $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $m['id']]);
+                $held = $stand->held((string) $m['google_event_id']);
+                $stored = GoogleStand::stored($m, $rows);
+                $this->check('e-google', $held === $stored, "$what: the stand-in holds each series as the rows here hold it", ['held' => $held, 'stored' => $stored]);
             }
-            $codes = array_column($plan['refusals'] ?? [], 'code');
-            $this->check('e-google', in_array('google', $codes, true), "$what: the plan refuses a split on a Google calendar (google)", ['refusals' => $codes]);
+            $before = $this->snapshot();
+            $stand->poll();
+            $this->same('e-google', $before, $this->snapshot(), "$what: a poll of the stand-in after the split changes nothing");
+        };
+        // This and following, with a rename.
+        $id = $make('Sample series');
+        $edit = ['scope' => 'following', 'instanceStart' => $at, 'title' => 'Sample series, renamed'];
+        try {
+            $plan = $stand->events->previewPatch($this->userId, $id, $edit);
+            $this->check('e-google', ($plan['refusals'] ?? []) === [], 'this and following: the plan is not refused on a Google calendar', ['refusals' => $plan['refusals'] ?? null]);
             $choices = [];
             foreach ($plan['groups'] ?? [] as $g) {
                 $choices[$g['id']] = $g['selected'];
             }
-            $got = null;
-            try {
-                $commit(['hash' => $plan['hash'] ?? null, 'choices' => $choices]);
-            } catch (HttpError $e) {
-                $got = $e->status . ' ' . $e->errorCode;
-            } catch (\Throwable $e) {
-                $got = get_class($e) . ': ' . mb_substr($e->getMessage(), 0, 200);
-            }
-            $this->check('e-google', $got === '422 series_refused', "$what: the commit is 422 series_refused", ['got' => $got]);
-            $this->same('e-google', $s0, $this->snapshot(), "$what: a refused split writes nothing");
-        };
-        $edit = ['scope' => 'following', 'instanceStart' => $at, 'title' => 'Sample series, renamed'];
-        $refused('this and following', fn() => $this->events->previewPatch($this->userId, $id, $edit), fn(array $p) => $this->events->patch($this->userId, $id, $edit + ['plan' => $p]));
-        $refused('delete following', fn() => $this->events->previewDelete($this->userId, $id, 'following', $at), fn(array $p) => $this->events->deleteEvent($this->userId, $id, 'following', $at, null, $p));
-        $refused('an answer from a day on', fn() => $this->events->previewAttendance($this->userId, $id, 'going', 'following', $at), fn(array $p) => $this->events->setAttendance($this->userId, $id, 'going', 'following', $at, $p));
+            $stand->events->patch($this->userId, $id, $edit + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
+            $new = $stand->events->splitEventId();
+            $masters = (int) $this->db->scalar('SELECT COUNT(*) FROM events WHERE user_id = ? AND id >= ? AND rrule IS NOT NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL', [$this->userId, $this->firstId]);
+            $this->check('e-google', $new !== null && $masters === 2, 'this and following: a new series from the day acted on, the old one ended before it', ['new' => $new, 'masters' => $masters]);
+            $this->check('e-google', str_contains((string) $this->db->scalar('SELECT rrule FROM events WHERE id = ?', [$id]), 'UNTIL='), 'this and following: the old series ends with an UNTIL', []);
+            $after('this and following', $id);
+        } catch (\Throwable $e) {
+            $this->fail('e-google', 'this and following failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+        }
+        // Delete following.
+        $id = $make('Sample series two');
+        try {
+            $plan = $stand->events->previewDelete($this->userId, $id, 'following', $at);
+            $this->check('e-google', ($plan['refusals'] ?? []) === [], 'delete following: the plan is not refused on a Google calendar', ['refusals' => $plan['refusals'] ?? null]);
+            $stand->events->deleteEvent($this->userId, $id, 'following', $at, null, ['hash' => $plan['hash'], 'choices' => []]);
+            $after('delete following', $id);
+        } catch (\Throwable $e) {
+            $this->fail('e-google', 'delete following failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+        }
+        // An answer from a day on.
+        $id = $make('Sample series three');
+        try {
+            $plan = $stand->events->previewAttendance($this->userId, $id, 'going', 'following', $at);
+            $this->check('e-google', ($plan['refusals'] ?? []) === [], 'an answer from a day on: the plan is not refused on a Google calendar', ['refusals' => $plan['refusals'] ?? null]);
+            $stand->events->setAttendance($this->userId, $id, 'going', 'following', $at, ['hash' => $plan['hash'], 'choices' => []]);
+            $after('an answer from a day on', $id);
+        } catch (\Throwable $e) {
+            $this->fail('e-google', 'an answer from a day on failed with ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+        }
         return $this->result('google split');
     }
 

@@ -346,6 +346,16 @@ final class GoogleSync
             $instance = self::whenUtc($item['originalStartTime']);
         }
         if (($item['status'] ?? 'confirmed') === 'cancelled') {
+            // An exception record Google dropped (a master change that reset
+            // the series, an end before it; probe 3.1, 2.6) comes as a
+            // cancelled item under the record's instance id, with the
+            // series' iCalUID and no originalStartTime: the record is gone,
+            // the series is not, and the day is no skip. The row Google
+            // knew by that id goes, nothing else.
+            $dropped = $instance === null ? self::droppedInstance((string) ($item['id'] ?? '')) : null;
+            if ($dropped !== null) {
+                return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $dropped, 'dropped' => true];
+            }
             return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instance];
         }
         // Google's own id for the resource: what the API is addressed by when
@@ -424,6 +434,24 @@ final class GoogleSync
     }
 
     /**
+     * The occurrence key an instance id names (`<series id>_<UTC basic time
+     * with Z>`, or `_<YYYYMMDD>` for an all-day series: GoogleWriter::instanceId),
+     * or null for an id of another form (a master's, a single event's).
+     */
+    public static function droppedInstance(string $id): ?string
+    {
+        $cut = strrpos($id, '_');
+        if ($cut === false) {
+            return null;
+        }
+        $suffix = substr($id, $cut + 1);
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z)?$/', $suffix, $m) !== 1) {
+            return null;
+        }
+        return sprintf('%s-%s-%s %s:%s:%s', $m[1], $m[2], $m[3], $m[4] ?? '00', $m[5] ?? '00', $m[6] ?? '00');
+    }
+
+    /**
      * Apply a change list to a snapshot (both in the parsed shape). Keys are
      * uid|instance, like Feeds::sync. A cancelled master removes its whole
      * series; a cancelled instance removes its override and becomes an
@@ -479,6 +507,7 @@ final class GoogleSync
         // happen (a live instance), each the last word on its day.
         $skipped = [];
         $live = [];
+        $droppedKeys = [];
         $changedMasters = [];
         foreach ($changes as $index => $ev) {
             if (($index & 127) === 0) {
@@ -492,6 +521,10 @@ final class GoogleSync
                         unset($byKey[$key]);
                     }
                     unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid]);
+                } elseif (!empty($ev['dropped'])) {
+                    // A dropped exception record: its row goes unless a live
+                    // row in this list takes the key; the day is no skip.
+                    $droppedKeys[$uid][self::key($ev)] = $instance;
                 } else {
                     $key = self::key($ev);
                     unset($byKey[$key], $keysByUid[$uid][$key], $live[$uid][$instance]);
@@ -510,6 +543,13 @@ final class GoogleSync
             } else {
                 unset($skipped[$uid][$instance]);
                 $live[$uid][$instance] = true;
+            }
+        }
+        foreach ($droppedKeys as $uid => $keys) {
+            foreach ($keys as $key => $instance) {
+                if (!isset($live[$uid][$instance])) {
+                    unset($byKey[$key], $keysByUid[$uid][$key]);
+                }
             }
         }
         foreach (array_keys($changedMasters + $skipped + $live) as $uid) {

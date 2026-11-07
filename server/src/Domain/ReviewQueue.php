@@ -40,6 +40,10 @@ final class ReviewQueue
     public const KIND_MAIL_LIMIT = 'mail_limit';
     public const KIND_MODEL_LIMIT = 'model_limit';
     public const KIND_MAIL_ERROR = 'mail_error';
+    /** Google kept something else than a series plan said (GoogleSeries): a notice, dismissed when read. */
+    public const KIND_GOOGLE_DIFFERS = 'google_differs';
+    /** A series change that stopped half way at Google (google_pending): Finish or Put back. */
+    public const KIND_GOOGLE_HALF = 'google_half';
 
     private const PREVIEW_CHARS = 400;
     /** Open competing change candidates kept for one meeting. */
@@ -1338,6 +1342,60 @@ final class ReviewQueue
         if ($row['kind'] !== self::KIND_MAIL_ERROR) throw HttpError::notFound('No such unreadable email notice');
         $this->close($id, 'dismissed');
         return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /**
+     * A series change carried to Google that Google kept differently in
+     * places (GoogleSeries::differences): one notice per change, its lines
+     * the differences in words, dismissed when read. The Activity entry
+     * carries the same words.
+     *
+     * @param list<string> $lines
+     */
+    public function holdGoogleDifferences(int $userId, ?int $eventId, string $title, string $calendarName, array $lines): int
+    {
+        return (new Undo($this->db))->write($userId, function () use ($userId, $eventId, $title, $calendarName, $lines): int {
+            return $this->db->insert('review_items', [
+                'user_id' => $userId, 'kind' => self::KIND_GOOGLE_DIFFERS, 'source_key' => 'google:' . ($eventId ?? 0) . ':' . bin2hex(random_bytes(4)), 'event_id' => $eventId,
+                'title' => mb_substr($title, 0, 300),
+                'summary' => mb_substr("Google kept something else than the change to '" . $title . "' on calendar '" . $calendarName . "' said. The calendar shows what Google stores.", 0, 1000),
+                'payload_json' => json_encode(['lines' => array_values(array_map(static fn(string $l): string => mb_substr($l, 0, 500), $lines)), 'calendarName' => $calendarName], JSON_INVALID_UTF8_SUBSTITUTE),
+            ]);
+        });
+    }
+
+    public function dismissGoogleDifferences(int $userId, int $id): array
+    {
+        $row = $this->requireOpen($userId, $id);
+        if ($row['kind'] !== self::KIND_GOOGLE_DIFFERS) throw HttpError::notFound('No such Google notice');
+        $this->close($id, 'dismissed');
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /**
+     * The series changes half done at Google (GoogleSeries, google_pending),
+     * newest first, for Review's Finish and Put back.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function googleHalfDone(int $userId): array
+    {
+        $out = [];
+        foreach ($this->db->all("SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status = 'half' ORDER BY p.id DESC", [$userId]) as $row) {
+            $steps = json_decode((string) $row['steps_json'], true) ?: [];
+            $out[] = [
+                'id' => (int) $row['id'],
+                'calendarId' => (int) $row['calendar_id'],
+                'calendarName' => (string) $row['calendar_name'],
+                'eventId' => $row['event_id'] !== null ? (int) $row['event_id'] : null,
+                'title' => (string) $row['title'],
+                'summary' => (string) $row['summary'],
+                'error' => (string) ($row['error'] ?? ''),
+                'stepsDone' => count($steps),
+                'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
+            ];
+        }
+        return $out;
     }
 
     /** @return array<string,mixed> */

@@ -437,8 +437,10 @@ final class Events
         $resp = null;
         $instanceId = null;
         $undo = null; // what to send back (GoogleUndo)
+        $occurrence = null;
         if ($existing !== null) {
             [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
+            self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
             if ($googleFields !== []) {
                 // A local-only override (attendance, reminders) has no Google
                 // id; the occurrence's instance id addresses it at Google.
@@ -462,12 +464,14 @@ final class Events
             [, $localFields] = self::splitGoogleFields($patch);
             // Before: the occurrence as it showed, the series' at that date.
             $shown = GoogleWriter::instanceBody($override);
+            $occurrence = $override;
             $override = array_merge($override, $patch);
+            self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
             $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
             $undo = [$instanceId, $shown, null];
         }
-        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $userId, $localFields, $in): bool {
+        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $userId, $localFields, $in): bool {
             if ($resp !== null) {
                 $this->google()->apply($calendar, [$resp]);
             }
@@ -479,9 +483,12 @@ final class Events
                     return false; // what Google answered is still kept
                 }
                 $rowId = (int) $created['id'];
-                // Same event on one day: it starts with the series' tags and people.
+                // Same event on one day: it starts with the series' tags and people, and its trip flag (a series column).
                 $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
                 $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+                if ((int) ($master['is_container'] ?? 0) === 1 && !array_key_exists('is_container', $localFields)) {
+                    $localFields['is_container'] = 1;
+                }
             }
             if ($localFields !== []) {
                 $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
@@ -490,6 +497,14 @@ final class Events
                 $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
             }
             $this->applyPeoplePatch($userId, $rowId, $in);
+            // The day's own list, as every writer keeps it (Own Fields): what
+            // this edit changed, on top of what the row owned (the sync's
+            // reading of Google's answer infers only Google's fields).
+            if ($this->ownFieldsColumn()) {
+                $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [$rowId]);
+                $was = $existing ?? $occurrence;
+                $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, self::changedOwnFields($was, $stored, $in)), $rowId]);
+            }
             return true;
         });
         if (!$found) {
@@ -497,6 +512,19 @@ final class Events
         }
         $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId,
             $undo !== null ? GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp)) : null);
+    }
+
+    /**
+     * An instance of an all-day series can't be given a clock time at
+     * Google (the probe, 2.2a: 400 "Invalid start time"), so a "this event"
+     * edit that would make a day of an all-day Google series timed is
+     * refused here before anything is sent, with the reason.
+     */
+    private static function refuseTimedUnderAllDay(array $master, int $rowAllDay): void
+    {
+        if ((int) $master['all_day'] === 1 && $rowAllDay === 0) {
+            throw new HttpError('google_all_day', 'At Google, a day of an all-day series can\'t be given a clock time. Make the series timed, or keep this day all-day.', 422);
+        }
     }
 
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
@@ -1402,6 +1430,10 @@ final class Events
                 $this->tripRule = $outer;
             }
         });
+        // A Google series change that stopped half way (GoogleSeries): its
+        // pending row and what Google has are committed above; the request
+        // fails now.
+        $this->throwDeferred();
     }
 
     /** The patch under way's trip rows and those flagged before it ([rows, flagged]), for tripRules; null when it leaves the flag alone. */
@@ -1586,11 +1618,11 @@ final class Events
             unset($in['plan']);
         }
         if ($google !== null) {
-            // A split on Google is refused until 1.5.3 (Series\Split), from
-            // its first day it is the whole series'.
+            // A series change goes to Google through GoogleSeries (a split
+            // too); from its first day a split is the whole series'.
             match ($scope) {
                 'this' => $this->googlePatchThis($userId, $google, $event, $in, $authority),
-                'following' => $this->splitPlanned($userId, $event, $in, Split::EDIT) === false
+                'following' => $this->splitPlanned($userId, $event, $in, Split::EDIT, $authority) === false
                     ? $this->googlePatchAllPlanned($userId, $google, $event, ['scope' => 'all'] + $in, $authority) : null,
                 'all' => $isRecurringMaster
                     ? $this->googlePatchAllPlanned($userId, $google, $event, $in, $authority)
@@ -1962,6 +1994,7 @@ final class Events
             }
             $this->deleteEventLocked($userId, $id, $scope, $instanceStart, $authority, $plan);
         });
+        $this->throwDeferred();
     }
 
     private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
@@ -2000,13 +2033,13 @@ final class Events
         }
 
         // Delete following is a split with no new series (Series\Split);
-        // from the series' first day it is delete all, and on Google it is
-        // refused until 1.5.3.
+        // from the series' first day it is delete all; on Google the split
+        // goes through GoogleSeries.
         $following = static fn(): array => ['instanceStart' => $instanceStart] + ($plan !== null ? ['plan' => $plan] : []);
         if ($google !== null) {
             match ($scope) {
                 'this' => $this->googleDeleteThis($userId, $google, $event, $instanceStart, $authority),
-                'following' => $this->splitPlanned($userId, $event, $following(), Split::DELETE) === false
+                'following' => $this->splitPlanned($userId, $event, $following(), Split::DELETE, $authority) === false
                     ? $this->googleDeleteAll($userId, $google, $event, $authority) : null,
                 'all' => $this->googleDeleteAll($userId, $google, $event, $authority),
             };
@@ -2107,6 +2140,7 @@ final class Events
             }
             $this->setAttendanceLocked($userId, $id, $attendance, $scope, $instanceStart, $plan);
         });
+        $this->throwDeferred();
     }
 
     private function setAttendanceLocked(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null, ?array $plan = null): void

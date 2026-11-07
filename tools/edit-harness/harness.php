@@ -5,7 +5,7 @@
 //
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/harness.php [--cases N] [--seed S]
 //       [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]]
-//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]
+//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]
 //
 // --fixed runs the fixed cases (cases/*.json, or the files named) after the
 // drawn ones (--cases 0 for the fixed ones alone; a full run of 1,000 cases or
@@ -15,18 +15,21 @@
 // tree (the mutation runner's patched copy, mutations/run.php); --find names
 // each case that ran a category of the plan-data checks (to pick fixed cases);
 // --shards N runs the cases on N processes at once, each on a database of its
-// own, and merges them into the report one process gives.
+// own, and merges them into the report one process gives; --google puts every
+// case's series on a Google calendar served by the probe's stand-in Google
+// (README, Google), checking what it holds after each edit and after a poll.
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     http_response_code(404);
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'product:']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'product:', 'google']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]\n";
     exit(0);
 }
+$googleMode = isset($opts['google']);
 $fixed = !array_key_exists('fixed', $opts) ? null : ($opts['fixed'] === false ? [] : explode(',', (string) $opts['fixed']));
 $saveSpec = isset($opts['save-spec']) ? (string) $opts['save-spec'] : null;
 $find = isset($opts['find']) ? (string) $opts['find'] : null;
@@ -110,7 +113,7 @@ use BetterCal\Infra\Migrator;
  * This process's share of the cases (shard $shard of $of; all of them for 0 of 1) on a database of its own, with one
  * shrunk reproduction per signature of its own outside the known paths: what a report is made from.
  */
-$runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onlyFamily, $onlyCase, $shrink, $quiet, $saveSpec, $find, $fixed, $full): array {
+$runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onlyFamily, $onlyCase, $shrink, $quiet, $saveSpec, $find, $fixed, $full, $googleMode): array {
     [$host, $port] = array_pad(explode(':', getenv('BC_TEST_DB') ?: '127.0.0.1:3306', 2), 2, '3306');
     $user = getenv('BC_TEST_DB_USER') ?: 'root';
     $password = getenv('BC_TEST_DB_PASS') ?: '';
@@ -122,7 +125,7 @@ $runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onl
         $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
         (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
         });
-        $runner = new Runner($db, domains($db), $seed);
+        $runner = new Runner($db, domains($db), $seed, $googleMode);
         $runner->run($cases, $onlyFamily, $onlyCase, 150, static function (int $i, array $result) use ($quiet, $cases, $saveSpec, $find): void {
             if ($find !== null) {
                 // --find 'check|role': the cases that ran a category, to pick one as a fixed case.

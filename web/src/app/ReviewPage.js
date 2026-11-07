@@ -37,8 +37,8 @@ import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import { askConfirm } from './ConfirmDialog.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off' };
-const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off', google_half: 'Half done at Google', google_differs: 'Google kept something else' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning', google_half: 'warning', google_differs: 'calendar' };
 
 // Which reader made a held emailed event, so an AI reading can be checked
 // before it is added: [phrase, tooltip]. A tier the item lacks (one held
@@ -123,6 +123,12 @@ function ReviewCard({ item, onChanged }) {
         toast('Email automation notice dismissed');
       } else if (item.kind === 'model_limit') {
         toast('AI notice dismissed');
+      } else if (item.kind === 'google_differs') {
+        toast('Notice dismissed. The calendar shows what Google stores.');
+      } else if (item.kind === 'google_half') {
+        const left = (res && res.left) || [];
+        toast(action.name === 'finish' ? 'Finished at Google' : (left.length ? 'Put back at Google, except: ' + left.join(' ') : 'Put back at Google'), { error: false });
+        await loadCalendars().catch(() => {});
       } else if (item.kind === 'invite_new') {
         if (!accepted) {
           toast('Dismissed. Nothing was added.');
@@ -187,6 +193,7 @@ function ReviewCard({ item, onChanged }) {
     ${item.kind === 'invite_new' && item.actions.some((a) => a.name.startsWith('approve_')) && html`<p class="bc-muted">Always add also adds this event, without sending a reply.</p>`}
     ${waitsForSeries && item.status === 'open' && html`<p class="bc-muted">Nothing to accept until the series is added.</p>`}
     ${item.kind === 'mail_error' && html`<p>${d.reason || 'The email could not be decoded.'} This notice stays until you dismiss it.</p>`}
+    ${item.kind === 'google_differs' && (d.lines || []).length > 0 && html`<ul class="bc-review-lines">${d.lines.map((l) => html`<li key=${l}>${l}</li>`)}</ul>`}
     ${item.kind === 'invite_change' && d.diff && d.diff.length > 0 && html`<${DiffRows} diff=${d.diff} />`}
   </div>`;
 }

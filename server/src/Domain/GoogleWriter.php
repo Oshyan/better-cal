@@ -232,6 +232,17 @@ final class GoogleWriter
         $this->refreshAfterWrite($calendar, $series);
     }
 
+    /**
+     * One request for a caller that runs its own sequence of them
+     * (GoogleSeries): the method, path, body, query and If-Match as given,
+     * no stored etag looked up and no read-back after. Google's answer,
+     * decoded; [] for a 204 or a DELETE's 410; the usual errors otherwise.
+     */
+    public function send(array $calendar, string $method, string $path, ?array $body = null, array $query = [], ?string $ifMatch = null, ?\Closure $beforeSend = null): array
+    {
+        return $this->call($calendar, $method, $path, $body, $query, $beforeSend, $ifMatch);
+    }
+
     /** The stored etag of the row Google knows by $googleId on this calendar, or null. */
     public function storedEtag(array $calendar, string $googleId): ?string
     {
@@ -413,7 +424,9 @@ final class GoogleWriter
             $message = $r['status'] === 403
                 ? 'Google says this account may not edit that calendar' . ($why !== '' ? " ($why)" : '')
                 : 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : '');
-            throw new HttpError('google_write_failed', $message, $status);
+            // Google's own status rides along (a caller retrying an insert
+            // with a chosen id reads a 409 as "it landed the first time").
+            throw new HttpError('google_write_failed', $message, $status, ['googleStatus' => $r['status']]);
         }
         return $data;
     }

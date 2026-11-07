@@ -22,6 +22,12 @@ trait PlanUntouched
      * in the same write (ChangeLog), so it is bookkeeping too.
      */
     private const BOOKKEEPING = ['events' => ['updated_at'], 'calendars' => ['synctoken', 'updated_at']];
+    /**
+     * On a Google calendar (README, Google) Google's own columns move with
+     * every write: the series' etag on every row, a re-keyed exception's
+     * instance id, and the calendar's poll bookkeeping after the read-back.
+     */
+    private const GOOGLE_BOOKKEEPING = ['events' => ['google_etag', 'google_event_id'], 'calendars' => ['content_changed_at', 'google_sync_token', 'last_polled_at', 'last_poll_status', 'last_poll_error', 'last_ok_at']];
     /** What leaving the series writes on a row kept as an event of its own. */
     private const DETACH = ['recurrence_parent_id', 'recurrence_instance_utc', 'uid', 'rrule', 'exdates_json', 'google_event_id', 'override_fields', 'source'];
     private const PLACEMENT_COLUMNS = ['start_utc', 'end_utc', 'all_day', 'tzid', 'recurrence_instance_utc'];
@@ -240,7 +246,7 @@ trait PlanUntouched
             }
             return $id === $master || $id === $edit['fromRow'] || !in_array($f, $before['own'][$id] ?? [], true) || ($choices['own' . ucfirst($f)] ?? 'keep') === 'give';
         };
-        $book = self::BOOKKEEPING['events'];
+        $book = array_merge(self::BOOKKEEPING['events'], $this->google !== null ? self::GOOGLE_BOOKKEEPING['events'] : []);
         foreach ($w0['events'] as $id => $r0) {
             $r1 = $w1['events'][$id] ?? null;
             if ($id === $master) {
@@ -356,7 +362,7 @@ trait PlanUntouched
             $this->ran('c-untouched', 'calendar');
             $c1 = $w1['calendars'][$cid] ?? null;
             foreach ($c0 as $col => $v) {
-                if ($c1 === null || ((string) $v !== (string) ($c1[$col] ?? '') && !in_array($col, self::BOOKKEEPING['calendars'], true))) {
+                if ($c1 === null || ((string) $v !== (string) ($c1[$col] ?? '') && !in_array($col, array_merge(self::BOOKKEEPING['calendars'], $this->google !== null ? self::GOOGLE_BOOKKEEPING['calendars'] : []), true))) {
                     $this->untouchedFail("a calendar's $col changed", ['calendar' => $cid, 'was' => $v, 'now' => $c1[$col] ?? null]);
                 }
             }

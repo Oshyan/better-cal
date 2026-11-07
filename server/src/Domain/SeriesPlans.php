@@ -682,11 +682,15 @@ trait SeriesPlans
      * Returns the new series' id, null for a delete, or false when the day
      * acted on is the series' first (the change is the whole series').
      */
-    private function splitPlanned(int $userId, array $event, array $in, string $mode): int|false|null
+    private function splitPlanned(int $userId, array $event, array $in, string $mode, ?RequestAuthority $authority = null): int|false|null
     {
         $result = $this->committedSplit($userId, $event, $in, $mode);
         if (!empty($result['whole'])) {
             return false;
+        }
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        if ($google !== null) {
+            return $this->googleSplitPlanned($userId, $google, $event, $in, $result, $authority);
         }
         $w = $result['writes'];
         $id = (int) $event['id'];
@@ -703,41 +707,7 @@ trait SeriesPlans
         $beforeLinks = Undo::linksOf($this->db, array_merge([$id], $partIds));
         $created = [];
         $createdEdited = [];
-        $newId = $this->db->tx(function () use ($w, $id, $userId, $master, $byId, $partIds, $in, &$created, &$createdEdited): ?int {
-            if ($w['old'] !== []) {
-                $this->db->update('events', $w['old'] + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
-            }
-            if ($w['part'] === null) {
-                foreach ($partIds as $rid) {
-                    $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
-                }
-                return null;
-            }
-            // The new series: the old one's row from the day acted on, its
-            // own plan's master columns on top (a moved calendar included).
-            $pw = $w['plan'];
-            $row = $this->copyForChild($master);
-            $row['uid'] = Ids::ulid();
-            $row['recurrence_parent_id'] = null;
-            $row['recurrence_instance_utc'] = null;
-            $row['google_event_id'] = null;
-            $row['override_fields'] = null;
-            $row['created_via'] = ActivityContext::get();
-            $row = array_merge($row, $w['part'], $pw['master']);
-            $newId = $this->db->insert('events', $this->withOwnColumn($row));
-            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
-            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
-            // The rows keyed from the split on belong to it (a new uid, so
-            // no key of theirs meets one of the old series').
-            $moved = [];
-            foreach ($partIds as $rid) {
-                $set = ['recurrence_parent_id' => $newId, 'uid' => $row['uid'], 'calendar_id' => (int) $row['calendar_id']];
-                $this->db->update('events', $set, 'id = ?', [$rid]);
-                $moved[$rid] = $set + $byId[$rid];
-            }
-            ($this->seriesPlanWriter($userId, $newId, ['master' => []] + $pw, $in, $moved, $created, $createdEdited))();
-            return $newId;
-        });
+        $newId = $this->db->tx($this->splitWriter($userId, $id, $w, $in, $master, $byId, $created, $createdEdited));
         $afterRows = [$this->db->one('SELECT * FROM events WHERE id = ?', [$id])];
         if ($newId !== null) {
             $afterRows[] = $this->db->one('SELECT * FROM events WHERE id = ?', [$newId]);
@@ -765,6 +735,58 @@ trait SeriesPlans
             $this->splitEventId = $newId;
         }
         return $newId;
+    }
+
+    /**
+     * The row writes of a split (Series\Split) on series $id, as a closure
+     * the caller runs in its transaction: the old series' new bound, and
+     * for an edit or an answer the new series (the old one's row from the
+     * day acted on, its own plan's master columns on top, a moved calendar
+     * included), the rows keyed from the split on re-parented to it, and
+     * its plan written on it; for a delete, those rows deleted. Returns the
+     * new series' id, null for a delete. $identity names the new series'
+     * uid and Google id when they are Google's (GoogleSeries), else the
+     * series gets a uid of its own.
+     */
+    private function splitWriter(int $userId, int $id, array $w, array $in, array $master, array $byId, array &$created, array &$createdEdited, array $identity = []): \Closure
+    {
+        $partIds = $w['rows'];
+        return function () use ($w, $id, $userId, $master, $byId, $partIds, $in, $identity, &$created, &$createdEdited): ?int {
+            if ($w['old'] !== []) {
+                $this->db->update('events', $w['old'] + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+            }
+            if ($w['part'] === null) {
+                foreach ($partIds as $rid) {
+                    $this->db->run('DELETE FROM events WHERE id = ?', [$rid]);
+                }
+                return null;
+            }
+            $pw = $w['plan'];
+            $row = $this->copyForChild($master);
+            $row['uid'] = (string) ($identity['uid'] ?? Ids::ulid());
+            $row['recurrence_parent_id'] = null;
+            $row['recurrence_instance_utc'] = null;
+            $row['google_event_id'] = $identity['google_event_id'] ?? null;
+            if (array_key_exists('google_etag', $row) || isset($identity['google_etag'])) {
+                $row['google_etag'] = $identity['google_etag'] ?? null;
+            }
+            $row['override_fields'] = null;
+            $row['created_via'] = ActivityContext::get();
+            $row = array_merge($row, $w['part'], $pw['master']);
+            $newId = $this->db->insert('events', $this->withOwnColumn($row));
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
+            // The rows keyed from the split on belong to it (a new uid, so
+            // no key of theirs meets one of the old series').
+            $moved = [];
+            foreach ($partIds as $rid) {
+                $set = ['recurrence_parent_id' => $newId, 'uid' => $row['uid'], 'calendar_id' => (int) $row['calendar_id']];
+                $this->db->update('events', $set, 'id = ?', [$rid]);
+                $moved[$rid] = $set + $byId[$rid];
+            }
+            ($this->seriesPlanWriter($userId, $newId, ['master' => []] + $pw, $in, $moved, $created, $createdEdited))();
+            return $newId;
+        };
     }
 
     /**
@@ -857,42 +879,206 @@ trait SeriesPlans
         };
     }
 
+    // ---- Google (GoogleSeries) --------------------------------------------------
+
+    private ?GoogleSeries $googleSeriesSvc = null;
     /**
-     * A Google series for all events, until 1.5.3: only edits that keep the
-     * rule text (the plan refuses the rest), sent as the master alone; what
-     * Google does with edited days is read back by the next sync.
+     * A Google change that stopped half way: its error, thrown by the public
+     * entry point (patch, deleteEvent, setAttendance: Events::throwDeferred)
+     * once the account's transaction has committed, so the pending row and
+     * what Google has (GoogleSeries) survive the failure the request reports.
+     */
+    private ?HttpError $googleDeferred = null;
+
+    private function googleSeries(): GoogleSeries
+    {
+        return $this->googleSeriesSvc ??= new GoogleSeries($this->db, $this->google(), new Feeds($this->db));
+    }
+
+    /** The error a Google change left for after the transaction, thrown once; nothing when there is none. */
+    public function throwDeferred(): void
+    {
+        if ($this->googleDeferred !== null) {
+            $e = $this->googleDeferred;
+            $this->googleDeferred = null;
+            throw $e;
+        }
+    }
+
+    /**
+     * A whole-series plan on a Google calendar (GoogleSeries): the plan
+     * carried to Google and read back, then the plan's rows written here
+     * and what Google holds synced on top of them, so every value is
+     * Google's and every row keeps its identity, tags, people and links. A
+     * difference goes into the Activity entry and a Review notice; a
+     * failure mid-way leaves the pending row for Review and fails the
+     * request once this transaction has committed.
      */
     private function googlePatchAllPlanned(int $userId, array $calendar, array $event, array $in, ?RequestAuthority $authority = null): void
     {
         $result = $this->committedPlan($userId, $event, $in, true);
         $id = (int) $event['id'];
         unset($in['plan'], $in['preview']);
-        $fields = $result['writes']['master'];
-        unset($fields['exdates_json']);
-        [$googleFields, $localFields] = self::splitGoogleFields($fields);
+        $w = $result['writes'];
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]);
+        $byId = [];
+        foreach ($rows as $r) {
+            $byId[(int) $r['id']] = $r;
+        }
         // After the plan is read (the flag is part of what it compares),
-        // before Google is sent anything.
+        // before Google is sent anything: the trip rules over the rows as
+        // the commit will leave them, the flag on every row the plan puts
+        // it on (a series column), so a refusal sends Google nothing.
+        [, $localFields] = self::splitGoogleFields($w['master']);
+        $this->flagPlannedRows($w['overrides']);
         $this->tripRules($id, $localFields);
-        $resp = null;
-        if ($googleFields !== []) {
-            $googleId = self::requireGoogleId($event);
-            $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($event, $googleFields)), $this->googleBeforeSend($authority));
+        self::requireGoogleId($master);
+        $target = GoogleSeries::targetOf($master, $rows, $w);
+        $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
+        try {
+            $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority));
+        } catch (HttpError $e) {
+            $this->googleDeferred = $e;
+            return;
         }
-        $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in): void {
-            if ($resp !== null) {
-                $this->google()->apply($calendar, [$resp]);
-            }
-            if ($localFields !== []) {
-                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
-            }
-            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                $this->labels->setEventTags($userId, $id, $in['tagNames']);
-            }
-            $this->applyPeoplePatch($userId, $id, $in);
+        $created = [];
+        $createdEdited = [];
+        $this->googleCommit($authority, function () use ($userId, $id, $w, $in, $byId, $calendar, $target, $out, &$created, &$createdEdited): void {
+            ($this->seriesPlanWriter($userId, $id, $w, $in, $byId, $created, $createdEdited))();
+            $this->googleSeries()->adoptSingles($target, $out['inserted'], $created);
+            $this->googleSeries()->store($calendar, $out['readbacks'], $out['targets']);
+            $this->googleSeries()->settle($out['pending']);
         });
-        if ($googleFields !== []) {
-            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id);
+        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences']);
+    }
+
+    /**
+     * A split on a Google calendar: the old series' new bound and the new
+     * series inserted with an id chosen here, its exceptions after the cut
+     * carried onto it (GoogleSeries), then the local split with Google's
+     * identity for the new series and what Google holds synced on top.
+     */
+    private function googleSplitPlanned(int $userId, array $calendar, array $event, array $in, array $result, ?RequestAuthority $authority): ?int
+    {
+        $w = $result['writes'];
+        $id = (int) $event['id'];
+        unset($in['plan'], $in['preview']);
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]);
+        $byId = [];
+        foreach ($rows as $r) {
+            $byId[(int) $r['id']] = $r;
         }
+        if ($w['part'] !== null) {
+            // The trip rules over the part's rows as the commit will leave them, before Google is sent anything.
+            [, $localFields] = self::splitGoogleFields($w['plan']['master'] ?? []);
+            $this->flagPlannedRows($w['plan']['overrides'] ?? []);
+            $this->tripRules(null, $localFields);
+        }
+        self::requireGoogleId($master);
+        [$oldTarget, $newTarget] = GoogleSeries::splitTargets($master, $rows, $w);
+        $targets = $newTarget === null ? [$oldTarget] : [$oldTarget, $newTarget];
+        $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
+        try {
+            $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority));
+        } catch (HttpError $e) {
+            $this->googleDeferred = $e;
+            return null;
+        }
+        $identity = $newTarget === null ? [] : [
+            'uid' => (string) ($out['targets'][1]['uid'] ?? ''),
+            'google_event_id' => (string) $newTarget['googleId'],
+            'google_etag' => $out['inserted'][(string) $newTarget['googleId']]['etag'] ?? null,
+        ];
+        $created = [];
+        $createdEdited = [];
+        $newId = $this->googleCommit($authority, function () use ($userId, $id, $w, $in, $master, $byId, $identity, $calendar, $out, $newTarget, &$created, &$createdEdited): ?int {
+            $newId = ($this->splitWriter($userId, $id, $w, $in, $master, $byId, $created, $createdEdited, $identity))();
+            if ($newTarget !== null) {
+                $this->googleSeries()->adoptSingles($out['targets'][1], $out['inserted'], $created);
+            }
+            $this->googleSeries()->store($calendar, $out['readbacks'], $out['targets']);
+            $this->googleSeries()->settle($out['pending']);
+            return $newId;
+        });
+        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences']);
+        if ($newId !== null) {
+            $this->splitEventId = $newId;
+        }
+        return $newId;
+    }
+
+    /**
+     * The trip flag a plan writes on its edited rows (Model::SERIES_COLUMNS),
+     * written before the Google calls so the trip rules read the end state
+     * (Trips::assertRules); a refusal rolls the transaction back with
+     * nothing sent, and the commit writes the same value again.
+     */
+    private function flagPlannedRows(array $overrides): void
+    {
+        foreach ($overrides as $rid => $cols) {
+            if (array_key_exists('is_container', $cols)) {
+                $this->db->update('events', ['is_container' => (int) $cols['is_container']], 'id = ?', [(int) $rid]);
+            }
+        }
+    }
+
+    /** The Activity entry of a Google series change, and a Review notice when Google kept something else. */
+    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences): void
+    {
+        $words = $summary;
+        if ($differences !== []) {
+            $words .= ' Google kept something else: ' . implode(' ', $differences);
+        }
+        $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id);
+        if ($differences !== []) {
+            (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
+        }
+    }
+
+    /**
+     * Review's Finish on a change half done at Google: the same targets
+     * from Google's state (GoogleSeries::finish), the rows here then
+     * Google's. A failure is deferred as the change's was.
+     */
+    public function googleFinish(int $userId, int $pendingId, ?RequestAuthority $authority = null): array
+    {
+        return $this->googleRecover($userId, $pendingId, $authority, 'finish');
+    }
+
+    /** Review's Put back on a change half done at Google (GoogleSeries::putBack). */
+    public function googlePutBack(int $userId, int $pendingId, ?RequestAuthority $authority = null): array
+    {
+        return $this->googleRecover($userId, $pendingId, $authority, 'putBack');
+    }
+
+    private function googleRecover(int $userId, int $pendingId, ?RequestAuthority $authority, string $how): array
+    {
+        return $this->undo->write($userId, function () use ($userId, $pendingId, $authority, $how): array {
+            $authority?->assertValid($this->db);
+            $row = $this->db->one('SELECT * FROM google_pending WHERE id = ? AND user_id = ?', [$pendingId, $userId]);
+            if ($row === null) {
+                throw HttpError::notFound('No such half-done Google change');
+            }
+            $calendar = CalendarMoveGuard::lockCalendar($this->db, (int) $row['calendar_id']);
+            if ($calendar === null || !GoogleWriter::writable($calendar)) {
+                throw HttpError::conflict('google_calendar_gone', 'The Google calendar this change was for is no longer one this account can edit.');
+            }
+            try {
+                $out = $how === 'finish'
+                    ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority))
+                    : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
+            } catch (HttpError $e) {
+                $this->googleDeferred = $e;
+                return ['ok' => false];
+            }
+            $left = $out['left'] ?? [];
+            $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
+                . ($left !== [] ? ' ' . implode(' ', $left) : '');
+            $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences']);
+            return ['ok' => true, 'differences' => $out['differences'], 'left' => $left];
+        });
     }
 
     // ---- own fields for "this event" edits -----------------------------------

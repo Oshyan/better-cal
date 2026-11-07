@@ -113,7 +113,7 @@ trait Invariants
         $occ = $ev->bounded() ? $ev->all() : $ev->through(Truth::windowEnd($row) - 1);
         $this->ran('c-occurrences', $combo);
         if ($ev->unread !== null || $ev->incomplete !== null) {
-            $this->fail('c-occurrences', 'the harness\'s evaluator could not read the series through its bound (an incomplete evaluation)', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'why' => $ev->unread ?? $ev->incomplete, 'read' => count($occ)]);
+            $this->fail('c-occurrences', 'the harness\'s evaluator could not read the series through its bound (an incomplete evaluation)', ['rrule' => $row['rrule'], 'start' => $row['start_utc'], 'tz' => $row['tzid'] ?? null, 'allDay' => $row['all_day'] ?? null, 'why' => $ev->unread ?? $ev->incomplete, 'read' => count($occ)]);
             return;
         }
         $from = Clock::parse((string) $row['start_utc'])->getTimestamp();
@@ -1083,10 +1083,14 @@ trait Invariants
     }
 
     /**
-     * (i) Until 1.5.3 a Google calendar is offered only edits that keep the
-     * rule text, and then as the local plan with no outcome claimed for
-     * edited days; an edit that keeps the text (not a list's member
-     * reading, no all-day change) is offered.
+     * (i) A Google calendar's series goes through the model like any other
+     * (1.5.4, GoogleSeries): worked out for the same rows read as a Google
+     * calendar's, the plan is the local plan (its rule, start, days, groups
+     * and refusals), with the Google note added. One refusal is Google's
+     * own: a day that stays timed under an all-day series can't be held at
+     * Google (probe 2.2a), so the plan is refused `googleAllDay` exactly
+     * when the series is all-day after the change and a kept edited day is
+     * timed after it.
      */
     private function checkGoogle(array $before, array $plan, array $google, array $choices, Expect $x): void
     {
@@ -1094,27 +1098,27 @@ trait Invariants
             $this->fail('i-google', 'the Google plan could not be worked out: ' . $google['error']);
             return;
         }
-        $keeps = Shape::pattern((string) $plan['rule']['after']) === Shape::pattern((string) $before['row']['rrule']) && ($choices['reading'] ?? '') !== 'member';
-        $whole = array_filter($google['plan']['refusals'] ?? [], static fn(array $r): bool => !isset($r['group']));
-        $refused = $google['refused'] || $google['refusedChoice'] || $whole !== [];
-        foreach ($google['plan']['groups'] ?? [] as $g) {
-            foreach ($g['options'] as $o) {
-                if (($choices[$g['id']] ?? null) === $o['id'] && !empty($o['disabled'])) {
-                    $refused = true; // the option chosen is refused there: the commit would be 422
+        $g = $google['plan'];
+        $timedUnderAllDay = false;
+        if ($x->allDay1) {
+            foreach ($plan['days'] ?? [] as $d) {
+                if (in_array($d['kind'] ?? '', ['edited', 'acted'], true) && in_array($d['outcome'] ?? '', ['moves', 'stays'], true) && (($d['after']['kind'] ?? null) === 'timed' || (isset($d['at']) && !empty($d['tz'])))) {
+                    $timedUnderAllDay = true;
                 }
             }
         }
-        if (!$keeps) {
-            $this->check('i-google', $refused, 'a change to the rule text is not offered on a Google calendar', ['rule' => $plan['rule']['after']]);
+        $codes = array_values(array_unique(array_column($g['refusals'] ?? [], 'code')));
+        if ($timedUnderAllDay) {
+            $this->check('i-google', $google['refused'] && $codes === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes]);
             return;
         }
-        $g = $google['plan'];
-        $edited = array_filter($g['days'] ?? [], static fn(array $d): bool => $d['kind'] === 'edited');
-        if (!$refused) {
-            $this->check('i-google', $g['rule']['after'] === $plan['rule']['after'] && $g['start'] === $plan['start'] && $edited === [], 'an edit that keeps the rule text is offered on Google as the local plan, claiming nothing for edited days', ['google' => [$g['rule']['after'] ?? null, $g['start'] ?? null], 'local' => [$plan['rule']['after'], $plan['start']], 'edited' => count($edited)]);
-        } elseif ($x->allDay1 === (bool) $before['allDay'] && $x->kind !== 'newrule') {
-            $this->fail('i-google', 'an edit that keeps the rule text is refused on a Google calendar', ['refusals' => $g['refusals'] ?? null, 'kind' => $x->kind]);
-        }
+        $strip = static function (array $p): array {
+            $p['notes'] = array_values(array_filter($p['notes'] ?? [], static fn(array $n): bool => ($n['kind'] ?? '') !== 'google'));
+            unset($p['hash']);
+            return $p;
+        };
+        $this->check('i-google', !$google['refused'] && $strip($g) === $strip($plan), 'the Google plan is the local plan, with the Google note added', ['google' => [$g['rule']['after'] ?? null, $g['start'] ?? null, $codes], 'local' => [$plan['rule']['after'], $plan['start']]]);
+        $this->check('i-google', in_array('google', array_column($g['notes'] ?? [], 'kind'), true), 'the Google plan carries the Google note', []);
     }
 
     // ---- refusals -------------------------------------------------------------
@@ -1170,12 +1174,8 @@ trait Invariants
         foreach ($before['overrides'] as $id => $ov) {
             if ((string) $ov['recurrence_instance_utc'] < $split) {
                 $ov1 = $after['overrides'][$id] ?? null;
-                $a = $ov;
-                unset($a['updated_at']);
-                $b = $ov1;
-                if ($b !== null) {
-                    unset($b['updated_at']);
-                }
+                $a = $this->untouchedRow($ov);
+                $b = $ov1 === null ? null : $this->untouchedRow($ov1);
                 $this->check('5-old', $a === $b, 'an edited day before the split is untouched', ['row' => $id]);
             }
         }
@@ -1319,9 +1319,9 @@ trait Invariants
         $got = $after['exdates'];
         sort($got);
         $this->check('7-this', $want === $got, 'the day is skipped and the other skips stay', ['expected' => $want, 'stored' => $got]);
-        $a = $before['row'];
-        $b = $after['row'];
-        unset($a['updated_at'], $b['updated_at'], $a['exdates_json'], $b['exdates_json']);
+        $a = $this->untouchedRow($before['row']);
+        $b = $this->untouchedRow($after['row']);
+        unset($a['exdates_json'], $b['exdates_json']);
         $this->check('7-this', $a === $b, 'the series is otherwise untouched', ['diff' => array_keys(array_diff_assoc(array_map('strval', array_map(static fn($v) => $v ?? '', $a)), array_map('strval', array_map(static fn($v) => $v ?? '', $b))))]);
         foreach ($before['overrides'] as $id => $ov) {
             $ov1 = $after['overrides'][$id] ?? null;
@@ -1329,13 +1329,21 @@ trait Invariants
                 $this->check('7-this', $ov1 === null, 'the edited row of that day is removed', ['row' => $id]);
                 continue;
             }
-            unset($ov['updated_at']);
-            if ($ov1 !== null) {
-                unset($ov1['updated_at']);
-            }
+            $ov = $this->untouchedRow($ov);
+            $ov1 = $ov1 === null ? null : $this->untouchedRow($ov1);
             $this->check('7-this', $ov === $ov1, 'every other edited day is untouched', ['row' => $id]);
         }
         $this->check('7-this', $this->standalones() === [], 'a delete makes no event of its own', []);
+    }
+
+    /** A row as "untouched" compares it: without its timestamp, and on a Google calendar without the series' etag, which every write to the series changes. */
+    private function untouchedRow(array $row): array
+    {
+        unset($row['updated_at']);
+        if ($this->google !== null) {
+            unset($row['google_etag']);
+        }
+        return $row;
     }
 
     /** Delete following: the series ends before the day; edited days from it on go; earlier ones untouched. From the first day: the series goes. */
@@ -1359,10 +1367,8 @@ trait Invariants
             if ((string) $ov['recurrence_instance_utc'] >= $split) {
                 $this->check('7-following', $ov1 === null, 'an edited day from the split on is deleted', ['row' => $id]);
             } else {
-                unset($ov['updated_at']);
-                if ($ov1 !== null) {
-                    unset($ov1['updated_at']);
-                }
+                $ov = $this->untouchedRow($ov);
+                $ov1 = $ov1 === null ? null : $this->untouchedRow($ov1);
                 $this->check('7-following', $ov === $ov1, 'an edited day before the split is untouched', ['row' => $id]);
             }
         }

@@ -50,6 +50,22 @@ return static function (Db $db): void {
         checkEq('edit harness: every required category of the plan\'s data checks ran', [], $t['missing']);
     });
 
+    // A slice on a Google calendar served by the probe's stand-in (README,
+    // Google): every edit goes to Google through GoogleSeries, what the
+    // stand-in holds after each equals the rows here, and a poll changes
+    // nothing (8-google). Undo there is the undo stage's, not applicable.
+    scenario('edit harness: a seeded slice on a Google calendar', function () use ($db): void {
+        $runner = new Runner($db, domains($db), 11, true);
+        $runner->run(40);
+        $unknown = [];
+        foreach ($runner->failures as $f) {
+            $sig = Runner::signature($f);
+            $unknown[$sig] ??= $sig . " (first: seed 11 case {$f['n']}): " . $f['what'] . ' ' . json_encode($f['detail'] ?? null);
+        }
+        checkEq('edit harness (Google): 40 drawn cases ran', 40, $runner->counts['cases']);
+        check('edit harness (Google): every failure is a finding (none expected)', $unknown === [], implode("\n  ", array_values($unknown)));
+    });
+
     // A whole-series edit of a first-Monday series whose UNTIL is the 1st of
     // a month the rule doesn't give: the expander once yielded that 1st as an
     // occurrence. Read as the rule's days, the case has no failure.

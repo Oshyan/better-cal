@@ -105,14 +105,11 @@ final class Duplicates
     {
         $aDay = (int) $a['all_day'] === 1;
         $bDay = (int) $b['all_day'] === 1;
-        // An event's date in its own zone: an all-day day made in the app is
-        // local midnight (07:00 UTC in Los Angeles), its Google copy a UTC
-        // midnight; compared as raw instants they never paired (audit, 0.9.14).
-        // A timed event stored in UTC is dated on the owner's clock (an
-        // evening event is that day's, not the next).
-        $date = static fn(array $e): string => Time::fromDb((string) $e['start_utc'])
-            ->setTimezone((int) $e['all_day'] === 1 ? Time::zone(Time::normalizeTzid((string) $e['tzid'])) : Time::displayZone((string) $e['tzid'], $homeTzid))
-            ->format('Y-m-d');
+        // The day each is on (Time::dayOf): an all-day day its date, compared
+        // as dates rather than instants (audit, 0.9.14); a timed event stored
+        // in UTC on the owner's clock (an evening event is that day's, not
+        // the next).
+        $date = static fn(array $e): string => Time::dayOf(Time::fromDb((string) $e['start_utc']), (int) $e['all_day'] === 1, Time::displayZone((string) $e['tzid'], $homeTzid));
         if ($aDay && $bDay) {
             return $date($a) === $date($b) ? 'same' : null;
         }

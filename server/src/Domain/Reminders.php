@@ -738,7 +738,7 @@ final class Reminders
         if (!$allDay) {
             return $startUtc;
         }
-        return (new \DateTimeImmutable($startUtc->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::zone($homeTzid ?? 'UTC')))->setTimezone(Time::utc());
+        return (new \DateTimeImmutable(Time::dayOf($startUtc, true, null) . ' 00:00:00', Time::zone($homeTzid ?? 'UTC')))->setTimezone(Time::utc());
     }
 
     /**

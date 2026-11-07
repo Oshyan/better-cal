@@ -2385,14 +2385,14 @@ final class Events
             'locationProvider' => isset($row['location_provider']) ? (string) $row['location_provider'] : null,
             'locationPlacedAt' => !empty($row['location_placed_at']) ? Time::iso(Time::fromDb((string) $row['location_placed_at'])) : null,
             'url' => $row['url'] !== null ? (string) $row['url'] : null,
-            // All-day events are calendar dates, not instants: serialize the date
-            // in the event's own zone at a fixed +00:00 midnight so clients can
+            // All-day events are calendar dates, not instants: serialize the
+            // date (Time::dayOf) at a fixed +00:00 midnight so clients can
             // read the date portion literally and never shift it across zones.
             'start' => (int) $row['all_day'] === 1
-                ? $startUtc->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                ? Time::dayOf($startUtc, true, null) . 'T00:00:00+00:00'
                 : Time::iso($startUtc->setTimezone($tz)),
             'end' => (int) $row['all_day'] === 1
-                ? $endUtc->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                ? Time::dayOf($endUtc, true, null) . 'T00:00:00+00:00'
                 : Time::iso($endUtc->setTimezone($tz)),
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
@@ -2410,7 +2410,7 @@ final class Events
             'seriesTitle' => !empty($row['recurrence_parent_id']) ? $this->parentTitle((int) $row['recurrence_parent_id']) : null,
             'seriesKey' => !empty($row['recurrence_parent_id']) && !empty($row['recurrence_instance_utc'])
                 ? ($this->parentAllDay((int) $row['recurrence_parent_id'])
-                    ? Time::fromDb((string) $row['recurrence_instance_utc'])->format('Y-m-d')
+                    ? Time::dayOf(Time::fromDb((string) $row['recurrence_instance_utc']), true, null)
                     : Time::fromDb((string) $row['recurrence_instance_utc'])->format('Y-m-d\TH:i:s\Z'))
                 : null,
             'rrule' => $rrule,
@@ -2586,7 +2586,7 @@ final class Events
                 // (Time::parseAllDay). A boundary that was not sent is the
                 // stored instant's date in the zone it was stored in: that is
                 // what turns a timed event into an all-day one.
-                $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable($t->setTimezone($floorTz)->format('Y-m-d'), Time::utc());
+                $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable(Time::dayOf($t, false, $floorTz), Time::utc());
                 $newStart = isset($in['start'])
                     ? self::allDayBoundary((string) $in['start'], 'UTC')
                     : $asDate($curStart);

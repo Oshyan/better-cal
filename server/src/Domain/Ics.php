@@ -976,7 +976,8 @@ final class Ics
         $zonedDay = null;
         if ($allDay && !$isDate) {
             $zonedDay = Time::zone($tzid);
-            $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable($t->setTimezone($zonedDay)->format('Y-m-d'), Time::utc());
+            // Read as the instants they were sent as, on the sender's clock.
+            $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable(Time::dayOf($t, false, $zonedDay), Time::utc());
             $start = $asDate($start);
             $end = $asDate($end);
             if ($end <= $start) {
@@ -985,7 +986,7 @@ final class Ics
             $tzid = 'UTC';
         }
         $dayOf = static fn(\DateTimeImmutable $t): \DateTimeImmutable => $zonedDay === null ? $t
-            : new \DateTimeImmutable($t->setTimezone($zonedDay)->format('Y-m-d'), Time::utc());
+            : new \DateTimeImmutable(Time::dayOf($t, false, $zonedDay), Time::utc());
 
         // Every path that turns ICS into rows comes through here (feeds,
         // imports, CalDAV, mail): the RRULE is made safe once, at the door.

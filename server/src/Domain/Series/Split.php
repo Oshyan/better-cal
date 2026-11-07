@@ -339,7 +339,7 @@ final class Split
 
     private static function inZone(\DateTimeImmutable $at, ?string $tz): string
     {
-        return $tz === null ? $at->setTimezone(Time::utc())->format('Y-m-d') : Time::iso($at->setTimezone(Time::zone($tz)));
+        return $tz === null ? Time::dayOf($at, true, null) : Time::iso($at->setTimezone(Time::zone($tz)));
     }
 
     /** @return array{0:int,1:int,2:int} */

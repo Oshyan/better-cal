@@ -1,0 +1,107 @@
+{
+    "n": 124,
+    "seed": 23,
+    "series": {
+        "family": "yearly_months",
+        "rrule": "FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=14",
+        "import": false,
+        "bound": "until",
+        "boundAt": 10,
+        "untilForm": "exact",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-03-01",
+        "length": 2
+    },
+    "exceptions": [
+        {
+            "at": 10,
+            "kind": "edit",
+            "own": [
+                "status",
+                "people"
+            ],
+            "days": 2,
+            "mins": -240,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 6,
+            "kind": "edit",
+            "own": [
+                "location"
+            ],
+            "days": -2,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 4,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 3,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        },
+        {
+            "at": 0,
+            "kind": "skip"
+        },
+        {
+            "at": 8,
+            "kind": "skip"
+        },
+        {
+            "at": 7,
+            "kind": "edit",
+            "own": [
+                "location"
+            ],
+            "days": -1,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 60
+        }
+    ],
+    "acted": 7,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 66600,
+        "trip": false,
+        "fields": {
+            "location": "Sample Annex"
+        },
+        "rule": "new",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": {
+            "none": true
+        },
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": true,
+    "choices": {
+        "edit": {
+            "outside": "delete",
+            "ownLocation": "keep"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

@@ -80,7 +80,10 @@ trait PlanUntouched
         $x = $ctx['x'];
         $out = $ctx['out'];
         $placedAt = $this->placedAt($x, $edit, $choices);
-        $keyOn = static fn(?int $img): ?string => $img === null ? null : ($ctx['byDay'][$img] ?? null);
+        // A day beyond the window the series was read over is looked for where it is (README, The Oracle), as the
+        // placement check does: a row whose image lies past the window still has a key there, and nothing of its own
+        // left means it goes, however far off its day is.
+        $keyOn = static fn(?int $img): ?string => $img === null ? null : self::keyOnDay($after, $ctx, $img);
         $fates = [];
         foreach ($before['overrides'] as $id => $ov) {
             if ($out === null) {

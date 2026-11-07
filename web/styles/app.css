@@ -30,7 +30,21 @@
   --src-api: #d4a03c;
   --src-import: #7a6fd4;
   --src-plugin: #2e8b8b;
+  /* Warm gold for the running event's ring: deeper ochre here, lighter
+     amber on dark. */
+  --active-gold: #c9962a;
+  /* The phone agenda's swipe actions, one hue each. The dark twins keep the
+     same hue family, lifted so each label clears 4.5:1 on its tile. */
+  --act-neutral: #8a91a1;
+  --act-maybe: #d4a017;    /* gold: Maybe */
+  --act-planned: #3f9d6e;  /* green: Planned */
+  --act-hidden: #c4626b;   /* rose: Hide, the one removal */
+  --act-up: #5b7fd4;       /* blue: thumb up */
+  --act-down: #6b7280;     /* grey: thumb down */
   --shadow: 0 6px 24px rgba(20, 26, 40, 0.14);
+  /* A small raised strip (the swipe tray): on dark it needs a deeper
+     shadow, as it shares the row's ground colour. */
+  --shadow-tray: 0 2px 10px rgba(0, 0, 0, 0.14);
   --radius: 8px;
   --chip-h: 20px;
   color-scheme: light;
@@ -61,7 +75,15 @@
     --src-api: #e6b555;
     --src-import: #9c92e8;
     --src-plugin: #4fb3b3;
+    --active-gold: #e0b04f;
+    --act-neutral: #9aa1ae;
+    --act-maybe: #e3b341;
+    --act-planned: #5cbf8a;
+    --act-hidden: #e5848c;
+    --act-up: #7d9be3;
+    --act-down: #8c93a0;
     --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    --shadow-tray: 0 2px 10px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
   }
 }
@@ -87,7 +109,15 @@
   --src-api: #e6b555;
   --src-import: #9c92e8;
   --src-plugin: #4fb3b3;
+  --active-gold: #e0b04f;
+  --act-neutral: #9aa1ae;
+  --act-maybe: #e3b341;
+  --act-planned: #5cbf8a;
+  --act-hidden: #e5848c;
+  --act-up: #7d9be3;
+  --act-down: #8c93a0;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  --shadow-tray: 0 2px 10px rgba(0, 0, 0, 0.5);
   color-scheme: dark;
 }
 
@@ -891,7 +921,8 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
    calendar's colour, in every view, so a phone that can't fit the holiday's
    name still shows there is one. A stripe rather than a tint: it never sits
    behind text or coloured chips (the options weighed are in
-   docs/design/day-marks.md). */
+   docs/design/day-marks.md). The fallback green is a calendar palette
+   colour (lib/color.js), kept in both themes as a calendar's own is. */
 .bc-cell.is-holiday .bc-cell-head,
 .bc-tg-vday-head.is-holiday { box-shadow: inset 0 3px 0 var(--bc-holiday, #4f9d69); }
 /* Touch: the header's tokens and flag reach the header's full height, so a
@@ -1071,7 +1102,7 @@ body.bc-drag-copy, body.bc-drag-copy * { cursor: copy !important; }
 body.bc-drag-copy .is-drag-source { opacity: 1; }
 body.bc-drag-copy .bc-drag-ghost::after {
   content: '+'; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--accent); color: #fff; font: 700 13px/16px system-ui, sans-serif; text-align: center;
+  background: var(--accent); color: var(--accent-fg); font: 700 13px/16px system-ui, sans-serif; text-align: center;
 }
 /* Ghost for dragging a person out of the sidebar: a floating name pill. */
 .bc-drag-personpill {
@@ -1756,6 +1787,8 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: transparent; border: none;
   display: flex; align-items: flex-end; justify-content: flex-end; padding: 6px;
 }
+/* Kept in both themes: a dark glass pill with white text over map tiles,
+   which read the same either way. */
 .bc-map-cover span {
   background: rgba(20, 26, 40, 0.55); color: #fff; border-radius: 5px;
   font-size: 10.5px; padding: 2px 7px; opacity: 0; transition: opacity 0.12s ease;
@@ -2684,7 +2717,8 @@ body.bc-rescheduling { user-select: none; }
   text-decoration-skip-ink: none;
 }
 /* Solid-filled shapes carry white text on the calendar colour; the raw
-   filter colour goes muddy against it, so lift it toward white. */
+   filter colour goes muddy against it, so lift it toward white (kept in
+   both themes: the fill and its white text are the same in dark). */
 :is(.bc-bar, .bc-block).is-highlighted .bc-chip-title {
   text-decoration-color: color-mix(in srgb, var(--hl, var(--accent)) 72%, white);
 }
@@ -2741,14 +2775,7 @@ body.bc-rescheduling { user-select: none; }
    ring. Both are driven by the global minute tick (store.nowMinute) via the
    is-past / is-now classes stamped in EventChip and on agenda rows. */
 
-/* Warm gold for the active-event ring, tuned per theme: deeper ochre on
-   light backgrounds, lighter amber on dark. Same override pattern as the
-   core palette: data-theme (stamped by settings.js) beats the OS scheme. */
-:root { --active-gold: #c9962a; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --active-gold: #e0b04f; }
-}
-:root[data-theme="dark"] { --active-gold: #e0b04f; }
+/* The ring's colour is --active-gold, in the token blocks at the top. */
 
 /* Past = "over": an opacity-led dim, slightly stronger than the desat-led
    .is-filter-dimmed treatment, so the two read differently at a glance.
@@ -3624,7 +3651,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Manage-row count badge (open proposals) */
 .bc-manage-badge {
   margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px;
-  border-radius: 999px; background: var(--accent); color: #fff;
+  border-radius: 999px; background: var(--accent); color: var(--accent-fg);
   font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
 
@@ -3634,6 +3661,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 @keyframes bc-plugin-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
 @keyframes bc-plugin-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse { animation: bc-plugin-pulse 2.4s ease-in-out infinite; }
+/* The shimmer's white sweep is kept in both themes: it runs over the
+   calendar's own fill, which does not change with the theme. */
 .bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer {
   background-image: linear-gradient(90deg, transparent 20%, rgba(255, 255, 255, 0.22) 50%, transparent 80%);
   background-size: 200% 100%;
@@ -3703,7 +3732,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
     position: absolute; top: -4px; bottom: -4px; right: 0; width: 0; z-index: 2;
     display: flex; justify-content: flex-end; gap: 4px; overflow: hidden;
     box-sizing: border-box; padding: 3px 2px; border-radius: 10px;
-    background: var(--bg-raised); box-shadow: 0 2px 10px rgba(0, 0, 0, .14);
+    background: var(--bg-raised); box-shadow: var(--shadow-tray);
     /* Closed, it is hidden outright: at zero width its padding and shadow
        still drew a sliver at the end of every row. It stays visible while
        it closes, then hides. */
@@ -3714,9 +3743,10 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   /* A day's section would clip the tray of its last row. */
   .bc-agenda-group { overflow: visible; }
   /* Soft tints of each action's hue, with the label in a deeper shade of
-     the same hue: pastel in light, muted in dark (mixed from the theme). */
+     the same hue: pastel in light, muted in dark (mixed from the theme; the
+     hues are the --act-* tokens, each with a dark twin). */
   .bc-agenda-act {
-    --hue: #8a91a1;
+    --hue: var(--act-neutral);
     flex: none; width: 48px; height: 100%; border: 0; padding: 0; border-radius: 7px;
     display: grid; place-items: center; align-content: center; gap: 2px;
     background: color-mix(in srgb, var(--hue) 26%, var(--bg-raised));
@@ -3724,14 +3754,14 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   }
   .bc-agenda-act svg { width: 15px; height: 15px; }
   .bc-agenda-act span { font-size: 9.5px; font-weight: 700; line-height: 10px; }
-  .bc-agenda-act.is-maybe { --hue: #d4a017; }
-  .bc-agenda-act.is-planned { --hue: #3f9d6e; }
+  .bc-agenda-act.is-maybe { --hue: var(--act-maybe); }
+  .bc-agenda-act.is-planned { --hue: var(--act-planned); }
   /* Hide takes the event off your calendar, the one removal here: rose, as
      swipe-to-delete usually is. The thumbs are feedback, a separate group. */
-  .bc-agenda-act.is-hidden { --hue: #c4626b; }
+  .bc-agenda-act.is-hidden { --hue: var(--act-hidden); }
   .bc-agenda-act.is-up { margin-left: 6px; }
-  .bc-agenda-act.is-up { --hue: #5b7fd4; }
-  .bc-agenda-act.is-down { --hue: #6b7280; }
+  .bc-agenda-act.is-up { --hue: var(--act-up); }
+  .bc-agenda-act.is-down { --hue: var(--act-down); }
   .bc-agenda-act.is-on { box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--hue) 80%, var(--fg)); }
 }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) and (prefers-reduced-motion: reduce) {
@@ -4311,7 +4341,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-mi:active { background: var(--bg-inset); }
 .bc-es-mi svg { flex: none; color: var(--fg-muted); }
 .bc-es-mi small { margin-left: auto; font-size: 12.5px; color: var(--fg-muted); }
-.bc-es-mi.is-danger, .bc-es-mi.is-danger svg { color: var(--danger, #c34a4a); }
+.bc-es-mi.is-danger, .bc-es-mi.is-danger svg { color: var(--danger); }
 /* A group's subject in More: "Calendar: Partiful" (with its colour), "Source: partiful.com". */
 .bc-es-mh { display: flex; align-items: center; gap: 7px; padding: 6px 12px 2px; font-size: 12px; font-weight: 600; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bc-es-mh i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
@@ -4369,6 +4399,8 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   display: flex; flex-direction: column; overflow: hidden;
   border: none; border-left: 1px solid var(--border); border-top: 4px solid var(--cal, var(--border-strong));
   border-radius: 0; box-shadow: -10px 0 30px rgba(20, 24, 34, 0.08); background: var(--bg-raised);
+  /* The shadow is kept in both themes: on dark it fades out, and the left
+     border draws the panel's edge there. */
 }
 @media (min-width: 1000px) { .bc-main.has-evpanel { padding-right: 480px; } }
 .bc-evpanel .bc-evsheet-head { flex: none; border-bottom: 1px solid var(--border); }
@@ -4721,6 +4753,8 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
   background: var(--accent); color: var(--accent-fg); font: 700 12px/1 var(--font);
   border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  /* The white ring and dark shadow are kept in both themes: they lift a
+     pin off light and dark map tiles alike. */
 }
 .bc-tr-section { display: flex; flex-direction: column; gap: 6px; }
 .bc-tr-label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-muted); }
@@ -4847,7 +4881,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* Move to Google, in a local calendar's settings (0.9.4, #55). */
 .bc-calset-value { font-size: 12.5px; color: var(--fg-muted); line-height: 1.4; }
 .bc-move .bc-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
-.bc-move-error { color: var(--danger, #c34a4a); display: grid; gap: 6px; }
+.bc-move-error { color: var(--danger); display: grid; gap: 6px; }
 /* The Move to Google dialog (MoveToGoogle.js): a centred window on a wide
    screen, a full-height sheet on a phone. Room for the choice, the one
    permission step, and the progress, which the sidebar panel never had. */

@@ -713,52 +713,18 @@ defineReload('plugins', async () => {
   return true;
 });
 
-// A plugin's ranges in a stretch. The server sends each plugin's earliest
-// ranges up to a cap and says when it stopped short (several tide stations
-// over a few months pass it), so this asks for the rest a page at a time,
-// after the last range sent by its start and key (#183). By start alone,
-// ranges sharing a start, or a long one still overlapping, came back again
-// and paging stopped short (#185). A refresh between pages (gen changes)
-// starts the plugin's pages again: its ranges can move, and pages from two
-// sets missed some and kept others' old times. Past 40 pages (20,000 ranges
-// a plugin, far past any real stretch) the plugin keeps truncated: true,
-// and the person is told; so does one refreshed on every page, after a few
-// fresh starts, with the ranges of its last start.
+// The plugins' bands in a stretch, in one request. The server reads each
+// plugin's ranges in one statement, and a refresh replaces them in one
+// transaction, so an answer holds the set before a refresh or the set after
+// it, whole, never part of each (#185). Past the server's cap (several
+// thousand a plugin, docs/limits.md) a plugin's bands are cut and marked
+// truncated, and the person is told once per plugin.
 const truncatedSeen = new Set();
 export async function fetchPluginRanges(start, end) {
-  const first = await api('/plugins/ranges?' + new URLSearchParams({ start, end }));
-  const out = {};
-  for (const [pid, firstPage] of Object.entries(first.plugins || {})) {
-    let entry = firstPage;
-    let page = entry;
-    let ranges = [...(entry.ranges || [])];
-    let sent = new Set(ranges.map((r) => r.key));
-    let restarts = 0;
-    let mixed = false;
-    for (let n = 1; page.truncated && (page.ranges || []).length > 0 && n < 40; n++) {
-      const last = page.ranges[page.ranges.length - 1];
-      const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid, afterStart: last.start, afterKey: String(last.key) }));
-      page = (d.plugins || {})[pid] || { truncated: false, ranges: [] };
-      if (page.gen !== entry.gen) {
-        if (restarts < 3) {
-          restarts++;
-          const again = await api('/plugins/ranges?' + new URLSearchParams({ start, end, plugin: pid }));
-          entry = (again.plugins || {})[pid] || { truncated: false, ranges: [] };
-          page = entry;
-          ranges = [...(entry.ranges || [])];
-          sent = new Set(ranges.map((r) => r.key));
-          continue;
-        }
-        mixed = true;
-      }
-      for (const r of page.ranges || []) {
-        if (sent.has(r.key)) continue;
-        sent.add(r.key);
-        ranges.push(r);
-      }
-    }
-    out[pid] = { ...entry, ranges, truncated: !!page.truncated || mixed };
-    if (out[pid].truncated && !truncatedSeen.has(pid)) {
+  const d = await api('/plugins/ranges?' + new URLSearchParams({ start, end }));
+  const out = d.plugins || {};
+  for (const [pid, entry] of Object.entries(out)) {
+    if (entry.truncated && !truncatedSeen.has(pid)) {
       truncatedSeen.add(pid);
       const pl = (state.plugins || []).find((p) => p.id === pid);
       toast(`${(pl && pl.name) || 'A plugin'} has more bands here than can be shown; some are missing.`, { duration: 10000 });

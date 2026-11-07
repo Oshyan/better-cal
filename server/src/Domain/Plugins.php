@@ -30,7 +30,7 @@ final class Plugins
 {
     public const HOST_VERSION = '0.1.0';
     public const FAILURE_DISABLE_THRESHOLD = 5;
-    public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
+    public const RANGE_RESPONSE_CAP = 5000; // bands per plugin per window request (docs/limits.md)
     private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'checklist', 'toggle', 'time', 'location', 'person'];
     /** Most choices one setting may offer, and most a checklist may hold. */
     public const OPTIONS_MAX = 500;
@@ -1921,60 +1921,35 @@ final class Plugins
     // ---- read paths (request handlers; no plugin code) ------------------
 
     /**
-     * Overlay ranges for a window: one indexed query, capped per plugin.
-     * Past the cap, the caller asks for one plugin's next page after the last
-     * range it got ($after: its start and id). Ordered by start and id, so
-     * ranges sharing a start, or a long one still overlapping, are neither
-     * sent twice nor skipped: paging by start alone stopped short.
-     *
-     * @param array{start:\DateTimeImmutable,id:int}|null $after
+     * Overlay bands for a window: each enabled plugin's ranges that overlap
+     * it, read in one statement per plugin. One statement sees one set, and
+     * a refresh replaces a plugin's ranges in one transaction
+     * (PluginHost::replaceRanges), so a reader gets the set before a refresh
+     * or the set after it, whole, never part of each (#185). Past
+     * RANGE_RESPONSE_CAP a plugin's bands are cut and marked truncated, and
+     * the app tells the person (docs/limits.md). Ordered by start, then by
+     * the plugin's source key, so equal starts draw in one order every time.
      */
-    public function rangesForWindow(\DateTimeImmutable $start, \DateTimeImmutable $end, ?string $only = null, ?array $after = null): array
+    public function rangesForWindow(\DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
-        $enabled = array_map(static fn($r) => (string) $r['id'], $this->db->all('SELECT id FROM plugins WHERE enabled = 1'));
-        if ($only !== null) {
-            $enabled = array_values(array_filter($enabled, static fn($id) => $id === $only));
-        }
         $out = [];
-        foreach ($enabled as $id) {
+        foreach ($this->db->all('SELECT id FROM plugins WHERE enabled = 1') as $plugin) {
+            $id = (string) $plugin['id'];
             // A band tied to a calendar goes with it: a deleted calendar's
             // bands stop showing (and return if the delete is undone).
-            $params = [$id, Time::toDb($end), Time::toDb($start)];
-            // Paged by start and source key, which a refresh keeps: it
-            // deletes and inserts a plugin's ranges, so their ids change, and
-            // a refresh between pages sent the range at the edge twice (#185).
-            $page = '';
-            if ($after !== null) {
-                $page = ' AND (r.start_utc > ? OR (r.start_utc = ? AND r.source_key > ?))';
-                $params[] = Time::toDb($after['start']);
-                $params[] = Time::toDb($after['start']);
-                $params[] = $after['key'];
-            }
-            // The set's gen (below) comes from the same statement as its
-            // rows: read separately, a refresh between the two labelled the
-            // old rows with the new set's gen, and nothing started again.
-            $genSql = '(SELECT COUNT(*) FROM plugin_ranges WHERE plugin_id = ?) AS gen_n, (SELECT COALESCE(MAX(id), 0) FROM plugin_ranges WHERE plugin_id = ?) AS gen_m';
-            array_unshift($params, $id, $id);
             $rows = $this->db->all(
-                'SELECT ' . $genSql . ', r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
+                'SELECT r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
                  LEFT JOIN calendars c ON c.id = r.calendar_id
-                 WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)' . $page . '
+                 WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)
                  ORDER BY r.start_utc, r.source_key LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
-                $params
+                [$id, Time::toDb($end), Time::toDb($start)]
             );
             $truncated = count($rows) > self::RANGE_RESPONSE_CAP;
             if ($truncated) {
                 array_pop($rows);
             }
-            // Which set of ranges the page came from: a refresh replaces them
-            // all under new ids, so this changes with it, and a reader paging
-            // through starts again rather than mixing two sets (#185). An
-            // empty page has no row to carry it, and asks on its own.
-            $gen = $rows !== [] ? ['n' => $rows[0]['gen_n'], 'm' => $rows[0]['gen_m']]
-                : $this->db->one('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM plugin_ranges WHERE plugin_id = ?', [$id]);
             $out[$id] = [
                 'truncated' => $truncated,
-                'gen' => $gen['n'] . ':' . $gen['m'],
                 'ranges' => array_map(static fn($r) => [
                     'id' => (int) $r['id'],
                     'key' => (string) $r['source_key'],

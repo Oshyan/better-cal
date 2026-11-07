@@ -2137,41 +2137,32 @@ console.log('--- chronological ordering across timezone offsets ---');
   await opened;
   eq('records: an answer from before a change is asked for again', [st.occ.get('d1').description, st.occ.get('d1').stale, detailCalls], ['After the change', false, 2]);
 
-  // Plugin bands past the cap: ranges sharing one start, and a long one
-  // still overlapping, each come once, paged by start and key. A refresh
-  // between pages gives them new ids, and keeps their keys.
-  let all = [{ id: 1, key: 'k1', start: '2031-05-01T00:00:00+00:00', end: '2031-05-30T00:00:00+00:00' }];
-  for (let i = 2; i <= 6; i++) all.push({ id: i, key: 'k' + i, start: '2031-05-10T06:00:00+00:00', end: '2031-05-10T07:00:00+00:00' });
-  const CAP = 2;
-  const order = (x, y) => Date.parse(x.start) - Date.parse(y.start) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
-  let refreshAfter = 0;
-  let pageCalls = 0;
-  let gen = 1;
-  let refresh = (rs) => rs.map((r) => ({ ...r, id: r.id + 100 }));
+  // Plugin bands: a stretch's bands come in one request, whole. A refresh
+  // between two reads shows only its set: the server reads each plugin's
+  // ranges in one statement and a refresh replaces them in one transaction,
+  // so no answer holds part of each. One cut at the cap stays marked, and
+  // the person is told once.
+  let bandSet = [{ id: 1, key: 'k1', start: '2031-05-01T00:00:00+00:00', end: '2031-05-30T00:00:00+00:00', label: 'before' }];
+  for (let i = 2; i <= 6; i++) bandSet.push({ id: i, key: 'k' + i, start: '2031-05-10T06:00:00+00:00', end: '2031-05-10T07:00:00+00:00', label: 'before' });
+  let bandCalls = 0;
+  let bandsCut = false;
+  let askedByStretchAlone = true;
   handler = async (u) => {
-    pageCalls++;
-    if (pageCalls === refreshAfter + 1 && refreshAfter) { all = refresh(all); gen++; }
-    let rs = [...all].sort(order);
-    const after = u.searchParams.get('afterStart');
-    if (after) {
-      const t = Date.parse(after);
-      const key = u.searchParams.get('afterKey');
-      rs = rs.filter((r) => Date.parse(r.start) > t || (Date.parse(r.start) === t && r.key > key));
-    }
-    return json({ plugins: { tides: { truncated: rs.length > CAP, gen: String(gen), ranges: rs.slice(0, CAP) } } });
+    bandCalls++;
+    if (u.searchParams.has('afterStart') || u.searchParams.has('afterKey') || u.searchParams.has('plugin')) askedByStretchAlone = false;
+    return json({ plugins: { tides: { truncated: bandsCut, ranges: bandSet } } });
   };
   const bands = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
-  eq('bands: paging brings every range once, ties included', [bands.tides.ranges.map((r) => r.key), bands.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], false]);
-  pageCalls = 0;
-  refreshAfter = 1;
+  eq('bands: a stretch\'s bands come in one request, whole', [bandCalls, askedByStretchAlone, bands.tides.ranges.map((r) => r.key), bands.tides.truncated], [1, true, ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], false]);
+  bandSet = bandSet.map((r) => ({ ...r, id: r.id + 100, label: 'after', start: r.key === 'k6' ? '2031-05-02T00:00:00+00:00' : r.start }));
+  bandCalls = 0;
   const refreshed = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
-  eq('bands: a refresh between pages sends no range twice', refreshed.tides.ranges.map((r) => r.key), ['k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
-  // A refresh that moves a range not yet sent to before the page edge:
-  // pages from the two sets lost it; the plugin's pages start again.
-  pageCalls = 0;
-  refresh = (rs) => rs.map((r) => (r.key === 'k6' ? { ...r, start: '2031-05-02T00:00:00+00:00', end: '2031-05-02T01:00:00+00:00' } : r));
-  const moved = await fetchPluginRanges('2031-05-01T00:00:00Z', '2031-05-20T00:00:00Z');
-  eq('bands: a range moved by a refresh between pages still comes, at its new time', [moved.tides.ranges.map((r) => r.key).sort(), moved.tides.ranges.find((r) => r.key === 'k6').start, moved.tides.truncated], [['k1', 'k2', 'k3', 'k4', 'k5', 'k6'], '2031-05-02T00:00:00+00:00', false]);
+  eq('bands: after a refresh only its set shows, at its times', [bandCalls, [...new Set(refreshed.tides.ranges.map((r) => r.label))], refreshed.tides.ranges.find((r) => r.key === 'k6').start], [1, ['after'], '2031-05-02T00:00:00+00:00']);
+  const toastsBeforeBands = st.toasts.length;
+  bandsCut = true;
+  const cut = await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
+  await fetchPluginRanges('2031-05-05T00:00:00Z', '2031-05-20T00:00:00Z');
+  eq('bands: a plugin cut at the cap stays marked, and the person is told once', [cut.tides.truncated, st.toasts.slice(toastsBeforeBands).filter((t) => t.text.includes('more bands here')).length], [true, 1]);
 
   // The change check's reloads: one at a time each, owed again meanwhile
   // it runs once more, and one that failed stays owed (#185).

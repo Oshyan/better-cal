@@ -8960,43 +8960,21 @@ return new class implements BetterCal\Plugin\PluginInterface {
         array_column($odb->all("SELECT k FROM plugin_kv WHERE plugin_id = 'stations' ORDER BY k"), 'k'),
     ]);
 
-    // Past the cap, paging after the last range by its start and key: ranges
-    // sharing a start, and a long one still overlapping, each come once.
+    // A window's bands come in one read, ordered by start then key. Past the
+    // cap they are cut and say so; at it they come whole.
     $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations'");
     $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, 'long', '2030-02-01 00:00:00', '2030-02-28 00:00:00', 'long')");
     for ($i = 0; $i < Plugins::RANGE_RESPONSE_CAP + 1; $i++) {
-        $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, ?, '2030-02-10 06:00:00', '2030-02-10 07:00:00', 'tied')", ['t' . $i]);
+        $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', NULL, ?, '2030-02-10 06:00:00', '2030-02-10 07:00:00', 'tied')", [sprintf('t%05d', $i)]);
     }
     $ws = new DateTimeImmutable('2030-02-05T00:00:00Z');
     $we = new DateTimeImmutable('2030-02-20T00:00:00Z');
-    $got = [];
-    $page = $own->rangesForWindow($ws, $we)['stations'];
-    $pages = 1;
-    while (true) {
-        foreach ($page['ranges'] as $r) {
-            $got[] = $r['id'];
-        }
-        if (!$page['truncated'] || $pages > 5) {
-            break;
-        }
-        $last = end($page['ranges']);
-        $page = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'key' => $last['key']])['stations'];
-        $pages++;
-    }
-    checkEq('bands: paging past the cap brings every range once, ties and long ones included', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, 2], [count($got), count(array_unique($got)), $pages]);
-    // A refresh between pages deletes and inserts the same ranges under new
-    // ids: the next page still starts after the last one sent.
-    $first = $own->rangesForWindow($ws, $we)['stations'];
-    $odb->run("CREATE TEMPORARY TABLE ranges_copy AS SELECT plugin_id, calendar_id, source_key, start_utc, end_utc, label FROM plugin_ranges WHERE plugin_id = 'stations'");
-    $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations'");
-    $odb->run('INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) SELECT plugin_id, calendar_id, source_key, start_utc, end_utc, label FROM ranges_copy');
-    $odb->run('DROP TABLE ranges_copy');
-    $last = end($first['ranges']);
-    $next = $own->rangesForWindow($ws, $we, 'stations', ['start' => new DateTimeImmutable($last['start']), 'key' => $last['key']])['stations'];
-    $keys = array_merge(array_column($first['ranges'], 'key'), array_column($next['ranges'], 'key'));
-    checkEq('bands: a refresh between pages sends no range twice', [Plugins::RANGE_RESPONSE_CAP + 2, Plugins::RANGE_RESPONSE_CAP + 2, false], [count($keys), count(array_unique($keys)), $next['truncated']]);
-    check('bands: a refresh between pages says so (gen), for the reader to start again', $first['gen'] !== $next['gen'] && $next['gen'] === $own->rangesForWindow($ws, $we, 'stations')['stations']['gen']);
-    checkEq('bands: a next page is for the plugin asked about', ['stations'], array_keys($own->rangesForWindow($ws, $we, 'stations')));
+    $cut = $own->rangesForWindow($ws, $we)['stations'];
+    $keys = array_column($cut['ranges'], 'key');
+    checkEq('bands: past the cap a window\'s bands are cut and say so, the earliest first and each once', [true, Plugins::RANGE_RESPONSE_CAP, Plugins::RANGE_RESPONSE_CAP, 'long', 't00000'], [$cut['truncated'], count($keys), count(array_unique($keys)), $keys[0], $keys[1]]);
+    $odb->run("DELETE FROM plugin_ranges WHERE plugin_id = 'stations' AND source_key IN ('long', ?)", [sprintf('t%05d', Plugins::RANGE_RESPONSE_CAP)]);
+    $whole = $own->rangesForWindow($ws, $we)['stations'];
+    checkEq('bands: at the cap they come whole', [false, Plugins::RANGE_RESPONSE_CAP], [$whole['truncated'], count($whole['ranges'])]);
 
     foreach (['stations', 'follower'] as $pid) {
         array_map('unlink', glob($dir . '/' . $pid . '/*'));

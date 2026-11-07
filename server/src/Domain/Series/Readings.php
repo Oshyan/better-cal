@@ -414,12 +414,13 @@ final class Readings
     /** Set positions move by the landed day's change of position in the set. */
     private static function setPosition(Rule $r0, int $actedDn, int $landedDn, int $k, callable $at): array
     {
-        $posIn = static function (int $dn) use ($r0): ?int {
+        // A day's place in its month's set: its index from the front, and the
+        // set's size, or null off the set.
+        $place = static function (int $dn) use ($r0): ?array {
             [$y, $m, $d] = Cal::ymd($dn);
             if (!in_array(Cal::wd($dn), $r0->set, true)) {
                 return null;
             }
-            $i = 0;
             $hits = [];
             $first = Cal::dn($y, $m, 1);
             for ($x = 1; $x <= Cal::monthLen($y, $m); $x++) {
@@ -428,31 +429,61 @@ final class Readings
                 }
             }
             $i = array_search($d, $hits, true);
-            if ($i === false) {
-                return null;
-            }
-            return (int) $r0->members[0]['n'] > 0 ? $i + 1 : $i - count($hits);
+            return $i === false ? null : [$i, count($hits)];
         };
-        $from = $posIn($actedDn);
-        $to = $posIn($landedDn);
+        $from = $place($actedDn);
+        $to = $place($landedDn);
         $rule = clone $r0;
         $rule->dirty = true;
         if ($from === null || $to === null) {
             return self::disable(self::reading('position', '', $rule, static fn(int $dn): ?int => null, false),
                 'not_in_set', Words::day(Cal::wd($landedDn)) . ' isn\'t one of its days');
         }
-        $dp = $to - $from;
-        $pm = [];
+        // A position has a place in every month when it is within four per
+        // day of the set of the end it is counted from (a month has at least
+        // four of each weekday). The positions are counted from the rule's own
+        // end when they all fit so, else from the other: the second weekday
+        // dragged to the last weekday of a 22-weekday month is the last
+        // weekday, not the 22nd, as a fifth Tuesday is the last Tuesday. One
+        // day's two counts add up to the set's size plus one, so one position
+        // always fits one way; a list is refused when neither way fits it.
+        $fits = 4 * count($r0->set);
+        $front = (int) $r0->members[0]['n'] > 0;
+        $posIn = static fn(array $p, bool $fromFront): int => $fromFront ? $p[0] + 1 : $p[0] - $p[1];
+        // The members counted from one end (a member written from the other
+        // is recounted in the acted month), moved by the landed day's change
+        // of position counted the same way.
+        $shifted = static function (bool $fromFront) use ($r0, $from, $to, $posIn): array {
+            $dp = $posIn($to, $fromFront) - $posIn($from, $fromFront);
+            return array_map(static function (array $mem) use ($fromFront, $from, $dp): array {
+                $n = (int) $mem['n'];
+                $n = ($n > 0) === $fromFront ? $n : ($n > 0 ? $n - $from[1] - 1 : $n + $from[1] + 1);
+                return ['t' => 'pos', 'n' => $n + $dp];
+            }, $r0->members);
+        };
+        $fitsAll = static function (array $pm, bool $fromFront) use ($fits): bool {
+            foreach ($pm as $mem) {
+                $n = (int) $mem['n'];
+                if ($n === 0 || ($n > 0) !== $fromFront || abs($n) > $fits) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        // The rule as written is kept when the drag doesn't move its positions.
+        $kept = $posIn($to, $front) === $posIn($from, $front);
+        $pm = $shifted($front);
         $bad = false;
-        foreach ($r0->members as $mem) {
-            $n = (int) $mem['n'] + $dp;
-            if ($n === 0 || ($n > 0) !== ((int) $mem['n'] > 0) || abs($n) > 4 * count($r0->set)) {
+        if (!$kept && !$fitsAll($pm, $front)) {
+            $other = $shifted(!$front);
+            if ($fitsAll($other, !$front)) {
+                $pm = $other;
+            } else {
                 $bad = true;
             }
-            $pm[] = ['t' => 'pos', 'n' => $n];
         }
         $rule->members = $pm;
-        $reading = self::reading('position', '', $rule, static fn(int $dn, ?int $mem = null): ?int => $mem === null ? null : $at($pm[$mem], $dn, $k), $dp === 0);
+        $reading = self::reading('position', '', $rule, static fn(int $dn, ?int $mem = null): ?int => $mem === null ? null : $at($pm[$mem], $dn, $k), $kept);
         return $bad ? self::disable($reading, 'count_range', 'a position would have no place in some months') : $reading;
     }
 

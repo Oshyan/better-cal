@@ -15,6 +15,7 @@
 import { state, set, toast, patchOccurrence, restoreOccurrence, localSaved, invalidateRecords } from './store.js';
 import { api, entriesOf, refreshWindow } from './api.js';
 import { commitPlan, chosen, planRefusal } from '../lib/seriesplan.js';
+import { ruleWords } from '../lib/planwords.js';
 
 let seq = 0;      // the newest request; an older answer is dropped
 let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
@@ -184,7 +185,12 @@ export async function confirmSeriesChange() {
     const verb = sc.done || (sc.kind === 'drag' ? 'Moved ' + which
       : sc.kind === 'resize' ? 'Changed ' + which
         : 'rrule' in sc.body ? 'Changed how it repeats' : 'Saved for ' + which);
-    toast(verb + (sc.google ? ' at Google' : ''), {
+    // A rule the change rewrote is named, so a drag that read the landed day
+    // as a new form ("the last weekday" for "the second weekday") says which.
+    const rule = plan.rule || {};
+    const wasRule = ruleWords(rule.from), nowRule = ruleWords(rule.to);
+    const now = nowRule && nowRule !== wasRule ? ', now ' + nowRule : '';
+    toast(verb + (sc.google ? ' at Google' : '') + now, {
       title: sc.body.title || sc.title,
       undo: entriesOf(res),
       note: sc.google ? GOOGLE_NO_UNDO : NO_UNDO,

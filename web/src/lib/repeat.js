@@ -132,7 +132,11 @@ export function describeRepeat(rrule, { start = null, short = false, ends = true
       else if (days.every((d) => d >= 1 && d <= 31)) text += ' on the ' + andList(days.map(ordinalDay));
       else return null;
     } else if (p.BYSETPOS) {
-      const pos = p.BYSETPOS.split(',').map((n) => ORDINAL[parseInt(n, 10)]);
+      // Any position, as the plan's words say them: "the 10th weekday", "the
+      // third-last weekday", "the 8th-last weekday".
+      const posWord = (n) => (!Number.isInteger(n) || n === 0 ? null
+        : ORDINAL[n] || (n > 0 ? ordinalDay(n) : (LAST_ORDINAL[-n] || ordinalDay(-n)) + '-last'));
+      const pos = p.BYSETPOS.split(',').map((n) => posWord(parseInt(n, 10)));
       const set = byday.join(',');
       if (pos.some((o) => !o)) return null;
       if (set === WEEKDAYS) text += ` on the ${andList(pos)} weekday`;

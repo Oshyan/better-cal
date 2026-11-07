@@ -1490,6 +1490,29 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($firstWd, [], smDrag($firstWd, '2027-10-01 09:00', '2027-11-01 09:00'));
     checkEq('and to the next month\'s first weekday: the rule stays, never a day by number', [null, '2027-10-01'], [$p['writes']['master']['rrule'] ?? null, smShows($firstWd, $p['writes'], '2027-10-31')[0] ?? null]);
 
+    // A position is counted from the end it fits: the second weekday (Mon 4
+    // Oct) dragged to the last weekday of a 21-weekday October (Fri 29 Oct)
+    // is the last weekday, not the 21st, which February can't supply; it
+    // then shows on Tue 30 Nov. Dragged to the 20th weekday (Thu 28 Oct) it
+    // keeps its own direction, since the 20th exists in every month.
+    $secondWd = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=2', '2027-09-02 09:00', 60, false, [], 'UTC');
+    $p = smPlan($secondWd, [], smDrag($secondWd, '2027-10-04 09:00', '2027-10-29 09:00'));
+    checkEq('the second weekday dragged to the last weekday: the last weekday', ['FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', false, true],
+        [$p['writes']['master']['rrule'] ?? null, $p['refused'], in_array('2027-11-30', smShows($secondWd, $p['writes'], '2027-12-31'), true)]);
+    $p = smPlan($secondWd, [], smDrag($secondWd, '2027-10-04 09:00', '2027-10-28 09:00'));
+    checkEq('dragged to the 20th weekday, which every month has: counted from the front still', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=20', $p['writes']['master']['rrule'] ?? null);
+    // The other way round: the last weekday (Fri 29 Oct) dragged to the
+    // first (Fri 1 Oct) is the first weekday, not the 21st-last.
+    $lastWd = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', '2027-09-30 09:00', 60, false, [], 'UTC');
+    $p = smPlan($lastWd, [], smDrag($lastWd, '2027-10-29 09:00', '2027-10-01 09:00'));
+    checkEq('the last weekday dragged to the first: the first weekday', ['FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1', true],
+        [$p['writes']['master']['rrule'] ?? null, in_array('2027-11-01', smShows($lastWd, $p['writes'], '2027-12-31'), true)]);
+    // A list is refused when it fits neither way: the first and third weekday,
+    // its first dragged to the last, would put the third past the month.
+    $firstThird = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,3', '2027-09-01 09:00', 60, false, [], 'UTC');
+    $p = smPlan($firstThird, [], smDrag($firstThird, '2027-10-01 09:00', '2027-10-29 09:00'));
+    checkEq('the first and third weekday, the first dragged to the last: refused, the third would pass the month', [true, 'count_range'], [$p['refused'], $p['plan']['refusals'][0]['code'] ?? null]);
+
     // The next events are the ones that show from the day acted on: an
     // edited day keyed later but kept on an earlier date of its own isn't one.
     $every2 = smSeries('Sample run', 'FREQ=DAILY;INTERVAL=2;COUNT=20', '2027-04-01 09:00', 30, false, [], 'UTC');
@@ -2281,13 +2304,24 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
     ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
 
-    // A zone option's start is in the plan's zone even when its plan is refused.
-    $firstWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
+    // A zone option's start is in the plan's zone even when its plan is
+    // refused: the first and third weekday, whose moment option lands the
+    // first on the last weekday of August and so puts the third past the month.
+    $firstThirdWd = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,3;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
     $laAt = new DateTimeImmutable('2028-09-01 06:00', Time::zone('America/Los_Angeles'));
-    $p = smPlan($firstWeekday, [], ['acted' => smAt('2028-09-01 06:00', 'Australia/Lord_Howe'), 'landed' => ['start_utc' => Time::toDb($laAt), 'end_utc' => Time::toDb($laAt->modify('+90 minutes')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']]);
-    checkEq('Zone options: the first weekday of the month from Lord Howe to Los Angeles, the moment option (whose plan is refused) starts at the series\' stored start, 06:00 on 1 Mar 2028 there, written in Los Angeles', [
+    $zoneDrag = static fn(array $s): array => ['acted' => smAt('2028-09-01 06:00', 'Australia/Lord_Howe'), 'landed' => ['start_utc' => Time::toDb($laAt), 'end_utc' => Time::toDb($laAt->modify('+90 minutes')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($firstThirdWd, [], $zoneDrag($firstThirdWd));
+    checkEq('Zone options: the first and third weekday from Lord Howe to Los Angeles, the moment option (whose plan is refused) starts at the series\' stored start, 06:00 on 1 Mar 2028 there, written in Los Angeles', [
         ['clock', '2028-03-01T06:00:00-08:00'], ['moment', '2028-02-29T11:00:00-08:00'],
     ], array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? []));
+    // One position reads the moment option: the first weekday's moment is the
+    // last weekday of August in Los Angeles, so the series becomes the last
+    // weekday at the landed clock, 12:30 there, from 29 Feb 2028.
+    $firstWeekday = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
+    $p = smPlan($firstWeekday, [], $zoneDrag($firstWeekday), ['zone' => 'moment']);
+    checkEq('Zone options: the first weekday\'s moment option is the last weekday at 12:30 in Los Angeles, from 29 Feb 2028, its end at that clock too', [
+        ['clock', '2028-03-01T06:00:00-08:00'], ['moment', '2028-02-29T12:30:00-08:00'], 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;UNTIL=20281031T193000Z',
+    ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? []), $p['writes']['master']['rrule'] ?? null]);
 
     // BYSETPOS limits each period's set, for every frequency.
     checkEq('BYSETPOS: weekly on Mon, Wed and Fri, the last of each week, from Mon 4 Jan 2027: the start, then Fri 8 and Fri 15 Jan', ['2027-01-04 09:00', '2027-01-08 09:00', '2027-01-15 09:00'],

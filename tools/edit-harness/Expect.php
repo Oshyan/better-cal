@@ -593,27 +593,48 @@ final class Expect
     private function setPosition(int $k): array
     {
         $s = $this->s0;
-        $pos = static function (int $dn) use ($s): ?int {
+        // A day's index in its month's set and the set's size, or null off the set.
+        $place = static function (int $dn) use ($s): ?array {
             [$y, $m] = Days::ymd($dn);
             $hits = $s->setDays($y, $m);
             $i = array_search($dn, $hits, true);
-            if ($i === false) {
-                return null;
-            }
-            return $s->forms[0][1] > 0 ? $i + 1 : $i - count($hits);
+            return $i === false ? null : [$i, count($hits)];
         };
-        $from = $pos($this->actedDn);
-        $to = $pos($this->landedDn);
+        $from = $place($this->actedDn);
+        $to = $place($this->landedDn);
         if ($from === null || $to === null) {
             return self::disabled(self::reading('position', ['type' => 'same']), 'not_in_set');
         }
-        $dp = $to - $from;
-        $forms = [];
+        // The spec's row: positions are counted from the rule's own end when
+        // every one then has a place in every month (within four per day of
+        // the set), else from the other end; a list that fits neither way is
+        // refused. A form written from the other end is recounted in the
+        // acted month (its set's size plus one, less the form's count).
+        $front = $s->forms[0][1] > 0;
+        $fits = 4 * count($s->set);
+        $posIn = static fn(array $p, bool $fromFront): int => $fromFront ? $p[0] + 1 : $p[0] - $p[1];
+        $shifted = static function (bool $fromFront) use ($s, $from, $to, $posIn): array {
+            $dp = $posIn($to, $fromFront) - $posIn($from, $fromFront);
+            $recount = static fn(int $n): int => ($n > 0) === $fromFront ? $n : ($n > 0 ? $n - $from[1] - 1 : $n + $from[1] + 1);
+            return array_map(static fn(array $f): array => ['pos', $recount($f[1]) + $dp], $s->forms);
+        };
+        $fitsAll = static function (array $forms, bool $fromFront) use ($fits): bool {
+            foreach ($forms as $f) {
+                if ($f[1] === 0 || ($f[1] > 0) !== $fromFront || abs($f[1]) > $fits) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $forms = $shifted($front);
         $bad = false;
-        foreach ($s->forms as $f) {
-            $x = $f[1] + $dp;
-            $bad = $bad || $x === 0 || ($x > 0) !== ($f[1] > 0) || abs($x) > 4 * count($s->set);
-            $forms[] = ['pos', $x];
+        if ($posIn($to, $front) !== $posIn($from, $front) && !$fitsAll($forms, $front)) {
+            $other = $shifted(!$front);
+            if ($fitsAll($other, !$front)) {
+                $forms = $other;
+            } else {
+                $bad = true;
+            }
         }
         $r = self::reading('position', ['type' => 'forms', 'forms' => $forms, 'k' => array_fill(0, count($forms), $k)]);
         return $bad ? self::disabled($r, 'count_range') : $r;

@@ -47,7 +47,7 @@ import {
 // the solo target keeps the ORIGINAL captured set so "Show all" always returns
 // to the pre-solo state. Applied as the calendars' real visible flags, in one
 // write (writeCalendarVisibility, #190): every view and the server agree,
-// Activity gets one entry, and a failure puts the flags back; folder custom
+// Activity records nothing, and a failure puts the flags back; folder custom
 // sets are not touched.
 async function applyVisibilityMap(entries) {
   try {

@@ -201,7 +201,7 @@ async function main() {
     create_event: [false, false, false, true], quick_add: [false, false, false, true],
     update_event: [false, true, false, true], delete_event: [false, true, true, true],
     set_attendance: [false, true, false, false], list_calendars: [true, false, true, false],
-    set_calendars_visible: [false, true, true, false],
+    set_calendars_visible: [false, false, true, false],
     list_review: [true, false, true, false], list_plugins: [true, false, true, false],
     get_system_health: [true, false, true, false], update_plugin_settings: [false, true, true, true],
     update_plugin_calendar_settings: [false, true, true, true], set_plugin_enabled: [false, true, true, true],
@@ -346,6 +346,7 @@ async function main() {
     ['a batch member with a stray field', 'set_calendars_visible', { calendars: [{ id: 1, visible: true, name: 'x' }] }],
     ['a batch member whose flag is a word', 'set_calendars_visible', { calendars: [{ id: 1, visible: 'yes' }] }],
     ['an empty batch', 'set_calendars_visible', { calendars: [] }],
+    ['a folder id, which the batch no longer takes', 'set_calendars_visible', { calendars: [{ id: 1, visible: true }], folderId: 3 }],
     ['arguments not an object', 'undo', ['x']],
   ]) {
     const res = await rpc('tools/call', { name, arguments: args });
@@ -355,7 +356,7 @@ async function main() {
 
   for (const [name, args, method, path] of [
     ['list_calendars', {}, 'GET', '/calendars'],
-    ['set_calendars_visible', { calendars: [{ id: 1, visible: false }, { id: 2, visible: true }], folderId: 3 }, 'PATCH', '/calendars'],
+    ['set_calendars_visible', { calendars: [{ id: 1, visible: false }, { id: 2, visible: true }] }, 'PATCH', '/calendars'],
     ['search_events', { q: 'dinner', limit: 5 }, 'GET', '/search?q=dinner&limit=5'],
     ['quick_add', { text: 'dinner fri 7pm', tz: 'UTC' }, 'POST', '/quickadd'],
     ['list_plugins', {}, 'GET', '/plugins'],

@@ -227,12 +227,12 @@ export function writeCalendars({ key = null, show = null, send, revert = null })
 // Many calendars shown or hidden in one write (#190): Only on a calendar
 // or a folder, a folder's All or None. `entries` is [[calendarId, visible]]
 // for every calendar wanted a certain way; the ones already so are left
-// alone. One request (PATCH /calendars) and one Activity entry, whose undo
-// puts every flag back. `folderId` names the folder acted on, for that
-// entry's line. Each calendar's key is its checkbox's (setCalendarVisible),
-// so a checkbox clicked after the batch keeps its own value if the batch
-// fails. Resolves with the server's calendars, or null when nothing changed.
-export function writeCalendarVisibility(entries, folderId = null) {
+// alone. One request (PATCH /calendars); which calendars show is a display
+// preference, so Activity records nothing (Show all is the way back). Each
+// calendar's key is its checkbox's (setCalendarVisible), so a checkbox
+// clicked after the batch keeps its own value if the batch fails. Resolves
+// with the server's calendars, or null when nothing changed.
+export function writeCalendarVisibility(entries) {
   const want = new Map(entries);
   const changed = state.calendars.filter((c) => want.has(c.id) && c.visible !== want.get(c.id));
   if (changed.length === 0) return Promise.resolve(null);
@@ -244,7 +244,6 @@ export function writeCalendarVisibility(entries, folderId = null) {
     show: () => put(new Set(was.keys()), (c) => want.get(c.id)),
     send: () => api('/calendars', { method: 'PATCH', body: {
       calendars: changed.map((c) => ({ id: c.id, visible: want.get(c.id) })),
-      ...(folderId != null ? { folderId } : {}),
     } }),
     revert: (keys) => put(new Set(keys.map((k) => Number(k.split(':')[1]))), (c) => was.get(c.id)),
   });

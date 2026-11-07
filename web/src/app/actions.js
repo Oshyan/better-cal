@@ -1599,9 +1599,9 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
   persistFolderVisibility(nextVis);
 
-  // Every flag in one write (#190): shown at once, one request, one
-  // Activity entry, and all put back if the save fails.
-  writeCalendarVisibility(changed.map((c) => [c.id, !c.visible]), folderId === ALL_GROUP_ID ? null : folderId)
+  // Every flag in one write (#190): shown at once, one request, and all
+  // put back if the save fails.
+  writeCalendarVisibility(changed.map((c) => [c.id, !c.visible]))
     .catch((e) => toast('Failed: ' + e.message, { error: true }));
 }
 

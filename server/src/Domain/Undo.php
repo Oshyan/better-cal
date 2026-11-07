@@ -144,10 +144,18 @@ final class Undo
 
     /**
      * A calendar's columns that are Better-Cal's own, never its source's:
-     * its place in the list and whether it shows. A Google calendar's
-     * change to only these is undoable like any other.
+     * its place in the list (whether it shows is a preference, PREFERENCES).
+     * A Google calendar's change to only these is undoable like any other.
      */
-    private const LOCAL_CALENDAR_COLUMNS = ['position', 'visible'];
+    private const LOCAL_CALENDAR_COLUMNS = ['position'];
+
+    /**
+     * Columns that say how the account is shown, not what it holds: display
+     * preferences kept on the server, as the settings are. Activity records
+     * none of them, undo never puts one back, and none makes an undo stale.
+     * A whole row brought back (a calendar deleted) comes back as it was.
+     */
+    private const PREFERENCES = ['calendars' => ['visible']];
 
     /**
      * Where a person's own changes come from, for undoing the last one
@@ -773,7 +781,7 @@ final class Undo
     public static function fieldsChanged(string $table, array $was, array $now): array
     {
         $out = [];
-        foreach (self::changedColumns($was, $now) as $col) {
+        foreach (self::changedColumns($table, $was, $now) as $col) {
             if (!in_array($col, self::OBJECT_COLUMNS[$table] ?? [], true)) {
                 $out[] = $col;
                 continue;
@@ -794,12 +802,13 @@ final class Undo
         return is_array($v) ? $v : [];
     }
 
-    /** The columns that differ between two versions of a row, bookkeeping aside. Pure. */
-    public static function changedColumns(array $was, array $now): array
+    /** The columns that differ between two versions of a $table row, bookkeeping and preferences aside. Pure. */
+    public static function changedColumns(string $table, array $was, array $now): array
     {
         $out = [];
+        $aside = array_merge(self::BOOKKEEPING, self::PREFERENCES[$table] ?? []);
         foreach (array_unique(array_merge(array_keys($was), array_keys($now))) as $col) {
-            if (!in_array($col, self::BOOKKEEPING, true) && !self::same($was[$col] ?? null, $now[$col] ?? null)) {
+            if (!in_array($col, $aside, true) && !self::same($was[$col] ?? null, $now[$col] ?? null)) {
                 $out[] = (string) $col;
             }
         }
@@ -973,7 +982,7 @@ final class Undo
         }
         [$was, $now] = $sides;
         foreach ($was + $now as $id => $_) {
-            if (isset($was[$id], $now[$id]) && array_diff(self::changedColumns($was[$id], $now[$id]), self::LOCAL_CALENDAR_COLUMNS) === []) {
+            if (isset($was[$id], $now[$id]) && array_diff(self::changedColumns('calendars', $was[$id], $now[$id]), self::LOCAL_CALENDAR_COLUMNS) === []) {
                 continue;
             }
             $ids[] = $id;
@@ -1390,7 +1399,7 @@ final class Undo
                     $kept = $afterByKey[$table][self::keyOf($table, $row)] ?? null;
                     $changed = null;
                     if ($kept !== null) {
-                        $changed = self::changedColumns($row, $kept);
+                        $changed = self::changedColumns($table, $row, $kept);
                         if ($changed === []) {
                             continue;
                         }

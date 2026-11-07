@@ -3497,6 +3497,85 @@ console.log('--- chronological ordering across timezone offsets ---');
   }
 }
 
+// --- Times when dragging (#190) ---
+// One wall-clock reading for a move, a resize and a draw (wallRangeInstants,
+// the typed range's rule), in a northern zone, a southern one and one on a
+// half-hour offset. The suite's own zone is set per zone and put back.
+{
+  const { wallMinutes, typedInstants, toISOWithOffset: iso } = await import('../src/lib/dates.js');
+  const { movedDates, resizedDates, drawnDates } = await import('../src/ui/monthmath.js');
+  const savedTz = process.env.TZ;
+  // Each zone: the day its clocks skip an hour and the first hour skipped,
+  // the day they repeat one and the first hour repeated, an ordinary day,
+  // and its offsets (minutes east) in daylight time, standard time and on
+  // that ordinary day.
+  const zones = [
+    ['America/Los_Angeles', { gap: ['2027-03-14', 2], fold: ['2027-11-07', 1], plain: '2027-06-16', dst: -420, std: -480, plainOff: -420 }],
+    ['Australia/Sydney', { gap: ['2027-10-03', 2], fold: ['2027-04-04', 2], plain: '2027-06-16', dst: 660, std: 600, plainOff: 600 }],
+    ['Australia/Adelaide', { gap: ['2027-10-03', 2], fold: ['2027-04-04', 2], plain: '2027-06-16', dst: 630, std: 570, plainOff: 570 }],
+  ];
+  const pair = (r) => (r ? [r.newStart || r.start, r.newEnd || r.end] : null);
+  for (const [tz, z] of zones) {
+    process.env.TZ = tz;
+    // An instant from a day's clock and an offset, as the server stores it.
+    const at = (day, h, m, off) => { const [y, mo, d] = day.split('-').map(Number); return iso(new Date(Date.UTC(y, mo - 1, d, h, m) - off * 60000)); };
+    const abs = (day, h, m) => wallMinutes(day, h * 60 + m);
+    const ev = (day, h1, m1, h2, m2, off) => ({ allDay: false, start: at(day, h1, m1, off), end: at(day, h2, m2, off) });
+    const { plain, plainOff: po, dst, std } = z;
+    const [gapDay, g] = z.gap;
+    const [foldDay, f] = z.fold;
+    const ordinary = ev(plain, 9, 0, 10, 0, po);
+    eq(`dragging (${tz}): an ordinary day: a move keeps the length, a resized end lands at its clock, a draw is its clocks`,
+      [movedDates(ordinary, abs(plain, 11, 15)), resizedDates(ordinary, 'end', abs(plain, 11, 0)), resizedDates(ordinary, 'start', abs(plain, 8, 30)), drawnDates(plain, 14 * 60, 15 * 60 + 30)].map(pair),
+      [[at(plain, 11, 15, po), at(plain, 12, 15, po)], [at(plain, 9, 0, po), at(plain, 11, 0, po)], [at(plain, 8, 30, po), at(plain, 10, 0, po)], [at(plain, 14, 0, po), at(plain, 15, 30, po)]]);
+    // The repeated hour: an event in either pass stays in it, and its
+    // dragged end lands beside the held one.
+    const first = ev(foldDay, f, 0, f, 30, dst);
+    const second = ev(foldDay, f, 0, f, 30, std);
+    eq(`dragging (${tz}): a resized end lands in the pass its start is in`,
+      [resizedDates(first, 'end', abs(foldDay, f, 45)), resizedDates(second, 'end', abs(foldDay, f, 45)), resizedDates(first, 'end', abs(foldDay, f + 1, 15))].map(pair),
+      [[first.start, at(foldDay, f, 45, dst)], [second.start, at(foldDay, f, 45, std)], [first.start, at(foldDay, f + 1, 15, std)]]);
+    const firstLate = ev(foldDay, f, 15, f, 45, dst);
+    const secondLate = ev(foldDay, f, 15, f, 45, std);
+    eq(`dragging (${tz}): a resized start lands in the pass its end is in`,
+      [resizedDates(firstLate, 'start', abs(foldDay, f, 0)), resizedDates(secondLate, 'start', abs(foldDay, f, 0))].map(pair),
+      [[at(foldDay, f, 0, dst), firstLate.end], [at(foldDay, f, 0, std), secondLate.end]]);
+    eq(`dragging (${tz}): a nudge keeps the pass, down or up`,
+      [movedDates(second, abs(foldDay, f, 15)), movedDates(ev(foldDay, f, 30, f + 1, 0, std), abs(foldDay, f, 15)), movedDates(first, abs(foldDay, f, 15))].map(pair),
+      [[at(foldDay, f, 15, std), at(foldDay, f, 45, std)], [at(foldDay, f, 15, std), at(foldDay, f, 45, std)], [at(foldDay, f, 15, dst), at(foldDay, f, 45, dst)]]);
+    // Brought from another day the event keeps its clock length (an hour on
+    // the grid, two of elapsed time across the fold), the first pass going
+    // forward and the second going back.
+    const before = ev(addDaysKey(foldDay, -7), 9, 0, 10, 0, dst);
+    const after = ev(addDaysKey(foldDay, 7), 9, 0, 10, 0, std);
+    eq(`dragging (${tz}): moved onto the fold day from before, the first pass; from after, the second; an hour on the clock either way`,
+      [movedDates(before, abs(foldDay, f, 30)), movedDates(after, abs(foldDay, f, 30))].map(pair),
+      [[at(foldDay, f, 30, dst), at(foldDay, f + 1, 30, std)], [at(foldDay, f, 30, std), at(foldDay, f + 1, 30, std)]]);
+    eq(`dragging (${tz}): a draw into the repeated hour is the first pass, and across it the clocks it covers`,
+      [drawnDates(foldDay, f * 60, f * 60 + 30), drawnDates(foldDay, f * 60 + 30, (f + 1) * 60 + 30)].map(pair),
+      [[at(foldDay, f, 0, dst), at(foldDay, f, 30, dst)], [at(foldDay, f, 30, dst), at(foldDay, f + 1, 30, std)]]);
+    // The skipped hour: a clock there is the clock plus the gap, and an end
+    // moves by the push its start got, as typed (#222).
+    const hh = (h) => String(h).padStart(2, '0');
+    eq(`dragging (${tz}): a draw into the skipped hour is pushed as a typed range is; one across it keeps its clocks`,
+      [drawnDates(gapDay, g * 60 + 30, (g + 1) * 60 + 30), drawnDates(gapDay, (g - 1) * 60 + 30, (g + 2) * 60)].map(pair),
+      [[at(gapDay, g + 1, 30, dst), at(gapDay, g + 2, 30, dst)], [at(gapDay, g - 1, 30, std), at(gapDay, g + 2, 0, dst)]]);
+    eq(`dragging (${tz}): the typed reading is the drawn one`,
+      [typedInstants(gapDay + 'T' + hh(g) + ':30', gapDay + 'T' + hh(g + 1) + ':30', null).map(iso), typedInstants(foldDay + 'T' + hh(f) + ':30', foldDay + 'T' + hh(f + 1) + ':30', null).map(iso)],
+      [pair(drawnDates(gapDay, g * 60 + 30, (g + 1) * 60 + 30)), pair(drawnDates(foldDay, f * 60 + 30, (f + 1) * 60 + 30))]);
+    eq(`dragging (${tz}): moved into the skipped hour the whole event is pushed; moved to just before it the end alone is`,
+      [movedDates(ordinary, abs(gapDay, g, 30)), movedDates(ordinary, abs(gapDay, g - 1, 30))].map(pair),
+      [[at(gapDay, g + 1, 30, dst), at(gapDay, g + 2, 30, dst)], [at(gapDay, g - 1, 30, std), at(gapDay, g + 1, 30, dst)]]);
+    const beforeGap = ev(gapDay, g - 1, 0, g - 1, 30, std);
+    const afterGap = ev(gapDay, g + 1, 15, g + 1, 30, dst);
+    const laterGap = ev(gapDay, g + 1, 45, g + 2, 30, dst);
+    eq(`dragging (${tz}): an end dragged into the skipped hour is pushed; a start pushed onto its held end is refused, one pushed short of it lands`,
+      [resizedDates(beforeGap, 'end', abs(gapDay, g, 30)), resizedDates(afterGap, 'start', abs(gapDay, g, 30)), resizedDates(laterGap, 'start', abs(gapDay, g, 30))].map(pair),
+      [[beforeGap.start, at(gapDay, g + 1, 30, dst)], null, [at(gapDay, g + 1, 30, dst), laterGap.end]]);
+  }
+  if (savedTz === undefined) delete process.env.TZ; else process.env.TZ = savedTz;
+}
+
 console.log('--- API offline session transitions ---');
 
 {

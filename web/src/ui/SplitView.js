@@ -17,7 +17,7 @@
 
 import { html, useRef, useState, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { MonthGrid } from './MonthGrid.js';
-import { autoScrolledJustNow } from './DragController.js';
+import { autoScrolled } from './DragController.js';
 import { AgendaList } from './AgendaList.js';
 import { epochDayOfKey, keyOfEpochDay } from '../lib/dates.js';
 import { rowIndexOfEpochDay, firstEpochDayOfRow } from './monthmath.js';
@@ -165,7 +165,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     // only the weeks on screen were reachable (#184). Only the auto-scroll:
     // weeks moved by data landing mid-drag are put back as ever.
     const onGrid = () => {
-      if (dragging() && autoScrolledJustNow(ge)) {
+      if (dragging() && autoScrolled(ge)) {
         const ed = listDay();
         if (ed != null) {
           const dy = ge.scrollTop - gridTopOf(ed);

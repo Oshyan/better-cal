@@ -158,9 +158,12 @@ return static function (Db $db): void {
         $d->undo->undoLatest($u);
         $ordered = $list();
         checkEq("undo: a Google calendar's move in the list undoes", $one, end($ordered));
+        // Whether it shows is a display preference: hidden, no entry.
+        $entryBefore = $latest();
         $d->calendars->patch($u, $one, ['visible' => false]);
-        $d->undo->undoLatest($u);
-        checkEq("undo: so does hiding it", 1, (int) $db->scalar('SELECT visible FROM calendars WHERE id = ?', [$one]));
+        checkEq("undo: hiding it writes no entry, and it is hidden", [$entryBefore, 0],
+            [$latest(), (int) $db->scalar('SELECT visible FROM calendars WHERE id = ?', [$one])]);
+        $d->calendars->patch($u, $one, ['visible' => true]);
         $d->calendars->patch($u, $one, ['name' => 'Renamed at Google']);
         checkEq("undo: a Google calendar's rename can't be undone here, and undo says so", 'not_undoable', refusal(fn() => $d->undo->undoLatest($u)));
     });

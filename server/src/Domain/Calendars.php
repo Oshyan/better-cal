@@ -343,21 +343,27 @@ final class Calendars
             }
         });
 
-        $after = $this->get($userId, $id);
-        $this->undo->record($userId, 'calendar', $id, 'update', ['calendars' => [$before]] + $beforeLinks, [
-            'calendars' => [$after],
+        // Activity records what changed of what the account holds; how it
+        // is shown (visible, Undo's PREFERENCES) is left out, so a patch
+        // that only shows or hides the calendar records nothing.
+        $beforeTables = ['calendars' => [$before]] + $beforeLinks;
+        $afterTables = [
+            'calendars' => [$this->get($userId, $id)],
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-        ]);
+        ];
+        if (Undo::touchesOf($beforeTables, $afterTables) !== []) {
+            $this->undo->record($userId, 'calendar', $id, 'update', $beforeTables, $afterTables);
+        }
         return $this->serializeById($userId, $id, $viewerTokenId);
     }
 
     /**
      * Many calendars shown or hidden in one change (#190): Only on a
-     * calendar, a folder's All or None. One request, one entry in Activity
-     * whose undo puts every flag back. $in['calendars'] is a list of
-     * {id, visible}; $in['folderId'] names the folder acted on, for the
-     * entry's line. Calendars already as asked are left alone, and a batch
-     * that changes nothing writes nothing.
+     * calendar, a folder's All or None. One request and one checked write.
+     * Which calendars show is a display preference (Undo's PREFERENCES), so
+     * Activity records nothing; the sidebar's Show all is the way back.
+     * $in['calendars'] is a list of {id, visible}. Calendars already as
+     * asked are left alone, and a batch that changes nothing writes nothing.
      *
      * @return list<array> the batch's calendars, serialized, in list order
      */
@@ -374,93 +380,29 @@ final class Calendars
             }
             $want[$item['id']] = filter_var($item['visible'], FILTER_VALIDATE_BOOL) ? 1 : 0;
         }
-        $folderId = $in['folderId'] ?? null;
-        if ($folderId !== null && (!is_int($folderId) || $folderId < 1)) {
-            throw HttpError::badRequest('folderId must be a whole number');
-        }
-        $this->undo->write($userId, function () use ($userId, $want, $folderId): void {
-            $folder = null;
-            if ($folderId !== null) {
-                $folder = $this->db->one('SELECT name FROM folders WHERE id = ? AND user_id = ?', [$folderId, $userId]);
-                if ($folder === null) {
-                    throw HttpError::notFound('No such folder');
-                }
-            }
+        $this->undo->write($userId, function () use ($userId, $want): void {
             // Each calendar locked in id order (the lock order every change
             // keeps), then those whose flag differs changed.
             $rows = CalendarMoveGuard::lockCalendars($this->db, array_keys($want));
-            $before = [];
+            $changed = [];
             foreach ($want as $id => $visible) {
                 $row = $rows[$id] ?? null;
                 if ($row === null || (int) $row['user_id'] !== $userId) {
                     throw HttpError::notFound('No such calendar');
                 }
                 if ((int) $row['visible'] !== $visible) {
-                    $before[] = $row;
+                    $changed[] = $id;
                 }
             }
-            if ($before === []) {
-                return;
+            foreach ($changed as $id) {
+                $this->db->update('calendars', ['visible' => $want[$id]], 'id = ?', [$id]);
             }
-            $shown = [];
-            $hidden = [];
-            foreach ($before as $row) {
-                $this->db->update('calendars', ['visible' => $want[(int) $row['id']]], 'id = ?', [(int) $row['id']]);
-                if ($want[(int) $row['id']] === 1) {
-                    $shown[] = (string) $row['name'];
-                } else {
-                    $hidden[] = (string) $row['name'];
-                }
-            }
-            [$ids, $params] = Db::in(array_map(static fn(array $row): int => (int) $row['id'], $before));
-            $after = $this->db->all("SELECT * FROM calendars WHERE id IN $ids ORDER BY id", $params);
-            $visibleAfter = array_map('strval', array_column($this->db->all('SELECT name FROM calendars WHERE user_id = ? AND visible = 1 ORDER BY position, id', [$userId]), 'name'));
-            $this->undo->record(
-                $userId,
-                'calendar',
-                (int) $before[0]['id'],
-                'update',
-                ['calendars' => $before],
-                ['calendars' => $after],
-                self::visibilitySummary($shown, $hidden, $visibleAfter, $folder !== null ? (string) $folder['name'] : null),
-            );
         });
         $byId = [];
         foreach ($this->listAll($userId, $viewerTokenId)['calendars'] as $calendar) {
             $byId[$calendar['id']] = $calendar;
         }
         return array_values(array_map(static fn(int $id): array => $byId[$id], array_keys($want)));
-    }
-
-    /**
-     * The Activity line for calendars shown or hidden together: what was
-     * done, named when one, counted when more ("Showed 4 calendars in
-     * folder 'Work'"), and the exception when all but one went ("Hid every
-     * calendar but 'Alex Example'"). Pure.
-     *
-     * @param list<string> $shown names of the calendars shown
-     * @param list<string> $hidden names of the calendars hidden
-     * @param list<string> $visibleAfter names of every calendar visible once done
-     */
-    public static function visibilitySummary(array $shown, array $hidden, array $visibleAfter, ?string $folder): string
-    {
-        if ($folder === null && $hidden !== [] && count($visibleAfter) === 1 && ($shown === [] || $shown === $visibleAfter)) {
-            return "Hid every calendar but '" . $visibleAfter[0] . "'";
-        }
-        if ($folder === null && $hidden !== [] && $shown === [] && $visibleAfter === [] && count($hidden) > 1) {
-            return 'Hid every calendar';
-        }
-        $piece = static fn(string $verb, array $names): string => count($names) === 1
-            ? "$verb calendar '" . $names[0] . "'"
-            : "$verb " . count($names) . ' calendars';
-        if ($shown !== [] && $hidden !== []) {
-            $line = count($shown) > 1 && count($hidden) > 1
-                ? 'Showed ' . count($shown) . ' and hid ' . count($hidden) . ' calendars'
-                : $piece('Showed', $shown) . ' and ' . $piece('hid', $hidden);
-        } else {
-            $line = $shown !== [] ? $piece('Showed', $shown) : $piece('Hid', $hidden);
-        }
-        return $line . ($folder !== null ? " in folder '" . $folder . "'" : '');
     }
 
     /**

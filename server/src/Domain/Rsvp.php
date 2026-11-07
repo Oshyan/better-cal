@@ -280,25 +280,25 @@ final class Rsvp
         // stale for nothing.
         $entry = 0;
         $touched = $via === 'google' ? ['invite_json', 'status', 'attendance'] : ['invite_json', 'status'];
-        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, $touched, &$entry): void {
+        // The CalDAV journal goes with it, so other clients see the answer.
+        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, $touched, $row, &$entry): void {
             $undo = new Undo($this->db);
             $entry = ActivityContext::with('rsvp', fn() => $before !== null && $after !== null
                 ? $undo->record($userId, 'event', $eventId, 'update', ['events' => [$before]], ['events' => [$after]], $summary)
                 : $undo->record($userId, 'event', $eventId, 'update', null, null, $summary,
                     touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], $touched)));
+            ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
         };
         $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken), $journal)
             : $this->answerByMail($row, $invite, $partstat, $authority, $retryUncertain, $journal);
         // Through the write boundary, so the request's credential is checked:
-        // the entry's wording and the change marker, nothing undo restores.
-        (new Undo($this->db))->write($userId, function () use ($outcome, $entry, $summary, $row): void {
+        // the entry's wording, nothing undo restores.
+        (new Undo($this->db))->write($userId, function () use ($outcome, $entry, $summary): void {
             if (!$outcome['sent'] && $entry > 0) {
                 // What became of the reply is known only after the attempt.
                 $this->db->run('UPDATE mutations SET summary = ? WHERE id = ?', [mb_substr($summary . ' (not sent: ' . ($outcome['message'] ?? 'unknown') . ')', 0, 300), $entry]);
             }
-            // Journal so other open clients see the answer on their next cursor poll.
-            ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
         });
         return ['myPartstat' => $partstat] + $outcome;
     }
@@ -361,6 +361,7 @@ final class Rsvp
             if (($current['reply']['attemptId'] ?? null) === $attempt) {
                 $current['reply'] = array_replace($current['reply'], $outcome);
                 $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($current), (int) $row['id']]);
+                ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
             }
         });
         return $outcome;

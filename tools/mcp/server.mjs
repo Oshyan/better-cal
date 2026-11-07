@@ -386,7 +386,7 @@ const TOOLS = [
   },
   {
     name: 'set_calendars_visible',
-    description: 'Show or hide many calendars in one change (one Activity entry, undone as one). Each calendar wanted a certain way is listed with its visible flag; ones already so are left alone. folderId names the folder acted on, for the Activity line.',
+    description: 'Show or hide many calendars in one change. Each calendar wanted a certain way is listed with its visible flag; ones already so are left alone. Which calendars show is a display preference: nothing is deleted, Activity records nothing, and showing them again is the way back.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -400,11 +400,10 @@ const TOOLS = [
           },
           description: 'The calendars and whether each should show',
         },
-        folderId: { type: 'integer', minimum: 1, description: 'The folder acted on (optional)' },
       },
       required: ['calendars'],
     },
-    handler: (a) => api('PATCH', '/calendars', { body: { calendars: a.calendars, ...(a.folderId !== undefined ? { folderId: a.folderId } : {}) } }),
+    handler: (a) => api('PATCH', '/calendars', { body: { calendars: a.calendars } }),
   },
   {
     name: 'list_review',
@@ -521,7 +520,7 @@ const EFFECTS = {
   delete_event:                    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
   set_attendance:                  { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false },
   list_calendars:                  { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
-  set_calendars_visible:           { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false },
+  set_calendars_visible:           { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   list_review:                     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   list_plugins:                    { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   get_system_health:               { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },

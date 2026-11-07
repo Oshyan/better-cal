@@ -73,12 +73,16 @@ return static function (Db $db): void {
     // What differs between two reads of a row, decided here rather than by
     // Undo's own helper (a mistake shared by both would pass): a column
     // whose text changed or that went to or from NULL, a calendar's settings
-    // by key. Bookkeeping columns undo neither keeps nor restores.
+    // by key. Bookkeeping columns undo neither keeps nor restores, nor the
+    // display preferences: Activity records what the account holds, not how
+    // it is shown (docs/design/decisions.md), so whether a calendar shows
+    // is no change to the journal.
     $bookkeeping = ['updated_at', 'synctoken', 'last_polled_at', 'last_poll_status', 'last_poll_error',
         'content_changed_at', 'last_ok_at', 'google_sync_token', 'score', 'scored_at'];
-    $differs = static function (string $table, array $was, array $now) use ($bookkeeping): array {
+    $preferences = ['calendars' => ['visible']];
+    $differs = static function (string $table, array $was, array $now) use ($bookkeeping, $preferences): array {
         $out = [];
-        foreach (array_diff(array_keys($was + $now), $bookkeeping) as $col) {
+        foreach (array_diff(array_keys($was + $now), $bookkeeping, $preferences[$table] ?? []) as $col) {
             [$a, $b] = [$was[$col] ?? null, $now[$col] ?? null];
             if ($a === null ? $b === null : ($b !== null && (string) $a === (string) $b)) {
                 continue;
@@ -302,7 +306,7 @@ return static function (Db $db): void {
                 $folder = (int) $d->folders->create($u, ['name' => 'Projects'])['id'];
             });
             $journaled("a calendar's settings", fn() => $d->calendars->patch($u, $work, ['name' => 'Work things', 'color' => '#336699', 'visible' => false, 'role' => 'context', 'folderIds' => [$folder]]));
-            $journaled('calendars shown and hidden together', fn() => $d->calendars->setVisibility($u, ['calendars' => [['id' => $work, 'visible' => true], ['id' => $home, 'visible' => false]], 'folderId' => $folder]));
+            $journaled('calendars shown and hidden together', fn() => $d->calendars->setVisibility($u, ['calendars' => [['id' => $work, 'visible' => true], ['id' => $home, 'visible' => false]]]), true, null);
             $journaled('a calendar filed and moved in its folder', function () use ($d, $u, $folder, $home): void {
                 $d->folders->place($u, $folder, $home, 0);
                 $d->folders->place($u, $folder, $home, 5);

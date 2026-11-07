@@ -8112,29 +8112,6 @@ checkEq(
     "Added saved view 'Focus'",
     Undo::defaultSummary('saved_view', 'create', null, ['saved_views' => [['name' => 'Focus']]])
 );
-// Calendars shown or hidden together (#190): one named, more counted, the
-// folder acted on named, and all but one as the exception.
-checkEq('activity summary: calendars shown or hidden together', [
-    "Hid every calendar but 'Home'",
-    "Hid every calendar but 'Home'",
-    'Hid every calendar',
-    "Showed 4 calendars in folder 'Work'",
-    "Hid calendar 'Errands' in folder 'Work'",
-    "Showed calendar 'Home'",
-    "Showed calendar 'Home' and hid 2 calendars",
-    'Showed 2 and hid 3 calendars',
-    "Hid 2 calendars",
-], [
-    \BetterCal\Domain\Calendars::visibilitySummary([], ['Work', 'Errands', 'Club'], ['Home'], null),
-    \BetterCal\Domain\Calendars::visibilitySummary(['Home'], ['Work', 'Errands'], ['Home'], null),
-    \BetterCal\Domain\Calendars::visibilitySummary([], ['Work', 'Home'], [], null),
-    \BetterCal\Domain\Calendars::visibilitySummary(['A', 'B', 'C', 'D'], [], ['A', 'B', 'C', 'D', 'Home'], 'Work'),
-    \BetterCal\Domain\Calendars::visibilitySummary([], ['Errands'], ['Home'], 'Work'),
-    \BetterCal\Domain\Calendars::visibilitySummary(['Home'], [], ['Home', 'Work'], null),
-    \BetterCal\Domain\Calendars::visibilitySummary(['Home'], ['Work', 'Errands'], ['Home', 'Club'], null),
-    \BetterCal\Domain\Calendars::visibilitySummary(['A', 'B'], ['C', 'D', 'E'], ['A', 'B'], null),
-    \BetterCal\Domain\Calendars::visibilitySummary([], ['Work', 'Errands'], ['Home', 'Club'], null),
-]);
 
 // UTC-stored times read on the owner's clock (plugins, Z feeds, imports): a
 // 7 PM Los Angeles dinner stored as 03:00Z is that day's, not the next.

@@ -36,27 +36,25 @@ final class ChangeLog
         }
     }
 
+    /**
+     * Journal one object, in the transaction of the change it journals (the
+     * caller's Undo::write or tx): a failure here fails the change with it,
+     * so no change is saved with CalDAV clients left untold.
+     */
     public static function record(Db $db, int $calendarId, string $uid, int $op): void
     {
-        try {
-            $db->tx(function () use ($db, $calendarId, $uid, $op): void {
-                $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
-                if ($token === null) {
-                    return; // calendar gone (cascade delete); nothing to journal
-                }
-                $db->insert('dav_changes', [
-                    'calendar_id' => $calendarId,
-                    'uri' => DavIcs::objectUri($uid),
-                    'operation' => $op,
-                    'synctoken' => (int) $token,
-                ]);
-                $db->run('UPDATE calendars SET synctoken = synctoken + 1 WHERE id = ?', [$calendarId]);
-            });
-        } catch (\PDOException $e) {
-            // Never let journaling break the mutation itself (e.g. migration
-            // 003 not applied yet during a rolling deploy).
-            error_log('dav changelog failed for calendar ' . $calendarId . ': ' . $e->getMessage());
+        self::assertWithChange($db);
+        $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
+        if ($token === null) {
+            return; // calendar gone (cascade delete); nothing to journal
         }
+        $db->insert('dav_changes', [
+            'calendar_id' => $calendarId,
+            'uri' => DavIcs::objectUri($uid),
+            'operation' => $op,
+            'synctoken' => (int) $token,
+        ]);
+        $db->run('UPDATE calendars SET synctoken = synctoken + 1 WHERE id = ?', [$calendarId]);
     }
 
     /**
@@ -72,25 +70,32 @@ final class ChangeLog
         if ($uids === []) {
             return;
         }
-        try {
-            $db->tx(function () use ($db, $calendarId, $uids, $op): void {
-                $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
-                if ($token === null) {
-                    return; // calendar gone (cascade delete); nothing to journal
-                }
-                $token = (int) $token;
-                foreach (array_chunk($uids, 500) as $chunk) {
-                    $params = [];
-                    foreach ($chunk as $uid) {
-                        array_push($params, $calendarId, DavIcs::objectUri((string) $uid), $op, $token++);
-                    }
-                    $db->run('INSERT INTO dav_changes (calendar_id, uri, operation, synctoken) VALUES '
-                        . implode(', ', array_fill(0, count($chunk), '(?, ?, ?, ?)')), $params);
-                }
-                $db->run('UPDATE calendars SET synctoken = synctoken + ? WHERE id = ?', [count($uids), $calendarId]);
-            });
-        } catch (\PDOException $e) {
-            error_log('dav changelog failed for calendar ' . $calendarId . ': ' . $e->getMessage());
+        self::assertWithChange($db);
+        $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
+        if ($token === null) {
+            return; // calendar gone (cascade delete); nothing to journal
+        }
+        $token = (int) $token;
+        foreach (array_chunk($uids, 500) as $chunk) {
+            $params = [];
+            foreach ($chunk as $uid) {
+                array_push($params, $calendarId, DavIcs::objectUri((string) $uid), $op, $token++);
+            }
+            $db->run('INSERT INTO dav_changes (calendar_id, uri, operation, synctoken) VALUES '
+                . implode(', ', array_fill(0, count($chunk), '(?, ?, ?, ?)')), $params);
+        }
+        $db->run('UPDATE calendars SET synctoken = synctoken + ? WHERE id = ?', [count($uids), $calendarId]);
+    }
+
+    /**
+     * A journal row belongs to the transaction of the change it tells
+     * about: written in one of its own, it could fail with the change
+     * already saved, or commit without it.
+     */
+    private static function assertWithChange(Db $db): void
+    {
+        if (!$db->pdo()->inTransaction()) {
+            throw new \LogicException('ChangeLog: a journal row written outside the transaction of the change it journals');
         }
     }
 

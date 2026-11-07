@@ -445,26 +445,27 @@ final class Feeds
                     touches: $touches
                 ));
             }
-        });
 
-        // CalDAV change journal: one entry per affected object (uid), each in
-        // a checked transaction of its own (a poll run by a request, inline).
-        foreach (array_keys($changedUids) as $index => $uid) {
-            if (($index & 127) === 0) {
-                self::assertSyncDeadline($deadline);
+            // CalDAV change journal: one entry per affected object (uid), in
+            // the poll's own transaction, so the poll and what it tells
+            // CalDAV clients commit or fail together.
+            foreach (array_keys($changedUids) as $index => $uid) {
+                if (($index & 127) === 0) {
+                    self::assertSyncDeadline($deadline);
+                }
+                $uid = (string) $uid;
+                if (isset($newMasterUids[$uid])) {
+                    ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD);
+                    continue;
+                }
+                $masterExists = $this->db->scalar(
+                    'SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+                       AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL',
+                    [$calendarId, $uid]
+                );
+                ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE);
             }
-            $uid = (string) $uid;
-            if (isset($newMasterUids[$uid])) {
-                RequestAuthority::checkedTx($this->db, fn() => ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD));
-                continue;
-            }
-            $masterExists = $this->db->scalar(
-                'SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
-                   AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL',
-                [$calendarId, $uid]
-            );
-            RequestAuthority::checkedTx($this->db, fn() => ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE));
-        }
+        });
 
         // The publisher touched something. This is what "stale" is judged
         // against: not whether the feed HAS events (a dead feed keeps

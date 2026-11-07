@@ -24,7 +24,9 @@ final class Events
     // How long a genuinely-new event wears its badge. A day is long enough to
     // catch it on the next visit without the calendar staying lit for most of
     // a week.
-    private const NEW_WINDOW_HOURS = 24;
+    // Public: the change cursor counts the events still inside it, so a mark
+    // ending moves the cursor (ChangeCursor::events).
+    public const NEW_WINDOW_HOURS = 24;
     private const SCOPES = ['this', 'following', 'all'];
 
     /**

@@ -24,7 +24,7 @@ use BetterCal\Support\{Limits, Time};
 $mailDb = static function (): Db {
     $db = new Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     foreach ([
-        'users' => 'id INTEGER PRIMARY KEY, settings_json TEXT',
+        'users' => 'id INTEGER PRIMARY KEY, settings_json TEXT, change_seq INTEGER NOT NULL DEFAULT 0',
         'events' => 'id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, tzid TEXT, all_day INTEGER, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, deleted_at TEXT, created_via TEXT, source TEXT, attendance TEXT, score REAL, scored_at TEXT, updated_at TEXT',
         'mail_ingest' => 'id INTEGER PRIMARY KEY, transport_key TEXT UNIQUE, message_id TEXT UNIQUE, subject TEXT, from_addr TEXT, tier TEXT, outcome TEXT, event_id INTEGER, error TEXT, processed_at TEXT DEFAULT CURRENT_TIMESTAMP',
         'mail_admissions' => 'id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id,kind,message_key)',
@@ -33,7 +33,7 @@ $mailDb = static function (): Db {
         'calendars' => 'id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT',
         'feedback_signals' => 'id INTEGER PRIMARY KEY, user_id INTEGER, event_id INTEGER, kind TEXT, created_at TEXT',
     ] as $name => $columns) $db->run("CREATE TABLE $name ($columns)");
-    $db->run("INSERT INTO users VALUES (1, '{}')");
+    $db->run("INSERT INTO users (id, settings_json) VALUES (1, '{}')");
     return $db;
 };
 
@@ -273,7 +273,7 @@ $rank = new Ranking($db, new LlmGateway(['gemini' => ['key' => 'synthetic', 'mod
 checkEq('ranking: saturated calendar cannot hide a later calendar', [1, 1], [$rank->run(), $transport->calls]);
 $rank->run();
 checkEq('ranking: repeated worker runs cannot reset persistent admission', 1, $transport->calls);
-$db->run("INSERT INTO users VALUES (2, '{}')");
+$db->run("INSERT INTO users (id, settings_json) VALUES (2, '{}')");
 $db->insert('calendars', ['id' => 3, 'user_id' => 2, 'name' => 'Another sample account']);
 $db->insert('events', ['id' => 103, 'user_id' => 2, 'calendar_id' => 3, 'title' => 'Sample event', 'source' => 'feed', 'attendance' => 'none', 'start_utc' => '2090-01-01 10:00:00', 'end_utc' => '2090-01-01 11:00:00', 'tzid' => 'UTC']);
 for ($i = 0; $i < 5; $i++) $db->insert('feedback_signals', ['user_id' => 2, 'event_id' => 103, 'kind' => 'up', 'created_at' => Time::nowDb()]);

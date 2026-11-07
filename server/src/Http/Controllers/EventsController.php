@@ -4,20 +4,33 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\ChangeCursor;
 use BetterCal\Domain\Events;
 use BetterCal\Domain\RequestAuthority;
 use BetterCal\Domain\Trips;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
+use BetterCal\Http\StaticFiles;
 use BetterCal\Support\Time;
 
 final class EventsController
 {
+    /**
+     * The window's cache policy (#16): a browser may keep an answer but
+     * must ask with its ETag before showing it again, and only this
+     * account's browser may keep it. A matching ask is a 304 with no body,
+     * answered before any event is read.
+     */
+    public const WINDOW_CACHE_CONTROL = 'private, no-cache';
+
     public function __construct(
         private readonly Events $events,
         private readonly Trips $trips,
         private readonly ?\BetterCal\Domain\Rsvp $rsvp = null,
+        /** The code version the window's ETag names (ChangeCursor::windowTag). */
+        private readonly string $version = '',
+        private readonly ?ChangeCursor $cursor = null,
     ) {
     }
 
@@ -45,6 +58,17 @@ final class EventsController
         if ($calendarsRaw !== null) {
             $calendars = array_values(array_filter(array_map('intval', explode(',', $calendarsRaw)), static fn(int $id) => $id > 0));
         }
+        // The window's ETag is the account's change cursor (a few indexed
+        // aggregates, no event row read): a client holding this window
+        // under the same tag has it as the server would send it now, and is
+        // told so before any expansion, sort, filter or encoding.
+        $headers = ['Cache-Control' => self::WINDOW_CACHE_CONTROL];
+        if ($this->cursor !== null) {
+            $headers['ETag'] = $this->cursor->windowTag((int) $req->user['id'], $this->version);
+            if (StaticFiles::matches($req->header('If-None-Match'), $headers['ETag'])) {
+                return Response::notModified($headers);
+            }
+        }
         $occurrences = $this->events->window(
             (int) $req->user['id'],
             $start,
@@ -58,7 +82,11 @@ final class EventsController
         // but only one this answer shows: one hidden by a filter, named with
         // no rows, stopped the client's follow-up for every other.
         $capped = $this->events->cappedSeries($occurrences);
-        return Response::json(['events' => $occurrences] + ($capped !== [] ? ['capped' => $capped] : []));
+        $response = Response::json(['events' => $occurrences] + ($capped !== [] ? ['capped' => $capped] : []));
+        foreach ($headers as $name => $value) {
+            $response = $response->withHeader($name, $value);
+        }
+        return $response;
     }
 
     public function create(Request $req): Response

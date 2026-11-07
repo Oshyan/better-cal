@@ -5259,6 +5259,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
         'CREATE TABLE plugin_warnings (id INTEGER PRIMARY KEY, plugin_id TEXT)',
         'CREATE TABLE app_update_state (id INTEGER PRIMARY KEY, latest_version TEXT, newest_version TEXT, minimum_secure_version TEXT)',
         'CREATE TABLE user_update_notices (user_id INTEGER PRIMARY KEY, dismissed_version TEXT)',
+        'CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, created_at TEXT NOT NULL)',
     ] as $sql) {
         $ccdb->run($sql);
     }
@@ -5294,6 +5295,30 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $events = $cc->events(1);
     BetterCal\Dav\ChangeLog::touchAccount($ccdb, 1);
     check('change cursor: background work that changes what shows moves the events part', $cc->events(1) !== $events);
+
+    // The one clock-dependent part of the window, an event's "new" mark,
+    // ends with nothing written: the part counts the events still inside
+    // their first day, so a mark ending moves it, and the window's ETag
+    // with it (#16).
+    $events = $cc->events(1);
+    $ccdb->run('INSERT INTO events (id, user_id, created_at) VALUES (1, 1, ?)', [BetterCal\Support\Time::nowDb()]);
+    $arrived = $cc->events(1);
+    check('change cursor: an event arriving moves the events part', $arrived !== $events);
+    $ccdb->run('UPDATE events SET created_at = ? WHERE id = 1', [BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc()->sub(new DateInterval('PT25H')))]);
+    check('change cursor: its new mark ending, with nothing written, moves the events part again', $cc->events(1) !== $arrived);
+    $ccdb->run('INSERT INTO events (id, user_id, created_at) VALUES (2, 2, ?)', [BetterCal\Support\Time::nowDb()]);
+    check('change cursor: another account\'s arrival moves nothing here', $cc->events(1) === $cc->events(1) && $cc->events(1) !== $arrived);
+
+    // The events window's ETag (#16) names the account, its cursor and the
+    // code version, and nothing else.
+    $cursor = $cc->events(1);
+    $tagFor = BetterCal\Domain\ChangeCursor::windowTagFor(...);
+    $t = $tagFor(1, $cursor, '1.5.2');
+    check('window tag: a weak validator', str_starts_with($t, 'W/"') && str_ends_with($t, '"') && strlen($t) === 36);
+    checkEq('window tag: the account, its cursor and the version name the same entity each time', $t, $cc->windowTag(1, '1.5.2'));
+    check('window tag: another account with the same cursor is another entity', $t !== $tagFor(2, $cursor, '1.5.2'));
+    check('window tag: another code version is another entity', $t !== $tagFor(1, $cursor, '1.5.3'));
+    check('window tag: the cursor moving is another entity', $cursor !== $arrived && $t !== $tagFor(1, $arrived, '1.5.2'));
 }
 
 // An outbound feed over its cap keeps the events nearest today: the oldest
@@ -9147,6 +9172,11 @@ require __DIR__ . '/plugins.php';
     check('static: no header, no match', !$sf::matches(null, $tag) && !$sf::matches('', $tag));
     check('static: a tag Apache compressed (-gzip or -br inside the quotes) still matches', $sf::matches(substr($tag, 0, -1) . '-gzip"', $tag) && $sf::matches(substr($tag, 0, -1) . '-br"', $tag));
     check('static: ... but a different tag with the suffix does not', !$sf::matches('W/"1-2-gzip"', $tag));
+    // Apache's mod_deflate and mod_brotli append the encoding to the tag
+    // they send out, and the browser sends that form back.
+    check('static: the tag as a compressing server sent it is the same tag',
+        $sf::matches(substr($tag, 0, -1) . '-gzip"', $tag) && $sf::matches(substr($tag, 0, -1) . '-br"', $tag) && $sf::matches(substr($tag, 2, -1) . '-gzip"', $tag));
+    check('static: any other suffix is another tag', !$sf::matches(substr($tag, 0, -1) . '-x"', $tag) && !$sf::matches(substr($tag, 0, -1) . 'gzip"', $tag));
 
     // Apache + PHP-FPM hands Authorization over under a REDIRECT_ prefix (or
     // not at all); API tokens must not depend on which server is in front.

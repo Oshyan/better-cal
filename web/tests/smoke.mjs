@@ -2058,6 +2058,68 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = realFetch;
 }
 
+// --- Event windows and the server's ETag (#16): a 304 keeps the window ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow } = await import('../src/app/api.js');
+  const { state: st, set: put, newGeneration, freshRanges, heldTag } = await import('../src/app/store.js');
+  const { isOwed } = await import('../src/app/reloads.js');
+  const at = (y, m, d) => isoAt(new Date(y, m - 1, d));
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const occ = (id, iso) => ({ instanceId: `${id}:${iso.replace(/[-:]/g, '')}`, eventId: id, calendarId: 1, title: `Sample ${id}`, start: iso, end: iso.replace('T19', 'T20'), allDay: false });
+  // A pretend server: one tag for the account's window at a time, a 304 to it.
+  const server = { tag: 'W/"tag-1"', events: [], asked: [] };
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url), 'http://app.test');
+    const p = u.pathname.replace('/api/v1', '');
+    if (p === '/changes/cursor') return json({ cursor: 'c1' });
+    if (p !== '/events') return json({});
+    const sent = (init.headers || {})['If-None-Match'] || null;
+    server.asked.push(sent);
+    const headers = { ETag: server.tag, 'Cache-Control': 'private, no-cache' };
+    if (sent === server.tag) return new Response(null, { status: 304, headers });
+    return new Response(JSON.stringify({ events: server.events }), { status: 200, headers: { 'Content-Type': 'application/json', ...headers } });
+  };
+  const held = (y1, m1, y2, m2) => heldTag(Date.parse(at(y1, m1, 1)), Date.parse(at(y2, m2, 1)));
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+
+  server.events = [occ(1, '2033-04-12T19:00:00Z')];
+  await loadWindow(at(2033, 4, 10), at(2033, 4, 20));
+  eq('etag: a stretch not held is asked for plainly, and held under the answer\'s tag', [server.asked, held(2033, 4, 2033, 5)], [[null], 'W/"tag-1"']);
+
+  // A change elsewhere moves the generation; the server says nothing changed.
+  newGeneration();
+  server.asked.length = 0;
+  const ok = await loadWindow(at(2033, 4, 10), at(2033, 4, 20));
+  eq('etag: the held stretch is asked for with its tag', server.asked, ['W/"tag-1"']);
+  eq('etag: a 304 keeps the window: the event stays, the stretch is fresh, nothing owed, no note',
+    [ok, st.occ.has('1:20330412T190000Z'), freshRanges().length > 0, isOwed('window'), st.windowStatus], [true, true, true, false, null]);
+
+  // Asked wider than what's held (April held, May not: one request for
+  // both), no tag is sent: a 304 could only say part of it is current.
+  newGeneration();
+  server.asked.length = 0;
+  server.tag = 'W/"tag-2"';
+  server.events = [occ(1, '2033-04-12T19:00:00Z'), occ(2, '2033-05-03T19:00:00Z')];
+  await loadWindow(at(2033, 4, 10), at(2033, 5, 10));
+  eq('etag: a stretch held only in part is asked for plainly, and the answer is held under its tag',
+    [server.asked, st.occ.has('2:20330503T190000Z'), held(2033, 4, 2033, 6)], [[null], true, 'W/"tag-2"']);
+
+  // The server's tag moved on: the held tag is answered in full with the new one.
+  newGeneration();
+  server.asked.length = 0;
+  server.tag = 'W/"tag-3"';
+  server.events = [occ(2, '2033-05-03T19:00:00Z')];
+  await loadWindow(at(2033, 4, 10), at(2033, 5, 10));
+  eq('etag: a tag the server no longer names is answered in full: the gone event goes, the new tag is held',
+    [server.asked, st.occ.has('1:20330412T190000Z'), st.occ.has('2:20330503T190000Z'), held(2033, 4, 2033, 6)], [['W/"tag-2"'], false, true, 'W/"tag-3"']);
+
+  put({ loadedRanges: [], windowStatus: null, visibleDays: null });
+  st.occ.clear();
+  globalThis.fetch = realFetch;
+}
+
 // --- Event windows and records: the second release review (#185) ---
 {
   const realFetch = globalThis.fetch;

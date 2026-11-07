@@ -399,7 +399,7 @@ function overlaps(occ, s, e) {
  * it can't carry and occurrences running into a stretch held from a newer
  * answer, and the stretch is held at `gen`.
  */
-export function mergeWindow(startISO, endISO, events, gen = generation) {
+export function mergeWindow(startISO, endISO, events, gen = generation, tag = null) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   if (state.loadedRanges.some((r) => r.gen > gen && r.start < e && r.end > s)) return false;
@@ -448,20 +448,58 @@ export function mergeWindow(startISO, endISO, events, gen = generation) {
       state.occ.set(ev.instanceId, ev);
     }
   }
-  holdRange(s, e, gen);
+  holdRange(s, e, gen, tag);
   set({ occVersion: state.occVersion + 1 });
   return true;
 }
 
-// [s, e) is now held at gen, in place of whatever covered it before.
-function holdRange(s, e, gen) {
+/**
+ * The server said [s, e) is unchanged (a 304 to the tag it was held
+ * under, #16): what's held there is what the server would send now, so it
+ * stays as it is and is held at `gen`, as an answer merged at `gen` would
+ * be. Dropped, returning false, when any of the stretch is held at a newer
+ * generation, as mergeWindow drops an answer older than what's there.
+ */
+export function keepWindow(startISO, endISO, gen = generation, tag = null) {
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (state.loadedRanges.some((r) => r.gen > gen && r.start < e && r.end > s)) return false;
+  holdRange(s, e, gen, tag);
+  return true;
+}
+
+/**
+ * The ETag every answer holding [s, e) carried, when the stretch is held
+ * whole (at any generation) and all of it under one tag; null otherwise.
+ * fetchRange sends it as If-None-Match, so a 304 means exactly that what's
+ * held is what the server would send now. A stretch held in part, or from
+ * answers with different tags, is asked for plainly: a 304 to it could
+ * only say some of it is current.
+ */
+export function heldTag(s, e) {
+  if (missingRanges(s, e, state.loadedRanges).length) return null;
+  let tag = null;
+  for (const r of state.loadedRanges) {
+    if (r.start >= e || r.end <= s) continue;
+    if (!r.tag || (tag !== null && r.tag !== tag)) return null;
+    tag = r.tag;
+  }
+  return tag;
+}
+
+// [s, e) is now held at gen, in place of whatever covered it before, under
+// the tag its answer carried (null when it carried none).
+function holdRange(s, e, gen, tag = null) {
   const out = [];
   for (const r of state.loadedRanges) {
-    for (const piece of missingRanges(r.start, r.end, [{ start: s, end: e }])) out.push({ ...piece, gen: r.gen });
+    for (const piece of missingRanges(r.start, r.end, [{ start: s, end: e }])) out.push(heldRange(piece.start, piece.end, r.gen, r.tag));
   }
-  out.push({ start: s, end: e, gen });
+  out.push(heldRange(s, e, gen, tag));
   state.loadedRanges = mergeRanges(out);
 }
+
+// One entry of loadedRanges: the tag only when the answer carried one.
+const heldRange = (start, end, gen, tag) => (tag ? { start, end, gen, tag } : { start, end, gen });
 
 // The view cache used to grow for the lifetime of the tab as someone scrolled
 // through time. Every top-level render then mapped and sorted that complete
@@ -501,7 +539,7 @@ export function pruneOccurrenceCache(startISO, endISO, {
     if (!(a < e && b > s)) state.occ.delete(id);
   }
   state.loadedRanges = state.loadedRanges
-    .map((range) => ({ start: Math.max(s, range.start), end: Math.min(e, range.end), gen: range.gen }))
+    .map((range) => heldRange(Math.max(s, range.start), Math.min(e, range.end), range.gen, range.tag))
     .filter((range) => range.end > range.start);
   set({ occVersion: state.occVersion + 1 });
   return 'pruned';
@@ -557,7 +595,9 @@ function mergeRanges(ranges) {
   const out = [];
   for (const r of sorted) {
     const last = out[out.length - 1];
-    if (last && r.start <= last.end && r.gen === last.gen) last.end = Math.max(last.end, r.end);
+    // One stretch only when held alike: at one generation and under one
+    // tag, so heldTag can read the tag off the stretch (#16).
+    if (last && r.start <= last.end && r.gen === last.gen && (r.tag || null) === (last.tag || null)) last.end = Math.max(last.end, r.end);
     else out.push({ ...r });
   }
   return out;

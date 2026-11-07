@@ -131,7 +131,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $exportController = new Controllers\ExportController(new Domain\Export($db), $cfg['app_root']);
         $foldersController = new Controllers\FoldersController($folders);
         $rsvp = new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds));
-        $eventsController = new Controllers\EventsController($events, $trips, $rsvp);
+        $eventsController = new Controllers\EventsController($events, $trips, $rsvp, (string) $cfg['version'], new Domain\ChangeCursor($db));
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);

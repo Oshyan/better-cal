@@ -8,8 +8,10 @@ declare(strict_types=1);
 // the object's uri, the operation and the calendar's synctoken as it was
 // before the change, and the calendar's synctoken is one higher after. A
 // move is a deletion on the calendar it left and an addition on the one it
-// joined. Each block is a scenario(): a throw fails that block, and the
-// next still runs.
+// joined. The row is written in the change's own transaction: a journal
+// that can't be written fails the change, which leaves nothing behind.
+// Each block is a scenario(): a throw fails that block, and the next still
+// runs.
 
 use BetterCal\Domain\Settings;
 use BetterCal\Infra\Db;
@@ -63,5 +65,28 @@ return static function (Db $db): void {
         checkEq('dav journal: a move is an addition on the calendar it joined, and that token is one higher',
             [[[$object, 1, $wasAway]], $wasAway + 1], [$told($away, $wasAway), $token($away)]);
         checkEq('dav journal: the moved event keeps its uid, so both rows name the same object', $object, $uri($id));
+    });
+
+    scenario('dav journal: a journal that cannot be written fails the change', function () use ($db, $d, $u, $home, $token): void {
+        // The journal's rows refused, as a full disk or a lost table would.
+        $count = static fn(): int => (int) $db->scalar("SELECT COUNT(*) FROM events WHERE user_id = ? AND title = 'Sample refused'", [$u]);
+        $entries = lastEntry($db, $u);
+        $was = $token($home);
+        $db->run("CREATE TRIGGER refuse_dav_changes BEFORE INSERT ON dav_changes FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'journal refused'");
+        try {
+            $failed = null;
+            try {
+                $d->events->create($u, eventAt($home, 'Sample refused', '2027-03-08'));
+            } catch (\PDOException $e) {
+                $failed = $e->getMessage();
+            }
+            check('dav journal: the create fails when its journal row cannot be written', $failed !== null && str_contains($failed, 'journal refused'), (string) $failed);
+        } finally {
+            $db->run('DROP TRIGGER IF EXISTS refuse_dav_changes');
+        }
+        checkEq('dav journal: and the create is rolled back: no event, no Activity entry, the token as it was',
+            [0, $entries, $was], [$count(), lastEntry($db, $u), $token($home)]);
+        $d->events->create($u, eventAt($home, 'Sample refused', '2027-03-08'));
+        checkEq('dav journal: with the journal writable again, the same create is saved and journaled', [1, $was + 1], [$count(), $token($home)]);
     });
 };

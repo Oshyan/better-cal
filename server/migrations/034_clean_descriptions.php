@@ -32,8 +32,10 @@ return static function (Db $db): string {
             if ($clean === $row['description']) {
                 continue;
             }
-            $db->run('UPDATE events SET description = ?, updated_at = ? WHERE id = ?', [$clean, $now, $lastId]);
-            ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+            $db->tx(static function () use ($db, $clean, $now, $lastId, $row): void {
+                $db->run('UPDATE events SET description = ?, updated_at = ? WHERE id = ?', [$clean, $now, $lastId]);
+                ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+            });
             $changed++;
         }
     }

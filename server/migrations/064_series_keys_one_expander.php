@@ -499,14 +499,16 @@ return static function (Db $db, bool $dryRun = false, ?callable $afterSeries = n
         if ($dryRun) {
             return;
         }
-        $db->tx(static function () use ($db, $writes): void {
+        $db->tx(static function () use ($db, $writes, $liveChanged, $master): void {
             foreach ($writes as [$sql, $params]) {
                 $db->run($sql, $params);
             }
+            if ($liveChanged) {
+                // CalDAV clients and open tabs fetch the series again.
+                ChangeLog::record($db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+            }
         });
         if ($liveChanged) {
-            // CalDAV clients and open tabs fetch the series again.
-            ChangeLog::record($db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
             ChangeLog::touchAccount($db, (int) $master['user_id']);
         }
         if ($afterSeries !== null) {

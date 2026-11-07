@@ -46,8 +46,10 @@ return static function (Db $db): string {
                 $set['rrule'] = str_replace('UNTIL=' . $m[1], 'UNTIL=' . $until->setTimezone($tz)->format('Ymd'), (string) $row['rrule']);
             }
         }
-        $db->update('events', $set, 'id = ?', [(int) $row['id']]);
-        ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+        $db->tx(static function () use ($db, $set, $row): void {
+            $db->update('events', $set, 'id = ?', [(int) $row['id']]);
+            ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+        });
         $events++;
 
         // Its edited days: the key names an occurrence of the old series.

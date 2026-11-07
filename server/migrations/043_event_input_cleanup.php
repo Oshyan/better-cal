@@ -51,8 +51,10 @@ return static function (Db $db): string {
                 continue;
             }
             $set['updated_at'] = $now;
-            $db->update('events', $set, 'id = ?', [$lastId]);
-            ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+            $db->tx(static function () use ($db, $set, $lastId, $row): void {
+                $db->update('events', $set, 'id = ?', [$lastId]);
+                ChangeLog::record($db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
+            });
             $changed++;
         }
     }

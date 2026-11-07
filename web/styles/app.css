@@ -2873,6 +2873,8 @@ body.bc-rescheduling { user-select: none; }
   font-size: 10.5px; color: var(--fg-muted); text-align: right;
 }
 .bc-place-credit a { color: inherit; }
+/* Nothing matched: one plain sentence where the rows would be. */
+.bc-place-empty { padding: 6px 9px; color: var(--fg-muted); cursor: default; }
 /* Compact variant for the quick add strip. */
 .bc-place-compact .bc-place-list { font-size: 12px; }
 .bc-qa-locfield { flex: 1; min-width: 120px; }

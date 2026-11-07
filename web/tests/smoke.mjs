@@ -27,6 +27,7 @@ import {
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
 import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl, validCoordinates } from '../src/lib/maps.js';
 import { safeWebUrl, meetingLinkInText } from '../src/lib/urls.js';
+import { placeAnswer } from '../src/lib/placeanswer.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { collapseDuplicates } from '../src/ui/duplicates.js';
 import { dayStepList, hidesCancelled } from '../src/ui/daysteps.js';
@@ -1692,6 +1693,17 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('map style: maptiler already dark', mapTilerStyle('streets-v2-dark', true), 'streets-v2-dark');
   eq('map style: maptiler style without a twin stays', mapTilerStyle('topo-v2', true), 'topo-v2');
   eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
+}
+
+// --- The place dropdown: rows, or the reason nothing matched ---
+{
+  const rows = [{ name: 'Harbor Light Cinema', address: 'Example Bay', lat: 1, lng: 2 }];
+  const credit = [{ label: 'Photon', url: 'https://photon.komoot.io' }];
+  eq('place answer: rows and who found them', placeAnswer({ results: rows, credits: credit, reason: null }), { results: rows, credits: credit, note: '' });
+  eq('place answer: nothing matched shows the one sentence, no credits', placeAnswer({ results: [], credits: credit, reason: 'No place matches all of those words.' }),
+    { results: [], credits: [], note: 'No place matches all of those words.' });
+  eq('place answer: no reason (no service reached, or an older server) leaves it closed', placeAnswer({ results: [], credits: [] }), { results: [], credits: [], note: '' });
+  eq('place answer: no answer at all', placeAnswer(null), { results: [], credits: [], note: '' });
 }
 
 // A day cell with the filter box in use (#126): matches first, grayed-out

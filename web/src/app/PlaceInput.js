@@ -20,6 +20,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { api } from './api.js';
+import { placeAnswer } from '../lib/placeanswer.js';
 import { state } from './store.js';
 import { knownPosition, awayFromHome } from './devicelocation.js';
 import { localTz } from '../lib/dates.js';
@@ -101,6 +102,7 @@ export function PlaceInput({
 }) {
   const [results, setResults] = useState(null); // null = closed, [] = no matches
   const [credits, setCredits] = useState([]); // who answered, as their terms ask
+  const [note, setNote] = useState(''); // why nothing came back, shown in place of the rows
   const [active, setActive] = useState(-1);
   const timerRef = useRef(0);
   const reqRef = useRef(0);
@@ -109,7 +111,7 @@ export function PlaceInput({
 
   useEffect(() => () => { clearTimeout(timerRef.current); clearTimeout(blurTimer.current); }, []);
 
-  const close = () => { setResults(null); setActive(-1); };
+  const close = () => { setResults(null); setNote(''); setActive(-1); };
   const inputRef = useRef(null);
 
   // Opened without the box having focus, the list closes on a press
@@ -140,9 +142,10 @@ export function PlaceInput({
     try {
       const data = await api('/geocode/search?' + params.toString());
       if (id !== reqRef.current) return; // stale response
-      const list = (data && data.results) || [];
-      setCredits((data && data.credits) || []);
-      setResults(list.length ? list : null);
+      const { results: list, credits: from, note: why } = placeAnswer(data);
+      setCredits(from);
+      setNote(why);
+      setResults(list.length || why ? list : null);
       setActive(list.length ? 0 : -1);
     } catch {
       if (id === reqRef.current) close(); // search is best-effort
@@ -221,6 +224,9 @@ export function PlaceInput({
       onBlur=${onBlur}
       onFocus=${onFocus}
     />
+    ${results && results.length === 0 && note && html`<ul class="bc-place-list" role="presentation">
+      <li class="bc-place-empty" role="status" onPointerDown=${(e) => e.preventDefault()}>${note}</li>
+    </ul>`}
     ${results && results.length > 0 && html`<ul class="bc-place-list" role="listbox">
       ${results.map((r, i) => html`<li
         key=${r.lat + ',' + r.lng + ':' + r.name}

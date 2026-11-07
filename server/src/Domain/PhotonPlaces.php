@@ -121,7 +121,9 @@ final class PhotonPlaces implements PlaceProvider
         // region failed: worldwide, a bare "250" or "250 e" is noise the far
         // filters drop anyway, and with Photon slow the retry only doubled
         // the wait before an empty answer.
-        $found = $address !== null ? count(PlaceSearch::containingAllWords($q, $candidates ?? [])) : count($candidates ?? []);
+        // Only rows with every typed word count (PlaceSearch drops the rest):
+        // a box full of near misses is a box that found nothing.
+        $found = count(PlaceSearch::containingAllWords($q, $candidates ?? []));
         $enough = $address !== null ? 1 : self::REGION_ENOUGH;
         if (!$biased || (PlaceSearch::hasWord($q) && ($candidates === null || $found < $enough))) {
             $world = $this->fetch($batch($params), $q, $biasLat, $biasLng);

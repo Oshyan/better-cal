@@ -13,8 +13,10 @@ use BetterCal\Http\HttpError;
  * The provider (PlaceProvider: PhotonPlaces by default, or LocationIQ or
  * Stadia with Photon behind them, PlaceProviders) fetches candidates and
  * carries every workaround its service needs. This class holds the rules
- * that apply whatever the provider: a leading house number must appear in a
- * result; an address goes nearest first; a bare number is never a far
+ * that apply whatever the provider: a result must contain every typed word
+ * (containingAllWords), a leading house number whole; a "<what> <where>"
+ * query nothing matches is narrowed to the where; an address goes nearest
+ * first; a bare number is never a far
  * place; results past 500 km are flagged far so the UI can call them out;
  * an airport code pins the airport. A provider may mark a row 'pin' (the
  * place named exactly what was typed): it goes first, ahead of ranking.
@@ -30,6 +32,9 @@ final class PlaceSearch
     public const FAR_KM = 500.0;
     /** Half a region box's height, in degrees of latitude (about 300 km). */
     public const REGION_HALF_DEG = 2.7;
+
+    /** Why the last search gave nothing (reason()). */
+    private ?string $reason = null;
 
     public function __construct(private readonly PlaceProvider $provider)
     {
@@ -233,16 +238,18 @@ final class PlaceSearch
 
     /**
      * Whether any candidate would survive search()'s rules for this query:
-     * the leading house number must match, and with a bias a bare number is
-     * never a far place. A provider whose answer would all be filtered out
-     * hasn't answered, so the next one is asked (FallbackPlaces): a service
-     * that reads "250" as a prefix and offers 2500 and 2507 leaves nothing. Pure.
+     * every typed word must be in it (containingAllWords), the leading house
+     * number among them, and with a bias a bare number is never a far place.
+     * A provider whose answer would all be filtered out hasn't answered, so
+     * the next one is asked (FallbackPlaces): a service that reads "250" as a
+     * prefix and offers 2500 and 2507 leaves nothing, and so does one that
+     * answers "<venue> <town>" with things in the town. Pure.
      *
      * @param list<array<string,mixed>> $candidates
      */
     public static function usable(string $q, array $candidates, bool $biased): bool
     {
-        $kept = self::matchingNumber($q, $candidates);
+        $kept = self::containingAllWords($q, self::matchingNumber($q, $candidates));
         if ($biased && self::houseNumber($q) !== null && !self::hasWord($q)) {
             $kept = array_filter($kept, static fn(array $c): bool => empty($c['far']));
         }
@@ -256,31 +263,199 @@ final class PlaceSearch
     }
 
     /**
-     * Keep candidates whose name and address contain every query word: each
-     * word as the start of a word in the candidate, numbers whole. The last
-     * word may be partial (it is still being typed). Pure.
+     * Street words and their short forms. A typed word and a word in a
+     * result are the same when their short forms are: "St" finds "Street"
+     * and "Boulevard" finds "Blvd".
+     */
+    public const SHORT_WORDS = [
+        'street' => 'st', 'avenue' => 'ave', 'boulevard' => 'blvd', 'road' => 'rd',
+        'drive' => 'dr', 'lane' => 'ln', 'court' => 'ct', 'place' => 'pl',
+        'highway' => 'hwy', 'parkway' => 'pkwy',
+        'north' => 'n', 'south' => 's', 'east' => 'e', 'west' => 'w',
+    ];
+
+    /**
+     * The words of a text as the word rule compares them: lowercased,
+     * accents off ("Café" is "cafe"), apostrophes dropped ("Joe's" is
+     * "joes"), split at anything not a letter or digit. Pure.
+     *
+     * @return list<string>
+     */
+    public static function words(string $text): array
+    {
+        $text = mb_strtolower($text);
+        if (class_exists(\Normalizer::class)) {
+            $text = (string) preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($text, \Normalizer::FORM_D));
+        }
+        $text = (string) preg_replace("/['\u{2019}]/u", '', $text);
+        return preg_split('/[^\p{L}\p{N}]+/u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    }
+
+    /** A word's short form (SHORT_WORDS), or the word. Pure. */
+    public static function shortWord(string $word): string
+    {
+        return self::SHORT_WORDS[$word] ?? $word;
+    }
+
+    /**
+     * The query without a trailing postal code or state code, which a result
+     * need not show (services spell the state out, or leave the postcode
+     * off): "40 Main St, Sampleton, EX 12345" is "40 Main St, Sampleton". A
+     * postal code is four to six digits (or a ZIP+4) after something else; a
+     * state code is two letters after a comma or before that postal code.
+     * Pure.
+     */
+    public static function withoutStateOrPostcode(string $q): string
+    {
+        $postcode = preg_match('/^(.*[\p{L}\p{N}].*?)[\s,]+\d{4,6}(?:-\d{4})?\s*$/u', $q, $m) === 1;
+        if ($postcode) {
+            $q = $m[1];
+        }
+        if (preg_match('/^(.*[\p{L}\p{N}].*?)(\s*,\s*|\s+)\p{L}{2}\.?\s*$/u', $q, $m) === 1 && ($postcode || str_contains($m[2], ','))) {
+            $q = $m[1];
+        }
+        return trim($q, " \t,");
+    }
+
+    /**
+     * The words a result must contain (words()): the query's, without a
+     * trailing state or postal code (withoutStateOrPostcode) and without
+     * "and", which a name may spell "&". Pure.
+     *
+     * @return list<string>
+     */
+    public static function requiredWords(string $q): array
+    {
+        return array_values(array_filter(self::words(self::withoutStateOrPostcode($q)), static fn(string $w): bool => $w !== 'and'));
+    }
+
+    /**
+     * Whether a candidate's name and address contain every required word
+     * (requiredWords): a number as a whole word, any other word as the start
+     * of one of the candidate's words (the last may still be being typed) or
+     * as the same street word (SHORT_WORDS). Pure.
+     *
+     * @param array<string,mixed> $candidate
+     * @param ?list<string> $required requiredWords($q), when already worked out
+     */
+    public static function hasAllWords(string $q, array $candidate, ?array $required = null): bool
+    {
+        $required ??= self::requiredWords($q);
+        if ($required === []) {
+            return true;
+        }
+        $have = self::words((string) ($candidate['name'] ?? '') . ' ' . (string) ($candidate['address'] ?? ''));
+        $short = array_map([self::class, 'shortWord'], $have);
+        foreach ($required as $w) {
+            if (ctype_digit($w)) {
+                if (!in_array($w, $have, true)) {
+                    return false;
+                }
+                continue;
+            }
+            $sw = self::shortWord($w);
+            $found = false;
+            foreach ($have as $i => $h) {
+                if (str_starts_with($h, $w) || $short[$i] === $sw) {
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Keep candidates that contain every typed word (hasAllWords): the one
+     * rule every service's answer is held to, whichever request it came
+     * from. Pure.
      *
      * @param list<array<string,mixed>> $candidates
      * @return list<array<string,mixed>>
      */
     public static function containingAllWords(string $q, array $candidates): array
     {
-        $words = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($q), -1, PREG_SPLIT_NO_EMPTY) ?: [];
-        if ($words === []) {
-            return $candidates;
+        $required = self::requiredWords($q);
+        return array_values(array_filter($candidates, static fn(array $c): bool => self::hasAllWords($q, $c, $required)));
+    }
+
+    /**
+     * Kinds of row that name a town or an area a trailing word can narrow
+     * to: a city, town, county, state or region, in each service's own words
+     * (Photon's city, LocationIQ's administrative boundary, MapTiler's
+     * municipality, Stadia's locality and so on).
+     */
+    public const AREA_KINDS = [
+        'city', 'town', 'municipality', 'joint_municipality', 'locality', 'localadmin',
+        'county', 'subregion', 'state', 'province', 'region', 'macroregion', 'administrative',
+    ];
+
+    /**
+     * Ways to read a query as "<what> <where>": the leading words and the
+     * last two, then the leading words and the last one, while leading
+     * words are left and the trailing ones have a letter. None for a query
+     * with a house number (an address names its town itself). A trailing
+     * state or postal code is set aside first. Pure.
+     *
+     * @return list<array{0:string,1:string}> [leading, trailing] pairs
+     */
+    public static function narrowings(string $q): array
+    {
+        if (self::houseNumber($q) !== null) {
+            return [];
         }
-        return array_values(array_filter($candidates, static function (array $c) use ($words): bool {
-            $text = mb_strtolower((string) ($c['name'] ?? '') . ' ' . (string) ($c['address'] ?? ''));
-            foreach ($words as $w) {
-                $pattern = ctype_digit($w)
-                    ? '/(?<![\p{L}\p{N}])' . preg_quote($w, '/') . '(?![\p{L}\p{N}])/u'
-                    : '/(?<![\p{L}\p{N}])' . preg_quote($w, '/') . '/u';
-                if (preg_match($pattern, $text) !== 1) {
-                    return false;
+        $tokens = preg_split('/[\s,]+/u', self::withoutStateOrPostcode($q), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $out = [];
+        foreach ([2, 1] as $n) {
+            if (count($tokens) > $n) {
+                $where = implode(' ', array_slice($tokens, -$n));
+                if (preg_match('/\p{L}/u', $where) === 1) {
+                    $out[] = [implode(' ', array_slice($tokens, 0, -$n)), $where];
                 }
             }
-            return true;
-        }));
+        }
+        return $out;
+    }
+
+    /**
+     * The first row that is a town or an area (AREA_KINDS) named exactly
+     * $name, case, accents and punctuation aside, or null. Pure.
+     *
+     * @param list<array<string,mixed>> $rows
+     */
+    public static function areaNamed(string $name, array $rows): ?array
+    {
+        $want = implode(' ', self::words($name));
+        if ($want === '') {
+            return null;
+        }
+        foreach ($rows as $r) {
+            if (in_array($r['kind'] ?? null, self::AREA_KINDS, true) && implode(' ', self::words((string) ($r['name'] ?? ''))) === $want) {
+                return $r;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Rows with their distance and far flag measured from another point (or
+     * none without one): rows found around a town the query narrowed to
+     * still say how far they are from the person. Pure.
+     *
+     * @param list<array<string,mixed>> $rows
+     * @return list<array<string,mixed>>
+     */
+    public static function rebias(array $rows, ?float $biasLat, ?float $biasLng): array
+    {
+        return array_map(static function (array $r) use ($biasLat, $biasLng): array {
+            $d = $biasLat !== null && $biasLng !== null ? round(self::distanceKm($biasLat, $biasLng, (float) $r['lat'], (float) $r['lng']), 1) : null;
+            $r['distanceKm'] = $d;
+            $r['far'] = $d !== null && $d > self::FAR_KM;
+            return $r;
+        }, $rows);
     }
 
     /**
@@ -426,7 +601,26 @@ final class PlaceSearch
         return $this->provider->credits();
     }
 
+    /** Said in the dropdown when a search answered nothing. */
+    public const NO_MATCH = 'No place matches all of those words.';
+
     /**
+     * Why the last search gave nothing, for the dropdown (NO_MATCH), or null:
+     * it found something, or every service failed.
+     */
+    public function reason(): ?string
+    {
+        return $this->reason;
+    }
+
+    /**
+     * Every service's rows are held to the word rule (containingAllWords); a
+     * service whose rows all fail it has not answered, and the next is asked
+     * (FallbackPlaces). When nothing matches the whole query and it reads as
+     * "<what> <where>" with the where a town or an area (narrowings,
+     * areaNamed), the what is searched again around that place: once, and
+     * never for an address.
+     *
      * @param ?string $language preferred language (preferredLanguage), or null
      * @return list<array<string,mixed>> ranked candidates (empty on provider
      *   failure; transport errors never bubble to the client)
@@ -438,34 +632,12 @@ final class PlaceSearch
             throw HttpError::badRequest('q is required');
         }
         $limit = max(1, min(self::MAX_LIMIT, $limit));
-        $biased = $biasLat !== null && $biasLng !== null;
+        $this->reason = null;
 
-        $candidates = self::matchingNumber($q, $this->provider->candidates($q, $biasLat, $biasLng, $limit, $language) ?? []);
-        $pinned = array_values(array_filter($candidates, static fn(array $c): bool => !empty($c['pin'])));
-        $candidates = array_values(array_filter($candidates, static fn(array $c): bool => empty($c['pin'])));
-        if ($biased) {
-            if (self::houseNumber($q) !== null) {
-                // A bare number is a house nearby: worldwide it is every
-                // place with that number.
-                if (!self::hasWord($q)) {
-                    $candidates = array_values(array_filter($candidates, static fn(array $c): bool => !$c['far']));
-                }
-                // An address is a place you mean to go: the nearest match is
-                // the one, however exact a far one looks ("250 elm" must offer
-                // the Elmwood Avenue nearby before an Elm Court a thousand
-                // miles off).
-                $candidates = self::addressOrder($q, $candidates);
-            } else {
-                $cap = $this->provider->distanceCap();
-                if ($cap !== null) {
-                    $candidates = self::rank($candidates, $cap);
-                }
-            }
+        $candidates = $this->found($q, $biasLat, $biasLng, $limit, $language);
+        if ($candidates === []) {
+            $candidates = $this->narrowed($q, $biasLat, $biasLng, $limit, $language);
         }
-        $candidates = array_merge(
-            array_map(static function (array $c): array { unset($c['pin']); return $c; }, $pinned),
-            $candidates
-        );
         // Airport codes: pin the IATA-table airport above everything; bias
         // must not bury SFO under a same-named street nearby, and in Denmark
         // "SFO" is an after-school program, which is never the intent of an
@@ -490,10 +662,81 @@ final class PlaceSearch
                 $airport['country']
             );
             $candidates = array_merge([$pinned], array_values(array_filter(
-                $candidates,
+                $candidates ?? [],
                 static fn(array $c): bool => mb_strtolower($c['name']) !== mb_strtolower($airport['name'])
             )));
         }
-        return array_slice($candidates, 0, $limit);
+        if ($candidates === []) {
+            $this->reason = self::NO_MATCH;
+        }
+        return array_slice($candidates ?? [], 0, $limit);
+    }
+
+    /**
+     * The query read as "<what> <where>": the first reading whose where the
+     * services find as a town or an area named exactly that (resolved like
+     * any query, through found()), then the what searched around it, its
+     * distances still from the bias. Empty when no reading narrows; null
+     * when a service failed on the way.
+     *
+     * @return ?list<array<string,mixed>>
+     */
+    private function narrowed(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array
+    {
+        foreach (self::narrowings($q) as [$what, $where]) {
+            $places = $this->found($where, $biasLat, $biasLng, $limit, $language);
+            if ($places === null) {
+                return null;
+            }
+            $area = self::areaNamed($where, $places);
+            if ($area !== null) {
+                $around = $this->found($what, (float) $area['lat'], (float) $area['lng'], $limit, $language);
+                return $around === null ? null : self::rebias($around, $biasLat, $biasLng);
+            }
+        }
+        return [];
+    }
+
+    /**
+     * One query through the provider and the shared rules, ranked, pins
+     * first; null when the provider could not be reached.
+     *
+     * @return ?list<array<string,mixed>>
+     */
+    private function found(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array
+    {
+        $biased = $biasLat !== null && $biasLng !== null;
+        $rows = $this->provider->candidates($q, $biasLat, $biasLng, $limit, $language);
+        if ($rows === null) {
+            return null;
+        }
+        // Every typed word, whichever service and request a row came from;
+        // pins too (an exactly named place, a town starting with the query).
+        $candidates = self::containingAllWords($q, self::matchingNumber($q, $rows));
+        $pinned = array_values(array_filter($candidates, static fn(array $c): bool => !empty($c['pin'])));
+        $candidates = array_values(array_filter($candidates, static fn(array $c): bool => empty($c['pin'])));
+        if ($biased) {
+            if (self::houseNumber($q) !== null) {
+                // A bare number is a house nearby: worldwide it is every
+                // place with that number.
+                if (!self::hasWord($q)) {
+                    $candidates = array_values(array_filter($candidates, static fn(array $c): bool => !$c['far']));
+                }
+                // An address is a place you mean to go: the nearest match is
+                // the one, however exact a far one looks ("250 elm" must offer
+                // the Elmwood Avenue nearby before an Elm Court a thousand
+                // miles off).
+                $candidates = self::addressOrder($q, $candidates);
+            } else {
+                $cap = $this->provider->distanceCap();
+                if ($cap !== null) {
+                    $candidates = self::rank($candidates, $cap);
+                }
+            }
+        }
+        return array_merge(
+            array_map(static function (array $c): array { unset($c['pin']); return $c; }, $pinned),
+            $candidates
+        );
     }
 }

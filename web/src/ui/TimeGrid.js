@@ -18,11 +18,14 @@
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
-  parseISO, toISOWithOffset, dayKeyOf, occDayKey, dateOfDayKey, todayKey,
-  fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay, wallInstant,
+  parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, todayKey,
+  fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay, wallMinutes, MINUTES_DAY,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
-import { occurrenceDaySpan, isOvernight, isWeekendEpochDay, shiftOccurrenceDays, resizeOccurrenceDays } from './monthmath.js';
+import {
+  occurrenceDaySpan, isOvernight, isWeekendEpochDay, shiftOccurrenceDays, resizeOccurrenceDays,
+  wallSpan, movedDates, resizedDates, drawnDates, SNAP_MIN,
+} from './monthmath.js';
 import { EventBlock, EventBar, HiddenMark, TripBand } from './EventChip.js';
 import { isBand, canReschedule } from '../lib/bands.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
@@ -38,8 +41,6 @@ import {
 } from '../lib/quickcreate.js';
 
 const HOUR_H = 48;   // px per hour
-const SNAP_MIN = 15;
-const MINUTES_DAY = 1440;
 const GUTTER = 52;   // px hour gutter
 const DAY_SPAN = 3653; // days either side of today (~10 years) in infinite mode
 const H_BUFFER = 3;    // extra day columns rendered either side
@@ -117,9 +118,12 @@ function spanNote(occ, startsHere, endsHere) {
   return null;
 }
 
-function dateAt(dayKey, minutes) {
-  const base = dateOfDayKey(dayKey);
-  return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minutes);
+// What a drawn draft will be created as, in words: the clocks read as the
+// drop reads them, so a range drawn into the skipped hour says the hour it
+// gets.
+function drawnLabel(draft) {
+  const d = drawnDates(draft.dayKey, draft.startMin, draft.endMin);
+  return fmtTime(parseISO(d.start)) + ' to ' + fmtTime(parseISO(d.end));
 }
 
 function snapMin(m) {
@@ -904,11 +908,7 @@ export function TimeGrid({
         ? allDayRangeDraft(p.startKey, p.endKey)
         : dayRangeDraft(p.startKey, p.endKey));
     } else {
-      onCreateRange({
-        start: toISOWithOffset(dateAt(p.dayKey, p.startMin)),
-        end: toISOWithOffset(dateAt(p.dayKey, p.endMin)),
-        allDay: false,
-      });
+      onCreateRange(drawnDates(p.dayKey, p.startMin, p.endMin));
     }
   }, [onCreateRange]);
 
@@ -918,18 +918,18 @@ export function TimeGrid({
   const dragMove = useCallback((occ, ev) => {
     ev.stopPropagation();
     const src = ev.currentTarget.closest('.bc-block') || ev.currentTarget;
-    const s0 = parseISO(occ.start);
-    const e0 = parseISO(occ.end);
-    const durMin = Math.max(SNAP_MIN, (e0 - s0) / 60000);
     const grab = pointToSlot({ x: ev.clientX, y: ev.clientY });
     if (!grab) return;
-    const grabOffset = grab.min - minutesOfDay(s0);
-    // An overnight event moves by its absolute start, across midnight as
-    // needed: grabbed in its second part, the offset spans the day change.
-    const overnight = isOvernight(occ);
-    const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
-    const absGrab = absOf(grab.dayKey, grab.min) - absOf(dayKeyOf(s0), minutesOfDay(s0));
-    let target = null;
+    // The event moves in absolute wall minutes and keeps its length on the
+    // clock (wallSpan), so a day whose clocks change shows it as the preview
+    // did. The start stays on the day under the pointer, less the days the
+    // grabbed part is from the start (an overnight event grabbed in its
+    // second part), and the end may run past midnight, so 9 to 11 PM can
+    // become 11 PM to 1 AM (#183).
+    const span = wallSpan(occ);
+    const absGrab = wallMinutes(grab.dayKey, grab.min) - span.sAbs;
+    const partDays = epochDayOfKey(grab.dayKey) - Math.floor(span.sAbs / MINUTES_DAY);
+    let target = null; // the start, in absolute wall minutes
     let ext = null;
     // Sidebar rows accept drops here too (recategorize / link a person);
     // feed events are read-only content-wise, so neither applies to them.
@@ -960,16 +960,10 @@ export function TimeGrid({
         }
         const slot = pointToSlot(pt);
         if (!slot) { target = null; hidePreview(previewRef); return; }
-        if (overnight) {
-          const a = snapMin(absOf(slot.dayKey, slot.min) - absGrab);
-          const day = Math.floor(a / MINUTES_DAY);
-          target = { dayKey: keyOfEpochDay(day), startMin: a - day * MINUTES_DAY };
-        } else {
-          // The start stays on the day under the pointer; the end may run
-          // past midnight, so 9 to 11 PM can become 11 PM to 1 AM (#183).
-          target = { dayKey: slot.dayKey, startMin: Math.max(0, Math.min(MINUTES_DAY - SNAP_MIN, snapMin(slot.min - grabOffset))) };
-        }
-        showPreview(previewRef, previewGeom(), target.dayKey, target.startMin, durMin);
+        const day = epochDayOfKey(slot.dayKey) - partDays;
+        const dayStart = day * MINUTES_DAY;
+        target = Math.max(dayStart, Math.min(dayStart + MINUTES_DAY - SNAP_MIN, snapMin(wallMinutes(slot.dayKey, slot.min) - absGrab)));
+        showPreview(previewRef, previewGeom(), keyOfEpochDay(day), target - dayStart, span.dur);
       },
       onDrop: (pt) => {
         src.classList.remove('is-drag-source');
@@ -980,11 +974,10 @@ export function TimeGrid({
           else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
           return;
         }
-        if (!target || !onMoveEvent) return;
-        const ns = dateAt(target.dayKey, target.startMin);
-        const ne = new Date(ns.getTime() + durMin * 60000);
-        if (ns.getTime() === s0.getTime()) return;
-        onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(ns), newEnd: toISOWithOffset(ne), at: pt });
+        if (target == null || !onMoveEvent) return;
+        const r = movedDates(occ, target);
+        if (parseISO(r.newStart).getTime() === parseISO(occ.start).getTime()) return;
+        onMoveEvent({ instanceId: occ.instanceId, ...r, at: pt });
       },
       onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); setDropRowHighlight(null); },
     });
@@ -1071,22 +1064,22 @@ export function TimeGrid({
     });
   }, [pointToSlot, infinite, vstack, calendars, onResizeEvent]); // eslint-disable-line
 
-  // An overnight event's ends, in absolute minutes. Each part carries only
-  // its own end's handle. In day view the stacked day under the pointer
-  // counts. Side by side (week), so does the event's other day (to end it
-  // before midnight, or start it after); any other column counts as the
-  // part's own day, so drifting sideways doesn't jump a day.
-  const dragResizeOvernight = useCallback((occ, edge, ev, s0, e0) => {
+  // One of an event's ends dragged, in absolute wall minutes, the other held
+  // exactly where it is (resizedDates). Each part of an overnight event
+  // carries only its own end's handle. In day view the stacked day under
+  // the pointer counts, so past the end of a day is the next day (it was
+  // the day's own end, which made an event dragged there 15 minutes long
+  // before the drag was measured in absolute minutes). Side by side (week),
+  // the column counts when it is one of the event's own days (to end an
+  // overnight event before midnight, or start it after); any other column
+  // is the day the handle is in, so drifting sideways doesn't jump a day.
+  const dragResize = useCallback((occ, edge, ev) => {
+    ev.stopPropagation();
+    if (!canReschedule(occ, calendars[occ.calendarId])) return;
     const col = ev.currentTarget.closest('.bc-tg-col');
-    const partKey = (col && col.dataset.day) || dayKeyOf(edge === 'start' ? s0 : new Date(e0.getTime() - 1));
-    const absOf = (k, m) => epochDayOfKey(k) * MINUTES_DAY + m;
-    // Each end on its own clock: across a clock change the minutes between
-    // them aren't the distance on the clock, and the end you didn't touch
-    // moved by an hour (#185).
-    const sAbs = absOf(dayKeyOf(s0), minutesOfDay(s0));
-    const eAbs = absOf(dayKeyOf(e0), minutesOfDay(e0));
-    const firstKey = dayKeyOf(s0);
-    const lastKey = dayKeyOf(new Date(e0.getTime() - 1));
+    const firstKey = dayKeyOf(parseISO(occ.start));
+    const lastKey = dayKeyOf(new Date(parseISO(occ.end).getTime() - 1));
+    const partKey = (col && col.dataset.day) || (edge === 'start' ? firstKey : lastKey);
     let result = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
@@ -1094,83 +1087,24 @@ export function TimeGrid({
         const slot = pointToSlot(pt);
         if (!slot) { result = null; hidePreview(previewRef); return; }
         const own = vstack || slot.dayKey === firstKey || slot.dayKey === lastKey ? slot.dayKey : partKey;
-        const a = snapMin(absOf(own, slot.min));
-        const s = edge === 'start' ? Math.min(a, eAbs - SNAP_MIN) : sAbs;
-        const e = edge === 'end' ? Math.max(a, sAbs + SNAP_MIN) : eAbs;
-        result = { s, e };
+        result = resizedDates(occ, edge, snapMin(wallMinutes(own, slot.min)));
+        if (!result) { hidePreview(previewRef); return; }
         // The preview shows the day the moved end is on.
-        const edgeDay = Math.floor((edge === 'end' ? e - 1 : s) / MINUTES_DAY);
+        const edgeDay = Math.floor((edge === 'end' ? result.e - 1 : result.s) / MINUTES_DAY);
         const dayStart = edgeDay * MINUTES_DAY;
-        const ps = Math.max(0, s - dayStart);
-        const pe = Math.min(MINUTES_DAY, e - dayStart);
+        const ps = Math.max(0, result.s - dayStart);
+        const pe = Math.min(MINUTES_DAY, result.e - dayStart);
         if (pe > ps) showPreview(previewRef, previewGeom(), keyOfEpochDay(edgeDay), ps, pe - ps);
         else hidePreview(previewRef);
       },
       onDrop: (pt) => {
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
-        // The end not dragged stays exactly as it was, and the one dragged
-        // lands on the right side of it in a repeated hour (wallInstant).
-        const gap = SNAP_MIN * 60000;
-        const at = (x, near) => { const d = Math.floor(x / MINUTES_DAY); return toISOWithOffset(new Date(wallInstant(keyOfEpochDay(d), x - d * MINUTES_DAY, near))); };
-        onResizeEvent({
-          instanceId: occ.instanceId,
-          newStart: edge === 'start' ? at(result.s, { before: e0.getTime() - gap }) : occ.start,
-          newEnd: edge === 'end' ? at(result.e, { after: s0.getTime() + gap }) : occ.end,
-          edge,
-          at: pt,
-        });
+        onResizeEvent({ instanceId: occ.instanceId, newStart: result.newStart, newEnd: result.newEnd, edge, at: pt });
       },
       onCancel: () => hidePreview(previewRef),
     });
-  }, [pointToSlot, previewGeom, onResizeEvent, vstack]);
-
-  const dragResize = useCallback((occ, edge, ev) => {
-    ev.stopPropagation();
-    if (!canReschedule(occ, calendars[occ.calendarId])) return;
-    const s0 = parseISO(occ.start);
-    const e0 = parseISO(occ.end);
-    const dayKey = occDayKey(occ);
-    if (isOvernight(occ)) { dragResizeOvernight(occ, edge, ev, s0, e0); return; }
-    if (!days.includes(dayKey)) return;
-    let result = null;
-    startPointerDrag(ev, {
-      scrollEl: scrollRef.current,
-      onMove: (pt) => {
-        const slot = pointToSlot(pt);
-        if (!slot) { result = null; hidePreview(previewRef); return; }
-        // Day view stacks the next day below this one: past the end of the
-        // event's own day is the end of that day, not 0:00 of the next, which
-        // made the event 15 minutes long; above its start is the start. Side
-        // by side (week), the column doesn't matter, only the height.
-        const own = !vstack || slot.dayKey === dayKey ? slot.min : (slot.dayKey > dayKey ? MINUTES_DAY : 0);
-        const m = snapMin(own);
-        let sMin = minutesOfDay(s0);
-        let eMin = minutesOfDay(e0) || MINUTES_DAY;
-        if (edge === 'start') sMin = Math.min(m, eMin - SNAP_MIN);
-        else eMin = Math.max(m, sMin + SNAP_MIN);
-        result = { sMin, eMin };
-        showPreview(previewRef, previewGeom(), dayKey, sMin, eMin - sMin);
-      },
-      onDrop: (pt) => {
-        hidePreview(previewRef);
-        if (!result || !onResizeEvent) return;
-        // The end not dragged stays exactly as it was: rebuilt from the
-        // clock, a start in the repeated hour of a clock change moved by an
-        // hour (#185). The one dragged lands on the right side of it
-        // (wallInstant).
-        const gap = SNAP_MIN * 60000;
-        onResizeEvent({
-          instanceId: occ.instanceId,
-          newStart: edge === 'start' ? toISOWithOffset(new Date(wallInstant(dayKey, result.sMin, { before: e0.getTime() - gap }))) : occ.start,
-          newEnd: edge === 'end' ? toISOWithOffset(new Date(wallInstant(dayKey, result.eMin, { after: s0.getTime() + gap }))) : occ.end,
-          edge,
-          at: pt,
-        });
-      },
-      onCancel: () => hidePreview(previewRef),
-    });
-  }, [pointToSlot, days, previewGeom, onResizeEvent, calendars, vstack, dragResizeOvernight]);
+  }, [pointToSlot, previewGeom, onResizeEvent, calendars, vstack]);
 
   // --- render ---------------------------------------------------------------
 
@@ -1361,7 +1295,7 @@ export function TimeGrid({
     ${draftPart(k) && html`<div
       class="bc-tg-draft"
       style=${`top:${(draftPart(k).s / 60) * HOUR_H}px;height:${((draftPart(k).e - draftPart(k).s) / 60) * HOUR_H}px`}
-    >${draftPart(k).first ? fmtTime(dateAt(draft.dayKey, draft.startMin)) + ' to ' + fmtTime(dateAt(draft.dayKey, draft.endMin)) : ''}</div>`}
+    >${draftPart(k).first ? drawnLabel(draft) : ''}</div>`}
     ${k === nowKey && html`<div class="bc-nowline" style=${`top:${(minutesOfDay(now) / 60) * HOUR_H}px`}><span class="bc-nowline-dot"></span></div>`}
   </div>`;
   });

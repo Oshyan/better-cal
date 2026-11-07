@@ -3,8 +3,9 @@
 
 import {
   epochDayOfKey, keyOfEpochDay, weekIndexOfEpochDay, firstEpochDayOfWeek,
-  dayKeyOfISO, parseISO, dayKeyOf, addDaysDate, toISOWithOffset, dateOfDayKey,
+  dayKeyOfISO, parseISO, dayKeyOf, addDaysDate, toISOWithOffset,
   pad, addDaysInZone, sameClock, localTz,
+  MINUTES_DAY, wallMinutes, wallMinutesOf, wallRangeInstants,
 } from '../lib/dates.js';
 
 // Which of a day's single events a month or 3-day cell shows, and what its
@@ -284,13 +285,67 @@ export function shiftOccurrenceDays(occ, deltaDays) {
   };
 }
 
+// --- times when dragging (#190) ---------------------------------------------
+// A drag on the time grid is measured in absolute wall minutes (dates.js,
+// wallMinutes): the grid is a wall clock, drawn the same on a day whose
+// clocks change, so a moved event keeps its shape on the clock, a resized
+// end goes to the clock it was dropped at, and a drawn range is the clocks
+// it covers. The minutes are read to instants by wallRangeInstants, the one
+// rule a typed range is read by. Each gesture says only what it holds and
+// what it moves; the reading is the same for the grid's own drags, a
+// bar's end dropped on a day, and reschedule mode's click on a column.
+
+export const SNAP_MIN = 15; // the grid's snap, and the least an event can be
+
+// A timed event's ends on the clock, in absolute wall minutes, and its
+// length there (never under one snap, so a moved event has room to show).
+export function wallSpan(occ) {
+  const sAbs = wallMinutesOf(parseISO(occ.start));
+  const eAbs = wallMinutesOf(parseISO(occ.end));
+  return { sAbs, eAbs, dur: Math.max(SNAP_MIN, eAbs - sAbs) };
+}
+
+// Moved so that it starts at the absolute wall minute `sAbs`, its clock
+// length kept. In a repeated hour the start stays on the side of its old
+// instant that the drag went to, so a nudge of an event in the second pass
+// stays in it (dateAt read the first pass, #190).
+export function movedDates(occ, sAbs) {
+  const span = wallSpan(occ);
+  const s0 = parseISO(occ.start).getTime();
+  const [s, e] = wallRangeInstants(sAbs, sAbs + span.dur, { near: sAbs > span.sAbs ? { after: s0 } : { before: s0 } });
+  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e) };
+}
+
+// One end dragged to the absolute wall minute `abs`, the other held exactly
+// where it is, and the two at least a snap apart on the clock. Null when the
+// reading is backwards (a start dragged into the skipped hour whose push
+// lands it on or past the held end). `s` and `e` are the clocks for the
+// preview.
+export function resizedDates(occ, edge, abs) {
+  const { sAbs, eAbs } = wallSpan(occ);
+  const s = edge === 'start' ? Math.min(abs, eAbs - SNAP_MIN) : sAbs;
+  const e = edge === 'end' ? Math.max(abs, sAbs + SNAP_MIN) : eAbs;
+  const hold = edge === 'start' ? { end: parseISO(occ.end).getTime() } : { start: parseISO(occ.start).getTime() };
+  const [ns, ne] = wallRangeInstants(s, e, { hold });
+  if (ne <= ns) return null;
+  return { newStart: edge === 'start' ? toISOWithOffset(ns) : occ.start, newEnd: edge === 'end' ? toISOWithOffset(ne) : occ.end, s, e };
+}
+
+// A range drawn on a day, from one minute of it to another (the end may
+// pass midnight in day view's stack).
+export function drawnDates(dayKey, startMin, endMin) {
+  const [s, e] = wallRangeInstants(wallMinutes(dayKey, startMin), wallMinutes(dayKey, endMin));
+  return { start: toISOWithOffset(s), end: toISOWithOffset(e), allDay: false };
+}
+
 /**
  * A bar's start or end dragged to another day (month and week views). The
  * other end stays put, and an end can't pass the other one. All-day: pure
  * day-key arithmetic, sent as literal dates (routing these through a local
  * Date shifted the untouched edge back a day west of UTC, since the +00:00
  * date parses to the prior local evening and the server floors the literal
- * date). Timed: the moved end keeps its clock time on its new day.
+ * date). Timed: the moved end keeps its clock time on its new day, read as
+ * any resized end is (resizedDates).
  */
 export function resizeOccurrenceDays(occ, edge, targetKey) {
   const { startKey, endKey } = occurrenceDaySpan(occ);
@@ -302,24 +357,15 @@ export function resizeOccurrenceDays(occ, edge, targetKey) {
     else sKey = keyOfEpochDay(Math.min(t, epochDayOfKey(endKey)));
     return { newStart: sKey, newEnd: keyOfEpochDay(epochDayOfKey(eKeyIncl) + 1) }; // exclusive
   }
-  const s0 = parseISO(occ.start);
-  const e0 = parseISO(occ.end);
-  let s = s0, e = e0;
-  if (edge === 'end') {
-    const base = dateOfDayKey(keyOfEpochDay(Math.max(t, epochDayOfKey(startKey))));
-    // Ending at midnight, its last day is the one before: dropped on Thursday
-    // it ends as Thursday does, at Friday 00:00 (it stopped a day short).
-    const atMidnight = e0.getHours() === 0 && e0.getMinutes() === 0;
-    e = atMidnight
-      ? new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1)
-      : new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
-    if (e <= s) e = new Date(s.getTime() + 30 * 60000);
-  } else {
-    const base = dateOfDayKey(keyOfEpochDay(Math.min(t, epochDayOfKey(endKey))));
-    s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), s0.getHours(), s0.getMinutes());
-    if (s >= e) s = new Date(e.getTime() - 30 * 60000);
-  }
-  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e) };
+  const { sAbs, eAbs } = wallSpan(occ);
+  const minuteOf = (abs) => abs - Math.floor(abs / MINUTES_DAY) * MINUTES_DAY;
+  // Ending at midnight, its last day is the one before: dropped on Thursday
+  // it ends as Thursday does, at Friday 00:00 (it stopped a day short).
+  const abs = edge === 'end'
+    ? Math.max(t, epochDayOfKey(startKey)) * MINUTES_DAY + (minuteOf(eAbs) || MINUTES_DAY)
+    : Math.min(t, epochDayOfKey(endKey)) * MINUTES_DAY + minuteOf(sAbs);
+  // A backwards reading leaves the bar as it is (month view spreads this).
+  return resizedDates(occ, edge, abs) || { newStart: occ.start, newEnd: occ.end };
 }
 
 export function dayDropDates(occ, targetKey) {
@@ -328,19 +374,13 @@ export function dayDropDates(occ, targetKey) {
   return { ...shiftOccurrenceDays(occ, delta), delta };
 }
 
-// Time-slot drop resolution (week/day views): snap the pointer minute to 15,
-// keep the duration, and clamp so the event still starts inside the day.
+// Time-slot drop resolution (reschedule mode's click on a week or day
+// column): snap the pointer minute, and the event starts inside that day;
+// the end may run past midnight (an overnight event dropped at 10 PM stays
+// at 10 PM; it was pulled back so it ended by midnight, #183).
 export function timeDropDates(occ, dayKey, minute) {
-  const s0 = parseISO(occ.start);
-  const e0 = parseISO(occ.end);
-  const durMin = Math.max(15, (e0.getTime() - s0.getTime()) / 60000);
-  // The start stays on the day dropped on; the end may run past midnight
-  // (an overnight event dropped at 10 PM stays at 10 PM; it was pulled back
-  // so it ended by midnight, #183).
-  const startMin = Math.max(0, Math.min(1440 - 15, Math.round(minute / 15) * 15));
-  const base = dateOfDayKey(dayKey);
-  const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, startMin);
-  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(new Date(s.getTime() + durMin * 60000)) };
+  const startMin = Math.max(0, Math.min(MINUTES_DAY - SNAP_MIN, Math.round(minute / SNAP_MIN) * SNAP_MIN));
+  return movedDates(occ, wallMinutes(dayKey, startMin));
 }
 
 // Dominant month of a row (the month owning the most of its days).

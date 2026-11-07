@@ -135,6 +135,44 @@ export function wallInstant(dayKey, minutes, { after = null, before = null } = {
   return t;
 }
 
+// Absolute wall minutes: a day's epoch day times 1440 plus a minute of that
+// day. The time grid's coordinate, and what a typed clock names: a place on
+// the clock, not an instant, so across a clock change a difference of them
+// is not elapsed time.
+export const MINUTES_DAY = 1440;
+export function wallMinutes(dayKey, minutes) {
+  return epochDayOfKey(dayKey) * MINUTES_DAY + minutes;
+}
+export function wallMinutesOf(d) {
+  return epochDayOfKey(dayKeyOf(d)) * MINUTES_DAY + d.getHours() * 60 + d.getMinutes();
+}
+
+// A range of wall clocks in this device's zone, as absolute wall minutes,
+// read to instants by the one rule for a typed range (typedInstants calls
+// this for this device's zone; decisions.md, "An end typed after a start in
+// the skipped hour" and "A clock time the fall change repeats"): the start
+// is its clock's instant, a skipped clock the clock plus the gap, a
+// repeated clock the pass beside `near` (a move: at or after the instant it
+// left when it went forward, at or before when it went back; nothing, as
+// typed or drawn: the first); the end is its clock moved by the push the
+// gap gave the start, at the first instant at or after the start. A resize
+// holds one end (`hold.start` or `hold.end`, an instant in ms): it stays
+// exactly that instant and only the other is read, beside it (rebuilt from
+// its clock, an end in a repeated hour moved by an hour, #185). An end at
+// or before the start on the clocks, or a start pushed onto or past a held
+// end, is the start's instant, so every check reads it as backwards.
+export function wallRangeInstants(sAbs, eAbs, { near = null, hold = {} } = {}) {
+  const at = (abs, hint) => {
+    const d = Math.floor(abs / MINUTES_DAY);
+    return wallInstant(keyOfEpochDay(d), abs - d * MINUTES_DAY, hint || {});
+  };
+  if (hold.end != null) return [new Date(at(sAbs, { before: hold.end })), new Date(hold.end)];
+  const s = hold.start != null ? hold.start : at(sAbs, near);
+  if (eAbs <= sAbs) return [new Date(s), new Date(s)];
+  const push = hold.start != null ? 0 : wallMinutesOf(new Date(s)) - sAbs;
+  return [new Date(s), new Date(at(eAbs + push, { after: s }))];
+}
+
 // Integer calendar-day count since 1970-01-01 for a day key.
 // Uses UTC arithmetic on the key parts so DST cannot skew the count.
 export function epochDayOfKey(key) {
@@ -434,20 +472,26 @@ export function wallTimeInZone(date, tz) {
 // reading the end alone would put both on one instant. A start that exists
 // has no push. An end at or before the start on the clocks is the start's
 // own instant, so every check reads it as backwards. `tz` null is this
-// device's zone; the values are 'YYYY-MM-DDTHH:MM' wall clocks.
+// device's zone; the values are 'YYYY-MM-DDTHH:MM' wall clocks. In this
+// device's zone the reading is wallRangeInstants, the time grid's, so a
+// typed range and a drawn one are read alike.
 export function typedInstants(startWall, endWall, tz) {
-  const at = (w) => (tz ? instantFromWallTime(w, tz) : fromInputValue(w));
-  const shownWall = (d) => (tz ? wallTimeInZone(d, tz) : isNaN(d) ? '' : toInputValue(d));
-  const asUtc = (w) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(w || ''));
-    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN;
-  };
+  const parts = (w) => /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(w || ''));
+  if (!tz) {
+    const abs = (w) => { const m = parts(w); return m ? wallMinutes(m[1] + '-' + m[2] + '-' + m[3], +m[4] * 60 + +m[5]) : NaN; };
+    const sa = abs(startWall);
+    const ea = abs(endWall);
+    if (isNaN(sa) || isNaN(ea)) return [fromInputValue(startWall), new Date(NaN)];
+    return wallRangeInstants(sa, ea);
+  }
+  const at = (w) => instantFromWallTime(w, tz);
+  const asUtc = (w) => { const m = parts(w); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN; };
   const s = at(startWall);
   const ts = asUtc(startWall);
   const te = asUtc(endWall);
   if (isNaN(s) || isNaN(ts) || isNaN(te)) return [s, new Date(NaN)];
   if (te <= ts) return [s, new Date(s.getTime())];
-  const push = asUtc(shownWall(s)) - ts;
+  const push = asUtc(wallTimeInZone(s, tz)) - ts;
   const e = new Date(te + push);
   return [s, at(e.getUTCFullYear() + '-' + pad(e.getUTCMonth() + 1) + '-' + pad(e.getUTCDate()) + 'T' + pad(e.getUTCHours()) + ':' + pad(e.getUTCMinutes()))];
 }

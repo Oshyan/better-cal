@@ -31,6 +31,10 @@ const CHIP_W = 280;      // confirm chip clamp estimate
 // Selectors for reschedule UI that keeps its native click behavior while the
 // grid itself is captured for drops.
 const UI_SELECTOR = '.bc-resched-banner, .bc-strip, .bc-confirm-chip';
+// Overlays whose Escape means close that overlay, not leave the mode; with
+// the month strip and fields, whose arrows and Enter are their own.
+const OVERLAY_SELECTOR = '.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop';
+const OWN_KEYS_SELECTOR = OVERLAY_SELECTOR + ', .bc-strip, input, textarea, select';
 
 // --- banner -----------------------------------------------------------------
 
@@ -258,6 +262,26 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
       if (e.target.closest('.bc-view')) e.stopPropagation();
     };
 
+    // A drop asked for at a target (a click, or Enter on the keyboard's
+    // day): the dates it would move to, and the confirm chip at the point.
+    const stage = (info, x, y) => {
+      const o = occRef.current;
+      const timed = info.minute != null && !o.allDay;
+      const drop = timed ? timeDropDates(o, info.key, info.minute) : dayDropDates(o, info.key);
+      if (parseISO(drop.newStart).getTime() === parseISO(o.start).getTime()) return; // dropped in place
+      clearHighlight();
+      if (ghostRef.current) ghostRef.current.style.display = 'none';
+      setPending({
+        instanceId: o.instanceId,
+        newStart: drop.newStart,
+        newEnd: drop.newEnd,
+        targetKey: info.key,
+        label: 'Move to ' + fmtDayMedium(dateOfDayKey(info.key)) + (timed ? ', ' + fmtTime(parseISO(drop.newStart)) : '') + '?',
+        x,
+        y,
+      });
+    };
+
     // Click = drop. Clicks on reschedule UI pass through; a click anywhere
     // else while the confirm chip is open cancels the chip (mode stays).
     const onClick = (e) => {
@@ -276,25 +300,7 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
       e.preventDefault();
       const info = targetInfo(e.clientX, e.clientY);
       if (!info || info.ui || !info.key) return;
-      const o = occRef.current;
-      const timed = info.minute != null && !o.allDay;
-      const drop = timed
-        ? timeDropDates(o, info.key, info.minute)
-        : dayDropDates(o, info.key);
-      if (parseISO(drop.newStart).getTime() === parseISO(o.start).getTime()) return; // dropped in place
-      const label = 'Move to ' + fmtDayMedium(dateOfDayKey(info.key)) +
-        (timed ? ', ' + fmtTime(parseISO(drop.newStart)) : '') + '?';
-      clearHighlight();
-      if (ghostRef.current) ghostRef.current.style.display = 'none';
-      setPending({
-        instanceId: o.instanceId,
-        newStart: drop.newStart,
-        newEnd: drop.newEnd,
-        targetKey: info.key,
-        label,
-        x: e.clientX,
-        y: e.clientY,
-      });
+      stage(info, e.clientX, e.clientY);
     };
 
     // Esc cancels the confirm chip first, then exits the mode. Esc typed
@@ -323,7 +329,7 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
     const onKey = (e) => {
       // The month strip's own arrow keys walk its months; fields keep theirs
       // (arrows and Enter only: Escape still leaves, below).
-      const own = e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop, .bc-strip, input, textarea, select');
+      const own = e.target.closest && e.target.closest(OWN_KEYS_SELECTOR);
       if (own && e.key !== 'Escape') return;
       if (STEP[e.key] && !pendingRef.current) {
         e.preventDefault();
@@ -349,24 +355,13 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
         e.preventDefault();
         e.stopPropagation();
         const info = keyTarget(kbKey);
-        const o = occRef.current;
-        const drop = dayDropDates(o, kbKey);
-        if (!info || parseISO(drop.newStart).getTime() === parseISO(o.start).getTime()) return;
+        if (!info) return;
         const r = info.dayEl.getBoundingClientRect();
-        clearHighlight();
-        setPending({
-          instanceId: o.instanceId,
-          newStart: drop.newStart,
-          newEnd: drop.newEnd,
-          targetKey: kbKey,
-          label: 'Move to ' + fmtDayMedium(dateOfDayKey(kbKey)) + '?',
-          x: r.left + r.width / 2,
-          y: r.top + Math.min(r.height / 2, 40),
-        });
+        stage(info, r.left + r.width / 2, r.top + Math.min(r.height / 2, 40));
         return;
       }
       if (e.key !== 'Escape') return;
-      if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop')) return;
+      if (e.target.closest && e.target.closest(OVERLAY_SELECTOR)) return;
       e.preventDefault();
       e.stopPropagation();
       if (pendingRef.current) setPending(null);

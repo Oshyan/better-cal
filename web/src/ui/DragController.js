@@ -18,9 +18,8 @@ const EDGE_MAX_SPEED = 18; // px per frame at the very edge
 // After a real drag completes, the browser fires a synthetic click on the
 // source element; swallow exactly one so drops never also open popovers.
 // A drag that ends without a click (usual on touch) must not leave the flag
-// set to eat the next real tap, so every new press clears it.
+// set to eat the next real tap, so every new press clears it (below).
 let suppressClick = false;
-window.addEventListener('pointerdown', () => { suppressClick = false; }, true);
 window.addEventListener('click', (e) => {
   if (suppressClick) {
     suppressClick = false;
@@ -29,17 +28,27 @@ window.addEventListener('click', (e) => {
   }
 }, true);
 
-// The scroller the edge auto-scroll last moved, and when: a scroll that
-// came from it, not from data landing or a re-layout (SplitView).
+// The scroller the edge auto-scroll last moved, and where it put it: the
+// scroll event reporting that position is the auto-scroll's own, not data
+// landing or a re-layout (SplitView). Read once; the next scroll is someone
+// else's. (A 120 ms window stood in for this.)
 let autoScroll = null;
-export function autoScrolledJustNow(el) {
-  return !!autoScroll && autoScroll.el === el && performance.now() - autoScroll.at < 120;
+export function autoScrolled(el) {
+  const own = !!autoScroll && autoScroll.el === el && el.scrollTop === autoScroll.top;
+  if (own) autoScroll = null;
+  return own;
 }
 
-// The drag under way: one at a time. Lifted, it kept only its own finger;
-// a second finger on another event lifted that one too, and each dropped
-// on its own (#185).
+// One drag at a time and one pointer per drag: the drag under way admits
+// or refuses every other pointer's press (admit, below), whether it reaches
+// the page or asks to start a drag, and takes moves and lifts only from its
+// own pointer (ours). Every press also clears the click swallowed after a
+// drop.
 let current = null;
+window.addEventListener('pointerdown', (ev) => {
+  suppressClick = false;
+  if (current) current.admit(ev);
+}, true);
 
 // startPointerDrag(pointerdownEvent, opts)
 // opts: {
@@ -62,7 +71,7 @@ export function startPointerDrag(e, opts) {
   // only on a Mac (elsewhere it's an ordinary press).
   const mac = /Mac/.test(navigator.platform || '') && navigator.maxTouchPoints < 2;
   if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && (e.button !== 0 || (mac && e.ctrlKey))) return () => {};
-  if (current && current.lifted()) return () => {};
+  if (current && !current.admit(e)) return () => {};
   const isTouch = e.pointerType === 'touch';
   const startX = e.clientX, startY = e.clientY;
   let lifted = false;
@@ -73,7 +82,7 @@ export function startPointerDrag(e, opts) {
   let done = false;
 
   const gOff = opts.ghostOffset || { x: 8, y: 8 };
-  const self = { lifted: () => lifted && !done };
+  const self = { admit };
   current = self;
 
   // Option (Mac) or Alt held during a drag makes the drop a copy. It is read
@@ -115,7 +124,7 @@ export function startPointerDrag(e, opts) {
     let moved = false;
     if (el) {
       const dy = edgeScrollDy(el, lastPt.y, lastPt.x);
-      if (dy !== 0) { el.scrollTop += dy; moved = true; autoScroll = { el, at: performance.now() }; }
+      if (dy !== 0) { el.scrollTop += dy; moved = true; autoScroll = { el, top: el.scrollTop }; }
     }
     const hel = opts.hScrollEl;
     if (hel) {
@@ -131,6 +140,19 @@ export function startPointerDrag(e, opts) {
   // finger's movement and lift went to the drag, dropping it where that
   // finger was (#185).
   const ours = (ev) => e.pointerId == null || ev.pointerId == null || ev.pointerId === e.pointerId;
+
+  // Another pointer's press while this drag is current, whether it reaches
+  // the page or asks to start a drag of its own: while the drag is lifted
+  // it starts nothing (a second finger on another event lifted that one
+  // too, and each dropped on its own, #185); while the drag is pending a
+  // touch is a pinch or a two-finger scroll, never this drag, and cancels
+  // it. Returns whether the press may go on.
+  function admit(ev) {
+    if (ours(ev)) return true;
+    if (lifted) return false;
+    if (ev.pointerType === 'touch') cancel();
+    return true;
+  }
 
   function onMove(ev) {
     if (!ours(ev)) return;
@@ -179,13 +201,6 @@ export function startPointerDrag(e, opts) {
     if (ours(ev)) cancel();
   }
 
-  // A second finger is a pinch or a two-finger scroll, never this drag.
-  // Once the drag has lifted, it is ignored (ours, above), and starts no
-  // drag of its own (current).
-  function onOtherDown(ev) {
-    if (ev.pointerType === 'touch' && ev.pointerId !== e.pointerId && !lifted) cancel();
-  }
-
   // The page scrolled under a still pointer (the wheel, a trackpad, an
   // arrow key): what's under it changed, so the target follows. It kept the
   // day or time from before the scroll (#184).
@@ -214,6 +229,7 @@ export function startPointerDrag(e, opts) {
   function cleanup() {
     done = true;
     if (current === self) current = null;
+    autoScroll = null;
     clearTimeout(pressTimer);
     cancelAnimationFrame(raf);
     if (ghost) ghost.remove();
@@ -226,7 +242,6 @@ export function startPointerDrag(e, opts) {
     window.removeEventListener('keydown', onKey, true);
     window.removeEventListener('contextmenu', onContextMenu, true);
     window.removeEventListener('touchmove', onTouchMove, { passive: false });
-    window.removeEventListener('pointerdown', onOtherDown, true);
     window.removeEventListener('scroll', onScrollWhileLifted, true);
   }
 
@@ -239,7 +254,6 @@ export function startPointerDrag(e, opts) {
   if (isTouch) {
     window.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('pointerdown', onOtherDown, true);
   }
 
   if (isTouch) pressTimer = setTimeout(lift, LONG_PRESS_MS);

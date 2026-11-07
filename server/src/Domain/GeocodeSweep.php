@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
 
@@ -171,6 +172,7 @@ final class GeocodeSweep
 
         $settingsByUser = [];
         $gaveUp = []; // userId => [firstEventId, [address, ...]]
+        $placedFor = []; // userId => true, once this run put coordinates on an event
         $transients = 0;
         foreach ($groups as $g) {
             if (microtime(true) - $t0 > $budgetSeconds) {
@@ -219,13 +221,19 @@ final class GeocodeSweep
             [$in, $params] = Db::in($g['ids']);
             if (isset($res['lat'], $res['lng'])) {
                 $now = Time::nowDb();
-                $this->db->run(
+                $placed = $this->db->run(
                     "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?,
                         location_source = 'lookup', location_provider = ?, location_placed_at = ?
                      WHERE id IN $in AND location_lat IS NULL",
                     [(float) $res['lat'], (float) $res['lng'], $now, $res['provider'] ?? null, $now, ...$params]
-                );
+                )->rowCount();
                 $stats['resolved'] += count($g['ids']);
+                // Coordinates ride on the window's rows (locationLat, locationLng),
+                // so placing an event changes what open tabs show: the account's
+                // change marker moves, once per account per run (#16).
+                if ($placed > 0) {
+                    $placedFor[$g['userId']] = true;
+                }
             } else {
                 $this->db->run("UPDATE events SET geocoded_at = ? WHERE id IN $in", [Time::nowDb(), ...$params]);
                 $stats['unplaced'] += count($g['ids']);
@@ -251,6 +259,10 @@ final class GeocodeSweep
             ActivityContext::with('geocode', function () use ($userId, $eventId, $summary, $addresses): void {
                 (new Undo($this->db))->record((int) $userId, 'event', (int) $eventId, 'update', null, null, $summary, ['addresses' => array_slice($addresses, 0, 50)]);
             });
+        }
+
+        foreach (array_keys($placedFor) as $userId) {
+            ChangeLog::touchAccount($this->db, (int) $userId);
         }
 
         $stats['seconds'] = round(microtime(true) - $t0, 2);

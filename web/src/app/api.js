@@ -2,7 +2,7 @@
 // 401 -> login, and generations for window loads (docs/design/loading-model.md)
 // and request ids for search, so out-of-order responses never render.
 
-import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, freshRanges, recordGeneration, dataGeneration, newGeneration } from './store.js';
+import { state, set, mergeWindow, keepWindow, heldTag, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, freshRanges, recordGeneration, dataGeneration, newGeneration } from './store.js';
 import { defineReload, owe, landed, reload, reloadGeneration } from './reloads.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
@@ -26,7 +26,15 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, formData, signal } = {}) {
+/**
+ * api()'s answer to a request made with `ifNoneMatch` when the server said
+ * the entity is unchanged (304): no body, and the caller keeps what it
+ * holds. Only a request that set the header can be answered so; the
+ * browser answers its own revalidations with the body it kept.
+ */
+export const NOT_MODIFIED = Symbol('not modified');
+
+export async function api(path, { method = 'GET', body, formData, signal, ifNoneMatch = null } = {}) {
   const requestEpoch = authEpoch;
   if (method !== 'GET' && state.offlineReadOnly && path !== '/auth/login') {
     // The cached /me deliberately contains no CSRF value. Re-establish the
@@ -39,6 +47,11 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
   const headers = {};
   if (method !== 'GET' && state.csrf) headers['X-CSRF'] = state.csrf;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  // The tag of what the caller holds: the server answers 304 while it
+  // still names the entity. The browser's own cache stands aside for a
+  // request that carries this header (Fetch: it is sent as no-store), so
+  // the 304 reaches this code, never a body served from the cache.
+  if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
   let res;
   try {
     res = await fetch(BASE + path, {
@@ -66,6 +79,11 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
     set({ authed: false, user: null, csrf: null, offlineReadOnly: false });
     throw new ApiError('unauthorized', 'Signed out', 401);
   }
+  if (res.status === 304) {
+    if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
+    if (state.serverState) set({ serverState: null });
+    return NOT_MODIFIED;
+  }
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   // Parsing can yield to logout or login just like fetch(). Do not return an
@@ -85,10 +103,20 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
   // the answer itself: two writes at once can't mix up whose they are.
   const entries = (res.headers.get('X-Undo-Entries') || '').split(',').map(Number).filter((n) => n > 0);
   if (entries.length && data && typeof data === 'object') Object.defineProperty(data, UNDO_ENTRIES, { value: entries });
+  // The answer's ETag (the events window, #16), on the answer itself, so
+  // the stretch it fills is held under the tag it came with (etagOf).
+  const etag = res.headers.get('ETag');
+  if (etag && data && typeof data === 'object') Object.defineProperty(data, ETAG, { value: etag });
   return data;
 }
 
 const UNDO_ENTRIES = Symbol('undo entries');
+const ETAG = Symbol('etag');
+
+/** The ETag an answer came with, or null. */
+export function etagOf(data) {
+  return (data && data[ETAG]) || null;
+}
 
 /** The journal entries a write's answer says it made, for its toast's Undo. */
 export function entriesOf(data) {
@@ -428,18 +456,31 @@ async function fetchRange(s, e) {
   try {
     let a = s;
     for (let n = 1; ; n++) {
-      const data = await api('/events?' + new URLSearchParams({ start: iso(a), end: iso(e) }));
+      // A stretch held whole under one tag (a window asked for again after
+      // a change elsewhere, a day stepped back to) is asked for with it: a
+      // 304 says it is as the server would send it now, so what's held
+      // stays and counts as fresh, and no event is read, sent or parsed
+      // (#16). The answer's own tag is held with the stretch it fills.
+      const tag = heldTag(a, e);
+      const data = await api('/events?' + new URLSearchParams({ start: iso(a), end: iso(e) }), { ifNoneMatch: tag });
+      if (data === NOT_MODIFIED) {
+        // Never without a tag of our own: nothing held could be kept, and
+        // an empty stretch must not pass for a loaded one.
+        if (!tag) throw new ApiError('network', 'Network error', 0);
+        keepWindow(iso(a), iso(e), gen, tag);
+        break;
+      }
       const events = data.events || [];
       const capped = Array.isArray(data.capped) ? data.capped : [];
       const cut = capped.length && n < CAPPED_REQUESTS ? completeUntil(events, capped) : null;
       if (cut !== null && cut > a) {
         // What the next request brings again isn't held from this one.
-        mergeWindow(iso(a), iso(cut), events.filter((o) => ms(o.start) < cut || ms(o.end) <= cut), gen);
+        mergeWindow(iso(a), iso(cut), events.filter((o) => ms(o.start) < cut || ms(o.end) <= cut), gen, etagOf(data));
         a = cut;
         continue;
       }
       if (capped.length) noteCapped(capped, events);
-      mergeWindow(iso(a), iso(e), events, gen);
+      mergeWindow(iso(a), iso(e), events, gen, etagOf(data));
       break;
     }
     ok = true;

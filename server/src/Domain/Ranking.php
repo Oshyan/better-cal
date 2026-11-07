@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
@@ -108,6 +109,11 @@ final class Ranking
                     foreach ($scores as $eventId => $score) {
                         $this->db->update('events', ['score' => $score, 'scored_at' => Time::nowDb()], 'id = ?', [$eventId]);
                         $scored++;
+                    }
+                    if ($scores !== []) {
+                        // Scores ride on the window's rows (`score`, which
+                        // clients sort by): open tabs refetch to show them (#16).
+                        ChangeLog::touchAccount($this->db, $userId);
                     }
                 }
             }

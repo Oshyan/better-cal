@@ -37,13 +37,20 @@ final class StaticFiles
         return 'W/"' . dechex($size) . '-' . dechex($mtime) . '"';
     }
 
-    /** Does the request's If-None-Match (a list, possibly "*") cover this ETag? Weak comparison. */
+    /**
+     * Does the request's If-None-Match (a list, possibly "*") cover this
+     * ETag? Weak comparison. A compressing web server (Apache's mod_deflate
+     * and mod_brotli, by default) appends its encoding to the tag it sends
+     * out ("abc" becomes "abc-gzip"), and the browser sends that form back,
+     * so a tag with such a suffix is the same tag: the entity is the same
+     * however it was encoded on the way.
+     */
     public static function matches(?string $ifNoneMatch, string $etag): bool
     {
         if ($ifNoneMatch === null || trim($ifNoneMatch) === '') {
             return false;
         }
-        $strip = static fn(string $t): string => preg_replace('/^W\//', '', trim($t)) ?? '';
+        $strip = static fn(string $t): string => preg_replace('/-(gzip|br|deflate)"$/', '"', preg_replace('/^W\//', '', trim($t)) ?? '') ?? '';
         foreach (explode(',', $ifNoneMatch) as $candidate) {
             if (trim($candidate) === '*' || $strip($candidate) === $strip($etag)) {
                 return true;

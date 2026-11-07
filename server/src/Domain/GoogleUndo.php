@@ -31,9 +31,15 @@ use BetterCal\Infra\Db;
  *   responseStatus, attendance  answer: my answer before, and my Planned or
  *               Maybe before (an answer resets it)
  *
- * Undoing sends the inverse through GoogleWriter, conditional on etagAfter:
- * any change to the event at Google since changed its etag, so Google
- * answers 412 and nothing is written (the undo is refused). A delete is
+ * Undoing sends the inverse through GoogleWriter, conditional on the row's
+ * stored etag (GoogleWriter sends it when none is given): any change to the
+ * event at Google since the app last read it changed its etag, so Google
+ * answers 412 and nothing is written (the undo is refused). The etag the
+ * change was answered with (etagAfter) is kept for the record, not sent:
+ * Google changes every row's etag in a series on any write (probe 5.2 and
+ * 5.3), so an edit to another day of the series would make this undo a
+ * false conflict, while the stored etag follows the app's own writes and a
+ * later local change to the row is the journal's own stale check. A delete is
  * undone by a PATCH of the same id back to its status (probe 6.2: a deleted
  * event stays readable under its id), conditional on the etag of the
  * deleted resource as read just before. The undo is recorded as an entry
@@ -148,7 +154,7 @@ final class GoogleUndo
                     throw HttpError::badRequest('That event is no longer here to change back', 'not_undoable');
                 }
                 $now = self::bodyOf($row);
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $g['before'], $beforeSend, $g['etagAfter'] ?? null));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $g['before'], $beforeSend));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $userId, $summary, $mutation): void {
                     $writer->apply($calendar, [$resp]);
                     $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
@@ -182,7 +188,7 @@ final class GoogleUndo
                     throw HttpError::badRequest('That event is no longer here to remove', 'not_undoable');
                 }
                 $local = $this->localOf($row);
-                self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend, $g['etagAfter'] ?? null));
+                self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $row, $googleId, $userId, $summary, $local, $g): void {
                     $writer->apply($calendar, [], [GoogleWriter::tombstone((string) $row['uid'], $row['recurrence_instance_utc'] !== null ? (string) $row['recurrence_instance_utc'] : null)]);
                     $this->record($userId, (int) $row['id'], $summary,
@@ -208,7 +214,7 @@ final class GoogleUndo
                 if ($was === null) {
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $g['etagAfter'] ?? null));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g): void {
                     $attendance = $row['attendance'] ?? null;
                     $writer->apply($calendar, [$resp]);

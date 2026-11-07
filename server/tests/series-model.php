@@ -247,6 +247,37 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Book club of four, skipping the 31st: a bounded series counts its class, every day listed, the new member named, no rate', [[
         'why' => 'noday', 'count' => 2, 'dates' => ['2027-02-15', '2027-04-15'], 'member' => '31st', 'period' => 'month', 'words' => 'No 31st in some months, so 15 Feb and 15 Apr have no event',
     ]], $skip4['plan']['losses']);
+    $twelve = smSeries('Book club, fourteen', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=14', '2027-01-15 19:00');
+    $skip12 = smPlan($twelve, [], smDrag($twelve, '2027-03-15 19:00', '2027-03-31 19:00'), ['reading' => 'skip']);
+    checkEq('Book club of fourteen, skipping the 31st: six lost, the first five listed and one more, said once', [[
+        'why' => 'noday', 'count' => 6, 'dates' => ['2027-02-15', '2027-04-15', '2027-06-15', '2027-09-15', '2027-11-15'], 'member' => '31st', 'period' => 'month',
+        'words' => 'No 31st in some months, so 15 Feb, 15 Apr, 15 Jun, 15 Sep, 15 Nov and 1 more have no event',
+    ]], $skip12['plan']['losses']);
+    // A start moved alone (Bounds): the days before the new start are a
+    // class of their own, finite whatever the end, so counted and never
+    // given a rate; the new start is a day the change names, so the cycle
+    // is read after it.
+    $startTo = static fn(array $series, string $local): array => ['landed' => ['start_utc' => smAt($local), 'end_utc' => smAt(substr($local, 0, 11) . '20:00'), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
+    $p = smPlan($book, [], $startTo($book, '2027-04-15 19:00'));
+    checkEq('Book club (no end), start moved to 15 Apr: three days before the new start, counted, no rate; nothing else lost or gained', [[[
+        'why' => 'start', 'count' => 3, 'dates' => ['2027-01-15', '2027-02-15', '2027-03-15'], 'words' => '15 Jan, 15 Feb and 15 Mar fall before the new start',
+    ]], [], '2027-04-15', 'Moved Book club (all events): starts 15 Apr (was 15 Jan), monthly on the 15th at 19:00, as before.'],
+        [$p['plan']['losses'], $p['plan']['gains'], substr($p['plan']['rule']['to']['start'], 0, 10), $p['plan']['summary']]);
+    $p = smPlan($book, [], $startTo($book, '2027-09-15 19:00'));
+    checkEq('Book club (no end), start moved to 15 Sep: eight before the new start, the first five listed and three more', [[
+        'why' => 'start', 'count' => 8, 'dates' => ['2027-01-15', '2027-02-15', '2027-03-15', '2027-04-15', '2027-05-15'], 'words' => '15 Jan, 15 Feb, 15 Mar, 15 Apr, 15 May and 3 more fall before the new start',
+    ]], $p['plan']['losses']);
+    $mondays = smSeries('Stand-up', 'FREQ=WEEKLY;BYDAY=MO', '2027-01-04 09:00');
+    $p = smPlan($mondays, [], $startTo($mondays, '2027-02-01 09:00'));
+    checkEq('Stand-up (weekly, no end), start moved four weeks: four Mondays before the new start, counted, no rate', [[
+        'why' => 'start', 'count' => 4, 'dates' => ['2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'], 'words' => '4 Jan, 11 Jan, 18 Jan and 25 Jan fall before the new start',
+    ]], $p['plan']['losses']);
+    $six = smSeries('Book club, six', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=6', '2027-01-15 19:00');
+    $p = smPlan($six, [], $startTo($six, '2027-04-15 19:00'));
+    checkEq('Book club of six, start moved to 15 Apr: three before the new start, the count kept from the new start (preselected) or the end, the rule as stored', [[[
+        'why' => 'start', 'count' => 3, 'dates' => ['2027-01-15', '2027-02-15', '2027-03-15'], 'words' => '15 Jan, 15 Feb and 15 Mar fall before the new start',
+    ]], ['count', 'end'], 'count', null],
+        [$p['plan']['losses'], smOptions($p, 'bound'), smGroup($p, 'bound')['selected'] ?? null, $p['writes']['master']['rrule'] ?? null]);
     $p = smPlan($book, [], smDrag($book, '2027-03-15 19:00', '2027-03-31 19:00'));
     checkEq('Book club 15 Mar to 31 Mar: the last day (clamped 31st merged into it) and the skipping 31st', [['last', 'skip'], 'FREQ=MONTHLY;BYMONTHDAY=-1'],
         [smOptions($p, 'reading'), $p['writes']['master']['rrule'] ?? null]);

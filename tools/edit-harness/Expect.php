@@ -214,13 +214,27 @@ final class Expect
         return [$this->actedDn + $days + $over, (($clock % 86400) + 86400) % 86400];
     }
 
+    /** A start moved alone: the new start, a day of the old pattern (series-model.md, Bounds: a start moved alone). */
+    public ?int $startTo = null;
+
     private function classify(): void
     {
         $o = $this->o;
         $this->delta = $this->landedDn - $this->actedDn;
         $timeChanged = $this->clock1 !== $o['clock'] || $this->tz1 !== $o['tz'] || $this->allDay1 !== $o['allDay'] || $this->len1 !== $o['len'];
+        // A request naming no day that puts the series on a later day of its
+        // own pattern, in its own zone and kind, moves the start, a bound:
+        // every occurrence is its own image and the days before it are
+        // outside. Put on a day the pattern doesn't give, it is a drag of the
+        // first occurrence as any other.
+        $startOnly = !empty($this->e['startOnly']) && $this->e['rule'] !== 'new' && $this->delta !== 0 && $this->s0->supported()
+            && $this->tz1 === $o['tz'] && $this->allDay1 === $o['allDay'] && $this->s0->has($this->landedDn, $o['startDn']);
         if ($this->e['rule'] === 'new') {
             $this->kind = 'newrule';
+        } elseif ($startOnly) {
+            $this->kind = 'start';
+            $this->startTo = $this->landedDn;
+            $this->delta = 0;
         } elseif ($this->delta !== 0) {
             $this->kind = 'drag';
         } elseif ($timeChanged) {
@@ -998,8 +1012,9 @@ final class Expect
         foreach ($o['raw'] as $occ) {
             $images[$occ['key']] = $this->image($t, $occ['dn']);
         }
-        $actedImg = $this->e['fromRow'] !== null || isset($images[$this->e['actedKey']]) ? $this->landedDn : null;
-        if ($t['type'] !== 'keep' && isset($images[$this->e['actedKey']]) && $images[$this->e['actedKey']] !== $this->landedDn && $this->kind !== 'newrule') {
+        // A start moved alone names no day, so none is placed (nothing is kept for the first occurrence).
+        $actedImg = $this->kind !== 'start' && ($this->e['fromRow'] !== null || isset($images[$this->e['actedKey']])) ? $this->landedDn : null;
+        if ($t['type'] !== 'keep' && isset($images[$this->e['actedKey']]) && $images[$this->e['actedKey']] !== $this->landedDn && $this->kind !== 'newrule' && $this->kind !== 'start') {
             $this->unoracled[] = 'acted image ' . Days::date((int) $images[$this->e['actedKey']]) . ' is not the landed day ' . Days::date($this->landedDn);
         }
         $vals = array_values(array_filter($images, static fn($v) => $v !== null));
@@ -1007,7 +1022,8 @@ final class Expect
         if ($t['type'] === 'keep') {
             $earliest = $this->newRuleStart();
         } else {
-            $earliest = $vals === [] ? null : min($vals);
+            // A start moved alone starts there; the days before it are outside (Bounds: a start moved alone).
+            $earliest = $this->startTo ?? ($vals === [] ? null : min($vals));
         }
         if ($earliest === null) {
             return ['empty' => true];

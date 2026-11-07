@@ -1641,9 +1641,11 @@ final class Model
      * A class as the plan reports it: why (a loss's), the member concerned
      * by name (a loss with no day: the new form that gives none; a gain:
      * the new member that gives it), the rule's period, the count (every
-     * one for a bounded series, null with no end), its first days, and for
-     * a series with no end its rate over the cycle in calendar periods,
-     * reduced ("5 in every 12 months"); and the words an API caller reads.
+     * one for a bounded series, and for the days before a moved start,
+     * which are finite whatever the end; null otherwise), its first days,
+     * and for a series with no end its rate over the cycle in calendar
+     * periods, reduced ("5 in every 12 months"); and the words an API
+     * caller reads.
      *
      * @param array{why:string,member:?int,days:list<int>,count:int,inCycle:int} $c
      * @param ?array{end:int,days:int,periods:int,gainTo:int} $cycle
@@ -1655,7 +1657,7 @@ final class Model
         $y = $this->thisYear;
         $unit = self::unitOf($this->r0);
         $out = $gain ? [] : ['why' => $c['why']];
-        $out['count'] = $cycle === null ? $c['count'] : null;
+        $out['count'] = $cycle === null || $c['why'] === 'start' ? $c['count'] : null;
         $out['dates'] = array_map(static fn(int $d): string => Cal::date($d), $c['days']);
         $name = null;
         if ($gain) {
@@ -1681,9 +1683,12 @@ final class Model
             $out['every'] = ['count' => intdiv($c['inCycle'], $g), 'span' => intdiv($cycle['periods'], $g), 'unit' => $unit];
         }
         $shown = count($c['days']);
-        $examples = Words::andList(array_map(static fn(int $d): string => Words::dayMonth($d, $y), $c['days']))
-            . ($cycle === null && $c['count'] > $shown ? ' and ' . ($c['count'] - $shown) . ' more' : '');
-        $one = $shown === 1 && ($cycle === null ? $c['count'] === 1 : true);
+        $names = array_map(static fn(int $d): string => Words::dayMonth($d, $y), $c['days']);
+        if ($out['count'] !== null && $c['count'] > $shown) {
+            $names[] = ($c['count'] - $shown) . ' more';
+        }
+        $examples = Words::andList($names);
+        $one = $shown === 1 && ($out['count'] === null || $c['count'] === 1);
         $after = isset($out['every'])
             ? ', and ' . ($out['every']['span'] === 1 ? ($out['every']['count'] === 1 ? '' : $out['every']['count'] . ' ') . 'every ' . $unit : $out['every']['count'] . ' in every ' . $out['every']['span'] . ' ' . $unit . 's') . ' after ' . ($one ? 'it' : 'them')
             : '';
@@ -1869,7 +1874,7 @@ final class Model
         // "keep" reading, whose start is named and whose days are no drag's
         // images (a new rule reports no loss or gain).
         $exDns = array_map(fn(string $k): int => $this->old->dnOf($k), array_merge($this->exdates, array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $this->rows)));
-        $named = max([$this->actedDn0, $landedDn, $this->old->startDn, ...$exDns]);
+        $named = max([$this->actedDn0, $landedDn, $this->old->startDn, $reading['start'] ?? $this->old->startDn, ...$exDns]);
         $gainTo = PHP_INT_MAX;
         /** @var ?array{end:int,days:int,gainTo:int} one cycle: its last day, its length in days, and how far gains are looked for */
         $cycle = null;
@@ -1889,11 +1894,11 @@ final class Model
             // plan asks for them again for each choice combination.
             $imagesKey = json_encode(['images', $this->r0->text(), $this->old->startDn, $this->actedDn0, $reading['id'], $reading['rule']->text(), $land['dn'], $land['clock'], $reading['start'] ?? null, $named]);
             [$images, $memberAt, $oldOcc, $gainTo, $cycle] = self::walked($imagesKey, function () use ($reading, $image, $named, &$images, &$memberAt): array {
-                // The new start is a day the change names too: when the
-                // earliest image falls after the days named (every occurrence
-                // before it has none), the cycle is taken after it, so the
-                // new rule's days are looked at over a whole cycle from where
-                // it starts.
+                // The new start is a day the change names too: a reading's
+                // own start is among the days named above, and when the
+                // earliest image falls after them (every occurrence before it
+                // has none) the cycle is taken after it, so the new rule's
+                // days are looked at over a whole cycle from where it starts.
                 $from = $named;
                 $reach = 0;
                 $periodsMoved = 0;
@@ -1913,7 +1918,7 @@ final class Model
                             $earliest = $earliest === null ? $img : min($earliest, $img);
                         }
                     }
-                    $again = $earliest !== null && $earliest > $from && !isset($reading['start']);
+                    $again = $earliest !== null && $earliest > $from;
                     $from = $earliest ?? $from;
                 } while ($again);
                 foreach ($this->oldDays($cycleEnd + 2 * $reach) as [$dn, $m]) {

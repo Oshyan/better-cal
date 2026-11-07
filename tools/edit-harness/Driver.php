@@ -116,6 +116,21 @@ final class Driver
             $this->spec['typed'] = false;
         }
         $spec = $this->spec;
+        // A start moved alone acts on the first occurrence with no day named, and lands on a later occurrence that is no
+        // exception's day (the driver's pick, by the case's seed and number); it needs a rule in the drag table and a first
+        // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit.
+        if (!empty($spec['vector']['startOnly'])) {
+            $exAt = array_fill_keys(array_column($spec['exceptions'] ?? [], 'at'), true);
+            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > 0 && $i <= 6 && !isset($exAt[$i])));
+            if ($st['shape']->supported() && !isset($exAt[0]) && $later !== []) {
+                $spec['acted'] = 0;
+                $spec['startTo'] = $later[crc32('start:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % count($later)];
+                $spec['vector']['date'] = $st['raw'][$spec['startTo']]['dn'] - $st['raw'][0]['dn'];
+            } else {
+                $spec['vector']['startOnly'] = false;
+            }
+            $this->spec = $spec;
+        }
         // A fixed case may act on the stored start itself (a rule the expander can't read has no occurrences to pick from).
         $atStart = !empty($spec['actedStart']);
         if (!$atStart && ($st['raw'] === [] || !isset($st['raw'][$spec['acted']]))) {
@@ -685,8 +700,8 @@ final class Driver
         $viaRow = $fromRow !== null && $scope === 'all' && ($v['via'] ?? 'row') === 'row';
         $target = $viaRow ? $fromRow : (int) $master['id'];
         $in = ['scope' => $scope];
-        if (!$viaRow && empty($this->spec['actedStart'])) {
-            // (A fixed case acting on the stored start names no occurrence: the series' own values at its first one.)
+        if (!$viaRow && empty($this->spec['actedStart']) && empty($v['startOnly'])) {
+            // (A fixed case acting on the stored start, and a start moved alone, name no occurrence: the series' own values at its first one.)
             $in['instanceStart'] = $this->instanceArg($st, $acted['key']);
         }
         $from = $shown ?? ['start' => $acted['key'], 'end' => Clock::db(Clock::parse($acted['key'])->modify('+' . $st['len'] . ' seconds')), 'tz' => $st['tz'], 'allDay' => $st['allDay']];
@@ -815,6 +830,7 @@ final class Driver
             'fields' => $changed,
             'trip' => $v['trip'],
             'untrip' => !empty($v['untrip']),
+            'startOnly' => !empty($v['startOnly']),
         ];
         return [$target, $in, $edit];
     }

@@ -4993,6 +4993,8 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
     { why: 'start', count: 2, dates: ['2027-01-04', '2027-01-11'] }, { why: 'end', count: 1, dates: ['2027-12-15'] }],
   [{ count: null, dates: ['2027-03-01', '2027-05-01', '2027-07-01'], member: '1st', period: 'month', every: { count: 5, span: 12, unit: 'month' } }]),
   ['Jan 4 and Jan 11 are before the new start.', 'Dec 15 is after the new end.', 'Adds Mar 1, May 1 and Jul 1, and 5 in every 12 months after them.']);
+  eq('series panel: a start moved far: the first five days before it and how many more, whatever the end', classed([{ why: 'start', count: 8, dates: ['2027-01-15', '2027-02-15', '2027-03-15', '2027-04-15', '2027-05-15'] }], []),
+    ['Jan 15, Feb 15, Mar 15, Apr 15, May 15 and 3 more are before the new start.']);
   eq('series panel: no class, no sentence; a refused plan says none', [classed([], []), planView({ ...choir, refusals: [{ code: 'dayset', words: '' }], losses: [{ why: 'noday', count: 1, dates: ['2027-02-15'] }] }, ctx()).classes], [[], []]);
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' on Tue, Mar 23 was moved earlier to Fri, Mar 26 and stays where it is.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);

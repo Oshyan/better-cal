@@ -4,6 +4,28 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.3 (2026-11-07)
+
+The layered fixes since 1.4.0 are replaced by one rule per area, an unbounded series is read one whole cycle past a change, and a batch of small follow-ups from the audit of closed issues ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
+
+- **One rule per area** ([#190](https://github.com/Oshyan/better-cal/issues/190)): month view's Next and Prev step from one reading of where you are, a glide ends only when it arrives or you scroll, and the agenda's Prev then Next returns to the month shown. Dragging on the time grid reads times the way a typed time is read: a moved event keeps its clock length, a resize into the repeated hour lands beside the end you held, a range drawn into the skipped hour is pushed whole, and in day view an end dragged into the next day crosses midnight. Which day an event belongs to is read in one place on the server, and the agenda has one window for its loads and its bands.
+- **Editing a repeating event with no end reads one whole cycle of its rule past the change** ([#205](https://github.com/Oshyan/better-cal/issues/205)), and the dialog says what is lost or gained by class ("No 31st in some months, so Feb 15, Apr 15 and Jun 15 have no event, and 5 in every 12 months after them") instead of listing every day. Large-series edits are faster.
+- **A series dragged onto a position counted from the other end takes that count:** "the second weekday" dragged to the last weekday of the month becomes "the last weekday" instead of being refused, as a fifth Tuesday already became the last Tuesday. The toast after a series change names the rule it now follows when the change rewrote it.
+- **A two-hour event dragged with typed clocks to end in the hour the fall change repeats keeps its two hours;** 1.5.2 read the end as the first of the two instants and halved it.
+- **Showing or hiding calendars writes no Activity entry:** it is a display preference, like the settings; Show all is the way back. Only on a calendar and a folder's All or None save in one request, and agents get `set_calendars_visible`.
+- **Plugin bands come whole in one read per plugin** instead of in pages, up to 5,000 bands per plugin per request.
+- **A CalDAV journal row is written in the same transaction as the change it tells about,** and a journal that cannot be written fails the save instead of leaving clients untold. The database suite reads the journal after every kind of event change ([#218](https://github.com/Oshyan/better-cal/issues/218)).
+- **Security:** a write under a request is covered only by a check of the request's own credential; another account's key, or your own key under a browser session, no longer passes the write watcher ([#204](https://github.com/Oshyan/better-cal/issues/204)).
+- **Review shows how each held emailed event was read** (the email's calendar file, its event data, its Google Calendar link, or the AI model), so you can check an AI reading before adding it ([#215](https://github.com/Oshyan/better-cal/issues/215)).
+- **Dark mode covers the last light-only colours,** including the phone agenda's swipe actions, which keep their colours but read clearly on the dark background ([#212](https://github.com/Oshyan/better-cal/issues/212)).
+- **Press `o` while an event's sheet is open on a phone** to see all of its details; it is in the command palette too ([#207](https://github.com/Oshyan/better-cal/issues/207)).
+- **Response compression:** the install guide's new [Compression](docs/install.md#compression) section turns it on for Nginx, Apache and LiteSpeed, and the shipped `.htaccess` enables it where `mod_deflate` is loaded ([#210](https://github.com/Oshyan/better-cal/issues/210)).
+- Quick add has tests for "every afternoon" and a series started with "from <date>" ([#220](https://github.com/Oshyan/better-cal/issues/220)).
+- A feed made from a saved search says on its card in Settings when it has more than 500 matches, as the other feeds do ([#217](https://github.com/Oshyan/better-cal/issues/217)).
+- **The calendar asks whether a window it holds has changed** and gets a one-line "no" instead of the whole window again, and a page reload or a return to a month reuses what the browser kept ([#16](https://github.com/Oshyan/better-cal/issues/16)). The ETag is the account's change cursor, and every write that changes the window moves it; the audit found two worker paths that didn't (ranking scores and geocoded coordinates), fixed. On Apache hosts that compress, the app's static files now get their 304s too.
+
+Operators: migration 066 adds one index on events (instant); `update.php` or the update page as usual.
+
 ## 1.5.2 (2026-11-06)
 
 Search ranks the way you'd expect, the measured comparison with 1.3 and 1.4.0 is in, and a batch of fixes that comparison and daily use turned up.

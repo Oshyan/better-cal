@@ -39,7 +39,7 @@ export function scopeDropChoice(at, occ, cb, { allLabel = 'All events' } = {}) {
   const cal = occ ? state.calendars.find((c) => c.id === occ.calendarId) : null;
   return {
     x: at.x, y: at.y,
-    title: cal && cal.provider === 'google' ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
+    title: cal && cal.provider === 'google' ? 'Repeating event (goes to Google; only this occurrence can be undone)' : 'Repeating event',
     options: [...scopes.map((s) => ({ label: CHIP_LABELS[s] || allLabel, value: s })), { label: 'Cancel', value: null }],
     note: why,
     cb,

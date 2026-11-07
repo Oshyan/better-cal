@@ -227,7 +227,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
         : move.stoppedByUpgrade
           ? 'An unfinished move from an older version was stopped safely during a security upgrade. Some events may remain at Google; review that copy first.'
           : `The last move was stopped by the account security reset. ${move.done} of ${move.total} events may already be at Google; it won't resume by itself.`}</p>`}
-      <p class="bc-move-note">Moves "${name}" into your Google account, so people who use Google Calendar can see it live, and add to it if you share it with them that way. It stays here too, edited in place like your other Google calendars, with its tags, people, reminders and trips. What changes: edits to it can't be undone here, as for any Google calendar. "Adopt as local calendar" brings it back.</p>
+      <p class="bc-move-note">Moves "${name}" into your Google account, so people who use Google Calendar can see it live, and add to it if you share it with them that way. It stays here too, edited in place like your other Google calendars, with its tags, people, reminders and trips. What changes: a change to a whole repeating series can't be undone here, as for any Google calendar. "Adopt as local calendar" brings it back.</p>
       ${accounts.length > 1 && html`<label class="bc-move-field"><span>Google account</span>
         <select value=${String(accountId)} onChange=${(e) => { setAccountId(Number(e.target.value)); setTarget('new'); }}>
           ${accounts.map((a) => html`<option key=${a.id} value=${String(a.id)}>${a.email}</option>`)}

@@ -13,7 +13,7 @@ import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { relationshipOptions, REL_LABEL } from './Relationship.js';
 import {
   deleteEvent, updateEvent, setRelationship, sendFeedback, enterReschedule, openDetail, openTripByEventId,
-  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent, goBackTo, editFromView, duplicateEvent,
+  googleBacked, GOOGLE_SERIES_NOTE, toggleCalendarVisible, rsvpEvent, goBackTo, editFromView, duplicateEvent,
 } from './actions.js';
 import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
@@ -278,7 +278,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const locIsMeeting = meet && loc && loc.includes(meet.url.slice(0, 24));
   const role = (cal && cal.role) || (isFeed ? 'opportunities' : 'mine');
   const suggested = role === 'opportunities';
-  const onDelete = () => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : (close(), deleteEvent(occ)));
+  const onDelete = () => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : (close(), deleteEvent(occ)));
   // Pulled up (0.5.3): the map, invitation replies, plugin data and where the
   // event came from join the sheet. The map's address lookup waits until then.
   const geo = useEventGeo(occ, full);
@@ -341,7 +341,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   // phone it opens right under the switch that asked (0.6.2); at the top of
   // the sheet it was out of view whenever the sheet had scrolled, and the
   // switch seemed to do nothing.
-  const attendScope = attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
+  const attendScope = attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_SERIES_NOTE : null}
         onPick=${async (scope) => { const ask = attendPrompt; const back = { popover: state.popover, attendPrompt: ask }; set({ attendPrompt: null }); const r = await setRelationship(occ, ask.relationship, scope, () => set(back)); if (r === 'hidden') close(); }}
         onCancel=${() => set({ attendPrompt: null })} />`;
 
@@ -350,7 +350,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${panel && tools}
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
-      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope, null, () => setTimeScope(f)); }} onCancel=${() => setTimeScope(null)} />`}
+      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_SERIES_NOTE : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope, null, () => setTimeScope(f)); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 
       ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => goBackTo(backTo)}>

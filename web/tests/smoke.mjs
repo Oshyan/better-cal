@@ -2798,21 +2798,88 @@ console.log('--- chronological ordering across timezone offsets ---');
   const { stepAnchor } = await import('../src/app/actions.js');
   const { setGlideActive } = await import('../src/lib/glide.js');
   const { state: st, set: put } = await import('../src/app/store.js');
-  const saved = { view: st.view, anchor: st.anchor, visibleMonth: st.visibleMonth, visibleDays: st.visibleDays, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, anchorSeen: st.anchorSeen };
-  // Rows changing height mid-glide left the grid months short of where it
-  // was going; Next stepped from there and the grid turned round.
+  const saved = { view: st.view, anchor: st.anchor, visibleMonth: st.visibleMonth, visibleDays: st.visibleDays, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, anchorSeen: st.anchorSeen, viewportNarrow: st.viewportNarrow, settings: st.settings };
+  // One reading of "on the way" (actions.js arrived): the view has not yet
+  // shown the anchor since the move, or the grid is still gliding there.
+  // Until then a step starts from the anchor's month, where it is going;
+  // after, from the month the view names.
   const n = (st.scrollSeq || 0) + 1;
-  put({ view: 'month', anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-26', end: '2026-08-22' }, scrollSeq: n, glideSeq: n, anchorSeen: -1 });
+  put({ view: 'month', viewportNarrow: false, anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-26', end: '2026-08-22' }, scrollSeq: n, glideSeq: n, anchorSeen: n - 1 });
+  setGlideActive(false);
+  stepAnchor(1);
+  eq('next month: before the grid has shown the anchor, steps from where it is going', st.anchor, '2027-04-15');
+  // The anchor came on screen (the report after the move) but the glide has
+  // not stopped: rows changing height mid-glide left the grid months short
+  // of where it was going; Next stepped from there and the grid turned round.
+  put({ visibleMonth: { year: 2027, month: 3 }, visibleDays: { start: '2027-03-21', end: '2027-04-24' }, anchorSeen: st.scrollSeq });
   setGlideActive(true);
   stepAnchor(1);
-  eq('next month: while the grid glides, steps from where it is going', st.anchor, '2027-04-15');
+  eq('next month: while the grid glides, steps from where it is going', st.anchor, '2027-05-15');
   setGlideActive(false);
-  // After a jump that didn't glide, from the month on screen, as before.
-  put({ anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, scrollSeq: st.scrollSeq + 1 });
+  // Arrived and scrolled off: from the month on screen.
+  put({ anchor: '2027-03-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-26', end: '2026-08-22' }, anchorSeen: st.scrollSeq });
   stepAnchor(1);
-  eq('next month: otherwise from the month on screen', st.anchor, '2026-09-15');
+  eq('next month: arrived, from the month on screen', st.anchor, '2026-09-15');
+  // Arrived and scrolled a little, the anchor still on screen but the grid
+  // naming the next month: the grid's window frames a month, so what it
+  // names is where you are.
+  put({ anchor: '2026-07-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-12', end: '2026-08-22' }, anchorSeen: st.scrollSeq });
+  stepAnchor(1);
+  eq('next month: the grid names August with July\'s anchor still on screen, Next goes to September', st.anchor, '2026-09-15');
+  put({ anchor: '2026-07-15', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-07-12', end: '2026-08-22' }, anchorSeen: st.scrollSeq });
+  stepAnchor(-1);
+  eq('prev month: and Prev goes to July', st.anchor, '2026-07-15');
+  // The phone's 3-day ribbon can't frame a month: a 1st landed on still
+  // reads as the month before, so the anchor's month stands while the
+  // anchor is on screen (#184), in both directions.
+  put({ viewportNarrow: true, settings: { ...(st.settings || {}), overviewMode: '3day' }, anchor: '2026-09-01', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-08-24', end: '2026-09-07' }, anchorSeen: st.scrollSeq });
+  stepAnchor(1);
+  eq('next month: the ribbon on the 1st, named the month before, steps on from the 1st', st.anchor, '2026-10-01');
+  put({ anchor: '2026-09-01', visibleMonth: { year: 2026, month: 8 }, visibleDays: { start: '2026-08-24', end: '2026-09-07' }, anchorSeen: st.scrollSeq });
+  stepAnchor(-1);
+  eq('prev month: the ribbon on the 1st steps back from the 1st', st.anchor, '2026-08-01');
+  put({ anchor: '2026-09-01', visibleMonth: { year: 2026, month: 9 }, visibleDays: { start: '2026-09-20', end: '2026-10-04' }, anchorSeen: st.scrollSeq });
+  stepAnchor(1);
+  eq('next month: the ribbon scrolled off the 1st steps from the month it names', st.anchor, '2026-10-01');
+  // The agenda shows the next month's events for a month with nothing in
+  // it, and names that month: Prev into the empty month, then Prev again,
+  // steps on from the month gone to; Next from it goes back (#184).
+  put({ view: 'agenda', viewportNarrow: false, anchor: '2026-09-01', visibleMonth: { year: 2026, month: 10 }, visibleDays: { start: '2026-09-01', end: '2026-10-03' }, anchorSeen: st.scrollSeq });
+  stepAnchor(-1);
+  eq('prev month: the agenda in an empty month steps on from that month', st.anchor, '2026-08-01');
+  put({ anchor: '2026-09-01', visibleMonth: { year: 2026, month: 10 }, visibleDays: { start: '2026-09-01', end: '2026-10-03' }, anchorSeen: st.scrollSeq });
+  stepAnchor(1);
+  eq('next month: the agenda in an empty month steps on from that month', st.anchor, '2026-10-01');
+  put({ anchor: '2026-10-01', visibleMonth: { year: 2026, month: 12 }, visibleDays: { start: '2026-12-03', end: '2026-12-10' }, anchorSeen: st.scrollSeq });
+  stepAnchor(1);
+  eq('next month: the agenda scrolled off its anchor steps from the month it names', st.anchor, '2027-01-01');
   put(saved);
   if (!hadWindow) delete globalThis.window; else globalThis.window = savedWindow;
+}
+
+// --- A glide's rules (#190) ---
+{
+  const { glideDistance, samePlace } = await import('../src/lib/glide.js');
+  const { fixedGeometry, fitGeometry } = await import('../src/ui/monthmath.js');
+  // Over when within a pixel of the target, or of as far as the scroller goes.
+  eq('glide: arrived', glideDistance(1000, 1000.5, 5000, 40), null);
+  eq('glide: arrived at the end of the scroller, short of the target', glideDistance(4000, 4800, 4000, 300), null);
+  // Closing in: the distance left, from the first scroll on.
+  eq('glide: the first scroll', glideDistance(500, 1000, 5000, null), 500);
+  eq('glide: closing in', glideDistance(900, 1000, 5000, 200), 100);
+  eq('glide: a pixel of jitter is still closing in', glideDistance(801, 1000, 5000, 198), 199);
+  // Farther off than at the last scroll is you scrolling.
+  eq('glide: moving away ends it', glideDistance(700, 1000, 5000, 200), null);
+  // The same week, the same way into it, in another geometry.
+  const fixed100 = fixedGeometry(0, 100, 100);
+  const fixed150 = fixedGeometry(0, 100, 150);
+  eq('same place: the geometry unchanged', samePlace(fixed100, fixed100, 250), 250);
+  eq('same place: every row taller (a resize) scales into the week', samePlace(fixed100, fixed150, 250), 375);
+  const plain = fitGeometry(0, 100, 100, new Map());
+  eq('same place: a week above grows, the place moves down with it', samePlace(plain, fitGeometry(0, 100, 100, new Map([[1, 300]])), 250), 450);
+  eq('same place: the week itself grows, the same fraction into it', samePlace(plain, fitGeometry(0, 100, 100, new Map([[2, 200]])), 250), 300);
+  eq('same place: a week below grows, nothing moves', samePlace(plain, fitGeometry(0, 100, 100, new Map([[3, 200]])), 250), 250);
+  eq('same place: back from fitted to fixed rows', samePlace(fitGeometry(0, 100, 100, new Map([[1, 300]])), fixed100, 450), 250);
 }
 
 // --- Calendars in a folder's own order, and where a dragged one lands (#187) ---

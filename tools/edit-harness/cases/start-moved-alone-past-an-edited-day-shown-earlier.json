@@ -1,0 +1,108 @@
+{
+    "n": 2713,
+    "seed": 31,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 5,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-10-19 06:00",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 4,
+            "kind": "edit",
+            "own": [
+                "reminders",
+                "people",
+                "date",
+                "time"
+            ],
+            "days": -2,
+            "mins": 180,
+            "zone": "America/New_York",
+            "len": -15
+        },
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": -3,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        }
+    ],
+    "acted": 0,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 3,
+        "clock": 1800,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {
+            "url": "https://example.test/series",
+            "status": "tentative"
+        },
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "master",
+        "startOnly": true
+    },
+    "stack": null,
+    "create": {
+        "calendarId": 37,
+        "title": "Sample series",
+        "location": "Sample Hall",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "tagNames": [
+            "sample"
+        ],
+        "personNames": [
+            "Alex Example"
+        ],
+        "start": "2027-10-19T06:00:00+02:00",
+        "end": "2027-10-19T08:00:00+02:00",
+        "rrule": "FREQ=DAILY;COUNT=5"
+    },
+    "everyOption": false,
+    "typed": false,
+    "startTo": 3,
+    "path": "all",
+    "request": {
+        "edit": {
+            "target": "master",
+            "body": {
+                "scope": "all",
+                "start": "2027-10-22T06:30:00+02:00",
+                "end": "2027-10-22T08:30:00+02:00",
+                "url": "https://example.test/series",
+                "status": "tentative"
+            }
+        }
+    },
+    "choices": {
+        "edit": {
+            "bound": "count",
+            "outside": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

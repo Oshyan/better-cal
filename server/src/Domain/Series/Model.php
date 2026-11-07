@@ -2676,11 +2676,15 @@ final class Model
         $gainList = array_values(array_map(fn(array $c): array => $this->classOut($c, $cycle, $r1p, $images, $memberAt, true), $gainClasses));
         // The next events from the day acted on: from where it lands, or from
         // where the request put it when that is earlier (an own date, or a
-        // zone kept at its moment), so nothing between them goes unlisted.
-        $putDn = $this->placed ? self::dayOf($this->placementOut($this->landedCols, $this->displayZone())) : $landedDn;
+        // zone kept at its moment), so nothing between them goes unlisted. A
+        // start moved alone names no day: the request put the series' start,
+        // and that is where it lands (an edited day keyed after it but shown
+        // before it isn't next, as any day shown before the cutoff).
+        $landsDn = $this->startTo ?? $landedDn;
+        $putDn = $this->placed ? self::dayOf($this->placementOut($this->landedCols, $this->displayZone())) : $landsDn;
         // A rule the expander can't read lists nothing, and goes on past
         // that unless it has an end.
-        [$next, $nextMore, $cutDn] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landedDn, $putDn), $actedAlone, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none', $landedDn];
+        [$next, $nextMore, $cutDn] = $this->readable ? $this->next($calc1, $newExdates, array_diff_key($placeRows, $rejoined), $overrideWrites, min($landsDn, $putDn), $actedAlone, $landedDn, $createEdited === null ? [] : [$createEdited]) : [[], $boundKind === 'none', $landedDn];
         // An option's next events: the same entries, without what only the plan's list says.
         $nextDates = array_map(static fn(array $n): array => array_intersect_key($n, ['start' => true, 'allDay' => true, 'tz' => true]), $next);
         if ($this->google) {

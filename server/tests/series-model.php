@@ -272,6 +272,12 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Stand-up (weekly, no end), start moved four weeks: four Mondays before the new start, counted, no rate', [[
         'why' => 'start', 'count' => 4, 'dates' => ['2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'], 'words' => '4 Jan, 11 Jan, 18 Jan and 25 Jan fall before the new start',
     ]], $p['plan']['losses']);
+    // Coming up lists from the new start: an edited day keyed after it but
+    // shown before it isn't next (seed 31, case 2713).
+    $early = [smEdited($mondays, 2, '2027-02-08 09:00', [], '2027-01-30 09:00', ['date'])];
+    $p = smPlan($mondays, $early, $startTo($mondays, '2027-02-01 09:00'));
+    checkEq('Stand-up, start moved four weeks, a day keyed 8 Feb shown 30 Jan: coming up starts at the new start and leaves that day out', [['2027-02-01', '2027-02-15', '2027-02-22', '2027-03-01'], true, 'stays'],
+        [smNext($p), $p['plan']['nextMore'], array_column($p['plan']['days'], 'outcome', 'key')['2027-02-08T17:00:00Z'] ?? null]);
     $six = smSeries('Book club, six', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=6', '2027-01-15 19:00');
     $p = smPlan($six, [], $startTo($six, '2027-04-15 19:00'));
     checkEq('Book club of six, start moved to 15 Apr: three before the new start, the count kept from the new start (preselected) or the end, the rule as stored', [[[
@@ -894,6 +900,15 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     // Its title was all it owned: taking the series' leaves it nothing of its own, so it is an occurrence again (Own Fields).
     checkEq('an editor save from an edited day that owned only its title: it goes back to the series, its row deleted', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", 'rejoins', [2], []],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, array_column($p['plan']['days'], 'outcome', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete'], $p['writes']['overrides']]);
+    // The same rule under a new pattern, from an edited day years on whose day the new rule has: the field sent is its
+    // value now and all it owned, so it rejoins; another day owning the same field keeps it under "keep" (seed 23, case 124:
+    // the harness's untouched check read the far day's key from its window alone and called the row kept).
+    $biannual = smSeries('Review', 'FREQ=YEARLY;BYMONTH=3,9;BYMONTHDAY=14', '2027-03-14', 0, true);
+    $far = [smEdited($biannual, 2, '2030-03-14', ['location' => 'Sample Hall'], null, ['location']), smEdited($biannual, 3, '2030-09-14', ['location' => 'Sample Hall'], null, ['location'])];
+    $p = smPlan($biannual, $far, ['acted' => smAt('2030-09-14 00:00', 'UTC'), 'columns' => ['location' => 'Sample Annex'], 'rrule' => 'FREQ=DAILY;INTERVAL=2'], ['ownLocation' => 'keep']);
+    $outcomes = array_column($p['plan']['days'], 'outcome', 'key');
+    checkEq('a new rule from an edited day years on that owned only the location sent: it takes it and rejoins, its row deleted; the other day keeps its own location', ['rejoins', 'stays', [3], ['location']],
+        [$outcomes['2030-09-14T00:00:00Z'] ?? null, $outcomes['2030-03-14T00:00:00Z'] ?? null, $p['writes']['delete'], array_column($p['plan']['days'], 'kept', 'key')['2030-03-14T00:00:00Z'] ?? null]);
     $p = smPlan($choir, $named, ['columns' => ['title' => 'Chorus']], ['ownTitle' => 'give']);
     checkEq('"Give it the new title too" to a day that owned only its title: it goes back to the series', ["'Rehearsal' Tue 16 Mar goes back to the series, on Tue 16 Mar", [2]],
         [array_column($p['plan']['days'], 'words', 'key')['2027-03-17T02:00:00Z'] ?? null, $p['writes']['delete']]);

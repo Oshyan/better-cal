@@ -37,13 +37,19 @@ final class StaticFiles
         return 'W/"' . dechex($size) . '-' . dechex($mtime) . '"';
     }
 
-    /** Does the request's If-None-Match (a list, possibly "*") cover this ETag? Weak comparison. */
+    /**
+     * Does the request's If-None-Match (a list, possibly "*") cover this ETag?
+     * Weak comparison. Apache's mod_deflate and mod_brotli add "-gzip" or
+     * "-br" inside the quotes of an ETag they compress, and the browser sends
+     * that back; without dropping it, every compressed file would come back
+     * whole instead of as a 304. Our own tags end in hex, never in either.
+     */
     public static function matches(?string $ifNoneMatch, string $etag): bool
     {
         if ($ifNoneMatch === null || trim($ifNoneMatch) === '') {
             return false;
         }
-        $strip = static fn(string $t): string => preg_replace('/^W\//', '', trim($t)) ?? '';
+        $strip = static fn(string $t): string => preg_replace(['/^W\//', '/-(?:gzip|br)"$/'], ['', '"'], trim($t)) ?? '';
         foreach (explode(',', $ifNoneMatch) as $candidate) {
             if (trim($candidate) === '*' || $strip($candidate) === $strip($etag)) {
                 return true;

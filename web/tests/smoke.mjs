@@ -3056,6 +3056,10 @@ console.log('--- chronological ordering across timezone offsets ---');
       if ('visible' in body) server.hidden[m[1]] = !body.visible;
       return json({ id: Number(m[1]), name: server.names[m[1]] || 'Sample ' + m[1], visible: !server.hidden[m[1]] });
     }
+    if (u.pathname.endsWith('/calendars') && method === 'PATCH') {
+      for (const c of body.calendars) server.hidden[c.id] = !c.visible;
+      return json({ calendars: body.calendars.map((c) => ({ id: c.id, name: server.names[c.id] || 'Sample ' + c.id, visible: !server.hidden[c.id] })) });
+    }
     if (u.pathname.endsWith('/calendars') && method === 'GET' && failReads > 0) { failReads--; return json({ error: { code: 'server', message: 'Down for a moment' } }, 500); }
     if (u.pathname.endsWith('/calendars') && method === 'GET') reads++;
     if (u.pathname.endsWith('/undo') && method === 'POST') return json({ ok: true, undone: { entity: 'calendar', op: 'update' } });
@@ -3255,6 +3259,12 @@ console.log('--- chronological ordering across timezone offsets ---');
       const body = JSON.parse(o.body);
       if ('visible' in body) server.set(Number(m[1]), body.visible);
       return json({ id: Number(m[1]), visible: server.get(Number(m[1])) });
+    }
+    if (u.pathname.endsWith('/calendars') && o.method === 'PATCH') {
+      // Only and a folder's All or None: one request for all of them (#190).
+      const body = JSON.parse(o.body);
+      for (const c of body.calendars) server.set(c.id, c.visible);
+      return json({ calendars: listed().filter((c) => body.calendars.some((b) => b.id === c.id)) });
     }
     if (u.pathname.endsWith('/calendars')) return json({ calendars: listed(), folders: folderList, tags: [] });
     return json({ events: [], people: [], plugins: [], count: 0 });

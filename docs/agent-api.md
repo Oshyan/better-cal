@@ -139,6 +139,7 @@ curl -s "$BC/events/42" -X DELETE -H "@$AUTH_FILE" -H 'Content-Type: application
 | Add plugin calendars | `POST /plugins/:id/calendars`, `PATCH /plugins/:id/calendars/:calendarId`, `GET /plugins/:id/options/:field?q=` | `add_plugin_calendar`, `update_plugin_calendar`, `search_plugin_options` | A tide calendar per station, a weather calendar per place; the plugin then fetches for it |
 | Enable or run plugins | `POST /plugins/:id/enable`, `/disable`, `/run` | `set_plugin_enabled`, `run_plugin` | Can have outside effects; runs are queued for the worker |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health |
+| Show or hide calendars | `PATCH /calendars` | `set_calendars_visible` | Many at once, one undo |
 | Undo | `POST /undo` | `undo` | Each call undoes the most recent change not yet undone, so repeating it steps further back (within 7 days) |
 | Manage calendars and folders | `POST/PATCH/DELETE /calendars`, `/folders` | none | REST only |
 | Outbound feeds, push devices, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | none | REST only; what a key creates belongs to it |

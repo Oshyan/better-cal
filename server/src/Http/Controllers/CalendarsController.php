@@ -54,6 +54,16 @@ final class CalendarsController
         ));
     }
 
+    /** PATCH /calendars {calendars:[{id, visible}], folderId?}: many shown or hidden in one change (#190). */
+    public function patchMany(Request $req): Response
+    {
+        return Response::json(['calendars' => $this->calendars->setVisibility(
+            $this->userId($req),
+            $req->body,
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        )]);
+    }
+
     public function adopt(Request $req, array $params): Response
     {
         return Response::json($this->calendars->adopt((int) $req->user['id'], (int) $params['id']));

@@ -190,7 +190,8 @@ export async function loadConfig() {
 // refresh, claim) call the API and then reload the list.
 // - shown at once (show), then sent, one at a time in the order made;
 // - a failed one puts back what it showed (revert), unless a newer write
-//   to the same thing (key) came since;
+//   to the same thing (key) came since; one that showed many things (a
+//   batch) names a key for each, and puts back only those still its own;
 // - a reload of the list only shows if no write was unsaved when it was
 //   asked for and none began before it answered: one asked for between
 //   writes held an older list, and landing late put it back on screen;
@@ -206,18 +207,46 @@ const latestByKey = new Map();
 export function writeCalendars({ key = null, show = null, send, revert = null }) {
   const edit = ++calendarEdits;
   calendarsUnsaved++;
-  if (key) latestByKey.set(key, edit);
+  const keys = key == null ? [] : [].concat(key);
+  for (const k of keys) latestByKey.set(k, edit);
   if (show) show();
   const run = calendarTurn.then(send, send);
   calendarTurn = run.catch(() => {});
   return run.catch((err) => {
-    if (revert && (!key || latestByKey.get(key) === edit)) revert();
+    const own = keys.filter((k) => latestByKey.get(k) === edit);
+    if (revert && (keys.length === 0 || own.length > 0)) revert(own);
     throw err;
   }).finally(() => {
-    if (key && latestByKey.get(key) === edit) latestByKey.delete(key);
+    for (const k of keys) if (latestByKey.get(k) === edit) latestByKey.delete(k);
     calendarsUnsaved--;
     owe('calendars');
     if (calendarsUnsaved === 0) reload('calendars');
+  });
+}
+
+// Many calendars shown or hidden in one write (#190): Only on a calendar
+// or a folder, a folder's All or None. `entries` is [[calendarId, visible]]
+// for every calendar wanted a certain way; the ones already so are left
+// alone. One request (PATCH /calendars) and one Activity entry, whose undo
+// puts every flag back. `folderId` names the folder acted on, for that
+// entry's line. Each calendar's key is its checkbox's (setCalendarVisible),
+// so a checkbox clicked after the batch keeps its own value if the batch
+// fails. Resolves with the server's calendars, or null when nothing changed.
+export function writeCalendarVisibility(entries, folderId = null) {
+  const want = new Map(entries);
+  const changed = state.calendars.filter((c) => want.has(c.id) && c.visible !== want.get(c.id));
+  if (changed.length === 0) return Promise.resolve(null);
+  const was = new Map(changed.map((c) => [c.id, c.visible]));
+  const keyOf = (id) => 'calendar:' + id + ':visible';
+  const put = (ids, value) => set({ calendars: state.calendars.map((c) => (ids.has(c.id) ? { ...c, visible: value(c) } : c)) });
+  return writeCalendars({
+    key: changed.map((c) => keyOf(c.id)),
+    show: () => put(new Set(was.keys()), (c) => want.get(c.id)),
+    send: () => api('/calendars', { method: 'PATCH', body: {
+      calendars: changed.map((c) => ({ id: c.id, visible: want.get(c.id) })),
+      ...(folderId != null ? { folderId } : {}),
+    } }),
+    revert: (keys) => put(new Set(keys.map((k) => Number(k.split(':')[1]))), (c) => was.get(c.id)),
   });
 }
 

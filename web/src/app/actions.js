@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence, localSaved,
   removeOccurrence, removeOccurrencesOfEvent, invalidateRecords,
 } from './store.js';
-import { api, entriesOf, refreshWindow, loadCalendars, loadPeople, loadReviewCount, writeCalendars } from './api.js';
+import { api, entriesOf, refreshWindow, loadCalendars, loadPeople, loadReviewCount, writeCalendars, writeCalendarVisibility } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
@@ -1592,15 +1592,10 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
   persistFolderVisibility(nextVis);
 
-  // Each calendar's flag through the same way in as its checkbox: shown
-  // at once, put back on its own if its save fails.
-  let told = false;
-  for (const c of changed) {
-    setCalendarVisible(c, !c.visible).catch((e) => {
-      if (!told) toast('Failed: ' + e.message, { error: true });
-      told = true;
-    });
-  }
+  // Every flag in one write (#190): shown at once, one request, one
+  // Activity entry, and all put back if the save fails.
+  writeCalendarVisibility(changed.map((c) => [c.id, !c.visible]), folderId === ALL_GROUP_ID ? null : folderId)
+    .catch((e) => toast('Failed: ' + e.message, { error: true }));
 }
 
 // What happened to an answer, in words: where it went, or why it didn't.

@@ -15,12 +15,13 @@ import { whenText, feedProblem } from '../lib/feedproblem.js';
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import {
-  toggleCalendarVisible, setCalendarVisible, createFolder, deleteFolder, renameFolder,
+  toggleCalendarVisible, deleteFolder, renameFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
   peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting, setSidebarOrder,
   setFolderSort, fileCalendar, unfileCalendar, placeCalendarInList,
 } from './actions.js';
+import { writeCalendarVisibility } from './api.js';
 import { sortedCalendars, calendarDrop } from '../lib/calorder.js';
 import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 
@@ -30,7 +31,6 @@ import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui
 import { CalendarSettings } from './CalendarSettings.js';
 import { needsAttention } from './system.js';
 import { MiniMonth } from './MiniMonth.js';
-import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
 import { Icon, CalDot } from '../ui/icons.js';
 import { attachScrollRail } from '../ui/scrollrail.js';
@@ -45,16 +45,16 @@ import {
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
 // captures the current visibility set; exiting restores it exactly. Switching
 // the solo target keeps the ORIGINAL captured set so "Show all" always returns
-// to the pre-solo state. Applied as real visible-flag PATCHes (silent, batch)
-// so every view and the server agree; folder custom sets are not touched.
-// Each through the same way in as its checkbox (setCalendarVisible): one
-// that fails goes back on its own.
+// to the pre-solo state. Applied as the calendars' real visible flags, in one
+// write (writeCalendarVisibility, #190): every view and the server agree,
+// Activity gets one entry, and a failure puts the flags back; folder custom
+// sets are not touched.
 async function applyVisibilityMap(entries) {
-  const want = new Map(entries);
-  const changed = state.calendars.filter((c) => want.has(c.id) && c.visible !== want.get(c.id));
-  if (changed.length === 0) return;
-  const results = await Promise.allSettled(changed.map((c) => setCalendarVisible(c, want.get(c.id))));
-  if (results.some((r) => r.status === 'rejected')) toast('Some visibility changes failed to save', { error: true });
+  try {
+    await writeCalendarVisibility(entries);
+  } catch (e) {
+    toast('Could not save which calendars show: ' + e.message, { error: true });
+  }
 }
 
 // Three things can be wrong with a feed and they want different reactions:

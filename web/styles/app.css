@@ -3329,7 +3329,7 @@ body.bc-rescheduling { user-select: none; }
   border: 1px solid var(--border-strong); color: var(--fg-muted); white-space: nowrap;
 }
 .bc-activity-badge.is-web, .bc-activity-badge.is-quickadd { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
-.bc-activity-badge.is-feed { color: var(--src-feed); border-color: color-mix(in srgb, var(--src-feed) 55%, transparent); }
+.bc-activity-badge.is-feed, .bc-activity-badge.is-google { color: var(--src-feed); border-color: color-mix(in srgb, var(--src-feed) 55%, transparent); }
 .bc-activity-badge.is-mail, .bc-activity-badge.is-rsvp { color: var(--src-mail); border-color: color-mix(in srgb, var(--src-mail) 55%, transparent); }
 .bc-activity-badge.is-api { color: var(--src-api); border-color: color-mix(in srgb, var(--src-api) 55%, transparent); }
 .bc-activity-badge.is-import, .bc-activity-badge.is-caldav { color: var(--src-import); border-color: color-mix(in srgb, var(--src-import) 55%, transparent); }

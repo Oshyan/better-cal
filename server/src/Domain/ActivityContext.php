@@ -11,7 +11,7 @@ namespace BetterCal\Domain;
  * code never threads a source parameter through its call stack.
  *
  * Manual-ish sources: web, caldav, quickadd. Automated: api (agent), feed,
- * mail:*, import. The UI groups them; the log stores the specific value.
+ * google (a Google calendar's poll), mail:*, import. The UI groups them; the log stores the specific value.
  */
 final class ActivityContext
 {

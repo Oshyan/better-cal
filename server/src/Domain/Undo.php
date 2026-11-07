@@ -759,7 +759,7 @@ final class Undo
      * and never a reason an undo is stale.
      */
     private const BOOKKEEPING = ['updated_at', 'synctoken', 'last_polled_at', 'last_poll_status', 'last_poll_error',
-        'content_changed_at', 'last_ok_at', 'google_sync_token', 'score', 'scored_at'];
+        'content_changed_at', 'last_ok_at', 'google_sync_token', 'google_etag', 'score', 'scored_at'];
 
     /**
      * Columns holding an object of separate settings (a calendar's: its

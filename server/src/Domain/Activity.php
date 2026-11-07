@@ -20,7 +20,7 @@ final class Activity
     public const MAX_LIMIT = 100;
 
     /** Sources the API accepts as filters; 'mail', 'plugin' and 'dedup' match every mail:* / plugin:* / dedup:* source too. */
-    public const SOURCES = ['web', 'api', 'caldav', 'feed', 'mail', 'quickadd', 'rsvp', 'import', 'geocode', 'system', 'plugin', 'review', 'dedup'];
+    public const SOURCES = ['web', 'api', 'caldav', 'feed', 'google', 'mail', 'quickadd', 'rsvp', 'import', 'geocode', 'system', 'plugin', 'review', 'dedup'];
 
     public function __construct(private readonly Db $db)
     {

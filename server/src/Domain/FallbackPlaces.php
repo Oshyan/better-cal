@@ -8,8 +8,9 @@ namespace BetterCal\Domain;
  * A keyed provider with Photon behind it. The primary answers the queries it
  * takes (SelectivePlaceProvider::accepts); the fallback answers the rest, and
  * also whenever the primary fails, is rate limited or finds nothing that the
- * shared rules would keep (PlaceSearch::usable). Ranking
- * and credits follow whichever answered.
+ * shared rules would keep (PlaceSearch::usable): a row has to contain every
+ * typed word, so a service that answers with near misses has not answered.
+ * Ranking and credits follow whichever answered.
  */
 final class FallbackPlaces implements PlaceProvider
 {

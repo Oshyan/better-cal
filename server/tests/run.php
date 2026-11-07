@@ -4014,7 +4014,7 @@ $regionTransport->regional = [$regionFeature('100', 'Main Street', 45.52, -122.6
 $regionTransport->world = [$regionFeature('100', 'Main Road', 48.85, 2.35), $regionFeature('7', 'Main Square', 52.37, 4.89)];
 $r = $ps->search('main', 45.52, -122.68, 6);
 checkEq('place search: too few regional matches adds a worldwide request without the box', [2, false], [count($regionTransport->calls), isset($regionTransport->calls[1][0]['bbox'])]);
-checkEq('place search: regional first, worldwide after, in Photon order past 500 km', ['100 Main Street', '8 Oak Lane', '100 Main Road', '7 Main Square'], array_column($r, 'name'));
+checkEq('place search: regional first, worldwide after, in Photon order past 500 km; a row without the typed word is dropped', ['100 Main Street', '100 Main Road', '7 Main Square'], array_column($r, 'name'));
 $regionTransport->calls = [];
 $regionTransport->regional = null; // the boxed request failed
 $r = $ps->search('100 main', 45.52, -122.68, 6);
@@ -4091,7 +4091,7 @@ $addrTransport->calls = [];
 $addrTransport->nearest = [];
 $addrTransport->regional = [$regionFeature('250', 'Elk Road', 45.50, -122.66)]; // a loose, typo-tolerant match
 $r = $aps->search('250 elm', 45.52, -122.68, 6);
-checkEq('place search: a loose nearby match still asks the world, and the full far match goes first', [2, ['250 Elm Court', '250 Elk Road']], [count($addrTransport->calls), array_column($r, 'name')]);
+checkEq('place search: a loose nearby match still asks the world, and only the full match is offered', [2, ['250 Elm Court']], [count($addrTransport->calls), array_column($r, 'name')]);
 $addrTransport->calls = [];
 $addrTransport->regional = [];
 $addrTransport->nearest = [$regionFeature('250', 'Oak Avenue', 45.53, -122.69), $regionFeature('250', 'Ash Lane', 45.521, -122.681)];
@@ -4346,6 +4346,172 @@ foreach ([null, []] as $primaryRows) {
     $chain->candidates('elm', 45.52, -122.68, 6, null);
     checkEq('fallback: a primary that ' . ($primaryRows === null ? 'fails' : 'finds nothing') . ' hands over', 1, $fallback->calls - $before);
 }
+$primary->rows = [$row('Example Bay Marina', 45.53, -122.69), $row('Bayview Market', 45.53, -122.69)];
+$before = $fallback->calls;
+$chain->candidates('harbor light example bay', 45.52, -122.68, 6, null);
+checkEq('fallback: an answer without every typed word (things in the town, not the venue) hands over', [1, 'Fallback'], [$fallback->calls - $before, $chain->credits()[0]['label']]);
+
+// The word rule: a result must contain every typed word, whichever service
+// and request it came from. Street words match their short forms, a number
+// is whole, the last word may be partial, a trailing state or postal code
+// may be missing.
+checkEq('word rule: words are lowercased, accents and apostrophes off', ['cafe', 'joes', 'harbor', 'light'], $PS::words("Café Joe's: Harbor-Light"));
+checkEq('word rule: street words have short forms, other words are themselves', ['st', 'blvd', 'n', 'harbor'], array_map([$PS, 'shortWord'], ['street', 'boulevard', 'north', 'harbor']));
+$wordRow = static fn(string $name, string $address = ''): array => ['name' => $name, 'address' => $address];
+checkEq('word rule: every typed word, the last as a prefix; street words either way; numbers whole',
+    [true, true, true, true, true, false, false, false, true],
+    [
+        $PS::hasAllWords('harbor light ci', $wordRow('Harbor Light Cinema', 'Example Bay')),
+        $PS::hasAllWords('12 pier st', $wordRow('12 Pier Street', 'Example Bay')),
+        $PS::hasAllWords('12 Pier Street', $wordRow('12 Pier St', 'Example Bay')),
+        $PS::hasAllWords('ocean blvd', $wordRow('Ocean Boulevard')),
+        $PS::hasAllWords('north harbor', $wordRow('N Harbor Road')),
+        $PS::hasAllWords('north example', $wordRow('Nob Example')),
+        $PS::hasAllWords('12 pier', $wordRow('120 Pier Street')),
+        $PS::hasAllWords('harbor light example bay', $wordRow('Example Bay Marina', 'Example Bay')),
+        $PS::hasAllWords('cafe example', $wordRow('Café Example')),
+    ]);
+checkEq('word rule: a trailing postal code or state code is set aside; a two-letter word being typed is not',
+    ['40 Pier St, Example Bay', '40 Pier St, Example Bay', 'Harbor Light', 'Example Bay', 'Harbor Light ci', '12345'],
+    [$PS::withoutStateOrPostcode('40 Pier St, Example Bay, EX 12345'), $PS::withoutStateOrPostcode('40 Pier St, Example Bay EX 12345-6789'),
+     $PS::withoutStateOrPostcode('Harbor Light, EX'), $PS::withoutStateOrPostcode('Example Bay 12345'),
+     $PS::withoutStateOrPostcode('Harbor Light ci'), $PS::withoutStateOrPostcode('12345')]);
+checkEq('word rule: the required words leave out the state, the postal code and "and"', ['40', 'pier', 'st', 'example', 'bay'], $PS::requiredWords('40 Pier St and, Example Bay, EX 12345'));
+check('word rule: an address with its state and postal code matches a row that spells the street out and leaves them off',
+    $PS::hasAllWords('40 Pier St, Example Bay, EX 12345', $wordRow('40 Pier Street', 'Example Bay, Example State')));
+checkEq('word rule: a same-number building on another street is dropped', ['40 Pier Street'],
+    array_column($PS::containingAllWords('40 Pier St, Example Bay', [$wordRow('40 Harbor Road', 'Example Bay'), $wordRow('40 Pier Street', 'Example Bay')]), 'name'));
+checkEq('word rule: "and" may be "&" in the name', ['Smith & Sons'], array_column($PS::containingAllWords('smith and sons', [$wordRow('Smith & Sons')]), 'name'));
+check('word rule: an answer of things in the town, without the venue, is no answer',
+    !$PS::usable('harbor light example bay', [$wordRow('Example Bay Marina', 'Example Bay'), $wordRow('Bayview Market', 'Example Bay')], true));
+checkEq('narrowing: the last two words, then the last one; never for an address or a single word',
+    [[['harbor light', 'example bay'], ['harbor light example', 'bay']], [['harbor', 'bay']], [['Harbor Light', 'Example County'], ['Harbor Light Example', 'County']], [], []],
+    [$PS::narrowings('harbor light example bay'), $PS::narrowings('harbor bay'), $PS::narrowings('Harbor Light, Example County, EX'),
+     $PS::narrowings('12 pier street example bay'), $PS::narrowings('cinema')]);
+$areaRow = static fn(string $name, ?string $kind): array => ['name' => $name, 'kind' => $kind, 'lat' => 1.0, 'lng' => 2.0];
+checkEq('narrowing: only a town or an area named exactly the trailing words',
+    ['Example County', 'Example Bay', null, null],
+    [($PS::areaNamed('example county', [$areaRow('Example County Fair', 'county'), $areaRow('Example County', 'county')]) ?? [])['name'] ?? null,
+     ($PS::areaNamed('Example Bay', [$areaRow('Example Bay', 'municipality')]) ?? [])['name'] ?? null,
+     $PS::areaNamed('example bay', [$areaRow('Example Bay', 'marina')]),
+     $PS::areaNamed('example bay', [$areaRow('Example Bayside', 'town')])]);
+$rebiased = $PS::rebias([['name' => 'Harbor Light Cinema', 'lat' => 12.31, 'lng' => 56.71, 'distanceKm' => 0.1, 'far' => false]], 22.0, 66.0)[0];
+checkEq('narrowing: distances are measured again from the person', [round($PS::distanceKm(22.0, 66.0, 12.31, 56.71), 1), true], [$rebiased['distanceKm'], $rebiased['far']]);
+
+// The whole chain on recorded answers: keyed services in front of Photon,
+// one fake transport for both.
+$chainFake = new class implements \BetterCal\Infra\GeocoderTransport, \BetterCal\Infra\KeyedGeocoderTransport {
+    /** @var array<string,mixed> "provider endpoint|query" => body */
+    public array $keyedBodies = [];
+    /** @var array<string,list<array>> query => Photon features */
+    public array $photonByQ = [];
+    public array $reverse = [];
+    /** @var list<string> "service:query", in order */
+    public array $asked = [];
+    public array $urls = [];
+    public function keyed(string $provider, array $urls): array
+    {
+        return array_map(function (string $u) use ($provider) {
+            $this->urls[] = $u;
+            $path = (string) parse_url($u, PHP_URL_PATH);
+            $query = [];
+            parse_str((string) parse_url($u, PHP_URL_QUERY), $query);
+            $q = $provider === 'maptiler' ? rawurldecode(basename($path, '.json')) : (string) ($query['q'] ?? '');
+            $endpoint = $provider === 'locationiq' ? basename($path) : 'search';
+            $this->asked[] = $provider . ':' . mb_strtolower($q);
+            return $this->keyedBodies[$provider . ' ' . $endpoint . '|' . mb_strtolower($q)] ?? [];
+        }, $urls);
+    }
+    public function photon(array $paramSets): array
+    {
+        return array_map(function (array $p) {
+            if (($p['_endpoint'] ?? null) === 'reverse') {
+                return ['features' => $this->reverse];
+            }
+            $this->asked[] = 'photon:' . mb_strtolower((string) $p['q']);
+            return ['features' => isset($p['layer']) ? [] : ($this->photonByQ[mb_strtolower((string) $p['q'])] ?? [])];
+        }, $paramSets);
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$photonFeature = static fn(string $name, float $lat, float $lng, array $props = []): array =>
+    ['geometry' => ['coordinates' => [$lng, $lat]], 'properties' => ($name === '' ? [] : ['name' => $name]) + $props + ['city' => 'Example Bay', 'state' => 'Example State', 'country' => 'Exampleland']];
+$biasAt = [12.30, 56.70];
+$liqChain = new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\FallbackPlaces(new $LIQ($chainFake, 'k'), new \BetterCal\Domain\PhotonPlaces($chainFake)));
+
+// "<venue> <town>": the keyed service's autocomplete answers with things in
+// the town; Photon has the venue.
+$chainFake->keyedBodies = ['locationiq autocomplete|harbor light example bay' => [
+    $liqResult('place', 'town', 12.32, 56.72, ['city' => 'Example Bay', 'state' => 'Example State'], 'Example Bay'),
+    $liqResult('leisure', 'marina', 12.33, 56.73, ['name' => 'Example Bay Marina', 'city' => 'Example Bay'], 'Example Bay Marina'),
+    $liqResult('shop', 'supermarket', 12.34, 56.74, ['name' => 'Bayview Market', 'city' => 'Example Bay'], 'Bayview Market'),
+]];
+$chainFake->photonByQ = ['harbor light example bay' => [$photonFeature('Harbor Light Cinema', 12.31, 56.71, ['street' => 'Pier Street', 'housenumber' => '12', 'osm_value' => 'cinema'])]];
+$chainFake->asked = [];
+$venueTown = $liqChain->search('Harbor Light Example Bay', $biasAt[0], $biasAt[1], 6, 'en');
+checkEq('chain: "<venue> <town>" shows the venue, from Photon, with Photon\'s credits, and nothing without the venue word',
+    [['Harbor Light Cinema'], 'photon', 'Photon', null],
+    [array_column($venueTown, 'name'), $venueTown[0]['provider'] ?? null, $liqChain->credits()[0]['label'] ?? null, $liqChain->reason()]);
+check('chain: a full-query match is not narrowed (the town is never searched alone)', !in_array('locationiq:example bay', $chainFake->asked, true) && !in_array('photon:example bay', $chainFake->asked, true));
+
+// An address: the keyed service offers the same number on another street,
+// Photon has the street (spelled short, the state and postal code left off).
+$chainFake->keyedBodies = ['locationiq autocomplete|12 pier street, example bay, ex 12345' => [
+    $liqResult('place', 'house', 12.31, 56.71, ['house_number' => '12', 'road' => 'Harbor Road', 'city' => 'Example Bay', 'state' => 'Example State', 'country' => 'Exampleland'], ''),
+]];
+$chainFake->photonByQ = [];
+$chainFake->reverse = [
+    $photonFeature('', 12.305, 56.705, ['housenumber' => '12', 'street' => 'Harbor Road']),
+    $photonFeature('', 12.306, 56.706, ['housenumber' => '12', 'street' => 'Pier St']),
+];
+$address = $liqChain->search('12 Pier Street, Example Bay, EX 12345', $biasAt[0], $biasAt[1], 6, 'en');
+checkEq('chain: an address keeps the street typed, not the same number on another street', [['12 Pier St'], 'photon', 'Photon'],
+    [array_column($address, 'name'), $address[0]['provider'] ?? null, $liqChain->credits()[0]['label'] ?? null]);
+$chainFake->reverse = [];
+
+// "<venue> <county>": nothing has every word, so the county is found like
+// any query and the venue searched around it.
+$mtChain = new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\FallbackPlaces(new $MT($chainFake, 'k'), new \BetterCal\Domain\PhotonPlaces($chainFake)));
+$chainFake->keyedBodies = [
+    'maptiler search|harbor light example county' => ['features' => [
+        $mtFeature('municipality', 'Exampleton', 'Exampleton, Example State, Exampleland', 12.40, 56.80),
+        $mtFeature('county', 'Example County', 'Example County, Example State, Exampleland', 12.50, 56.90, 0.6),
+    ]],
+    'maptiler search|example county' => ['features' => [
+        $mtFeature('county', 'Example County', 'Example County, Example State, Exampleland', 12.50, 56.90),
+    ]],
+    'maptiler search|harbor light' => ['features' => [
+        $mtFeature('poi', 'Harbor Light Cinema', 'Harbor Light Cinema, 12 Pier Street, Example Bay, Exampleland', 12.52, 56.91, 1.0, ['categories' => ['cinema']]),
+    ]],
+];
+$chainFake->photonByQ = ['harbor light example county' => [$photonFeature('Harbor Road', 12.31, 56.71)]];
+$chainFake->asked = [];
+$chainFake->urls = [];
+$narrowed = $mtChain->search('Harbor Light Example County', $biasAt[0], $biasAt[1], 6, 'en');
+parse_str((string) parse_url((string) end($chainFake->urls), PHP_URL_QUERY), $aroundQuery);
+checkEq('chain: "<venue> <county>" narrows to the county and finds the venue around it, distance still from the person',
+    [['Harbor Light Cinema'], '56.9,12.5', round($PS::distanceKm($biasAt[0], $biasAt[1], 12.52, 56.91), 1), 'maptiler', null],
+    [array_column($narrowed, 'name'), $aroundQuery['proximity'] ?? null, $narrowed[0]['distanceKm'] ?? null, $narrowed[0]['provider'] ?? null, $mtChain->reason()]);
+checkEq('chain: one narrowing round: the full query, the county, the venue around it',
+    ['harbor light example county', 'example county', 'harbor light'],
+    array_values(array_unique(array_map(static fn(string $a): string => substr($a, strpos($a, ':') + 1), $chainFake->asked))));
+
+// Nothing has every word anywhere: an empty answer and the reason.
+$chainFake->keyedBodies = ['maptiler search|harbor light nowhere' => ['features' => [
+    $mtFeature('municipality', 'Nowhereton', 'Nowhereton, Example State, Exampleland', 12.40, 56.80),
+]]];
+$chainFake->photonByQ = ['harbor light nowhere' => [$photonFeature('Harbor Road', 12.31, 56.71)]];
+$chainFake->asked = [];
+$none = $mtChain->search('Harbor Light Nowhere', $biasAt[0], $biasAt[1], 6, 'en');
+checkEq('chain: nothing with every word is an empty answer with its reason, never the nearest fuzzy match',
+    [[], 'No place matches all of those words.'], [$none, $mtChain->reason()]);
+check('chain: a failed narrowing searches nothing more than its readings', !in_array('maptiler:harbor light', $chainFake->asked, true) && !in_array('maptiler:harbor', $chainFake->asked, true));
+$down = new \BetterCal\Domain\PlaceSearch(new class implements \BetterCal\Domain\PlaceProvider {
+    public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { return null; }
+    public function distanceCap(): ?float { return null; }
+    public function credits(): array { return []; }
+});
+checkEq('chain: a service that could not be reached gives no reason (nothing was said about the words)', [[], null], [$down->search('harbor light example bay', 1.0, 2.0, 6), $down->reason()]);
 
 // Which service: Photon unless a known one is chosen with its key; Settings
 // is told what was asked, what is used and why, never the key.

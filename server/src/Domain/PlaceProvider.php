@@ -8,8 +8,8 @@ namespace BetterCal\Domain;
  * One place-search provider behind the location dropdown. A provider owns
  * everything specific to its service: the requests it makes, the
  * workarounds its quirks need, and mapping its responses into candidate rows
- * (PlaceSearch::row). PlaceSearch owns what holds for any provider: the house
- * number must match, address order, far flags, the airport pin, the limit.
+ * (PlaceSearch::row). PlaceSearch owns what holds for any provider: every
+ * typed word must be in a result, the house number whole, address order, far flags, the airport pin, the limit.
  */
 interface PlaceProvider
 {

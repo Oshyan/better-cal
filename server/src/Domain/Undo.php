@@ -164,8 +164,11 @@ final class Undo
      */
     private const OWN_SOURCES = ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'];
 
-    /** $plugins: the plugin registry undo uses for plugin edits (tests pass one with a stand-in plugin). */
-    public function __construct(private readonly Db $db, private readonly ?Plugins $plugins = null)
+    /**
+     * $plugins: the plugin registry undo uses for plugin edits; $google: the
+     * writer that sends a Google edit's undo (tests pass stand-ins for both).
+     */
+    public function __construct(private readonly Db $db, private readonly ?Plugins $plugins = null, private readonly ?GoogleWriter $google = null)
     {
     }
 
@@ -332,7 +335,10 @@ final class Undo
         // Before the refs: a Google calendar's entry has its snapshots
         // emptied there, and what it changed has to stay known.
         $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables), $touches));
-        if (!$this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds)) {
+        // A write to one Google resource keeps what to send back in its
+        // details and no snapshot of the row (GoogleUndo).
+        $google = $beforeTables === [] && $afterTables === [] && GoogleUndo::carries($details);
+        if (!$this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds, $google)) {
             foreach ($pieces as $side => $tables) {
                 $this->writePieces($mutationId, $side, $tables);
             }
@@ -604,7 +610,8 @@ final class Undo
         $touches = [];
         $settings = []; // each as before the first step and after the last
         foreach ($records as $r) {
-            if ($r['beforeTables'] === null && $r['afterTables'] === null) {
+            // A Google write's undo is in its own details, which a merge drops.
+            if (($r['beforeTables'] === null && $r['afterTables'] === null) || GoogleUndo::carries($r['details'])) {
                 $logOnly = true;
             }
             foreach ((array) ($r['details']['settings'] ?? []) as $name => $pair) {
@@ -1011,11 +1018,13 @@ final class Undo
 
     /**
      * The calendars an entry refers to; true when one is a Google calendar's,
-     * whose entries keep no snapshots (emptied here).
+     * whose entries keep no snapshots (emptied here), unless it is a write
+     * to one Google resource whose details say what to send back
+     * ($googleBefore: GoogleUndo), whose snapshots are empty already.
      *
      * @param list<int> $explicitCalendarIds
      */
-    private function recordCalendarRefs(int $mutationId, ?array $beforeTables, ?array $afterTables, array $explicitCalendarIds = []): bool
+    private function recordCalendarRefs(int $mutationId, ?array $beforeTables, ?array $afterTables, array $explicitCalendarIds = [], bool $googleBefore = false): bool
     {
         $ids = array_values(array_unique(array_filter(
             array_merge(array_map('intval', $explicitCalendarIds), self::calendarIdsOf($beforeTables, $afterTables)),
@@ -1032,6 +1041,9 @@ final class Undo
         [$in, $params] = Db::in($ids);
         if (self::googleInSnapshots($beforeTables, $afterTables)
             || $this->db->scalar("SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google' LIMIT 1", $params) !== null) {
+            if ($googleBefore) {
+                return true;
+            }
             // Google-backed edits are activity-only by design. Make
             // that permanent so adopt-back-to-local cannot revive a
             // provider-cache snapshot created after the move.
@@ -1101,8 +1113,8 @@ final class Undo
      * add and review decisions included) or, asked with an API key,
      * through the API. Changes the app made on its own (feeds, mail,
      * plugins) are passed over. When that last change can't be undone (a
-     * change sent to Google, say), that's the answer: an older one behind
-     * it isn't undone instead.
+     * whole-series change sent to Google, say), that's the answer: an older
+     * one behind it isn't undone instead.
      *
      * @return array{entity:string,op:string}
      */
@@ -1148,6 +1160,16 @@ final class Undo
             $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
             throw HttpError::badRequest(is_string($details['notUndoable'] ?? null) ? $details['notUndoable']
                 : 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)', 'not_undoable');
+        }
+        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+        if (GoogleUndo::carries(is_array($details) ? $details : null)) {
+            // A write to one Google resource: its inverse goes to Google
+            // first (GoogleUndo::undo), not inside a transaction. The stale
+            // check here is the journal's; Google's own (If-Match) follows.
+            if (!$force && $this->staleFor($mutation)) {
+                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+            }
+            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority);
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.

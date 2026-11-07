@@ -268,9 +268,10 @@ final class Events
     // Google first: the change goes to the API, and what Google answers with
     // is materialised locally (GoogleWriter::apply) before the local-only
     // parts of the same edit (tags, people, reminders, the trip flag,
-    // coordinates) are applied to the resulting row. Activity gets a plain
-    // entry, not an undoable one: an undo would have to be a second write
-    // to Google, and the row is Google's, not a snapshot of ours.
+    // coordinates) are applied to the resulting row. A write to one Google
+    // resource (an event, or one occurrence of a series) gets an entry that
+    // undoes by a second write to Google (GoogleUndo); a whole-series change
+    // gets a plain one (googleJournal).
     //
     // The credential behind the request is checked just before each Google
     // call (after any token refresh) and again first thing in the
@@ -335,12 +336,33 @@ final class Events
         return [$google, $local];
     }
 
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null): void
+    /**
+     * The Activity entry of a write to Google. $google (GoogleUndo::details)
+     * is what to send back: given, the entry is undoable; that is every
+     * write here to one Google resource, an event in no series or one
+     * occurrence of a series, which Google keeps as a resource of its own
+     * (the probe's groups 2, 5 and 6). A whole-series change (a series
+     * created or deleted whole here, or a plan's change, SeriesPlans) is
+     * several resources at Google and passes none: log-only, until the
+     * series undo is built on GoogleUndo::undo.
+     */
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null): void
     {
+        $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
+        if ($google !== null) {
+            (new GoogleUndo($this->db, $this->undo))->record($userId, $eventId ?? 0, $summary, $google);
+            return;
+        }
         // No snapshots, but what it changed is known: the event, which an
         // older undo of it (its tags, say) stands on.
         $touches = $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
-        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary . " on Google calendar '" . (string) $calendar['name'] . "'", touches: $touches);
+        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, touches: $touches);
+    }
+
+    /** The etag a Google answer carries, or null. */
+    private static function answerEtag(?array $resp): ?string
+    {
+        return is_array($resp) && isset($resp['etag']) && is_string($resp['etag']) && $resp['etag'] !== '' ? $resp['etag'] : null;
     }
 
     private function googleCreate(int $userId, array $calendar, array $row, array $in, ?RequestAuthority $authority = null): array
@@ -366,7 +388,9 @@ final class Events
         if ($id === null) {
             throw new HttpError('google_write_failed', 'Google accepted the event but it did not come back on the calendar', 502);
         }
-        $this->googleJournal($userId, "Created '" . (string) $row['title'] . "'", $calendar, $id);
+        // A series made whole at Google stays log-only (googleJournal).
+        $this->googleJournal($userId, "Created '" . (string) $row['title'] . "'", $calendar, $id, empty($row['rrule'])
+            ? GoogleUndo::details(GoogleUndo::CREATE, $calendar, (string) ($resp['id'] ?? ''), null, null, self::answerEtag($resp)) : null);
         return $this->get($userId, $id);
     }
 
@@ -393,7 +417,8 @@ final class Events
             $this->applyPeoplePatch($userId, $id, $in);
         });
         if ($googleFields !== []) {
-            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id);
+            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id,
+                GoogleUndo::details(GoogleUndo::EDIT, $calendar, (string) $event['google_event_id'], GoogleUndo::bodyOf($event), $event['google_etag'] ?? null, self::answerEtag($resp)));
         }
     }
 
@@ -411,6 +436,7 @@ final class Events
         $this->tripRules();
         $resp = null;
         $instanceId = null;
+        $undo = null; // what to send back (GoogleUndo)
         if ($existing !== null) {
             [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
             if ($googleFields !== []) {
@@ -420,6 +446,7 @@ final class Events
                     ? (string) $existing['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
                 $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)), $this->googleBeforeSend($authority));
+                $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
         } else {
             // The occurrence becomes an exception at Google: patch its
@@ -433,9 +460,12 @@ final class Events
             $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
             $patch = $this->columnPatch($override, $in, $instanceUtc, forOverride: true);
             [, $localFields] = self::splitGoogleFields($patch);
+            // Before: the occurrence as it showed, the series' at that date.
+            $shown = GoogleWriter::instanceBody($override);
             $override = array_merge($override, $patch);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
             $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
+            $undo = [$instanceId, $shown, null];
         }
         $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $userId, $localFields, $in): bool {
             if ($resp !== null) {
@@ -465,7 +495,8 @@ final class Events
         if (!$found) {
             throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
         }
-        $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId);
+        $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId,
+            $undo !== null ? GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp)) : null);
     }
 
     /** "Nov 7" for an activity line: an all-day date as stored, a timed day on the series' clock. */
@@ -479,9 +510,14 @@ final class Events
 
     private function googleDeleteAll(int $userId, array $calendar, array $event, ?RequestAuthority $authority = null): void
     {
-        $this->google()->delete($calendar, self::requireGoogleId($event), $this->googleBeforeSend($authority));
+        $googleId = self::requireGoogleId($event);
+        // What the row has of its own goes with it, and comes back with an
+        // undo; a series deleted whole stays log-only (googleJournal).
+        $undo = empty($event['rrule']) ? GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
+            $event['google_etag'] ?? null, null, ['local' => (new GoogleUndo($this->db, $this->undo))->localOf($event)]) : null;
+        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
-        $this->googleJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id']);
+        $this->googleJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id'], $undo);
     }
 
     private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void
@@ -498,9 +534,12 @@ final class Events
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
             : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+        $shown = $override ?? $master;
+        $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
+            $override['google_etag'] ?? null, null, ['local' => $override !== null ? (new GoogleUndo($this->db, $this->undo))->localOf($override) : []]);
         $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
-        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id']);
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
@@ -511,9 +550,12 @@ final class Events
                 $this->withExdate($parent, (string) $override['recurrence_instance_utc']);
             }
         }
-        $this->google()->delete($calendar, self::requireGoogleId($override), $this->googleBeforeSend($authority));
+        $googleId = self::requireGoogleId($override);
+        $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($override)['status']],
+            $override['google_etag'] ?? null, null, ['local' => (new GoogleUndo($this->db, $this->undo))->localOf($override)]);
+        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
-        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id']);
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo);
     }
 
 

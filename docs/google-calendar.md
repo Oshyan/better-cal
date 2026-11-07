@@ -82,7 +82,7 @@ For a calendar that started in Better-Cal and now needs to be seen by people who
 - **Sharing:** from Google Calendar: the calendar's settings there, **Share with specific people**, with "See all event details" or "Make changes to events".
 - **If the upload stops** (Google unreachable, say), the calendar stays local and untouched, and **Try again** continues where it stopped. Nothing switches over until every event is at Google. Disconnecting the account partway cancels the move instead (the Disconnect confirmation says so): the calendar stays local, events already uploaded stay at Google, and a new move starts over.
 
-**What changes:** as with any Google calendar, changes can't be undone here, since each is a write to Google. Earlier Activity entries for it stay listed but can't be undone either. Moving events between it and a local calendar is refused (copy, then delete). **Adopt as local** reverses the whole move, leaving the copy at Google as it is.
+**What changes:** as with any Google calendar, an undo is a second write to Google (see Activity below), and a change to a whole repeating series can't be undone yet. Activity entries from before the move stay listed but can't be undone. Moving events between it and a local calendar is refused (copy, then delete). **Adopt as local** reverses the whole move, leaving the copy at Google as it is.
 
 ## What Writes Send
 
@@ -92,7 +92,7 @@ Recurring edits: "this occurrence" patches Google's instance and comes back as a
 
 Moving an event between a Google calendar and any other calendar is refused, because half of such a move could never be undone here. Use **Copy to** (the stack icon on an event), then delete the original if you meant a move. A trip on a Google calendar moves one event at a time.
 
-Activity records each write as a plain entry ("Updated 'Team lunch' on Google calendar 'Book club'"), with no Undo, since undoing would be a second write to Google.
+Activity records each write ("Updated 'Team lunch' on Google calendar 'Book club'"). A change to one event, or to one occurrence of a series, has Undo, in its notice and in Activity: a field or time change, a delete, a new event, Planned or Maybe on an event you organize, and an answer to an invitation. Undo is a second write to Google, sending back what the event was before, and only if the event hasn't changed at Google since (Google checks its version); if it has, the undo is refused and nothing changes. A deleted event comes back under the same identity at Google, with its tags, people and reminders here. The undo is an Activity entry of its own, so it can be undone too. A change to a whole repeating series (all events, or this and following) and a new repeating event are listed without Undo for now.
 
 ## Invitations
 

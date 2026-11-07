@@ -270,10 +270,11 @@ final class Rsvp
         $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Maybe'][$partstat];
         $summary = $verb . " to '" . (string) $row['title'] . "'";
         // Recorded with the answer, in the transaction that changes the event.
-        // An answer that goes to the organizer (or may have) can't be taken
-        // back here: log only, but what it changed is the ground of an older
-        // undo of this event. One that stays here ($before and $after given:
-        // nothing was sent) is undoable like any change.
+        // An answer that goes to the organizer by mail (or may have) can't be
+        // taken back here: log only, but what it changed is the ground of an
+        // older undo of this event. One that stays here ($before and $after
+        // given: nothing was sent) is undoable like any change, and so is one
+        // set at Google ($google: GoogleUndo), by setting the earlier one.
         // What a sent answer changed: by mail the invitation and the status;
         // at Google, Planned or Maybe too (answerAtGoogle resets attendance).
         // Only those: marking more would make an older undo of this event
@@ -281,12 +282,14 @@ final class Rsvp
         $entry = 0;
         $touched = $via === 'google' ? ['invite_json', 'status', 'attendance'] : ['invite_json', 'status'];
         // The CalDAV journal goes with it, so other clients see the answer.
-        $journal = function (?array $before = null, ?array $after = null) use ($userId, $eventId, $summary, $touched, $row, &$entry): void {
+        $journal = function (?array $before = null, ?array $after = null, ?array $google = null) use ($userId, $eventId, $summary, $touched, $row, &$entry): void {
             $undo = new Undo($this->db);
-            $entry = ActivityContext::with('rsvp', fn() => $before !== null && $after !== null
-                ? $undo->record($userId, 'event', $eventId, 'update', ['events' => [$before]], ['events' => [$after]], $summary)
-                : $undo->record($userId, 'event', $eventId, 'update', null, null, $summary,
-                    touches: array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], $touched)));
+            $touches = array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => $eventId]), $col], $touched);
+            $entry = ActivityContext::with('rsvp', fn() => match (true) {
+                $google !== null => (new GoogleUndo($this->db, $undo))->record($userId, $eventId, $summary, $google, $touches),
+                $before !== null && $after !== null => $undo->record($userId, 'event', $eventId, 'update', ['events' => [$before]], ['events' => [$after]], $summary),
+                default => $undo->record($userId, 'event', $eventId, 'update', null, null, $summary, touches: $touches),
+            });
             ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], ChangeLog::OP_MODIFY);
         };
         $outcome = $via === 'google'
@@ -401,14 +404,14 @@ final class Rsvp
         // list it has now (not our copy) with only our own answer changed.
         $current = $this->google->get($calendar, $googleId);
         $attendees = (array) ($current['attendees'] ?? []);
-        $found = false;
+        $was = null; // my answer before, for its undo
         foreach ($attendees as $i => $a) {
             if (is_array($a) && !empty($a['self'])) {
+                $was = (string) ($a['responseStatus'] ?? 'needsAction');
                 $attendees[$i]['responseStatus'] = self::GOOGLE_STATUS[$partstat];
-                $found = true;
             }
         }
-        if (!$found) {
+        if ($was === null) {
             throw new HttpError('google_write_failed', 'Google no longer lists this account as a guest of the event.', 409);
         }
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
@@ -417,13 +420,16 @@ final class Rsvp
         // a change at Google between the read and the write answers 412.
         $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false),
             isset($current['etag']) && is_string($current['etag']) ? $current['etag'] : null);
-        (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal): void {
+        $etag = static fn(array $r): ?string => isset($r['etag']) && is_string($r['etag']) ? $r['etag'] : null;
+        $google = GoogleUndo::details(GoogleUndo::ANSWER, $calendar, $googleId, null, $etag($current), $etag($resp),
+            ['responseStatus' => $was, 'attendance' => (string) ($row['attendance'] ?? 'none')]);
+        (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal, $google): void {
             $check(true);
             $this->google->apply($calendar, [$resp]);
             // The answer decides Planned or Maybe again (Events::relationship),
             // over any choice made by hand since the last answer.
             $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);
-            $journal();
+            $journal(google: $google);
         });
         return ['sent' => true, 'reason' => null, 'message' => null];
     }

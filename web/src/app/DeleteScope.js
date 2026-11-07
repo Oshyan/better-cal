@@ -7,7 +7,7 @@
 
 import { html } from '../../vendor/index.js';
 import { describeRrule } from './eventparts.js';
-import { deleteEvent, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
+import { deleteEvent, googleBacked, GOOGLE_SERIES_NOTE } from './actions.js';
 import { state, set } from './store.js';
 import { seriesScopes } from './scopes.js';
 
@@ -34,16 +34,8 @@ export function DeleteScope({ occ, onDone, onCancel, compact }) {
     if (onDone) onDone();
     deleteEvent(occ, scope, () => set(back));
   };
-  const google = googleBacked(occ);
-  const note = google ? GOOGLE_NO_UNDO : null;
-  if (!occ.recurring) {
-    // Only reached for a Google event: everything else deletes at once with
-    // Undo, but this one cannot be undone, so it is asked first.
-    return html`<div class=${'bc-delscope' + (compact ? ' is-compact' : '')} role="group" aria-label="Confirm delete">
-      <span class="bc-delscope-q">Delete at Google? <span class="bc-delscope-note">Can't be undone.</span></span>
-      <button type="button" class="bc-btn bc-btn-danger" onClick=${() => run(undefined)}>Delete</button>
-      <button type="button" class="bc-link-btn" onClick=${onCancel}>Cancel</button>
-    </div>`;
-  }
+  // An event in no series deletes at once with Undo, at Google too; only
+  // a series asks.
+  const note = googleBacked(occ) ? GOOGLE_SERIES_NOTE : null;
   return html`<${ScopeChoice} occ=${occ} verb="Delete" danger note=${note} onPick=${run} onCancel=${onCancel} compact=${compact} />`;
 }

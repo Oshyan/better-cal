@@ -346,7 +346,10 @@ export function pluginBacked(occ) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   return cal && cal.reschedulable ? (cal.pluginName || 'its source') : null;
 }
+// At Google a change to one event, or to one occurrence of a series, undoes
+// like any other; a change to a whole series can't be undone yet.
 export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
+export const GOOGLE_SERIES_NOTE = 'Goes to Google; only this occurrence can be undone';
 export const NO_UNDO = "Can't be undone";
 
 // Undo toasts name the item on their first line and say what happened to it
@@ -566,8 +569,9 @@ export async function createEvent(fields) {
         onAction: () => toggleCalendarVisible(cal),
       });
     } else if (cal && cal.provider === 'google') {
-      // Created at Google through the connector: no local snapshot to undo to.
-      toast('Created at Google' + repeats, { title: itemName(occ), note: NO_UNDO });
+      // Created at Google through the connector: undone by deleting it there,
+      // except a series, which can't be undone yet (no entry to undo).
+      toast('Created at Google' + repeats, { title: itemName(occ), undo: entriesOf(occ), note: NO_UNDO });
     } else {
       toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undo: entriesOf(occ) });
     }
@@ -1629,7 +1633,8 @@ export async function rsvpEvent(occ, answer, retryUncertain = false) {
     if (via !== 'google') refreshWindow(); // Accept makes it Planned, Maybe a Maybe
     loadReviewCount(); // an answered invitation leaves the Review queue
     const out = rsvpOutcome(result, via);
-    toast(out.text, { error: !!out.error });
+    // An answer set at Google (or kept here) undoes; one mailed can't.
+    toast(out.text, { error: !!out.error, undo: out.error ? [] : entriesOf(result) });
     return result;
   } catch (e) {
     toast("Couldn't answer: " + e.message, { error: true });

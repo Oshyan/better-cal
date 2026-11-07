@@ -7,7 +7,7 @@
 import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
-  enterReschedule, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView, editFromView,
+  enterReschedule, deleteEvent, stepPopoverSameDay, toggleRel, applyDefaultView, editFromView,
   toggleFitRows,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
@@ -79,10 +79,6 @@ export const handlers = {
     if (occ.recurring) {
       // Which occurrences is a decision (DeleteScope), asked on the open surface.
       set({ deletePrompt: occ.instanceId });
-      return true;
-    }
-    if (googleBacked(occ)) {
-      set({ deletePrompt: occ.instanceId }); // asks on the open surface, saying it cannot be undone
       return true;
     }
     // Like Delete in the event's panel: no question, Undo in the notice.

@@ -40,7 +40,7 @@ import { useLongPress, RowMenu } from './rowmenu.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight, coveredAt } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
-import { setGlideActive } from '../lib/glide.js';
+import { setGlideActive, glideDistance, samePlace } from '../lib/glide.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
@@ -403,15 +403,18 @@ export function MonthGrid({
     setTopRef.current = el.scrollTop;
   }, []);
 
-  // A glide under way (Today, the arrows): the row it's heading for. Until it
-  // arrives, a geometry change re-aims it instead of setting scrollTop, which
-  // cancelled the smooth scroll part way when a window load landed (#183).
-  // It ends on arrival, or when you scroll yourself.
+  // A glide under way (Today, the arrows): the row it's heading for, where
+  // that was last aimed at, and how far off it was at the last scroll. It
+  // ends in two ways only: the scroller arrives there, or you take the
+  // scroller, by an input on it or a scroll that moves away from the target
+  // (lib/glide.js glideDistance). Rows changing height under it keep their
+  // place and aim it again (the geometry effect) instead of setting
+  // scrollTop, which cancelled the smooth scroll part way when a window
+  // load landed (#183). The browser's scrollend says nothing: it fires for
+  // the grid's own writes as for yours, and counting those assumed one
+  // scrollend per write, which browsers don't promise (#185, #190).
   const glideRef = useRef(null);
-  // Scroll ends the grid caused itself, holding its place mid-glide: one
-  // read as yours ended the glide, and the next load pinned it part way.
-  const ownEndsRef = useRef(0);
-  const setGlide = useCallback((g) => { glideRef.current = g; ownEndsRef.current = 0; setGlideActive(!!g); }, []);
+  const setGlide = useCallback((g) => { glideRef.current = g; setGlideActive(!!g); }, []);
   useEffect(() => () => { if (glideRef.current) setGlideActive(false); }, []);
   const anchorTopRef = useRef(null);
 
@@ -420,18 +423,12 @@ export function MonthGrid({
     const el = scrollRef.current;
     if (!el) return;
     let raf = 0;
-    const endGlide = (e) => {
-      if (e && e.type === 'scrollend' && ownEndsRef.current > 0) { ownEndsRef.current--; return; }
-      if (glideRef.current) setGlide(null);
-    };
+    const endGlide = () => { if (glideRef.current) setGlide(null); };
     const onScroll = () => {
       const gl = glideRef.current;
       if (gl && anchorTopRef.current) {
-        // Arrived (or as near as the scroller goes), or moving away from the
-        // target: a glide only ever closes in, so that's you scrolling (a
-        // scrollbar drag, Page Down; Safari has no scrollend to say so).
-        const dist = Math.abs(el.scrollTop - Math.min(anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight));
-        if (dist <= 1 || (gl.dist != null && dist > gl.dist + 1)) setGlide(null);
+        const dist = glideDistance(el.scrollTop, anchorTopRef.current(gl.row), el.scrollHeight - el.clientHeight, gl.dist);
+        if (dist == null) setGlide(null);
         else gl.dist = dist;
       }
       const g = geomRef.current;
@@ -444,7 +441,7 @@ export function MonthGrid({
       raf = requestAnimationFrame(() => { raf = 0; recompute(); });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    const yours = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'scrollend'];
+    const yours = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
     for (const t of yours) el.addEventListener(t, endGlide, { passive: true });
     return () => {
       el.removeEventListener('scroll', onScroll);
@@ -512,21 +509,22 @@ export function MonthGrid({
     const prev = prevGeoRef.current;
     prevGeoRef.current = geo;
     if (glideRef.current && pendingRowRef.current == null) {
+      const gl = glideRef.current;
       // What's on screen stays put first, as it does outside a glide: rows
       // above it changing height moved the grid months under the glide
       // (March to the August before), and it had all that way to come back.
-      // Only when something moved: written unchanged (a load that left the
-      // heights alone), it stopped the glide where it was.
-      if (prev !== geo) {
-        const w = prev.weekAt(el.scrollTop);
-        const held = geo.top(w) + ((el.scrollTop - prev.top(w)) / prev.height(w)) * geo.height(w);
-        if (Math.abs(held - el.scrollTop) >= 1) {
-          ownEndsRef.current++;
-          setTop(held);
-        }
+      // Then the glide is aimed again, from here. A change that moved
+      // neither this place nor the target (a load that left the heights
+      // alone) leaves the scroll under way alone.
+      const held = samePlace(prev, geo, el.scrollTop);
+      const target = anchorTop(gl.row);
+      const moved = Math.abs(held - el.scrollTop) >= 1;
+      if (moved || target !== gl.target) {
+        if (moved) setTop(held);
+        gl.target = target;
+        gl.dist = null; // re-aimed: the distance starts over
+        el.scrollTo({ top: target, behavior: 'smooth' });
       }
-      glideRef.current.dist = null; // re-aimed: the distance starts over
-      el.scrollTo({ top: anchorTop(glideRef.current.row), behavior: 'smooth' });
       recompute();
       return;
     }
@@ -535,8 +533,7 @@ export function MonthGrid({
       settleAnchor();
     } else if (prev !== geo && prev.fit !== geo.fit) {
       const w = prev.weekAt(el.scrollTop);
-      const frac = (el.scrollTop - prev.top(w)) / prev.height(w);
-      setTop(geo.top(w) + frac * geo.height(w));
+      setTop(samePlace(prev, geo, el.scrollTop));
       topWeekRef.current = w;
       fitAnchorRef.current = geo.fit ? fitAnchorAt(geomRef.current, w, el.scrollTop - geo.top(w)) : null;
     } else if (geo.fit && fitAnchorRef.current) {
@@ -577,7 +574,7 @@ export function MonthGrid({
         pendingRowRef.current = null;
         // Already there (Today on today): nothing will scroll, so no glide
         // to end; one left set would pull you back on the next load.
-        setGlide(Math.abs(top - el.scrollTop) > 1 ? { row: w, dist: null } : null);
+        setGlide(Math.abs(top - el.scrollTop) > 1 ? { row: w, target: top, dist: null } : null);
         el.scrollTo({ top, behavior: 'smooth' });
         return;
       }

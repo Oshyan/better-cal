@@ -62,20 +62,32 @@ export function setOverviewMode(mode) {
 
 // --- navigation -------------------------------------------------------------
 
-// Where you are (lib/viewpos.js). Views report the days they show
-// (visibleDays), and anchorSeen records the move (scrollSeq) after which
-// they first showed the anchor; a report from before the latest move, or
-// from the view you left, never counts.
-export function hereKey() {
-  return hereKeyOf(state.anchor, state.visibleDays, state.anchorSeen === state.scrollSeq);
+// Whether the view has arrived where the last move (Today, an arrow, a jump,
+// a view switch) sent it. Views report the days they show (visibleDays), and
+// anchorSeen records the move (scrollSeq) after which they first showed the
+// anchor; a report from before the latest move, or from the view you left,
+// never counts. The month grid glides to a near target (lib/glide.js), and
+// the anchor comes on screen a little before the glide ends, so until the
+// grid says it has stopped, it is still on its way. This is the one reading
+// of "on the way": where you are, and what a step starts from, follow it.
+export function arrived() {
+  return state.anchorSeen === state.scrollSeq && !glideActive();
 }
+
+// Where you are (lib/viewpos.js): the anchor until the view has arrived
+// there, and while it is on screen; the middle of the screen once you've
+// scrolled it off.
+export function hereKey() {
+  return hereKeyOf(state.anchor, state.visibleDays, arrived());
+}
+
+const monthOf = (dayKey) => ({ year: Number(dayKey.slice(0, 4)), month: Number(dayKey.slice(5, 7)) });
 
 export function setView(view) {
   const anchor = hereKey();
   // The month too: until the new view reports what it shows, the mini-month
   // and the label otherwise stayed on the old view's month (#183).
-  const visibleMonth = { year: Number(anchor.slice(0, 4)), month: Number(anchor.slice(5, 7)) };
-  set({ view, anchor, visibleMonth, visibleDays: null, scrollSeq: state.scrollSeq + 1 });
+  set({ view, anchor, visibleMonth: monthOf(anchor), visibleDays: null, scrollSeq: state.scrollSeq + 1 });
 }
 
 export function cycleView() {
@@ -105,42 +117,37 @@ export function navigate(days) {
 
 // Toolbar chevron step, sized to the current view: month and agenda step by
 // month, multiweek by its week count, week by week, day by day.
-let lastStepAt = 0;
 export function stepAnchor(dir) {
   const v = state.view;
   if (v === 'day') return navigate(dir);
   if (v === 'week') return navigate(7 * dir);
   if (v === 'weeks2') return navigate(14 * dir);
   if (v === 'weeks3') return navigate(21 * dir);
-  // Mid-glide the month on screen still reads as the one being left, so a
-  // second press steps from where the first one is going: while the grid
-  // says it's gliding, or soon after a press, before it has started.
-  const gliding = state.glideSeq === state.scrollSeq && (glideActive() || Date.now() - lastStepAt < 900);
-  lastStepAt = Date.now();
-  const fromAnchor = { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
-  // The phone's 3-day ribbon shows about two weeks, often across two months,
-  // so its "month on screen" lags: landing on the 1st still read as the
-  // month before, and the next press aimed at the same 1st and stayed put
-  // (#184). It steps from the day you're on instead.
-  const here = hereKey();
-  const ribbon = v === 'month' && effectiveOverviewMode() === '3day';
-  let vm = ribbon ? { year: Number(here.slice(0, 4)), month: Number(here.slice(5, 7)) }
-    : (!gliding && state.visibleMonth) || fromAnchor;
-  // The agenda names the month of its top day, which may stand for empty
-  // days before it. Prev to a month with nothing in it lands back there,
-  // the list unmoved: the next Prev steps on from the month it went to, or
-  // it went to the same month again (#184).
-  const d = state.visibleDays;
-  const ym = (x) => x.year * 12 + x.month;
-  if (v === 'agenda' && dir < 0 && d && state.anchor >= d.start && state.anchor <= d.end
-    && state.anchor.endsWith('-01') && ym(fromAnchor) < ym(vm)) vm = fromAnchor;
-  const k = vm.year * 12 + (vm.month - 1) + dir;
+  const from = stepMonth();
+  const k = from.year * 12 + (from.month - 1) + dir;
   const y = Math.floor(k / 12);
   const m = ((k % 12) + 12) % 12 + 1;
   // Mid-month in the month grid (jumpAnchorFor): landing on the 1st left the
   // outgoing month dominant in a tall window, so the label, and the next
   // step computed from it, stayed put and Next did nothing.
   glideTo(jumpAnchorFor(y + '-' + pad(m) + '-01', 'month'));
+}
+
+// The month a Next or Prev steps from: the one the view names
+// (visibleMonth), once it has arrived there; until then the anchor's, where
+// it is going, so a second press mid-glide steps on from the first (#185).
+// A view whose window can't frame a month names another month than the one
+// gone to even then: the phone's 3-day ribbon shows about two weeks, so a
+// 1st landed on still read as the month before, and the next press aimed at
+// the same 1st; the agenda's list shows the next month's events for a month
+// with nothing in it, so Prev into it and Prev again went to the same month
+// (#184). There the anchor's month stands while the anchor is on screen.
+function stepMonth() {
+  const anchorMonth = monthOf(state.anchor);
+  if (!arrived()) return anchorMonth;
+  const framesMonth = state.view === 'month' && effectiveOverviewMode() !== '3day';
+  if (!framesMonth && hereKey() === state.anchor) return anchorMonth;
+  return state.visibleMonth || anchorMonth;
 }
 
 // Where a jump should actually land, given how much of a date was asked for.

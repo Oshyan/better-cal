@@ -265,6 +265,62 @@ for (const file of files) {
   }
 }
 
+// --- 11. dark mode: colours come from tokens with a dark twin (#212) -------
+// A colour written straight into a rule stays the same in dark, which is how
+// light-only greys and hues kept turning up on dark surfaces. Colours live in
+// the token blocks at the top of app.css (:root, and its two dark blocks); a
+// literal anywhere else fails here unless it is listed below, each one kept
+// on purpose with a comment beside it in the sheet saying why. Every light
+// token that holds a colour needs a value in both dark blocks, unless it is
+// one that is the same on either ground.
+{
+  const css = readFileSync(join(root, '..', 'styles', 'app.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  const COLOR = /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|(?<![\w-])(white|black)(?![\w-])/;
+  // Kept literals: white text or a white ring on a fill that does not change
+  // with the theme, a dark glass pill over map tiles, and shadows whose
+  // black reads on either ground. Matched as selector plus declaration.
+  const KEPT = new Set([
+    '.bc-cell.is-holiday .bc-cell-head, .bc-tg-vday-head.is-holiday { box-shadow: inset 0 3px 0 var(--bc-holiday, #4f9d69) }',
+    '.bc-tg-head-day.is-holiday { background-image: linear-gradient(var(--bc-holiday, #4f9d69), var(--bc-holiday, #4f9d69)) }',
+    '.bc-map-cover span { background: rgba(20, 26, 40, 0.55) }',
+    '.bc-map-cover span { color: #fff }',
+    ':is(.bc-bar, .bc-block).is-highlighted .bc-chip-title { text-decoration-color: color-mix(in srgb, var(--hl, var(--accent)) 72%, white) }',
+    '.bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer { background-image: linear-gradient(90deg, transparent 20%, rgba(255, 255, 255, 0.22) 50%, transparent 80%) }',
+    '.bc-evpanel { box-shadow: -10px 0 30px rgba(20, 24, 34, 0.08) }',
+    '.bc-tr-pin span { border: 2px solid #fff }',
+    '.bc-tr-pin span { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35) }',
+  ]);
+  const SAME_BOTH = new Set(['--accent-fg', '--on-solid']);
+  const TOKEN_SEL = new Map([[':root', 'light'], [':root:not([data-theme="light"])', 'os'], [':root[data-theme="dark"]', 'pinned']]);
+  const blocks = { light: new Map(), os: new Map(), pinned: new Map() };
+  const stray = [];
+  // Walk innermost rules: a selector, then declarations up to its close.
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\s+/g, ' ');
+    const tok = TOKEN_SEL.get(sel);
+    for (const raw of m[2].split(';')) {
+      const decl = raw.trim().replace(/\s+/g, ' ');
+      if (!decl) continue;
+      if (tok) {
+        const at = decl.indexOf(':');
+        blocks[tok].set(decl.slice(0, at).trim(), decl.slice(at + 1).trim());
+        continue;
+      }
+      const key = sel + ' { ' + decl + ' }';
+      if (COLOR.test(decl) && !KEPT.has(key)) stray.push(key);
+    }
+  }
+  check(stray.length === 0, 'colour literals outside the token blocks (make a token with a dark twin, or keep it with a reason): ' + stray.join(' | '));
+  const needTwin = [...blocks.light].filter(([k, v]) => COLOR.test(v) && !SAME_BOTH.has(k)).map(([k]) => k);
+  const missing = needTwin.filter((k) => !blocks.os.has(k) || !blocks.pinned.has(k));
+  check(needTwin.length > 20 && missing.length === 0, 'light colour tokens without a value in both dark blocks: ' + missing.join(', '));
+  const osKeys = [...blocks.os.keys()].sort().join();
+  check(osKeys === [...blocks.pinned.keys()].sort().join() && [...blocks.os].every(([k, v]) => blocks.pinned.get(k) === v),
+    'the OS dark block and the pinned dark block must define the same tokens with the same values');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

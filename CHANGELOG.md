@@ -22,6 +22,7 @@ The layered fixes since 1.4.0 are replaced by one rule per area, an unbounded se
 - **Response compression:** the install guide's new [Compression](docs/install.md#compression) section turns it on for Nginx, Apache and LiteSpeed, and the shipped `.htaccess` enables it where `mod_deflate` is loaded ([#210](https://github.com/Oshyan/better-cal/issues/210)).
 - Quick add has tests for "every afternoon" and a series started with "from <date>" ([#220](https://github.com/Oshyan/better-cal/issues/220)).
 - A feed made from a saved search says on its card in Settings when it has more than 500 matches, as the other feeds do ([#217](https://github.com/Oshyan/better-cal/issues/217)).
+- The bundled front-end libraries ship their full license texts in `web/vendor/`, and the third-party notices always name the versions actually bundled ([#209](https://github.com/Oshyan/better-cal/issues/209)).
 - **The calendar asks whether a window it holds has changed** and gets a one-line "no" instead of the whole window again, and a page reload or a return to a month reuses what the browser kept ([#16](https://github.com/Oshyan/better-cal/issues/16)). The ETag is the account's change cursor, and every write that changes the window moves it; the audit found two worker paths that didn't (ranking scores and geocoded coordinates), fixed. On Apache hosts that compress, the app's static files now get their 304s too.
 
 Operators: migration 066 adds one index on events (instant); `update.php` or the update page as usual.

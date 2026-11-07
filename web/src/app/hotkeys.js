@@ -34,6 +34,8 @@ export const HOTKEYS = [
   { id: 'quickAdd', keys: ['c'], label: 'Quick add (plain language)', group: 'Events' },
   { id: 'newEvent', keys: ['n'], label: 'New event (full editor)', group: 'Events' },
   { id: 'editEvent', keys: ['e'], label: 'Edit event (popover or detail open)', group: 'Events' },
+  // The desktop panel already shows every detail; on a phone the sheet grows to full height.
+  { id: 'fullDetails', keys: ['o'], label: 'Show all details (event sheet open on a phone)', group: 'Events' },
   { id: 'reschedule', keys: ['r'], label: 'Reschedule (popover open)', group: 'Events' },
   { id: 'deleteEvent', keys: ['Delete', 'Backspace'], display: ['Del'], label: 'Delete event (popover or detail open)', group: 'Events' },
   { id: 'detailPrev', keys: ['['], label: 'Previous event that day (event open)', group: 'Events' },

@@ -11,6 +11,7 @@ import {
   toggleFitRows,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
+import { isMobile } from '../ui/DayExpand.js';
 
 function isTyping() {
   const el = document.activeElement;
@@ -57,6 +58,14 @@ export const handlers = {
     const occ = focusedOcc();
     if (!occ || isFeedOcc(occ)) return false;
     editFromView(occ);
+    return true;
+  },
+  // The phone sheet grows to full height (EventPopover reads the request);
+  // the desktop panel already shows everything, so the key falls through.
+  fullDetails: () => {
+    const pop = state.popover;
+    if (!pop || !focusedOcc() || !isMobile()) return false;
+    set({ popover: { ...pop, grow: (pop.grow || 0) + 1 } });
     return true;
   },
   reschedule: () => {

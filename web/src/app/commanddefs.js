@@ -8,6 +8,7 @@
 //   hotkey   — id in HOTKEYS; the palette runs that same handler and shows
 //              the key. Must resolve, or the smoke test fails.
 //   needs    — context gate: 'occ' (popover or detail open) | 'popover'.
+//              'sheet' is the event sheet open on a phone.
 //              Gated commands are hidden, not shown-then-silently-ignored.
 //   prompt   — the command asks for one more thing before it runs.
 //   keywords — extra words that should match, beyond the label.
@@ -27,6 +28,7 @@ export const STATIC_COMMANDS = [
   { id: 'newPerson', icon: 'people', label: 'New person…', group: 'Create', prompt: true, keywords: 'add create people contact friend' },
 
   { id: 'editEvent', icon: 'pencil', label: 'Edit event', group: 'Event', hotkey: 'editEvent', needs: 'occ' },
+  { id: 'fullDetails', icon: 'more', label: 'Show all details', group: 'Event', hotkey: 'fullDetails', needs: 'sheet', keywords: 'expand open full more' },
   { id: 'reschedule', icon: 'reschedule', label: 'Reschedule event', group: 'Event', hotkey: 'reschedule', needs: 'popover', keywords: 'move' },
   { id: 'deleteEvent', icon: 'trash', label: 'Delete event', group: 'Event', hotkey: 'deleteEvent', needs: 'occ', keywords: 'remove' },
 

@@ -157,7 +157,7 @@ export async function run() {
     const cell = sc && sc.querySelector(`[data-day="${today}"]`);
     const r = cell && cell.getBoundingClientRect();
     const box = sc && sc.getBoundingClientRect();
-    const ok = !!(r && box && r.top >= box.top - 2 && r.bottom <= box.top + box.height * 0.75);
+    const ok = !!(r && box && r.top >= box.top - 2 && r.top <= box.top + box.height * 0.75);
     S.set({ settings: { ...st().settings, monthRows: rows } });
     return { ok, todayRowTop: r && box ? Math.round(r.top - box.top) : null };
   });

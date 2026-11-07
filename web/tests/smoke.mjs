@@ -4832,6 +4832,21 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: a zone change keeping the same moment names both zones and the new clock', toZone('FREQ=WEEKLY;BYDAY=WE', '2027-01-06T04:00:00+01:00'),
     'From weekly on Tuesday at 7:00 PM in Los Angeles to weekly on Wednesday at 4:00 AM in Berlin, with no end, as before.');
   eq('series panel: AFFECTS, all events with no end, then the changed days with what they have of their own, and the removed', v.affects, 'All events, with no end. 2 were changed earlier (title, location and 1 other), 1 was removed.');
+  // Each class of days the change loses or adds is one sentence under
+  // Affects, from its first days and its rate (no end) or its count.
+  const classed = (losses, gains) => planView({ ...choir, losses, gains }, ctx()).classes;
+  eq('series panel: a class of days lost for want of a day names the member, its first days and its rate', classed([
+    { why: 'noday', count: null, dates: ['2027-02-15', '2027-04-15', '2027-06-15'], member: '31st', period: 'month', every: { count: 5, span: 12, unit: 'month' } }], []),
+  ['No 31st in some months, so Feb 15, Apr 15 and Jun 15 have no event, and 5 in every 12 months after them.']);
+  eq('series panel: a bounded series counts its class instead of a rate; one day says it alone', [
+    classed([{ why: 'noday', count: 7, dates: ['2027-02-15', '2027-04-15', '2027-06-15', '2027-09-15', '2027-11-15'], member: '31st', period: 'month' }], []),
+    classed([{ why: 'noday', count: 1, dates: ['2028-02-29'], member: '29 February', period: 'year' }], []),
+  ], [['No 31st in some months, so Feb 15, Apr 15, Jun 15, Sep 15, Nov 15 and 2 more have no event.'], ['No 29 February in some years, so Feb 29, 2028 has no event.']]);
+  eq('series panel: days before a moved start, days past the new end, and the days a change adds, each a sentence', classed([
+    { why: 'start', count: 2, dates: ['2027-01-04', '2027-01-11'] }, { why: 'end', count: 1, dates: ['2027-12-15'] }],
+  [{ count: null, dates: ['2027-03-01', '2027-05-01', '2027-07-01'], member: '1st', period: 'month', every: { count: 5, span: 12, unit: 'month' } }]),
+  ['Jan 4 and Jan 11 are before the new start.', 'Dec 15 is after the new end.', 'Adds Mar 1, May 1 and Jul 1, and 5 in every 12 months after them.']);
+  eq('series panel: no class, no sentence; a refused plan says none', [classed([], []), planView({ ...choir, refusals: [{ code: 'dayset', words: '' }], losses: [{ why: 'noday', count: 1, dates: ['2027-02-15'] }] }, ctx()).classes], [[], []]);
   eq('series panel: a day moved earlier says so, then its question right under it, then its radios', [v.edited[0].line1, v.edited[0].line2, v.edited[0].choices[0].reason, v.edited[0].choices[0].options.map((o) => [o.label, o.selected])], [
     "'Choir' on Tue, Mar 23 was moved earlier to Fri, Mar 26 and stays where it is.", '', 'Keep it there, or move it with the rest?', [['Keep it on Fri, Mar 26', true], ['Move it to Sat, Mar 27', false]]]);
   eq('series panel: an ordinary edited day in one sentence, what it has of its own beside its name, nothing it keeps', v.edited[1].line1, "'Rehearsal', with its own title and location, on Tue, Apr 13 moves to Wed, Apr 14.");

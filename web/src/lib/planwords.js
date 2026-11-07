@@ -287,6 +287,41 @@ function endChange(bound, rule, opts) {
 }
 
 /**
+ * Under AFFECTS, one sentence per class of days the change loses or adds
+ * (series-model.md, Bounds: Losses and gains by class), from the class's
+ * data: its first days, its count for a bounded series, its rate for one
+ * with no end. "No 31st in some months, so Feb 15, Apr 15 and Jun 15 have
+ * no event, and 5 in every 12 months after them.", "Jan 4 and Jan 11 are
+ * before the new start.", "Nov 15 and Dec 15 are after the new end.",
+ * "Adds Mar 1, May 1 and Jul 1, and 5 in every 12 months after them."
+ */
+export function classLines(losses, gains, opts = {}) {
+  const say = (c) => {
+    let prev = null;
+    const days = (c.dates || []).map((d) => { const s = fmtDay(d, { ...opts, weekday: false, prev }); prev = dayKeyOf(d); return s; }).filter(Boolean);
+    const more = c.count != null && c.count > days.length ? c.count - days.length : 0;
+    const list = andList(more ? [...days, more + ' more'] : days);
+    const one = days.length === 1 && !more;
+    const e = c.every;
+    const rate = e ? ', and ' + (e.span === 1 ? (e.count === 1 ? '' : e.count + ' ') + 'every ' + e.unit : e.count + ' in every ' + e.span + ' ' + e.unit + 's') + ' after ' + (one ? 'it' : 'them') : '';
+    return { list, one, rate };
+  };
+  const out = [];
+  for (const c of losses || []) {
+    const { list, one, rate } = say(c);
+    if (!list) continue;
+    if (c.why === 'start') out.push(list + (one ? ' is' : ' are') + ' before the new start.');
+    else if (c.why === 'end') out.push(list + (one ? ' is' : ' are') + ' after the new end.');
+    else out.push((c.member ? 'No ' + c.member + ' in some ' + (c.period || 'month') + 's, so ' : '') + list + (one ? ' has' : ' have') + ' no event' + rate + '.');
+  }
+  for (const c of gains || []) {
+    const { list, rate } = say(c);
+    if (list) out.push('Adds ' + list + rate + '.');
+  }
+  return out;
+}
+
+/**
  * Header line 3, when the edit started from a day with something of its
  * own: "Started from 'Sample practice 6' on Fri, Dec 11.", the date being
  * where that day showed (its `before` placement), where the person started.

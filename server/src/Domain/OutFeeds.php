@@ -297,7 +297,7 @@ final class OutFeeds
             'search' => 'This feed contains only events matching: ' . (string) ($scope['q'] ?? ''),
             default => 'This feed contains all events.',
         };
-        return $base === '' ? $scopeText : $base . ' — ' . $scopeText;
+        return $base === '' ? $scopeText : $base . ': ' . $scopeText;
     }
 
     private function serialize(array $row, bool $showUrl = true): array

@@ -39,8 +39,6 @@ import { onOutsidePress, insideAny, swallowClickOfThisPress } from '../ui/outsid
 import { EventSheetBody } from './EventSheetBody.js';
 import { TripSheetBody } from './Trips.js';
 
-const GAP = 10;
-const WIDTH = 360;
 // Sheet gestures (phones): movement before a touch counts as a drag or a
 // swipe, and how far a release must travel to change the sheet.
 const SLOP = 10;
@@ -101,33 +99,6 @@ function scrollParent(el) {
     if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
   }
   return null;
-}
-
-// Anchor placement. The rect is first clipped to the viewport: multi-day
-// bars and week-spanning segments routinely start off-screen, and anchoring
-// to their true (negative) left threw the popover to the far edge, nowhere
-// near the part the user clicked. Wide anchors (long bars) get the popover
-// below their visible span rather than flipped to one side, which reads as
-// arbitrary when the anchor is most of the row.
-function place(anchorRect) {
-  const h = 300; // estimate; clamped below anyway
-  const vw = window.innerWidth;
-  const left0 = Math.max(GAP, anchorRect.left);
-  const right0 = Math.min(vw - GAP, anchorRect.right);
-  const wide = right0 - left0 > vw * 0.4;
-
-  let left;
-  if (wide) {
-    left = left0;
-  } else {
-    left = right0 + GAP;
-    if (left + WIDTH > vw - GAP) left = left0 - GAP - WIDTH; // flip left
-  }
-  left = Math.max(GAP, Math.min(left, vw - GAP - WIDTH));
-
-  let top = wide ? anchorRect.bottom + GAP : anchorRect.top;
-  top = Math.max(GAP, Math.min(top, window.innerHeight - GAP - h));
-  return { left, top };
 }
 
 export function EventPopover() {
@@ -465,7 +436,6 @@ export function EventPopover() {
   // account can only view. The server's `editable` is the word on it.
   const isFeed = cal ? !cal.editable : occ.source === 'feed';
   const mobile = isMobile();
-  const pos = !mobile && popover.anchorRect ? place(popover.anchorRect) : null;
 
   // Mobile sheet only: same-day prev/next in the header row, sharing the
   // detail view's list builder. Navigating swaps the popover's occurrence.
@@ -482,10 +452,6 @@ export function EventPopover() {
     if (target) set({ popover: { ...popover, pin: navPin, instanceId: target.instanceId, dayKey: navDay } });
   };
   navRef.current = nav ? { go: goSheet, index: nav.index, count: nav.list.length } : null;
-  // On the phone the full view is the same sheet grown (0.5.3: with the map,
-  // invitation replies, plugin data and source); elsewhere, the separate
-  // full view.
-  const openFull = () => (mobile ? setFull(true) : openDetail(occ.instanceId));
 
   const saveTime = async (startVal, endVal) => {
     const s = fromInputValue(startVal);

@@ -1,0 +1,62 @@
+{
+    "n": 46,
+    "seed": 23,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "none",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-06-08",
+        "length": 2
+    },
+    "exceptions": [
+        {
+            "at": 9,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 3,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        }
+    ],
+    "acted": 1,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 30,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": true,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=WE",
+        "bound": {
+            "count": 4
+        },
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "outside": "keep"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

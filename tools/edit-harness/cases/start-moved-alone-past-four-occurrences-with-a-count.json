@@ -1,0 +1,75 @@
+{
+    "n": 54,
+    "seed": 23,
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=19",
+        "import": false,
+        "bound": "count",
+        "boundAt": 14,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2026-08-19 01:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 13,
+            "kind": "edit",
+            "own": [
+                "title",
+                "date"
+            ],
+            "days": -3,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 6,
+            "kind": "skip"
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 122,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "tags": [
+                "added",
+                "sample"
+            ]
+        },
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=MONTHLY;BYMONTHDAY=3",
+        "bound": null,
+        "via": "master",
+        "startOnly": true
+    },
+    "stack": {
+        "kind": "deleteThis",
+        "days": -1,
+        "mins": -60
+    },
+    "everyOption": false,
+    "typed": false,
+    "startTo": 4,
+    "choices": {
+        "edit": {
+            "bound": "end"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

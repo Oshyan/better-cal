@@ -389,6 +389,12 @@ return [
     ],
     // The trip rule's two mutations patch its query (Trips::assertRules, which every writer and Undo call).
     [
+        'id' => 'cycle-one-period-short', 'file' => $model, 'checks' => ['c-placement'],
+        'what' => 'one whole cycle of the rule\'s periods read one period short, so a loss or gain class\'s rate is counted over less than a cycle',
+        'patch' => [['        $end = $r->periodFirst($r->periodPlus($p, $counted * $r->interval)) - 1;', '        $end = $r->periodFirst($r->periodPlus($p, ($counted - 1) * $r->interval)) - 1;']],
+        'cases' => ['mutation-count-sent-on-a-daily-series-with-no-end', 'mutation-end-sent-on-a-monthly-list-with-no-end-dragged'],
+    ],
+    [
         'id' => 'undo-gate-clear-flag', 'file' => 'server/src/Domain/Trips.php', 'dbtest' => 'undo-trips',
         'what' => 'the shared trip rule (Trips::assertRules) lets a trip\'s flag be cleared while a live stop stands',
         'patch' => [["                        OR (c.is_container = 0 AND c.id IN \$was))", "                        OR (1 = 0 AND c.id IN \$was))"]],

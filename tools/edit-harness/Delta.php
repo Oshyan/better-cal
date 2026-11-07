@@ -24,7 +24,7 @@ final class Delta
     public const FIELDS = ['title', 'location', 'description', 'url', 'reminders', 'status', 'tags', 'people'];
 
     /** The deltas a shrink can zero, one at a time. */
-    public const ZEROABLE = ['date', 'clock', 'zone', 'length', 'allDay', 'trip', 'rule', 'bound', 'title', 'location', 'description', 'url', 'reminders', 'status', 'tags', 'people'];
+    public const ZEROABLE = ['date', 'clock', 'zone', 'length', 'allDay', 'trip', 'rule', 'bound', 'startOnly', 'title', 'location', 'description', 'url', 'reminders', 'status', 'tags', 'people'];
 
     public static function draw(Rng $r, array $series, int $rawCount): array
     {
@@ -45,7 +45,18 @@ final class Delta
             'newRule' => self::otherRule($r, $series['rrule']),
             'bound' => null,
             'via' => $r->pick(['row', 'master']),
+            // A start moved alone (series-model.md, Bounds): a whole-series
+            // request that names no day and puts the series' start on a later
+            // day of its own pattern (the driver picks the day), with no zone,
+            // all-day or pattern change, which the design reads as a bound.
+            'startOnly' => false,
         ];
+        if ($r->chance(0.08)) {
+            $v['startOnly'] = true;
+            $v['scope'] = 'all';
+            $v['zone'] = null;
+            $v['via'] = 'master';
+        }
         if (!$r->chance(0.45)) {
             $v['date'] = $r->chance(0.25) ? $r->pick([28, 29, 30, 31, 35, 45, -7, 7, 14, 21, -28, -30]) : ($r->pick([-3, -2, -1, 1, 2, 3, 4, 5, 6, 8, 10, 13]));
         }
@@ -58,11 +69,14 @@ final class Delta
         if ($r->chance(0.18)) {
             $v['length'] = $timed ? $r->pick([-15, 15, 30, 60]) * 60 : 1;
         }
-        $v['allDay'] = $r->chance(0.12);
+        $v['allDay'] = !$v['startOnly'] && $r->chance(0.12);
         foreach (self::FIELDS as $f) {
             if ($r->chance(0.12)) {
                 $v['fields'][$f] = self::VALUES[$f];
             }
+        }
+        if ($v['startOnly'] && $v['rule'] === 'new') {
+            $v['rule'] = 'same';
         }
         if ($r->chance(0.18)) {
             $kind = $r->pick(['count', 'until', 'none']);
@@ -129,6 +143,7 @@ final class Delta
                 return $v;
             case 'allDay':
             case 'trip':
+            case 'startOnly':
                 if ($v[$d] === false) {
                     return null;
                 }

@@ -363,7 +363,7 @@ trait PlanPlacement
      * is no old occurrence's image and no stored skip, classed by its
      * member. Each listed class must be one of the harness's: its dates the
      * class's first days (five at most), its count the whole class for a
-     * bounded series and null with no end, its rate the class's count over
+     * bounded series or a start class and null otherwise, its rate the class's count over
      * one cycle in calendar periods, reduced, absent when the cycle has
      * none, a member named exactly for `noday` and for every gain; and every
      * class of the harness's must be listed. A rule outside the drag table
@@ -495,7 +495,8 @@ trait PlanPlacement
             }
             $seen[$key] = true;
             $this->expect('c-placement', "a $list class lists its first days, five at most", "$list dates", $c['days'], $l['dates'] ?? null, ['class' => $i]);
-            $this->expect('c-placement', "a $list class counts every one of a bounded series, null with no end", "$list count", $bounded ? $c['count'] : null, array_key_exists('count', $l) ? $l['count'] : 'absent', ['class' => $i]);
+            // The days before a moved start are finite whatever the end, so a start class is counted always.
+            $this->expect('c-placement', "a $list class counts every one of a bounded series and of a start class, null otherwise", "$list count", $bounded || $c['why'] === 'start' ? $c['count'] : null, array_key_exists('count', $l) ? $l['count'] : 'absent', ['class' => $i]);
             $every = null;
             if ($cycle !== null && $c['inCycle'] > 0) {
                 $g = self::gcd($c['inCycle'], $cycle['periods']);

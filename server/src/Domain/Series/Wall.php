@@ -78,19 +78,33 @@ final class Wall
      * spring change day being 03:30 to 04:30, an hour, and every other range
      * is its two clocks' own instants. Null for an end at or before the
      * start on the clocks typed, which the push could otherwise carry past it.
+     * An instant given stays that instant (Calc::at, decisions.md "A clock
+     * time the fall change repeats"): when $given is one of the instants the
+     * end's clock names (the later of the two a repeated hour has, which a
+     * two-hour event dragged to end in that hour names), it is the answer.
      *
      * @param int $typedStart the start's clock typed, as asUtc gives it
      * @param int $typedEnd the end's clock typed, as asUtc gives it
+     * @param ?\DateTimeImmutable $given the end instant the request gave beside the clocks, if any
      * @return \DateTimeImmutable|null in the zone
      */
-    public static function typedEnd(\DateTimeImmutable $start, int $typedStart, int $typedEnd, \DateTimeZone $zone): ?\DateTimeImmutable
+    public static function typedEnd(\DateTimeImmutable $start, int $typedStart, int $typedEnd, \DateTimeZone $zone, ?\DateTimeImmutable $given = null): ?\DateTimeImmutable
     {
         if ($typedEnd <= $typedStart) {
             return null;
         }
         $w = $typedEnd + $start->getTimestamp() + $zone->getOffset($start) - $typedStart;
         $sec = (($w % 86400) + 86400) % 86400;
-        return self::resolve(intdiv($w - $sec, 86400), [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60], $zone);
+        $dn = intdiv($w - $sec, 86400);
+        $clock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
+        if ($given !== null) {
+            foreach (self::instants($dn, $clock, $zone) as $t) {
+                if ($t->getTimestamp() === $given->getTimestamp()) {
+                    return $t;
+                }
+            }
+        }
+        return self::resolve($dn, $clock, $zone);
     }
 
     /** The wall clock's seconds as if it were UTC. @param array{0:int,1:int,2:int} $clock */

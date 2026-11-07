@@ -2561,6 +2561,33 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     checkEq('typed across a half-hour gap: 02:15 to 02:45 is 02:45 to 03:15, half an hour', ['2027-10-03 02:45', '2027-10-03 03:15'],
         array_map(static fn(string $iso): string => Time::parseIso($iso)->setTimezone(new DateTimeZone('Australia/Lord_Howe'))->format('Y-m-d H:i'), [$lh['start'], $lh['end']]));
     $adb->run('DELETE FROM events WHERE id = ?', [(int) $lh['eventId']]);
+    // A typed drag onto a change day with the instants beside the clocks
+    // (what the editor sends for a drag): an instant that is one the clock
+    // names stays, as any instant given does, so a two-hour event dragged to
+    // end in the hour the fall change repeats keeps its two hours (seed 31,
+    // case 675). A southern zone, its fall change in April and spring change
+    // in September, a bounded series with edited rows, no length change.
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $nz = 'Pacific/Auckland';
+        $nzZone = new DateTimeZone($nz);
+        $nzLen = static fn(array $row): int => Time::fromDb((string) $row['end_utc'])->getTimestamp() - Time::fromDb((string) $row['start_utc'])->getTimestamp();
+        $nzRows = static fn(int $id) => array_map(static fn(array $r): array => [Time::fromDb((string) $r['start_utc'])->setTimezone($nzZone)->format('Y-m-d H:i'), $nzLen($r)],
+            $adb->all('SELECT start_utc, end_utc FROM events WHERE id = ? OR recurrence_parent_id = ? ORDER BY id', [$id, $id]));
+        foreach ([
+            // The fall change day: 01:30 to 02:30 typed, the end instant the later 02:30 (two hours after the start).
+            ['2028-04-04T13:30:00+00:00', '2028-04-01T12:30:00+00:00', '2028-04-01T14:30:00+00:00', '2028-04-02T01:30', '2028-04-02T02:30', 'fall'],
+            // The spring change day: 02:30 to 04:30 typed into the gap, pushed to 03:30 to 05:30, the instants those.
+            ['2028-10-03T12:30:00+00:00', '2028-09-23T14:30:00+00:00', '2028-09-23T16:30:00+00:00', '2028-09-24T02:30', '2028-09-24T04:30', 'spring'],
+        ] as [$nzActed, $nzStart, $nzEnd, $nzTypedStart, $nzTypedEnd, $nzChange]) {
+            $nzId = (int) $eventsA->create(1, ['calendarId' => 10, 'title' => 'Sample first Wednesday', 'start' => '2027-10-05T12:30:00+00:00', 'end' => '2027-10-05T14:30:00+00:00',
+                'allDay' => false, 'tzid' => $nz, 'rrule' => 'FREQ=MONTHLY;BYDAY=1WE;COUNT=16'])['eventId'];
+            $eventsA->patch(1, $nzId, ['scope' => 'this', 'instanceStart' => '2027-11-02T12:30:00+00:00', 'title' => 'Sample first Wednesday, renamed']);
+            $eventsA->patch(1, $nzId, ['scope' => 'this', 'instanceStart' => '2027-11-30T12:30:00+00:00', 'location' => 'Sample Annex']);
+            planned($eventsA, 1, $nzId, ['scope' => 'all', 'instanceStart' => $nzActed, 'start' => $nzStart, 'end' => $nzEnd, 'typed' => ['start' => $nzTypedStart, 'end' => $nzTypedEnd, 'tz' => $nz]]);
+            checkEq("typed onto the $nzChange change ($nz): the series and its edited rows keep their two hours", [7200, 7200, 7200], array_column($nzRows($nzId), 1));
+            $adb->run('DELETE FROM events WHERE id = ? OR recurrence_parent_id = ?', [$nzId, $nzId]);
+        }
+    }
     // A "this and following" change reports the event that now holds the
     // occurrence, so the app can keep it open (it used to go blank). Needs
     // sabre/vobject to prove the occurrence (the install job runs it).

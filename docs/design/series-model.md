@@ -412,7 +412,7 @@ Sending Google the plan isn't the same as Google ending up with it. Google decid
 - **Etags.** Any change to the series, to the master or to one instance, changes the etag of the master and of every instance. `If-Match` on PATCH and DELETE of either answers 412 when stale, 200 or 204 when current.
 - **Deletes.** A deleted event stays readable (`showDeleted`) and comes back under the same id by a PATCH to `status: confirmed`, a single event and a cancelled instance alike; an id chosen by the client is accepted on insert and can't be inserted again after a delete (409), so putting a deleted event back is that PATCH, never a second insert.
 - **Sync.** A write shows in the next sync-token delta at once, with the write's etag; the delta after a master change lists the series' exceptions, cancelled ones included; an unbounded series lists 730 instances and no more (COUNT=1000 is accepted and expands to 730).
-- **Mail** is unverified: the probe's mail group needs a guest mailbox and hasn't run.
+- **Mail.** With `sendUpdates=none`, no mail reaches a guest for the insert of a series with that guest, a master patch, an instance patch or a status change (checked against a guest mailbox, 2026-11-07). With the parameter left out, a master patch mails the guest an "Updated invitation", so the parameter is never omitted.
 
 So the contract, and what the app does to keep the plan:
 

@@ -9,39 +9,52 @@ final class Db
     private ?\PDO $pdo = null;
 
     /**
-     * Moves on as each transaction begins or ends here, so a credential
-     * checked in one (credentialChecked) isn't taken for checked in the next.
+     * The credentials checked with a lock in the transaction open now, each
+     * by the identity the check recorded (RequestAuthority::checked), and
+     * the serial of that transaction. The serial moves on as each
+     * transaction begins or ends here, so a check in one isn't taken for a
+     * check in the next.
      */
     private int $txSerial = 0;
     private int $checkedIn = -1;
+    /** @var array<string,true> */
+    private array $checked = [];
 
     /**
      * While a request's credential is registered (RequestAuthority::during):
-     * called with each write statement made outside a transaction in which
-     * a credential was checked, on any connection.
+     * called with each write statement made on any connection, and the
+     * connection making it, which says what was checked in its transaction.
      */
-    private static ?\Closure $uncheckedWrite = null;
+    private static ?\Closure $onWrite = null;
 
     /** Set (or with null, clear) the watch on writes; returns the one it replaces. */
-    public static function watchWrites(?\Closure $onUnchecked): ?\Closure
+    public static function watchWrites(?\Closure $onWrite): ?\Closure
     {
-        $was = self::$uncheckedWrite;
-        self::$uncheckedWrite = $onUnchecked;
+        $was = self::$onWrite;
+        self::$onWrite = $onWrite;
         return $was;
     }
 
-    /** Was a credential checked in the transaction open now? */
-    public function credentialCheckedNow(): bool
+    /** Was a credential checked in the transaction open now: any, or, with $identity, that one? */
+    public function credentialCheckedNow(?string $identity = null): bool
     {
-        return $this->checkedIn === $this->txSerial && $this->pdo()->inTransaction();
+        if ($this->checkedIn !== $this->txSerial || !$this->pdo()->inTransaction()) {
+            return false;
+        }
+        return $identity === null || isset($this->checked[$identity]);
     }
 
-    /** A credential was checked, locked, in the transaction open now (RequestAuthority::checked). */
-    public function credentialChecked(): void
+    /** A credential was checked, locked, in the transaction open now; $identity says which one (RequestAuthority::checked). */
+    public function credentialChecked(string $identity): void
     {
-        if ($this->pdo()->inTransaction()) {
+        if (!$this->pdo()->inTransaction()) {
+            return;
+        }
+        if ($this->checkedIn !== $this->txSerial) {
+            $this->checked = [];
             $this->checkedIn = $this->txSerial;
         }
+        $this->checked[$identity] = true;
     }
 
     public function __construct(private readonly array $cfg)
@@ -67,10 +80,8 @@ final class Db
     public function run(string $sql, array $params = []): \PDOStatement
     {
         $pdo = $this->pdo();
-        if (self::$uncheckedWrite !== null
-            && !($this->checkedIn === $this->txSerial && $pdo->inTransaction())
-            && preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i', $sql) === 1) {
-            (self::$uncheckedWrite)($sql);
+        if (self::$onWrite !== null && preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i', $sql) === 1) {
+            (self::$onWrite)($sql, $this);
         }
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);

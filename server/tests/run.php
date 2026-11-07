@@ -13956,20 +13956,24 @@ check('no database errors were logged during the run', $dbErrors === [], implode
 // the write boundary: Undo::write checks the registered credential
 // (RequestAuthority::during) right after the account's lock, and a write
 // statement made under it outside a transaction in which it was checked is
-// a journaling misuse. A worker's write, with none registered, is neither.
+// a journaling misuse. The check must be of the request's own credential:
+// a check of another account's key, or of the account's own key under a
+// browser session, covers nothing. A worker's write, with none registered,
+// is neither.
 {
     $wb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $wb->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
     $wb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
     $wb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
-    $wb->run("INSERT INTO users VALUES (1, '{}')");
+    $wb->run("INSERT INTO users VALUES (1, '{}'), (2, '{}')");
     $wb->run('CREATE TABLE sample_rows (id INTEGER PRIMARY KEY, label TEXT)');
     $wb->run("INSERT INTO sessions VALUES (?, 1, '2030-01-01 00:00:00', '2099-01-01 00:00:00')", [hash('sha256', 'sample-session')]);
-    $wb->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (5, 1, NULL)');
+    $wb->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (5, 1, NULL), (7, 2, NULL)');
     $wb->run("INSERT INTO sample_rows VALUES (1, 'first')");
     $wbUndo = new BetterCal\Domain\Undo($wb);
     $session = BetterCal\Domain\RequestAuthority::credential(1, null, 'sample-session');
     $token = BetterCal\Domain\RequestAuthority::credential(1, 5, null);
+    $othersKey = BetterCal\Domain\RequestAuthority::credential(2, 7, null);
     $misusesAt = new ReflectionProperty(BetterCal\Domain\Undo::class, 'misuses');
     $kept = $misusesAt->getValue();
     $newMisuses = static function (callable $fn) use ($misusesAt): array {
@@ -13997,6 +14001,22 @@ check('no database errors were logged during the run', $dbErrors === [], implode
         $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->tx(function () use ($wb, $session): void {
             $session->assertValid($wb);
             $wb->run("UPDATE sample_rows SET label = 'checked' WHERE id = 1");
+        }))));
+    checkEq("write boundary: a check of another account's key covers no write under the request's session", $unchecked,
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->tx(function () use ($wb, $othersKey): void {
+            $othersKey->assertValid($wb);
+            $wb->run("UPDATE sample_rows SET label = 'another account key' WHERE id = 1");
+        }))));
+    checkEq("write boundary: nor does a check of the account's own key, under its browser session", $unchecked,
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->tx(function () use ($wb, $token): void {
+            $token->assertValid($wb);
+            $wb->run("UPDATE sample_rows SET label = 'own key, not the session' WHERE id = 1");
+        }))));
+    checkEq("write boundary: the request's credential checked beside another's covers the write", [],
+        $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, fn() => $wb->tx(function () use ($wb, $othersKey, $session): void {
+            $othersKey->assertValid($wb);
+            $session->assertValid($wb);
+            $wb->run("UPDATE sample_rows SET label = 'both checked' WHERE id = 1");
         }))));
     checkEq('write boundary: a check in one transaction does not cover the next', $unchecked,
         $newMisuses(fn() => BetterCal\Domain\RequestAuthority::during($session, function () use ($wb, $session): void {

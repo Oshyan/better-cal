@@ -147,7 +147,7 @@ final class ApiTokens
             throw \BetterCal\Http\HttpError::conflict('token_revoked', 'The API key was revoked or expired before the change could be saved.');
         }
         if ($lock !== '' || $forUpdate) {
-            RequestAuthority::checked($db, $userId);
+            RequestAuthority::checked($db, $userId, RequestAuthority::identityOf($tokenId, null, null));
         }
     }
 

@@ -55,7 +55,13 @@ final class Auth
         }
         $replacement = password_needs_rehash((string) $user['password_hash'], PASSWORD_DEFAULT)
             ? password_hash($password, PASSWORD_DEFAULT) : null;
-        return $this->db->tx(function () use ($user, $replacement): ?array {
+        // Signing in is a request made with the password: its session is
+        // written in a transaction checked by that password, whatever
+        // credential the request came in with (a password change signs in
+        // again under the session it has just ended). The change marker
+        // doesn't move: nothing a device shows has changed.
+        $signingIn = RequestAuthority::password((int) $user['id'], (string) $user['password_hash']);
+        return RequestAuthority::during($signingIn, fn(): ?array => $this->db->tx(function () use ($user, $replacement): ?array {
             if (!RequestAuthority::passwordStillCurrent($this->db, (int) $user['id'], (string) $user['password_hash'])) {
                 return null;
             }
@@ -75,7 +81,7 @@ final class Auth
             // Opportunistic cleanup of expired sessions.
             $this->db->run('DELETE FROM sessions WHERE expires_at < ?', [Time::nowDb()]);
             return ['token' => $token, 'csrf' => $csrf, 'user' => $user];
-        });
+        }), false);
     }
 
     /**
@@ -324,15 +330,16 @@ final class Auth
         if ($user === null) {
             throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
         }
+        $tokenHash = hash('sha256', $token);
         $session = $db->one(
             'SELECT token_hash, authenticated_at FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?' . $lock,
-            [hash('sha256', $token), $userId, Time::nowDb()]
+            [$tokenHash, $userId, Time::nowDb()]
         );
         if ($session === null) {
             throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
         }
         if ($forUpdate) {
-            RequestAuthority::checked($db, $userId);
+            RequestAuthority::checked($db, $userId, RequestAuthority::identityOf(null, $tokenHash, null));
         }
         return $session;
     }

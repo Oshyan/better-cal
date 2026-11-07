@@ -175,6 +175,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/calendars/:id/export", [$exportController, 'calendar']);
         $router->add('GET', "$base/export", [$exportController, 'all']);
         $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
+        $router->add('PATCH', "$base/calendars", [$calendarsController, 'patchMany']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
         $router->add('POST', "$base/calendars/:id/position", [$calendarsController, 'position']);
         $router->add('POST', "$base/calendars/:id/adopt", [$calendarsController, 'adopt']);

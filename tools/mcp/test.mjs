@@ -101,6 +101,8 @@ const mock = createServer((req, res) => {
       respond(200, { ok: true, settings: { credential: { set: true } } });
     } else if (req.method === 'GET' && path === '/api/v1/calendars') {
       respond(200, { calendars: [{ id: 1, name: 'Sample' }], folders: [], tags: [] });
+    } else if (req.method === 'PATCH' && path === '/api/v1/calendars') {
+      respond(200, { calendars: (entry.body.calendars || []).map((c) => ({ id: c.id, name: 'Sample', visible: c.visible })) });
     } else if (req.method === 'GET' && path === '/api/v1/search') {
       respond(200, { results: [{ eventId: 42, title: 'Dinner' }] });
     } else if (req.method === 'POST' && path === '/api/v1/quickadd') {
@@ -199,6 +201,7 @@ async function main() {
     create_event: [false, false, false, true], quick_add: [false, false, false, true],
     update_event: [false, true, false, true], delete_event: [false, true, true, true],
     set_attendance: [false, true, false, false], list_calendars: [true, false, true, false],
+    set_calendars_visible: [false, true, true, false],
     list_review: [true, false, true, false], list_plugins: [true, false, true, false],
     get_system_health: [true, false, true, false], update_plugin_settings: [false, true, true, true],
     update_plugin_calendar_settings: [false, true, true, true], set_plugin_enabled: [false, true, true, true],
@@ -233,6 +236,7 @@ async function main() {
     'search_events',
     'search_plugin_options',
     'set_attendance',
+    'set_calendars_visible',
     'set_plugin_enabled',
     'undo',
     'update_event',
@@ -338,6 +342,10 @@ async function main() {
     ['enum violation', 'set_attendance', { id: 42, attendance: 'owner' }],
     ['missing required', 'create_event', { title: 't' }],
     ['non-integer array item', 'list_events', { start: 's', end: 'e', calendars: [1, '2,3&x=1'] }],
+    ['a batch member without its flag', 'set_calendars_visible', { calendars: [{ id: 1 }] }],
+    ['a batch member with a stray field', 'set_calendars_visible', { calendars: [{ id: 1, visible: true, name: 'x' }] }],
+    ['a batch member whose flag is a word', 'set_calendars_visible', { calendars: [{ id: 1, visible: 'yes' }] }],
+    ['an empty batch', 'set_calendars_visible', { calendars: [] }],
     ['arguments not an object', 'undo', ['x']],
   ]) {
     const res = await rpc('tools/call', { name, arguments: args });
@@ -347,6 +355,7 @@ async function main() {
 
   for (const [name, args, method, path] of [
     ['list_calendars', {}, 'GET', '/calendars'],
+    ['set_calendars_visible', { calendars: [{ id: 1, visible: false }, { id: 2, visible: true }], folderId: 3 }, 'PATCH', '/calendars'],
     ['search_events', { q: 'dinner', limit: 5 }, 'GET', '/search?q=dinner&limit=5'],
     ['quick_add', { text: 'dinner fri 7pm', tz: 'UTC' }, 'POST', '/quickadd'],
     ['list_plugins', {}, 'GET', '/plugins'],

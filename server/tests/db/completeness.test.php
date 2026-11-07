@@ -302,6 +302,7 @@ return static function (Db $db): void {
                 $folder = (int) $d->folders->create($u, ['name' => 'Projects'])['id'];
             });
             $journaled("a calendar's settings", fn() => $d->calendars->patch($u, $work, ['name' => 'Work things', 'color' => '#336699', 'visible' => false, 'role' => 'context', 'folderIds' => [$folder]]));
+            $journaled('calendars shown and hidden together', fn() => $d->calendars->setVisibility($u, ['calendars' => [['id' => $work, 'visible' => true], ['id' => $home, 'visible' => false]], 'folderId' => $folder]));
             $journaled('a calendar filed and moved in its folder', function () use ($d, $u, $folder, $home): void {
                 $d->folders->place($u, $folder, $home, 0);
                 $d->folders->place($u, $folder, $home, 5);

@@ -171,9 +171,11 @@ function pluginSegment(id) {
 
 // Validates tools/call arguments against the tool's own inputSchema, for the
 // JSON Schema subset the tools below actually use (object / string / integer /
-// boolean / array-of, enum, minimum, required). Undeclared keys are refused
-// rather than dropped: a caller sending a field the tool does not model is
-// either confused or probing, and both deserve an error, not a silent forward.
+// boolean / array-of, enum, minimum, minItems, required). An object with
+// declared properties is checked as the arguments are, so a batch member
+// is held to its shape. Undeclared keys are refused rather than dropped: a
+// caller sending a field the tool does not model is either confused or
+// probing, and both deserve an error, not a silent forward.
 // Returns a list of problems; empty means valid.
 function valueErrors(name, value, schema) {
   switch (schema.type) {
@@ -183,6 +185,7 @@ function valueErrors(name, value, schema) {
       break;
     case 'object':
       if (value === null || typeof value !== 'object' || Array.isArray(value)) return [`${name} must be an object`];
+      if (schema.properties) return argErrors(value, schema).map((e) => `${name}: ${e}`);
       break;
     case 'boolean':
       if (typeof value !== 'boolean') return [`${name} must be a boolean`];
@@ -193,6 +196,7 @@ function valueErrors(name, value, schema) {
       break;
     case 'array':
       if (!Array.isArray(value)) return [`${name} must be an array`];
+      if (schema.minItems !== undefined && value.length < schema.minItems) return [`${name} must have at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}`];
       return value.flatMap((v, i) => valueErrors(`${name}[${i}]`, v, schema.items ?? {}));
     default:
       break;
@@ -381,6 +385,28 @@ const TOOLS = [
     handler: () => api('GET', '/calendars'),
   },
   {
+    name: 'set_calendars_visible',
+    description: 'Show or hide many calendars in one change (one Activity entry, undone as one). Each calendar wanted a certain way is listed with its visible flag; ones already so are left alone. folderId names the folder acted on, for the Activity line.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calendars: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: { id: { type: 'integer', minimum: 1 }, visible: { type: 'boolean' } },
+            required: ['id', 'visible'],
+          },
+          description: 'The calendars and whether each should show',
+        },
+        folderId: { type: 'integer', minimum: 1, description: 'The folder acted on (optional)' },
+      },
+      required: ['calendars'],
+    },
+    handler: (a) => api('PATCH', '/calendars', { body: { calendars: a.calendars, ...(a.folderId !== undefined ? { folderId: a.folderId } : {}) } }),
+  },
+  {
     name: 'list_review',
     description: 'Read the Review queue. Possible duplicates can be decided with resolve_duplicate. Invitations, replies, proposals, safety dismissals and subscription claims require a signed-in browser.',
     inputSchema: {
@@ -495,6 +521,7 @@ const EFFECTS = {
   delete_event:                    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
   set_attendance:                  { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false },
   list_calendars:                  { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
+  set_calendars_visible:           { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false },
   list_review:                     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   list_plugins:                    { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   get_system_health:               { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },

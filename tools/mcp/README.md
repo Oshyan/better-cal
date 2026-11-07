@@ -56,6 +56,7 @@ Every call's arguments are checked against the tool's schema before any request:
 | `delete_event` | `id`, `scope?`, `instanceStart?` | Delete an event or instances |
 | `set_attendance` | `id`, `attendance` | `none`, `interested`, `going` or `hidden` |
 | `list_calendars` | none | Calendars, folders, tags |
+| `set_calendars_visible` | `calendars`, `folderId?` | Show or hide many calendars in one change, undone as one |
 | `list_review` | `status?` | Read Review; tokens get actions for duplicates only |
 | `list_plugins` | none | Plugin schemas and settings; secrets show only set/unset |
 | `get_system_health` | none | Worker and failure status, without private host and destination details |

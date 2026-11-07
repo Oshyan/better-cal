@@ -328,33 +328,6 @@ trait PlanPlacement
         }
     }
 
-    /**
-     * The model's window over an old series (the plan's "stated window"):
-     * all of a bounded one; of an unbounded one, through the latest of the
-     * day acted on, the start and every exception's day, and a span on by
-     * its frequency.
-     */
-    private static function lossWindow(array $before, int $actedDn): ?int
-    {
-        if ($before['bounded']) {
-            return null;
-        }
-        $s = $before['shape'];
-        $i = max(1, $s->interval);
-        $span = match ($s->freq) {
-            'DAILY' => 3 * $i + 14,
-            'WEEKLY' => 21 * $i + 14,
-            'MONTHLY' => 366 * $i + 62,
-            'YEARLY' => 1100 * $i + 400,
-            default => 400,
-        };
-        $days = [$actedDn, $before['startDn']];
-        foreach (array_merge($before['exdates'], array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $before['overrides'])) as $k) {
-            $days[] = Clock::dayOf($k, $before['tz']);
-        }
-        return max($days) + $span;
-    }
-
     /** Whether a day is one of the stored series' occurrences, looked for past the window read. */
     private static function isNewDay(array $after, array $ctx, int $dn): bool
     {
@@ -373,76 +346,248 @@ trait PlanPlacement
     }
 
     /**
-     * Losses and gains over the model's window and exclusions: a loss is an
-     * old occurrence whose image is no day of the stored series, skipped
-     * days, edited days and the day acted on left out, and none for a new
-     * rule; a gain is a stored day that is no old occurrence's image and no
-     * stored skip, up to the lesser of the latest image and the window, none
-     * for a new rule. Each listed item must be one; each one within the
-     * window must be listed.
+     * Losses and gains by class (series-model.md, Bounds: Losses and gains
+     * by class), worked out the harness's own way over the span the design
+     * names: all of a bounded series; of one with no end, from the start
+     * through the latest day the change names (the day acted on, where it
+     * landed, the start, every exception's day, and the new start), then one
+     * whole cycle of the rule's periods (one period daily and weekly,
+     * 4,800 / gcd(n, 4,800) monthly, 400 / gcd(n, 400) yearly), then on by
+     * the reach, the furthest any image of the cycle moves: old days through
+     * the cycle plus twice the reach, new days through the cycle plus the
+     * reach. A loss is an old occurrence whose image is no day of the stored
+     * series (skipped days, edited days and the day acted on left out, none
+     * for a new rule), classed by why (`noday`: no image, or one the new
+     * series has no day on; `start`: before the new start; `end`: past the
+     * new end) and, for `noday`, by its member; a gain is a stored day that
+     * is no old occurrence's image and no stored skip, classed by its
+     * member. Each listed class must be one of the harness's: its dates the
+     * class's first days (five at most), its count the whole class for a
+     * bounded series and null with no end, its rate the class's count over
+     * one cycle in calendar periods, reduced, absent when the cycle has
+     * none, a member named exactly for `noday` and for every gain; and every
+     * class of the harness's must be listed. A rule outside the drag table
+     * is read through the days named alone, every day its own image.
      */
     private function placeLossesGains(array $plan, array $before, array $after, array $edit, array $ctx, array $choices): void
     {
         $x = $ctx['x'];
-        $out = $ctx['out'];
         $tz0 = $ctx['tz0'];
         $newRule = $x->kind === 'newrule';
         $actedDn = Clock::dayOf((string) $edit['actedKey'], $tz0);
-        $window = self::lossWindow($before, $actedDn);
         // The day acted on is left out where an outcome names it: a row made for it, or an event of its own.
         $outcomeDays = $ctx['actedAlone'] !== null || $ctx['created'] !== null ? [$actedDn => true] : [];
         foreach (array_merge($before['exdates'], array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $before['overrides'])) as $k) {
             $outcomeDays[Clock::dayOf($k, $tz0)] = true;
         }
-        $listedLosses = array_map(static fn(array $l): ?string => $l['date'] ?? null, $plan['losses'] ?? []);
-        $listedGains = array_map(static fn(array $l): ?string => $l['date'] ?? null, $plan['gains'] ?? []);
-        // The old occurrences and their images under the reading chosen: the
-        // expander's, and past the window it was read over, the harness's own
-        // reading of the rule, as far as any listed day or the window goes.
         $t = $this->readingOf($x, $choices);
-        $oldDns = array_column($before['raw'], 'dn');
-        if ($before['through'] !== null && $oldDns !== []) {
-            $far = array_map(static fn(string $d): int => Days::ofDate($d), array_filter(array_merge($listedLosses, $listedGains), static fn($d): bool => is_string($d) && preg_match(self::DATE_RE, $d) === 1));
-            $hi = max(array_merge([(int) $window], $far)) + 800;
-            $oldDns = array_merge($oldDns, $before['shape']->days($before['startDn'], end($oldDns) + 1, $hi));
+        $s0 = $before['shape'];
+        $s1 = $after['shape'];
+        $newStart = (int) $after['startDn'];
+        $last = $after['bounded'] ? $after['lastDn'] : null;
+        // A daily rule with a weekday list repeats by the week (its cycle is one), so the week is its period.
+        $unit = $s0->dailyList ? 'week' : $s0->unit();
+        // The old occurrences, each with its member: the oracle's (the
+        // evaluator's, through its window), then the pattern's own days,
+        // through the span the design names and no further.
+        $oldDays = [];
+        foreach ($before['raw'] as $o) {
+            $oldDays[$o['dn']] = $s0->supported() ? $s0->memberOf($o['dn']) : null;
         }
-        $losses = [];
+        $cycle = null;
+        $gainTo = null;
+        if (!$before['bounded'] && $s0->supported() && $s1->supported() && !$newRule && $before['through'] !== null && $oldDays !== []) {
+            $named = max(array_merge([$actedDn, $x->landedDn, $before['startDn'], $newStart], array_keys($outcomeDays)));
+            [$end, $len, $periods] = self::cycleAfter($s0, $before['startDn'], $named);
+            $reach = 0;
+            foreach (self::patternDays($s0, $before['startDn'], $named + 1, $end) as $dn => $m) {
+                $img = $x->image($t, $dn);
+                if ($img !== null) {
+                    $reach = max($reach, abs($img - $dn));
+                }
+            }
+            $readTo = $end + 2 * $reach;
+            $gainTo = $end + $reach;
+            $cycle = ['end' => $end, 'len' => $len, 'periods' => $periods];
+            $lastRaw = (int) array_key_last($oldDays);
+            foreach (self::patternDays($s0, $before['startDn'], $lastRaw + 1, $readTo) as $dn => $m) {
+                $oldDays[$dn] = $m;
+            }
+            $oldDays = array_filter($oldDays, static fn(int $dn): bool => $dn <= $readTo, ARRAY_FILTER_USE_KEY);
+        }
+        $inNew = function (int $dn) use ($after, $ctx, $s1, $newStart): bool {
+            if (isset($ctx['byDay'][$dn]) || $dn === $newStart) {
+                return true;
+            }
+            if ($after['through'] !== null && $dn >= Clock::dayOf($after['through'], $ctx['tz1']) - 1 && $s1->supported()) {
+                return $dn >= $newStart && $s1->has($dn, $newStart);
+            }
+            return self::isNewDay($after, $ctx, $dn);
+        };
         $images = [];
-        foreach ($oldDns as $dn) {
+        $lossClasses = [];
+        foreach ($oldDays as $dn => $m) {
             $img = $x->image($t, $dn);
             if ($img !== null) {
                 $images[$img] = true;
             }
-            if ($newRule || isset($outcomeDays[$dn])) {
+            if ($newRule || isset($outcomeDays[$dn]) || ($img !== null && $inNew($img))) {
                 continue;
             }
-            if ($img === null || !self::isNewDay($after, $ctx, $img)) {
-                $losses[$dn] = Days::date($dn);
-            }
+            $why = $img === null ? 'noday' : ($img < $newStart ? 'start' : ($last !== null && $img > $last ? 'end' : 'noday'));
+            self::classAdd($lossClasses, $why === 'noday' ? "noday:$m" : $why, $why, $dn, $cycle === null ? null : [$cycle['end'] - $cycle['len'], $cycle['end']]);
         }
-        foreach ($listedLosses as $date) {
-            $this->expect('c-placement', 'a listed loss is an old occurrence with no day in the new series', 'losses member', true, $date !== null && in_array($date, $losses, true), ['date' => $date]);
-        }
-        foreach ($losses as $dn => $date) {
-            if ($window === null || $dn <= $window) {
-                $this->expect('c-placement', 'every loss within the window is listed', 'losses complete', true, in_array($date, $listedLosses, true), ['date' => $date]);
-            }
-        }
-        // Gains: a day of the stored series that is no old occurrence's image and no stored skip.
+        $this->placeClasses('losses', $plan['losses'] ?? [], $lossClasses, $before['bounded'], $cycle, $unit, true);
+        // Gains: a day of the stored series that is no old occurrence's image and no stored skip, through the latest image of a
+        // bounded series, through the cycle plus the reach of one with no end.
         $vals = array_keys($images);
         $latest = $vals === [] ? null : max($vals);
-        $to = $window === null ? $latest : ($latest === null ? $window : min($latest, $window));
-        $skipped = array_fill_keys(array_map(static fn(string $k): int => Clock::dayOf($k, $ctx['tz1']), $after['exdates']), true);
-        $isGain = fn(int $dn): bool => !$newRule && !isset($images[$dn]) && !isset($skipped[$dn]) && self::isNewDay($after, $ctx, $dn);
-        foreach ($listedGains as $date) {
-            $ok = $date !== null && preg_match(self::DATE_RE, $date) === 1 && $isGain(Days::ofDate($date));
-            $this->expect('c-placement', 'a listed gain is a stored day that is no old occurrence\'s image', 'gains member', true, $ok, ['date' => $date]);
-        }
+        $to = $gainTo ?? $latest;
+        $newDays = [];
         foreach ($after['raw'] as $o) {
-            if ($to !== null && $o['dn'] <= $to && $isGain($o['dn'])) {
-                $this->expect('c-placement', 'every gain up to the lesser of the latest image and the window is listed', 'gains complete', true, in_array(Days::date($o['dn']), $listedGains, true), ['date' => Days::date($o['dn'])]);
+            $newDays[$o['dn']] = $s1->supported() ? $s1->memberOf($o['dn']) : null;
+        }
+        if ($cycle !== null && $after['through'] !== null && $newDays !== []) {
+            foreach (self::patternDays($s1, $newStart, (int) array_key_last($newDays) + 1, (int) $to) as $dn => $m) {
+                $newDays[$dn] = $m;
             }
         }
+        $skipped = array_fill_keys(array_map(static fn(string $k): int => Clock::dayOf($k, $ctx['tz1']), $after['exdates']), true);
+        $gainClasses = [];
+        foreach ($newDays as $dn => $m) {
+            if ($newRule || $to === null || $dn > $to || $dn < $newStart || isset($images[$dn]) || isset($skipped[$dn])) {
+                continue;
+            }
+            self::classAdd($gainClasses, (string) $m, 'gain', $dn, $cycle === null ? null : [$to - $cycle['len'], $to]);
+        }
+        $this->placeClasses('gains', $plan['gains'] ?? [], $gainClasses, $before['bounded'], $cycle, $unit, false);
+    }
+
+    /** Adds a day to a class: its first five days, its count, and how many fall in the cycle's span (after $span[0] through $span[1]). */
+    private static function classAdd(array &$classes, string $key, string $why, int $dn, ?array $span): void
+    {
+        $classes[$key] ??= ['why' => $why, 'days' => [], 'count' => 0, 'inCycle' => 0];
+        if (count($classes[$key]['days']) < 5) {
+            $classes[$key]['days'][] = Days::date($dn);
+        }
+        $classes[$key]['count']++;
+        if ($span !== null && $dn > $span[0] && $dn <= $span[1]) {
+            $classes[$key]['inCycle']++;
+        }
+    }
+
+    /** The plan's classes of one list against the harness's: each listed one is one of the harness's, with its days, count, rate and member; each of the harness's is listed. */
+    private function placeClasses(string $list, array $listed, array $classes, bool $bounded, ?array $cycle, string $unit, bool $lossList): void
+    {
+        $byFirst = [];
+        foreach ($classes as $key => $c) {
+            $byFirst[$c['days'][0]] = $key;
+        }
+        $seen = [];
+        foreach ($listed as $i => $l) {
+            $first = $l['dates'][0] ?? null;
+            $key = is_string($first) ? ($byFirst[$first] ?? null) : null;
+            $c = $key === null ? null : $classes[$key];
+            $this->expect('c-placement', "a listed $list class begins with a day that is one" . ($lossList ? ', lost for the reason listed' : ''), "$list member", true,
+                $c !== null && (!$lossList || $c['why'] === ($l['why'] ?? null)), ['class' => $l]);
+            if ($c === null) {
+                continue;
+            }
+            $seen[$key] = true;
+            $this->expect('c-placement', "a $list class lists its first days, five at most", "$list dates", $c['days'], $l['dates'] ?? null, ['class' => $i]);
+            $this->expect('c-placement', "a $list class counts every one of a bounded series, null with no end", "$list count", $bounded ? $c['count'] : null, array_key_exists('count', $l) ? $l['count'] : 'absent', ['class' => $i]);
+            $every = null;
+            if ($cycle !== null && $c['inCycle'] > 0) {
+                $g = self::gcd($c['inCycle'], $cycle['periods']);
+                $every = ['count' => intdiv($c['inCycle'], $g), 'span' => intdiv($cycle['periods'], $g), 'unit' => $unit];
+            }
+            $got = isset($l['every']) && is_array($l['every']) ? ['count' => $l['every']['count'] ?? null, 'span' => $l['every']['span'] ?? null, 'unit' => $l['every']['unit'] ?? null] : null;
+            $this->expect('c-placement', "a $list class's rate is its count over one cycle in calendar periods, reduced, absent when the cycle has none", "$list every", $every, $got, ['class' => $i]);
+            $named = !$lossList || $c['why'] === 'noday';
+            $this->expect('c-placement', "a $list class names its member exactly when it is lost for want of a day or gained, with the rule's period", "$list member name", $named,
+                isset($l['member']) && is_string($l['member']) && $l['member'] !== '' && ($l['period'] ?? null) === $unit, ['class' => $i]);
+        }
+        foreach ($classes as $key => $c) {
+            $this->expect('c-placement', "every $list class is listed", "$list complete", true, isset($seen[$key]), ['class' => $c]);
+        }
+    }
+
+    /**
+     * One whole cycle of a rule's periods after $dn's period (series-model.md,
+     * Bounds: one cycle per family): its last day, its length in days, and
+     * its length in calendar periods.
+     *
+     * @return array{0:int,1:int,2:int}
+     */
+    private static function cycleAfter(Shape $s, int $startDn, int $dn): array
+    {
+        $counted = match ($s->freq) {
+            'MONTHLY' => intdiv(4800, self::gcd($s->interval, 4800)),
+            'YEARLY' => intdiv(400, self::gcd($s->interval, 400)),
+            default => 1,
+        };
+        $p0 = self::periodOfCycle($s, $startDn);
+        $p = self::periodOfCycle($s, $dn) + 1;
+        while (!$s->counted($p, $p0)) {
+            $p++;
+        }
+        $first = self::periodFirst($s, $p);
+        $end = self::periodFirst($s, $p + $counted * $s->interval) - 1;
+        return [$end, $end - $first + 1, $counted * $s->interval];
+    }
+
+    /** The period a day is in for the cycle's purposes: a daily rule with a weekday list repeats by the week, as its cycle says. */
+    private static function periodOfCycle(Shape $s, int $dn): int
+    {
+        if ($s->dailyList) {
+            $base = $dn - ($s->wkst - 3);
+            return intdiv($base - (($base % 7) + 7) % 7, 7);
+        }
+        return $s->periodOf($dn);
+    }
+
+    /** The first day of a period of the harness's reading of a rule. */
+    private static function periodFirst(Shape $s, int $p): int
+    {
+        if ($s->freq === 'MONTHLY') {
+            [$y, $m] = Days::fromMi($p);
+            return Days::dn($y, $m, 1);
+        }
+        if ($s->freq === 'WEEKLY' || $s->dailyList) {
+            return $p * 7 + ($s->wkst - 3);
+        }
+        return $s->freq === 'YEARLY' ? Days::dn($p, 1, 1) : $p;
+    }
+
+    /**
+     * A pattern's days from $from through $to in the periods counted from
+     * $startDn, each with its member.
+     *
+     * @return array<int,?int> day => member
+     */
+    private static function patternDays(Shape $s, int $startDn, int $from, int $to): array
+    {
+        $out = [];
+        $p0 = $s->periodOf($startDn);
+        for ($p = $s->periodOf($from), $lastP = $s->periodOf($to); $p <= $lastP; $p++) {
+            if (!$s->counted($p, $p0)) {
+                continue;
+            }
+            foreach ($s->periodDays($p) as [$d, $i]) {
+                if ($d >= $from && $d <= $to) {
+                    $out[$d] = $i;
+                }
+            }
+        }
+        return $out;
+    }
+
+    private static function gcd(int $a, int $b): int
+    {
+        while ($b !== 0) {
+            [$a, $b] = [$b, $a % $b];
+        }
+        return max(1, $a);
     }
 
     /**

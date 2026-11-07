@@ -264,6 +264,10 @@ final class Calc
     private array $byDay = [];
     /** Every key on a day up to this one has been read. */
     private ?int $readTo = null;
+    /** How many of the expansion's keys are in the list: a longer read appends the rest. */
+    private int $taken = 0;
+    /** @var ?array{keys:list<array{0:int,1:string}>,it:?\Iterator,done:bool,ok:bool} a form too big for the shared cache, read on from here */
+    private ?array $own = null;
     private bool $complete = false;
 
     /**
@@ -298,16 +302,19 @@ final class Calc
         while (!$this->complete && ($this->readTo === null || $this->readTo < $maxDn) && ($max === PHP_INT_MAX || $have() < $max)) {
             $from = $this->readTo ?? $this->startDn;
             $to = min($maxDn, $from + max(400, 2 * ($from - $this->startDn)));
-            $raw = self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $to, PHP_INT_MAX, $state);
-            $this->list = [];
-            $this->byDay = [];
-            foreach ($raw as $k) {
+            // The expansion through a later day is the earlier one and more
+            // (one iterator, read on), so only the keys past those taken
+            // are added: a series read a little further isn't copied whole.
+            $raw = self::expansion($this->storedRule()->text(), $this->storedStart(), $this->tz, $this->allDay, $to, PHP_INT_MAX, $state, $this->own);
+            for ($i = $this->taken, $n = count($raw); $i < $n; $i++) {
+                $k = $raw[$i];
                 if ($this->anchor !== null && $k[0] === $this->anchor) {
                     continue;
                 }
                 $this->list[] = $k;
                 $this->byDay[$k[0]][] = $k[1];
             }
+            $this->taken = count($raw);
             $this->readTo = $to;
             $this->complete = $state['whole'];
             if ($to >= $limit) {
@@ -444,25 +451,34 @@ final class Calc
      * (the walk is done and every day it holds was returned) and whether the
      * expander reads the rule.
      *
+     * A form the cache can't afford (over CACHE_ENTRY_MAX_BYTES) is handed
+     * to the reader in $own, which passes it back to read on from where it
+     * got to, instead of walking the whole series again from its start.
+     *
      * @param-out array{whole:bool,ok:bool} $state
+     * @param ?array{keys:list<array{0:int,1:string}>,it:?\Iterator,done:bool,ok:bool} $own
      * @return list<array{0:int,1:string}>
      */
-    private static function expansion(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay, int $maxDn, int $max, ?array &$state = null): array
+    private static function expansion(string $rrule, \DateTimeImmutable $start, string $tz, bool $allDay, int $maxDn, int $max, ?array &$state = null, ?array &$own = null): array
     {
         $ck = self::cacheKey($rrule, $start, $tz, $allDay);
-        if (!isset(self::$cache[$ck])) {
-            $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
-            try {
-                $local = $allDay ? new \DateTimeImmutable(Time::dayOf($start, true, null) . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
-                // An all-day series is read in its own form: no clock parts.
-                $entry['it'] = new RuleIterator($allDay ? \BetterCal\Domain\Recurrence::inForm($rrule, true, 'UTC') : $rrule, $local);
-            } catch (RuleNotReadable) {
-                $entry['done'] = true;
-                $entry['ok'] = false;
+        if ($own !== null) {
+            $e = &$own;
+        } else {
+            if (!isset(self::$cache[$ck])) {
+                $entry = ['keys' => [], 'it' => null, 'done' => false, 'ok' => true];
+                try {
+                    $local = $allDay ? new \DateTimeImmutable(Time::dayOf($start, true, null) . ' 00:00:00', Time::utc()) : $start->setTimezone(Time::zone($tz));
+                    // An all-day series is read in its own form: no clock parts.
+                    $entry['it'] = new RuleIterator($allDay ? \BetterCal\Domain\Recurrence::inForm($rrule, true, 'UTC') : $rrule, $local);
+                } catch (RuleNotReadable) {
+                    $entry['done'] = true;
+                    $entry['ok'] = false;
+                }
+                self::$cache[$ck] = $entry;
             }
-            self::$cache[$ck] = $entry;
+            $e = &self::$cache[$ck];
         }
-        $e = &self::$cache[$ck];
         // A walk that can't be completed (a limit of the walk, MAX_STEPS
         // here or the iterator's own) is never the series' end: the caller
         // sees it as WalkIncomplete, and the stored form is from then on one
@@ -499,6 +515,16 @@ final class Calc
             $out[] = $k;
         }
         $state = ['whole' => $e['done'] && count($out) === count($e['keys']), 'ok' => $e['ok']];
+        if ($own !== null) {
+            unset($e);
+            return $out;
+        }
+        if (self::cost($e) > self::CACHE_ENTRY_MAX_BYTES) {
+            $own = $e;
+            unset($e);
+            unset(self::$cache[$ck]);
+            return $out;
+        }
         unset($e);
         self::bound($ck);
         return $out;

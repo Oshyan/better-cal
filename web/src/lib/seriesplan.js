@@ -141,6 +141,7 @@ export function planView(plan, ctx = {}) {
     readings: [],
     comingUp: '',
     affects: '',
+    classes: [],
     edited: [],
     skipped: [],
     notes: [],
@@ -183,6 +184,7 @@ export function planView(plan, ctx = {}) {
   view.started = W.startedLine(plan.acted, opts);
   view.count = plan.counts ? plan.counts.events : null;
   view.affects = view.refused || deletes ? '' : W.affects(plan.counts, plan.bound, opts, plan.days, plan.rule);
+  view.classes = view.refused || deletes ? [] : W.classLines(plan.losses, plan.gains, opts);
 
   // Every group is drawn once, by its id: the readings, the bound and the
   // zone under Change; a day the new rule would add among the removed days;

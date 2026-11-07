@@ -231,7 +231,8 @@ trait PlanChecks
         'days[]' => ['key', 'newKey', 'kind', 'title', 'day', 'ownDate', 'before', 'after', 'shows', 'to', 'at', 'tz', 'why', 'side', 'outcome', 'head', 'outcomeWords', 'words', 'kept', 'takes'],
         'placement' => ['date', 'at', 'tz', 'kind'],
         'acted' => ['key', 'title', 'day', 'ownDate', 'before', 'shows', 'kept'],
-        'losses[]' => ['date', 'words'],
+        'losses[]' => ['why', 'count', 'dates', 'member', 'period', 'every', 'words'],
+        'every' => ['count', 'span', 'unit'],
         'notes[]' => ['kind', 'date', 'clock', 'at', 'tz', 'fold', 'daylight', 'words'],
         'refusals[]' => ['group', 'option', 'code', 'words'],
         'fields[]' => ['field', 'words', 'was', 'now', 'mixed'],
@@ -583,7 +584,12 @@ trait PlanChecks
         foreach (['losses', 'gains'] as $list) {
             foreach ($plan[$list] ?? [] as $i => $l) {
                 $this->shapeKeys("plan.{$list}[$i]", 'losses[]', $l);
-                $this->role('date', "plan.{$list}[$i].date", $l['date'] ?? null);
+                foreach ($l['dates'] ?? [] as $j => $d) {
+                    $this->role('date', "plan.{$list}[$i].dates[$j]", $d);
+                }
+                if (isset($l['every'])) {
+                    $this->shapeKeys("plan.{$list}[$i].every", 'every', $l['every']);
+                }
             }
         }
         foreach ($plan['notes'] ?? [] as $i => $n) {

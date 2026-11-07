@@ -194,6 +194,7 @@ return static function (Db $db): void {
             $cards["invite_new:$changedDay"]['detail']['method'] ?? null, $cards["invite_new:$changedDay"]['detail']['occurrence'] ?? null,
             array_column($cards["invite_new:$changedDay"]['actions'] ?? [], 'label'),
         ]);
+        checkEq('review page: a held emailed event names the reader that made it', 'imip', $cards["invite_new:$changedDay"]['detail']['tier'] ?? null);
         $rq->accept($q, $rq->holdNewInvitation($q, 'reading-group@example.test', $weekly, ['sequence' => 1] + $invite, 'host@example.test'));
         $cards = $listed();
         checkEq('review page: once the series is added, the held days are changes to their occurrences, with their actions', [['Skip that occurrence', 'Dismiss'], ['Accept change', 'Dismiss']], [

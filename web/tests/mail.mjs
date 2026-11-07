@@ -59,4 +59,24 @@ for (const [detail, label] of [
   const decided = ReviewCard({ item: { kind: 'invite_new', status: 'dismissed', detail: { method: 'CANCEL', occurrence: '2026-12-19T01:00:00Z' }, actions: [] } });
   assert.ok(!walk(decided).some((node) => node?.strings?.some((part) => part.includes(waitingLine))), 'a decided day no longer says it waits');
 }
+// A held emailed event says which reader made it, beside the sender; an
+// item without a stored reader, and a held change, say nothing of it.
+{
+  const readerOf = (item) => {
+    const node = walk(ReviewCard({ item: { status: 'open', actions: [], ...item } }))
+      .find((n) => n?.strings?.some((part) => part.includes('class="bc-review-reader"')));
+    return node ? node.values.find((v) => typeof v === 'string' && v.startsWith('Read ')) : null;
+  };
+  for (const [tier, phrase] of [
+    ['imip', "Read from the email's calendar file"],
+    ['markup', "Read from the email's event data"],
+    ['gcal-link', "Read from the email's Google Calendar link"],
+    ['llm', 'Read by the AI model'],
+  ]) {
+    assert.equal(readerOf({ kind: 'invite_new', detail: { tier, from: 'alex@example.com' } }), phrase, tier);
+  }
+  assert.equal(readerOf({ kind: 'invite_new', detail: { from: 'alex@example.com' } }), null, 'no stored reader, no phrase');
+  assert.equal(readerOf({ kind: 'invite_new', detail: { tier: 'none' } }), null, 'an unknown reader, no phrase');
+  assert.equal(readerOf({ kind: 'invite_change', detail: { tier: 'llm', diff: [] } }), null, 'a held change names no reader');
+}
 console.log('Mail Review label regression tests passed');

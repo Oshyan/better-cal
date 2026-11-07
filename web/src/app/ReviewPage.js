@@ -40,6 +40,16 @@ import { askConfirm } from './ConfirmDialog.js';
 const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off' };
 const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning' };
 
+// Which reader made a held emailed event, so an AI reading can be checked
+// before it is added: [phrase, tooltip]. A tier the item lacks (one held
+// before it was stored) shows nothing.
+const READ_BY = {
+  imip: ["Read from the email's calendar file", 'The email carried a calendar file, the kind calendar apps send with invitations and bookings.'],
+  markup: ["Read from the email's event data", 'The email carried structured event details, as many booking and ticket emails do.'],
+  'gcal-link': ["Read from the email's Google Calendar link", 'The email had an "Add to Google Calendar" link, and the event was read from that link.'],
+  llm: ['Read by the AI model', "An AI model read the email's text. Check the time and place before adding it."],
+};
+
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
 function fmtWhen(value) {
@@ -167,7 +177,7 @@ function ReviewCard({ item, onChanged }) {
       ${item.status !== 'open' && html`<span class="bc-badge">${item.status}</span>`}
     </div>
     <div class="bc-review-body">
-      <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${item.kind === 'invite_change' ? html` <span class="bc-review-sender" title="The organizer's calendar numbers each version of an invitation, raising it when the time, place or details change. A version older than the one on your calendar is not applied.">${d.method === 'CANCEL' ? 'Cancellation' : 'Updated invitation'} (v${(d.sequence || 0) + 1})</span>` : ''}</span>
+      <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${item.kind === 'invite_new' && READ_BY[d.tier] ? html` <span class="bc-review-reader" title=${READ_BY[d.tier][1]}>${READ_BY[d.tier][0]}</span>` : ''}${item.kind === 'invite_change' ? html` <span class="bc-review-sender" title="The organizer's calendar numbers each version of an invitation, raising it when the time, place or details change. A version older than the one on your calendar is not applied.">${d.method === 'CANCEL' ? 'Cancellation' : 'Updated invitation'} (v${(d.sequence || 0) + 1})</span>` : ''}</span>
       ${(item.actions.length > 0 || openOptions || openSystem) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
         class=${a.quiet ? 'bc-link-btn bc-review-quiet' : 'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}

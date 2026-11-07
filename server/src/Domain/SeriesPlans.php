@@ -361,9 +361,12 @@ trait SeriesPlans
      * day is a clock its instant (03:30) can't hold. The end is its clock
      * moved by the push the gap gave the start, then read by the same rule
      * (Wall::typedEnd), so 02:30 to 03:30 there is an hour, 03:30 to 04:30,
-     * and an end at or before the start on the clocks is refused. `tz`
-     * defaults to the request's `tzid`, then the event's zone ($eventTz),
-     * then the person's.
+     * and an end at or before the start on the clocks is refused. An instant
+     * the request gives beside the clocks (`start`, `end`) stays that instant
+     * where it is one the clock names, as any instant given does (Calc::at):
+     * a two-hour event dragged to end in the hour the fall change repeats
+     * names the later 02:30, and keeps its two hours. `tz` defaults to the
+     * request's `tzid`, then the event's zone ($eventTz), then the person's.
      */
     private function typedTimes(int $userId, array $in, ?string $eventTz): array
     {
@@ -380,10 +383,17 @@ trait SeriesPlans
         $tz = Time::normalizeTzid((string) ($t['tz'] ?? $in['tzid'] ?? $eventTz ?? $this->userTzid($userId)));
         $zone = Time::zone($tz);
         $asUtc = static fn(array $m): int => Wall::asUtc(Cal::dn((int) $m[1], (int) $m[2], (int) $m[3]), [(int) $m[4], (int) $m[5], (int) ($m[6] ?? 0)]);
-        $start = Calc::at(Cal::dn((int) $s[1], (int) $s[2], (int) $s[3]), [(int) $s[4], (int) $s[5], (int) ($s[6] ?? 0)], $tz);
+        $given = static function (mixed $iso): ?\DateTimeImmutable {
+            try {
+                return is_string($iso) && $iso !== '' ? Time::parseIso($iso) : null;
+            } catch (\Throwable) {
+                return null;
+            }
+        };
+        $start = Calc::at(Cal::dn((int) $s[1], (int) $s[2], (int) $s[3]), [(int) $s[4], (int) $s[5], (int) ($s[6] ?? 0)], $tz, $given($in['start'] ?? null));
         $in['start'] = Time::iso($start->setTimezone($zone));
         if (isset($e)) {
-            $end = Wall::typedEnd($start, $asUtc($s), $asUtc($e), $zone);
+            $end = Wall::typedEnd($start, $asUtc($s), $asUtc($e), $zone, $given($in['end'] ?? null));
             if ($end === null) {
                 throw HttpError::badRequest('end must be after start');
             }

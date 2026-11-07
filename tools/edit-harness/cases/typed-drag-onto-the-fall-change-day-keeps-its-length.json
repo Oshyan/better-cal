@@ -1,0 +1,111 @@
+{
+    "n": 675,
+    "seed": 31,
+    "series": {
+        "family": "monthly_nth",
+        "rrule": "FREQ=MONTHLY;BYDAY=1WE",
+        "import": false,
+        "bound": "count",
+        "boundAt": 16,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-09-10 01:30",
+        "length": 120
+    },
+    "exceptions": [
+        {
+            "at": 5,
+            "kind": "edit",
+            "own": [
+                "title",
+                "reminders",
+                "date"
+            ],
+            "days": 1,
+            "mins": 120,
+            "zone": "America/New_York",
+            "len": 60
+        },
+        {
+            "at": 7,
+            "kind": "edit",
+            "own": [
+                "status",
+                "time",
+                "length"
+            ],
+            "days": -3,
+            "mins": -90,
+            "zone": "Asia/Tokyo",
+            "len": 30
+        }
+    ],
+    "acted": 6,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": -3,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 66600,
+        "trip": false,
+        "fields": {
+            "location": "Sample Annex"
+        },
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=1",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "create": {
+        "calendarId": 9,
+        "title": "Sample series",
+        "location": "Sample Hall",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "tagNames": [
+            "sample"
+        ],
+        "personNames": [
+            "Alex Example"
+        ],
+        "start": "2027-09-10T01:30:00+12:00",
+        "end": "2027-09-10T03:30:00+12:00",
+        "rrule": "FREQ=MONTHLY;BYDAY=1WE;COUNT=16"
+    },
+    "everyOption": false,
+    "typed": true,
+    "path": "all",
+    "request": {
+        "edit": {
+            "target": "master",
+            "body": {
+                "scope": "all",
+                "instanceStart": "2028-04-05T01:30:00+12:00",
+                "start": "2028-04-02T01:30:00+13:00",
+                "end": "2028-04-02T02:30:00+12:00",
+                "typed": {
+                    "start": "2028-04-02T01:30:00",
+                    "end": "2028-04-02T02:30:00",
+                    "tz": "Pacific/Auckland"
+                },
+                "location": "Sample Annex"
+            }
+        }
+    },
+    "choices": {
+        "edit": {
+            "movedDays": "move"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

@@ -23,4 +23,11 @@
     RewriteRule ^dav(/|$) dav.php [END]
     RewriteRule ^ index.php [END]
 </IfModule>
+
+# Compress what the app sends (the events window can be a few megabytes of
+# JSON). Skipped where mod_deflate isn't loaded; LiteSpeed has its own switch
+# (docs/install.md, Compression).
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE application/json text/javascript text/css text/html image/svg+xml text/calendar application/manifest+json application/xml text/xml
+</IfModule>
 # END Better-Cal

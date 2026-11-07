@@ -9143,6 +9143,8 @@ require __DIR__ . '/plugins.php';
     check('static: * matches', $sf::matches('*', $tag));
     check('static: a different tag does not match', !$sf::matches('W/"1-2"', $tag));
     check('static: no header, no match', !$sf::matches(null, $tag) && !$sf::matches('', $tag));
+    check('static: a tag Apache compressed (-gzip or -br inside the quotes) still matches', $sf::matches(substr($tag, 0, -1) . '-gzip"', $tag) && $sf::matches(substr($tag, 0, -1) . '-br"', $tag));
+    check('static: ... but a different tag with the suffix does not', !$sf::matches('W/"1-2-gzip"', $tag));
 
     // Apache + PHP-FPM hands Authorization over under a REDIRECT_ prefix (or
     // not at all); API tokens must not depend on which server is in front.

@@ -323,6 +323,33 @@ If the host forces the document root to a directory you don't control (`public_h
 
 If signing in through the browser works but API tokens return 401 and CalDAV clients keep asking for the password, the `Authorization` header is being dropped.
 
+## Compression
+
+The app doesn't compress its own responses; turn it on in the web server. The events window it loads can be a few megabytes of JSON, usually a tenth of that compressed, so on a phone connection this decides whether the calendar opens at once or makes you wait.
+
+**Nginx**, in the `server` block (or `http`, for every site):
+
+```nginx
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types application/json text/javascript text/css image/svg+xml text/calendar application/manifest+json application/xml text/xml;
+```
+
+`text/html` is always compressed once `gzip` is on, so it isn't in the list (Nginx warns about it as a duplicate). Where the brotli module is installed (`libnginx-mod-http-brotli-filter` on Debian and Ubuntu, or built in by some panels), add `brotli on;` and a `brotli_types` line with the same types; browsers that accept it get brotli, the rest gzip.
+
+**Apache:** the shipped `server/public/.htaccess` turns on `mod_deflate` for these types wherever the module is loaded (`a2enmod deflate`; Debian and Ubuntu enable it by default). With `AllowOverride None`, as in the example above, put the same line in the `<Directory>` block:
+
+```apache
+        AddOutputFilterByType DEFLATE application/json text/javascript text/css text/html image/svg+xml text/calendar application/manifest+json application/xml text/xml
+```
+
+Apache 2.4.26 and newer also have `mod_brotli` (`a2enmod brotli`); add the same line with `BROTLI_COMPRESS` in place of `DEFLATE`, above the deflate one.
+
+**LiteSpeed and OpenLiteSpeed** set compression in the server, not in `.htaccess`. On shared hosting the host controls it and usually has it on; check below, and ask the host if it isn't. In OpenLiteSpeed's WebAdmin, Server Configuration, Tuning: **Enable Compression** and **Enable Dynamic GZIP Compression** on (everything Better-Cal sends comes from PHP, so the dynamic one is what counts), and add the types above to **Compressible Types**, comma separated.
+
+To check, on any server: `curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip, br' https://cal.example.com/assets/styles/app.css` should show `Content-Encoding: gzip` (or `br`).
+
 ## Behind a Proxy or CDN
 
 Sign-in attempts are rate limited per network address. If something on another address sits in front of the web server (Cloudflare, a load balancer, a separate reverse-proxy host, a container ingress), PHP sees that proxy's address for every visitor, so they'd all share one limit. Set `BETTERCAL_TRUSTED_PROXIES` in `.env.php` to the proxy's IPs or CIDR ranges, and the real address is read from the right-hand end of `X-Forwarded-For`, the part a client can't forge. Otherwise leave it empty and the header is ignored. Nginx or Apache on the same machine handing requests to PHP-FPM isn't a proxy in this sense.

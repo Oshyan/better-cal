@@ -112,6 +112,9 @@ final class ReviewController
                     'method' => $c['method'],
                     'isInvitation' => ($heldInvite['method'] ?? '') === 'REQUEST',
                     'from' => $c['from'],
+                    // Which reader made the event from the email; an item
+                    // held before the reader was stored has none.
+                    'tier' => isset($c['detail']['tier']) ? (string) $c['detail']['tier'] : null,
                     'organizer' => $c['organizer'],
                     'sequence' => (int) ($c['detail']['sequence'] ?? $c['detail']['invite']['sequence'] ?? 0),
                     'diff' => $c['diff'],

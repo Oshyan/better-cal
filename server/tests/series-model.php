@@ -237,8 +237,16 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $labels = array_map(static fn(array $o): string => $o['label'], smGroup($p, 'reading')['options'] ?? []);
     checkEq('Book club: the readings\' words', ['On the 30th, or the last day in shorter months', 'On the 30th, skipping months without one'], $labels);
     $skip = smPlan($book, [], smDrag($book, '2027-03-15 19:00', '2027-03-30 19:00'), ['reading' => 'skip']);
-    checkEq('Book club, skipping: BYMONTHDAY=30, and 15 Feb\'s event has no place', ['FREQ=MONTHLY;BYMONTHDAY=30', true],
-        [$skip['writes']['master']['rrule'] ?? null, in_array('2027-02-15', array_column($skip['plan']['losses'], 'date'), true)]);
+    checkEq('Book club, skipping: BYMONTHDAY=30, and February\'s events have no place: one class, the first five Februaries, 1 in every 12 months, no count (no end)', ['FREQ=MONTHLY;BYMONTHDAY=30', [[
+        'why' => 'noday', 'count' => null, 'dates' => ['2027-02-15', '2028-02-15', '2029-02-15', '2030-02-15', '2031-02-15'], 'member' => '30th', 'period' => 'month',
+        'every' => ['count' => 1, 'span' => 12, 'unit' => 'month'],
+        'words' => 'No 30th in some months, so 15 Feb, 15 Feb 2028, 15 Feb 2029, 15 Feb 2030 and 15 Feb 2031 have no event, and 1 in every 12 months after them',
+    ]]], [$skip['writes']['master']['rrule'] ?? null, $skip['plan']['losses']]);
+    $four = smSeries('Book club, four', 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=4', '2027-01-15 19:00');
+    $skip4 = smPlan($four, [], smDrag($four, '2027-03-15 19:00', '2027-03-31 19:00'), ['reading' => 'skip']);
+    checkEq('Book club of four, skipping the 31st: a bounded series counts its class, every day listed, the new member named, no rate', [[
+        'why' => 'noday', 'count' => 2, 'dates' => ['2027-02-15', '2027-04-15'], 'member' => '31st', 'period' => 'month', 'words' => 'No 31st in some months, so 15 Feb and 15 Apr have no event',
+    ]], $skip4['plan']['losses']);
     $p = smPlan($book, [], smDrag($book, '2027-03-15 19:00', '2027-03-31 19:00'));
     checkEq('Book club 15 Mar to 31 Mar: the last day (clamped 31st merged into it) and the skipping 31st', [['last', 'skip'], 'FREQ=MONTHLY;BYMONTHDAY=-1'],
         [smOptions($p, 'reading'), $p['writes']['master']['rrule'] ?? null]);
@@ -252,8 +260,11 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     checkEq('Rent due dragged to 5 Mar (the 27th-last day): one reading, every 5th', [[], 'FREQ=MONTHLY;BYMONTHDAY=5'], [smOptions($p, 'reading'), $p['writes']['master']['rrule'] ?? null]);
     $salon = smSeries('Salon night', 'FREQ=MONTHLY;BYMONTHDAY=31', '2027-01-31 19:00');
     $p = smPlan($salon, [], smDrag($salon, '2027-01-31 19:00', '2027-02-01 19:00'));
-    checkEq('Salon night (every 31st) dragged to 1 Feb: every 1st, naming the gains 1 Mar, 1 May, 1 Jul, 1 Oct and 1 Dec', ['FREQ=MONTHLY;BYMONTHDAY=1', ['2027-03-01', '2027-05-01', '2027-07-01', '2027-10-01', '2027-12-01']],
-        [$p['writes']['master']['rrule'] ?? null, array_slice(array_column($p['plan']['gains'], 'date'), 0, 5)]);
+    checkEq('Salon night (every 31st) dragged to 1 Feb: every 1st, one class of gains naming 1 Mar, 1 May, 1 Jul, 1 Oct and 1 Dec, 5 in every 12 months', ['FREQ=MONTHLY;BYMONTHDAY=1', [[
+        'count' => null, 'dates' => ['2027-03-01', '2027-05-01', '2027-07-01', '2027-10-01', '2027-12-01'], 'member' => '1st', 'period' => 'month',
+        'every' => ['count' => 5, 'span' => 12, 'unit' => 'month'], 'words' => 'Adds 1 Mar, 1 May, 1 Jul, 1 Oct and 1 Dec, and 5 in every 12 months after them',
+    ]]], [$p['writes']['master']['rrule'] ?? null, $p['plan']['gains']]);
+    checkEq('Salon night: no loss, every 31st has its 1st', [], $p['plan']['losses']);
     $leap = smSeries('Leap party', 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28', '2028-02-28', 0, true);
     $p = smPlan($leap, [], smDrag($leap, '2028-02-28', '2028-02-29'));
     checkEq('Leap party to 29 Feb 2028: the last day of February (preselected) or only in leap years', [['lastFeb', 'leap'], 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1'],
@@ -602,7 +613,7 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $p = smPlan($statement, $rows, smDrag($statement, '2027-01-30 18:00', '2027-02-01 18:00'));
     checkEq('External F1: every 30th from 30 Jan to 1 Feb is every 1st; the edit on 1 May, the skip on 1 Jul; the gain 1 Mar named', [
         'FREQ=MONTHLY;BYMONTHDAY=1', smAt('2027-05-01 18:00'), json_encode([smAt('2027-07-01 18:00')]), '2027-03-01',
-    ], [$p['writes']['master']['rrule'] ?? null, $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $p['writes']['master']['exdates_json'] ?? null, $p['plan']['gains'][0]['date'] ?? null]);
+    ], [$p['writes']['master']['rrule'] ?? null, $p['writes']['overrides'][2]['recurrence_instance_utc'] ?? null, $p['writes']['master']['exdates_json'] ?? null, $p['plan']['gains'][0]['dates'][0] ?? null]);
     $plainMonthly = smSeries('Statement', 'FREQ=MONTHLY', '2027-01-30 18:00');
     $p = smPlan($plainMonthly, [], smDrag($plainMonthly, '2027-04-30 18:00', '2027-05-01 18:00'));
     checkEq('Cause 2: a bare monthly from 30 Jan, 30 Apr to 1 May: every 1st from 1 Feb, written bare', ['FREQ=MONTHLY', smAt('2027-02-01 18:00'), ['2027-02-01', '2027-03-01', '2027-04-01', '2027-05-01']],
@@ -786,7 +797,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $nexts = array_map(static fn(array $o): array => array_map(static fn(array $e): string => substr($e['start'], 0, 10), $o['next'] ?? []), smGroup($p, 'bound')['options'] ?? []);
     checkEq('Cello lesson: keep the end and keep 6 show their ends, not the same 1 Nov', [['2027-09-01', '2027-10-01', '2027-11-01'], ['2027-05-01', '2027-06-01', '2027-07-01']], $nexts);
     $six = smPlan($cello, [], smDrag($cello, '2027-10-31 16:00', '2027-11-01 16:00'), ['bound' => 'count']);
-    checkEq('Cello lesson, keep 6: no gain past its end (1 Oct is no gain of a series ending 1 Jul)', ['2027-03-01', '2027-05-01', '2027-07-01'], array_column($six['plan']['gains'], 'date'));
+    checkEq('Cello lesson, keep 6: no gain past its end (1 Oct is no gain of a series ending 1 Jul); a bounded series counts its gains, with no rate', [[
+        'count' => 3, 'dates' => ['2027-03-01', '2027-05-01', '2027-07-01'], 'member' => '1st', 'period' => 'month', 'words' => 'Adds 1 Mar, 1 May and 1 Jul',
+    ]], $six['plan']['gains']);
 
     $p = smPlan($bounded, [smEdited($bounded, 2, '2027-02-23 19:00', ['title' => 'Rehearsal at Sample Hall'], null, ['title'])], ['acted' => smAt('2027-02-23 19:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=6']);
     checkEq('Ends shortened from the edited day itself: the day acted on has no special place, it is outside like any other', [['keep', 'delete'], [2]],

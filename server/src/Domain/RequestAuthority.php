@@ -19,6 +19,9 @@ final class RequestAuthority
         private readonly ?string $passwordHash = null,
     ) {}
 
+    /** identity(), computed once. */
+    private ?string $identity = null;
+
     /**
      * The credential of the request being served (during()), or a closure
      * that resolves it once the request has signed in (CalDAV). Null for a
@@ -61,16 +64,18 @@ final class RequestAuthority
      * Run $fn as a request made with $authority: every write made under it
      * is checked at the write boundary (Undo::write, right after the
      * account's lock), and a write statement made outside a transaction
-     * in which a credential was checked is a journaling misuse
-     * (Undo::uncheckedWrite). Null runs $fn as no request at all.
+     * in which this credential, the request's own, was checked is a
+     * journaling misuse (Undo::uncheckedWrite). Null runs $fn as no
+     * request at all.
      */
     public static function during(self|\Closure|null $authority, callable $fn, ?bool $movesMarker = null): mixed
     {
         [$was, $wasMoving] = [self::$current, self::$movesMarker];
         self::$current = $authority;
         self::$movesMarker = $movesMarker ?? $wasMoving;
-        $watch = Db::watchWrites($authority === null ? null : static function (string $sql): void {
-            if (self::current() === null) {
+        $watch = Db::watchWrites($authority === null ? null : static function (string $sql, Db $db): void {
+            $current = self::current();
+            if ($current === null || $db->credentialCheckedNow($current->identity())) {
                 return;
             }
             [$verb, $table] = self::written($sql);
@@ -125,20 +130,47 @@ final class RequestAuthority
 
     /**
      * A credential was checked with lock in the transaction open now (the
-     * checks assertValid makes, wherever they are made): its writes are
-     * covered, and in a request that may change what devices show, the
-     * account's change marker moves with them, once per transaction.
+     * checks assertValid makes, wherever they are made), recorded by its
+     * identity (identityOf), so a check of one credential is never taken
+     * for a check of another: the request's writes are covered only when
+     * its own was checked. In a request that may change what devices show,
+     * the account's change marker moves with the first check, once per
+     * transaction.
      */
-    public static function checked(Db $db, int $userId): void
+    public static function checked(Db $db, int $userId, string $identity): void
     {
         if (!$db->pdo()->inTransaction()) {
             return;
         }
         $already = $db->credentialCheckedNow();
-        $db->credentialChecked();
+        $db->credentialChecked($identity);
         if (!$already && self::$movesMarker && self::current() !== null) {
             ChangeLog::touchAccount($db, $userId);
         }
+    }
+
+    /**
+     * What a locked check marks its transaction with: which credential it
+     * proved. An API key by its id, a browser session by its stored hash,
+     * a password by its hash: the one thing each check reads, and what
+     * tells the request's own credential from any other, the account's
+     * own key under a browser session included.
+     */
+    public static function identityOf(?int $tokenId, ?string $sessionHash, ?string $passwordHash): string
+    {
+        if ($passwordHash !== null) {
+            return 'password:' . $passwordHash;
+        }
+        if ($tokenId !== null) {
+            return 'key:' . $tokenId;
+        }
+        return 'session:' . (string) $sessionHash;
+    }
+
+    /** This credential's identity, as the check of it marks a transaction (identityOf). */
+    private function identity(): string
+    {
+        return $this->identity ??= self::identityOf($this->tokenId, $this->session === null ? null : hash('sha256', $this->session), $this->passwordHash);
     }
 
     /** @return array{0:string,1:string} the statement's verb and the table it writes */
@@ -194,7 +226,7 @@ final class RequestAuthority
         $current = $db->scalar('SELECT password_hash FROM users WHERE id = ?' . ($lock ? $db->forUpdate() : ''), [$userId]);
         $still = is_string($current) && hash_equals($verifiedHash, $current);
         if ($still && $lock) {
-            self::checked($db, $userId);
+            self::checked($db, $userId, self::identityOf(null, null, $verifiedHash));
         }
         return $still;
     }

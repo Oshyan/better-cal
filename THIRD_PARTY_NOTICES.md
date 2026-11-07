@@ -4,17 +4,17 @@ Better-Cal is MIT licensed (see [LICENSE](LICENSE)). It includes or depends on t
 
 ## Included in this repository
 
-These front-end libraries are copied into `web/vendor/`, pinned and checksummed in `web/vendor/manifest.json`. The manifest is the source for the versions below, so a version changed there changes here too. Each license's full text is at the link.
+These front-end libraries are copied into `web/vendor/`, pinned and checksummed in `web/vendor/manifest.json`. The versions below are written from the manifest by `node scripts/vendor.mjs --readme`, and `--verify` fails when they differ. Each library's license, as its package publishes it, ships beside it in `web/vendor/` (linked), pinned and checked like its code.
 
 | Library | Version | License | Files |
 |---|---|---|---|
-| [Preact](https://github.com/preactjs/preact) | 11.0.2 | [MIT](https://github.com/preactjs/preact/blob/11.0.2/LICENSE) | `preact.module.js`, `hooks.module.js` |
-| [htm](https://github.com/developit/htm) | 3.1.1 | [Apache-2.0](https://github.com/developit/htm/blob/3.1.1/LICENSE) | `htm.module.js` |
-| [Squire](https://github.com/fastmail/Squire) | 2.4.10 | [MIT](https://github.com/fastmail/Squire/blob/master/LICENSE) | `squire/squire-raw.js` |
-| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.17 | [Apache-2.0 or MPL-2.0](https://github.com/cure53/DOMPurify/blob/3.4.17/LICENSE) (used under Apache-2.0) | `squire/purify.min.js` |
-| [Leaflet](https://github.com/Leaflet/Leaflet) | 1.9.4 | [BSD-2-Clause](https://github.com/Leaflet/Leaflet/blob/v1.9.4/LICENSE) | `leaflet/` |
+| [Preact](https://github.com/preactjs/preact) | 11.0.2 | [MIT](web/vendor/LICENSE-preact.txt) | `preact.module.js`, `hooks.module.js` |
+| [htm](https://github.com/developit/htm) | 3.1.1 | [Apache-2.0](web/vendor/LICENSE-htm.txt) | `htm.module.js` |
+| [Squire](https://github.com/fastmail/Squire) | 2.4.10 | [MIT](web/vendor/LICENSE-squire.txt) | `squire/squire-raw.js` |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.17 | [Apache-2.0 or MPL-2.0](web/vendor/LICENSE-dompurify.txt) (used under Apache-2.0) | `squire/purify.min.js` |
+| [Leaflet](https://github.com/Leaflet/Leaflet) | 1.9.4 | [BSD-2-Clause](web/vendor/LICENSE-leaflet.txt) | `leaflet/` |
 
-The Apache-2.0 licensed files (htm, DOMPurify) are redistributed unmodified; their license text is at the links above. Only Preact's two files are changed: the source-map comment is removed, and `hooks.module.js` imports Preact by its local path.
+The Apache-2.0 licensed files (htm, DOMPurify) are redistributed unmodified, with their license text beside them. Only Preact's two files are changed: the source-map comment is removed, and `hooks.module.js` imports Preact by its local path.
 
 ## PHP libraries (Composer)
 

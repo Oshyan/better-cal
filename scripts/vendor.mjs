@@ -2,19 +2,25 @@
 // Vendored frontend libraries (web/vendor) are pinned in web/vendor/manifest.json:
 // package, version, license, path inside the npm package, the transform applied
 // after download, the sha256 of the file as published (upstreamSha256) and the
-// sha256 of the file as it sits in the tree (sha256). web/vendor/README.md is
-// written from the manifest, so a reviewer finds all of it next to the files.
+// sha256 of the file as it sits in the tree (sha256). Each package's license
+// text is an entry too (LICENSE-<library>.txt, the package's own LICENSE), pinned
+// and checked like its code. web/vendor/README.md and the Version column of
+// THIRD_PARTY_NOTICES.md are written from the manifest, so a reviewer finds all
+// of it next to the files and the notices can't name a stale version.
 //
 //   node scripts/vendor.mjs --verify            every file matches its manifest hash, nothing in
-//                                               web/vendor is unlisted, the README is current
-//                                               (deploy runs this)
+//                                               web/vendor is unlisted, every package has one
+//                                               version and a license entry, the README and the
+//                                               notices' versions are current (deploy runs this)
 //   node scripts/vendor.mjs --check-upstream    download every pinned file again, check it against
 //                                               upstreamSha256, apply its transform and check the
 //                                               result is byte for byte the committed file
 //   node scripts/vendor.mjs --fetch [name ...]  download the pinned versions (all, or the named
-//                                               entries), apply transforms, rewrite the hashes,
-//                                               licenses and README
-//   node scripts/vendor.mjs --readme            rewrite web/vendor/README.md from the manifest
+//                                               entries and their packages' license texts), apply
+//                                               transforms, rewrite the hashes, licenses, README
+//                                               and notices' versions
+//   node scripts/vendor.mjs --readme            rewrite web/vendor/README.md and the notices'
+//                                               versions from the manifest
 //
 // To upgrade: change the version in the manifest, --fetch that entry, review
 // the diff (the hash lines and the file), run the suites, commit both.
@@ -30,6 +36,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const vendorDir = join(root, 'web', 'vendor');
 const manifestPath = join(vendorDir, 'manifest.json');
 const readmePath = join(vendorDir, 'README.md');
+const noticesPath = join(root, 'THIRD_PARTY_NOTICES.md');
 // Files in web/vendor that are ours, not downloads.
 const OWN = new Set(['manifest.json', 'index.js', 'README.md']);
 
@@ -71,13 +78,32 @@ function walk(dir, out = []) {
   return out;
 }
 
+// THIRD_PARTY_NOTICES.md with each table row's Version cell set from the
+// manifest entry its License cell links to (web/vendor/LICENSE-<library>.txt),
+// and the license entries no row links to.
+function notices(text, manifest) {
+  const unlinked = new Set(Object.keys(manifest.files).filter((f) => manifest.files[f].path === 'LICENSE'));
+  const out = text.replace(/^(\| [^|\n]+ \| )[^|\n]+( \| [^|\n]*\]\(web\/vendor\/([^)\s]+)\)[^|\n]* \|.*)$/gm, (line, head, tail, file) => {
+    const e = manifest.files[file];
+    if (!e) return line;
+    unlinked.delete(file);
+    return `${head}${e.version}${tail}`;
+  });
+  return { text: out, unlinked: [...unlinked] };
+}
+
+function writeDocs(manifest) {
+  writeFileSync(readmePath, readme(manifest));
+  writeFileSync(noticesPath, notices(readFileSync(noticesPath, 'utf8'), manifest).text);
+}
+
 function readme(manifest) {
   const rows = Object.entries(manifest.files).map(([file, e]) =>
     `| \`${file}\` | [${e.package}](https://www.npmjs.com/package/${e.package}/v/${e.version}) ${e.version} | ${e.license || ''} | [\`${e.path}\`](${fileUrl(e)}) | \`${e.upstreamSha256 || ''}\` | ${e.transform ? `\`${e.sha256}\` (changed, see below)` : 'same'} |`);
   const changed = Object.entries(manifest.files).filter(([, e]) => e.transform);
   return `# Vendored libraries
 
-This folder holds the open-source libraries the web app uses, copied from their published npm packages and changed only as listed under Changes below. There's no build step, so they're committed as published, which for several of them means minified. Nothing here is our own code in minified form: ours are \`index.js\` (it re-exports the UI runtime), \`manifest.json\` and this file.
+This folder holds the open-source libraries the web app uses, copied from their published npm packages and changed only as listed under Changes below. There's no build step, so they're committed as published, which for several of them means minified. Nothing here is our own code in minified form: ours are \`index.js\` (it re-exports the UI runtime), \`manifest.json\` and this file. Each library's license text, as its package publishes it, is here as \`LICENSE-<library>.txt\`, pinned and checked like its code.
 
 This file is written from \`manifest.json\` by \`node scripts/vendor.mjs --readme\`; don't edit it by hand.
 
@@ -132,6 +158,32 @@ function verify(manifest) {
     bad++;
     console.log('README web/vendor/README.md is out of date: run node scripts/vendor.mjs --readme');
   }
+  const packages = new Map();
+  for (const [file, e] of Object.entries(manifest.files)) {
+    const seen = packages.get(e.package);
+    if (!seen) { packages.set(e.package, { version: e.version, file, license: e.path === 'LICENSE' }); continue; }
+    if (e.path === 'LICENSE') seen.license = true;
+    if (seen.version !== e.version) {
+      bad++;
+      console.log(`VERSION  ${file}: ${e.package}@${e.version}, but ${seen.file} is ${e.package}@${seen.version}`);
+    }
+  }
+  for (const [pkg, p] of packages) {
+    if (p.license) continue;
+    bad++;
+    console.log(`LICENSE  ${pkg}: no entry for its license text (path LICENSE) in web/vendor/manifest.json`);
+  }
+  let text = '';
+  try { text = readFileSync(noticesPath, 'utf8'); } catch { /* missing */ }
+  const listed = notices(text, manifest);
+  if (listed.text !== text) {
+    bad++;
+    console.log('NOTICES  THIRD_PARTY_NOTICES.md names a version the manifest does not: run node scripts/vendor.mjs --readme');
+  }
+  for (const file of listed.unlinked) {
+    bad++;
+    console.log(`NOTICES  THIRD_PARTY_NOTICES.md has no row linking web/vendor/${file}`);
+  }
   const n = Object.keys(manifest.files).length;
   console.log(bad === 0 ? `vendor: ${n} files match the manifest` : `vendor: ${bad} problem(s)`);
   return bad === 0;
@@ -164,7 +216,11 @@ async function checkUpstream(manifest) {
 }
 
 async function fetchEntries(manifest, names) {
-  const wanted = names.length ? names : Object.keys(manifest.files);
+  // A named entry brings its package's license text along, so an upgrade
+  // fetches the license of the version it moves to.
+  const licenseOf = (name) => Object.keys(manifest.files).filter((f) =>
+    manifest.files[name] && manifest.files[f].package === manifest.files[name].package && manifest.files[f].path === 'LICENSE');
+  const wanted = names.length ? [...new Set(names.flatMap((name) => [name, ...licenseOf(name)]))] : Object.keys(manifest.files);
   const licenses = new Map();
   for (const file of wanted) {
     const entry = manifest.files[file];
@@ -192,7 +248,7 @@ async function fetchEntries(manifest, names) {
     };
   }
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-  writeFileSync(readmePath, readme(manifest));
+  writeDocs(manifest);
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -204,7 +260,7 @@ if (args[0] === '--verify') {
 } else if (args[0] === '--fetch') {
   await fetchEntries(manifest, args.slice(1));
 } else if (args[0] === '--readme') {
-  writeFileSync(readmePath, readme(manifest));
+  writeDocs(manifest);
 } else {
   console.log('usage: node scripts/vendor.mjs --verify | --check-upstream | --fetch [file ...] | --readme');
   process.exit(2);

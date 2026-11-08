@@ -65,7 +65,7 @@ final class GoogleStand
     {
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
         $fake = new FakeGoogle(self::CALENDAR);
-        $fake->token = null;
+        $fake->token = 'sample-access';
         $fake->zone = 'UTC';
         $fake->expand = static fn(array $master): array => self::expand($master);
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
@@ -75,14 +75,15 @@ final class GoogleStand
         // HARNESS_GOOGLE_TRACE=1 prints every request to the stand-in on stderr.
         $trace = getenv('HARNESS_GOOGLE_TRACE') !== false;
         $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace): array {
-            $answer = $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
+            // The writer sends its bearer token among the headers, as to Google.
+            $answer = $inner($method, $url, $payload, $headers);
             if ($trace) {
                 fwrite(STDERR, "google: $method " . rawurldecode(basename((string) parse_url($url, PHP_URL_PATH))) . ' ' . json_encode($payload, JSON_UNESCAPED_SLASHES) . ' -> ' . $answer['status'] . ' ' . mb_substr((string) $answer['body'], 0, 300) . "\n");
             }
             return $answer;
         });
         $list = $fake->syncTransport();
-        $sync = new GoogleSync($db, $auth, $feeds, static fn(string $url, array $headers): array => $list($url, array_merge(['Authorization: Bearer sample-access'], $headers)));
+        $sync = new GoogleSync($db, $auth, $feeds, static fn(string $url, array $headers): array => $list($url, $headers));
         $events = new Events($db, new Recurrence(), $undo, new \BetterCal\Domain\Labels($db),
             new \BetterCal\Domain\Filters($db, $undo, new \BetterCal\Infra\JobQueue($db)), new \BetterCal\Domain\Trips($db, $undo), null, $writer);
         $account = $db->insert('google_accounts', ['user_id' => $userId, 'email' => 'owner@example.test',
@@ -132,6 +133,27 @@ final class GoogleStand
     public function poll(): void
     {
         $this->sync->poll($this->calendar());
+    }
+
+    /**
+     * Why no series with this rule exists on a Google calendar, or null when
+     * one can. Google refuses a rule under a day (400 "Invalid recurrence
+     * rule", probe group 1), and the sync reads a rule through
+     * Recurrence::safeRrule as every import does, so a rule it refuses
+     * (RSCALE, an X- part) arrives as a single event, never a series. The
+     * harness's adopt is the only way either gets to the stand-in, and the
+     * next read-back would take the rule away, so such a case is not
+     * applicable in this mode.
+     */
+    public static function unheld(string $rrule): ?string
+    {
+        if (in_array(Shape::parts($rrule)['FREQ'] ?? '', ['HOURLY', 'MINUTELY', 'SECONDLY'], true)) {
+            return 'a series several times a day: Google refuses a rule under a day (HOURLY and finer, probe group 1)';
+        }
+        if ($rrule !== '' && Recurrence::safeRrule($rrule) === null) {
+            return 'a rule the sync reads as none (Recurrence::safeRrule, as every import): it arrives from Google as a single event, never a series';
+        }
+        return null;
     }
 
     /**

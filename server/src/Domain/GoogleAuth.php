@@ -231,7 +231,11 @@ final class GoogleAuth
                 $fields['access_token_enc'] = null;
                 $fields['access_token_expires_at'] = null;
             }
-            RequestAuthority::checkedTx($this->db, fn() => $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']]));
+            // What Google said of the grant holds whatever the caller's
+            // transaction does: a write's refresh runs inside the app's own
+            // write, which this error rolls back, so the mark is made once
+            // that transaction is over (at once when none is open).
+            $this->db->whenTxEnds(fn() => RequestAuthority::checkedTx($this->db, fn() => $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']])));
             throw $e;
         }
         // The reset may have committed while Google's token endpoint was in

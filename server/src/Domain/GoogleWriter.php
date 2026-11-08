@@ -383,13 +383,7 @@ final class GoogleWriter
         if ($account === null) {
             throw new HttpError('google_disconnected', 'The Google account this calendar came from is disconnected; reconnect it under Settings, Connections.', 409);
         }
-        try {
-            $access = $this->auth->accessToken($account);
-        } catch (HttpError $e) {
-            throw $e;
-        } catch (\RuntimeException $e) {
-            throw new HttpError('google_write_failed', 'Google refused the sign-in: ' . $e->getMessage(), 502);
-        }
+        $access = $this->access($account);
         if ($method !== 'GET') {
             $query = ['sendUpdates' => 'none'] + $query;
         }
@@ -402,19 +396,31 @@ final class GoogleWriter
             ? ['If-Match: ' . $ifMatch]
             : [];
         $http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));
+        // The transport seam (tests, the edit harness) takes the request the
+        // real client sends, its bearer token among the headers, so the
+        // retry below is the app's own path under test too.
+        $send = fn(string $access): array => $this->jsonTransport !== null
+            ? ($this->jsonTransport)($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers))
+            : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
         // Refreshing a token is network work too. Recheck after it, not before it.
         if ($beforeSend !== null) $beforeSend();
         try {
-            $r = $this->jsonTransport !== null
-                ? ($this->jsonTransport)($method, $url, $payload, $headers)
-                : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
-            // A held token Google no longer takes: once more with a fresh one.
-            if ($this->jsonTransport === null && $this->auth->tokenRejected($account, (int) $r['status'])) {
-                $access = $this->auth->accessToken($account);
-                $r = $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
-            }
+            $r = $send($access);
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+        }
+        // A held token Google no longer takes: once more with a fresh one,
+        // and only once (a second 401 is reported below). A refresh Google
+        // refuses (a revoked grant) is the sign-in's error, as on the first
+        // try, and the recheck runs after the refresh as it does above.
+        if ($this->auth->tokenRejected($account, (int) $r['status'])) {
+            $access = $this->access($account);
+            if ($beforeSend !== null) $beforeSend();
+            try {
+                $r = $send($access);
+            } catch (\RuntimeException $e) {
+                throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+            }
         }
         if ($r['status'] === 412) {
             throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
@@ -434,5 +440,17 @@ final class GoogleWriter
             throw new HttpError('google_write_failed', $message, $status, ['googleStatus' => $r['status']]);
         }
         return $data;
+    }
+
+    /** An access token for a write: a refusal of our own (reconnect needed, quarantined) as is, anything else the sign-in's failure. */
+    private function access(array $account): string
+    {
+        try {
+            return $this->auth->accessToken($account);
+        } catch (HttpError $e) {
+            throw $e;
+        } catch (\RuntimeException $e) {
+            throw new HttpError('google_write_failed', 'Google refused the sign-in: ' . $e->getMessage(), 502);
+        }
     }
 }

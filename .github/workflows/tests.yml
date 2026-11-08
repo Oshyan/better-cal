@@ -114,6 +114,18 @@ jobs:
         env:
           BC_TEST_DB: mariadb:3306
         run: ./tools/edit-harness/run.sh --seed 7 --cases 1000 --quiet --shards 4
+      # The same harness with every series on a Google calendar served by the
+      # stand-in Google (no network): every fixed case and sequence (the
+      # Google split among them), then a short seed on four processes. Only
+      # this mode checks what Google holds after each edit (8-google,
+      # e-google) and Undo through Google; a shard that ran without --google
+      # fails the run.
+      - name: Edit harness, Google mode
+        env:
+          BC_TEST_DB: mariadb:3306
+        run: |
+          ./tools/edit-harness/run.sh --cases 0 --fixed --google --quiet
+          ./tools/edit-harness/run.sh --google --seed 7 --cases 300 --quiet --shards 4
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

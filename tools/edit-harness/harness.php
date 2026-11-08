@@ -185,7 +185,8 @@ $runHere = static function (int $shard, int $of) use ($root, $cases, $seed, $onl
             }
         }
         return [
-            'partial' => true, 'shard' => $shard, 'counts' => $runner->counts, 'firstSeen' => $runner->firstSeen, 'failures' => $runner->failures, 'minimal' => $minimal,
+            // The mode it ran in, so the parent can tell a child that lost --google (it once did, silently) from one that ran it.
+            'partial' => true, 'shard' => $shard, 'google' => $googleMode, 'counts' => $runner->counts, 'firstSeen' => $runner->firstSeen, 'failures' => $runner->failures, 'minimal' => $minimal,
             'misuses' => $misuses, 'prof' => Prof::$t, 'casesSeconds' => $casesSeconds, 'seconds' => round(microtime(true) - $started, 1),
         ];
     } finally {
@@ -398,8 +399,13 @@ try {
         $exit = proc_close($proc);
         $file = "$tmp/shard-$k.json";
         $part = is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
-        if ($exit !== 0 || !is_array($part) || ($part['partial'] ?? null) !== true || ($part['shard'] ?? null) !== $k) {
-            $why = $exit !== 0 ? "exit $exit" : (is_file($file) ? 'its partial findings are not JSON from a shard' : 'no partial findings');
+        if ($exit !== 0 || !is_array($part) || ($part['partial'] ?? null) !== true || ($part['shard'] ?? null) !== $k || ($part['google'] ?? null) !== $googleMode) {
+            $why = match (true) {
+                $exit !== 0 => "exit $exit",
+                !is_file($file) => 'no partial findings',
+                !is_array($part) || ($part['partial'] ?? null) !== true || ($part['shard'] ?? null) !== $k => 'its partial findings are not JSON from a shard',
+                default => 'it ran ' . (($part['google'] ?? false) === true ? 'with' : 'without') . ' --google, the run ' . ($googleMode ? 'with' : 'without') . ' it',
+            };
             $broken[] = "shard $k/$shards failed ($why); its output:\n" . trim((string) @file_get_contents("$tmp/shard-$k.out"));
             continue;
         }

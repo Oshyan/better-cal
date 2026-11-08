@@ -251,11 +251,13 @@ final class GoogleSync
             try {
                 $headers = ['Authorization: Bearer ' . $access, 'Accept: application/json'];
                 $r = $this->transport !== null ? ($this->transport)($url, $headers) : $http->get($url, $headers);
-                // A held token Google no longer takes: once more with a fresh one.
-                if ($this->transport === null && $this->auth->tokenRejected($account, (int) $r['status'])) {
-                    $access = $this->auth->accessToken($account);
+                // A held token Google no longer takes: once more with a fresh
+                // one, and only once (a second 401 is reported below), within
+                // the poll's deadline: a refresh past it is not asked for.
+                if ($this->auth->tokenRejected($account, (int) $r['status'])) {
+                    $access = $this->auth->accessToken($account, $budget->deadline());
                     $headers = ['Authorization: Bearer ' . $access, 'Accept: application/json'];
-                    $r = $http->get($url, $headers);
+                    $r = $this->transport !== null ? ($this->transport)($url, $headers) : $http->get($url, $headers);
                 }
             } catch (\RuntimeException $e) {
                 // Translate the shared transport's intentionally generic

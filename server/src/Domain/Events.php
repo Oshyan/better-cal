@@ -510,8 +510,11 @@ final class Events
         // A day with a row of its own: the row and its links before, as
         // googlePatchAll keeps them.
         $before = $existing !== null ? ['events' => [$existing]] + $this->labels->eventLinkRows((int) $existing['id']) : null;
+        $changed = []; // the fields this edit changed, read from the request before placement
         if ($existing !== null) {
-            [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
+            // The day starts where the own list this edit leaves puts it.
+            [$cols, $changed] = $this->placedThis($existing, $this->columnPatch($existing, $in, $instanceUtc, forOverride: true), $master, $in);
+            [$googleFields, $localFields] = self::splitGoogleFields($cols);
             self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
             if ($googleFields !== []) {
                 // A local-only override (attendance, reminders) has no Google
@@ -532,7 +535,7 @@ final class Events
             $override['exdates_json'] = null;
             $override['start_utc'] = Time::toDb($instStart);
             $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
-            $patch = $this->columnPatch($override, $in, $instanceUtc, forOverride: true);
+            [$patch, $changed] = $this->placedThis($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true), $master, $in);
             [, $localFields] = self::splitGoogleFields($patch);
             // Before: the occurrence as it showed, the series' at that date.
             $shown = GoogleWriter::instanceBody($override);
@@ -544,7 +547,7 @@ final class Events
             $undo = [$instanceId, $shown, null];
             $made = $override;
         }
-        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $made, $userId, $googleFields, $localFields, $in): bool {
+        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $made, $userId, $googleFields, $localFields, $in, $changed): bool {
             if ($existing !== null) {
                 $rowId = (int) $existing['id'];
                 // The row as this edit leaves it, written before Google's
@@ -555,7 +558,7 @@ final class Events
                 $fields = $googleFields + $localFields;
                 if ($this->ownFieldsColumn()) {
                     $after = array_merge($existing, $fields);
-                    $fields['override_fields'] = $this->ownAfterThis($after, $master, self::changedOwnFields($existing, $after, $in));
+                    $fields['override_fields'] = $this->ownAfterThis($after, $master, $changed);
                 }
                 if ($fields !== []) {
                     $this->db->update('events', $fields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
@@ -612,8 +615,7 @@ final class Events
             // reading of Google's answer infers only Google's fields).
             if ($this->ownFieldsColumn()) {
                 $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [$rowId]);
-                $was = $existing ?? $occurrence;
-                $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, self::changedOwnFields($was, $stored, $in)), $rowId]);
+                $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, $changed), $rowId]);
             }
             return true;
         });
@@ -2061,9 +2063,10 @@ final class Events
             // stamping FREQ=... onto an imported moved instance on every edit.
             // Inert to expansion (masters are selected by parent IS NULL) but
             // wrong on the row, and a trap for anything reading rrule.
-            $fields = $this->columnPatch($existing, $in, $instanceUtc, forOverride: true);
-            // The fields this edit changed are the day's own from now on.
-            $own = $this->ownAfterThis($existing, $master, self::changedOwnFields($existing, array_merge($existing, $fields), $in));
+            // The fields this edit changed are the day's own from now on, and
+            // the day starts where that list puts it.
+            [$fields, $changed] = $this->placedThis($existing, $this->columnPatch($existing, $in, $instanceUtc, forOverride: true), $master, $in);
+            $own = $this->ownAfterThis($existing, $master, $changed);
             if ($own !== null && $own !== (string) ($existing['override_fields'] ?? '')) {
                 $fields['override_fields'] = $own;
             }
@@ -2099,9 +2102,11 @@ final class Events
         $override['start_utc'] = Time::toDb($instStart);
         $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $occurrence = $override;
-        $override = array_merge($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true));
-        // A new edited day owns what this edit changed from its occurrence.
-        $override['override_fields'] = OwnFieldsList::encode(self::changedOwnFields($occurrence, $override, $in));
+        // A new edited day owns what this edit changed from its occurrence,
+        // and starts where that list puts it.
+        [$patch, $changed] = $this->placedThis($occurrence, $this->columnPatch($override, $in, $instanceUtc, forOverride: true), $master, $in);
+        $override = array_merge($override, $patch);
+        $override['override_fields'] = OwnFieldsList::encode($changed);
         $override = $this->withOwnColumn($override);
 
         $newId = $this->db->tx(function () use ($override, $masterId, $userId, $in): int {

@@ -189,12 +189,11 @@ final class OwnFields
             // own the series' clock there. Compared as instants, since an
             // equal day, clock and zone are two instants where the hour
             // repeats (the first, when no instant names it).
-            $mStart = Time::fromDb((string) $master['start_utc'])->setTimezone($tzM);
             $sameZone = Time::normalizeTzid((string) $row['tzid']) === Time::normalizeTzid((string) $master['tzid']);
             $series = null;
             if (!$mAllDay && $sameZone) {
                 $series = $key !== '' && !in_array('date', $own, true) ? Time::fromDb($key)
-                    : Calc::at(Cal::dnOf($start->setTimezone($tzR)), [(int) $mStart->format('G'), (int) $mStart->format('i'), (int) $mStart->format('s')], (string) $master['tzid']);
+                    : Calc::at(Cal::dnOf($start->setTimezone($tzR)), self::seriesClock($master, $key), (string) $master['tzid']);
             }
             if ($series === null || $series->getTimestamp() !== $start->getTimestamp()) {
                 $own[] = 'time';
@@ -219,6 +218,73 @@ final class OwnFields
             $own[] = 'people';
         }
         return self::normalize($own);
+    }
+
+    /**
+     * Where a stored edited day starts and ends by its own list (Own Fields):
+     * on its own date where it owns one, else its occurrence's day; at its
+     * own clock in its own zone where it owns its time, else at the series'
+     * clock in the series' zone; the wall clock read by the one rule (a
+     * skipped clock is the clock plus the gap, a repeated one the instant
+     * the row names, else the first). Its length is its own. A day that owns
+     * neither is at its key. An all-day row, a row of an all-day series and
+     * a row with no key are returned as they are.
+     *
+     * @param list<string> $own
+     */
+    public static function placed(array $row, array $master, array $own): array
+    {
+        $key = (string) ($row['recurrence_instance_utc'] ?? '');
+        if ($key === '' || (int) ($row['all_day'] ?? 0) === 1 || (int) ($master['all_day'] ?? 0) === 1 || empty($row['start_utc']) || empty($row['end_utc'])) {
+            return $row;
+        }
+        $ownDate = in_array('date', $own, true);
+        $ownTime = in_array('time', $own, true);
+        $start = Time::fromDb((string) $row['start_utc']);
+        $len = Time::fromDb((string) $row['end_utc'])->getTimestamp() - $start->getTimestamp();
+        $tz = $ownTime ? (string) $row['tzid'] : (string) $master['tzid'];
+        if (!$ownDate && !$ownTime) {
+            $at = Time::fromDb($key);
+        } else {
+            $dn = $ownDate ? Cal::dnOf($start->setTimezone(Time::zone((string) $row['tzid'])))
+                : Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone((string) $master['tzid'])));
+            $clock = $ownTime ? self::clockOf($start->setTimezone(Time::zone($tz))) : self::seriesClock($master, $key);
+            $at = Calc::at($dn, $clock, $tz, $start);
+        }
+        $out = $row;
+        if ($at->getTimestamp() !== $start->getTimestamp()) {
+            $out['start_utc'] = Time::toDb($at);
+            $out['end_utc'] = Time::toDb($at->modify('+' . $len . ' seconds'));
+        }
+        if (Time::normalizeTzid((string) $row['tzid']) !== Time::normalizeTzid($tz)) {
+            $out['tzid'] = $tz;
+        }
+        return $out;
+    }
+
+    /**
+     * The series' clock an edited day inherits: the series' one clock, read
+     * from its start in its zone; for a rule several times a day, which has
+     * no one clock, its occurrence's own.
+     *
+     * @return array{0:int,1:int,2:int}
+     */
+    private static function seriesClock(array $master, string $key): array
+    {
+        $zone = Time::zone((string) $master['tzid']);
+        $mStart = Time::fromDb((string) $master['start_utc'])->setTimezone($zone);
+        $several = false;
+        try {
+            $several = Rule::parse((string) ($master['rrule'] ?? ''), Cal::dnOf($mStart))->several;
+        } catch (\Throwable) {
+        }
+        return self::clockOf($several && $key !== '' ? Time::fromDb($key)->setTimezone($zone) : $mStart);
+    }
+
+    /** @return array{0:int,1:int,2:int} */
+    private static function clockOf(\DateTimeImmutable $local): array
+    {
+        return [(int) $local->format('G'), (int) $local->format('i'), (int) $local->format('s')];
     }
 
     private static function reminders(mixed $json): string

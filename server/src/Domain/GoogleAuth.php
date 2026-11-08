@@ -21,8 +21,10 @@ use BetterCal\Support\Time;
  * and manage events on the calendars it made, and nothing else, which is how
  * a local calendar is moved to Google. Accounts connected before 0.9.4 lack
  * it until they reconnect once (needsReconnectToCreate). The refresh token
- * is the only thing kept, sealed with the session secret; access tokens are
- * minted per run and never stored.
+ * is kept sealed with the session secret, and so is the current access
+ * token (with its expiry and the grant it came from), so the worker's ticks
+ * and the browser's requests share one token for its hour instead of each
+ * asking Google for a new one.
  */
 final class GoogleAuth
 {
@@ -162,57 +164,45 @@ final class GoogleAuth
                 'SELECT id FROM calendar_moves WHERE google_account_id = ? ORDER BY id' . $lock,
                 [(int) $account['id']]
             );
+            // The stored access token goes with the row.
             $this->db->run('DELETE FROM google_accounts WHERE id = ?', [(int) $account['id']]);
-            self::forgetToken((int) $account['id']);
         });
     }
 
     // ---- Tokens -----------------------------------------------------------
 
-    /**
-     * Access tokens by account id for this process: the token, when it
-     * expires, and the refresh grant it came from. A token is good for about
-     * an hour, so a move's run, a poll or a request reuses it across its
-     * Google calls instead of asking for a new one before each.
-     *
-     * @var array<int,array{token:string,expiresAt:int,grant:string}>
-     */
-    private static array $tokens = [];
-
-    /** Seconds before a token's expiry at which it is no longer reused. */
+    /** Seconds before a token's expiry at which it is no longer used. */
     private const TOKEN_MARGIN_SECONDS = 60;
 
-    /** Drop the token held for an account (Google answered 401 to it, or the account changed). */
-    public static function forgetToken(int $accountId): void
-    {
-        unset(self::$tokens[$accountId]);
-    }
-
-    /** Drop every held token (tests). */
-    public static function forgetTokens(): void
-    {
-        self::$tokens = [];
-    }
+    /** Secrets purpose of the stored access token, so no other sealed field opens as one. */
+    private const ACCESS_TOKEN_PURPOSE = 'google-access-token';
 
     /**
      * Google answered a call made with this account's token: a 401 means the
-     * token is no longer good (revoked, or expired early), so the held one
-     * is dropped and the next call asks for a fresh one. Returns whether the
-     * caller should retry once with a new token.
+     * token is no longer good (revoked, or expired early), so the stored one
+     * is cleared and the next accessToken() asks for a fresh one. Returns
+     * whether the caller should retry once with a new token.
      */
-    public static function tokenRejected(array $account, int $status): bool
+    public function tokenRejected(array $account, int $status): bool
     {
         if ($status !== 401) {
             return false;
         }
-        self::forgetToken((int) ($account['id'] ?? 0));
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->update(
+            'google_accounts',
+            ['access_token_enc' => null, 'access_token_expires_at' => null],
+            'id = ?',
+            [(int) ($account['id'] ?? 0)]
+        ));
         return true;
     }
 
     /**
-     * An access token for this account: the one held for it while it is
-     * good and came from the account's current refresh grant, else a fresh
-     * one from a refresh request, held for the next call.
+     * An access token for this account: the one stored on its row while it
+     * has more than the margin left and came from the account's current
+     * refresh grant, else a fresh one from a refresh request, stored for the
+     * next call in this or any other process. The row is re-read first
+     * (assertUsable), so the stored token costs no extra query.
      */
     public function accessToken(array $account, ?float $absoluteDeadline = null): string
     {
@@ -221,11 +211,10 @@ final class GoogleAuth
         // Re-read instead of trusting a worker/controller snapshot loaded
         // before a compromise reset committed.
         $account = $this->assertUsable($account);
-        $held = self::$tokens[(int) $account['id']] ?? null;
-        if ($held !== null && $held['grant'] === (string) $account['refresh_token_enc'] && $held['expiresAt'] - self::TOKEN_MARGIN_SECONDS > time()) {
-            return $held['token'];
+        $stored = $this->storedToken($account);
+        if ($stored !== null) {
+            return $stored;
         }
-        self::forgetToken((int) $account['id']);
         $refresh = Secrets::open((string) $account['refresh_token_enc'], (string) $this->cfg['session_secret']);
         try {
             $token = $this->tokenRequest([
@@ -239,6 +228,8 @@ final class GoogleAuth
             $fields = ['status' => 'error', 'last_error' => mb_substr($e->getMessage(), 0, 2000)];
             if ($e instanceof HttpError && $e->errorCode === 'google_reconnect_needed') {
                 $fields['reauth_required_at'] = Time::nowDb();
+                $fields['access_token_enc'] = null;
+                $fields['access_token_expires_at'] = null;
             }
             RequestAuthority::checkedTx($this->db, fn() => $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']]));
             throw $e;
@@ -252,10 +243,62 @@ final class GoogleAuth
         }
         $access = (string) $token['access_token'];
         $lifetime = (int) ($token['expires_in'] ?? 3600);
-        if ($lifetime > self::TOKEN_MARGIN_SECONDS) {
-            self::$tokens[(int) $account['id']] = ['token' => $access, 'expiresAt' => time() + $lifetime, 'grant' => (string) $account['refresh_token_enc']];
+        if ($access !== '' && $lifetime > self::TOKEN_MARGIN_SECONDS) {
+            $this->storeToken($account, $access, time() + $lifetime);
         }
         return $access;
+    }
+
+    /** The row's stored access token while it is good and from the row's current grant, else null. */
+    private function storedToken(array $account): ?string
+    {
+        $sealed = (string) ($account['access_token_enc'] ?? '');
+        $expires = (string) ($account['access_token_expires_at'] ?? '');
+        if ($sealed === '' || $expires === '') {
+            return null;
+        }
+        try {
+            if (Time::fromDb($expires)->getTimestamp() - self::TOKEN_MARGIN_SECONDS <= time()) {
+                return null;
+            }
+            $held = json_decode(Secrets::openFor(self::ACCESS_TOKEN_PURPOSE, $sealed, (string) $this->cfg['session_secret']), true);
+        } catch (\Throwable) {
+            // Unreadable (the session secret changed, or a malformed value):
+            // a refresh replaces it.
+            return null;
+        }
+        if (!is_array($held) || !is_string($held['token'] ?? null) || $held['token'] === ''
+            || !hash_equals(self::grantFingerprint($account), (string) ($held['grant'] ?? ''))) {
+            return null;
+        }
+        return $held['token'];
+    }
+
+    /**
+     * Store a fresh token on the row it was minted for. The write lands only
+     * while that grant is still the row's and the row is not quarantined, so
+     * a reconnect or reset that committed during the refresh is never given
+     * the old grant's token.
+     */
+    private function storeToken(array $account, string $access, int $expiresAt): void
+    {
+        $sealed = Secrets::sealFor(
+            self::ACCESS_TOKEN_PURPOSE,
+            json_encode(['token' => $access, 'grant' => self::grantFingerprint($account)], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            (string) $this->cfg['session_secret']
+        );
+        RequestAuthority::checkedTx($this->db, fn() => $this->db->update(
+            'google_accounts',
+            ['access_token_enc' => $sealed, 'access_token_expires_at' => Time::toDb((new \DateTimeImmutable('@' . $expiresAt)))],
+            'id = ? AND refresh_token_enc = ? AND reauth_required_at IS NULL',
+            [(int) $account['id'], (string) $account['refresh_token_enc']]
+        ));
+    }
+
+    /** Which refresh grant a token came from: the sealed refresh token changes with every connect. */
+    private static function grantFingerprint(array $account): string
+    {
+        return hash('sha256', (string) ($account['refresh_token_enc'] ?? ''));
     }
 
     /** Reload and reject the distinct compromise-quarantine state before any Google request. */
@@ -586,6 +629,8 @@ final class GoogleAuth
                 $this->db->update('google_accounts', [
                     'refresh_token_enc' => $sealed, 'scopes' => $scopes, 'status' => 'ok', 'last_error' => null,
                     'reauth_required_at' => null,
+                    // A new grant: the old grant's access token goes.
+                    'access_token_enc' => null, 'access_token_expires_at' => null,
                 ], 'id = ?', [(int) $existing['id']]);
                 if (($existing['reauth_required_at'] ?? null) !== null) {
                     $this->db->run(

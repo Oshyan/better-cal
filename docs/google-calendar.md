@@ -27,7 +27,7 @@ BETTERCAL_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 BETTERCAL_GOOGLE_CLIENT_SECRET=...
 ```
 
-Refresh tokens are encrypted with `BETTERCAL_SESSION_SECRET` (already set on any working install) before they're stored. Changing the session secret invalidates stored tokens; reconnecting each account fixes it.
+Refresh tokens are encrypted with `BETTERCAL_SESSION_SECRET` (already set on any working install) before they're stored, and so is each account's current access token, with its expiry and the grant it came from, so the worker and the browser share one token for its hour instead of asking Google for a new one each time. A reconnect, a disconnect, the compromise reset or a 401 from Google clears it. Changing the session secret invalidates stored tokens; reconnecting each account fixes it.
 
 Until both variables are set, Settings → Connections says the connector isn't set up and offers nothing.
 

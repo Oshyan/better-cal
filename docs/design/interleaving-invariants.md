@@ -1,0 +1,168 @@
+# Interleaving Invariants
+
+The series harness draws one edit at a time, and the series model has stayed clean through every review because of it. Google recovery, undo on Google calendars and the sync's treatment of rows with local-only data have had hand-written tests only, and every review and sweep since 1.5.4 found a neighbour of the last fix there. So the harness gets an interleaving mode (`run.sh --interleave`): a Google-backed series, then 3 to 8 random steps mixing writes here, changes made at Google by someone else, polls, failures injected into a write, Finish, Put back, undo and redo.
+
+This file is that mode's oracle, written before its generator. Each invariant is a statement of the form "after step X, Y holds", derived from a sentence in the docs and cited, with the steps it applies to and what "equal" means for it. As everywhere in the harness, the checks share nothing with the product: what each side holds is read from the rows and from the stand-in, what a step changed is the harness's own record of the request it sent, and an expectation comes from these statements, never from the product's answer. Where the docs leave a case open, the section Where the Docs Leave It Open says so, and the oracle counts that case as ambiguous rather than picking a side.
+
+## Steps
+
+Each step has a code the invariants and the findings use.
+
+- **Writes here** (through `Events`, the plan API and Undo, as the client sends them): `w-all` a whole-series edit; `w-follow` this and following; `w-delfollow` delete following; `w-answer` an answer (Planned or Maybe) from a day on; `w-this-g` a "this event" edit of fields Google holds (title, place, notes, link, status, date, time, length); `w-this-l` a "this event" edit of local-only fields (tags, people, reminders, attendance, icon, coordinates); `w-this-m` both at once; `w-del1` one occurrence deleted; `w-create` a new event or series.
+- **Changes at Google** (`r-*`, made through the stand-in's own API as another client, no `If-Match`, so Google's behaviour from the probe applies): `r-rename`, `r-time`, `r-zone`, `r-length`, `r-rule`, `r-bound` (COUNT or UNTIL), `r-skip+` and `r-skip-` (a day cancelled or brought back), `r-exc+` and `r-exc-` (an exception made, or put back to the series), `r-gonly` (a field only Google holds: attendees, colorId, transparency, visibility, Google's own reminders), `r-delete` (the series deleted).
+- **Polls**: `p-delta` (the sync token), `p-whole` (a full list), `p-410` (the token refused, then the full list).
+- **Failures**: `f-lost` (the stand-in takes write k, its answer is lost), `f-before` (write k fails before it is sent, as a network error), `f-fatal` (the stand-in takes write k, then an `Error` unwinds the process's transaction, as the recovery tests' `fatalAt` does). Each is a write step with its failure point drawn.
+- **Recovery**: `finish`, `putback` (Review's two actions on the `google_half` item).
+- **Undo**: `u-entry` (`POST /activity/:id/undo` of a chosen entry), `u-bare` (`POST /undo`), `redo` (an undo's own entry undone by its id).
+
+"A write" below means any `w-*` or `f-*` step, an undo, a redo, Finish or Put back. "Any step" includes the `r-*` steps and polls.
+
+## What Equal Means
+
+- **A day** is a series' identity (its uid, or for the part a split made, the new uid) with the date its occurrence shows on in the series' zone. A day keeps its identity when a change moves its key within that date (a new clock or zone: "a key the series' clock or zone moved goes to the one occurrence on its day", decisions.md, "A local-only 'this event' edit of an ordinary day sends Google nothing"), and when a drag moves it to its image under the oracle (Expect). A day after a split's cut belongs to the new series.
+- **Held here alone** (`alone(row)`): what Google never holds, read from the rows and the tables that hang off them: tags (by name, as a set), people (by id, as a set), reminders (the normalized list, null and `[]` distinct), attendance, icon, coordinates and their provenance (`location_lat`, `location_lng`, `location_source`, `location_provider`, `location_placed_at`), trip links (`event_links`, each as its role and the other end's day), the trip flag, the floating flag, duplicate decisions and plugin data. Sources: google-calendar.md, What Writes Send ("Not sent: attendees, reminders and color. Tags, people, reminders and the trip flag stay local and survive polls"), the floating paragraph under it ("keeps the setting here"), series-model.md, Own Fields (`Series\OwnFields::REFERENCES`: trip links, duplicate decisions, plugin data). Coordinates are an ambiguity (A1).
+- **The Google digest** of a series (`gdigest`), from the comparison the recovery rule defines (decisions.md, "'Nothing changed since' includes the series' zone": "start and end, the all-day flag, the rule, the content, and the zone of a timed event as the string Google holds"; series-model.md, Google as a Contract, Recovery: "compared field by field with the etag aside"): the master's start and end instants, all-day flag, zone string when timed, rule as parts (list values as sets, `INTERVAL=1` dropped, EXDATE lines as a set of instants), title, description, location text, link (`source.url`) and status; and each instance record by its `originalStartTime`, with the same fields, a cancelled record as a skip. A record whose fields are the series' own values at its occurrence is left out ("an ordinary occurrence here, no edited day", series-model.md, Google as a Contract). Etag, sequence, `updated` and the fields only Google holds are not in it.
+- **The full Google state** (`gfull`): the digest plus every field Google holds that the app never sends (attendees, colorId, transparency, visibility, reminders, guest permissions), by series and by record.
+- **The digest here** (`ldigest`): the same fields read from the rows of each live series (the master, and each edited row by its key), in the same shape, so `gdigest = ldigest` is a comparison of like with like. It extends `GoogleStand::held` and `stored` with the zone and the rows' zones; both stay the harness's own.
+- **The state here** (`lstate`): `ldigest` plus `alone(row)` and `override_fields` (as a set) for every row, by day. Row ids are left out except where an invariant says an id is kept. `updated_at`, `google_etag` and the bookkeeping tables c-untouched names are left out.
+- **Named**: a value removed by a step is named when an Activity entry the step wrote (its `summary` or `details`) carries the removed row's id or its day's date, or, for Finish and Put back, when their answer's `differences` does. The form is the oracle's choice, since the docs say "named" without one (A5).
+- **What a step changed** (`asked(step)`): the harness's record of its own request: the fields it sent with their values, on which rows (a "this event" edit: the day; a whole-series edit: the series and every row not owning the field, with the choices committed; a placement change: the oracle's expectation for it, Expect), and for an undo the fields its entry's step asked. It is never read from the product's snapshots.
+
+## The Invariants
+
+### x-alone: nothing held here alone goes without a word
+
+After any step, every value in `alone(row)` that a day had before the step is still on a row standing for that day, or the step removed it on purpose (it is in `asked(step)`, or the step deleted that day or its series and recorded the removal in its own undoable entry), or the step named it.
+
+Applies after: every step. It is the mode's main check, and the one every sweep shape so far has failed.
+
+From: google-calendar.md, What Writes Send ("Tags, people, reminders and the trip flag stay local and survive polls"; "either way the edited days keep their tags, people, reminders and trip links", of Finish and Put back); How Syncing Works ("if the series no longer has the day ... the day and its tags go, named in the poll's Activity entry"); decisions.md, "Recovery removes only what it made" ("a day with no row left for it is put back as it was and named, never dropped silently"); "A local-only 'this event' edit of an ordinary day sends Google nothing" ("A day the series no longer has is removed with its tags, people and reminders, named in the poll's Activity entry").
+
+### x-sync-silent: a poll sends Google nothing
+
+After `p-delta`, `p-whole` or `p-410`, the stand-in took no POST, PATCH or DELETE during the step, and `gfull` is as it was before it.
+
+From: google-calendar.md, intro ("write-through, not two-way sync: each change goes to Google first"); How Syncing Works (a poll lists and stores); decisions.md, "Outside connections do only what changes".
+
+### x-local-silent: a change here alone sends Google nothing
+
+After `w-this-l`, and after an undo or redo of an entry whose `asked` holds only local-only fields, the stand-in took no write and `gfull` is unchanged; the row a `w-this-l` makes for an ordinary day is under its instance key and survives the next poll while the series has the day.
+
+From: decisions.md, "A local-only 'this event' edit of an ordinary day sends Google nothing"; "A change made here alone to a Google event undoes like any local change" ("keep their snapshots and undo here, sending Google nothing"); api-contract.md, Activity ("A change made here alone to an event on a Google calendar ... undoes here as on a local calendar, sending Google nothing").
+
+### x-write-asked: a write changes at Google only what was asked
+
+After a write that succeeds, for every field of `gdigest` that `asked(step)` doesn't reach, Google's value is the one it had before the step (an exception Google dropped on a master change and the app sent again counts as unchanged when it ends equal). Every field of `gfull` outside `gdigest` is unchanged on every series and record, whatever the step, and no request body the stand-in took carries `attendees`, `reminders` or `colorId`.
+
+Applies after: `w-*` but `w-this-l`, `u-entry`, `u-bare`, `redo`, `finish`, `putback`.
+
+From: google-calendar.md, What Writes Send (the list of what is sent; "Not sent: attendees (they would mail people), reminders (per-user at Google) and color"); decisions.md, "The undo of a Google edit sends back only the fields that edit changed"; series-model.md, Google as a Contract, What the app sends ("the fields that changed"). Put back's case is x-putback's.
+
+### x-agree: the rows are what Google holds
+
+After any write that succeeds and after any poll, `ldigest = gdigest` for every live series of the case, and a poll right after (`p-delta`, then `p-whole`) changes no row. After an `r-*` step and before a poll the two may differ, and nothing is asserted.
+
+From: google-calendar.md, intro ("Google's answer is saved here the same way a poll would save it, so there's never a local-only version of a Google event"); series-model.md, Google as a Contract ("Acceptance is the read-back and the sync after it ... a second sync must change nothing"; "Local rows are written from what Google returned, never from the plan"); decisions.md, the local-only rule ("under a whole read and a delta read alike"). A write that Google kept differently is still equal here (the rows are Google's), and x-honest checks that it was named.
+
+### x-follow: a row of local things follows its series
+
+After a poll, a row whose own fields are all held here alone exists exactly when the series, as stored after the poll, has its key (or, for a key the series' clock or zone moved, the one occurrence on its date), and each field it doesn't own (title, place, notes, link, status, the time from its key, all-day, zone) equals the series' value at that occurrence. A row the series no longer has is gone and named (x-alone).
+
+Applies after: `p-*`, chiefly after `r-time`, `r-zone`, `r-length`, `r-rule`, `r-bound`, `r-skip+`, `r-rename`, `r-delete`.
+
+From: decisions.md, "A local-only 'this event' edit of an ordinary day sends Google nothing" ("after the poll it exists only while the series, as stored then, has its key ... and every field it doesn't own takes the series' value"); google-calendar.md, How Syncing Works ("its title, place, notes and time reach that day on the next poll, the day moves with the series' new clock time").
+
+### x-dropped: a dropped record keeps what is held here
+
+After a poll that reads a record of Google's as gone or as plain (dropped by `r-time`, `r-zone` or `r-rule`, overwritten by `r-rename`, put back by `r-exc-`), a day that had a row with values held here alone keeps exactly those values on a row for that day, its Google-held fields now the series' (owned no longer), while the series has the day; else x-follow's removal applies.
+
+From: decisions.md, the local-only rule ("the same rule keeps an edited day whose own fields are all held here ... when a feed, Google or ICS, drops its record of that day"); series-model.md, Rows from Elsewhere ("Changed at the other end: ... inherited when it equals it"; "A person's local changes to such a row ... are its own and kept across polls"); Google as a Contract ("unless that row owns something Google doesn't hold").
+
+### x-structure: one row per day, on the series' days
+
+After any step, every live series of the case has at most one live row per key; every edited row's key and every skip is an occurrence of its series as stored (the harness's evaluator, `Rfc`); no live row has a master that is gone; an undo or redo makes no row for a day its series doesn't have.
+
+From: series-model.md, Own Fields; the harness's invariant h (README); api-contract.md, Activity ("Something the change belonged to deleted since makes it `not_undoable`"); series-model.md, Google as a Contract ("no edited day outlives its series or comes back by a poll").
+
+### x-own: an edited day follows the series in what it doesn't own
+
+After any write that succeeds and after any poll, every field of an edited row outside its `override_fields` (the date, time, length and all-day placement included, by `OwnFields::placed`'s rule as the harness reads it) equals the series' value at its occurrence. After a poll, ownership follows Rows from Elsewhere: a field unchanged at Google keeps its ownership, one changed to the master's value becomes inherited, one changed to another value its own.
+
+From: series-model.md, Own Fields ("A series-wide change reaches every field an edited day doesn't own; its own fields stay"); Rows from Elsewhere (the three rules).
+
+### x-conflict: a stale etag is refused whole
+
+After a write of fields Google holds, or an undo of one, sent while Google changed that series since the last poll or write here (an `r-*` step not yet polled), the answer is 409 `google_conflict`, the stand-in took no write that landed, and `lstate` is as before the step.
+
+From: api-contract.md, Google Calendar ("every edit and delete is sent with the event's stored Google etag as `If-Match`, Google answered that the event changed since, and nothing was changed here or there"); Activity ("409 `google_conflict` when the event or series changed at Google since, with nothing written"); series-model.md, Google as a Contract ("the first write is conditional on the stored etag").
+
+### x-pending: a failure leaves the change listed, or nothing at all
+
+After `f-before` at the first write: an error, the stand-in unchanged, `lstate` unchanged, no `google_pending` row and no `google_half` item. After any other failure (`f-lost`, `f-fatal`, or `f-before` after an earlier write landed): the answer fails with `pending`; Review lists one `google_half` item for it whose `stepsDone` covers every write the stand-in took, the one whose answer was lost included; x-alone holds.
+
+From: series-model.md, Google as a Contract, Recovery ("The pending row is written on a connection of its own, so it is committed before the first request whatever the account's transaction does after"; "A transaction rolled back with nothing sent takes it too"; "The request that stopped fails with the error and `pending`"); api-contract.md, Review (`google_half`, `stepsDone`: "a step whose answer never came included").
+
+### x-finish: Finish completes the change over what stands now
+
+After `finish` that answers ok: for every field the pending change asked (`asked` of the failed step, the local part included: tags, people, reminders and flags, review R3), the rows and Google hold the change's value; for every other field, they hold the value from just before Finish; every place where either side departs from that is named in `differences`. A row made here since the failure keeps its id and what it holds, with the plan applied over it; a row the change's own stores made is gone, or, holding something held here alone since, has handed it to the row left for its day. The pending row and the Review item are gone. After `finish` that answers 409 `google_finish_local`: nothing held here alone is lost and the item stays listed.
+
+"The change's value" for a field change is the value sent; for a placement change (time, zone, rule, bound, a split) it is Expect's expectation for the edit, read from the series as it was when the change was planned, and is asserted only when nothing at Google changed since; with a change at Google since, the digest comparison is equal-or-named.
+
+From: google-calendar.md, What Writes Send ("Finish (the rest of it, from what Google has now, then its part here: tags, people, reminders and flags)"); series-model.md, Recovery ("Finish runs the same targets from Google's state, then writes the change's part here ... a row made here since ... stays with what it has, and the plan is applied over it"); decisions.md, "Put back is all or nothing" ("Finish writes the local part of a mixed change from the plan kept with the pending row"); "Recovery removes only what it made".
+
+### x-putback: Put back is all or nothing, and the harness knows which
+
+The harness decides on its own whether a target series changed at Google since the failure: for a series whose last step was answered, any `r-*` step on it since (Google changes the etag on every write, probe 5.1); for one whose last step's answer was lost, an `r-*` step since that changed its `gdigest`.
+
+After `putback` with a series changed since: 409 `google_changed_since`, `left` names exactly the series changed since, the stand-in took no write, `lstate` is unchanged and the item stays listed. With none changed: ok with `left: []`; every target series' `gfull` at Google is what it was before the failed change (an inserted series cancelled); the rows here are as they were before the change, but for what was made here since, which stays (a row a store made that was given something held here alone hands it to the day's row); the pending row and the item are gone.
+
+From: google-calendar.md, What Writes Send ("Put back (every step sent, reversed, a step whose answer never came included, all or nothing: only while nothing changed at Google since; if anything did, even in a series this change inserted, nothing is put back"); api-contract.md, Review (`put_back`, `left`); decisions.md, "Put back is all or nothing"; "'Nothing changed since' includes the series' zone". A change at Google to a field only Google holds is A2.
+
+### x-undo-fields: an undo takes back only what its entry changed
+
+After `u-entry`, `u-bare` or `redo` that answers ok, every field in `asked` of the entry's step is back at its value from before that step (for redo, from after it), and every other field, here and at Google, is as it stood before the undo (a change made since in another field, a remote one read by a poll included, stays). When a later entry not undone asked the same field on the same row (or, for a repeating event, changed its times where this entry deleted, edited or split off a date, or the other way round), the answer is `stale_undo` and nothing is written anywhere. When the trip rules refuse what it puts back, `undo_conflict` and nothing is written.
+
+From: decisions.md, "The undo of a Google edit sends back only the fields that edit changed" ("a field a later entry changed again is stale as on a local calendar; redo carries the same fields"); api-contract.md, Activity (`stale_undo`, `undo_conflict`; a `series` entry "each series as putting the entry's snapshots back here leaves it, so what changed since in other fields stays"); series-model.md, Undo for Google series.
+
+### x-undo-bare: the bare Undo steps back one change at a time
+
+After `u-bare`, the entry undone is the newest one from the session's sources that is neither undone nor an undo's own entry, exactly as on a local calendar; an undo's entry names the entry it undid (`details.google.undoes`), and a change with its undo beside it makes no older entry stale.
+
+From: decisions.md, "The bare Undo steps one change further back on a Google calendar as it does locally"; api-contract.md, `POST /undo` ("so each call steps one change further back, on a Google calendar as on a local one").
+
+### x-honest: an answer says what happened
+
+After every write: an answer that says ok holds what it claims (the rows and Google carry `asked`, or each departure is in a `google_differs` Review item, or for Finish and Put back in `differences`); a `google_differs` item appears exactly when Google kept something other than the plan; an error answer without `pending` leaves `lstate` and `gfull` as before; an error with `pending` is x-pending's. Every write that succeeds leaves one Activity entry, undoable unless it is Finish or Put back (log only).
+
+From: api-contract.md, Series Plans, Google calendars ("a difference goes into the Activity entry and a Review notice (`google_differs`)"); Google Calendar ("502 `google_write_failed` (Google refused or is unreachable; nothing changed)"); Activity (`not_undoable` for "Review's Finish and Put back"); google-calendar.md, Activity paragraph.
+
+## Which Invariants Run After Which Steps
+
+| Step | Invariants |
+|---|---|
+| `w-all`, `w-follow`, `w-delfollow`, `w-answer`, `w-this-g`, `w-this-m`, `w-del1`, `w-create` | x-alone, x-write-asked, x-agree, x-structure, x-own, x-conflict, x-honest |
+| `w-this-l` | x-alone, x-local-silent, x-agree, x-structure, x-own, x-honest |
+| `r-*` | x-alone (rows here untouched by the step itself), x-structure |
+| `p-delta`, `p-whole`, `p-410` | x-alone, x-sync-silent, x-agree, x-follow, x-dropped, x-structure, x-own |
+| `f-lost`, `f-before`, `f-fatal` | x-alone, x-pending, x-structure, x-honest |
+| `finish` | x-alone, x-finish, x-write-asked, x-agree, x-structure, x-own, x-honest |
+| `putback` | x-alone, x-putback, x-agree, x-structure, x-own, x-honest |
+| `u-entry`, `u-bare`, `redo` | x-alone, x-undo-fields, x-undo-bare (`u-bare`), x-local-silent (local-only entries), x-write-asked, x-conflict, x-agree, x-structure, x-own, x-honest |
+
+The harness's existing checks for a single edit (a to i, c-untouched, 8-google, f-undo) still run on every `w-all` and `w-follow` step whose series nothing else touched since the last poll, as in `--google`.
+
+## Where the Docs Leave It Open
+
+Until each is decided, the oracle counts a disagreement here as `ambiguous` with the case, never as a failure.
+
+- **A1, coordinates.** Own Fields lists `location` "with its coordinates and provenance" as one field, and no doc names coordinates among what Google doesn't hold. Google holds the location text only. The oracle reads coordinates as held here alone while the location text is unchanged (a poll that brings the same text back has no reason to clear them) and as going with the text when Google changes it. The sync sweep's "a day given coordinates only, then a poll" fails under this reading.
+- **A2, Put back after a lost answer and a change to a field only Google holds.** google-calendar.md says "only while nothing changed at Google since"; the recovery rule (decisions.md, "'Nothing changed since' includes the series' zone") compares start, end, all-day, rule, content and zone. A change to attendees or colorId on an inserted series whose insert's answer was lost is a change by the first and none by the second, and Put back would then cancel a series someone added guests to. The oracle accepts a refusal or a Put back here.
+- **A3, an undo after a remote change of the same field, read by a poll.** `stale_undo` is about "a newer change"; a poll's entry is log only. Whether a rename made at Google and polled makes an undo of an earlier rename here stale, or the undo puts the old title back over it, isn't said. The oracle accepts either, but x-conflict still applies before the poll.
+- **A4, Finish over a change at Google to a day the change didn't touch.** "Runs the same targets from Google's state" could send the whole target and overwrite it. x-finish asserts equal-or-named, which both readings can meet; the oracle tallies which one the product took.
+- **A5, what "named" means.** The docs say a removed day is "named in the poll's Activity entry" with no form. The oracle takes the row id or the day's date in the entry's summary or details.
+- **A6, a write while a change is half done.** No doc says whether a write to a series with a `google_half` item is refused. The oracle accepts success or refusal, holding x-honest and x-alone either way.
+- **A7, a process killed outright.** The harness injects an `Error` after the stand-in took the write, as the recovery tests do; a stopped process leaving a row marked running with no lock is the database suite's kill test, and is not drawn here.
+
+## Not Covered
+
+A day past the 730th occurrence of a series with no end (the product leaves it as Google has it and names it; the `--google` mode covers it), invitations organized by someone else (their answer is Google's `responseStatus`, a different path), a series several times a day and a rule the expander can't read (neither exists on a Google calendar, `GoogleStand::unheld`), and moves between calendars (refused on Google).

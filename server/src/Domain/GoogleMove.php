@@ -152,8 +152,12 @@ final class GoogleMove
         });
         if ($started) {
             // Most calendars finish within the request; a big one carries on in
-            // the worker and the settings panel shows its progress.
-            $this->run($moveId, 12);
+            // the worker and the settings panel shows its progress. The worker
+            // takes it up on its next tick: a recovery job that found this
+            // run holding the lease backed off, so it is brought forward.
+            if ($this->run($moveId, 12) === self::RESULT_MORE) {
+                $this->queue->expediteGoogleMove($moveId);
+            }
         }
         $row = $this->db->one('SELECT * FROM calendar_moves WHERE id = ?', [$moveId]);
         if ($row === null) {

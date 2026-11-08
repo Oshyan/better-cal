@@ -10351,6 +10351,18 @@ require __DIR__ . '/plugins.php';
     $ensureJob->invoke($mover, $moveId);
     checkEq('move scheduling: a running old attempt still gets exactly one pending recovery job', 1,
         (int) $mdb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'google_move' AND status = 'pending'"));
+    // A run that ends with more to upload brings the pending job forward: a
+    // recovery job that backed off while the request's run held the lease
+    // runs on the worker's next tick, and with no pending job one is queued.
+    $mdb->run("UPDATE jobs SET run_after = '2999-01-01 00:00:00' WHERE type = 'google_move' AND status = 'pending'");
+    $queue->expediteGoogleMove($moveId);
+    checkEq('move scheduling: a continuation brings the backed-off recovery job forward to now, adding none', [1, true],
+        [(int) $mdb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'google_move' AND status = 'pending'"),
+            (string) $mdb->scalar("SELECT MIN(run_after) FROM jobs WHERE type = 'google_move' AND status = 'pending'") <= BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc())]);
+    $mdb->run("UPDATE jobs SET status = 'done' WHERE type = 'google_move'");
+    $queue->expediteGoogleMove($moveId);
+    checkEq('move scheduling: with no pending job, a continuation queues one', 1,
+        (int) $mdb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'google_move' AND status = 'pending'"));
     checkEq('move recovery marker: one exact opaque marker recovers its remote id', 'remote-1',
         BetterCal\Domain\GoogleMove::recoveredCalendarId([
             ['id' => 'other', 'description' => 'ordinary description'],

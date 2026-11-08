@@ -166,7 +166,7 @@ try {
                     $mover = new BetterCal\Domain\GoogleMove($db, $googleAuth, new BetterCal\Domain\GoogleWriter($db, $googleAuth, $feeds), $feeds, $undo, $queue);
                     $result = $mover->run($moveId, 40);
                     if ($result === BetterCal\Domain\GoogleMove::RESULT_MORE) {
-                        $queue->enqueue('google_move', ['moveId' => $moveId]);
+                        $queue->expediteGoogleMove($moveId);
                     } elseif ($result === BetterCal\Domain\GoogleMove::RESULT_BUSY) {
                         // The browser request may own the short first lease.
                         // Keep one recovery job so a killed PHP request cannot

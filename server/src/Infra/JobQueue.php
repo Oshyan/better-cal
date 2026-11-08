@@ -168,6 +168,25 @@ final class JobQueue
         ) !== null;
     }
 
+    /**
+     * A move with more to upload runs on the worker's next tick: its pending
+     * job is brought forward to now (a recovery job backed off while the
+     * request's own run held the lease), or one is queued when there is none.
+     */
+    public function expediteGoogleMove(int $moveId): void
+    {
+        $extract = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite'
+            ? "CAST(JSON_EXTRACT(payload_json, '$.moveId') AS TEXT)"
+            : "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.moveId'))";
+        $moved = $this->db->run(
+            "UPDATE jobs SET run_after = ? WHERE type = 'google_move' AND status = 'pending' AND $extract = ? AND run_after > ?",
+            [Time::toDb(Time::nowUtc()), (string) $moveId, Time::toDb(Time::nowUtc())]
+        )->rowCount();
+        if ($moved === 0 && !$this->hasQueuedGoogleMove($moveId)) {
+            $this->enqueue('google_move', ['moveId' => $moveId]);
+        }
+    }
+
     public function hasQueuedGoogleMove(int $moveId): bool
     {
         $extract = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite'

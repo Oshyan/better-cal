@@ -237,10 +237,23 @@ final class Driver
         }
         $this->checkTripLinks($before, $acted, $sent);
         if ($this->google !== null) {
-            // What the stand-in holds equals the rows here, and a poll changes nothing (8-google). Undo on a Google
-            // calendar is the undo stage's (#172), so the undo, redo and stack checks are not applicable here.
+            // What the stand-in holds equals the rows here, and a poll changes nothing (8-google). Undo sends the
+            // series as it was back to Google (#172): every row as before the edit, but for the etags Google changes
+            // on every write, and the stand-in holding it as the rows here do. Redo and the stack are the local run's.
             $this->checkGoogleHeld($id);
-            $this->na('Undo on a Google calendar (the undo stage of #172)');
+            if ($v['scope'] === 'attendAll' || $path === 'attendFollowing@first') {
+                // Planned for all events (from the first day, too) is the account's own mark, never sent to Google,
+                // and a Google calendar's entry of a change made here alone keeps no snapshot (Activity, log-only).
+                $this->na('Undo of an answer for all events on a Google calendar (local, log-only)');
+                return $this->result($path);
+            }
+            Prof::mark('undo');
+            if ($this->undoLatest('f-undo', 'undo')) {
+                $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),
+                    'after Undo on a Google calendar every row is as before the edit by its place in the series, but for the etags Google changes on every write (a day Google gives back may come back under a new id here)');
+                $this->checkGoogleHeld($id);
+            }
+            $this->na('redo and the undo stack on a Google calendar');
             return $this->result($path);
         }
         Prof::mark('undo');
@@ -664,6 +677,15 @@ final class Driver
             $out['event_links'] = $this->db->all("SELECT * FROM event_links WHERE event_id IN $in OR container_id IN $in ORDER BY id", array_merge($params, $params));
         }
         return $out;
+    }
+
+    /** A snapshot without the rows' Google etags, which every write to a series at Google changes. */
+    private static function withoutEtags(array $snap): array
+    {
+        foreach ($snap['events'] as $i => $r) {
+            unset($snap['events'][$i]['google_etag']);
+        }
+        return $snap;
     }
 
     /** A snapshot with ids replaced by roles, so a redo's new rows compare with the first run's. */

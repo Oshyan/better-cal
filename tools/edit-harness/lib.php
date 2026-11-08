@@ -287,7 +287,8 @@ final class Runner
         $other = (int) $this->domains->calendars->create($u, ['name' => 'Sample other calendar'])['id'];
         if ($this->google) {
             $stand = GoogleStand::make($this->db, $this->domains->undo, $u);
-            return new Driver($this->db, $stand->events, $this->domains->undo, $u, $stand->calendarId, $other, $stand);
+            // Undo sends a Google change back through the stand-in, as the app's Undo does through Google.
+            return new Driver($this->db, $stand->events, new \BetterCal\Domain\Undo($this->db, null, $stand->writer), $u, $stand->calendarId, $other, $stand);
         }
         return new Driver($this->db, $this->domains->events, $this->domains->undo, $u, Product::defaultCalendarId($this->db, $u), $other);
     }

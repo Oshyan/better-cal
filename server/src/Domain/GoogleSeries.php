@@ -50,8 +50,10 @@ use BetterCal\Support\Time;
  * runs the befores, each series only while its etag is the one its last
  * step left.
  *
- * The undo stage calls the same function with the before state as the
- * target: applying a target state is the whole public surface.
+ * Undo (GoogleUndo, kind series) calls the same function with the befores
+ * apply() returned as the targets, each conditional on its series' etag as
+ * stored at undo time (withStoredEtags): applying a target state is the
+ * whole public surface.
  */
 final class GoogleSeries
 {
@@ -202,7 +204,10 @@ final class GoogleSeries
      * thrown with `pending` in its extra.
      *
      * @param list<array> $targets
-     * @return array{pending:int, readbacks:array<string,list<array>>, differences:list<string>, inserted:array<string,array>, targets:list<array>}
+     * `befores` are the series as they were before (beforeOf), the targets
+     * that undo the change.
+     *
+     * @return array{pending:int, readbacks:array<string,list<array>>, differences:list<string>, inserted:array<string,array>, targets:list<array>, befores:list<array>}
      */
     public function apply(int $userId, array $calendar, array $targets, string $title, string $summary, ?int $eventId = null, ?\Closure $beforeSend = null): array
     {
@@ -224,22 +229,74 @@ final class GoogleSeries
             'updated_at' => Time::nowDb(),
         ]);
         $steps = [];
-        return $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
+        return $this->run($calendar, $pendingId, $targets, $steps, $beforeSend) + ['befores' => array_values($befores)];
     }
 
-    /** The series a target changes, as it is here before the change; an inserted series' before is its removal. */
+    /** A series' removal: the target that cancels it at Google (a series inserted, or one not here). Pure. */
+    public static function removalOf(array $t, array $singles = []): array
+    {
+        return ['uid' => $t['uid'] ?? null, 'googleId' => (string) $t['googleId'], 'etag' => $t['etag'] ?? null, 'insert' => false, 'remove' => true,
+            'master' => $t['master'], 'exceptions' => [], 'skips' => [], 'singles' => $singles];
+    }
+
+    /**
+     * Targets made conditional on what is stored here now: each series'
+     * uid and etag as its row holds them (the etag follows the app's own
+     * writes and the polls, Google changing every row's etag in a series
+     * on any write), each event of its own's etag the same way. A series
+     * not stored here has no etag to send (null: unconditional).
+     *
+     * @param list<array> $targets
+     * @return list<array>
+     */
+    public function withStoredEtags(array $calendar, array $targets): array
+    {
+        foreach ($targets as $i => $t) {
+            $master = $this->masterRow($calendar, $t);
+            $targets[$i]['etag'] = $master !== null && isset($master['google_etag']) && $master['google_etag'] !== '' ? (string) $master['google_etag'] : null;
+            if ($master !== null) {
+                $targets[$i]['uid'] = (string) $master['uid'];
+                $targets[$i]['insert'] = false;
+            }
+            foreach ($t['singles'] ?? [] as $si => $s) {
+                $row = $this->writer->rowByGoogleId((int) $calendar['id'], (string) $s['id']);
+                $targets[$i]['singles'][$si]['etag'] = $row !== null && isset($row['google_etag']) && $row['google_etag'] !== '' ? (string) $row['google_etag'] : null;
+            }
+        }
+        return $targets;
+    }
+
+    /** How many steps a pending change has done (0: nothing reached Google). */
+    public function stepsDone(int $pendingId): int
+    {
+        return count(json_decode((string) $this->db->scalar('SELECT steps_json FROM google_pending WHERE id = ?', [$pendingId]), true) ?: []);
+    }
+
+    /**
+     * The series a target changes, as it is here before the change: a
+     * series inserted, or one not here, has its removal as its before; an
+     * event of its own the target makes is removed, one it removes is
+     * made again as stored here.
+     */
     private function beforeOf(array $calendar, array $t): array
     {
         $singles = [];
         foreach ($t['singles'] ?? [] as $s) {
-            $singles[] = ['id' => (string) $s['id'], 'remove' => true];
+            if (empty($s['remove'])) {
+                $singles[] = ['id' => (string) $s['id'], 'remove' => true];
+                continue;
+            }
+            $row = $this->writer->rowByGoogleId((int) $calendar['id'], (string) $s['id']);
+            if ($row !== null) {
+                $singles[] = ['id' => (string) $s['id'], 'row' => self::cols($row), 'rowId' => (int) $row['id'], 'remove' => false];
+            }
         }
-        if (!empty($t['insert'])) {
-            return ['uid' => null, 'googleId' => (string) $t['googleId'], 'etag' => null, 'insert' => false, 'remove' => true, 'master' => $t['master'], 'exceptions' => [], 'skips' => [], 'singles' => $singles];
+        $master = empty($t['insert']) ? $this->masterRow($calendar, $t) : null;
+        if ($master === null) {
+            return self::removalOf(['uid' => empty($t['insert']) ? ($t['uid'] ?? null) : null, 'etag' => null] + $t, $singles);
         }
-        $master = $this->masterRow($calendar, $t);
-        $rows = $master === null ? [] : $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]);
-        $before = $master === null ? $t : self::stateOf($master, $rows);
+        $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]);
+        $before = self::stateOf($master, $rows);
         $before['singles'] = $singles;
         return $before;
     }
@@ -297,6 +354,17 @@ final class GoogleSeries
                     }
                     $uid = $t['uid'] ?? null;
                     $items = $this->readBack($calendar, $send, $uid, (string) $t['googleId'], null, $beforeSend);
+                    // Each record of it still listed live goes too, so no
+                    // edited day outlives its series, however Google treats
+                    // a series' records when its master goes.
+                    $live = array_filter($items, static fn(array $item): bool => (string) ($item['recurringEventId'] ?? '') === (string) $t['googleId'] && (string) ($item['status'] ?? '') !== 'cancelled');
+                    foreach ($live as $item) {
+                        $this->cancel($send, (string) $item['id'], null);
+                        $record('record-remove', (string) $item['id'], null);
+                    }
+                    if ($live !== []) {
+                        $items = $this->readBack($calendar, $send, $uid, (string) $t['googleId'], null, $beforeSend);
+                    }
                     $readbacks[(string) ($uid ?? $t['googleId'])] = $items;
                     continue;
                 }
@@ -363,7 +431,12 @@ final class GoogleSeries
         return false;
     }
 
-    /** An insert with the id the app chose: a 409 means the first attempt landed, so the event is read back and counts as done. */
+    /**
+     * An insert with the id the app chose: a 409 means the id is taken, by
+     * the first attempt that landed or by the event itself cancelled (an
+     * undo's undo making it again), so it is read back, and a cancelled
+     * one is sent again as the body has it, conditional on its etag.
+     */
     private function insertChosen(\Closure $send, string $id, array $body): array
     {
         try {
@@ -372,17 +445,21 @@ final class GoogleSeries
             if ((int) ($e->extra['googleStatus'] ?? 0) !== 409) {
                 throw $e;
             }
-            return $send('GET', '/' . rawurlencode($id), null, null);
+            $found = $send('GET', '/' . rawurlencode($id), null, null);
+            if ((string) ($found['status'] ?? '') !== 'cancelled') {
+                return $found;
+            }
+            return $send('PATCH', '/' . rawurlencode($id), $body + ['status' => 'confirmed'], isset($found['etag']) && is_string($found['etag']) ? $found['etag'] : null);
         }
     }
 
-    /** A DELETE, conditional when an etag is known; an event already gone (404) is gone. */
+    /** A DELETE, conditional when an etag is known; an event already gone (404, or 410 once deleted) is gone. */
     private function cancel(\Closure $send, string $id, ?string $etag): void
     {
         try {
             $send('DELETE', '/' . rawurlencode($id), null, $etag);
         } catch (HttpError $e) {
-            if ((int) ($e->extra['googleStatus'] ?? 0) !== 404) {
+            if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
                 throw $e;
             }
         }
@@ -844,16 +921,8 @@ final class GoogleSeries
     public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
-        $targets = json_decode((string) $row['targets_json'], true) ?: [];
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
-        foreach ($targets as $i => $t) {
-            $master = $this->masterRow($calendar, $t);
-            if ($master !== null) {
-                $targets[$i]['uid'] = (string) $master['uid'];
-                $targets[$i]['etag'] = isset($master['google_etag']) && $master['google_etag'] !== '' ? (string) $master['google_etag'] : null;
-                $targets[$i]['insert'] = false;
-            }
-        }
+        $targets = $this->withStoredEtags($calendar, json_decode((string) $row['targets_json'], true) ?: []);
         $this->db->update('google_pending', ['status' => self::STATUS_RUNNING, 'error' => null, 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]);
         $out = $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
         $this->store($calendar, $out['readbacks'], $out['targets']);

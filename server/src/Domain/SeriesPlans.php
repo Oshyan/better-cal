@@ -926,6 +926,7 @@ trait SeriesPlans
         foreach ($rows as $r) {
             $byId[(int) $r['id']] = $r;
         }
+        $beforeTables = $this->googleSeriesTables($calendar, [(string) $master['uid']]);
         // After the plan is read (the flag is part of what it compares),
         // before Google is sent anything: the trip rules over the rows as
         // the commit will leave them, the flag on every row the plan puts
@@ -950,7 +951,8 @@ trait SeriesPlans
             $this->googleSeries()->store($calendar, $out['readbacks'], $out['targets']);
             $this->googleSeries()->settle($out['pending']);
         });
-        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences']);
+        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
+            [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid']], array_merge(array_keys($w['detach'] ?? []), $created))]);
     }
 
     /**
@@ -970,6 +972,7 @@ trait SeriesPlans
         foreach ($rows as $r) {
             $byId[(int) $r['id']] = $r;
         }
+        $beforeTables = $this->googleSeriesTables($calendar, [(string) $master['uid']]);
         if ($w['part'] !== null) {
             // The trip rules over the part's rows as the commit will leave them, before Google is sent anything.
             [, $localFields] = self::splitGoogleFields($w['plan']['master'] ?? []);
@@ -1002,7 +1005,9 @@ trait SeriesPlans
             $this->googleSeries()->settle($out['pending']);
             return $newId;
         });
-        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences']);
+        $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
+            [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid'], (string) ($identity['uid'] ?? '')],
+                array_merge(array_keys($w['plan']['detach'] ?? []), $created))]);
         if ($newId !== null) {
             $this->splitEventId = $newId;
         }
@@ -1024,14 +1029,23 @@ trait SeriesPlans
         }
     }
 
-    /** The Activity entry of a Google series change, and a Review notice when Google kept something else. */
-    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences): void
+    /**
+     * The Activity entry of a Google series change, and a Review notice
+     * when Google kept something else. $undo ([befores, before tables,
+     * after tables]) makes the entry undoable (googleSeriesJournal); Review's
+     * Finish and Put back pass none, being the way back themselves.
+     */
+    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null): void
     {
         $words = $summary;
         if ($differences !== []) {
             $words .= ' Google kept something else: ' . implode(' ', $differences);
         }
-        $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id);
+        if ($undo !== null && $id !== null) {
+            $this->googleSeriesJournal($userId, mb_substr($words, 0, 900), $calendar, $id, $undo[0], $undo[1], $undo[2]);
+        } else {
+            $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id);
+        }
         if ($differences !== []) {
             (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
         }

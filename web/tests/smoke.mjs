@@ -5256,7 +5256,7 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   eq('series panel: a refused change says why by its code, and can\'t be confirmed', [gRefused.refused, gRefused.canConfirm, gRefused.change],
     ['At Google, a day of an all-day series can’t have a time of its own, so this change can’t be made while an edited day keeps one. Give that day the series’ all-day setting first, or change only this one.', false, '']);
   const gNote = planView({ ...choir, notes: [{ kind: 'google', words: 'Server note' }] }, ctx());
-  eq('series panel: the Google note says the change is sent to Google and read back, and can\'t be undone yet', gNote.notes, ['This change is sent to Google and read back from it: the calendar shows what Google stores. It can’t be undone yet.']);
+  eq('series panel: the Google note says the change is sent to Google and read back, nothing about undo', gNote.notes, ['This change is sent to Google and read back from it: the calendar shows what Google stores.']);
   const gap = planView({ ...choir, notes: [{ kind: 'gap', date: '2027-03-14', clock: '02:30', at: '2027-03-14T03:30:00-07:00', tz: LA, words: 'Server note' }] }, ctx());
   eq('series panel: a note in the user\'s format', gap.notes, ['There is no 2:30 AM on Sun, Mar 14 in Los Angeles, so that one is at 3:30 AM.']);
 
@@ -6615,8 +6615,8 @@ console.log('--- the scopes an occurrence has, one rule for every chooser (1.5.1
   // The drop chip (drag, resize, reschedule, a calendar or a person drop).
   const chip = (occ, o) => scopeDropChoice({ x: 10, y: 20 }, occ, () => {}, o);
   eq('drop chip: local, three scopes and Cancel, no note', [chip(local).options.map((x) => x.value), chip(local).note], [['this', 'following', 'all', null], null]);
-  eq('drop chip: Google, three scopes too, no note, the title says Google and that only this occurrence can be undone', [chip(google).options.map((x) => x.value), chip(google).note, /Google/.test(chip(google).title), /only this occurrence can be undone/.test(chip(google).title)],
-    [['this', 'following', 'all', null], null, true, true]);
+  eq('drop chip: Google, three scopes too, no note, the title says the change goes to Google and nothing about undo', [chip(google).options.map((x) => x.value), chip(google).note, chip(google).title],
+    [['this', 'following', 'all', null], null, 'Repeating event (goes to Google)']);
   eq('drop chip: the all label the caller gives', chip(local, { allLabel: 'All events…' }).options.map((x) => x.label), ['This event', 'This + following', 'All events…', 'Cancel']);
 
   // The delete, answer and new-time row.

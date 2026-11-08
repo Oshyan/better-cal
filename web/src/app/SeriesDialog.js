@@ -33,7 +33,6 @@ export function SeriesDialog({ host = 'calendar' }) {
 function SeriesPanel({ sc }) {
   const rootRef = useRef(null);
   const bodyRef = useRef(null);
-  const cancelRef = useRef(null);
   // The groups of edited days opened to show their days.
   const [openGroups, setOpenGroups] = useState(() => new Set());
   const toggleGroup = (key) => setOpenGroups((was) => {
@@ -68,10 +67,10 @@ function SeriesPanel({ sc }) {
     return () => { stop(); document.removeEventListener('keydown', onKey, true); };
   }, []);
 
-  // Focus: Cancel for a Google series (it can't be undone yet), else the
-  // panel, so Enter confirms once the plan is there.
+  // Focus: the panel, so Enter confirms once the plan is there (a Google
+  // series' change undoes like a local one's).
   useEffect(() => {
-    const el = sc.google ? cancelRef.current : rootRef.current;
+    const el = rootRef.current;
     if (el) el.focus({ preventScroll: true });
   }, []);
 
@@ -101,7 +100,7 @@ function SeriesPanel({ sc }) {
     <div class="bc-sd-actions">
       ${sc.status === 'refreshing' && html`<span class="bc-sd-status" role="status">${view.working}</span>`}
       ${sc.status === 'committing' && html`<span class="bc-sd-status" role="status">${view.saving}</span>`}
-      <button type="button" class="bc-btn" ref=${cancelRef} onClick=${() => cancelSeriesChange()}>Cancel</button>
+      <button type="button" class="bc-btn" onClick=${() => cancelSeriesChange()}>Cancel</button>
       ${view.refused
         ? html`<button type="button" class="bc-btn bc-btn-primary" onClick=${() => onlyThisOne()}>${view.onlyThis}</button>`
         : html`<button type="button" class="bc-btn bc-btn-primary" disabled=${!canConfirm} onClick=${() => confirmSeriesChange()}>${view.action}</button>`}

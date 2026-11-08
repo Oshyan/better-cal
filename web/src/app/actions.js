@@ -346,10 +346,10 @@ export function pluginBacked(occ) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   return cal && cal.reschedulable ? (cal.pluginName || 'its source') : null;
 }
-// At Google a change to one event, or to one occurrence of a series, undoes
-// like any other; a change to a whole series can't be undone yet.
-export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
-export const GOOGLE_SERIES_NOTE = 'Goes to Google; only this occurrence can be undone';
+// At Google every change undoes like any other: one event or occurrence by
+// its inverse, a whole series by sending it back as it was. A scope chooser
+// for a Google series says where the change goes.
+export const GOOGLE_SERIES_NOTE = 'Goes to Google';
 export const NO_UNDO = "Can't be undone";
 
 // Undo toasts name the item on their first line and say what happened to it
@@ -570,7 +570,7 @@ export async function createEvent(fields) {
       });
     } else if (cal && cal.provider === 'google') {
       // Created at Google through the connector: undone by deleting it there,
-      // except a series, which can't be undone yet (no entry to undo).
+      // a series as a whole.
       toast('Created at Google' + repeats, { title: itemName(occ), undo: entriesOf(occ), note: NO_UNDO });
     } else {
       toast((cal ? 'Created in ' + cal.name : 'Created') + repeats, { title: itemName(occ), undo: entriesOf(occ) });

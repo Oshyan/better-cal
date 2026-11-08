@@ -62,6 +62,22 @@ foreach ($fit as $t) {
     $fwalls[] = gmdate('m-d H:i', $fit->wall()) . ' at ' . $t->format('H:i');
 }
 checkEq('floating gap: the expander names 02:30 as the clock it generated 03:30 from', ['03-13 02:30 at 02:30', '03-14 02:30 at 03:30', '03-15 02:30 at 02:30'], $fwalls);
+// The documented limit (decisions.md, floating entry): a sub-daily floating
+// series is generated and keyed in its own zone, so the clocks Home's
+// skipped hour lands on one instant are one occurrence everywhere, at the
+// later clock. Hourly and minutely from 00:30 on 13 Mar at Home, 30 s long:
+// Tokyo's 02:00 to 03:00 on 14 Mar is empty, and 03:00 to 04:00 holds the
+// merged ones, keyed as Home's 03:xx. A change here is the wall-clock key
+// release, made on purpose.
+$fsub = static fn(string $freq): array => ['start_utc' => '2027-03-13 08:30:00', 'end_utc' => '2027-03-13 08:30:30', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=' . $freq];
+$fr = new Recurrence();
+checkEq('floating limit: hourly, the hour Home skips is empty in Tokyo, nothing cut short', [[], []], [$fclock($fexp($fsub('HOURLY'), '2027-03-14T02:00:00+09:00', '2027-03-14T03:00:00+09:00', 'Asia/Tokyo', $fr), 'Asia/Tokyo'), $fr->capped()]);
+$fh = $fexp($fsub('HOURLY'), '2027-03-14T03:00:00+09:00', '2027-03-14T04:00:00+09:00', 'Asia/Tokyo');
+checkEq('floating limit: hourly, 02:30 and 03:30 at Home are one occurrence at 03:30', [['03-14 03:30-03:30'], ['2027-03-14 10:30:00']], [$fclock($fh, 'Asia/Tokyo'), array_column($fh, 'instanceUtc')]);
+$fr = new Recurrence();
+checkEq('floating limit: minutely, the hour Home skips is empty in Tokyo, nothing cut short', [0, []], [count($fexp($fsub('MINUTELY'), '2027-03-14T02:00:00+09:00', '2027-03-14T03:00:00+09:00', 'Asia/Tokyo', $fr)), $fr->capped()]);
+$fm = $fexp($fsub('MINUTELY'), '2027-03-14T03:00:00+09:00', '2027-03-14T04:00:00+09:00', 'Asia/Tokyo');
+checkEq('floating limit: minutely, the next hour holds 60, keyed from Home\'s 03:00', [60, '2027-03-14 10:00:00', '03:00'], [count($fm), $fm[0]['instanceUtc'] ?? null, isset($fm[0]) ? $fm[0]['start']->setTimezone($fz('Asia/Tokyo'))->format('H:i') : null]);
 
 // The window a floating series is expanded over is the viewer's moved to the
 // series' own clock, so the cap is spent on what the window shows.

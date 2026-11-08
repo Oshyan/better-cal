@@ -9837,6 +9837,72 @@ require __DIR__ . '/plugins.php';
         iterator_to_array($MF::unseenUids(9000, 0, static fn(): array => ['5'], static fn(string $s): array => []), false),
     ]);
 
+    // An idle run asks the mailbox one question. fetchUnseen against a
+    // scripted IMAP server (the real client and protocol parsing; only the
+    // socket is replaced): with nothing unread it is login, STATUS, logout,
+    // no LIST of every folder and no SELECT; with mail unread it still
+    // selects the inbox, searches and reaches the message.
+    if (class_exists(\Webklex\PHPIMAP\ClientManager::class)) {
+        $imapRun = static function (int $unread): array {
+            $sent = [];
+            $reply = static function (string $line) use (&$sent, $unread): array {
+                [$tag, $rest] = explode(' ', $line, 2);
+                $verb = str_starts_with($rest, 'UID ') ? implode(' ', array_slice(explode(' ', $rest), 0, 2)) : strtok($rest, ' ');
+                $sent[] = $verb;
+                return match ($verb) {
+                    'LOGIN', 'NOOP', 'UID STORE' => ["$tag OK done"],
+                    'STATUS' => ['* STATUS "INBOX" (MESSAGES 3 UNSEEN ' . $unread . ' RECENT 0 UIDNEXT 4 UIDVALIDITY 7)', "$tag OK done"],
+                    'LIST' => ['* LIST (\\HasNoChildren) "/" "INBOX"', '* LIST (\\HasNoChildren) "/" "Sample label"', "$tag OK done"],
+                    'SELECT' => ['* 3 EXISTS', '* 0 RECENT', '* OK [UIDVALIDITY 7] UIDs valid', "$tag OK [READ-WRITE] done"],
+                    'UID SEARCH' => ['* SEARCH 2', "$tag OK done"],
+                    'UID FETCH' => ['* 2 FETCH (UID 2 RFC822.SIZE 99999999)', "$tag OK done"],
+                    'LOGOUT' => ['* BYE', "$tag OK done"],
+                    default => ["$tag BAD unexpected"],
+                };
+            };
+            $make = static function (array $settings) use ($reply): \Webklex\PHPIMAP\Client {
+                $config = (new \Webklex\PHPIMAP\ClientManager())->make($settings)->getConfig();
+                $server = new class($config, $reply) extends \Webklex\PHPIMAP\Connection\Protocols\ImapProtocol {
+                    private array $lines = [];
+                    public function __construct(\Webklex\PHPIMAP\Config $config, private readonly Closure $reply) { parent::__construct($config, true, false); }
+                    public function connect(string $host, ?int $port = null): bool { $this->stream = fopen('php://memory', 'r+'); return true; }
+                    public function write(\Webklex\PHPIMAP\Connection\Protocols\Response $response, string $data): void {
+                        $response->addCommand($data . "\r\n");
+                        array_push($this->lines, ...($this->reply)($data));
+                    }
+                    public function nextLine(\Webklex\PHPIMAP\Connection\Protocols\Response $response): string {
+                        if ($this->lines === []) throw new \Webklex\PHPIMAP\Exceptions\RuntimeException('empty response');
+                        $line = array_shift($this->lines) . "\r\n";
+                        $response->addResponse($line);
+                        return $line;
+                    }
+                };
+                return new class($config, $server) extends \Webklex\PHPIMAP\Client {
+                    public function __construct(\Webklex\PHPIMAP\Config $config, private readonly \Webklex\PHPIMAP\Connection\Protocols\ImapProtocol $server) { parent::__construct($config); }
+                    public function connect(): \Webklex\PHPIMAP\Client {
+                        $this->disconnect();
+                        $this->connection = $this->server;
+                        $this->connection->connect('imap.example.test', 993);
+                        $this->authenticate();
+                        return $this;
+                    }
+                };
+            };
+            $fetcher = new BetterCal\Infra\MailFetcher(['imap' => ['host' => 'imap.example.test', 'user' => 'calendar@example.test', 'pass' => 'invented']], $make);
+            $got = iterator_to_array($fetcher->fetchUnseen(10), false);
+            return [$sent, $got];
+        };
+        [$idle, $none] = $imapRun(0);
+        checkEq('mail fetch: an idle run is login, STATUS and logout, with no LIST of every folder and no SELECT', [['LOGIN', 'STATUS', 'LOGOUT'], []], [$idle, $none]);
+        Limits::configure(['MAIL_BYTES' => 10]);
+        [$busy, $got] = $imapRun(1);
+        checkEq('mail fetch: with mail unread it selects the inbox, searches and reaches the message, never listing folders',
+            [true, false, ['STATUS', 'SELECT', 'UID SEARCH'], 99999999],
+            [in_array('UID FETCH', $busy, true), in_array('LIST', $busy, true),
+                array_values(array_intersect($busy, ['STATUS', 'SELECT', 'UID SEARCH'])), $got[0]['oversize'] ?? null]);
+        Limits::reset();
+    }
+
     Limits::reset();
     $trace = [];
     $fakeMessage = new class(static function (string $step) use (&$trace): void { $trace[] = $step; }) {

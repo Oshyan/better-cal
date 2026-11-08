@@ -314,8 +314,8 @@ final class EventPage
     private function cached(string $key): ?array
     {
         try {
-            // This cache's expired rows go as it's used: nothing else prunes them.
-            $this->db->run('DELETE FROM http_cache WHERE url LIKE ? AND expires_at <= ?', [self::CACHE_PREFIX . '%', Time::nowDb()]);
+            // An expired row is never read; the daily prune of the whole
+            // table (PluginHost::pruneHttpCache) deletes it.
             $body = $this->db->scalar('SELECT body FROM http_cache WHERE url_hash = ? AND expires_at > ?', [$key, Time::nowDb()]);
         } catch (\PDOException) {
             return null;

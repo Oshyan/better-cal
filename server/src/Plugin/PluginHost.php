@@ -803,6 +803,36 @@ final class PluginHost
         return ['status' => $r['status'], 'body' => $r['body'], 'cached' => false];
     }
 
+    /** Rows one prune statement deletes, and statements a run makes at most. */
+    public const HTTP_CACHE_PRUNE_BATCH = 1000;
+    public const HTTP_CACHE_PRUNE_BATCHES = 20;
+
+    /**
+     * Deletes expired http_cache rows, whoever wrote them: plugin fetches and
+     * event pages alike. Reads already skip an expired row, so this only
+     * keeps the table from growing; a URL that carries a date (a day's tide
+     * predictions) is a new row every day and never read again. Run by the
+     * daily activity_prune job, in batches, at most HTTP_CACHE_PRUNE_BATCH x
+     * HTTP_CACHE_PRUNE_BATCHES rows a run, the oldest first, so a backlog
+     * goes over a few days instead of in one long delete.
+     *
+     * @return int rows deleted
+     */
+    public static function pruneHttpCache(Db $db, ?\DateTimeImmutable $now = null): int
+    {
+        $cutoff = Time::toDb($now ?? Time::nowUtc());
+        $deleted = 0;
+        for ($i = 0; $i < self::HTTP_CACHE_PRUNE_BATCHES; $i++) {
+            $n = $db->run(
+                'DELETE FROM http_cache WHERE expires_at <= ? ORDER BY expires_at LIMIT ' . self::HTTP_CACHE_PRUNE_BATCH,
+                [$cutoff]
+            )->rowCount();
+            $deleted += $n;
+            if ($n < self::HTTP_CACHE_PRUNE_BATCH) break;
+        }
+        return $deleted;
+    }
+
     /** httpCached + JSON decode. Throws on non-2xx or unparseable JSON. */
     public function getJsonCached(string $url, int $ttlSeconds = 3600): array
     {

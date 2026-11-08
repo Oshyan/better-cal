@@ -343,9 +343,10 @@ try {
                     $result = (new BetterCal\Domain\Activity($db))->prune();
                     $modelAdmissions = (new BetterCal\Domain\ModelAdmission($db))->prune();
                     $externalAdmissions = (new BetterCal\Domain\ExternalActionAdmission($db))->prune();
+                    $httpCache = BetterCal\Plugin\PluginHost::pruneHttpCache($db);
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
                         . ' deleted=' . $result['deleted'] . ' plugin_rows=' . $result['pluginRowsForgotten'] . ' model_admissions=' . $modelAdmissions
-                        . ' external_action_admissions=' . $externalAdmissions . "\n";
+                        . ' external_action_admissions=' . $externalAdmissions . ' http_cache=' . $httpCache . "\n";
                     break;
                 case 'update_check':
                     $result = $updates->check(true);
@@ -430,6 +431,7 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     // Mail ingest polls the calendar@ mailbox every ~2 minutes.
     bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
     // Activity retention: snapshots kept 7 days, log rows 90 (docs/api-contract.md).
+    // Also expired rows of the shared HTTP cache (plugin fetches, event pages).
     bc_enqueue_if_stale($db, $queue, 'activity_prune', 'P1D');
     // Coordinates for anything with an address and none yet, upcoming first.
     // Every tick; the job itself is a no-op when there is nothing to place.

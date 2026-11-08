@@ -840,6 +840,42 @@ return static function (Db $db): void {
         $s = $setup();
         $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-22 10:00'), 'useSeries' => ['time']]);
         checkEq('by the master and the day\'s key: 22 March back at the series\' time at Google', $iso('2027-03-22 10:00'), $day($s, '20270322T170000Z')[4] ?? null);
+
+        // Undone by the fields it changed at Google, and redone by the undo's own entry.
+        $s = $setup();
+        $id = (int) $rowAt($s, '2027-03-29 17:00:00')['id'];
+        $tag = $s->events->patch($s->u, $id, ['tagNames' => ['Sample label']]);
+        $s->events->patch($s->u, $id, ['useSeries' => ['title']]);
+        $entry = lastEntry($db, $s->u);
+        $kind = json_decode((string) $db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true)['google']['changed'] ?? null;
+        $s->undo->undoById($s->u, $entry);
+        $back = $rowAt($s, '2027-03-29 17:00:00');
+        $tags = static fn(?array $r): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) ($r['id'] ?? 0)]), 'name');
+        checkEq('the entry names the title it changed at Google; undone: the own title back at Google and here, the tag kept', [['summary'], 'Sample weekly, special', 'Sample weekly, special', ['Sample label']],
+            [$kind, $day($s, '20270329T170000Z')[0] ?? null, $back['title'] ?? null, $tags($back)]);
+        $s->undo->undoById($s->u, lastEntry($db, $s->u));
+        $again = $rowAt($s, '2027-03-29 17:00:00');
+        checkEq('redone: the series\' title again at Google, and the day ordinary again here (its row went, as the first time)', ['Sample weekly', null], [$day($s, '20270329T170000Z')[0] ?? null, $again]);
+        unset($tag);
+    });
+
+    scenario('google recovery sweep F5, a split: the part here goes over what is there now; a later tag list is kept and named, one equal to the plan\'s is not named', function () use ($setup, $masterId, $recover, $iso, $db): void {
+        $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
+        $newSeries = static fn(object $s): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND google_event_id <> ? AND deleted_at IS NULL', [$s->calendarId, 'smpl3weekly']);
+        foreach (['Sample tag B' => true, 'Sample split tag' => false] as $later => $named) {
+            $s = $setup();
+            $s->t->loseFirstPost = true;
+            try {
+                planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split', 'tagNames' => ['Sample split tag']]);
+            } catch (HttpError) {
+            }
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => [$later]]);
+            $s->events->throwDeferred();
+            $out = $recover($s, 'finish');
+            $new = $newSeries($s);
+            checkEq("a tag list set on the series meanwhile ($later): Finish ok, the new series takes it as it is now, " . ($named ? 'named' : 'not named'),
+                [true, [$later], $named], [$out['ok'], $tagsOf((int) ($new['id'] ?? 0)), str_contains(implode(' ', $out['differences']), 'tags')]);
+        }
     });
 
     scenario('google recovery sweep controls: Finish with nothing changed meanwhile lands everything; Put back of a rename with nothing changed restores it', function () use ($setup, $move, $held, $stored, $recover, $lostRename): void {

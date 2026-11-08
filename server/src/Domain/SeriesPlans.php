@@ -988,7 +988,7 @@ trait SeriesPlans
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
             $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
+                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return null;
@@ -1042,8 +1042,19 @@ trait SeriesPlans
                 throw HttpError::notFound('The series this change was for is no longer here');
             }
             $words = [];
+            $was = (array) ($plan['was'] ?? []);
             if (($plan['kind'] ?? '') !== 'split') {
-                [$w, $in, $words] = self::localDeltasOver($w, $in, $local, $master, $this->db, (array) ($plan['was'] ?? []));
+                [$w, $in, $words] = self::localDeltasOver($w, $in, $local, $master, $this->db, $was);
+            } else {
+                // A split: the old part's own columns, and the new series' (its plan,
+                // over the series it is copied from as that series is now).
+                [$old, , $oldWords] = self::localDeltasOver(['master' => (array) ($w['old'] ?? [])], $in, $local, $master, $this->db, $was);
+                $w['old'] = $old['master'];
+                $words = $oldWords;
+                if (is_array($w['plan'] ?? null)) {
+                    [$w['plan'], $in, $newWords] = self::localDeltasOver($w['plan'], $in, $local, $master, $this->db, $was);
+                    $words = array_values(array_unique(array_merge($words, $newWords)));
+                }
             }
             $byId = [];
             foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $r) {
@@ -1119,7 +1130,8 @@ trait SeriesPlans
                 continue;
             }
             $now = array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
-            if ($now !== $setOf($local[$table] ?? [], $col)) {
+            // Changed since, as sets: neither the set the change found nor the one it sets.
+            if ($now !== $setOf($local[$table] ?? [], $col) && $now !== self::plannedSet($field, $w[$field]['master'], $in, (int) $master['user_id'], $db)) {
                 unset($w[$field]['master']);
                 foreach ($keys as $k) {
                     unset($in[$k]);
@@ -1129,6 +1141,33 @@ trait SeriesPlans
         }
         $words = $names === [] ? [] : ["The " . implode(', ', $names) . " of '" . (string) $master['title'] . "' changed here while this change was half done; left as they are."];
         return [$w, $in, $words];
+    }
+
+    /** The ids a plan's tag names or the request's people name, sorted; null when one of them isn't there yet (a set it makes, never one there now). */
+    private static function plannedSet(string $field, mixed $planned, array $in, int $userId, \BetterCal\Infra\Db $db): ?array
+    {
+        if ($field === 'tags') {
+            $names = array_values(array_unique(array_map('strval', (array) $planned)));
+            $table = 'tags';
+        } elseif (is_array($in['personIds'] ?? null)) {
+            $ids = array_values(array_unique(array_map('intval', $in['personIds'])));
+            sort($ids);
+            return $ids;
+        } else {
+            $names = array_values(array_unique(array_map('strval', (array) ($in['personNames'] ?? []))));
+            $table = 'people';
+        }
+        if ($names === []) {
+            return [];
+        }
+        [$q, $params] = \BetterCal\Infra\Db::in($names);
+        $rows = $db->all("SELECT id FROM `$table` WHERE user_id = ? AND name IN $q", array_merge([$userId], $params));
+        if (count($rows) < count($names)) {
+            return null;
+        }
+        $ids = array_map('intval', array_column($rows, 'id'));
+        sort($ids);
+        return $ids;
     }
 
     /**
@@ -1381,8 +1420,20 @@ trait SeriesPlans
             $this->google()->apply($google, [$resp]);
         }
         $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
-        $this->undo->record($userId, 'event', $id, 'update', ['events' => [$row]] + $links, ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id])),
-            "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'");
+        $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";
+        $beforeTables = ['events' => [$row]] + $links;
+        $afterTables = ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id]));
+        if ($resp !== null) {
+            // A Google edit like every other: undone by the fields it changed at Google, its rows by their snapshots (GoogleUndo).
+            $was = GoogleUndo::bodyOf($row);
+            $this->googleJournal($userId, $summary, $google, (int) $master['id'],
+                GoogleUndo::details(GoogleUndo::EDIT, $google, $googleId, $was, $row['google_etag'] ?? null, self::answerEtag($resp),
+                    ['changed' => GoogleUndo::editChanged($was, $after, $resp)]),
+                [$beforeTables, $afterTables]);
+            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+            return;
+        }
+        $this->undo->record($userId, 'event', $id, 'update', $beforeTables, $afterTables, $summary);
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 }

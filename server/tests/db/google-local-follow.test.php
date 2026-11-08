@@ -385,6 +385,12 @@ return static function (Db $db): void {
         $renamed = refusal(fn() => $f->d->events->patch($f->u, $master, ['scope' => 'this', 'instanceStart' => '2027-03-15T17:00:00+00:00', 'title' => 'Sample rename']));
         checkEq('coordinates accepted, on the day\'s row at the feed\'s text; a title refused', [null, 'Sample field', 37.5, 'feed_readonly'],
             [$placed, $row['location'] ?? null, isset($row['location_lat']) ? (float) $row['location_lat'] : null, $renamed]);
+        // Every field held here alone, read from the one list: people too.
+        $people = refusal(fn() => $f->d->events->patch($f->u, $master, ['scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00', 'personNames' => ['Sam Sample']]));
+        $people22 = (int) $db->scalar('SELECT COUNT(*) FROM event_people ep JOIN events e ON e.id = ep.event_id WHERE e.recurrence_parent_id = ? AND e.recurrence_instance_utc = ?', [$master, '2027-03-22 17:00:00']);
+        checkEq('a person accepted on a feed\'s day, on its row', [null, 1], [$people, $people22]);
+        checkEq('the gate\'s keys are those of every field on the list (an answer and an icon have no patch key) and the coordinates\'',
+            ['locationLat', 'locationLng', 'locationSource', 'locationProvider', 'reminders', 'tagNames', 'personIds', 'personNames'], \BetterCal\Domain\Series\OwnFields::feedEditKeys());
     });
 
     scenario('held here alone: one list, and none of its columns is one Undo counts as Google\'s', function (): void {

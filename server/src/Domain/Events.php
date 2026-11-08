@@ -1672,8 +1672,8 @@ final class Events
         }
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
-        // What a feed's day may be given is what is held here alone (OwnFields::FEED_EDIT_KEYS, from the one list).
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::FEED_EDIT_KEYS]);
+        // What a feed's day may be given is what is held here alone (OwnFields::feedEditKeys, read from the one list).
+        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');

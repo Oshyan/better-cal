@@ -14,11 +14,13 @@ use BetterCal\Infra\Db;
  * 2026-11-07, groups 2, 5 and 6), and a whole series changed, made or
  * deleted (kind series, GoogleSeries).
  *
- * A write to one resource's entry is shaped as a plugin edit's: empty
- * snapshots ({"tables":[]}), since the row is Google's. A series entry
- * keeps the rows' snapshots as a local plan's entry keeps them (the rows'
- * identities, tags, people, own lists and links). Either way, what to send
- * back is in its details, under `google`:
+ * An edit's entry keeps the row's snapshots before and after, with its tags
+ * and people (none on a side where the edit made the row, or made the day
+ * ordinary again), so its undo puts back what it changed here, the row
+ * itself included; a create, delete or answer keeps them as noted below. A
+ * series entry keeps the rows' snapshots as a local plan's entry keeps
+ * them (the rows' identities, tags, people, own lists and links). Either
+ * way, what to send back is in its details, under `google`:
  *
  *   kind        edit, delete, create, answer or series: what the change did
  *   calendarId  the local calendar
@@ -30,6 +32,11 @@ use BetterCal\Infra\Db;
  *               were before the change; delete: {status}; series: the
  *               series as they were, as GoogleSeries targets (stateOf; a
  *               series the change made is its removal); else null
+ *   changed     edit: the fields of `before` the edit changed (changedKeys),
+ *               the only ones its undo sends back, over the event as it is
+ *               then, so a later change to another field stays; an entry
+ *               without them sends what its after snapshot shows changed,
+ *               else all of `before`
  *   etagBefore  the row's etag before the change, when known
  *   etagAfter   the resource's etag Google answered the change with; null
  *               after a delete, which answers nothing
@@ -97,6 +104,57 @@ final class GoogleUndo
     public static function bodyOf(array $row): array
     {
         return ($row['recurrence_instance_utc'] ?? null) !== null ? GoogleWriter::instanceBody($row) : GoogleWriter::body($row);
+    }
+
+    /**
+     * The fields of a Google body two versions differ in, as one PATCH
+     * sends them: a start or end changed sends both, which Google reads
+     * together. Pure.
+     *
+     * @return list<string>
+     */
+    public static function changedKeys(array $before, array $after): array
+    {
+        $out = [];
+        foreach (array_unique(array_merge(array_keys($before), array_keys($after))) as $key) {
+            if (json_encode($before[$key] ?? null) !== json_encode($after[$key] ?? null)) {
+                $out[] = (string) $key;
+            }
+        }
+        if (array_intersect($out, ['start', 'end']) !== []) {
+            $out = array_values(array_unique(array_merge($out, array_intersect(['start', 'end'], array_keys($before)))));
+        }
+        return $out;
+    }
+
+    /**
+     * The fields an edit changed at Google: its before body against the
+     * event as the edit left it, its row here or, the day left with no row
+     * (an ordinary occurrence again), Google's answer. Pure.
+     *
+     * @return list<string>
+     */
+    public static function editChanged(array $before, ?array $leftRow, ?array $answer): array
+    {
+        $parsed = $leftRow === null && $answer !== null ? GoogleSync::toParsed($answer) : null;
+        $left = $leftRow ?? (is_array($parsed) && empty($parsed['cancelled']) ? $parsed : null);
+        return $left === null ? array_keys($before) : self::changedKeys($before, self::bodyOf($left));
+    }
+
+    /**
+     * What an edit entry sends back: the fields it recorded as changed
+     * (details `changed`); for one recorded without them, its before body
+     * against the row its after snapshot keeps, else all of the before body.
+     * Pure.
+     *
+     * @return list<string>
+     */
+    private static function changedOf(array $g, ?array $leftRow): array
+    {
+        if (is_array($g['changed'] ?? null)) {
+            return array_values(array_filter($g['changed'], 'is_string'));
+        }
+        return self::editChanged((array) $g['before'], $leftRow, null);
     }
 
     /**
@@ -245,29 +303,60 @@ final class GoogleUndo
 
         switch ((string) $g['kind']) {
             case self::EDIT:
-                if ($row === null || !is_array($g['before'] ?? null)) {
+                // The row's snapshots, when the edit kept them (every edit
+                // since 1.5.5): the row as it was (none, for a day the edit
+                // gave a row) and as the edit left it (none, for a day it
+                // made ordinary again).
+                $snap = static fn(string $side): ?array => json_decode((string) ($mutation[$side] ?? ''), true)['tables']['events'][0] ?? null;
+                [$wasRow, $leftRow] = [$snap('before_json'), $snap('after_json')];
+                $local = $wasRow !== null || $leftRow !== null;
+                if (!is_array($g['before'] ?? null) || ($row === null && $wasRow === null)) {
                     throw HttpError::badRequest('That event is no longer here to change back', 'not_undoable');
                 }
-                $now = self::bodyOf($row);
-                // An edit that kept the row's snapshots (its tags, reminders,
-                // trip flag and the like changed with it): Google's columns
-                // go back to Google, the rest are put back here from them,
-                // refused before Google is sent anything when they can't be.
-                $local = (json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'] ?? []) !== [];
+                // Only what the edit changed goes back, each field at its
+                // value before, over the event as it is now: a later change
+                // to another field stays, here and at Google (one to the same
+                // field made this entry stale: Undo::staleFor).
+                $changed = self::changedOf($g, $leftRow);
+                $send = array_intersect_key($g['before'], array_flip($changed));
+                // The event as it is now: its row, or, a day with no row
+                // here (the edit made it ordinary, or an undo removed the row
+                // the edit made), as Google shows it, read just before and
+                // sent back conditional on that read.
+                $current = $row === null && $send !== [] ? $writer->get($calendar, $googleId) : null;
+                $parsed = $current !== null ? GoogleSync::toParsed($current) : null;
+                if ($current !== null && (!is_array($parsed) || !empty($parsed['cancelled']))) {
+                    throw self::conflict();
+                }
+                $now = $row !== null ? self::bodyOf($row) : ($parsed !== null ? self::bodyOf($parsed) : []);
+                $etag = $current !== null ? (self::etagOf($current) ?? '') : null;
+                $rowId = $row !== null ? (int) $row['id'] : (int) $wasRow['id'];
+                // What the edit changed here (tags, reminders, the trip flag,
+                // the row itself when the edit made it) is put back from the
+                // snapshots, refused before Google is sent anything when it
+                // can't be.
                 if ($local) {
                     $this->undo->checkRestore($mutation, true);
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $g['before'], $beforeSend));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $userId, $summary, $mutation, $local): void {
-                    $rowId = (int) $row['id'];
-                    $was = $local ? $this->rowTables($rowId) : null;
-                    $writer->apply($calendar, [$resp]);
+                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $etag));
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
+                    $was = $this->rowTables($rowId);
+                    // The row put back first (made again under its id, or
+                    // removed, as the edit found it), Google's answer stored
+                    // on top, as a poll would store it.
                     if ($local) {
                         $this->undo->restoreSnapshots($mutation, true);
                     }
+                    if ($resp !== null) {
+                        $writer->apply($calendar, [$resp]);
+                    }
+                    // The undo's own entry carries the fields it sent back,
+                    // each at its value before the undo, so undoing it (redo)
+                    // sends those alone too.
                     $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
-                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, self::etagOf($resp), ['undoes' => (int) $mutation['id']]),
-                        null, 'update', $was !== null ? [$was, $this->rowTables($rowId)] : null);
+                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, $resp !== null ? self::etagOf($resp) : null,
+                            ['undoes' => (int) $mutation['id'], 'changed' => $changed]),
+                        null, 'update', [$was, $this->rowTables($rowId)]);
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 

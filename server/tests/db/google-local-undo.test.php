@@ -33,13 +33,42 @@ return static function (Db $db): void {
     $single = static fn(string $title): array => ['id' => 'smpl4single', 'iCalUID' => 'smpl4single@google.com', 'summary' => $title,
         'location' => 'Sample room 2', 'start' => $when('2027-03-30 15:00'), 'end' => $when('2027-03-30 16:00')];
 
-    $setup = static function () use ($db, $cfg, $single): object {
+    // A weekly series, Tuesdays 09:00 from 6 April 2027, eight of them, the
+    // third with a title of its own (an edited day): for "this event" edits.
+    $expand = static function (array $master): array {
+        $zone = (string) ($master['start']['timeZone'] ?? 'UTC');
+        $start = new DateTimeImmutable((string) $master['start']['dateTime']);
+        $end = new DateTimeImmutable((string) $master['end']['dateTime']);
+        $rrule = null;
+        foreach ((array) ($master['recurrence'] ?? []) as $line) {
+            if (str_starts_with((string) $line, 'RRULE:')) {
+                $rrule = substr((string) $line, 6);
+            }
+        }
+        if ($rrule === null) {
+            return [];
+        }
+        $row = ['start_utc' => BetterCal\Support\Time::toDb($start), 'end_utc' => BetterCal\Support\Time::toDb($end), 'all_day' => 0, 'tzid' => $zone, 'rrule' => $rrule];
+        return array_map(static fn(array $o): DateTimeImmutable => $o['start']->setTimezone(new DateTimeZone($zone)),
+            Recurrence::occurrences($row, $start, $start->modify('+2 years'), null, 730));
+    };
+    $series = static function (FakeGoogle $fake) use ($when): void {
+        $fake->seed(['id' => 'smpl4weekly', 'iCalUID' => 'smpl4weekly@google.com', 'summary' => 'Sample standup', 'description' => 'Sample notes',
+            'start' => $when('2027-04-06 09:00'), 'end' => $when('2027-04-06 09:30'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=8']]);
+        $fake->seed(['id' => 'smpl4weekly_20270420T160000Z', 'iCalUID' => 'smpl4weekly@google.com', 'recurringEventId' => 'smpl4weekly',
+            'summary' => 'Sample standup, special', 'description' => 'Sample notes', 'originalStartTime' => $when('2027-04-20 09:00'),
+            'start' => $when('2027-04-20 09:00'), 'end' => $when('2027-04-20 09:30')]);
+    };
+
+    $setup = static function () use ($db, $cfg, $single, $expand, $series): object {
         $u = freshUser($db);
         $d = domains($db);
         $fake = new FakeGoogle('local@group.calendar.google.com');
         $fake->token = null;
         $fake->zone = 'America/Los_Angeles';
+        $fake->expand = $expand;
         $fake->seed($single('Sample review'));
+        $series($fake);
         $t = new class {
             /** @var list<array{0:string,1:string}> method, id */
             public array $calls = [];
@@ -195,5 +224,96 @@ return static function (Db $db): void {
         $n = $count($s);
         $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-tag']]);
         checkEq('no entry, no call to Google', [0, []], [$count($s) - $n, $s->t->calls]);
+    });
+
+    // Undoing an edit sends back only the fields that edit changed, each at
+    // its value before, over the event as it is now, and redo the same: a
+    // later edit of another field stays, here and at Google. A later edit
+    // of the same field makes the entry stale, as on a local calendar.
+    $remote = static fn(object $s, string $gid): array => [$s->fake->events[$gid]['summary'] ?? null, (string) ($s->fake->events[$gid]['description'] ?? '')];
+    $local = static fn(int $id): array => array_values($db->one('SELECT title, description FROM events WHERE id = ?', [$id]) ?? []);
+    $rowOf = static fn(object $s, string $gid): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, $gid]);
+
+    scenario('google local undo: a description edit undone after a later title edit on a Google event keeps the later title here and at Google, and redo keeps it too', function () use ($setup, $last, $remote, $local): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['description' => 'Sample agenda']);
+        $entry = (int) $last($s)['id'];
+        $s->events->patch($s->u, $s->id, ['title' => 'Sample review, later']);
+        $s->undo->undoById($s->u, $entry);
+        checkEq('undone: no description, the later title kept, here and at Google', [['Sample review, later', null], ['Sample review, later', '']],
+            [$local($s->id), $remote($s, 'smpl4single')]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('redo by the undo\'s entry: the description back, the later title still kept', [['Sample review, later', 'Sample agenda'], ['Sample review, later', 'Sample agenda']],
+            [$local($s->id), $remote($s, 'smpl4single')]);
+    });
+
+    scenario('google local undo: the same on an edited day of a Google series: the later title stays here and at Google, through undo and redo', function () use ($setup, $last, $remote, $local, $rowOf): void {
+        $s = $setup();
+        $gid = 'smpl4weekly_20270420T160000Z';
+        $day = $rowOf($s, $gid);
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $at = '2027-04-20T16:00:00+00:00';
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => $at, 'description' => 'Sample agenda']);
+        $entry = (int) $last($s)['id'];
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => $at, 'title' => 'Sample standup, moved room']);
+        $s->undo->undoById($s->u, $entry);
+        checkEq('undone: the description back, the later title kept, on the same row here and at Google', [
+            (int) $day['id'], ['Sample standup, moved room', 'Sample notes'], ['Sample standup, moved room', 'Sample notes'],
+        ], [(int) ($rowOf($s, $gid)['id'] ?? 0), $local((int) $day['id']), $remote($s, $gid)]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('redo: the description forward again, the later title still kept', [['Sample standup, moved room', 'Sample agenda'], ['Sample standup, moved room', 'Sample agenda']],
+            [$local((int) $day['id']), $remote($s, $gid)]);
+    });
+
+    scenario('google local undo: an edit of a Google event\'s field changed again since is stale, as on a local calendar, and Google is sent nothing', function () use ($setup, $last, $remote, $local): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['description' => 'Sample agenda, first']);
+        $entry = (int) $last($s)['id'];
+        $s->events->patch($s->u, $s->id, ['description' => 'Sample agenda, second']);
+        $s->t->calls = [];
+        checkEq('refused stale, the second description kept here and at Google, no call', [
+            'stale_undo', ['Sample review', 'Sample agenda, second'], ['Sample review', 'Sample agenda, second'], [],
+        ], [refusal(fn() => $s->undo->undoById($s->u, $entry)), $local($s->id), $remote($s, 'smpl4single'), $s->t->calls]);
+    });
+
+    $dayTags = static fn(int $masterId, string $key): array => array_column($db->all('SELECT t.name FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id
+        WHERE e.recurrence_parent_id = ? AND e.recurrence_instance_utc = ? AND e.deleted_at IS NULL ORDER BY t.name', [$masterId, $key]), 'name');
+    $dayRow = static fn(int $masterId, string $key): ?array => $db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$masterId, $key]);
+
+    scenario('google local undo: a tag given to an ordinary day of a Google series makes its row; undone, the row and tag are gone and Google is sent nothing', function () use ($db, $setup, $last, $rowOf, $dayTags, $dayRow): void {
+        $s = $setup();
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $key = '2027-04-13 16:00:00';
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-13T16:00:00+00:00', 'tagNames' => ['sample-day']]);
+        $entry = $last($s);
+        checkEq('the day has a row with the tag, and the entry keeps it as made', [true, ['sample-day'], 0, 1],
+            [$dayRow($masterId, $key) !== null, $dayTags($masterId, $key), count(json_decode((string) $entry['before_json'], true)['tables']['events'] ?? []),
+                count(json_decode((string) $entry['after_json'], true)['tables']['events'] ?? [])]);
+        $s->t->calls = [];
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        checkEq('undone: no row, no tag, an ordinary day again, no call to Google', [null, [], 0, []],
+            [$dayRow($masterId, $key), $dayTags($masterId, $key),
+                (int) $db->scalar('SELECT COUNT(*) FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE t.name = ?', ['sample-day']), $s->t->calls]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq('a poll after it keeps the day ordinary', null, $dayRow($masterId, $key));
+    });
+
+    scenario('google local undo: a title and a tag given to an ordinary day of a Google series in one edit are undone together: Google\'s day back to the series, no row here', function () use ($db, $setup, $last, $rowOf, $dayTags, $dayRow): void {
+        $s = $setup();
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $key = '2027-04-13 16:00:00';
+        $gid = 'smpl4weekly_20270413T160000Z';
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-13T16:00:00+00:00', 'title' => 'Sample standup, offsite', 'tagNames' => ['sample-day']]);
+        checkEq('the day has its title here and at Google, and the tag here', ['Sample standup, offsite', 'Sample standup, offsite', ['sample-day']],
+            [$dayRow($masterId, $key)['title'] ?? null, $s->fake->events[$gid]['summary'] ?? null, $dayTags($masterId, $key)]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('undone: Google\'s day has the series\' title, no row here, no tag', ['Sample standup', null, []],
+            [$s->fake->events[$gid]['summary'] ?? null, $dayRow($masterId, $key), $dayTags($masterId, $key)]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq('a poll after it keeps the day ordinary', null, $dayRow($masterId, $key));
+        // Redo: the day made again, its title at Google and here, the tag back.
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('redo by the undo\'s entry: the title here and at Google, the tag back', ['Sample standup, offsite', 'Sample standup, offsite', ['sample-day']],
+            [$dayRow($masterId, $key)['title'] ?? null, $s->fake->events[$gid]['summary'] ?? null, $dayTags($masterId, $key)]);
     });
 };

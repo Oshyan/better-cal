@@ -157,10 +157,10 @@ return static function (Db $db): void {
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
         $sent = $t->google->calls[0][2] ?? [];
-        checkEq('one PATCH with If-Match "g2", sending the before body; the answer is stored', [
-            [['PATCH', 'probe9z8y7x', '"g2"']], ['Sample review', 'Sample notes', 'Sample room 1', '2027-03-03T14:00:00-08:00'],
+        checkEq('one PATCH with If-Match "g2", sending back the fields the change made, at their before values, and nothing else; the answer is stored', [
+            [['PATCH', 'probe9z8y7x', '"g2"']], ['location', 'summary'], ['Sample review', 'Sample room 1'],
             ['Sample review', 'Sample room 1', '"g3"'], 1,
-        ], [$calls($t), [$sent['summary'] ?? null, $sent['description'] ?? null, $sent['location'] ?? null, $sent['start']['dateTime'] ?? null],
+        ], [$calls($t), (static function (array $k): array { sort($k); return $k; })(array_keys($sent)), [$sent['summary'] ?? null, $sent['location'] ?? null],
             [$row($t, 'probe9z8y7x')['title'], $row($t, 'probe9z8y7x')['location'], $row($t, 'probe9z8y7x')['google_etag']], $undone((int) $entry['id'])]);
 
         $back = $last($t);

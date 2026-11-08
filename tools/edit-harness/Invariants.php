@@ -1112,9 +1112,36 @@ trait Invariants
             $this->check('i-google', $google['refused'] && $codes === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes]);
             return;
         }
-        $strip = static function (array $p): array {
+        // An option the local plan offers can be disabled on Google with
+        // Google's one reason: choosing it would keep a timed day under an
+        // all-day series (series-model.md, Google). Such an option exists
+        // only when the series is all-day after the change and a row is
+        // timed; its data (next, bound, differs) is left out on both sides.
+        $onlyGoogle = [];
+        foreach ($g['groups'] ?? [] as $gi => $grp) {
+            foreach ($grp['options'] ?? [] as $oi => $o) {
+                if (!empty($o['disabled']) && ($o['code'] ?? '') === 'googleAllDay' && empty($plan['groups'][$gi]['options'][$oi]['disabled'])) {
+                    $onlyGoogle[] = [$gi, $oi];
+                }
+            }
+        }
+        $timedRow = false;
+        foreach ($before['overrides'] ?? [] as $r) {
+            $timedRow = $timedRow || (int) ($r['all_day'] ?? 1) === 0;
+        }
+        $this->check('i-google', $onlyGoogle === [] || ($x->allDay1 && $timedRow), 'an option disabled on Google alone is disabled for Google\'s one reason, on an all-day series with a timed day', ['disabled' => $onlyGoogle]);
+        $strip = static function (array $p) use ($onlyGoogle): array {
             $p['notes'] = array_values(array_filter($p['notes'] ?? [], static fn(array $n): bool => ($n['kind'] ?? '') !== 'google'));
             unset($p['hash']);
+            foreach ($onlyGoogle as [$gi, $oi]) {
+                $p['groups'][$gi]['options'][$oi] = array_intersect_key($p['groups'][$gi]['options'][$oi], ['id' => true, 'label' => true]);
+                // The group's other options list their dates against the
+                // options offered (where they part), so with one fewer
+                // offered their lists are left out too.
+                foreach ($p['groups'][$gi]['options'] as $k => $o) {
+                    unset($p['groups'][$gi]['options'][$k]['next'], $p['groups'][$gi]['options'][$k]['differs']);
+                }
+            }
             return $p;
         };
         $this->check('i-google', !$google['refused'] && $strip($g) === $strip($plan), 'the Google plan is the local plan, with the Google note added', ['google' => [$g['rule']['after'] ?? null, $g['start'] ?? null, $codes], 'local' => [$plan['rule']['after'], $plan['start']]]);

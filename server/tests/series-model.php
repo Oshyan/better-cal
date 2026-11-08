@@ -2314,16 +2314,17 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
         ['clock', '2027-01-05T01:30:00-08:00'], ['moment', '2027-01-04T22:30:00-08:00'], '2027-01-05T00:30:00-08:00',
     ], [...array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? [[], []]), smGroup($p, 'zone')['options'][0]['next'][0]['start'] ?? null]);
 
-    // A zone option's start is in the plan's zone even when its plan is
-    // refused: the first and third weekday, whose moment option lands the
-    // first on the last weekday of August and so puts the third past the month.
+    // A zone option whose own plan is refused is disabled with the refusal's
+    // reason and has no start to show: the first and third weekday, whose
+    // moment option lands the first on the last weekday of August and so puts
+    // the third past the month.
     $firstThirdWd = smSeries('Sample report', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,3;UNTIL=20281031T190000Z', '2028-03-01 06:00', 90, false, [], 'Australia/Lord_Howe');
     $laAt = new DateTimeImmutable('2028-09-01 06:00', Time::zone('America/Los_Angeles'));
     $zoneDrag = static fn(array $s): array => ['acted' => smAt('2028-09-01 06:00', 'Australia/Lord_Howe'), 'landed' => ['start_utc' => Time::toDb($laAt), 'end_utc' => Time::toDb($laAt->modify('+90 minutes')), 'all_day' => 0, 'tzid' => 'America/Los_Angeles']];
     $p = smPlan($firstThirdWd, [], $zoneDrag($firstThirdWd));
-    checkEq('Zone options: the first and third weekday from Lord Howe to Los Angeles, the moment option (whose plan is refused) starts at the series\' stored start, 06:00 on 1 Mar 2028 there, written in Los Angeles', [
-        ['clock', '2028-03-01T06:00:00-08:00'], ['moment', '2028-02-29T11:00:00-08:00'],
-    ], array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null], smGroup($p, 'zone')['options'] ?? []));
+    checkEq('Zone options: the first and third weekday from Lord Howe to Los Angeles, the clock option starts at 06:00 on 1 Mar 2028 written in Los Angeles, and the moment option (whose plan is refused) is disabled with that reason and no start', [
+        ['clock', '2028-03-01T06:00:00-08:00', false, null], ['moment', null, true, 'count_range'],
+    ], array_map(static fn(array $o): array => [$o['id'], $o['start'] ?? null, !empty($o['disabled']), $o['code'] ?? null], smGroup($p, 'zone')['options'] ?? []));
     // One position reads the moment option: the first weekday's moment is the
     // last weekday of August in Los Angeles, so the series becomes the last
     // weekday at the landed clock, 12:30 there, from 29 Feb 2028.

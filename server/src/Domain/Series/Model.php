@@ -522,9 +522,20 @@ final class Model
         foreach ($plan['groups'] as $gi => $group) {
             $alts = [];
             foreach ($group['options'] as $oi => $option) {
-                if (empty($option['disabled'])) {
-                    $alts[$oi] = $option['id'] === $group['selected'] ? $result : $this->compute([$group['id'] => $option['id']] + $result['selected']);
+                if (!empty($option['disabled'])) {
+                    continue;
                 }
+                $alt = $option['id'] === $group['selected'] ? $result : $this->compute([$group['id'] => $option['id']] + $result['selected']);
+                if ($alt['writes'] === null) {
+                    // An option whose own plan is refused (a timed day kept
+                    // under an all-day series at Google) can't be chosen: it
+                    // is disabled with the refusal's reason, never offered
+                    // with a refused plan's empty data behind it.
+                    $r = $alt['plan']['refusals'][0] ?? ['code' => 'refused', 'words' => ''];
+                    $plan['groups'][$gi]['options'][$oi] += ['disabled' => true, 'code' => (string) $r['code'], 'reason' => (string) $r['words']];
+                    continue;
+                }
+                $alts[$oi] = $alt;
             }
             $consequence = in_array($group['id'], ['reading', 'zone'], true);
             $nexts = [];
@@ -565,7 +576,7 @@ final class Model
                 // a day coming up (which can be an edited day at its own
                 // time): its series' start, written in this plan's zone as
                 // rule.to.start is (an option's plan writes its rule.to in
-                // its own series' zone, which a refused one keeps as it was).
+                // its own series' zone; a refused one is disabled above).
                 // An adoption's option names what it makes the series: its
                 // rule (a day) and its start (a time, whose clock it says).
                 if ($group['id'] === 'zone' || $group['id'] === 'time') {

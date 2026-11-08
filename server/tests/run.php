@@ -1204,6 +1204,43 @@ $sameFamilyHandle = $handleForMethod->invoke(null, 'https://pool.example.test/b'
 $ipv4OnlyHandle = $handleForMethod->invoke(null, 'https://pool.example.test/a', true);
 check('http pool: the same host reuses its handle, and an IPv4-only client gets a handle of its own',
     $anyFamilyHandle === $sameFamilyHandle && $ipv4OnlyHandle !== $anyFamilyHandle);
+// Connections and TLS sessions are shared through one share per address
+// family, attached to every pooled handle (afresh after curl_reset); DNS
+// never, so one client's pinned addresses never answer for another's.
+$sharesProperty = new ReflectionProperty(HttpClient::class, 'shares');
+$shares = $sharesProperty->getValue();
+check('http share: pooled handles get a connection and TLS share, one per address family',
+    !function_exists('curl_share_init') || (($shares['any'] ?? null) instanceof CurlShareHandle && ($shares['v4'] ?? null) instanceof CurlShareHandle && $shares['any'] !== $shares['v4']));
+// A response's headers are the final answer's: a status line starts the list again.
+$headerLineMethod = new ReflectionMethod(HttpClient::class, 'headerLine');
+$headerList = [];
+foreach (["HTTP/1.1 100 Continue\r\n", "\r\n", "HTTP/1.1 200 OK\r\n", "ETag: \"a1\"\r\n", "Last-Modified: Tue, 01 Dec 2026 10:00:00 GMT\r\n", "X-Twice: one\r\n", "x-twice: two\r\n", "\r\n"] as $headerText) {
+    $headerLineMethod->invokeArgs(null, [&$headerList, $headerText]);
+}
+checkEq('http headers: only the final answer\'s, names in lower case, the last of a repeat',
+    ['etag' => '"a1"', 'last-modified' => 'Tue, 01 Dec 2026 10:00:00 GMT', 'x-twice' => 'two'], $headerList);
+// get() returns them; getMany() keeps its shape, one URL or several.
+$headerClient = new HttpClient(
+    allowedSchemes: ['https'],
+    resolver: static fn(string $host, int $ms): array => ['93.184.216.34'],
+    transport: static fn(string $method, string $url, array $headers, ?string $body): array => ['status' => 200, 'body' => 'ok', 'headers' => ['ETag' => '"b2"']],
+);
+checkEq('http headers: get() returns the answer\'s headers', ['status' => 200, 'body' => 'ok', 'headers' => ['etag' => '"b2"']], $headerClient->get('https://feeds.example.test/a.ics'));
+checkEq('http getMany: one URL answers in the same shape as several', [['status' => 200, 'body' => 'ok', 'error' => null]], $headerClient->getMany(['https://feeds.example.test/a.ics']));
+// One URL goes through the pooled handle for its host (a lone geocoder
+// lookup reuses the last one's connection); an unreachable stand-in
+// address still answers in the batch shape, with its error.
+$handlesProperty = new ReflectionProperty(HttpClient::class, 'handles');
+$loneClient = new HttpClient(
+    requestBudget: 1,
+    connectTimeoutMs: 75,
+    totalTimeoutMs: 100,
+    allowedSchemes: ['https'],
+    resolver: static fn(string $host, int $ms): array => ['93.184.216.34'],
+);
+$lone = $loneClient->getMany(['https://lone.example.test/lookup']);
+checkEq('http getMany: a one-URL batch keeps its shape', ['status', 'body', 'error'], array_keys($lone[0]));
+check('http getMany: a one-URL batch uses the pooled handle for its host', isset($handlesProperty->getValue()['https://lone.example.test:']));
 $resolverMethod = new ReflectionMethod(HttpClient::class, 'resolveHost');
 $dnsStarted = microtime(true);
 $dnsTimedOut = false;

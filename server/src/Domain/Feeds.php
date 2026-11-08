@@ -19,10 +19,33 @@ final class Feeds
     // Timeouts now come from HttpClient (5s connect / 20s total).
     private const MAX_BYTES = 20 * 1024 * 1024;
 
+    /**
+     * What turns a feed's body into rows, beside the app's version (every
+     * release reads each feed afresh once). Raise it for a change to
+     * Ics::parse or sync() that ships without a new version, so a feed
+     * whose body did not change is read again anyway.
+     */
+    private const PARSE_VERSION = 1;
+
+    /**
+     * How long a feed may go without a fetch that sends no validators and
+     * parses and syncs whatever comes back: a server that answers 304 to
+     * everything, or a body we keep matching, never hides a change for
+     * longer than this.
+     */
+    private const FULL_READ_SECONDS = 86_400;
+
+    /** The longest validator kept; a longer one is not sent back at all. */
+    private const VALIDATOR_MAX = 512;
+
     public function __construct(
         private readonly Db $db,
         private readonly ?JobQueue $queue = null,
         private readonly ?array $cfg = null,
+        // Tests only: HttpClient's transport and resolver for a feed's
+        // fetch (a stand-in server answering for an invented host).
+        private readonly ?\Closure $httpTransport = null,
+        private readonly ?\Closure $httpResolver = null,
     ) {
     }
 
@@ -53,10 +76,39 @@ final class Feeds
                 return (new GoogleSync($this->db, new GoogleAuth($this->db, $cfg), $this))->poll($calendar);
             }
             $cfg = $this->cfg ?? config();
-            $ics = $this->fetch(FeedCredentials::openSourceUrl(
-                (string) $calendar['source_url'],
-                (string) ($cfg['session_secret'] ?? '')
-            ));
+            $secret = (string) ($cfg['session_secret'] ?? '');
+            $url = FeedCredentials::openSourceUrl((string) $calendar['source_url'], $secret);
+            $homeTz = Settings::homeTzid($this->db, (int) $calendar['user_id']);
+            // What was kept from the last read of this same address, read
+            // the same way (validators, body hash): an answer that says
+            // nothing changed is taken without parsing or syncing.
+            $read = [
+                'urlKey' => self::validatorKey($url, $secret),
+                'parseKey' => self::parseKey((string) ($cfg['version'] ?? ''), $homeTz),
+            ];
+            $held = $this->heldRead((int) $calendar['id'], $read['urlKey'], $read['parseKey']);
+            $send = [];
+            if ($held !== null) {
+                if ($held['etag'] !== null) {
+                    $send[] = 'If-None-Match: ' . $held['etag'];
+                }
+                if ($held['last_modified'] !== null) {
+                    $send[] = 'If-Modified-Since: ' . $held['last_modified'];
+                }
+            }
+            $answer = $this->fetchFeed($url, $send);
+            $read['etag'] = self::validator($answer['headers']['etag'] ?? null);
+            $read['lastModified'] = self::validator($answer['headers']['last-modified'] ?? null);
+            if ($answer['status'] === 304) {
+                if ($held === null || $send === []) {
+                    throw new \RuntimeException('Feed fetch failed: HTTP 304 to a request that asked for the whole feed');
+                }
+                // A 304 may carry the validators afresh; the ones sent stand otherwise.
+                $read['etag'] ??= $held['etag'];
+                $read['lastModified'] ??= $held['last_modified'];
+                return $this->pollUnchanged($calendar, $held, $read);
+            }
+            $ics = $answer['body'];
             // Bounded before parsing, like every other ICS door (F8): the
             // refusal is recorded as this calendar's poll error, so the owner
             // sees why it stopped updating.
@@ -64,8 +116,12 @@ final class Feeds
             if ($problem !== null) {
                 throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
             }
-            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']), $skipped);
-            $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($calendar, $parsed, $skipped): int {
+            $read['bodyHash'] = hash('sha256', $ics);
+            if ($held !== null && hash_equals((string) $held['body_hash'], $read['bodyHash'])) {
+                return $this->pollUnchanged($calendar, $held, $read);
+            }
+            $parsed = Ics::parse($ics, $homeTz, $skipped);
+            $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($calendar, $parsed, $skipped, $read): int {
                 // A token can be revoked while the remote server is answering.
                 // Lock user -> token -> calendar, then reread every governing
                 // field. Revocation/reset or an owner adopting the feed either
@@ -83,7 +139,9 @@ final class Feeds
                 SubscriptionAuthority::lockForPoll($this->db, $current);
                 SubscriptionAuthority::assertCanPoll($this->db, $current);
                 $count = $this->sync($current, $parsed, true, null, $skipped);
-                $this->pollSucceeded($current, count($parsed), $count, Ics::skippedMessage($skipped));
+                $warning = Ics::skippedMessage($skipped);
+                $this->pollSucceeded($current, count($parsed), $count, $warning);
+                $this->keepRead((int) $current['id'], $read + ['eventCount' => count($parsed), 'warning' => $warning, 'fullAt' => Time::nowDb()]);
                 return $count;
             });
             return $count;
@@ -96,6 +154,116 @@ final class Feeds
             $this->pollFailed($calendar, $e);
             throw $e;
         }
+    }
+
+    /**
+     * A poll whose answer says the feed is as it was last read (a 304, or
+     * the same body): the bookkeeping of a poll that worked, with the count
+     * and any skipped-events warning of that read, and nothing synced.
+     * Locked and rechecked as a sync is: a revocation that commits while the
+     * server answers discards this answer too.
+     */
+    private function pollUnchanged(array $calendar, array $held, array $read): int
+    {
+        (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($calendar, $held, $read): void {
+            SubscriptionAuthority::lockForPoll($this->db, $calendar);
+            $current = $this->db->one('SELECT * FROM calendars WHERE id = ?' . $this->db->forUpdate(), [(int) $calendar['id']]);
+            if ($current === null
+                || (string) ($current['kind'] ?? '') !== 'subscribed'
+                || (string) ($current['provider'] ?? 'ics') === 'google'
+                || empty($current['source_url'])
+            ) {
+                throw HttpError::conflict('subscription_authorization_revoked', 'This calendar no longer uses this feed; the fetched response was discarded.');
+            }
+            SubscriptionAuthority::lockForPoll($this->db, $current);
+            SubscriptionAuthority::assertCanPoll($this->db, $current);
+            $warning = $held['warning'] !== null ? (string) $held['warning'] : null;
+            $this->pollSucceeded($current, (int) $held['event_count'], 0, $warning);
+            $this->keepRead((int) $current['id'], $read + [
+                'bodyHash' => (string) $held['body_hash'],
+                'eventCount' => (int) $held['event_count'],
+                'warning' => $warning,
+                'fullAt' => (string) $held['full_at'],
+            ]);
+        });
+        return 0;
+    }
+
+    /**
+     * The last read of this calendar's feed, when it was of the same address
+     * read the same way and recently enough read in full; null asks for the
+     * whole feed (no validators sent, whatever comes back parsed and synced).
+     * A row kept for another address is never used: its validators belong to
+     * another server. Missing table (code ahead of migration 073): null.
+     */
+    private function heldRead(int $calendarId, string $urlKey, string $parseKey): ?array
+    {
+        try {
+            $row = $this->db->one('SELECT * FROM feed_reads WHERE calendar_id = ?', [$calendarId]);
+        } catch (\PDOException) {
+            return null;
+        }
+        if ($row === null
+            || !hash_equals((string) $row['url_key'], $urlKey)
+            || (string) $row['parse_key'] !== $parseKey
+            || Time::fromDb((string) $row['full_at'])->getTimestamp() < time() - self::FULL_READ_SECONDS
+        ) {
+            return null;
+        }
+        return $row;
+    }
+
+    /** This read, kept for the next poll in place of the last; never the address itself. */
+    private function keepRead(int $calendarId, array $read): void
+    {
+        $row = [
+            'calendar_id' => $calendarId,
+            'url_key' => $read['urlKey'],
+            'parse_key' => $read['parseKey'],
+            'etag' => $read['etag'],
+            'last_modified' => $read['lastModified'],
+            'body_hash' => $read['bodyHash'],
+            'event_count' => $read['eventCount'],
+            'warning' => $read['warning'],
+            'full_at' => $read['fullAt'],
+        ];
+        try {
+            $this->db->run('DELETE FROM feed_reads WHERE calendar_id = ?', [$calendarId]);
+            $this->db->insert('feed_reads', $row);
+        } catch (\PDOException $e) {
+            // Before migration 073 there is nowhere to keep it; every poll
+            // reads in full, as before.
+            if (str_contains($e->getMessage(), 'feed_reads')) {
+                return;
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Which address a kept read belongs to, without keeping the address (it
+     * may carry credentials): keyed with the install's secret, so a copy of
+     * the database does not reveal it either. Pure.
+     */
+    public static function validatorKey(string $url, string $sessionSecret): string
+    {
+        return hash_hmac('sha256', $url, 'feed-reads|' . $sessionSecret);
+    }
+
+    /** What a body is read with besides itself: the parser's version and the Home zone. Pure. */
+    public static function parseKey(string $appVersion, ?string $homeTz): string
+    {
+        return self::PARSE_VERSION . '|' . $appVersion . '|' . ($homeTz ?? '');
+    }
+
+    /** A validator header as it may be sent back: one line, of bounded length, or null. Pure. */
+    public static function validator(?string $value): ?string
+    {
+        $value = $value === null ? '' : trim($value);
+        if ($value === '' || strlen($value) > self::VALIDATOR_MAX || preg_match('/[\x00-\x1f\x7f]/', $value) === 1) {
+            return null;
+        }
+        return $value;
     }
 
     /** Bookkeeping for a poll that worked: status, stats, health, follow-up jobs. */
@@ -146,6 +314,19 @@ final class Feeds
 
     public function fetch(string $url): string
     {
+        return $this->fetchFeed($url, [])['body'];
+    }
+
+    /**
+     * A feed's answer to a GET with $headers (validators, on a poll): status,
+     * body and the final hop's headers. A 304 comes back as it is, body
+     * empty; any other answer is checked as a whole ICS calendar.
+     *
+     * @param list<string> $headers
+     * @return array{status:int,body:string,headers:array<string,string>}
+     */
+    private function fetchFeed(string $url, array $headers): array
+    {
         if (str_starts_with($url, 'webcal://')) {
             $url = 'https://' . substr($url, strlen('webcal://'));
         }
@@ -166,14 +347,20 @@ final class Feeds
             userAgent: HttpClient::userAgentFor('ics-subscriber'),
             maxBytes: self::MAX_BYTES,
             maxRedirects: 5,
+            resolver: $this->httpResolver,
+            transport: $this->httpTransport,
         );
         try {
-            $r = $http->get($url);
+            $r = $http->get($url, $headers);
         } catch (\RuntimeException $e) {
             throw new \RuntimeException('Feed fetch failed: ' . $e->getMessage(), 0, $e);
         }
         $body = $r['body'];
         $status = $r['status'];
+        $answerHeaders = $r['headers'] ?? [];
+        if ($status === 304) {
+            return ['status' => 304, 'body' => '', 'headers' => $answerHeaders];
+        }
         if ($status >= 400) {
             throw new \RuntimeException("Feed fetch failed: HTTP $status");
         }
@@ -186,7 +373,7 @@ final class Feeds
         if (!Ics::completeCalendar($body)) {
             throw new \RuntimeException('Feed fetch failed: incomplete ICS calendar');
         }
-        return $body;
+        return ['status' => $status, 'body' => $body, 'headers' => $answerHeaders];
     }
 
     /**

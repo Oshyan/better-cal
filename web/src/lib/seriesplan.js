@@ -191,7 +191,7 @@ export function planView(plan, ctx = {}) {
   // every other group on the row of the days it is about, of those with
   // rows: one day's own row, or the row of the days it is about together.
   // A group about no day with a row is a row of its own.
-  const rowDays = days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.outcome === 'moves'));
+  const rowDays = days.filter((x) => x.kind !== 'skipped' && !(x.kind === 'acted' && x.row === 'created'));
   const hasRow = new Set(rowDays.map((d) => d.key));
   const onDay = new Map(); // a day's key -> the groups about it alone
   const onDays = new Map(); // the keys of days a group is about together -> those groups

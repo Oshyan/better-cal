@@ -174,6 +174,7 @@ trait PlanPlacement
         $role = 'acted ' . ($ctx['created'] !== null ? 'created' : 'separate');
         $this->expect('c-placement', 'the day acted on is named by its key', "key ($role)", $actedKey, $key);
         $this->expect('c-placement', 'the day acted on\'s outcome is the comparison of its instant and kind', "outcome ($role)", $fate, $d['outcome'] ?? null);
+        $this->expect('c-placement', 'the day acted on says row "created" exactly when the commit creates its row', "row ($role)", $ctx['created'] !== null ? 'created' : null, $d['row'] ?? null);
         $this->expect('c-placement', 'the day acted on is about its old key\'s day in the old zone', "day ($role)", $identity($actedKey), $d['day'] ?? null);
         $this->expect('c-placement', 'the day acted on showed at its occurrence', "before ($role)", self::placed($was, $zone), self::norm($d['before'] ?? null, self::PLACEMENT_KEYS));
         $this->expect('c-placement', 'the day acted on\'s shows is the date its occurrence showed on', "shows ($role)", self::placed($was, $zone)['date'], $d['shows'] ?? null);
@@ -447,7 +448,9 @@ trait PlanPlacement
         foreach ($after['raw'] as $o) {
             $newDays[$o['dn']] = $s1->supported() ? $s1->memberOf($o['dn']) : null;
         }
-        if ($cycle !== null && $after['through'] !== null && $newDays !== []) {
+        // The stored series read past its window wherever the span goes further (the window bounds what is listed, never
+        // what is matched): one with no end after the change counts its gains through the latest image of a bounded one.
+        if ($to !== null && $after['through'] !== null && $newDays !== [] && $s1->supported()) {
             foreach (self::patternDays($s1, $newStart, (int) array_key_last($newDays) + 1, (int) $to) as $dn => $m) {
                 $newDays[$dn] = $m;
             }
@@ -627,10 +630,11 @@ trait PlanPlacement
         $entry = static fn(int $d): array => $x->allDay1
             ? ['start' => Days::date($d) . 'T00:00:00+00:00', 'allDay' => true]
             : ['start' => Clock::iso(Clock::at($d, $clock, $x->tz1)), 'allDay' => false];
-        // The series as it is today, before the day acted on: each event's instant, kind and day in the old zone.
+        // The series as it is today, before the day acted on: each event's instant, kind and day in the old zone, from its
+        // first shown day (the stored day of a start in a skipped hour is none of its events, as the oracle reads it).
         $actedAt = Clock::parse($x->actedKey())->getTimestamp();
         $old = [];
-        foreach ($before['raw'] as $o) {
+        foreach (array_slice($before['raw'], self::shownFrom($before)) as $o) {
             if (Clock::parse($o['key'])->getTimestamp() < $actedAt) {
                 $old[] = ['ts' => Clock::parse($o['key'])->getTimestamp(), 'allDay' => $before['allDay'], 'date' => Days::date($o['dn'])];
             }

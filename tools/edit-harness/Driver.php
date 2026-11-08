@@ -135,14 +135,24 @@ final class Driver
         Prof::mark('state');
         $st = $this->state($id);
         $this->checkSeries('g-created', $st);
+        $this->checkAnchorRefused($id, $st);
         if (!isset($spec['vector'])) {
             $horizon = Clock::db((new \DateTimeImmutable('now', Clock::utc()))->modify('+19 years'));
             $within = array_values(array_filter($st['raw'], static fn(array $o): bool => $o['key'] < $horizon));
             if ($within === []) {
                 return $this->result('none');
             }
-            $spec += Space::exceptions($r, $spec['series'], $within);
-            $spec['vector'] = Delta::draw($r, $spec['series'], count($within));
+            // The stored day of a start in a skipped hour is no day of the series (series-model.md, Zones, DST and
+            // All-Day Days: every sentence names the first day shown, and the API never shows that one), so the days
+            // are drawn from the shown ones; their indexes stay the raw list's, which a spec names.
+            $base = self::shownFrom($st);
+            $drawn = Space::exceptions($r, $spec['series'], array_slice($within, $base));
+            $drawn['acted'] += $base;
+            foreach ($drawn['exceptions'] as $k => $ex) {
+                $drawn['exceptions'][$k]['at'] += $base;
+            }
+            $spec += $drawn;
+            $spec['vector'] = Delta::draw($r, $spec['series'], count($within) - $base);
             $spec['stack'] = Delta::stack($r);
             $this->spec = $spec + $this->spec;
         }
@@ -166,7 +176,8 @@ final class Driver
         // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit.
         if (!empty($spec['vector']['startOnly'])) {
             $exAt = array_fill_keys(array_column($spec['exceptions'] ?? [], 'at'), true);
-            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > 0 && $i <= 6 && !isset($exAt[$i])));
+            $base = self::shownFrom($st);
+            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i])));
             if ($st['shape']->supported() && !isset($exAt[0]) && $later !== []) {
                 $spec['acted'] = 0;
                 $spec['startTo'] = $later[crc32('start:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % count($later)];
@@ -1005,6 +1016,34 @@ final class Driver
     }
 
     /**
+     * The stored day of a start in a skipped hour is no occurrence (series-model.md, Zones, DST and All-Day Days: a
+     * generated skip the API never shows), so a request naming it is refused as any key that is no occurrence is:
+     * 422 invalid_recurrence_instance (api-contract), never a 500 or another code, writing nothing. Asked of the
+     * series as created, by a delete-following preview and an all-events preview.
+     */
+    private function checkAnchorRefused(int $id, array $st): void
+    {
+        if (!Product::$plan || self::shownFrom($st) !== 1) {
+            return;
+        }
+        $inst = $this->instanceArg($st, (string) $st['raw'][0]['key']);
+        $s0 = $this->snapshot();
+        foreach (['delete following' => fn() => $this->events->previewDelete($this->userId, $id, 'following', $inst, []),
+            'all events' => fn() => $this->events->previewPatch($this->userId, $id, ['scope' => 'all', 'instanceStart' => $inst, 'title' => 'Sample rename', 'plan' => ['choices' => []]])] as $what => $ask) {
+            $got = 'answered';
+            try {
+                $ask();
+            } catch (HttpError $e) {
+                $got = $e->status . ' ' . $e->errorCode;
+            } catch (\Throwable $e) {
+                $got = get_class($e);
+            }
+            $this->check('e-anchor', $got === '422 invalid_recurrence_instance', 'a request naming the stored day of a start in a skipped hour is refused as no occurrence', ['request' => $what, 'instanceStart' => $inst, 'got' => $got]);
+        }
+        $this->same('e-anchor', $s0, $this->snapshot(), 'a refused request naming the stored anchor writes nothing');
+    }
+
+    /**
      * Apply the edit. Returns what was sent (with the plan, the choices and
      * the Google plan for a whole-series edit), or null when it was refused
      * (the refusal is checked here).
@@ -1092,17 +1131,20 @@ final class Driver
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
         $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && $this->google === null && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
-        if ($google !== null && !isset($google['error']) && $google['refused']) {
-            // A Google refusal stands only when no reading Google could hold is left (invariant i): each other reading
-            // the local plan offers, planned for Google from the same rows before the commit.
+        if ($google !== null && !isset($google['error']) && self::timedUnderAllDay($plan)) {
+            // What Google can hold, read from the local plans (invariant i), never from the Google plan's own reasoning:
+            // for each enabled option of each group, the rest as chosen, whether its local plan (the oracle checks it)
+            // keeps a timed day under an all-day series, which Google can't hold.
             foreach ($plan['groups'] ?? [] as $grp) {
-                if (($grp['id'] ?? '') !== 'reading') {
-                    continue;
-                }
                 foreach ($grp['options'] as $o) {
-                    if (empty($o['disabled']) && $o['id'] !== $grp['selected']) {
-                        $alt = $this->googlePlan($target, $in, ['reading' => $o['id']] + $choices);
-                        $google['otherReadings'][$o['id']] = $alt === null || isset($alt['error']) ? null : (bool) $alt['refused'];
+                    if (!empty($o['disabled'])) {
+                        continue;
+                    }
+                    try {
+                        $alt = $o['id'] === $grp['selected'] ? $plan : $preview([$grp['id'] => $o['id']] + $choices);
+                        $google['holdable'][$grp['id']][$o['id']] = !self::timedUnderAllDay($alt);
+                    } catch (HttpError) {
+                        $google['holdable'][$grp['id']][$o['id']] = false;
                     }
                 }
             }

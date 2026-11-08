@@ -67,6 +67,13 @@ trait PlanPreselect
                 $this->unoracled[] = "the design's preselection for the $role group";
                 continue;
             }
+            // One rule for every group (api-contract, series_refused): a preselection whose own plan is refused is a
+            // disabled option, and the group's first enabled option in its order is selected instead.
+            $enabled = array_values(array_map(static fn(array $o): string => $o['id'], array_filter($g['options'], static fn(array $o): bool => empty($o['disabled']))));
+            if (!in_array($want, $enabled, true) && $enabled !== []) {
+                $want = $enabled[0];
+                $why .= ', or the first enabled option where that one is disabled';
+            }
             $this->ran('c-preselect-design', $role);
             $this->check('c-preselect-design', $g['selected'] === $want, "the preselected option is the design's for this change: $why", ['group' => $g['id'], 'selected' => $g['selected'], 'design' => $want, 'offered' => array_column($g['options'], 'id')]);
         }

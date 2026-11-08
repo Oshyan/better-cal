@@ -1,0 +1,45 @@
+{
+    "n": 9811,
+    "seed": 0,
+    "series": {
+        "family": "yearly_months",
+        "rrule": "FREQ=YEARLY;BYMONTH=3,9;BYDAY=2SU",
+        "import": false,
+        "bound": "count",
+        "boundAt": 15,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-11-06 02:30",
+        "length": 60
+    },
+    "exceptions": [],
+    "acted": 1,
+    "from": "first",
+    "vector": {
+        "scope": "deleteFollowing",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=MONTHLY;BYDAY=2WE",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

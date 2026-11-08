@@ -515,9 +515,15 @@ final class Model
         }
     }
 
+    /** True while run() works out one option's own plan: nothing is moved off a refused option then. */
+    private bool $hold = false;
+
     private function run(array $choices): array
     {
         $result = $this->compute($choices);
+        if ($result['writes'] === null) {
+            $result = $this->selectedEnabled($choices, $result);
+        }
         $plan = $result['plan'];
         foreach ($plan['groups'] as $gi => $group) {
             $alts = [];
@@ -525,7 +531,11 @@ final class Model
                 if (!empty($option['disabled'])) {
                     continue;
                 }
+                // An option's own plan: every group as named, nothing moved,
+                // so one that is refused shows as refused.
+                $this->hold = true;
                 $alt = $option['id'] === $group['selected'] ? $result : $this->compute([$group['id'] => $option['id']] + $result['selected']);
+                $this->hold = false;
                 if ($alt['writes'] === null) {
                     // An option whose own plan is refused (a timed day kept
                     // under an all-day series at Google) can't be chosen: it
@@ -618,6 +628,39 @@ final class Model
             'refused' => $plan['refusals'] !== [] && $result['writes'] === null,
             'refusedChoice' => $result['refusedChoice'] ?? false,
         ];
+    }
+
+    /**
+     * One rule for every group (api-contract, series_refused): a selected
+     * option whose own plan is refused (a timed day kept under an all-day
+     * series at Google) is disabled, and the selection moves to the group's
+     * first enabled option in the group's order, as a reading's does (pick()
+     * passes over a disabled one). The change is refused only when every
+     * option is. A named option that is refused moves too, so its plan shows
+     * it disabled; committing it is refused (SeriesPlans::checkedPlan).
+     * This covers the groups picked before the mapping (the zone, the
+     * adoptions); mapHeld() the ones the mapping picks. A plan that leaves
+     * no events is the readings' own refusal (Bounds), not moved here.
+     */
+    private function selectedEnabled(array $choices, array $refused): array
+    {
+        if (($refused['plan']['refusals'][count($refused['plan']['refusals']) - 1]['code'] ?? '') === 'empty') {
+            return $refused;
+        }
+        foreach ($this->groups as $g) {
+            foreach ($g['options'] as $o) {
+                if (!empty($o['disabled']) || $o['id'] === $g['selected']) {
+                    continue;
+                }
+                $alt = $this->compute([$g['id'] => $o['id']] + $choices);
+                if ($alt['writes'] !== null) {
+                    return $alt;
+                }
+            }
+        }
+        // Nothing to move to: the refusal stands, worked out again so the
+        // state run() reads is the refused plan's.
+        return $this->compute($choices);
     }
 
     /**
@@ -1115,11 +1158,45 @@ final class Model
                 $reading = $r;
             }
         }
-        $out = $this->map($reading, $land);
+        $out = $this->mapHeld($reading, $land, false);
         if ($out === null) {
             return $this->refused('empty');
         }
         return $out;
+    }
+
+    /**
+     * map() with the one rule for every group (selectedEnabled): when the
+     * plan under the current choices is refused, each group the mapping
+     * picked (the bound, the edge, the days outside, the moved days, the own
+     * fields) moves, in the plans' order, to its first other enabled option
+     * whose plan holds. So a reading's own plan (merged()) is its plan with
+     * those selections moved, never refused for a default another option
+     * avoids. Nothing moves in the mapping of one option's own plan
+     * (run()), though its readings are still judged by their own plans.
+     */
+    private function mapHeld(array $reading, array $land, bool $probe): ?array
+    {
+        $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
+        $out = $this->map($reading, $land, $probe);
+        if (($this->hold && !$probe) || $out === null || $out['writes'] !== null) {
+            return $out;
+        }
+        foreach (array_slice($this->groups, count($saved[0])) as $g) {
+            foreach ($g['options'] as $o) {
+                if (!empty($o['disabled']) || $o['id'] === $g['selected']) {
+                    continue;
+                }
+                [$this->groups, $this->refusals, $this->notes] = [$saved[0], $saved[1], $saved[2]];
+                $this->choices = [$g['id'] => $o['id']] + $saved[3];
+                $alt = $this->map($reading, $land, $probe);
+                if ($alt !== null && $alt['writes'] !== null) {
+                    return $alt;
+                }
+            }
+        }
+        [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
+        return $this->map($reading, $land, $probe);
     }
 
     /**
@@ -1773,7 +1850,7 @@ final class Model
             $saved = [$this->groups, $this->refusals, $this->notes, $this->choices];
             $this->groups = [];
             $this->choices = [];
-            $m = $this->map($r, $land, true);
+            $m = $this->mapHeld($r, $land, true);
             [$this->groups, $this->refusals, $this->notes, $this->choices] = $saved;
             if ($m === null) {
                 // Nothing left (Bounds): refused, and the rest of the plan stands.
@@ -2283,8 +2360,11 @@ final class Model
                     'all_day' => $cAll ? 1 : 0, 'tzid' => $cTz, 'override_fields' => OwnFields::encode($own),
                 ];
                 // Where it showed, the occurrence at its old key; where it was put, the row created.
+                // Its outcome is every row's (decisions.md, What an outcome is): its start instant
+                // and kind before and after, never whether a row is made, which `row` says.
                 $sides = $this->rowSides($occ, $createEdited);
-                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'outcome' => 'moves', 'kept' => $own, 'takes' => []] + $sides
+                $moved = $createEdited['start_utc'] !== (string) $occ['start_utc'] || $cAll !== ((int) $occ['all_day'] === 1);
+                $days[] = ['key' => $this->acted, 'newKey' => $nk, 'kind' => 'acted', 'row' => 'created', 'outcome' => $moved ? 'moves' : 'stays', 'kept' => $own, 'takes' => []] + $sides
                     + Words::dayParts('This one, ' . Words::date(self::dayOf($sides['after']), $this->thisYear), 'keeps where it was put', ', ');
             }
         }

@@ -5461,8 +5461,13 @@ console.log('--- the series change panel, its sentences from the plan\'s data (1
   }
   // A group about a day with no row of its own (the day acted on, moving with the drag) is still drawn.
   const actedOwn = { ...owned([]), groups: [{ id: 'ownTitle', field: 'title', count: 1, days: ['2027-01-12T18:00:00Z'], selected: 'keep', options: [{ id: 'keep' }, { id: 'give' }] }],
-    days: [{ key: '2027-01-12T18:00:00Z', newKey: '2027-01-13T18:00:00Z', kind: 'acted', outcome: 'moves', day: '2027-01-12', before: { date: '2027-01-12', at: '2027-01-12T18:00:00+00:00' }, after: { date: '2027-01-13', at: '2027-01-13T18:00:00+00:00' }, shows: '2027-01-12', to: '2027-01-13', kept: ['title'], takes: [] }] };
+    days: [{ key: '2027-01-12T18:00:00Z', newKey: '2027-01-13T18:00:00Z', kind: 'acted', row: 'created', outcome: 'moves', day: '2027-01-12', before: { date: '2027-01-12', at: '2027-01-12T18:00:00+00:00' }, after: { date: '2027-01-13', at: '2027-01-13T18:00:00+00:00' }, shows: '2027-01-12', to: '2027-01-13', kept: ['title'], takes: [] }] };
   eq('every choice drawn: one about the day acted on, which has no row, is a row of its own', choicesIn(planView(actedOwn, ctx())).map((c) => c.id), ['ownTitle']);
+  // The day acted on whose row the commit creates is told by `row`, never by its outcome: kept at its instant while
+  // the series moves away from it, it `stays`, and it is still in Coming up, with no row among the edited days.
+  const actedStays = { ...owned([]), groups: [],
+    days: [{ key: '2027-01-12T18:00:00Z', newKey: '2027-01-12T17:00:00Z', kind: 'acted', row: 'created', outcome: 'stays', day: '2027-01-12', before: { date: '2027-01-12', at: '2027-01-12T18:00:00+00:00' }, after: { date: '2027-01-12', at: '2027-01-12T18:00:00+00:00' }, shows: '2027-01-12', to: '2027-01-12', kept: ['time'], takes: [] }] };
+  eq('the day acted on with a created row that stays has no edited-day row', planView(actedStays, ctx()).edited, []);
 
   // Every date and time in the panel is in one zone, the plan's (the
   // series' after the change), never the device's or an occurrence's: a

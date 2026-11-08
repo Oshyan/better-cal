@@ -1,0 +1,48 @@
+{
+    "n": 9814,
+    "seed": 0,
+    "series": {
+        "family": "weekly_list_i2",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,SU;WKST=SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 9,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-09-18 02:30",
+        "length": 30
+    },
+    "exceptions": [],
+    "acted": 20,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 2,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=SA",
+        "bound": null,
+        "via": "row"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": true,
+    "choices": {
+        "edit": {
+            "reading": "member",
+            "ownUrl": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

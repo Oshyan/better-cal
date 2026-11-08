@@ -1,0 +1,47 @@
+{
+    "n": 9815,
+    "seed": 0,
+    "series": {
+        "family": "monthly_nth",
+        "rrule": "FREQ=MONTHLY;BYDAY=-1SU",
+        "import": false,
+        "bound": "count",
+        "boundAt": 2,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2026-08-02 02:30",
+        "length": 120
+    },
+    "exceptions": [],
+    "acted": 1,
+    "from": "afterChange",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": "UTC",
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 9000,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": null,
+        "via": "row"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "zone": "moment"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

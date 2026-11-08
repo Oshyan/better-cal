@@ -1124,6 +1124,32 @@ trait SeriesPlans
         return OwnFields::normalize($out);
     }
 
+    /**
+     * A "this event" edit's column patch with the start the own list it
+     * leaves implies (OwnFields::placed): an inherited clock is the series'
+     * on the day's date, whatever clock the request showed. Returns the
+     * patch and the fields the edit changed, read from the request before
+     * any placement, so a date moved alone stays the one field changed.
+     *
+     * @return array{0:array,1:list<string>}
+     */
+    private function placedThis(array $row, array $patch, array $master, array $in): array
+    {
+        $after = array_merge($row, $patch);
+        $changed = self::changedOwnFields($row, $after, $in);
+        $known = OwnFields::decode($row['override_fields'] ?? null);
+        if ($known === null && !empty($row['id'])) {
+            $known = OwnFields::infer($row, $master);
+        }
+        $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known ?? [], $changed)));
+        foreach (['start_utc', 'end_utc', 'tzid'] as $col) {
+            if ((string) ($placed[$col] ?? '') !== (string) ($after[$col] ?? '')) {
+                $patch[$col] = $placed[$col];
+            }
+        }
+        return [$patch, $changed];
+    }
+
     /** A row's own list after a "this event" edit added $fields to it. */
     private function ownAfterThis(array $row, array $master, array $fields): ?string
     {

@@ -204,4 +204,31 @@ return static function (Db $db): void {
             \BetterCal\Support\Time::fromDb('2027-03-16 00:00:00'), \BetterCal\Support\Time::fromDb('2027-03-20 00:00:00')), 'instanceUtc');
         checkEq('migration 064: the edited day shows once, in place of its occurrence, and the skip skips', ['2027-03-17 09:30:00'], $shown);
     });
+
+    // 072: an edited day stored where its own list puts it. A monthly series
+    // at 02:30 in Los Angeles; its 14 Mar 2027 shows at 03:30 (the spring
+    // gap). Moved by its date alone to 17 Mar, "this event" now stores it at
+    // the series' 02:30 (09:30Z) with its date its own; the version before
+    // stored the 03:30 the request showed (10:30Z), which the migration
+    // places again. A day that owns its time stays where it is.
+    scenario('migration 072: an edited day placed by its own list', function () use ($db, $migration): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = (int) $db->scalar('SELECT id FROM calendars WHERE user_id = ?', [$u]);
+        $id = (int) $d->events->create($u, ['calendarId' => $cal, 'title' => 'Sample monthly', 'start' => '2027-01-14T02:30:00-08:00', 'end' => '2027-01-14T03:30:00-08:00',
+            'allDay' => false, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=MONTHLY;BYMONTHDAY=14'])['eventId'];
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-03-14T03:30:00-07:00', 'start' => '2027-03-17T03:30:00-07:00', 'end' => '2027-03-17T04:30:00-07:00']);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-04-14T02:30:00-07:00', 'start' => '2027-04-14T05:00:00-07:00', 'end' => '2027-04-14T06:00:00-07:00']);
+        $row = static fn(string $key): array => array_values($db->one('SELECT start_utc, end_utc, override_fields FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$id, $key]) ?? []);
+        checkEq('"this event": a gap day moved by its date alone is stored at the series\' clock on its new date, its date its own', ['2027-03-17 09:30:00', '2027-03-17 10:30:00', '["date"]'], $row('2027-03-14 10:30:00'));
+        checkEq('"this event": a day given its own clock keeps it', ['2027-04-14 12:00:00', '2027-04-14 13:00:00', '["time"]'], $row('2027-04-14 09:30:00'));
+        // The row as the version before stored it.
+        $db->run('UPDATE events SET start_utc = ?, end_utc = ? WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', ['2027-03-17 10:30:00', '2027-03-17 11:30:00', $id, '2027-03-14 10:30:00']);
+        $said = $migration('072_edited_days_at_their_own_list.php')($db);
+        checkEq('migration 072: the day stored at the shown clock is placed at the series\' clock, the day of its own time stays', [
+            ['2027-03-17 09:30:00', '2027-03-17 10:30:00', '["date"]'], ['2027-04-14 12:00:00', '2027-04-14 13:00:00', '["time"]'], true,
+        ], [$row('2027-03-14 10:30:00'), $row('2027-04-14 09:30:00'), (bool) preg_match('/^[1-9]\d* edited days? placed by/', $said)]);
+        $again = $migration('072_edited_days_at_their_own_list.php')($db);
+        checkEq('migration 072: run again, it places nothing', true, str_starts_with($again, '0 edited days placed'));
+    });
 };

@@ -40,7 +40,9 @@ final class PushSender
 
     private const TTL_SECONDS = 3600;
     private const CONNECT_TIMEOUT = 10;
-    private const TOTAL_TIMEOUT = 30;
+    // 10 s: sends are serial inside a 50 s worker tick, so one stuck push
+    // service with a few devices must not hold the tick's other reminders.
+    private const TOTAL_TIMEOUT = 10;
 
     private ?object $webPush = null;
 
@@ -221,6 +223,8 @@ final class PushSender
                 'privateKey' => (string) $vapid['private'],
             ],
         ], [], $client);
+        // One VAPID token per push service per sender, not a signature per send.
+        $this->webPush->setReuseVAPIDHeaders(true);
         return $this->webPush;
     }
 }

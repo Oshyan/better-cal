@@ -76,7 +76,7 @@ A week is enough to know. Google stays the system of record, and everything you 
 
 What you'll notice, so it isn't a surprise:
 
-- Writes to Google say "can't be undone", before and after. They're real writes to Google's calendar, with no local snapshot to roll back to. Ordinary changes are fine; be a little deliberate with edits to a repeating series.
+- Writes to Google are real writes to Google's calendar. Undo sends the change back to Google, and is refused when the event changed there since.
 - An event can't be moved between a Google calendar and another calendar. **Copy to** works; delete the original if you meant a move.
 - Inviting people is still Google's job. Better-Cal doesn't send invitations, by email or through Google. If your week involves sending invites, do that at Google and watch them appear here.
 

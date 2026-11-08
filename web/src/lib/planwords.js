@@ -904,7 +904,7 @@ export const unofferedWords = (code) => UNOFFERED[code] || null;
 /** A note's sentence, by its kind and data. */
 export function noteWords(n, opts = {}) {
   if (!n) return '';
-  if (n.kind === 'google') return 'This change is sent to Google and read back from it: the calendar shows what Google stores. It can’t be undone yet.';
+  if (n.kind === 'google') return 'This change is sent to Google and read back from it: the calendar shows what Google stores.';
   // A note's clocks are its point. Its subject is its clock when that can be
   // said, and "a clock time" with its time unavailable when its zone can't be
   // read (never the device's clock); a note with no instant says what it can.

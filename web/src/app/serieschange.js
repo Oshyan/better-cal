@@ -21,7 +21,6 @@ let seq = 0;      // the newest request; an older answer is dropped
 let dialogs = 0;  // each dialog's id, so an answer for a closed one is dropped
 
 const NO_UNDO = "Can't be undone";
-const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
 
 /**
  * Whether the server works out series plans (/config `seriesPlans: true`).
@@ -193,7 +192,7 @@ export async function confirmSeriesChange() {
     toast(verb + (sc.google ? ' at Google' : '') + now, {
       title: sc.body.title || sc.title,
       undo: entriesOf(res),
-      note: sc.google ? GOOGLE_NO_UNDO : NO_UNDO,
+      note: NO_UNDO,
     });
     invalidateRecords(sc.occ.eventId);
     refreshWindow();

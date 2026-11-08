@@ -47,7 +47,7 @@ The relationship is your side only. Nobody is notified and nothing is RSVP'd; re
 One thing does travel. On a **Mine** calendar, Maybe is stored as the event's status, `TENTATIVE` in iCalendar terms, and Planned as `CONFIRMED`. That's the standard way to say "tentative", so:
 
 - CalDAV clients (Apple Calendar, Thunderbird, DAVx5) see it and can set it.
-- On a Google calendar you write to, Maybe becomes tentative at Google (drawn hatched there). Like every Google write, it can't be undone from Better-Cal, and the prompt says so.
+- On a Google calendar you write to, Maybe becomes tentative at Google (drawn hatched there). Like every Google write, its undo is a second write to Google.
 
 On an **Opportunities** calendar the relationship is a private mark on your copy of the event. Feeds and Google polls never overwrite it.
 

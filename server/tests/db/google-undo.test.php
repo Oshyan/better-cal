@@ -6,10 +6,10 @@ declare(strict_types=1);
 // an attendance answer and one occurrence of a series, each undone by a
 // second write to Google conditional on the etag recorded after the
 // change, and each undo undoable back. A stale etag refuses the undo with
-// nothing written; a whole-series change stays log-only. Google is a
-// stand-in holding invented resources, with an etag that changes on every
-// write (on every row of a series for a write to any of them, probe 5) and
-// If-Match answered 412 when stale.
+// nothing written (a whole-series change: google-series-undo.test.php).
+// Google is a stand-in holding invented resources, with an etag that
+// changes on every write (on every row of a series for a write to any of
+// them, probe 5) and If-Match answered 412 when stale.
 
 use BetterCal\Domain\Activity;
 use BetterCal\Domain\Events;
@@ -269,22 +269,5 @@ return static function (Db $db): void {
         checkEq('the delete is a skip; its undo reads the instance, sends {status: confirmed} to it, and the day is back', [
             [null, ['2027-03-08 18:00:00']], ['GET', 'PATCH'], ['status' => 'confirmed'], [], 'Sample standup',
         ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 2), $t->google->calls[1][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
-    });
-
-    scenario('google undo: a whole-series change stays log-only, refused with its words', function () use ($db, $setup, $row, $last): void {
-        $t = $setup();
-        $masterId = (int) $row($t, 'probe1a2b3c')['id'];
-        $t->events->patch($t->u, $masterId, ['title' => 'Sample standup, new term', 'scope' => 'all']);
-        $entry = $last($t);
-        $caught = null;
-        try {
-            $t->undo->undoById($t->u, (int) $entry['id']);
-        } catch (HttpError $e) {
-            $caught = $e->errorCode;
-        }
-        checkEq('the series is renamed; its entry keeps no snapshot and no Google before state; undo refuses', [
-            'Sample standup, new term', null, null, false, 'not_undoable',
-        ], [$row($t, 'probe1a2b3c')['title'], $entry['before_json'], $entry['after_json'],
-            isset(json_decode((string) $entry['details_json'], true)['google']), $caught]);
     });
 };

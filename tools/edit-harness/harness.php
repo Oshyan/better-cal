@@ -370,6 +370,9 @@ try {
     if (isset($opts['product'])) {
         array_push($pass, '--product', (string) $opts['product']);
     }
+    if ($googleMode) {
+        $pass[] = '--google';
+    }
     if ($saveSpec !== null) {
         array_push($pass, '--save-spec', $saveSpec);
     }

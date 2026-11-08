@@ -4,25 +4,32 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 
 /**
- * Undo for a write to one Google resource (#172): a single event, or one
- * occurrence of a series, which Google keeps as one resource of its own
- * (the probe, 2026-11-07, groups 2, 5 and 6).
+ * Undo for a write to Google (#172): a single event, or one occurrence of a
+ * series, which Google keeps as one resource of its own (the probe,
+ * 2026-11-07, groups 2, 5 and 6), and a whole series changed, made or
+ * deleted (kind series, GoogleSeries).
  *
- * The entry is shaped as a plugin edit's: empty snapshots ({"tables":[]}),
- * since the row is Google's, and what to send back in its details, under
- * `google`:
+ * A write to one resource's entry is shaped as a plugin edit's: empty
+ * snapshots ({"tables":[]}), since the row is Google's. A series entry
+ * keeps the rows' snapshots as a local plan's entry keeps them (the rows'
+ * identities, tags, people, own lists and links). Either way, what to send
+ * back is in its details, under `google`:
  *
- *   kind        edit, delete, create or answer: what the change did
+ *   kind        edit, delete, create, answer or series: what the change did
  *   calendarId  the local calendar
- *   googleId    the resource's id at Google (an occurrence's instance id)
+ *   googleId    the resource's id at Google (an occurrence's instance id;
+ *               for a series, its first series' id)
  *   before      edit: the resource's fields as GoogleWriter sends them
  *               (summary, description, location, status, start, end,
  *               source, and recurrence for an event in no series), as they
- *               were before the change; delete: {status}; else null
+ *               were before the change; delete: {status}; series: the
+ *               series as they were, as GoogleSeries targets (stateOf; a
+ *               series the change made is its removal); else null
  *   etagBefore  the row's etag before the change, when known
  *   etagAfter   the resource's etag Google answered the change with; null
  *               after a delete, which answers nothing
@@ -45,8 +52,15 @@ use BetterCal\Infra\Db;
  * deleted resource as read just before. The undo is recorded as an entry
  * of the same shape, so it can be undone back.
  *
- * A change made by a whole-series plan (SeriesPlans) is not one resource
- * and keeps a log-only entry; its undo comes later, built on undo() here.
+ * A series is undone by GoogleSeries::apply with the before targets, each
+ * conditional on its series' etag as stored at undo time, as the single
+ * kinds are; then the snapshots are put back here (Undo::restoreSnapshots)
+ * and what Google read back is stored on top (GoogleSeries::store), so the
+ * rows keep their own parts and show what Google holds. A 412 on the
+ * first write is the conflict, nothing written; a failure after a step
+ * reached Google leaves the pending row for Review (Finish, Put back) and
+ * the entry to undo again. The undo is recorded with the befores of its
+ * own apply, so it undoes back.
  */
 final class GoogleUndo
 {
@@ -54,6 +68,7 @@ final class GoogleUndo
     public const DELETE = 'delete';
     public const CREATE = 'create';
     public const ANSWER = 'answer';
+    public const SERIES = 'series';
 
     private const UNDID = 'Undid: ';
 
@@ -68,8 +83,9 @@ final class GoogleUndo
     public static function carries(?array $details): bool
     {
         $g = $details['google'] ?? null;
-        return is_array($g) && in_array($g['kind'] ?? null, [self::EDIT, self::DELETE, self::CREATE, self::ANSWER], true)
-            && is_string($g['googleId'] ?? null) && $g['googleId'] !== '' && isset($g['calendarId']);
+        return is_array($g) && in_array($g['kind'] ?? null, [self::EDIT, self::DELETE, self::CREATE, self::ANSWER, self::SERIES], true)
+            && is_string($g['googleId'] ?? null) && $g['googleId'] !== '' && isset($g['calendarId'])
+            && (($g['kind'] ?? null) !== self::SERIES || (is_array($g['before'] ?? null) && $g['before'] !== []));
     }
 
     /** A row's Google fields as GoogleWriter sends them: an occurrence's without the series' recurrence. Pure. */
@@ -96,7 +112,7 @@ final class GoogleUndo
         ] + $extra;
     }
 
-    /** What a row has of its own that a delete at Google takes with it: tags, people, reminders. */
+    /** What a row has of its own that a delete at Google takes with it: tags, people, reminders, the trip flag, an edited day's own list. */
     public function localOf(array $row): array
     {
         $id = (int) $row['id'];
@@ -104,20 +120,78 @@ final class GoogleUndo
             'tags' => array_map('intval', array_column($this->db->all('SELECT tag_id FROM event_tags WHERE event_id = ? ORDER BY tag_id', [$id]), 'tag_id')),
             'people' => array_map('intval', array_column($this->db->all('SELECT person_id FROM event_people WHERE event_id = ? ORDER BY person_id', [$id]), 'person_id')),
             'reminders' => $row['reminders_json'] ?? null,
+            'trip' => (int) ($row['is_container'] ?? 0),
+            'own' => $row['override_fields'] ?? null,
         ];
     }
 
     /**
-     * Record an undoable entry for a write to one Google resource, inside
-     * Undo::write. $touches defaults to the event whole, which an older
-     * undo of it (its tags, say) stands on.
+     * Record an undoable entry for a write to Google, inside Undo::write.
+     * $tables: a series' snapshots [before, after] (seriesTables), whose
+     * rows say what it touched; without them $touches defaults to the event
+     * whole, which an older undo of it (its tags, say) stands on.
      *
      * @param list<array{0:string,1:string}>|null $touches
+     * @param array{0:array,1:array}|null $tables
      */
-    public function record(int $userId, int $eventId, string $summary, array $google, ?array $touches = null, string $op = 'update'): int
+    public function record(int $userId, int $eventId, string $summary, array $google, ?array $touches = null, string $op = 'update', ?array $tables = null): int
     {
-        return $this->undo->record($userId, 'event', $eventId, $op, [], [], $summary, ['google' => $google], [(int) $google['calendarId']],
-            $touches ?? ($eventId > 0 ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : []));
+        return $this->undo->record($userId, 'event', $eventId, $op, $tables[0] ?? [], $tables[1] ?? [], $summary, ['google' => $google], [(int) $google['calendarId']],
+            $touches ?? ($tables === null && $eventId > 0 ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : []));
+    }
+
+    /**
+     * Rows of series and events of their own on a calendar, for a series
+     * entry's snapshot: the live rows of each uid (a master and its edited
+     * days), the rows $ids name, and what hangs off them (Undo::linksOf).
+     *
+     * @param list<string> $uids
+     * @param list<int> $ids
+     * @return array<string,list<array>>
+     */
+    public function seriesTables(int $calendarId, array $uids, array $ids = []): array
+    {
+        $rows = [];
+        $uids = array_values(array_unique(array_filter(array_map('strval', $uids), static fn(string $u): bool => $u !== '')));
+        if ($uids !== []) {
+            [$in, $params] = Db::in($uids);
+            foreach ($this->db->all("SELECT * FROM events WHERE calendar_id = ? AND uid IN $in AND deleted_at IS NULL ORDER BY id", array_merge([$calendarId], $params)) as $r) {
+                $rows[(int) $r['id']] = $r;
+            }
+        }
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn(int $i): bool => $i > 0 && !isset($rows[$i]))));
+        if ($ids !== []) {
+            [$in, $params] = Db::in($ids);
+            foreach ($this->db->all("SELECT * FROM events WHERE id IN $in AND deleted_at IS NULL ORDER BY id", $params) as $r) {
+                $rows[(int) $r['id']] = $r;
+            }
+        }
+        ksort($rows);
+        return ['events' => array_values($rows)] + Undo::linksOf($this->db, array_keys($rows));
+    }
+
+    /**
+     * Record a whole-series change sent to Google (GoogleSeries): its
+     * befores as apply() returned them (or built here for a series made or
+     * deleted whole) and the rows' snapshots before and after. The one
+     * recording of every series change on a Google calendar.
+     *
+     * @param list<array> $befores
+     */
+    public function recordSeries(int $userId, int $eventId, string $summary, array $calendar, array $befores, array $beforeTables, array $afterTables): int
+    {
+        $etag = static function (array $tables, ?string $googleId): ?string {
+            foreach ($tables['events'] ?? [] as $r) {
+                if ($googleId !== null && (string) ($r['google_event_id'] ?? '') === $googleId && !empty($r['google_etag'])) {
+                    return (string) $r['google_etag'];
+                }
+            }
+            return null;
+        };
+        $googleId = (string) ($befores[0]['googleId'] ?? '');
+        return $this->record($userId, $eventId, $summary,
+            self::details(self::SERIES, $calendar, $googleId, array_values($befores), $etag($beforeTables, $googleId), $etag($afterTables, $googleId)),
+            null, 'update', [$beforeTables, $afterTables]);
     }
 
     /**
@@ -136,6 +210,9 @@ final class GoogleUndo
         }
         $g = $details['google'];
         $userId = (int) $mutation['user_id'];
+        if ((string) $g['kind'] === self::SERIES) {
+            return $this->undoSeries($mutation, $g, $authority);
+        }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
         if ($calendar === null || !GoogleWriter::writable($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
@@ -231,6 +308,73 @@ final class GoogleUndo
         throw HttpError::badRequest('This entry has nothing to send back to Google', 'not_undoable');
     }
 
+    /**
+     * Undo a whole-series change: the trip rules checked over what the
+     * undo will leave (Undo::checkRestore), then the befores sent to Google
+     * (GoogleSeries::apply, each series conditional on its stored etag),
+     * the snapshots put back here, Google's read-back stored on top, the
+     * pending row settled, the entry marked undone and the undo recorded,
+     * all in the account's write. A failure before anything reached Google
+     * rolls all of it back (a 412 is the conflict); one after a step did
+     * commits the pending row and what Google has, and is thrown once the
+     * write has committed.
+     *
+     * @return array{entity:string,op:string}
+     */
+    private function undoSeries(array $mutation, array $g, ?RequestAuthority $authority): array
+    {
+        $userId = (int) $mutation['user_id'];
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
+        if ($calendar === null || !GoogleWriter::writable($calendar)) {
+            throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
+        }
+        $summary = str_starts_with((string) $mutation['summary'], self::UNDID)
+            ? substr((string) $mutation['summary'], strlen(self::UNDID))
+            : self::UNDID . (string) $mutation['summary'];
+        $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
+        $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
+        $this->undo->checkRestore($mutation);
+        $deferred = null;
+        $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
+            $authority?->assertValid($this->db);
+            $locked = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
+            if ($locked === null || !GoogleSync::sameBinding($calendar, $locked)) {
+                throw HttpError::conflict('google_binding_changed', 'This calendar changed while the undo was running. Reload before trying again.');
+            }
+            $fresh = $this->db->one('SELECT * FROM mutations WHERE id = ?', [(int) $mutation['id']]);
+            if ($fresh === null || (int) $fresh['undone'] === 1) {
+                throw HttpError::badRequest('Already undone', 'already_undone');
+            }
+            $targets = $series->withStoredEtags($locked, (array) $g['before']);
+            $title = (string) ($targets[0]['master']['title'] ?? '');
+            try {
+                $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);
+            } catch (HttpError $e) {
+                $pending = isset($e->extra['pending']) ? (int) $e->extra['pending'] : null;
+                if ($pending === null || $series->stepsDone($pending) === 0) {
+                    throw $e->errorCode === 'google_conflict' ? self::conflict() : $e; // nothing reached Google: all of it rolls back
+                }
+                $deferred = $e;
+                return;
+            }
+            // The rows as the change left them, the undo's own before.
+            $ids = $this->undo->snapshotEventIds($fresh);
+            $uids = array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets));
+            $was = $this->seriesTables((int) $locked['id'], $uids, $ids);
+            $this->undo->restoreSnapshots($fresh);
+            $series->store($locked, $out['readbacks'], $out['targets']);
+            $series->settle($out['pending']);
+            $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
+            $uids = array_merge($uids, array_keys($out['readbacks']));
+            $this->recordSeries($userId, (int) $mutation['entity_id'], $summary, $locked, $out['befores'], $was,
+                $this->seriesTables((int) $locked['id'], $uids, array_merge($ids, array_map('intval', array_column($was['events'], 'id')))));
+        });
+        if ($deferred !== null) {
+            throw $deferred;
+        }
+        return ['entity' => 'event', 'op' => 'update'];
+    }
+
     private function writer(): GoogleWriter
     {
         return $this->writer ??= new GoogleWriter($this->db, new GoogleAuth($this->db, config()), new Feeds($this->db, null, config()));
@@ -261,7 +405,7 @@ final class GoogleUndo
         return $row !== null ? (int) $row['id'] : $fallback;
     }
 
-    /** Tags, people and reminders a delete took, back on the row the undo brought back (those still in the account). */
+    /** Tags, people, reminders, the trip flag and the own list a delete took, back on the row the undo brought back (tags and people still in the account). */
     private function restoreLocal(int $userId, int $eventId, array $local): void
     {
         $tags = array_values(array_filter(array_map('intval', (array) ($local['tags'] ?? [])), static fn(int $id): bool => $id > 0));
@@ -277,6 +421,12 @@ final class GoogleUndo
         if (is_string($local['reminders'] ?? null)) {
             $this->db->run('UPDATE events SET reminders_json = ? WHERE id = ?', [$local['reminders'], $eventId]);
         }
+        if ((int) ($local['trip'] ?? 0) === 1) {
+            $this->db->run('UPDATE events SET is_container = 1 WHERE id = ?', [$eventId]);
+        }
+        if (is_string($local['own'] ?? null) && OwnFields::hasColumn($this->db)) {
+            $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$local['own'], $eventId]);
+        }
     }
 
     private static function etagOf(array $resource): ?string
@@ -285,7 +435,7 @@ final class GoogleUndo
     }
 
     /** Changed at Google since: the stale-undo words and the conflict's sentence. */
-    private static function conflict(): HttpError
+    public static function conflict(): HttpError
     {
         return new HttpError('google_conflict', 'Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.', 409);
     }

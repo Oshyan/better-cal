@@ -103,9 +103,10 @@ final class Expect
 
     /**
      * The adoptions offered, by part (Changing the Series from an Edited Day): day, time, length, each with the day's
-     * own offset for it, its preselection and whether it is refused: [part => ['offset', 'preselect', 'disabled']].
+     * own offset for it, its preselection, whether it is refused and, refused because its own plan is, that plan's
+     * refusal code: [part => ['offset', 'preselect', 'disabled', 'code']].
      *
-     * @var array<string,array{offset:int,preselect:string,disabled:bool}>
+     * @var array<string,array{offset:int,preselect:string,disabled:bool,code?:?string}>
      */
     public array $adoptions = [];
 
@@ -114,7 +115,8 @@ final class Expect
      * shown in the series' own kind and zone: each such part is a group, "this becomes the series' own" (the delta
      * measured from the occurrence, the same-way delta plus the day's own offset for that part) or "the series moves
      * the same way". Not under a new rule, which gives the day acted on no special place, nor for a rule the expander
-     * can't read. The day is refused where the drag adopting it would be; it is preselected when that drag moves
+     * can't read. The day is refused where the drag adopting it would be, or where every reading of that drag leaves no
+     * events (Bounds, nothing left: its own plan is refused, code `empty`); it is preselected when that drag moves
      * every event by less than one period of the rule's frequency, the time always, the length only when typed (the
      * harness never types one). The choices the case made ($edit['adopt']) are applied to the landing.
      */
@@ -155,7 +157,20 @@ final class Expect
             $drag->delta = $to - $this->actedDn;
             $drag->kind = 'drag';
             $enabled = $drag->refusal() === null && $this->s0->supported() && array_filter($drag->designReadings(), static fn(array $r): bool => $r['enabled']) !== [];
+            $code = null;
+            if ($enabled) {
+                // An option whose own plan would be refused is a disabled option with that refusal's code (api-contract,
+                // series_refused). Adopting the day can start the series past an end sent with the edit where moving it
+                // the same way doesn't: when every reading of the adopting drag leaves no events, its plan is refused
+                // (Bounds, nothing left), the code the first reading's refusal, in the design's order.
+                $read = $drag->readings();
+                if (array_filter($read, static fn(array $r): bool => $r['enabled']) === []) {
+                    $enabled = false;
+                    $code = (string) $read[0]['why'];
+                }
+            }
             $this->adoptions['day']['disabled'] = !$enabled;
+            $this->adoptions['day']['code'] = $code;
             // A refused option is never the preselection.
             $this->adoptions['day']['preselect'] = $enabled && $this->withinPeriod($this->actedDn, $to) ? 'adopt' : 'same';
         }

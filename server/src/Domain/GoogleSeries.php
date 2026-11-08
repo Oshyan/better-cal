@@ -55,10 +55,10 @@ use BetterCal\Support\Time;
  * landed), and every other step follows from a fresh read-back. A failure
  * mid-way stops, stores what Google has, and leaves the row for Review
  * ("Half done at Google"): Finish runs the same targets from Google's
- * state and then the change's part here, Put back runs the befores, each
- * series only while its etag is the one its last step left, or, a last
- * step's answer lost, while the read-back is what that step leaves (an
- * insert's series as sent; compared field by field, etag aside). A row
+ * state and then the change's part here, Put back runs the befores, all
+ * or none: only while every series' etag is the one its last step left,
+ * or, a last step's answer lost, the read-back is what that step leaves
+ * (an insert's series as sent; compared field by field, etag aside). A row
  * still marked running whose
  * run holds no lock (a process that stopped) is half done too. Either way
  * the rows a recovery brings back take their ids, tags, people and links
@@ -1452,8 +1452,10 @@ final class GoogleSeries
      * its etag at Google is the one the last answered step left or the one
      * the change started from, or, the last step's answer lost, the series
      * is what that step leaves (unchangedSince; an event of its own made
-     * with its answer lost, as sent). A change made since, at Google or
-     * here, leaves the series as it is, named in `left`; an inserted series is
+     * with its answer lost, as sent). A change made at Google since,
+     * to any series, puts nothing back: nothing is sent or stored, the
+     * pending row stays for Finish, and the 409 names each series (`left`
+     * in its extra). Otherwise every series is put back: an inserted series is
      * cancelled, a single made is cancelled, a dropped exception is sent
      * again from its complete before state, and the rows brought back take
      * their ids and what hung off them from the snapshot (reattach). Its
@@ -1468,9 +1470,11 @@ final class GoogleSeries
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
         $targets = json_decode((string) $row['targets_json'], true) ?: [];
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
-        $this->refresh($calendar, $befores, $beforeSend);
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        // Every series checked before anything is sent or stored: Put back
+        // is the whole change's, or none of it (half of a split put back
+        // would leave two series overlapping).
         $left = [];
         $run = [];
         foreach ($befores as $i => $b) {
@@ -1509,7 +1513,7 @@ final class GoogleSeries
                 $safe = $base === null || $current === null || $current === $base;
             }
             if (!$safe) {
-                $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since, and was left as it is.";
+                $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since.";
                 continue;
             }
             $b['etag'] = $current;
@@ -1533,7 +1537,7 @@ final class GoogleSeries
                     }
                     $parsed = GoogleSync::toParsed($found);
                     if ($parsed === null || !self::sameEvent($parsed, $sentSingles[$sid]['row'])) {
-                        $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed at Google since, and was left as it is.";
+                        $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed at Google since.";
                         unset($b['singles'][$si]);
                         continue;
                     }
@@ -1544,6 +1548,13 @@ final class GoogleSeries
             $b['singles'] = array_values($b['singles'] ?? []);
             $run[$i] = $b;
         }
+        if ($left !== []) {
+            $words = implode(' ', $left) . ' Nothing was put back; Finish completes the change from what Google has now.';
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+            $this->endUnlessTx($pendingId, true);
+            throw new HttpError('google_changed_since', $words, 409, ['pending' => $pendingId, 'left' => $left]);
+        }
+        $this->refresh($calendar, $befores, $beforeSend);
         $out = ['readbacks' => [], 'differences' => [], 'targets' => [], 'inserted' => []];
         if ($run !== []) {
             $out = $this->run($calendar, $pendingId, $run, $steps, $beforeSend, true);

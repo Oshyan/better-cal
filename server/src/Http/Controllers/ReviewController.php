@@ -221,7 +221,7 @@ final class ReviewController
                 'status' => 'open',
                 'title' => $half['title'],
                 'summary' => 'Half done at Google: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
-                    . ' Finish sends the rest from what Google has now; Put back reverses the steps done (an event changed since is left as it is).',
+                    . ' Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.',
                 'createdAt' => $half['createdAt'],
                 'eventId' => $half['eventId'],
                 'detail' => $half,

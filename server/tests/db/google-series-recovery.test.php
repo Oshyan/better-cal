@@ -343,30 +343,57 @@ return static function (Db $db): void {
 
     // ---- R2: a write whose answer was lost is put back only while nothing changed since
 
-    scenario('google recovery: a split whose insert answer was lost, the new series renamed elsewhere since, Put back leaves it and says so; untouched, it is cancelled', function () use ($setup, $masterId, $held, $pending, $recover, $iso): void {
-        foreach (['renamed elsewhere' => true, 'untouched' => false] as $what => $edited) {
-            $s = $setup();
-            $was = $held($s, 'smpl3weekly');
-            $s->t->loseFirstPost = true;
-            try {
-                planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
-            } catch (HttpError) {
-            }
-            $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
-            if ($edited) {
-                $s->fake->seed(array_replace($s->fake->events[$new], ['summary' => 'Sample renamed elsewhere']));
-            }
-            $out = $recover($s, 'putBack');
-            checkEq("$what: the new series " . ($edited ? 'stands as it was edited, named in left' : 'is cancelled, nothing left') . '; the old series is put back; no pending row',
-                [true, $edited ? 1 : 0, $edited ? 'confirmed' : 'cancelled', $edited ? 'Sample renamed elsewhere' : 'Sample split', $was, []],
-                [$out['ok'], count($out['left']), $s->fake->events[$new]['status'] ?? 'confirmed', $s->fake->events[$new]['summary'], $held($s, 'smpl3weekly'), $pending($s)]);
-            if ($edited) {
-                check("$what: left names the series and why", str_contains($out['left'][0] ?? '', "'Sample split' changed at Google since"), (string) json_encode($out['left']));
-            }
+    // Put back that finds a change made at Google since: [its answer's ok, the error's code and words, the change still in Review].
+    $refused = static function (object $s) use ($listed): array {
+        $out = $s->events->googlePutBack($s->u, (int) $listed($s)[0]['id']);
+        $error = null;
+        try {
+            $s->events->throwDeferred();
+        } catch (HttpError $e) {
+            $error = $e;
         }
+        return [$out['ok'], $error?->errorCode, (string) $error?->getMessage(), count($listed($s))];
+    };
+
+    scenario('google recovery: a split whose insert answer was lost, the new series renamed elsewhere since: Put back sends nothing, changes nothing here, and names the series and Finish', function () use ($setup, $masterId, $held, $stored, $elsewhere, $refused, $iso): void {
+        $s = $setup();
+        $s->t->loseFirstPost = true;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+        } catch (HttpError) {
+        }
+        $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+        $s->fake->seed(array_replace($s->fake->events[$new], ['summary' => 'Sample renamed elsewhere']));
+        $old = $held($s, 'smpl3weekly');
+        $here = $stored($s, 'smpl3weekly');
+        $journal = $elsewhere($s);
+        $writes = $s->t->writes;
+        [$ok, $code, $words, $listedAfter] = $refused($s);
+        checkEq('not ok, google_changed_since; the words name the series and Finish; the change is still in Review, its journal as it was',
+            [false, 'google_changed_since', true, true, 1, $journal],
+            [$ok, $code, str_contains($words, "'Sample split' changed at Google since"), str_contains($words, 'Finish'), $listedAfter, $elsewhere($s)]);
+        checkEq("nothing sent; the old series keeps the change's end at Google and here; the new series stands as edited",
+            [$writes, $old, $here, true, 'confirmed', 'Sample renamed elsewhere'],
+            [$s->t->writes, $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), str_contains((string) $old['rule'], 'UNTIL='), $s->fake->events[$new]['status'] ?? 'confirmed', $s->fake->events[$new]['summary']]);
     });
 
-    scenario('google recovery: a PATCH whose answer was lost, then another part of the series changed elsewhere: Put back leaves the series as Google has it and says so', function () use ($setup, $masterId, $move, $held, $pending, $recover, $when, $db): void {
+    scenario('google recovery: an answered step and a step whose answer was lost both unchanged since: Put back reverses the whole change', function () use ($setup, $masterId, $held, $stored, $pending, $elsewhere, $recover, $iso): void {
+        $s = $setup();
+        $was = $held($s, 'smpl3weekly');
+        $s->t->loseFirstPost = true;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+        } catch (HttpError) {
+        }
+        $states = $elsewhere($s)[0][1] ?? [];
+        checkEq("the journal holds the old series' write answered and the insert sent with no answer", [true, 'insert:sent'], [in_array('master:done', $states, true), end($states) ?: null]);
+        $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+        $out = $recover($s, 'putBack');
+        checkEq('both reversed: the new series cancelled, the old one as it was at Google and here; nothing left; no pending row', [true, [], 'cancelled', $was, $was, []],
+            [$out['ok'], $out['left'], $s->fake->events[$new]['status'] ?? 'confirmed', $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), $pending($s)]);
+    });
+
+    scenario('google recovery: a PATCH whose answer was lost, then another part of the series changed elsewhere: Put back sends nothing and names the series', function () use ($setup, $masterId, $move, $held, $refused, $when, $db): void {
         // An edited day's PATCH lost, then the series' place changed elsewhere.
         $s = $setup();
         $s->t->loseAt = 2;
@@ -376,10 +403,9 @@ return static function (Db $db): void {
         }
         $s->fake->seed(array_replace($s->fake->events['smpl3weekly'], ['location' => 'Sample room elsewhere']));
         $there = $held($s, 'smpl3weekly');
-        $out = $recover($s, 'putBack');
-        checkEq("an edited day's answer lost, the place changed since: nothing sent back, the series named in left, Google keeps the other edit; no pending row",
-            [true, 1, $there, 'Sample room elsewhere', []],
-            [$out['ok'], count($out['left']), $held($s, 'smpl3weekly'), $s->fake->events['smpl3weekly']['location'] ?? null, $pending($s)]);
+        [$ok, $code, $words, $listedAfter] = $refused($s);
+        checkEq("an edited day's answer lost, the place changed since: refused, the series named; Google keeps both; still in Review",
+            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
 
         // The master's PATCH (a rename) lost, then a day edited elsewhere.
         $s = $setup();
@@ -391,12 +417,13 @@ return static function (Db $db): void {
         $s->fake->seed(['id' => 'smpl3weekly_20270308T180000Z', 'iCalUID' => 'smpl3weekly@google.com', 'recurringEventId' => 'smpl3weekly', 'summary' => 'Sample weekly, renamed',
             'description' => 'Sample notes', 'location' => 'Sample room 2', 'originalStartTime' => $when('2027-03-08 10:00'), 'start' => $when('2027-03-08 10:00'), 'end' => $when('2027-03-08 11:00')]);
         $there = $held($s, 'smpl3weekly');
-        $out = $recover($s, 'putBack');
-        checkEq("the master's answer lost, a day edited since: the series is left as Google has it and named; the rename stands at Google and here; no pending row",
-            [true, 1, $there, 'Sample weekly, renamed', []],
-            [$out['ok'], count($out['left']), $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $pending($s)]);
+        $title = $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]);
+        [$ok, $code, , $listedAfter] = $refused($s);
+        checkEq("the master's answer lost, a day edited since: refused; Google and the row here as they were; still in Review",
+            [false, 'google_changed_since', $there, $title, 1], [$ok, $code, $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $listedAfter]);
+    });
 
-        // The same rename, its answer lost, nothing changed since: put back.
+    scenario('google recovery: a rename whose answer was lost, nothing changed since: Put back restores the series', function () use ($setup, $masterId, $held, $recover, $db): void {
         $s = $setup();
         $was = $held($s, 'smpl3weekly');
         $s->t->loseAt = 1;

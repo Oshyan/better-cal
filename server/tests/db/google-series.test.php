@@ -354,7 +354,7 @@ return static function (Db $db): void {
         checkEq('a second sync changes nothing', $before, $after);
     });
 
-    scenario('google series: Put back leaves a series changed at Google since, and names it', function () use ($setup, $masterId, $held, $db, $iso, $pending): void {
+    scenario('google series: Put back puts nothing back when a series changed at Google since, and names it', function () use ($setup, $masterId, $held, $db, $iso, $pending): void {
         $s = $setup();
         $id = $masterId($s);
         $s->t->staleAt = 3;
@@ -367,9 +367,15 @@ return static function (Db $db): void {
         $s->fake->events['smpl1weekly']['etag'] = '"elsewhere"';
         $listed = (new ReviewQueue($db, $s->events))->googleHalfDone($s->u);
         $out = $s->events->googlePutBack($s->u, (int) $listed[0]['id']);
-        $s->events->throwDeferred();
-        checkEq('the series is named and left as it is; the pending row is settled', [true, 1, true, 'Sample weekly, theirs', $iso('2027-03-01 11:00'), []],
-            [$out['ok'], count($out['left']), str_contains($out['left'][0] ?? '', 'changed at Google since'), $s->fake->events['smpl1weekly']['summary'], $held($s, 'smpl1weekly')['start'], $pending($s)]);
+        $error = null;
+        try {
+            $s->events->throwDeferred();
+        } catch (HttpError $e) {
+            $error = $e;
+        }
+        checkEq('nothing is put back: the answer names the series and Finish; Google keeps the other edit; the change stays in Review', [false, 'google_changed_since', true, true, 'Sample weekly, theirs', $iso('2027-03-01 11:00'), 1],
+            [$out['ok'], $error?->errorCode, str_contains((string) $error?->getMessage(), "changed at Google since"), str_contains((string) $error?->getMessage(), 'Finish'),
+                $s->fake->events['smpl1weekly']['summary'], $held($s, 'smpl1weekly')['start'], count((new ReviewQueue($db, $s->events))->googleHalfDone($s->u))]);
     });
 
     scenario('google series: an insert whose answer was lost is retried, found by its id and carried on', function () use ($setup, $masterId, $held, $stored, $secondSync, $db, $iso, $pending): void {

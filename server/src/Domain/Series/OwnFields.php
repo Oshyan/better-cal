@@ -356,6 +356,13 @@ final class OwnFields
                 $out[] = $field;
             }
         }
+        // The place is its text with its coordinates: a day given other
+        // coordinates at the same text has a place of its own (Own Fields).
+        foreach (['location_lat', 'location_lng'] as $col) {
+            if (!in_array('location', $out, true) && array_key_exists($col, $a) && array_key_exists($col, $b) && self::coordinate($a[$col]) !== self::coordinate($b[$col])) {
+                $out[] = 'location';
+            }
+        }
         $placed = static fn(array $r): bool => !empty($r['start_utc']) && !empty($r['end_utc']);
         if ($placed($a) && $placed($b)) {
             if (self::shownDay($a) !== self::shownDay($b)) {
@@ -377,6 +384,12 @@ final class OwnFields
             $out[] = 'allDay';
         }
         return self::normalize($out);
+    }
+
+    /** A coordinate as compared: null when unset, else to nine decimals (a number sent and the value stored back are the same place). */
+    private static function coordinate(mixed $value): ?string
+    {
+        return $value === null || $value === '' ? null : number_format((float) $value, 9, '.', '');
     }
 
     /** The day a row shows on (Time::dayOf). */

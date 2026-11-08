@@ -211,7 +211,7 @@ A feed poll, a Google sync or a CalDAV client's PUT brings an edited day's full 
 - **Changed at the other end:** its own when the new value differs from the master's value in the same sync; inherited when it equals it, which is a series-wide change the other app carried to the day, or the day put back to the series' value there.
 - **A row the app hasn't seen before** (an edited day made elsewhere), or a field whose ownership is unknown: by equality with its master, as the backfill.
 
-A person's local changes to such a row (attendance, tags, reminders) are its own and kept across polls, as today. The rule needs the rows the app writes to be what the other end echoes, so where the app doesn't carry inherited values there (Google before 1.5.4), it doesn't write them locally either.
+A person's local changes to such a row (attendance, tags, reminders) are its own and kept across polls, as today. When the other end's record of a day changes to hold nothing of its own, or goes, the row keeps exactly what is held here alone (tags, people, reminders, an answer, an icon, coordinates picked for the place text it shows, what refers to it) and takes the series' values for everything else, whoever made it; one left holding nothing is an ordinary occurrence again, one whose day is gone goes named in Activity, and one whose image another row holds gives that row what it holds (decisions.md, "A feed's change to a day keeps what is held here"). The rule needs the rows the app writes to be what the other end echoes, so where the app doesn't carry inherited values there (Google before 1.5.4), it doesn't write them locally either.
 
 ### All-Day Is One of Them
 

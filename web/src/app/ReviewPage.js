@@ -126,8 +126,9 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'google_differs') {
         toast('Notice dismissed. The calendar shows what Google stores.');
       } else if (item.kind === 'google_half') {
-        const left = (res && res.left) || [];
-        toast(action.name === 'finish' ? 'Finished at Google' : (left.length ? 'Put back at Google, except: ' + left.join(' ') : 'Put back at Google'), { error: false });
+        // Put back is all or nothing: a series changed at Google since
+        // refuses it whole (409), and its words arrive through the catch.
+        toast(action.name === 'finish' ? 'Finished at Google' : 'Put back at Google', { error: false });
         await loadCalendars().catch(() => {});
       } else if (item.kind === 'invite_new') {
         if (!accepted) {
@@ -154,7 +155,9 @@ function ReviewCard({ item, onChanged }) {
     } catch (e) {
       // A 409 can close a gone/stale item, or refresh its differences after an
       // owner edit. The server message says which and the list reloads either way.
-      toast(e.message || 'Failed', { error: true });
+      // A Put back refused (google_changed_since) names each series and Finish:
+      // its words are shown whole, and long enough to read.
+      toast(e.message || 'Failed', { error: true, duration: e.code === 'google_changed_since' ? 15000 : undefined });
     } finally {
       setBusy(false);
       await onChanged();

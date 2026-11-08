@@ -24,7 +24,7 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'product:', 'google']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'product:', 'google']);
 if (isset($opts['help'])) {
     echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]\n";
     exit(0);
@@ -93,6 +93,10 @@ if ($everyOption !== null) {
 // --typed F: the share of drawn cases whose timed edits send the wall clocks typed (README, The Delta Vector).
 if (isset($opts['typed'])) {
     BetterCal\EditHarness\Driver::$typed = (float) $opts['typed'];
+}
+// --floating F: the share of drawn timed series made floating (README, Floating); 0 turns floating cases off.
+if (isset($opts['floating'])) {
+    BetterCal\EditHarness\Driver::$floating = (float) $opts['floating'];
 }
 if (!BetterCal\EditHarness\Product::$plan) {
     // No plan API: the wall clocks typed are a 1.5 request field, so every case is sent untyped (counted as not applicable).
@@ -360,6 +364,9 @@ try {
     }
     if (isset($opts['typed'])) {
         array_push($pass, '--typed', (string) $opts['typed']);
+    }
+    if (isset($opts['floating'])) {
+        array_push($pass, '--floating', (string) $opts['floating']);
     }
     if ($fixed !== null) {
         $pass[] = $opts['fixed'] === false ? '--fixed' : '--fixed=' . $opts['fixed'];

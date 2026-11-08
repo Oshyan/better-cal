@@ -54,12 +54,13 @@ use BetterCal\Support\Time;
  * retry: an insert carries an id the app chose (a 409 on retry means it
  * landed), and every other step follows from a fresh read-back. A failure
  * mid-way stops, stores what Google has, and leaves the row for Review
- * ("Half done at Google"): Finish runs the same targets from Google's
- * state and then the change's part here, Put back runs the befores, all
- * or none: only while every series' etag is the one its last step left,
- * or, a last step's answer lost, the read-back is what that step leaves
- * (an insert's series as sent; compared field by field, the zone among them, etag aside). A row
- * still marked running whose
+ * ("Half done at Google"): Finish applies the change's deltas over what
+ * Google and the rows hold now (rule A: rebase), then the change's part
+ * here; Put back runs the befores, all or none: only while every series'
+ * etag is the one its last step left, or, a last step's answer lost, the
+ * series' state (rule B: one digest of every field of every resource,
+ * less what Google rewrites on its own) is the one that step journaled
+ * it leaves. A row still marked running whose
  * run holds no lock (a process that stopped) is half done too. Either way
  * the rows a recovery brings back take their ids, tags, people and links
  * from the snapshot (reattach). Each store a pending change runs records
@@ -138,21 +139,18 @@ final class GoogleSeries
     }
 
     /**
-     * The own fields Google holds of an edited day: placement and content.
-     * The rest (reminders, an answer, tags, people, an icon) are held here
-     * alone, as Feeds::heldHereAlone and the rewind read them.
-     */
-    private const GOOGLE_OWN = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'status'];
-
-    /**
      * Whether a row is an edited day to Google: it owns a field Google
-     * holds. A day with only local data (tags, people, reminders, an answer,
-     * an icon, or only something that refers to it) is an ordinary day to
-     * every Google write and every undo: no PATCH, no own values (rule D).
+     * holds, any but what is held here alone (OwnFields::HELD_HERE, the one
+     * list the sync and the rewind read). A day with only local data (tags,
+     * people, reminders, an answer, an icon, or only something that refers
+     * to it) is an ordinary day to every Google write and every undo: no
+     * PATCH, no own values (rule D). A day owning its place by coordinates
+     * alone is one too in effect: its Google fields are the series', and a
+     * day at the series' values is never sent (isPlain).
      */
     private static function editedAtGoogle(array $own): bool
     {
-        return array_intersect($own, self::GOOGLE_OWN) !== [];
+        return array_diff($own, OwnFields::HELD_HERE) !== [];
     }
 
     /** The series as stored: a target (the before side of a plan, or the undo stage's target); a day with only local data is an ordinary day. */
@@ -1234,15 +1232,16 @@ final class GoogleSeries
     /**
      * The steps a read-back calls for, each a PATCH on an instance id, from
      * one comparison per day (rule A): what the target wants of the day (an
-     * edited day, a skip, or an ordinary day: no edited day, or one at the
-     * series' own values) against what Google holds (a record, a cancelled
-     * one, or none; a record at the series' values is none). An edited day
-     * Google doesn't hold as the target has it (dropped, reset,
-     * overwritten, or never there) is sent whole; a skipped day not
-     * cancelled is cancelled; a day Google holds as an edited or cancelled
-     * record that the target has as ordinary is put back to the series'
-     * values at its occurrence. A day both have as ordinary is never sent,
-     * whatever records Google keeps for it.
+     * edited day, which is a row owning a field Google holds, rule D; a
+     * skip; or an ordinary day) against what Google holds (a record, a
+     * cancelled one, or none; for a day the target has no edited day for, a
+     * record at the series' values is none). An edited day Google doesn't
+     * hold as the target has it (dropped, reset, overwritten, or never
+     * there) is sent whole, so the record the row stands on exists; a
+     * skipped day not cancelled is cancelled; a day Google holds as an
+     * edited or cancelled record that the target has as ordinary is put
+     * back to the series' values at its occurrence. A day both have as
+     * ordinary is never sent, whatever records Google keeps for it.
      *
      * @return list<array{0:string,1:string,2:array,3:string}> kind, instance id, body, occurrence key
      */
@@ -1257,9 +1256,10 @@ final class GoogleSeries
         $out = ['exception' => [], 'skip' => [], 'plain' => []];
         foreach ($keys as $key) {
             $x = $t['exceptions'][$key] ?? null;
-            $want = isset($skipSet[$key]) ? 'skip' : ($x !== null && !self::isPlain($x, $m, $key) ? $x : null);
+            $want = isset($skipSet[$key]) ? 'skip' : $x;
             $record = $held['records'][$key] ?? null;
-            $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && !self::isPlain($record, $m, $key) ? $record : null);
+            // A record the target has no edited day for is an ordinary day when it holds the series' values.
+            $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && ($x !== null || !self::isPlain($record, $m, $key)) ? $record : null);
             $id = self::instanceId((string) $t['googleId'], $key, $allDay);
             if ($want === 'skip') {
                 if ($has !== 'skip') {
@@ -1337,9 +1337,6 @@ final class GoogleSeries
                 continue;
             }
             $record = $held['records'][$key] ?? null;
-            if (!$edited($x, $key)) {
-                continue; // an ordinary day to the plan: below, with the records the plan has none for
-            }
             $name = "'" . $x['title'] . "'";
             if ($record === null) {
                 $out[] = 'Google kept ' . $day($key) . (isset($held['cancelled'][$key]) ? ' skipped' : ' as an ordinary day') . "; the plan had $name on " . $shown($x) . '.';
@@ -1363,13 +1360,13 @@ final class GoogleSeries
         }
         foreach ($held['records'] as $key => $record) {
             $key = (string) $key;
-            if (!isset($skipSet[$key]) && !$edited($t['exceptions'][$key] ?? null, $key) && $edited($record, $key)) {
+            if (!isset($skipSet[$key]) && !isset($t['exceptions'][$key]) && $edited($record, $key)) {
                 $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . '; the plan had an ordinary day.';
             }
         }
         foreach (array_keys($held['cancelled']) as $key) {
             $key = (string) $key;
-            if (!isset($skipSet[$key]) && !$edited($t['exceptions'][$key] ?? null, $key)) {
+            if (!isset($skipSet[$key]) && !isset($t['exceptions'][$key])) {
                 $out[] = 'Google kept ' . $day($key) . ' skipped; the plan had it.';
             }
         }
@@ -1536,8 +1533,8 @@ final class GoogleSeries
                 continue;
             }
             $row = self::cols($result);
-            if (self::isPlain($row, $master, $key)) {
-                continue;
+            if ($x === null && self::isPlain($row, $master, $key)) {
+                continue; // an ordinary day; a target's edited day stays one (its row stands on its record)
             }
             $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), OwnFields::infer($row + ['recurrence_instance_utc' => $key], $master)));
             $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
@@ -2011,14 +2008,12 @@ final class GoogleSeries
         return false;
     }
 
-    /** The own fields no feed carries (Feeds' rule for an edited day held here alone). */
-    private const HELD_HERE_FIELDS = ['reminders', 'attendance', 'tags', 'people', 'icon'];
-
     /**
-     * What an edited day holds here alone: its own fields no feed carries
-     * and whatever refers to it (OwnFields::references), with the row and
-     * its links as they are now; null when it holds none of it (a row a
-     * store made and nobody touched since).
+     * What an edited day holds here alone: its own fields no feed carries,
+     * its place's coordinates, read as the sync reads them (Feeds::heldHere,
+     * from the one list OwnFields::HELD_HERE), and whatever refers to it
+     * (OwnFields::references), with the row and its links as they are now;
+     * null when it holds none of it (a row a store made and nobody touched since).
      */
     private function heldHere(array $row): ?array
     {
@@ -2026,7 +2021,7 @@ final class GoogleSeries
             return null;
         }
         $id = (int) $row['id'];
-        $fields = array_values(array_intersect(OwnFields::decode($row['override_fields'] ?? null) ?? [], self::HELD_HERE_FIELDS));
+        $fields = Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
         $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
         if ($fields === [] && $refs === []) {
             return null;
@@ -2076,7 +2071,8 @@ final class GoogleSeries
             $destId = (int) $dest['id'];
             $patch = [];
             foreach ($h['fields'] as $field) {
-                foreach (OwnFields::COLUMNS[$field] ?? [] as $col) {
+                // A place held here is its coordinates (its text is Google's).
+                foreach ($field === 'location' ? OwnFields::COORDINATE_COLUMNS : (OwnFields::COLUMNS[$field] ?? []) as $col) {
                     if (array_key_exists($col, $was)) {
                         $patch[$col] = $was[$col];
                     }

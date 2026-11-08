@@ -517,6 +517,16 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        if (array_key_exists('useSeries', $in)) {
+            // "Use series value" by the master and the day's key, as on a local calendar.
+            if (!is_array($in['useSeries']) || array_diff_key($in, array_flip(['scope', 'instanceStart', 'useSeries'])) !== []) {
+                throw HttpError::badRequest('useSeries is a list of field names, sent on its own with scope this and instanceStart');
+            }
+            if ($existing !== null) {
+                $this->useSeriesValues($userId, $master, $existing, $in['useSeries'], $calendar, $authority);
+            }
+            return;
+        }
         // An edited day never takes the flag this way (forOverride): the
         // rows stand as the commit will leave them.
         $this->tripRules();
@@ -1649,10 +1659,12 @@ final class Events
                 throw HttpError::badRequest('useSeries is a list of field names, sent on its own with scope this');
             }
             $master = $this->get($userId, (int) $event['recurrence_parent_id']);
-            if ($event['source'] === 'feed') {
-                throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+            // A writable Google calendar's day takes it as any edit does (Google first).
+            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+            if ($event['source'] === 'feed' && $google === null) {
+                throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
             }
-            $this->useSeriesValues($userId, $master, $event, $in['useSeries']);
+            $this->useSeriesValues($userId, $master, $event, $in['useSeries'], $google, $authority);
             return;
         }
         if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
@@ -1660,10 +1672,11 @@ final class Events
         }
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
+        // What a feed's day may be given is what is held here alone (OwnFields::FEED_EDIT_KEYS, from the one list).
+        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::FEED_EDIT_KEYS]);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
-            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
         }
         if ($google !== null && self::isCalendarChange($event, $in)) {
             throw HttpError::forbidden('google_move', 'Events on a Google calendar stay there; create it on the other calendar instead');

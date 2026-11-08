@@ -70,10 +70,10 @@ checkEq('google steps: the dropped moved day sent whole, the own title sent agai
 ], array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['summary'] ?? null, $s[2]['start']['dateTime'] ?? null], $steps));
 check('google steps: an exception\'s body carries no rule and no link', !isset($steps[0][2]['recurrence']) && !isset($steps[0][2]['source']));
 
-// A record the target has no exception for (a day rejoining the series) is put back to the series' values at its occurrence.
+// A record the target has no exception for (a day rejoining the series) is put back to the series' values at its occurrence;
+// one that holds them already (29 March, renamed with its series) is an ordinary day and is never sent (rule A).
 $plain = GoogleSeries::stepsFor(['exceptions' => [], 'skips' => []] + $target, $items);
-checkEq('google steps: a record the plan has no exception for is put back to the series\' values at its occurrence, a cancelled one un-cancelled', [
-    ['plain', 'smpl2weekly_20270329T170000Z', 'Sample weekly, renamed', '2027-03-29T10:00:00-07:00', 'confirmed'],
+checkEq('google steps: a cancelled record the plan has no exception for is un-cancelled at the series\' values; a record at the series\' values is left alone', [
     ['plain', 'smpl2weekly_20270405T170000Z', 'Sample weekly, renamed', '2027-04-05T10:00:00-07:00', 'confirmed'],
 ], array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['summary'] ?? null, $s[2]['start']['dateTime'] ?? null, $s[2]['status'] ?? null], $plain));
 

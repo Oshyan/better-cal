@@ -86,6 +86,29 @@ final class OwnFields
         return self::normalize(array_merge(array_diff($fields, array_keys(self::REFERENCES)), $kinds));
     }
 
+    /**
+     * The one list of what an edited day holds here alone, which no feed,
+     * Google or ICS, carries: these own fields, and a place's coordinates
+     * (COORDINATE_COLUMNS: a feed carries a place's text, never where it
+     * is). Read by the sync (Feeds::heldHere, recordHolds), by recovery's
+     * carry-over (GoogleSeries::heldHere), by the gate on a read-only
+     * feed's day (FEED_EDIT_KEYS) and checked against what Undo holds as
+     * Google's (Undo::GOOGLE_HELD, whose complement these columns are),
+     * so the four can't drift.
+     */
+    public const HELD_HERE = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+
+    /** The place's columns no feed carries: its coordinates and where they came from. */
+    public const COORDINATE_COLUMNS = ['location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at', 'geocoded_at'];
+
+    /**
+     * A request's keys for what is held here alone that a day of a
+     * read-only (ICS) feed may still be given: tags, reminders and
+     * coordinates (attendance has its own path). People and an icon are
+     * held here alone too, and not yet offered on a feed's day.
+     */
+    public const FEED_EDIT_KEYS = ['tagNames', 'reminders', 'locationLat', 'locationLng', 'locationSource', 'locationProvider'];
+
     /** The content fields and the columns each one writes. */
     public const COLUMNS = [
         'title' => ['title'],

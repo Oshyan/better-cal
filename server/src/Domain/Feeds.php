@@ -433,12 +433,12 @@ final class Feeds
      * coordinates): a feed carries its text, never its coordinates, so a
      * day's picked coordinates are held here alone while it shows the text
      * they were picked for (heldHere), and a new text clears them, as it
-     * does on every feed row.
+     * does on every feed row. The one list (OwnFields::HELD_HERE).
      */
-    private const HELD_HERE_FIELDS = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+    private const HELD_HERE_FIELDS = \BetterCal\Domain\Series\OwnFields::HELD_HERE;
 
-    /** The place's columns no feed carries: its coordinates and where they came from. */
-    private const COORDINATE_COLUMNS = ['location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at', 'geocoded_at'];
+    /** The place's columns no feed carries: its coordinates and where they came from (OwnFields::COORDINATE_COLUMNS). */
+    private const COORDINATE_COLUMNS = \BetterCal\Domain\Series\OwnFields::COORDINATE_COLUMNS;
 
     /**
      * What an edited day holds here alone, of the fields it owns ($own),

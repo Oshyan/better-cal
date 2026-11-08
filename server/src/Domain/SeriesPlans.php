@@ -1299,7 +1299,7 @@ trait SeriesPlans
      * no field and no trip, is an occurrence again, and its row goes (its
      * key in Undo).
      */
-    private function useSeriesValues(int $userId, array $master, array $row, array $fields): void
+    private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
         $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
@@ -1347,6 +1347,20 @@ trait SeriesPlans
         // The write rule every writer shares: a row goes only when nothing of
         // its own is left, nor anything referring to it (OwnFields::own).
         $gone = OwnFields::own($left, self::referencesNaming($this->db, [$id])[$id] ?? []) === [];
+        // On a writable Google calendar, Google first: the day's record given
+        // the series' values for what it takes back (all of them when no own
+        // field is left), sent only when a field Google holds changes; its
+        // answer is stored on top of the write here, as a poll stores it.
+        $resp = null;
+        if ($google !== null) {
+            $googleSet = array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS));
+            $changed = array_filter($googleSet, static fn(mixed $v, string $col): bool => (string) $v !== (string) ($row[$col] ?? ''), ARRAY_FILTER_USE_BOTH);
+            if ($changed !== []) {
+                $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1, (string) $master['tzid']);
+                $resp = $this->google()->patch($google, $googleId, self::patchBody($row, $googleSet), $this->googleBeforeSend($authority));
+            }
+        }
         $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
             if ($gone) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
@@ -1363,7 +1377,10 @@ trait SeriesPlans
             }
             unset($userId);
         });
-        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+        if ($resp !== null) {
+            $this->google()->apply($google, [$resp]);
+        }
+        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
         $this->undo->record($userId, 'event', $id, 'update', ['events' => [$row]] + $links, ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id])),
             "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'");
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);

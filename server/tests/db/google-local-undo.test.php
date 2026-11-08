@@ -301,7 +301,7 @@ return static function (Db $db): void {
         $s->undo->undoById($s->u, (int) $entry['id']);
         checkEq('undone: no row, no tag, an ordinary day again, no call to Google', [null, [], 0, []],
             [$dayRow($masterId, $key), $dayTags($masterId, $key),
-                (int) $db->scalar('SELECT COUNT(*) FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE t.name = ?', ['sample-day']), $s->t->calls]);
+                (int) $db->scalar('SELECT COUNT(*) FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE t.name = ? AND t.user_id = ?', ['sample-day', $s->u]), $s->t->calls]);
         $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
         checkEq('a poll after it keeps the day ordinary', null, $dayRow($masterId, $key));
     });

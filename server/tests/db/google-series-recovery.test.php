@@ -623,4 +623,48 @@ return static function (Db $db): void {
         }
         checkEq('some failure point leaves a row a store made (the case is exercised)', true, $madeAny);
     });
+
+    scenario('google recovery: a row a store of the half-done change made, then tagged here, keeps its tag on the day through Finish and Put back', function () use ($setup, $move, $rowAt, $held, $stored, $pending, $recover, $db): void {
+        $dry = $setup();
+        $move($dry);
+        $writes = $dry->t->writes;
+        $was = $held($setup(), 'smpl3weekly');
+        $tags = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name');
+        $ran = 0;
+        foreach (['finish', 'putBack'] as $how) {
+            for ($n = 2; $n <= $writes; $n++) {
+                $s = $setup();
+                $s->t->staleAt = $n;
+                try {
+                    $move($s);
+                } catch (HttpError) {
+                }
+                $s->t->staleAt = null;
+                $row = $db->one('SELECT targets_json, made_json FROM google_pending WHERE user_id = ?', [$s->u]);
+                $made = array_map('intval', json_decode((string) ($row['made_json'] ?? ''), true) ?: []);
+                $day = $made === [] ? null : $db->one('SELECT * FROM events WHERE id IN (' . implode(',', $made) . ') AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL ORDER BY id LIMIT 1');
+                if ($day === null) {
+                    continue;
+                }
+                $ran++;
+                $key = (string) $day['recurrence_instance_utc'];
+                // A "this event" tag on that day, as the editor sends it.
+                $s->events->patch($s->u, (int) $day['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => Time::fromDb($key)->format('Y-m-d\TH:i:s\Z'), 'tagNames' => ['Sample later tag']]);
+                checkEq("$how, failure at write $n: the tag is the day's own on the row the store made", true, in_array('tags', json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [(int) $day['id']]), true) ?: [], true));
+                $s->events->throwDeferred();
+                // The day the change's target names at that key: its row in the snapshot.
+                $rowId = (int) (json_decode((string) $row['targets_json'], true)[0]['exceptions'][$key]['rowId'] ?? 0);
+                $out = $recover($s, $how);
+                $there = $how === 'finish' ? $rowAt($s, $key) : $db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]);
+                checkEq("$how, failure at write $n: ok; the day the tagged row stood for keeps the tag on its row; the made row is gone; Google and the rows agree; no pending row",
+                    [true, ['Sample later tag'], 0, true, []],
+                    [$out['ok'], $tags((int) ($there['id'] ?? 0)), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND id <> ?', [(int) $day['id'], (int) ($there['id'] ?? 0)]),
+                        $held($s, 'smpl3weekly') === $stored($s, 'smpl3weekly'), $pending($s)]);
+                if ($how === 'putBack') {
+                    checkEq("putBack, failure at write $n: the series is as it was at Google", $was, $held($s, 'smpl3weekly'));
+                }
+            }
+        }
+        checkEq('the case is exercised for both', true, $ran >= 2);
+    });
 };

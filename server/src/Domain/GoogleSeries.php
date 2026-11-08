@@ -1369,11 +1369,13 @@ final class GoogleSeries
         $out = $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
         $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
         $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+        $held = [];
         if (is_array($plan) && $commit !== null) {
-            $this->commitLocal($calendar, $pendingId, $local, $plan, $out, $commit);
+            $held = $this->commitLocal($calendar, $pendingId, $local, $plan, $out, $commit);
         }
         $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
         $this->reattach($calendar, $local, $out['targets']);
+        $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $out['targets']));
         $this->settle($pendingId);
         return $out;
     }
@@ -1383,12 +1385,17 @@ final class GoogleSeries
      * back where they were (rewind), then the change's writer, all or
      * nothing. A failure leaves the rows as Google holds them, keeps the
      * pending row half done with words for what stopped, and is thrown.
+     * Returns what rewind took off the rows it made that hold something
+     * here alone (heldHere), for carryHeld once Google's state is stored.
+     *
+     * @return list<array>
      */
-    private function commitLocal(array $calendar, int $pendingId, array $local, array $plan, array $out, \Closure $commit): void
+    private function commitLocal(array $calendar, int $pendingId, array $local, array $plan, array $out, \Closure $commit): array
     {
         $made = $this->madeOf($pendingId);
-        $write = function () use ($calendar, $local, $plan, $out, $commit, $made): void {
-            $kept = $this->rewind($calendar, $local, $out['targets'], $made);
+        $held = [];
+        $write = function () use ($calendar, $local, $plan, $out, $commit, $made, &$held): void {
+            [$kept, $held] = $this->rewind($calendar, $local, $out['targets'], $made);
             $commit($plan, $out);
             $this->follow($local, $kept);
         };
@@ -1413,6 +1420,7 @@ final class GoogleSeries
             $this->endUnlessTx($pendingId, true);
             throw new HttpError('google_finish_local', $words, 409, ['pending' => $pendingId]);
         }
+        return $held;
     }
 
     /**
@@ -1427,11 +1435,17 @@ final class GoogleSeries
      * any other row of those series the snapshot lacks is a change made
      * here since (a tag on an ordinary day, which makes its row), kept as
      * it stands and returned, for the plan to be applied over it (follow).
+     * A row a store made that has since been given something held here
+     * alone (heldHere: a tag, a person, a reminder, an answer, an icon, a
+     * trip link) is no longer recovery's alone: where a target names a day
+     * at its key, what it holds is taken (returned, for carryHeld to put on
+     * the row the change leaves there) and the row goes; otherwise it is
+     * kept like any later local change.
      *
      * @param array<string,list<array>> $local
      * @param list<array> $targets
      * @param array<int,true> $made
-     * @return list<int> the rows kept that the snapshot lacks
+     * @return array{0:list<int>, 1:list<array>} the rows kept that the snapshot lacks, and what was taken
      */
     private function rewind(array $calendar, array $local, array $targets, array $made): array
     {
@@ -1464,16 +1478,25 @@ final class GoogleSeries
         [$inUids, $uidParams] = Db::in(array_values(array_unique($uids)));
         [$inIds, $idParams] = Db::in(array_values(array_unique($googleIds)));
         $kept = [];
-        foreach ($this->db->all("SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND (uid IN $inUids OR google_event_id IN $inIds)", array_merge([$calendarId], $uidParams, $idParams)) as $r) {
+        $taken = [];
+        foreach ($this->db->all("SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND (uid IN $inUids OR google_event_id IN $inIds)", array_merge([$calendarId], $uidParams, $idParams)) as $r) {
             $id = (int) $r['id'];
             if (isset($snap[$id])) {
                 continue;
             }
-            if (isset($made[$id])) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
-            } else {
+            if (!isset($made[$id])) {
                 $kept[] = $id;
+                continue;
             }
+            $held = $this->heldHere($r);
+            if ($held !== null && !self::namesDay($targets, $r)) {
+                $kept[] = $id;
+                continue;
+            }
+            if ($held !== null) {
+                $taken[] = $held;
+            }
+            $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
         }
         $live = [];
         if ($snap !== []) {
@@ -1494,7 +1517,7 @@ final class GoogleSeries
             }
         }
         if ($gone === []) {
-            return $kept;
+            return [$kept, $taken];
         }
         $eventCols = ['event_tags' => ['event_id'], 'event_people' => ['event_id']];
         foreach (OwnFields::REFERENCES as [$table, , $cols]) {
@@ -1518,7 +1541,145 @@ final class GoogleSeries
                 }
             }
         }
-        return $kept;
+        return [$kept, $taken];
+    }
+
+    /** Whether a target has a day of the series at $row's key (an edited day of its own, by key). */
+    private static function namesDay(array $targets, array $row): bool
+    {
+        foreach ($targets as $t) {
+            if ((string) ($t['uid'] ?? '') === (string) $row['uid'] && isset($t['exceptions'][(string) $row['recurrence_instance_utc']])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The own fields no feed carries (Feeds' rule for an edited day held here alone). */
+    private const HELD_HERE_FIELDS = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+
+    /**
+     * What an edited day holds here alone: its own fields no feed carries
+     * and whatever refers to it (OwnFields::references), with the row and
+     * its links as they are now; null when it holds none of it (a row a
+     * store made and nobody touched since).
+     */
+    private function heldHere(array $row): ?array
+    {
+        if ($row['recurrence_instance_utc'] === null) {
+            return null;
+        }
+        $id = (int) $row['id'];
+        $fields = array_values(array_intersect(OwnFields::decode($row['override_fields'] ?? null) ?? [], self::HELD_HERE_FIELDS));
+        $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
+        if ($fields === [] && $refs === []) {
+            return null;
+        }
+        return ['row' => $row, 'fields' => $fields, 'links' => Undo::linksOf($this->db, [$id])];
+    }
+
+    /**
+     * What rows a store made held here alone (heldHere), put on the row the
+     * recovery leaves for that day: the row a target names at its key
+     * (the snapshot's row, by id, or the row at that key now). Its own
+     * fields there are its own on that row (a tag list replaces the row's,
+     * as a "this event" edit would), and what referred to it refers to that
+     * row. A day with no row left for it is put back as it was and named:
+     * never dropped without a word.
+     *
+     * @param list<array> $held
+     * @param list<array> $targets
+     * @return list<string> words for the days left as they were
+     */
+    private function carryHeld(array $calendar, array $held, array $targets): array
+    {
+        $words = [];
+        $calendarId = (int) $calendar['id'];
+        $live = fn(int $id): ?array => $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
+        foreach ($held as $h) {
+            $was = $h['row'];
+            $wasId = (int) $was['id'];
+            $key = (string) $was['recurrence_instance_utc'];
+            $dest = null;
+            foreach ($targets as $t) {
+                $rid = (int) ($t['exceptions'][$key]['rowId'] ?? 0);
+                if ((string) ($t['uid'] ?? '') === (string) $was['uid'] && $rid > 0 && $rid !== $wasId) {
+                    $dest = $live($rid);
+                }
+            }
+            $dest ??= $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL', [$calendarId, (string) $was['uid'], $key, $wasId]);
+            if ($dest === null) {
+                if ($live($wasId) === null) {
+                    $this->db->upsert('events', $was);
+                    $this->relinks($h['links'], $wasId, $wasId, []);
+                    $day = Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']))), (int) Time::nowUtc()->format('Y'));
+                    $words[] = "'" . (string) $was['title'] . "' on $day was changed here while the change was half done; it was left as it was.";
+                }
+                continue;
+            }
+            $destId = (int) $dest['id'];
+            $patch = [];
+            foreach ($h['fields'] as $field) {
+                foreach (OwnFields::COLUMNS[$field] ?? [] as $col) {
+                    if (array_key_exists($col, $was)) {
+                        $patch[$col] = $was[$col];
+                    }
+                }
+            }
+            if ($h['fields'] !== [] && OwnFields::hasColumn($this->db)) {
+                $patch['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(OwnFields::decode($dest['override_fields'] ?? null) ?? [], $h['fields'])));
+            }
+            if ($patch !== []) {
+                $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$destId]);
+            }
+            $replace = [];
+            foreach (['tags' => 'event_tags', 'people' => 'event_people'] as $field => $table) {
+                if (in_array($field, $h['fields'], true)) {
+                    $this->db->run("DELETE FROM `$table` WHERE event_id = ?", [$destId]);
+                    $replace[$table] = true;
+                }
+            }
+            if ($live($wasId) !== null) {
+                $this->db->run('DELETE FROM events WHERE id = ?', [$wasId]);
+            }
+            $this->relinks($h['links'], $wasId, $destId, $replace);
+        }
+        return $words;
+    }
+
+    /**
+     * Links captured for row $from (Undo::linksOf's shape) written naming
+     * $to; tags and people only where $replace names their table, or where
+     * $from is $to. A link whose other end is gone since is left out.
+     *
+     * @param array<string,list<array>> $links
+     * @param array<string,true> $replace
+     */
+    private function relinks(array $links, int $from, int $to, array $replace): void
+    {
+        $eventCols = ['event_tags' => ['event_id'], 'event_people' => ['event_id']];
+        foreach (OwnFields::REFERENCES as [$table, , $cols]) {
+            $eventCols[$table] = $cols;
+        }
+        foreach ($eventCols as $table => $cols) {
+            if (in_array($table, ['event_tags', 'event_people'], true) && $from !== $to && !isset($replace[$table])) {
+                continue;
+            }
+            foreach ($links[$table] ?? [] as $link) {
+                foreach ($cols as $col) {
+                    if ((int) ($link[$col] ?? 0) === $from) {
+                        $link[$col] = $to;
+                    }
+                }
+                try {
+                    $this->db->upsert($table, $link);
+                } catch (\PDOException $e) {
+                    if (!Db::isForeignKeyViolation($e)) {
+                        throw $e;
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1725,8 +1886,23 @@ final class GoogleSeries
         $out = ['readbacks' => [], 'differences' => [], 'targets' => [], 'inserted' => []];
         if ($run !== []) {
             $out = $this->run($calendar, $pendingId, $run, $steps, $beforeSend, true);
+            // Rows a store of the change made that hold something here
+            // alone since go to the day the series goes back to: the
+            // change's target names its row at their key.
+            $held = [];
+            $made = $this->madeOf($pendingId);
+            if ($made !== []) {
+                [$in, $params] = Db::in(array_keys($made));
+                foreach ($this->db->all("SELECT * FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                    $h = $this->heldHere($r);
+                    if ($h !== null) {
+                        $held[] = $h;
+                    }
+                }
+            }
             $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
             $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
+            $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $targets));
         }
         $this->settle($pendingId);
         $out['targets'] = array_values($out['targets']);

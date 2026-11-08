@@ -286,9 +286,17 @@ return static function (Db $db): void {
         $key = '2027-04-13 16:00:00';
         $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-13T16:00:00+00:00', 'tagNames' => ['sample-day']]);
         $entry = $last($s);
-        checkEq('the day has a row with the tag, and the entry keeps it as made', [true, ['sample-day'], 0, 1],
+        checkEq('the day has a row with the tag, the entry keeps it as made, and Google was sent nothing and holds no record of the day', [true, ['sample-day'], 0, 1, [], false],
             [$dayRow($masterId, $key) !== null, $dayTags($masterId, $key), count(json_decode((string) $entry['before_json'], true)['tables']['events'] ?? []),
-                count(json_decode((string) $entry['after_json'], true)['tables']['events'] ?? [])]);
+                count(json_decode((string) $entry['after_json'], true)['tables']['events'] ?? []), $s->t->calls, isset($s->fake->events['smpl4weekly_20270413T160000Z'])]);
+        // Polls keep the row: a delta, and a read of the whole calendar (no sync token), where Google lists no record of the day.
+        $id = (int) $dayRow($masterId, $key)['id'];
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $kept = (int) ($dayRow($masterId, $key)['id'] ?? 0);
+        $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$s->calendarId]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq('a delta poll and a whole read both keep the row and its tag', [$id, $id, ['sample-day']],
+            [$kept, (int) ($dayRow($masterId, $key)['id'] ?? 0), $dayTags($masterId, $key)]);
         $s->t->calls = [];
         $s->undo->undoById($s->u, (int) $entry['id']);
         checkEq('undone: no row, no tag, an ordinary day again, no call to Google', [null, [], 0, []],
@@ -315,5 +323,34 @@ return static function (Db $db): void {
         $s->undo->undoById($s->u, (int) $last($s)['id']);
         checkEq('redo by the undo\'s entry: the title here and at Google, the tag back', ['Sample standup, offsite', 'Sample standup, offsite', ['sample-day']],
             [$dayRow($masterId, $key)['title'] ?? null, $s->fake->events[$gid]['summary'] ?? null, $dayTags($masterId, $key)]);
+    });
+
+    scenario('google local undo: an ordinary day given only a tag, then deleted, is skipped at Google and here, its row gone; a whole read keeps it skipped', function () use ($db, $setup, $rowOf, $dayRow): void {
+        $s = $setup();
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $key = '2027-04-13 16:00:00';
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-13T16:00:00+00:00', 'tagNames' => ['sample-day']]);
+        $s->events->deleteEvent($s->u, $masterId, 'this', '2027-04-13T16:00:00+00:00');
+        $skipped = static fn(): bool => in_array($key, BetterCal\Domain\Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$masterId])), true);
+        checkEq('deleted: no row, the day skipped here and cancelled at Google', [null, true, 'cancelled'],
+            [$dayRow($masterId, $key), $skipped(), $s->fake->events['smpl4weekly_20270413T160000Z']['status'] ?? null]);
+        $db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$s->calendarId]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq('a whole read after it: still no row, still skipped', [null, true], [$dayRow($masterId, $key), $skipped()]);
+    });
+
+    scenario('google local undo: a place given to an edited day that had none is cleared by its undo, here and at Google, and redo gives it back', function () use ($db, $setup, $last, $rowOf): void {
+        $s = $setup();
+        $gid = 'smpl4weekly_20270420T160000Z';
+        $id = (int) $rowOf($s, $gid)['id'];
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $place = static fn(): array => [$db->scalar('SELECT location FROM events WHERE id = ?', [$id]), (string) ($s->fake->events[$gid]['location'] ?? '')];
+        checkEq('no place to start with', [null, ''], $place());
+        $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-20T16:00:00+00:00', 'location' => 'Sample hall']);
+        checkEq('the place here and at Google', ['Sample hall', 'Sample hall'], $place());
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('undone: no place, here or at Google', [null, ''], $place());
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('redo: the place back, here and at Google', ['Sample hall', 'Sample hall'], $place());
     });
 };

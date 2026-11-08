@@ -531,8 +531,11 @@ final class Events
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
         } else {
-            // The occurrence becomes an exception at Google: patch its
-            // instance id with the occurrence as it should now be.
+            // The occurrence becomes an exception at Google, when the edit
+            // changes what Google shows of it: its instance id patched
+            // with the occurrence as it should now be. A change held here
+            // alone (tags, people, reminders, attendance) sends nothing,
+            // so Google keeps no record of the day equal to its series.
             $duration = Recurrence::durationSeconds($master);
             $instStart = Time::fromDb($instanceUtc);
             $override = $this->copyForChild($master);
@@ -548,7 +551,12 @@ final class Events
             $override = array_merge($override, $patch);
             self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-            $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
+            if (GoogleUndo::changedKeys($shown, GoogleWriter::instanceBody($override)) !== []) {
+                $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
+            }
+            // Journaled as a write to that resource either way: the row it
+            // makes here is undone with the fields it changed at Google,
+            // none for a change held here alone (GoogleUndo).
             $undo = [$instanceId, $shown, null];
             $made = $override;
         }
@@ -580,17 +588,20 @@ final class Events
                 }
             } else {
                 $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
-                if ($created === null && $resp === null) {
-                    return false; // what Google answered is still kept
-                }
                 if ($created === null) {
-                    // Google's answer equals the series on that day (what
-                    // changed is local: tags, people, reminders, attendance),
-                    // so the sync stores no row for it (Feeds::sync, an
-                    // ordinary occurrence). The day's row is this writer's,
-                    // under Google's identity for the occurrence and as the
-                    // sync would have made it (a Google calendar's rows are
-                    // Google's: a cancelled day takes it, as a poll's does).
+                    // Nothing sent (what changed is held here alone: tags,
+                    // people, reminders, attendance), or Google's answer
+                    // equals the series on that day, which the sync stores
+                    // no row for (Feeds::sync, an ordinary occurrence). The
+                    // day's row is this writer's, under Google's identity
+                    // for the occurrence (a later edit of its Google fields
+                    // patches that id) and as the sync would have made it (a
+                    // Google calendar's rows are Google's: a cancelled day
+                    // takes it, as a poll's does). A poll that reads the
+                    // calendar whole keeps it while its series has the day,
+                    // though Google holds no record of it: its own part is
+                    // held here alone (Feeds::sync, rows the feed no longer
+                    // carries).
                     $created = $this->withOwnColumn(array_merge($made, [
                         'recurrence_parent_id' => $masterId,
                         'recurrence_instance_utc' => $instanceUtc,

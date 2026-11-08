@@ -34,7 +34,8 @@ use BetterCal\Infra\Db;
  *               series the change made is its removal); else null
  *   changed     edit: the fields of `before` the edit changed (changedKeys),
  *               the only ones its undo sends back, over the event as it is
- *               then, so a later change to another field stays; an entry
+ *               then, so a later change to another field stays (one the
+ *               event had none of goes as null: inverse); an entry
  *               without them sends what its after snapshot shows changed,
  *               else all of `before`
  *   etagBefore  the row's etag before the change, when known
@@ -123,6 +124,23 @@ final class GoogleUndo
         }
         if (array_intersect($out, ['start', 'end']) !== []) {
             $out = array_values(array_unique(array_merge($out, array_intersect(['start', 'end'], array_keys($before)))));
+        }
+        return $out;
+    }
+
+    /**
+     * The PATCH that puts the fields $changed back as $before had them: each
+     * at its before value, and one $before has none of (a link the edit
+     * added, which GoogleWriter::body sends as `source` only when there is
+     * one) as null, which clears it at Google. Pure.
+     *
+     * @param list<string> $changed
+     */
+    public static function inverse(array $before, array $changed): array
+    {
+        $out = [];
+        foreach ($changed as $key) {
+            $out[$key] = array_key_exists($key, $before) ? $before[$key] : null;
         }
         return $out;
     }
@@ -318,7 +336,7 @@ final class GoogleUndo
                 // to another field stays, here and at Google (one to the same
                 // field made this entry stale: Undo::staleFor).
                 $changed = self::changedOf($g, $leftRow);
-                $send = array_intersect_key($g['before'], array_flip($changed));
+                $send = self::inverse($g['before'], $changed);
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and

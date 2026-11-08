@@ -14495,6 +14495,22 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         BetterCal\Http\Controllers\ExportController::attachment('Café plans.ics'));
 }
 
+// A Google edit's undo sends back the fields the edit changed alone, each
+// at its value before; one the event had none of goes as null, clearing it.
+{
+    $was = ['summary' => 'Sample review', 'description' => '', 'location' => '', 'status' => 'confirmed',
+        'start' => ['dateTime' => '2027-03-30T15:00:00-07:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-30T16:00:00-07:00', 'timeZone' => 'America/Los_Angeles']];
+    $now = array_replace($was, ['location' => 'Sample hall', 'source' => ['url' => 'https://example.test/sample', 'title' => 'example.test'],
+        'end' => ['dateTime' => '2027-03-30T17:00:00-07:00', 'timeZone' => 'America/Los_Angeles']]);
+    $keys = BetterCal\Domain\GoogleUndo::changedKeys($was, $now);
+    sort($keys);
+    checkEq('google undo: the fields an edit changed, a start or end change sending both', ['end', 'location', 'source', 'start'], $keys);
+    checkEq('google undo: the inverse sends each at its value before, a field it had none of as null', [
+        'location' => '', 'source' => null, 'start' => $was['start'], 'end' => $was['end'],
+    ], BetterCal\Domain\GoogleUndo::inverse($was, ['location', 'source', 'start', 'end']));
+    checkEq('google undo: an edit that changed nothing at Google sends nothing back', [], BetterCal\Domain\GoogleUndo::inverse($was, BetterCal\Domain\GoogleUndo::changedKeys($was, $was)));
+}
+
 require __DIR__ . '/series-model.php';
 require __DIR__ . '/google-series.php';
 require __DIR__ . '/expander.php';

@@ -22,3 +22,9 @@ Tasks and projects each get their own calendar (Fibery tasks, Fibery projects), 
 Only the time can change from Better-Cal; titles, details and everything else are edited in Fibery. A task moved to another day keeps its time of day, so one due at midnight stays at midnight; it has one date, so it moves but doesn't stretch. A project keeps its length when moved, and a resize changes its start or end. If Fibery refuses a change, the event goes back and the message says why. Undo works as for any move: it puts the date back in Fibery (an overdue task goes back to its real due date, not today).
 
 Dates follow Fibery's own rules: date-times are shown in your Home time zone, and date-only fields and date ranges never shift between zones.
+
+## How It Syncs
+
+Every minute the plugin asks each chosen database two small questions in one request: how many items it holds and when the newest change was made. If nothing moved, that's the whole run. Editing, adding or deleting an item changes one of the two, and then both tasks and projects are read in full in the same request, not just the one that changed, so tasks that show a renamed project pick up its new name right away. Everything is also read in full when the settings change, when the day turns over (overdue tasks move to the new today), and at least every 15 minutes regardless, which picks up changes that don't touch the items themselves, like an edited description or a renamed state.
+
+If Fibery refuses to read one database, the other still syncs, its calendar keeps what it last had, and the plugin's status says which one failed. It tries again the next minute.

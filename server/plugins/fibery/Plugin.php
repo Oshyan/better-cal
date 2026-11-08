@@ -10,10 +10,12 @@ use BetterCal\Plugin\PluginInterface;
 /**
  * Fibery tasks and projects on the calendar, and their dates back to Fibery.
  *
- * Every minute the sync job reads the open, dated items of the chosen
- * databases (one batched request) and replaces the calendar's snapshot, so
- * completions, deletions and date changes made in Fibery all arrive the same
- * way. Moving an event here calls applyEdit, which writes the new date to
+ * Every minute the sync job asks each chosen database for its entity count
+ * and newest modification date (one small batched request). When either
+ * moved for any database, or one wasn't read in full for 15 minutes, or its
+ * settings changed, every database has its open, dated items read (their
+ * pages in one batch) and the calendars' snapshots replaced, so completions,
+ * deletions and date changes made in Fibery all arrive the same way. Moving an event here calls applyEdit, which writes the new date to
  * Fibery while the person waits.
  *
  * Dates follow Fibery's own rules (its guide, "Timezones" and "Date Ranges in
@@ -39,6 +41,7 @@ return new class implements PluginInterface, EditablePlugin {
     private const SCHEMA_TTL = 600;          // seconds a cached schema is trusted
     private const PAGE = 1000;               // entities per query page (Fibery's recommendation)
     private const MAX_PAGES = 3;             // per database per run
+    private const FULL_READ_EVERY = 900;     // seconds: each slot is read in full at least this often
     private const DESCRIPTION_CHARS = 1500;
     private const FINISHED_LOOKBACK_DAYS = 90;
 
@@ -119,16 +122,44 @@ return new class implements PluginInterface, EditablePlugin {
             return;
         }
 
-        $rows = [];
+        // Ask each chosen database whether anything changed (one small
+        // batched request). A run is the probe alone, or reads every slot:
+        // a renamed project shows in the tasks that name it, though only
+        // the project's database moved.
+        $probes = $this->probe($host, $ws, $token, $plans);
+        $known = $host->kvGet('synced', []);
+        $known = is_array($known) ? $known : [];
+        $due = false;
         foreach ($plans as $slot => $plan) {
-            [$rows[$slot], $complete] = $this->fetchAll($host, $ws, $token, $this->query($plan, $s, null));
-            if (!$complete) {
+            $last = is_array($known[$slot] ?? null) ? $known[$slot] : null;
+            $due = $due || $last === null || $probes[$slot] === null || ($last['probe'] ?? null) !== $probes[$slot]
+                || ($last['mark'] ?? null) !== $this->mark($host, $plan, $s, $slot)
+                || time() - (int) ($last['at'] ?? 0) >= self::FULL_READ_EVERY;
+        }
+        $queries = [];
+        foreach ($plans as $slot => $plan) {
+            if ($due) {
+                $queries[$slot] = $this->query($plan, $s, null);
+                continue;
+            }
+            if (empty($known[$slot]['complete'])) {
                 $warnings[] = ['severity' => 'info', 'code' => 'too-many'];
             }
+            $host->log($slot . ': unchanged in Fibery, not read again');
         }
-        $docs = !empty($s['includeDescription']) ? $this->descriptions($host, $ws, $token, $plans, $rows) : [];
+        [$rows, $complete, $failed] = $this->fetchAll($host, $ws, $token, $queries);
+        foreach ($failed as $slot => $why) {
+            // This slot's calendar keeps what it last had; the others sync.
+            $warnings[] = ['severity' => 'warn', 'code' => $slot . '-read-failed'];
+            $host->log($slot . ': Fibery refused the read: ' . $why);
+        }
+        if (in_array(false, $complete, true)) {
+            $warnings[] = ['severity' => 'info', 'code' => 'too-many'];
+        }
+        $read = array_intersect_key($plans, $rows);
+        $docs = !empty($s['includeDescription']) ? $this->descriptions($host, $ws, $token, $read, $rows, count($read) === count($plans)) : [];
 
-        foreach ($plans as $slot => $plan) {
+        foreach ($read as $slot => $plan) {
             $events = [];
             foreach ($rows[$slot] as $row) {
                 $ev = $this->event($plan, $row, $s, $tz, $ws, $docs);
@@ -138,7 +169,10 @@ return new class implements PluginInterface, EditablePlugin {
             }
             [$added, $updated, $removed] = $host->syncEvents($this->calendarId($host, $slot, true), $events);
             $host->log($slot . ': ' . count($events) . ' items (' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed)');
+            // Marked after the calendar exists, so the next run compares like with like.
+            $known[$slot] = ['probe' => $probes[$slot], 'mark' => $this->mark($host, $plan, $s, $slot), 'at' => time(), 'complete' => $complete[$slot]];
         }
+        $host->kvSet('synced', array_intersect_key($known, $plans));
         $host->replaceWarnings($warnings);
     }
 
@@ -264,38 +298,122 @@ return new class implements PluginInterface, EditablePlugin {
     }
 
     /**
-     * Every row a query matches, a page at a time (Fibery's own cursor:
-     * order by id, ask for one more than a page, continue after the last id).
-     * One database per request keeps each answer well under the 5 MB cap.
+     * What each slot's database looks like now, for telling whether it
+     * changed: its entity count and newest modification date, every slot in
+     * one request (the count is the one aggregate Fibery allows at the top of
+     * a query). The count is of the whole database, so a deletion changes it;
+     * an edit changes the newest date. Null for a slot whose answer didn't
+     * come back usable, so the run reads in full.
      *
-     * @return array{0:list<array>,1:bool} rows, and whether they're all of them
+     * @return array<string,?array{count:int,newest:?string}>
      */
-    private function fetchAll(PluginHost $host, string $ws, string $token, array $query): array
+    private function probe(PluginHost $host, string $ws, string $token, array $plans): array
     {
-        $params = $query['_params'];
-        unset($query['_params']);
-        $base = $query['q/where'];
-        $rows = [];
-        $after = null;
-        for ($page = 0; $page < self::MAX_PAGES; $page++) {
-            if ($after !== null) {
-                $query['q/where'] = ['q/and', $base, ['>', ['fibery/id'], '$after']];
-                $params['$after'] = $after;
-            }
-            $batch = $this->commands($host, $ws, $token, [['command' => 'fibery.entity/query', 'args' => ['query' => $query, 'params' => $params]]])[0];
-            $more = count($batch) > self::PAGE;
-            $batch = array_slice($batch, 0, self::PAGE);
-            array_push($rows, ...$batch);
-            if (!$more || $batch === []) {
-                return [$rows, true];
-            }
-            $after = (string) end($batch)['fibery/id'];
+        $commands = [];
+        foreach ($plans as $plan) {
+            $commands[] = ['command' => 'fibery.entity/query', 'args' => ['query' => [
+                'q/from' => $plan['db'],
+                'q/select' => ['q/count', ['fibery/id']],
+            ]]];
+            $commands[] = ['command' => 'fibery.entity/query', 'args' => ['query' => [
+                'q/from' => $plan['db'],
+                'q/select' => ['fibery/modification-date'],
+                'q/order-by' => [[['fibery/modification-date'], 'q/desc']],
+                'q/limit' => 1,
+            ]]];
         }
-        return [$rows, false];
+        $results = $this->commandResults($host, $ws, $token, $commands);
+        $out = [];
+        $i = 0;
+        foreach (array_keys($plans) as $slot) {
+            [$count, $newest] = [$results[$i++], $results[$i++]];
+            $out[$slot] = $count['ok'] && is_int($count['result']) && $newest['ok'] && is_array($newest['result']) ? [
+                'count' => $count['result'],
+                'newest' => isset($newest['result'][0]['fibery/modification-date']) ? (string) $newest['result'][0]['fibery/modification-date'] : null,
+            ] : null;
+        }
+        return $out;
     }
 
-    /** Plain-text descriptions, by document secret, fetched only when changed. */
-    private function descriptions(PluginHost $host, string $ws, string $token, array $plans, array $rows): array
+    /**
+     * Everything besides Fibery's data that decides what a slot shows: its
+     * plan, the settings, the Home zone and today's date there (an overdue
+     * task moves to today, and the look-back window moves with the day), and
+     * the calendar it fills. When this changes the slot is read again.
+     */
+    private function mark(PluginHost $host, array $plan, array $s, string $slot): string
+    {
+        unset($s['token']);
+        $tz = $host->timezone();
+        return sha1((string) json_encode([$plan, $s, $tz->getName(), (new \DateTimeImmutable('now', $tz))->format('Y-m-d'),
+            $this->calendarId($host, $slot, false)]));
+    }
+
+    /**
+     * Every row each slot's query matches, a page at a time (Fibery's own
+     * cursor: order by id, ask for one more than a page, continue after the
+     * last id). Each round is one request carrying the next page of every
+     * slot still reading, so the slots' first pages travel together and a
+     * slot whose page was full goes on with its own. A command Fibery
+     * refuses fails only its own slot.
+     *
+     * @param array<string,array> $queries by slot
+     * @return array{0:array<string,list<array>>,1:array<string,bool>,2:array<string,string>}
+     *         each slot read: its rows and whether they're all of them; each slot that failed: why
+     */
+    private function fetchAll(PluginHost $host, string $ws, string $token, array $queries): array
+    {
+        $reading = [];
+        foreach ($queries as $slot => $query) {
+            $params = $query['_params'];
+            unset($query['_params']);
+            $reading[$slot] = ['query' => $query, 'params' => $params, 'base' => $query['q/where'], 'after' => null];
+        }
+        $rows = [];
+        $complete = [];
+        $failed = [];
+        for ($page = 0; $page < self::MAX_PAGES && $reading !== []; $page++) {
+            $commands = [];
+            foreach ($reading as $r) {
+                if ($r['after'] !== null) {
+                    $r['query']['q/where'] = ['q/and', $r['base'], ['>', ['fibery/id'], '$after']];
+                    $r['params']['$after'] = $r['after'];
+                }
+                $commands[] = ['command' => 'fibery.entity/query', 'args' => ['query' => $r['query'], 'params' => $r['params']]];
+            }
+            $results = $this->commandResults($host, $ws, $token, $commands);
+            foreach (array_keys($reading) as $i => $slot) {
+                $res = $results[$i];
+                if (!$res['ok'] || !is_array($res['result'])) {
+                    $failed[$slot] = $res['ok'] ? 'unexpected answer' : $res['error'];
+                    unset($reading[$slot], $rows[$slot]);
+                    continue;
+                }
+                $batch = array_slice(array_values($res['result']), 0, self::PAGE + 1);
+                $more = count($batch) > self::PAGE;
+                $batch = array_slice($batch, 0, self::PAGE);
+                $rows[$slot] ??= [];
+                array_push($rows[$slot], ...$batch);
+                if (!$more || $batch === []) {
+                    $complete[$slot] = true;
+                    unset($reading[$slot]);
+                    continue;
+                }
+                $reading[$slot]['after'] = (string) end($batch)['fibery/id'];
+            }
+        }
+        foreach (array_keys($reading) as $slot) {
+            $complete[$slot] = false;
+        }
+        return [$rows, $complete, $failed];
+    }
+
+    /**
+     * Plain-text descriptions, by document secret, fetched only when changed.
+     * Ones no longer used are dropped only when every slot was read this run
+     * ($prune): a slot left unread keeps showing its descriptions.
+     */
+    private function descriptions(PluginHost $host, string $ws, string $token, array $plans, array $rows, bool $prune): array
     {
         $cache = $host->kvGet('descriptions', []);
         $cache = is_array($cache) ? $cache : [];
@@ -331,7 +449,9 @@ return new class implements PluginInterface, EditablePlugin {
                 }
             }
         }
-        $cache = array_intersect_key($cache, $keep);
+        if ($prune) {
+            $cache = array_intersect_key($cache, $keep);
+        }
         $host->kvSet('descriptions', $cache);
         return array_map(static fn($c) => (string) ($c['t'] ?? ''), $cache);
     }
@@ -728,17 +848,37 @@ return new class implements PluginInterface, EditablePlugin {
      */
     private function commands(PluginHost $host, string $ws, string $token, array $commands): array
     {
+        $results = [];
+        foreach ($this->commandResults($host, $ws, $token, $commands) as $r) {
+            if (!$r['ok']) {
+                throw new \RuntimeException($r['error'], self::E_REFUSED);
+            }
+            $results[] = $r['result'];
+        }
+        return $results;
+    }
+
+    /**
+     * Run commands in one request, each answered on its own: Fibery returns
+     * {success, result} for every command, a failed one's result saying why
+     * ({name, message}). Throws only when the request as a whole fails.
+     *
+     * @return list<array{ok:bool,result:mixed,error:string}>
+     */
+    private function commandResults(PluginHost $host, string $ws, string $token, array $commands): array
+    {
         $out = $this->post($host, 'https://' . $ws . '/api/commands', $token, $commands);
-        if (!is_array($out) || count($out) !== count($commands)) {
+        if (!is_array($out) || !array_is_list($out) || count($out) !== count($commands)) {
             throw new \RuntimeException('Fibery sent an unexpected answer', self::E_UNREACHABLE);
         }
         $results = [];
         foreach ($out as $r) {
             if (!is_array($r) || empty($r['success'])) {
                 $msg = is_array($r) && is_array($r['result'] ?? null) ? (string) ($r['result']['message'] ?? '') : '';
-                throw new \RuntimeException($msg !== '' ? mb_substr($msg, 0, 200) : 'Fibery refused the request', self::E_REFUSED);
+                $results[] = ['ok' => false, 'result' => null, 'error' => $msg !== '' ? mb_substr($msg, 0, 200) : 'Fibery refused the request'];
+                continue;
             }
-            $results[] = $r['result'];
+            $results[] = ['ok' => true, 'result' => $r['result'] ?? null, 'error' => ''];
         }
         return $results;
     }

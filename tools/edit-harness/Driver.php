@@ -280,12 +280,6 @@ final class Driver
             // series as it was back to Google (#172): every row as before the edit, but for the etags Google changes
             // on every write, and the stand-in holding it as the rows here do. Redo and the stack are the local run's.
             $this->checkGoogleHeld($id);
-            if ($v['scope'] === 'attendAll' || $path === 'attendFollowing@first') {
-                // Planned for all events (from the first day, too) is the account's own mark, never sent to Google,
-                // and a Google calendar's entry of a change made here alone keeps no snapshot (Activity, log-only).
-                $this->na('Undo of an answer for all events on a Google calendar (local, log-only)');
-                return $this->result($path);
-            }
             Prof::mark('undo');
             if ($this->undoLatest('f-undo', 'undo')) {
                 $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),

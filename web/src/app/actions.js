@@ -333,9 +333,10 @@ export function exitReschedule() {
 // --- event mutations --------------------------------------------------------
 
 // A write to an event on a Google calendar goes to Google and lands back
-// from Google's answer; there is no local snapshot to undo to, and the
-// global Undo would skip it and revert something ELSE. So those toasts say
-// where the change went and do not offer Undo (server: Events::googleJournal).
+// from Google's answer, so those toasts say where the change went. Its Undo
+// is a second write to Google; a change made here alone (a trip link,
+// Planned, tags) undoes here as on a local calendar (server: GoogleUndo,
+// Undo::heldHereAlone).
 export function googleBacked(occ) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   return !!(cal && cal.provider === 'google');

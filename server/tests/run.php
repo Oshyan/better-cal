@@ -10356,6 +10356,11 @@ require __DIR__ . '/plugins.php';
     BetterCal\Domain\CalendarMoveGuard::lockAndAssertMutable($mdb, [1]);
     check('move guard: completed/cancelled lifecycle restores writes', true);
     $mdb->run("UPDATE calendars SET kind = 'subscribed', provider = 'google' WHERE id = 1");
+    // A change to what Google holds of the row (its title); one made here alone would undo here.
+    $mdb->run('UPDATE mutations SET before_json = ?, after_json = ? WHERE id = 1', [
+        json_encode(['tables' => ['events' => [['id' => 10, 'calendar_id' => 1, 'uid' => 'sample-event', 'title' => 'Before']]]]),
+        json_encode(['tables' => ['events' => [['id' => 10, 'calendar_id' => 1, 'uid' => 'sample-event', 'title' => 'After']]]]),
+    ]);
     $googleUndoCode = null;
     try {
         (new BetterCal\Domain\Undo($mdb))->undoById(1, 1, true);

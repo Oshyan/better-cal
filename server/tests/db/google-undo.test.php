@@ -148,9 +148,10 @@ return static function (Db $db): void {
         $entry = $last($t);
         $g = $google($entry);
         $listed = (new Activity($db))->list($t->u, [])['entries'][0];
-        checkEq('the entry keeps empty snapshots and the before state, etags before and after; Activity offers its undo', [
-            '{"tables":[]}', '{"tables":[]}', 'edit', 'probe9z8y7x', 'Sample review', 'Sample room 1', '"g1"', '"g2"', true,
-        ], [$entry['before_json'], $entry['after_json'], $g['kind'] ?? null, $g['googleId'] ?? null, $g['before']['summary'] ?? null, $g['before']['location'] ?? null,
+        $snap = static fn(?string $json): ?string => json_decode((string) $json, true)['tables']['events'][0]['title'] ?? null;
+        checkEq('the entry keeps the row before and after (its local part undoes from them) and the before state, etags before and after; Activity offers its undo', [
+            'Sample review', 'Sample review, renamed', 'edit', 'probe9z8y7x', 'Sample review', 'Sample room 1', '"g1"', '"g2"', true,
+        ], [$snap($entry['before_json']), $snap($entry['after_json']), $g['kind'] ?? null, $g['googleId'] ?? null, $g['before']['summary'] ?? null, $g['before']['location'] ?? null,
             $g['etagBefore'] ?? null, $g['etagAfter'] ?? null, $listed['undoable']]);
 
         $t->google->calls = [];

@@ -467,6 +467,19 @@ return static function (Db $db): void {
             }), true, false);
         });
 
+        // An edit of what Google doesn't hold (tags, reminders, the trip
+        // flag) on an event of a Google calendar the account writes to:
+        // Google is sent nothing, and the entry undoes here as a local one.
+        scenario("journal: a Google event's local fields", function () use ($db, $d, $u, $ics, $feeds, $journaled): void {
+            $account = $db->insert('google_accounts', ['user_id' => $u, 'email' => 'writer@example.test', 'refresh_token_enc' => 'sealed-sample', 'scopes' => 'calendar']);
+            $googleCal = $db->insert('calendars', ['user_id' => $u, 'name' => 'Google writable sample', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
+                'google_account_id' => $account, 'google_calendar_id' => 'writable@group.calendar.google.com', 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
+                'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
+            (new Undo($db))->write($u, fn() => $feeds->sync($db->one('SELECT * FROM calendars WHERE id = ?', [$googleCal]), Ics::parse($ics), true));
+            $event = (int) $db->scalar("SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND (rrule IS NULL OR rrule = '') ORDER BY id LIMIT 1", [$googleCal]);
+            $journaled("a Google event's tags, reminders and trip flag", fn() => $d->events->patch($u, $event, ['tagNames' => ['sample-local'], 'reminders' => [['minutes' => 20]], 'isContainer' => true]));
+        });
+
         // Emailed invitations: held for Review, decided there, and answered.
         // The Invitations calendar is the app's own, made once for the account
         // rather than by any one decision, so it's made here first.

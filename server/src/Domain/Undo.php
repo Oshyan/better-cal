@@ -332,14 +332,13 @@ final class Undo
             'details_json' => $details === null ? null : json_encode($details, self::JSON_FLAGS),
         ]);
         ActivityContext::noteEntry($mutationId);
-        // Before the refs: a Google calendar's entry has its snapshots
-        // emptied there, and what it changed has to stay known.
+        // Before the refs: an entry of a change to what Google holds has
+        // its snapshots emptied there, and what it changed has to stay known.
         $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables), $touches));
         // A write to Google that undo can send back keeps what to send in
         // its details (GoogleUndo): no snapshot for one resource, the rows'
         // own snapshots for a whole series, kept as any change keeps them.
-        $google = GoogleUndo::carries($details);
-        if (!$this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds, $google) || $google) {
+        if (!$this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds, GoogleUndo::carries($details))) {
             foreach ($pieces as $side => $tables) {
                 $this->writePieces($mutationId, $side, $tables);
             }
@@ -369,7 +368,7 @@ final class Undo
         $this->recordTouches($mutationId, self::touchesOf($tables, null));
         if ($this->recordCalendarRefs($mutationId, $tables, null)
             || (int) $this->db->scalar('SELECT before_json IS NULL AND after_json IS NULL FROM mutations WHERE id = ?', [$mutationId]) === 1) {
-            return; // log-only: a Google calendar's
+            return; // log-only: it removes rows Google holds
         }
         $this->writePieces($mutationId, 'before', $tables);
     }
@@ -848,6 +847,30 @@ final class Undo
     }
 
     /**
+     * Whether two snapshots differ: a row made or removed, or a column
+     * changed (changedColumns). Pure.
+     */
+    public static function anyChange(array $before, array $after): bool
+    {
+        foreach (array_unique(array_merge(array_keys($before), array_keys($after))) as $table) {
+            $was = [];
+            foreach ($before[$table] ?? [] as $row) {
+                $was[self::keyOf($table, $row)] = $row;
+            }
+            $now = [];
+            foreach ($after[$table] ?? [] as $row) {
+                $now[self::keyOf($table, $row)] = $row;
+            }
+            foreach ($was + $now as $key => $_) {
+                if (!isset($was[$key], $now[$key]) || self::changedColumns($table, $was[$key], $now[$key]) !== []) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * One stored value, as two reads of it can come back: the same text
      * (the driver may answer 1 or "1"), or both NULL. Not loose equality:
      * "01" and "1", or "" and NULL, are different values. Pure.
@@ -945,6 +968,28 @@ final class Undo
      */
     private function revertsSince(int $entryId, int $since): bool
     {
+        [$hops, $at] = $this->undoChain($entryId);
+        return $hops % 2 === 1 && $at > $since;
+    }
+
+    /**
+     * Whether an entry only takes back an earlier change: an undo's own
+     * entry (an odd number of undoes down to the change). An undo of an
+     * undo puts the change back and is a change like it.
+     */
+    private function takesBack(int $entryId): bool
+    {
+        return $this->undoChain($entryId)[0] % 2 === 1;
+    }
+
+    /**
+     * The undoes an entry stands at the end of (details.google.undoes,
+     * followed down) and the change at the start of them: [hops, change].
+     *
+     * @return array{0:int,1:int}
+     */
+    private function undoChain(int $entryId): array
+    {
         $hops = 0;
         $at = $entryId;
         for ($seen = 0; $seen < 100; $seen++) {
@@ -956,7 +1001,7 @@ final class Undo
             $hops++;
             $at = $undoes;
         }
-        return $hops % 2 === 1 && $at > $since;
+        return [$hops, $at];
     }
 
     /**
@@ -1057,25 +1102,74 @@ final class Undo
      * Google calendar, read from its own rows: one deleted is no longer
      * there to look up. Pure.
      */
-    private static function googleInSnapshots(?array $before, ?array $after): bool
+    private static function googleCalendarsIn(?array $before, ?array $after): array
     {
-        $ids = self::calendarIdsOf($before, $after);
+        $ids = [];
         foreach ([$before, $after] as $tables) {
             foreach ($tables['calendars'] ?? [] as $row) {
-                if (is_array($row) && in_array((int) ($row['id'] ?? 0), $ids, true)
-                    && ($row['kind'] ?? '') === 'subscribed' && ($row['provider'] ?? '') === 'google') {
-                    return true;
+                if (is_array($row) && ($row['kind'] ?? '') === 'subscribed' && ($row['provider'] ?? '') === 'google') {
+                    $ids[] = (int) ($row['id'] ?? 0);
                 }
             }
         }
-        return false;
+        return array_values(array_unique(array_filter($ids, static fn(int $id): bool => $id > 0)));
     }
 
     /**
-     * The calendars an entry refers to; true when one is a Google calendar's,
-     * whose entries keep no snapshots (emptied here), unless it is a write
-     * to one Google resource whose details say what to send back
-     * ($googleBefore: GoogleUndo), whose snapshots are empty already.
+     * What Google holds of a row on a Google calendar: of an event, the
+     * columns its sync writes (Feeds::columnsOf, GoogleSync) and the row's
+     * identity; of the calendar itself, all of it (null) but its place in
+     * the list (LOCAL_CALENDAR_COLUMNS; its folders are rows of their own).
+     * Every other column of an event, and every other table (tags, people,
+     * trip links, duplicate decisions, plugin data), is held here alone.
+     */
+    private const GOOGLE_HELD = [
+        'events' => [...GoogleWriter::GOOGLE_COLUMNS, 'url', 'invite_json', 'recurrence_instance_utc', 'recurrence_parent_id',
+            'google_event_id', 'uid', 'calendar_id', 'source', 'deleted_at', 'user_id'],
+        'calendars' => null,
+    ];
+
+    /**
+     * Whether a change left alone everything Google holds of the calendars
+     * $googleIds: it made or removed no event or calendar row there and
+     * changed none of their GOOGLE_HELD columns. Such a change (a trip
+     * link, Planned, tags, reminders) never reaches
+     * Google, so its entry keeps its snapshots and undoes here as any
+     * local change does. One that did is Google's: its undo is a write to
+     * Google (GoogleUndo) or none. Pure.
+     *
+     * @param list<int> $googleIds
+     */
+    private static function heldHereAlone(?array $before, ?array $after, array $googleIds): bool
+    {
+        foreach (self::GOOGLE_HELD as $table => $held) {
+            $calendarOf = $table === 'events' ? 'calendar_id' : 'id';
+            $sides = [[], []];
+            foreach ([$before, $after] as $i => $tables) {
+                foreach ($tables[$table] ?? [] as $row) {
+                    if (is_array($row) && in_array((int) ($row[$calendarOf] ?? 0), $googleIds, true)) {
+                        $sides[$i][self::keyOf($table, $row)] = $row;
+                    }
+                }
+            }
+            [$was, $now] = $sides;
+            foreach ($was + $now as $key => $_) {
+                $changed = isset($was[$key], $now[$key]) ? self::changedColumns($table, $was[$key], $now[$key]) : null;
+                if ($changed === null || ($held === null ? array_diff($changed, self::LOCAL_CALENDAR_COLUMNS) !== [] : array_intersect($changed, $held) !== [])) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The calendars an entry refers to; true when it changed something
+     * Google holds of one of them (heldHereAlone) and so keeps no
+     * snapshots (emptied here), unless it is a write to Google whose
+     * details say what to send back ($googleBefore: GoogleUndo). A change
+     * made here alone to a Google calendar's rows keeps them as any local
+     * change does.
      *
      * @param list<int> $explicitCalendarIds
      */
@@ -1093,15 +1187,17 @@ final class Undo
             // (recordRemoved) name its calendars again.
             $this->db->run($this->db->insertIgnore() . ' INTO mutation_calendar_refs (mutation_id, calendar_id) VALUES (?, ?)', [$mutationId, $calendarId]);
         }
+        if ($googleBefore) {
+            return false;
+        }
         [$in, $params] = Db::in($ids);
-        if (self::googleInSnapshots($beforeTables, $afterTables)
-            || $this->db->scalar("SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google' LIMIT 1", $params) !== null) {
-            if ($googleBefore) {
-                return true;
-            }
-            // Google-backed edits are activity-only by design. Make
-            // that permanent so adopt-back-to-local cannot revive a
-            // provider-cache snapshot created after the move.
+        $google = array_merge(self::googleCalendarsIn($beforeTables, $afterTables), array_map('intval', array_column(
+            $this->db->all("SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google'", $params), 'id')));
+        if ($google !== [] && !self::heldHereAlone($beforeTables, $afterTables, $google)) {
+            // Undone here, a change to what Google holds would be put back
+            // on rows the next poll overwrites, and never at Google; and a
+            // calendar adopted back as local would get a provider cache's
+            // snapshot back.
             $this->db->update('mutations', ['before_json' => null, 'after_json' => null], 'id = ?', [$mutationId]);
             $this->db->run('DELETE FROM mutation_rows WHERE mutation_id = ?', [$mutationId]);
             return true;
@@ -1167,23 +1263,30 @@ final class Undo
      * Undo the last change the person made themselves: in the app (quick
      * add and review decisions included) or, asked with an API key,
      * through the API. Changes the app made on its own (feeds, mail,
-     * plugins) are passed over. When that last change can't be undone (a
-     * whole-series change sent to Google, say), that's the answer: an older
-     * one behind it isn't undone instead.
+     * plugins) are passed over, and so is an undo's own entry (a Google
+     * calendar's, takesBack): each call steps one change further back, on
+     * a Google calendar as on a local one, where an undo records nothing.
+     * Redo is the undo's entry undone by its id. When that last change
+     * can't be undone (an answer already sent, say), that's the answer: an
+     * older one behind it isn't undone instead.
      *
      * @return array{entity:string,op:string}
      */
     public function undoLatest(int $userId, ?RequestAuthority $authority = null): array
     {
         [$in, $params] = Db::in(ActivityContext::get() === 'api' ? ['api'] : self::OWN_SOURCES);
-        $last = $this->db->one(
-            "SELECT id, summary, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
-             WHERE user_id = ? AND undone = 0 AND source IN $in ORDER BY id DESC LIMIT 1",
-            array_merge([$userId], $params)
-        );
-        if ($last === null) {
-            throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
-        }
+        $below = PHP_INT_MAX;
+        do {
+            $last = $this->db->one(
+                "SELECT id, summary, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
+                 WHERE user_id = ? AND undone = 0 AND id < ? AND source IN $in ORDER BY id DESC LIMIT 1",
+                array_merge([$userId, $below], $params)
+            );
+            if ($last === null) {
+                throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
+            }
+            $below = (int) $last['id'];
+        } while ($this->takesBack($below));
         if ((int) $last['log_only'] === 1) {
             throw HttpError::badRequest("The last change can't be undone here: " . $last['summary'], 'not_undoable');
         }
@@ -1370,20 +1473,19 @@ final class Undo
                 $calendarIds[] = (int) $ref['calendar_id'];
             }
             CalendarMoveGuard::lockAndAssertMutable($this->db, $calendarIds);
-            if (self::googleInSnapshots($before, $after)) {
-                throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
-            }
+            // On a Google calendar (then or now) only what is held here
+            // alone is put back here: Google's own rows and columns are a
+            // provider cache the next poll overwrites (heldHereAlone).
+            $google = self::googleCalendarsIn($before, $after);
             foreach (array_values(array_unique($calendarIds)) as $calendarId) {
                 $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
                 if ($calendar !== null && (string) $calendar['kind'] === 'subscribed'
                     && (string) ($calendar['provider'] ?? '') === 'google') {
-                    // Google-backed rows are a provider cache. Restoring any
-                    // old full-row snapshot locally would be overwritten on
-                    // poll and can resurrect the pre-move source/provider
-                    // state, including cross-calendar trip snapshots that a
-                    // cutover could not find by mutation.entity_id alone.
-                    throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
+                    $google[] = $calendarId;
                 }
+            }
+            if ($google !== [] && !self::heldHereAlone($before, $after, $google)) {
+                throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
             }
             // GoogleMove finalization clears undo snapshots under the same
             // calendar lock. Re-read after acquiring it so an undo request
@@ -1408,6 +1510,10 @@ final class Undo
             // the trip rules are checked over once it's done.
             $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
             $pieces = $this->pieceTables($mutationId);
+            if ($google !== [] && array_intersect(['events', 'calendars'], array_merge([], ...array_values($pieces))) !== []) {
+                // Event or calendar rows made or removed in bulk: on a Google calendar, Google's.
+                throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
+            }
             foreach ($pieces as $side => $tables) {
                 foreach ($tables as $table) {
                     foreach ($this->piecesOf($mutationId, $side, $table) as $rows) {
@@ -1606,13 +1712,16 @@ final class Undo
      * then syncs Google's values onto. Inside write() for the entry's
      * account.
      */
-    public function restoreSnapshots(array $mutation): void
+    public function restoreSnapshots(array $mutation, bool $hereAlone = false): void
     {
         if (!isset(self::$writing[spl_object_id($this->db) . ':' . (int) $mutation['user_id']])) {
             self::misuse('Undo::restoreSnapshots outside Undo::write');
         }
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
+        if ($hereAlone) {
+            $before = self::googleHeldAsAfter($before, $after);
+        }
         $mutationId = (int) $mutation['id'];
         $this->lockRows($before, $after);
         $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
@@ -1628,6 +1737,31 @@ final class Undo
     }
 
     /**
+     * $before with what Google holds of each event row (GOOGLE_HELD) as it
+     * is in $after, so putting it back leaves those columns to Google: an
+     * edit's undo sends them to Google and puts back only the rest here
+     * (GoogleUndo). Pure.
+     */
+    private static function googleHeldAsAfter(array $before, array $after): array
+    {
+        $now = [];
+        foreach ($after['events'] ?? [] as $row) {
+            $now[self::keyOf('events', $row)] = $row;
+        }
+        foreach ($before['events'] ?? [] as $i => $row) {
+            $kept = $now[self::keyOf('events', $row)] ?? null;
+            if ($kept !== null) {
+                foreach (self::GOOGLE_HELD['events'] as $col) {
+                    if (array_key_exists($col, $kept)) {
+                        $before['events'][$i][$col] = $kept[$col];
+                    }
+                }
+            }
+        }
+        return $before;
+    }
+
+    /**
      * The snapshots put back in a write of their own that is rolled back
      * after: what putting them back would refuse (the trip rules over what
      * it leaves, a row it belongs to gone since) is refused now, for a
@@ -1636,15 +1770,15 @@ final class Undo
      * savepoint over the events' full-text index is not safe on MariaDB),
      * and the check is left to the restore itself.
      */
-    public function checkRestore(array $mutation): void
+    public function checkRestore(array $mutation, bool $hereAlone = false): void
     {
         if ($this->db->pdo()->inTransaction()) {
             return;
         }
         $done = new \RuntimeException('checked');
         try {
-            $this->write((int) $mutation['user_id'], function () use ($mutation, $done): void {
-                $this->restoreSnapshots($mutation);
+            $this->write((int) $mutation['user_id'], function () use ($mutation, $done, $hereAlone): void {
+                $this->restoreSnapshots($mutation, $hereAlone);
                 throw $done;
             });
         } catch (\RuntimeException $e) {

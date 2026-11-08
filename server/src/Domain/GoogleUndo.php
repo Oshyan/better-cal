@@ -249,11 +249,25 @@ final class GoogleUndo
                     throw HttpError::badRequest('That event is no longer here to change back', 'not_undoable');
                 }
                 $now = self::bodyOf($row);
+                // An edit that kept the row's snapshots (its tags, reminders,
+                // trip flag and the like changed with it): Google's columns
+                // go back to Google, the rest are put back here from them,
+                // refused before Google is sent anything when they can't be.
+                $local = (json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'] ?? []) !== [];
+                if ($local) {
+                    $this->undo->checkRestore($mutation, true);
+                }
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $g['before'], $beforeSend));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $userId, $summary, $mutation): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $userId, $summary, $mutation, $local): void {
+                    $rowId = (int) $row['id'];
+                    $was = $local ? $this->rowTables($rowId) : null;
                     $writer->apply($calendar, [$resp]);
+                    if ($local) {
+                        $this->undo->restoreSnapshots($mutation, true);
+                    }
                     $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
-                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, self::etagOf($resp), ['undoes' => (int) $mutation['id']]));
+                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, self::etagOf($resp), ['undoes' => (int) $mutation['id']]),
+                        null, 'update', $was !== null ? [$was, $this->rowTables($rowId)] : null);
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -498,6 +512,16 @@ final class GoogleUndo
             $fn();
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
         });
+    }
+
+    /** An event row and its tags and people, as an edit's entry keeps them. @return array<string,list<array>> */
+    private function rowTables(int $id): array
+    {
+        return [
+            'events' => $this->db->all('SELECT * FROM events WHERE id = ?', [$id]),
+            'event_tags' => $this->db->all('SELECT * FROM event_tags WHERE event_id = ?', [$id]),
+            'event_people' => $this->db->all('SELECT * FROM event_people WHERE event_id = ?', [$id]),
+        ];
     }
 
     /** The row Google knows by $googleId here, or $fallback. */

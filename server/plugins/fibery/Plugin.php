@@ -11,10 +11,10 @@ use BetterCal\Plugin\PluginInterface;
  * Fibery tasks and projects on the calendar, and their dates back to Fibery.
  *
  * Every minute the sync job asks each chosen database for its entity count
- * and newest modification date (one small batched request). A database
- * where either moved, or not read in full for an hour, or whose settings
- * changed, has its open, dated items read (every such database's pages in
- * one batch) and the calendar's snapshot replaced, so completions,
+ * and newest modification date (one small batched request). When either
+ * moved for any database, or one wasn't read in full for 15 minutes, or its
+ * settings changed, every database has its open, dated items read (their
+ * pages in one batch) and the calendars' snapshots replaced, so completions,
  * deletions and date changes made in Fibery all arrive the same way. Moving an event here calls applyEdit, which writes the new date to
  * Fibery while the person waits.
  *
@@ -41,7 +41,7 @@ return new class implements PluginInterface, EditablePlugin {
     private const SCHEMA_TTL = 600;          // seconds a cached schema is trusted
     private const PAGE = 1000;               // entities per query page (Fibery's recommendation)
     private const MAX_PAGES = 3;             // per database per run
-    private const FULL_READ_EVERY = 3600;    // seconds: each slot is read in full at least this often
+    private const FULL_READ_EVERY = 900;     // seconds: each slot is read in full at least this often
     private const DESCRIPTION_CHARS = 1500;
     private const FINISHED_LOOKBACK_DAYS = 90;
 
@@ -123,23 +123,29 @@ return new class implements PluginInterface, EditablePlugin {
         }
 
         // Ask each chosen database whether anything changed (one small
-        // batched request) and read in full only the slots where it did.
+        // batched request). A run is the probe alone, or reads every slot:
+        // a renamed project shows in the tasks that name it, though only
+        // the project's database moved.
         $probes = $this->probe($host, $ws, $token, $plans);
         $known = $host->kvGet('synced', []);
         $known = is_array($known) ? $known : [];
-        $queries = [];
+        $due = false;
         foreach ($plans as $slot => $plan) {
             $last = is_array($known[$slot] ?? null) ? $known[$slot] : null;
-            if ($last !== null && $probes[$slot] !== null && ($last['probe'] ?? null) === $probes[$slot]
-                && ($last['mark'] ?? null) === $this->mark($host, $plan, $s, $slot)
-                && time() - (int) ($last['at'] ?? 0) < self::FULL_READ_EVERY) {
-                if (empty($last['complete'])) {
-                    $warnings[] = ['severity' => 'info', 'code' => 'too-many'];
-                }
-                $host->log($slot . ': unchanged in Fibery, not read again');
+            $due = $due || $last === null || $probes[$slot] === null || ($last['probe'] ?? null) !== $probes[$slot]
+                || ($last['mark'] ?? null) !== $this->mark($host, $plan, $s, $slot)
+                || time() - (int) ($last['at'] ?? 0) >= self::FULL_READ_EVERY;
+        }
+        $queries = [];
+        foreach ($plans as $slot => $plan) {
+            if ($due) {
+                $queries[$slot] = $this->query($plan, $s, null);
                 continue;
             }
-            $queries[$slot] = $this->query($plan, $s, null);
+            if (empty($known[$slot]['complete'])) {
+                $warnings[] = ['severity' => 'info', 'code' => 'too-many'];
+            }
+            $host->log($slot . ': unchanged in Fibery, not read again');
         }
         [$rows, $complete, $failed] = $this->fetchAll($host, $ws, $token, $queries);
         foreach ($failed as $slot => $why) {
@@ -297,7 +303,7 @@ return new class implements PluginInterface, EditablePlugin {
      * one request (the count is the one aggregate Fibery allows at the top of
      * a query). The count is of the whole database, so a deletion changes it;
      * an edit changes the newest date. Null for a slot whose answer didn't
-     * come back usable, so that slot is read in full.
+     * come back usable, so the run reads in full.
      *
      * @return array<string,?array{count:int,newest:?string}>
      */

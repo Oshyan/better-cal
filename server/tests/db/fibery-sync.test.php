@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 // The Fibery plugin's sync against a stand-in for Fibery's /api/commands:
 // each run first asks every chosen database for its entity count and newest
-// modification date in one batched request, reads in full only the slots
-// where those moved (or whose settings or day changed, or which haven't
-// been read for an hour), and sends those slots' pages together. A command
+// modification date in one batched request. A run is that probe alone, or,
+// when any database's answer moved (or a slot's settings or day changed, or
+// a slot hasn't been read for 15 minutes), reads every slot, their pages
+// sent together. A command
 // Fibery refuses fails only its own slot. The stand-in answers each command
 // on its own, {success, result}, as Fibery does; the workspace, databases
 // and items are invented.
@@ -131,27 +132,31 @@ return static function (Db $db): void {
         checkEq('fibery sync: the calendar keeps its items', ['Book the room', 'Write the agenda'], $titles('task'));
     });
 
-    scenario('fibery sync: a deletion changes the count and triggers the read', function () use ($run, $reads, $titles, &$entities, $taskDb): void {
+    scenario('fibery sync: a deletion changes the count and triggers the read', function () use ($run, $reads, $titles, &$entities, $taskDb, $projectDb): void {
         unset($entities[$taskDb]['t-02']); // the newest date is unchanged; only the count moved
         $reqs = $run();
-        checkEq('fibery sync: only the changed slot is read', [[$taskDb]], $reads($reqs));
+        checkEq('fibery sync: a moved count reads every slot, not only the changed one', [[$taskDb, $projectDb]], $reads($reqs));
         checkEq('fibery sync: the deleted task leaves the calendar', ['Write the agenda'], $titles('task'));
     });
 
-    scenario('fibery sync: an edit changes the newest date and triggers the read', function () use ($run, $reads, $titles, $put, $projectDb): void {
+    scenario('fibery sync: an edit changes the newest date and triggers the read', function () use ($run, $reads, $titles, $put, $taskDb, $projectDb): void {
         $put($projectDb, 'p-01', 'Spring fair, moved');
         $reqs = $run();
-        checkEq('fibery sync: the edited slot is read', [[$projectDb]], $reads($reqs));
+        checkEq('fibery sync: an edit in one database reads every slot, so tasks naming a renamed project refresh', [[$taskDb, $projectDb]], $reads($reqs));
         checkEq('fibery sync: the edit arrives', ['Spring fair, moved'], $titles('project'));
     });
 
-    scenario('fibery sync: the hourly safety read', function () use ($run, $reads, $host, $taskDb): void {
-        $h = $host();
-        $known = $h->kvGet('synced', []);
-        $known['task']['at'] = time() - 3601;
-        $h->kvSet('synced', $known);
-        $reqs = $run();
-        checkEq('fibery sync: a slot not read for an hour is read though unchanged', [[$taskDb]], $reads($reqs));
+    scenario('fibery sync: the 15-minute safety read', function () use ($run, $reads, $host, $taskDb, $projectDb): void {
+        $age = static function (int $seconds) use ($host): void {
+            $h = $host();
+            $known = $h->kvGet('synced', []);
+            $known['task']['at'] = time() - $seconds;
+            $h->kvSet('synced', $known);
+        };
+        $age(840);
+        checkEq('fibery sync: 14 minutes after a read, an unchanged run reads nothing', [], $reads($run()));
+        $age(901);
+        checkEq('fibery sync: a slot not read for 15 minutes is read though unchanged, with every other slot', [[$taskDb, $projectDb]], $reads($run()));
         checkEq('fibery sync: and the next run skips it again', [], $reads($run()));
     });
 
@@ -171,7 +176,7 @@ return static function (Db $db): void {
         checkEq('fibery sync: the refused slot keeps what it last had', ['Spring fair, moved'], $titles('project'));
         checkEq('fibery sync: and says so', [$manifest['messages']['project-read-failed']], $warnings());
         $refuse = null;
-        checkEq('fibery sync: the refused slot is read again on the next run', [[$projectDb]], $reads($run()));
+        checkEq('fibery sync: the refused slot is read again on the next run, with the other', [[$taskDb, $projectDb]], $reads($run()));
         checkEq('fibery sync: and catches up', ['Spring fair, moved again'], $titles('project'));
         checkEq('fibery sync: its warning clears', [], $warnings());
     });

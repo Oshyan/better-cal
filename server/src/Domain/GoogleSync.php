@@ -120,7 +120,15 @@ final class GoogleSync
             );
         }
 
-        if ($syncToken === null) {
+        // A delta with no items: nothing changed at Google since the stored
+        // token. The rows here are then the snapshot, and Feeds::sync of the
+        // rows against themselves finds no difference and writes nothing, so
+        // neither the snapshot nor the sync is made: the poll records the new
+        // token and its success under the same checks a sync takes.
+        $unchanged = $syncToken !== null && $changes === [];
+        if ($unchanged) {
+            $snapshot = [];
+        } elseif ($syncToken === null) {
             $snapshot = self::applyChanges([], $changes, $eventLimit, $deadline);
         } else {
             // Re-evaluate with the parsed remote changes already resident:
@@ -139,7 +147,7 @@ final class GoogleSync
         unset($changes);
         self::assertWithinDeadline($deadline);
         // The account first, as every change to its data takes it (Undo::write).
-        return (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline): int {
+        return (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -162,6 +170,12 @@ final class GoogleSync
             if ($learnedRole !== null) {
                 $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);
                 $current['google_access_role'] = $learnedRole;
+            }
+            if ($unchanged) {
+                $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
+                $stored = (int) $this->db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]);
+                $this->feeds->pollSucceeded($current, $stored, 0);
+                return 0;
             }
             // Feeds::sync loads and indexes every stored row (including a
             // soft-deleted one), while the new snapshot is still resident.

@@ -174,6 +174,7 @@ trait PlanPlacement
         $role = 'acted ' . ($ctx['created'] !== null ? 'created' : 'separate');
         $this->expect('c-placement', 'the day acted on is named by its key', "key ($role)", $actedKey, $key);
         $this->expect('c-placement', 'the day acted on\'s outcome is the comparison of its instant and kind', "outcome ($role)", $fate, $d['outcome'] ?? null);
+        $this->expect('c-placement', 'the day acted on says row "created" exactly when the commit creates its row', "row ($role)", $ctx['created'] !== null ? 'created' : null, $d['row'] ?? null);
         $this->expect('c-placement', 'the day acted on is about its old key\'s day in the old zone', "day ($role)", $identity($actedKey), $d['day'] ?? null);
         $this->expect('c-placement', 'the day acted on showed at its occurrence', "before ($role)", self::placed($was, $zone), self::norm($d['before'] ?? null, self::PLACEMENT_KEYS));
         $this->expect('c-placement', 'the day acted on\'s shows is the date its occurrence showed on', "shows ($role)", self::placed($was, $zone)['date'], $d['shows'] ?? null);

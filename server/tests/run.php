@@ -14225,6 +14225,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 require __DIR__ . '/series-model.php';
 require __DIR__ . '/google-series.php';
 require __DIR__ . '/expander.php';
+require __DIR__ . '/floating.php';
 require __DIR__ . '/dav-query.php';
 require __DIR__ . '/files-security.php';
 require __DIR__ . '/credentials-security.php';

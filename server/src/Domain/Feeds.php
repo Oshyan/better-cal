@@ -250,10 +250,19 @@ final class Feeds
         return hash_hmac('sha256', $url, 'feed-reads|' . $sessionSecret);
     }
 
-    /** What a body is read with besides itself: the parser's version and the Home zone. Pure. */
+    /**
+     * The configured limits a body's parse reads (Ics::parse and the
+     * Recurrence checks it calls): a description or link cut at its limit,
+     * EXDATE and list values counted against theirs. A change to one reads
+     * every feed afresh, as a new version does.
+     */
+    private const PARSE_LIMITS = ['DESCRIPTION_CHARS', 'URL_CHARS', 'EXDATE_VALUES_PER_EVENT', 'EXDATE_VALUES_PER_INPUT', 'ICS_LIST_VALUES_PER_INPUT', 'ICS_LIST_VALUES_PER_LINE'];
+
+    /** What a body is read with besides itself: the parser's version, the Home zone and the limits the parse reads (PARSE_LIMITS). */
     public static function parseKey(string $appVersion, ?string $homeTz): string
     {
-        return self::PARSE_VERSION . '|' . $appVersion . '|' . ($homeTz ?? '');
+        $limits = array_map(static fn(string $name): string => $name . '=' . Limits::get($name), self::PARSE_LIMITS);
+        return self::PARSE_VERSION . '|' . $appVersion . '|' . ($homeTz ?? '') . '|' . hash('sha256', implode(';', $limits));
     }
 
     /** A validator header as it may be sent back: one line, of bounded length, or null. Pure. */
@@ -418,29 +427,167 @@ final class Feeds
             && Events::googleAnswer(['invite_json' => $current['invite_json'] ?? null]) !== Events::googleAnswer(['invite_json' => $changed['invite_json']]);
     }
 
-    /** The own fields of an edited day that no feed carries: what is held here alone. */
-    private const HELD_HERE_FIELDS = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+    /**
+     * The own fields of an edited day that no feed carries: what is held
+     * here alone. The place is a field too (Own Fields: its text with its
+     * coordinates): a feed carries its text, never its coordinates, so a
+     * day's picked coordinates are held here alone while it shows the text
+     * they were picked for (heldHere), and a new text clears them, as it
+     * does on every feed row. The one list (OwnFields::HELD_HERE).
+     */
+    private const HELD_HERE_FIELDS = \BetterCal\Domain\Series\OwnFields::HELD_HERE;
+
+    /** The place's columns no feed carries: its coordinates and where they came from (OwnFields::COORDINATE_COLUMNS). */
+    private const COORDINATE_COLUMNS = \BetterCal\Domain\Series\OwnFields::COORDINATE_COLUMNS;
 
     /**
-     * Whether an edited row's own part is all held here (HELD_HERE_FIELDS
-     * and what refers to it, OwnFields::references) and not empty: a day
-     * with nothing the feed would carry of its own.
+     * What an edited day holds here alone, of the fields it owns ($own),
+     * as $row stands: the HELD_HERE_FIELDS it owns, and its place while it
+     * owns it with coordinates (the part of the place no feed carries).
+     * What refers to the row (OwnFields::references) is read apart. Pure.
+     *
+     * @param list<string> $own
+     * @return list<string>
      */
-    private static function heldHereAlone(Db $db, array $row): bool
+    public static function heldHere(array $own, array $row): array
     {
-        $own = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null) ?? [];
-        if (array_diff($own, self::HELD_HERE_FIELDS) !== []) {
-            return false;
+        $held = array_values(array_intersect($own, self::HELD_HERE_FIELDS));
+        if (in_array('location', $own, true) && ($row['location_lat'] ?? null) !== null && ($row['location_lng'] ?? null) !== null) {
+            $held[] = 'location';
         }
-        return $own !== [] || (\BetterCal\Domain\Series\OwnFields::references($db, [(int) $row['id']])[(int) $row['id']] ?? []) !== [];
+        return \BetterCal\Domain\Series\OwnFields::normalize($held);
     }
 
     /**
-     * A row of its series (an edited day whose own part is all held here)
-     * as the series, after this poll, has it: null for a day the series no
-     * longer has, else the columns it takes, every one a field it doesn't
-     * own (title, place, notes, link, status, all-day, zone, the guest
-     * list, and the time: its key and its series' length from there).
+     * Whether the feed's record of an edited day holds something of its
+     * own: a field it owns that a feed carries, or a guest list other than
+     * its series'. A place is the record's by its text alone: one showing
+     * its series' text, now ($series) or before this poll ($was), is the
+     * series' text with coordinates of its own, which no record carries (a
+     * delta lists a stored copy of such a day, never the series' new text
+     * on it). Pure.
+     *
+     * @param list<string> $own
+     */
+    public static function recordHolds(array $own, array $row, array $series, ?array $was = null): bool
+    {
+        $text = (string) ($row['location'] ?? '');
+        foreach ($own as $field) {
+            if (in_array($field, self::HELD_HERE_FIELDS, true)
+                || ($field === 'location' && ($text === (string) ($series['location'] ?? '') || ($was !== null && $text === (string) ($was['location'] ?? ''))))) {
+                continue;
+            }
+            return true;
+        }
+        return ($row['invite_json'] ?? null) !== null && !self::sameValue('invite_json', $series['invite_json'] ?? null, $row['invite_json']);
+    }
+
+    /** $row as it follows its series ($target, ofSeries): a new place text clears its coordinates. Pure. */
+    public static function followed(array $row, array $target): array
+    {
+        $after = array_merge($row, $target);
+        if (array_key_exists('location', $target) && (string) ($row['location'] ?? '') !== (string) ($target['location'] ?? '')) {
+            foreach (self::COORDINATE_COLUMNS as $col) {
+                $after[$col] = null;
+            }
+        }
+        return $after;
+    }
+
+    /**
+     * An edited row's own fields: its list, or for a row stored before the
+     * list (null) the fields that differ from its series, tags and people
+     * included (OwnFields::infer), so a tag given before migration 063 is
+     * still the day's own.
+     *
+     * @return list<string>
+     */
+    private function ownOf(array $row, array $master): array
+    {
+        $known = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null);
+        if ($known !== null) {
+            return $known;
+        }
+        $of = fn(string $table, string $col, array $r): array => array_column($this->db->all("SELECT $col FROM $table WHERE event_id = ?", [(int) ($r['id'] ?? 0)]), $col);
+        return \BetterCal\Domain\Series\OwnFields::infer($row, $master, $of('event_tags', 'tag_id', $row), $of('event_tags', 'tag_id', $master),
+            $of('event_people', 'person_id', $row), $of('event_people', 'person_id', $master));
+    }
+
+    /**
+     * A following row whose image another row holds ($holderId) gives that
+     * row what it holds here alone ($held; $source as it follows its
+     * series): its tags and people are added to the holder's; its
+     * reminders, answer and icon are taken where the holder owns none; its
+     * coordinates where the holder owns no place and shows the same text;
+     * what refers to it (trip links, duplicate decisions, plugin data) is
+     * moved to the holder where that names nothing twice. The holder owns
+     * what it took.
+     *
+     * @param list<string> $held
+     */
+    private function mergeInto(array $source, int $holderId, array $held, ?array $series, bool $ownColumn): void
+    {
+        $sourceId = (int) $source['id'];
+        $holder = $this->db->one('SELECT * FROM events WHERE id = ?', [$holderId]);
+        if ($holder === null) {
+            return;
+        }
+        $own = $this->ownOf($holder, $series ?? $holder);
+        $set = [];
+        $taken = [];
+        foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
+            if (in_array($field, $held, true)) {
+                $this->db->run($this->db->insertIgnore() . " INTO $table (event_id, $col) SELECT ?, $col FROM $table WHERE event_id = ?", [$holderId, $sourceId]);
+                $taken[] = $field;
+            }
+        }
+        foreach (['reminders' => 'reminders_json', 'attendance' => 'attendance', 'icon' => 'icon'] as $field => $col) {
+            if (in_array($field, $held, true) && !in_array($field, $own, true)) {
+                $set[$col] = $source[$col] ?? null;
+                $taken[] = $field;
+            }
+        }
+        if (in_array('location', $held, true) && !in_array('location', $own, true) && (string) ($holder['location'] ?? '') === (string) ($source['location'] ?? '')) {
+            foreach (self::COORDINATE_COLUMNS as $col) {
+                $set[$col] = $source[$col] ?? null;
+            }
+            $taken[] = 'location';
+        }
+        foreach ($this->db->all('SELECT * FROM event_links WHERE event_id = ? OR container_id = ?', [$sourceId, $sourceId]) as $link) {
+            $container = (int) $link['container_id'] === $sourceId ? $holderId : (int) $link['container_id'];
+            $event = (int) $link['event_id'] === $sourceId ? $holderId : (int) $link['event_id'];
+            if ($container !== $event && $this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$container, $event]) === null) {
+                $this->db->run('UPDATE event_links SET container_id = ?, event_id = ? WHERE id = ?', [$container, $event, (int) $link['id']]);
+            }
+        }
+        foreach ($this->db->all("SELECT * FROM event_duplicates WHERE (event_a = ? OR event_b = ?) AND status IN ('linked', 'dismissed')", [$sourceId, $sourceId]) as $pair) {
+            $other = (int) $pair['event_a'] === $sourceId ? (int) $pair['event_b'] : (int) $pair['event_a'];
+            [$a, $b] = [min($holderId, $other), max($holderId, $other)];
+            if ($other !== $holderId && $this->db->scalar('SELECT id FROM event_duplicates WHERE event_a = ? AND event_b = ?', [$a, $b]) === null) {
+                $this->db->run('UPDATE event_duplicates SET event_a = ?, event_b = ? WHERE id = ?', [$a, $b, (int) $pair['id']]);
+            }
+        }
+        foreach ($this->db->all('SELECT plugin_id, k FROM event_plugin_data WHERE event_id = ?', [$sourceId]) as $data) {
+            if ($this->db->scalar('SELECT event_id FROM event_plugin_data WHERE event_id = ? AND plugin_id = ? AND k = ?', [$holderId, $data['plugin_id'], $data['k']]) === null) {
+                $this->db->run('UPDATE event_plugin_data SET event_id = ? WHERE event_id = ? AND plugin_id = ? AND k = ?', [$holderId, $sourceId, $data['plugin_id'], $data['k']]);
+            }
+        }
+        if ($ownColumn && $taken !== []) {
+            $set['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode(array_merge($own, $taken));
+        }
+        if ($set !== []) {
+            $this->db->update('events', $set + ['updated_at' => Time::nowDb()], 'id = ?', [$holderId]);
+        }
+    }
+
+    /**
+     * A row of its series (an edited day the feed holds no record of its
+     * own for) as the series, after this poll, has it: null for a day the
+     * series no longer has, else the columns it takes from the series:
+     * every field a feed carries (title, place text, notes, link, status,
+     * all-day, zone, the guest list, and the time: its key and its series'
+     * length from there) and every series column (Model::SERIES_COLUMNS:
+     * the trip and floating flags), which no edited day owns.
      *
      * Its day is asked the way a "this event" edit asks (Events::
      * requireInstance): a key the series' own expansion yields on that day,
@@ -473,6 +620,7 @@ final class Feeds
         if (array_key_exists('invite_json', $series)) {
             $target['invite_json'] = $series['invite_json'];
         }
+        $target += array_intersect_key($series, \BetterCal\Domain\Series\Model::SERIES_COLUMNS);
         if (empty($series['rrule'])) {
             return null;
         }
@@ -520,37 +668,45 @@ final class Feeds
 
     /**
      * A row of its series a poll removes, for its Activity entry: its
-     * title, its day, and what it held here that goes with it.
+     * title, its day, what it held here ($held, and what referred to it,
+     * $refs) and why it went: 'gone' (its series no longer has the day) or
+     * 'merged' (another row holds the day, and took what it held).
      *
-     * @return array{title:string,day:string,held:list<string>}
+     * @param list<string> $held
+     * @param list<string> $refs
+     * @return array{title:string,day:string,held:list<string>,why:string}
      */
-    private function droppedDay(array $row): array
+    private function droppedDay(array $row, array $held, array $refs, string $why): array
     {
-        $words = ['tags' => 'its tags', 'people' => 'its people', 'reminders' => 'its reminders', 'attendance' => 'its answer', 'icon' => 'its icon'];
-        $own = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null) ?? [];
-        $held = array_values(array_intersect_key($words, array_flip($own)));
-        if ((\BetterCal\Domain\Series\OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? []) !== []) {
-            $held[] = 'what refers to it';
+        $words = ['location' => 'its coordinates', 'reminders' => 'its reminders', 'attendance' => 'its answer', 'tags' => 'its tags', 'people' => 'its people', 'icon' => 'its icon'];
+        $named = array_values(array_intersect_key($words, array_flip($held)));
+        if ($refs !== []) {
+            $named[] = 'what refers to it';
         }
         $zone = (int) ($row['all_day'] ?? 0) === 1 ? 'UTC' : (string) ($row['tzid'] ?: 'UTC');
-        return ['title' => (string) $row['title'], 'day' => Time::fromDb((string) $row['recurrence_instance_utc'])->setTimezone(Time::zone($zone))->format('Y-m-d'), 'held' => $held];
+        return ['title' => (string) $row['title'], 'day' => Time::fromDb((string) $row['recurrence_instance_utc'])->setTimezone(Time::zone($zone))->format('Y-m-d'), 'held' => $named, 'why' => $why];
     }
 
-    /** The removed days a poll names in its Activity entry, after its count. */
+    /** The removed days a poll names in its Activity entry, after its count: the days gone, then the days kept on another row. */
     private static function droppedWords(array $days): string
     {
-        if ($days === []) {
-            return '';
+        $groups = [];
+        foreach (['gone' => ['its series no longer has that day', 'their series no longer has those days'],
+            'merged' => ['kept on the row its day already has', 'kept on the rows their days already have']] as $why => [$one, $many]) {
+            $these = array_values(array_filter($days, static fn(array $d): bool => $d['why'] === $why));
+            if ($these === []) {
+                continue;
+            }
+            $named = array_map(static function (array $d): string {
+                $held = $d['held'];
+                $last = array_pop($held);
+                $list = $held === [] ? (string) $last : implode(', ', $held) . ' and ' . $last;
+                return "'" . $d['title'] . "' on " . $d['day'] . ($last === null ? '' : ' with ' . $list);
+            }, array_slice($these, 0, 3));
+            $more = count($these) - count($named);
+            $groups[] = implode('; ', $named) . ($more > 0 ? '; ' . $more . ' more' : '') . ': ' . (count($these) === 1 ? $one : $many);
         }
-        $named = array_map(static function (array $d): string {
-            $held = $d['held'];
-            $last = array_pop($held);
-            $list = $held === [] ? (string) $last : implode(', ', $held) . ' and ' . $last;
-            return "'" . $d['title'] . "' on " . $d['day'] . ($last === null ? '' : ' with ' . $list);
-        }, array_slice($days, 0, 3));
-        $more = count($days) - count($named);
-        return ' (' . implode('; ', $named) . ($more > 0 ? '; ' . $more . ' more' : '')
-            . (count($days) === 1 ? ': its series no longer has that day)' : ': their series no longer has those days)');
+        return $groups === [] ? '' : ' (' . implode('; ', $groups) . ')';
     }
 
     /**
@@ -777,26 +933,36 @@ final class Feeds
                 }
             }
 
-            // Remove events that disappeared from the feed, and bring each
-            // row of its series up to its series.
+            // Rows the feed no longer carries go, and every edited day of a
+            // series the feed still has is brought up to its series by one
+            // rule, whoever made its row (created_via is provenance only;
+            // series-model.md, Rows from Elsewhere; decisions.md, "A feed's
+            // change to a day keeps what is held here"):
             //
-            // An edited day whose own part is all held here (tags, people,
-            // reminders, attendance, an icon, what refers to it) has nothing
-            // the feed would carry: Google keeps no record of a day a change
-            // held here alone left at its series' values (Events, a "this
-            // event" edit), and a feed's day given a tag here never had one.
-            // It is a row of its series (series-model.md, Own Fields): it
-            // exists only while the series, as this poll leaves it, has its
-            // day, and every field it doesn't own is the series' (ofSeries).
-            // A whole read and a delta read alike: a delta lists the stored
-            // copy of such a row, which says nothing new about it.
-            //
-            // A per-occurrence row the PERSON made on a series the feed still
-            // carries (going to this week's meetup, a reminder for one day)
-            // is theirs, not the feed's: it stays as long as its series does.
+            // While the feed's record for the day holds something of its own
+            // (a field: title, place text, notes, link, status, date, time,
+            // length, all-day; or a guest list of its own), the record decides
+            // those, as stored above. Otherwise (no record, a record equal to
+            // its series, or a delta's stored copy, which says nothing new)
+            // the row keeps exactly what is held here alone (heldHere: tags,
+            // people, reminders, an answer, an icon, picked coordinates, and
+            // what refers to it) and takes the series' values for everything
+            // else (ofSeries), its key moving to its image. Then:
+            //  - the series no longer has its day: the row goes, named in
+            //    Activity with what it held;
+            //  - another row already holds its image (the feed's record of
+            //    that day, a row that stays, or another row moving there):
+            //    what it holds goes to that row and it goes, named as kept
+            //    on that day's row;
+            //  - it holds nothing: it is an ordinary occurrence again, no row.
+            // A whole read and a delta read alike.
             $removeIndex = 0;
             $newMasters = [];
             $droppedDays = [];
+            $drop = [];   // id => the row, gone with nothing named
+            $gone = [];   // id => [the row, what it held]: its day is gone
+            $follow = []; // id => [the row, the row as it follows, what it holds, what refers to it]
+            $updated = array_flip($updatedEventIds);
             foreach ($existingByKey as $key => $row) {
                 if (($removeIndex++ & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -804,68 +970,136 @@ final class Feeds
                 if ($unknownSkipped || isset($protected[$row['uid']])) {
                     continue;
                 }
+                $id = (int) $row['id'];
+                $uid = (string) $row['uid'];
                 $carried = isset($seen[$key]) && !isset($plain[$key]);
-                $seriesSeen = $row['recurrence_parent_id'] !== null && isset($seen[$row['uid'] . '|']) && isset($masterIdByUid[(string) $row['uid']]);
-                $follows = false;
-                if ($ownColumn && $seriesSeen && $row['deleted_at'] === null && !isset($plain[$key])) {
-                    // As the loop above left it: a record the feed carries
-                    // may have given it a field of its own.
-                    $now = $carried ? $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]) : $row;
-                    if ($now !== null && self::heldHereAlone($this->db, $now)) {
-                        $uid = (string) $row['uid'];
-                        $newMasters[$uid] ??= $this->db->one('SELECT * FROM events WHERE id = ?', [$masterIdByUid[$uid]]);
-                        $target = $newMasters[$uid] === null ? null
-                            : self::ofSeries($now, $existingByKey[$uid . '|'] ?? null, $newMasters[$uid]);
-                        if ($target !== null && ($target['recurrence_instance_utc'] ?? $now['recurrence_instance_utc']) !== $now['recurrence_instance_utc']
-                            && $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? LIMIT 1',
-                                [$calendarId, $uid, $target['recurrence_instance_utc'], (int) $now['id']]) !== null) {
-                            $target = null; // the day it moves to has a row of its own: that row is the day's
-                        }
-                        if ($target !== null) {
-                            $changed = [];
-                            foreach ($target as $col => $value) {
-                                if (array_key_exists($col, $now) && !self::sameValue($col, $now[$col], $value)) {
-                                    $changed[$col] = $value;
-                                }
-                            }
-                            if ($changed !== []) {
-                                if (array_key_exists('location', $changed)) {
-                                    $changed['location_lat'] = null;
-                                    $changed['location_lng'] = null;
-                                    $changed['geocoded_at'] = null;
-                                    $changed['location_source'] = null;
-                                    $changed['location_provider'] = null;
-                                    $changed['location_placed_at'] = null;
-                                }
-                                foreach (array_keys($changed) as $col) {
-                                    $touches[] = [Undo::keyOf('events', ['id' => (int) $now['id']]), (string) $col];
-                                }
-                                $changed['updated_at'] = Time::nowDb();
-                                $this->db->update('events', $changed, 'id = ?', [(int) $now['id']]);
-                                $changedUids[$uid] = true;
-                                if (!in_array((int) $now['id'], $updatedEventIds, true)) {
-                                    $updatedEventIds[] = (int) $now['id'];
-                                    $upserts++;
-                                }
-                            }
-                            continue;
-                        }
-                        $follows = true;
-                        $row = $now;
+                $seriesSeen = $row['recurrence_parent_id'] !== null && isset($seen[$uid . '|']) && isset($masterIdByUid[$uid]);
+                if (!$seriesSeen || $row['deleted_at'] !== null) {
+                    if (!$carried) {
+                        $drop[$id] = $row;
+                    }
+                    continue;
+                }
+                // As the loop above left it: a record the feed carries may
+                // have changed it.
+                $now = isset($updated[$id]) ? $this->db->one('SELECT * FROM events WHERE id = ?', [$id]) : $row;
+                $newMasters[$uid] ??= $this->db->one('SELECT * FROM events WHERE id = ?', [$masterIdByUid[$uid]]);
+                $series = $newMasters[$uid];
+                if ($now === null || $series === null) {
+                    continue;
+                }
+                $was = $existingByKey[$uid . '|'] ?? null;
+                $own = $this->ownOf($now, $was ?? $series);
+                if ($carried && self::recordHolds($own, $now, $series, $was)) {
+                    continue;
+                }
+                $target = self::ofSeries($now, $was, $series);
+                $refs = \BetterCal\Domain\Series\OwnFields::references($this->db, [$id])[$id] ?? [];
+                if ($target === null) {
+                    $gone[$id] = [$now, self::heldHere($own, $now), $refs];
+                    continue;
+                }
+                $after = self::followed($now, $target);
+                $held = self::heldHere($own, $after);
+                if ($held === [] && $refs === []) {
+                    $drop[$id] = $now;
+                    continue;
+                }
+                $follow[$id] = [$now, $after, $held, $refs];
+            }
+            self::assertSyncDeadline($deadline);
+
+            // Who holds each day after the poll: every row left where it is,
+            // then each following row at its image, the first to claim a day
+            // holding it (a row whose image is its own key first, then by id);
+            // a later one merges into the holder.
+            $merge = []; // id => the holder's id
+            if ($follow !== []) {
+                $holderAt = [];
+                foreach ($this->db->all('SELECT id, uid, recurrence_instance_utc FROM events WHERE calendar_id = ? AND recurrence_instance_utc IS NOT NULL', [$calendarId]) as $r) {
+                    $rid = (int) $r['id'];
+                    if (!isset($follow[$rid]) && !isset($drop[$rid]) && !isset($gone[$rid])) {
+                        $holderAt[$r['uid'] . '|' . $r['recurrence_instance_utc']] = $rid;
                     }
                 }
-                if (!$follows && $carried) {
-                    continue;
+                foreach ([true, false] as $inPlace) {
+                    foreach ($follow as $id => [$now, $after]) {
+                        if (((string) $after['recurrence_instance_utc'] === (string) $now['recurrence_instance_utc']) !== $inPlace) {
+                            continue;
+                        }
+                        $at = $now['uid'] . '|' . $after['recurrence_instance_utc'];
+                        if (isset($holderAt[$at])) {
+                            $merge[$id] = $holderAt[$at];
+                        } else {
+                            $holderAt[$at] = $id;
+                        }
+                    }
                 }
-                if (!$follows && $seriesSeen && (string) ($row['created_via'] ?? '') !== 'feed') {
-                    continue;
+            }
+
+            // Keys are unique per calendar: a row moving onto a key another
+            // row leaves takes it once that row has let it go.
+            foreach ($follow as $id => [$now, $after]) {
+                if (isset($merge[$id]) || (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc']) {
+                    $this->db->run('UPDATE events SET recurrence_instance_utc = NULL WHERE id = ?', [$id]);
                 }
-                if ($follows) {
-                    $droppedDays[] = $this->droppedDay($row);
+            }
+            foreach ($drop + array_map(static fn(array $g): array => $g[0], $gone) as $id => $row) {
+                if (isset($gone[$id]) && ($gone[$id][1] !== [] || $gone[$id][2] !== [])) {
+                    $droppedDays[] = $this->droppedDay($row, $gone[$id][1], $gone[$id][2], 'gone');
                 }
                 $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
-                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
+                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
                 $changedUids[(string) $row['uid']] = true;
+                $removedCount++;
+            }
+            foreach ($follow as $id => [$now, $after, $held]) {
+                if (isset($merge[$id])) {
+                    continue;
+                }
+                $changed = [];
+                foreach ($after as $col => $value) {
+                    if (array_key_exists($col, $now) && !self::sameValue($col, $now[$col], $value)) {
+                        $changed[$col] = $value;
+                    }
+                }
+                if ($ownColumn) {
+                    $list = \BetterCal\Domain\Series\OwnFields::encode($held);
+                    if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
+                        $changed['override_fields'] = $list;
+                    }
+                }
+                $moved = (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc'];
+                if ($changed === [] && !$moved) {
+                    continue;
+                }
+                if ($moved) {
+                    $changed['recurrence_instance_utc'] = $after['recurrence_instance_utc'];
+                }
+                foreach (array_keys($changed) as $col) {
+                    $touches[] = [Undo::keyOf('events', ['id' => $id]), (string) $col];
+                }
+                $changed['updated_at'] = Time::nowDb();
+                $this->db->update('events', $changed, 'id = ?', [$id]);
+                $changedUids[(string) $now['uid']] = true;
+                if (!in_array($id, $updatedEventIds, true)) {
+                    $updatedEventIds[] = $id;
+                    $upserts++;
+                }
+            }
+            foreach ($merge as $id => $holderId) {
+                [$now, $after, $held, $refs] = $follow[$id];
+                $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
+                $this->mergeInto($after + ['id' => $id], $holderId, $held, $newMasters[(string) $now['uid']] ?? null, $ownColumn);
+                $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
+                $droppedDays[] = $this->droppedDay($now, $held, $refs, 'merged');
+                $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
+                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
+                if (!in_array($holderId, $updatedEventIds, true)) {
+                    $updatedEventIds[] = $holderId;
+                    $upserts++;
+                }
+                $changedUids[(string) $now['uid']] = true;
                 $removedCount++;
             }
             self::assertSyncDeadline($deadline);

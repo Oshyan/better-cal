@@ -507,7 +507,11 @@ final class GoogleUndo
             : self::UNDID . (string) $mutation['summary'];
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
-        $befores = $this->rebased($mutation, $calendar, (array) $g['before']);
+        try {
+            $befores = $this->rebased($mutation, $calendar, (array) $g['before']);
+        } catch (HttpError $e) {
+            throw $this->halfDoneReason($userId, $calendar, (array) $g['before']) ?? $e;
+        }
         $deferred = null;
         $this->undo->write($userId, function () use ($mutation, $befores, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
             $authority?->assertValid($this->db);
@@ -596,6 +600,41 @@ final class GoogleUndo
             }
         }
         return $out;
+    }
+
+    /**
+     * The real reason an undo of a series can't put its rows back, where
+     * one is a change to the same series half done at Google: its store
+     * holds the series' days as Google has them now (an edited day Google
+     * holds at the series' values is no row here), so the snapshot names a
+     * day that is gone until that change is finished or put back. Null
+     * when no such change names the series.
+     *
+     * @param list<array> $befores
+     */
+    private function halfDoneReason(int $userId, array $calendar, array $befores): ?HttpError
+    {
+        $names = [];
+        foreach ($befores as $t) {
+            foreach (['uid', 'googleId'] as $k) {
+                if (!empty($t[$k])) {
+                    $names[(string) $t[$k]] = true;
+                }
+            }
+        }
+        foreach (GoogleSeries::halfDoneOf($this->db, $userId) as $half) {
+            if ((int) $half['calendarId'] !== (int) $calendar['id']) {
+                continue;
+            }
+            $pending = RequestAuthority::asServer(fn(): ?array => $this->db->journal()->one('SELECT targets_json FROM google_pending WHERE id = ?', [(int) $half['id']]));
+            foreach (json_decode((string) ($pending['targets_json'] ?? ''), true) ?: [] as $t) {
+                if (isset($names[(string) ($t['uid'] ?? '')]) || isset($names[(string) ($t['googleId'] ?? '')])) {
+                    return HttpError::conflict('google_pending',
+                        "A change to '" . $half['title'] . "' is half done at Google, and its days here are as Google holds them until it is finished. Finish it or put it back in Review, then undo this.");
+                }
+            }
+        }
+        return null;
     }
 
     private function writer(): GoogleWriter

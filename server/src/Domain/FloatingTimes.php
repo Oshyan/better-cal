@@ -110,6 +110,14 @@ trait FloatingTimes
                 $in[$k] = $move($in[$k]);
             }
         }
+        // A rule's UTC UNTIL names a moment on the device's clock too.
+        if (is_string($in['rrule'] ?? null) && preg_match('/(^|;)UNTIL=(\d{8}T\d{6})Z/i', $in['rrule'], $u) === 1) {
+            $until = \DateTimeImmutable::createFromFormat('!Ymd\THis', $u[2], Time::utc());
+            if ($until !== false) {
+                $moved = Floating::stored($until, $own, $from)->format('Ymd\THis\Z');
+                $in['rrule'] = (string) preg_replace('/(^|;)UNTIL=\d{8}T\d{6}Z/i', '${1}UNTIL=' . $moved, $in['rrule'], 1);
+            }
+        }
         if (is_array($in['typed'] ?? null)) {
             $in['typed']['tz'] = $own->getName();
         }

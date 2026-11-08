@@ -237,6 +237,14 @@ export function CalendarSettings({ cal, folders, onClose, full = false }) {
       </select>
     </div>
     <${ReminderField} cal=${cal} />
+    ${(cal.kind === 'local' || (subscribed && cal.provider === 'google' && cal.editable)) && html`<label class="bc-check" title="New timed events made here start out floating: shown and reminded at the same clock time in whatever zone you are in. Each event can still be changed in its editor.">
+      <input
+        type="checkbox"
+        checked=${!!cal.floatTimed}
+        onChange=${(e) => updateCalendar(cal, { floatTimed: e.target.checked })}
+      />
+      <span>New timed events float</span>
+    </label>`}
     ${cal.kind === 'plugin' && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       <span class="bc-calset-source"><${Icon} name="plugins" size=${13} /><span>

@@ -1826,7 +1826,7 @@ console.log('--- chronological ordering across timezone offsets ---');
 // The editor takes "3:00 PM" plus a picked zone. These must not depend on the
 // zone the test (or the browser) runs in, which is the whole point.
 {
-  const { instantFromWallTime, wallTimeInZone, zoneOptions, zoneNote } = await import('../src/lib/dates.js');
+  const { instantFromWallTime, wallTimeInZone, zoneOptions, zoneNote, fmtTime } = await import('../src/lib/dates.js');
   const utc = (d) => d.toISOString().slice(0, 16) + 'Z';
   eq('zone: 3 PM New York in summer', utc(instantFromWallTime('2026-06-04T15:00', 'America/New_York')), '2026-06-04T19:00Z');
   eq('zone: 3 PM New York in winter', utc(instantFromWallTime('2026-01-15T15:00', 'America/New_York')), '2026-01-15T20:00Z');
@@ -1870,6 +1870,12 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('zone note: none for UTC (unknown, not a place)', zoneNote({ ...timed, tzid: 'UTC' }), '');
   eq('zone note: none for all-day events', zoneNote({ ...timed, allDay: true, tzid: far }), '');
   eq('zone note: none without a zone', zoneNote(timed), '');
+  // A floating event (#167) has no zone: its times are this device's clock,
+  // and where a zone would show it says "local", never a city.
+  const floatNote = zoneNote({ ...timed, tzid: far, floating: true });
+  assert('zone note: a floating event says local, not a city', floatNote.endsWith(' local') && !floatNote.includes(' in '), floatNote);
+  eq('zone note: a floating event says its times on this device', floatNote.replace(/\s/g, ' '), (fmtTime(new Date(timed.start)) + ' to ' + fmtTime(new Date(timed.end)) + ' local').replace(/\s/g, ' '));
+  eq('zone note: none for a floating all-day event', zoneNote({ ...timed, allDay: true, floating: true }), '');
 }
 
 // --- Repeat end date: the local day, however UNTIL was written (0.9.14) ---
@@ -3537,6 +3543,45 @@ console.log('--- chronological ordering across timezone offsets ---');
   await calendar(22);
   eq("Apply to: an event that doesn't repeat has none, and its calendar changes alone", [applyTo(), ed.querySelector('select.bc-calselect').value], [null, '22']);
 
+  // Floating (#167): the toggle beside the zone, preset from a calendar whose
+  // new timed events float, sent only when it changes.
+  const floatBox = () => (ed.querySelectorAll('label.bc-check').find((l) => l.textContent.includes('Same clock time in any zone')) || null)?.querySelector('input') || null;
+  const zoneShown = () => ed.querySelectorAll('.bc-zone').length > 0;
+  put({ calendars: st.calendars.map((c) => (c.id === 23 ? { ...c, floatTimed: true } : c)) });
+  const sent = [];
+  const editorFetch = globalThis.fetch;
+  globalThis.fetch = async (url, o = {}) => {
+    if (o.method === 'POST' || o.method === 'PATCH') sent.push([o.method, new URL(String(url), 'http://app.test').pathname, JSON.parse(o.body || '{}')]);
+    return editorFetch(url, o);
+  };
+  const submitForm = async () => { ed.querySelector('form').dispatch('submit'); await settle(); };
+  render(null, ed);
+  put({ editor: null });
+  await settle();
+  put({ editor: { mode: 'create', draft: { title: 'Sample walk', calendarId: 21, start: '2027-03-10T07:00:00-08:00', end: '2027-03-10T07:30:00-08:00' } } });
+  render(html`<${EditorDrawer} />`, ed);
+  await settle();
+  eq('floating toggle: off for a new event on a calendar that does not float, with the zone control', [floatBox() && floatBox().checked, zoneShown()], [false, true]);
+  await calendar(23);
+  eq('floating toggle: a calendar whose new timed events float turns it on and hides the zone', [floatBox().checked, zoneShown()], [true, false]);
+  await submitForm();
+  const created = sent.find(([m, path]) => m === 'POST' && path.endsWith('/events'));
+  eq('floating toggle: a new floating event is created with floating, and no zone of its own', [created && created[2].floating, created && 'tzid' in created[2] && created[2].tzid !== Intl.DateTimeFormat().resolvedOptions().timeZone], [true, false]);
+  sent.length = 0;
+  const floatingOcc = { instanceId: '63@1', eventId: 63, calendarId: 21, title: 'Sample stretch', recurring: false, floating: true, tzid: 'Asia/Tokyo', start: '2027-03-10T07:00:00-08:00', end: '2027-03-10T07:30:00-08:00', allDay: false, full: true };
+  await open(floatingOcc);
+  eq('floating toggle: a floating event opens with it on', floatBox().checked, true);
+  floatBox().checked = false;
+  floatBox().dispatch('change');
+  await settle();
+  await submitForm();
+  const patched = sent.find(([m, path]) => m === 'PATCH' && path.endsWith('/events/63'));
+  eq('floating toggle: turned off, the save sends floating false and nothing else changed', patched && patched[2], { floating: false });
+  sent.length = 0;
+  await open({ ...floatingOcc, instanceId: '64@1', eventId: 64, floating: false, invite: { kind: 'invitation' } });
+  eq('floating toggle: none for an invitation', floatBox(), null);
+  globalThis.fetch = editorFetch;
+
   render(null, ed);
   put({ editor: null });
   await settle();
@@ -3697,6 +3742,13 @@ console.log('--- API offline session transitions ---');
       ['/api/v1/events', 'POST', 'LIVE-CSRF'],
     ]);
     eq('api offline: live /me restores writable mode', [storeState.offlineReadOnly, storeState.csrf], [false, 'LIVE-CSRF']);
+
+    // Floating events (#167) come on the device's clock: every request names its zone.
+    const zoneHeaders = [];
+    globalThis.fetch = async (url, options = {}) => { zoneHeaders.push(options.headers?.['X-Device-Tz'] || null); return jsonResponse({ ok: true }); };
+    await requestApi('/config');
+    await requestApi('/events', { method: 'POST', body: { title: 'Sample event' } });
+    eq('api: every request names the device zone (X-Device-Tz)', zoneHeaders, [Intl.DateTimeFormat().resolvedOptions().timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone]);
 
     storeState.authed = true;
     storeState.offlineReadOnly = true;
@@ -6257,7 +6309,7 @@ console.log('--- 1.5.1: adoption readings, typed values, one field table, quick 
   const lengthOnly = planView({ ...base, groups: [], days: [dayOf('k1', '2027-01-12'), dayOf('k2', '2027-01-19')] }, { kind: 'resize', title: 'Choir', refYear: 2027 });
   eq('a length-only change: its days\' group says they take the new length', lengthOnly.edited.map((r) => r.line1), ['2 days that were changed earlier stay where they are and take the new length.']);
   // One field table: every field the editor sends has a row, and the panel names it.
-  const sendable = ['title', 'calendarId', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'locationProvider', 'url', 'description', 'tagNames', 'personIds', 'rrule', 'reminders', 'isContainer', 'status'];
+  const sendable = ['title', 'calendarId', 'start', 'end', 'allDay', 'tzid', 'typed', 'location', 'locationLat', 'locationLng', 'locationProvider', 'url', 'description', 'tagNames', 'personIds', 'rrule', 'reminders', 'isContainer', 'floating', 'status'];
   eq('field table: every field the editor sends is a row of the table', sendable.filter((k) => !editField(k)), []);
   eq('field table: a field the table lacks is never sent', changedFields({ title: 'A', mystery: 2 }, { title: 'A', mystery: 1 }), {});
   eq('field table: a new time sends its typed clocks with it', Object.keys(changedFields({ start: 'b', end: 'c', allDay: false, typed: { start: '2027-03-14T02:30', end: '2027-03-14T03:30', tz: 'America/Los_Angeles' } }, { start: 'a', end: 'c', allDay: false, typed: null })), ['start', 'typed', 'end', 'allDay']);

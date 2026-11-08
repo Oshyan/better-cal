@@ -498,8 +498,19 @@ export function typedInstants(startWall, endWall, tz) {
 
 // "Thu, Jun 4, 3:00 PM to 4:00 PM in New York" for a timed event whose own zone
 // keeps a different clock from this device; '' otherwise. UTC is what imports
-// write when the zone is unknown, so it is never announced as a place.
+// write when the zone is unknown, so it is never announced as a place. A
+// floating event (#167) has no zone: its times are already this device's
+// clock, and where a zone would show it says "local" ("7:00 AM to 8:00 AM local").
 export function zoneNote(occ) {
+  if (occ && !occ.allDay && occ.floating) {
+    const s = new Date(occ.start);
+    const e = new Date(occ.end || occ.start);
+    if (isNaN(s)) return '';
+    // The day is on the line it sits beside; only the clock is said again.
+    const times = isNaN(e) || e.getTime() === s.getTime() ? fmtTime(s)
+      : dayKeyOf(s) === dayKeyOf(e) ? fmtTime(s) + ' to ' + fmtTime(e) : fmtRange(s, e, false);
+    return times + ' local';
+  }
   if (!occ || occ.allDay || !occ.tzid || occ.tzid === 'UTC' || sameClock(occ.tzid, localTz())) return '';
   // Reuse the local formatters (and the 12/24-hour setting they follow) by
   // shifting the instant so that the device's clock reads what the zone's does.

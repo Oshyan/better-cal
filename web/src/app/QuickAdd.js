@@ -387,6 +387,9 @@ export function QuickAdd() {
       rrule: effectiveRrule(f) || null,
       // "alert 30 minutes" in the text (#33): this event's own reminder.
       ...(d && Array.isArray(d.reminders) && d.reminders.length ? { reminders: d.reminders.map((m) => ({ minutes: m })) } : {}),
+      // "7am floating" (#167): the same clock time in any zone. Without the
+      // word the server presets it from the calendar's setting.
+      ...(d && d.floating && !f.allDay ? { floating: true } : {}),
       location,
       locationLat: location && f.locationLat != null ? f.locationLat : null,
       locationLng: location && f.locationLng != null ? f.locationLng : null,
@@ -444,6 +447,7 @@ export function QuickAdd() {
           personNames: (draft && draft.personNames) || [],
           rrule: effectiveRrule(form) || '',
           ...(draft && Array.isArray(draft.reminders) && draft.reminders.length ? { reminders: draft.reminders } : {}),
+          ...(draft && draft.floating && !form.allDay ? { floating: true } : {}),
           ...(draft && Array.isArray(draft.tags) && draft.tags.length ? { tags: draft.tags } : {}),
         },
         nlText: touchedRef.current.size === 0 ? text : '',
@@ -565,6 +569,7 @@ export function QuickAdd() {
         ${draft && draft.other && html`<button
           type="button" class="bc-qchip bc-qchip-other" title=${otherReadingWords(draft.other).title} onClick=${takeOther}
         >${otherReadingWords(draft.other).label}</button>`}
+        ${draft && draft.floating && !form.allDay && html`<span class="bc-qchip" title="Same clock time in any zone"><${Icon} name="clock" size=${12} />local</span>`}
         ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft && Array.isArray(draft.tags) && draft.tags.map((t) => html`<span class="bc-qchip" title="Tag">#${t}</span>`)}

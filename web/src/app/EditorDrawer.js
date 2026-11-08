@@ -98,7 +98,7 @@ function looseBase(rrule, start) {
 // The clock a timed series' end date is read and written on: the zone the
 // event keeps, when that isn't this device's; null means this device.
 function untilZone(occ) {
-  return occ && !occ.allDay && occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
+  return occ && !occ.allDay && !occ.floating && occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
 }
 
 // RRULE text -> the repeat controls. A rule they can't rebuild exactly
@@ -137,8 +137,11 @@ function formInstants(form) {
     const v = allDayInputs(f.start, f.end);
     return [fromInputValue(v.start), fromInputValue(v.end)];
   }
-  return typedInstants(form.start, form.end, form.tzTouched && form.tz ? form.tz : null);
+  return typedInstants(form.start, form.end, form.tzTouched && form.tz && !form.floating ? form.tz : null);
 }
+
+// A calendar's "New timed events float" (#167): what a new event's toggle starts at.
+const calFloats = (calendarId) => !!(state.calendars.find((c) => c.id === Number(calendarId)) || {}).floatTimed;
 
 // The quiet zone control on the duration line. A link until clicked, because
 // almost every event is in the zone you are sitting in and a 420-entry select
@@ -292,6 +295,8 @@ export function EditorDrawer() {
         nf.tags = baseTags.concat(addTags).join(', ');
       }
       if (d.calendarFromText && d.calendarId) nf.calendarId = d.calendarId;
+      // "7am floating" (#167); text without the word leaves the toggle as it was.
+      if (d.floating && !nf.floating) { nf.floating = true; nf.floatTouched = true; touched.push('floating'); }
       // People the editor started with stay; the text adds to them.
       const named = toPeopleChips(d.personNames || []);
       nf.people = [...base.people, ...named.filter((p) => !base.people.some((b) => b.name.toLowerCase() === p.name.toLowerCase()))];
@@ -462,6 +467,11 @@ export function EditorDrawer() {
       // event's zone. An untouched edit never rewrites a stored zone.
       tz: draftZone || localTz(),
       tzTouched: !!draftZone,
+      // Floating (#167): the same clock time in any zone. A new event starts
+      // from quick add's words, else its calendar's setting, until the toggle
+      // is used (floatTouched).
+      floating: occ ? !!occ.floating : !!(draft.floating || (!draft.allDay && calFloats(draft.calendarId || defaultTargetCalendarId()))),
+      floatTouched: false,
       isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
       // Planned or Maybe, on my own calendars (status confirmed / tentative).
       rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
@@ -795,7 +805,7 @@ export function EditorDrawer() {
       // A zone the owner picked becomes the event's own zone: it is what a
       // repeating event keeps its clock time in across DST changes. All-day
       // events are dates and have no use for one.
-      if (fm.tzTouched && !fm.allDay) out.tzid = fm.tz;
+      if (fm.tzTouched && !fm.allDay && !fm.floating) out.tzid = fm.tz;
       return out;
     };
     let fields = formFields(form);
@@ -822,6 +832,9 @@ export function EditorDrawer() {
     if (occ ? !!occ.isContainer !== form.isContainer : form.isContainer) {
       fields.isContainer = form.isContainer;
     }
+    // Floating (#167): sent only when it changes, and never on an all-day event.
+    const floats = !!form.floating && !form.allDay;
+    if (occ ? !!occ.floating !== floats : floats) fields.floating = floats;
     // Planned or Maybe is the event's status on my own calendars; sent on a
     // new Maybe, or when an edit changes it.
     if (isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)))) {
@@ -846,7 +859,7 @@ export function EditorDrawer() {
       // the dialog over the footer (SeriesDialog.js), unless it says the
       // change is direct (a split never is: it ends the series before it).
       if (occ.recurring && (scope === 'all' || scope === 'following') && seriesPlans()) {
-        const was = opened ? { ...formFields(opened), reminders: opened.reminders } : {};
+        const was = opened ? { ...formFields(opened), reminders: opened.reminders, floating: !!occ.floating } : {};
         openSeriesChange({
           kind: 'editor', occ, body: fields, quiet: true, scope,
           fields: fieldLines(fields, was, {
@@ -922,7 +935,7 @@ export function EditorDrawer() {
   // the other calendar, with nothing to say it had (#186). Back to its own
   // calendar, Apply to goes back too, unless you chose it yourself.
   const pickCalendar = (v) => {
-    upd({ calendarId: v });
+    upd(!occ && !form.floatTouched ? { calendarId: v, floating: calFloats(v) } : { calendarId: v });
     if (!occ || !occ.recurring) return;
     const moved = Number(v) !== occ.calendarId;
     if (moved && scope === 'this') {
@@ -1063,7 +1076,11 @@ export function EditorDrawer() {
             title=${durationLock ? 'Length kept: moving the start moves the end with it. Click to set them separately.' : 'Start and end set separately. Click to keep the length when the start moves.'}
             onClick=${() => setDurationLock(!durationLock)}
           ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${12} />${lengthText || 'Length'}</button>
-          ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
+          ${!form.allDay && !(occ && occ.invite) && html`<label class=${'bc-check' + flash('floating')} title="Floating: shown and reminded at this clock time in whatever zone the device is in, for routines like a morning walk. Invitations keep their zone.">
+            <input type="checkbox" checked=${!!form.floating} onChange=${(e) => upd({ floating: e.target.checked, floatTouched: true })} />
+            <span>Same clock time in any zone</span>
+          </label>`}
+          ${!form.allDay && !form.floating && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
         </div>
         ${backwards && html`<span></span><div class="bc-ed-ctl bc-when-err" role="alert">
           <${Icon} name="warning" size=${13} /> The end is before the start.

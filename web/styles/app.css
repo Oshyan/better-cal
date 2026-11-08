@@ -1598,6 +1598,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* --- near-duplicate group chips + popover -------------------------------------- */
 
 .bc-stack-glyph { flex: none; opacity: 0.8; line-height: 1; display: inline-flex; align-items: center; }
+/* A floating event's mark (#167): a small clock, quiet beside the time. */
+.bc-float-mark { flex: none; opacity: 0.75; line-height: 1; display: inline-flex; align-items: center; }
 .bc-chip.is-group .bc-chip-title, .bc-bar.is-group .bc-chip-title { font-weight: 600; }
 .bc-bar.is-group { cursor: pointer; }
 .bc-group-pop {

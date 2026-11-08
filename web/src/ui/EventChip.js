@@ -136,6 +136,12 @@ export function HiddenMark({ count, onShow }) {
   >${glyph}</button>`;
 }
 
+// A floating event (#167): its clock time holds in any zone, so it is not
+// pinned to a moment like the events beside it. A small clock after the time.
+export function FloatMark() {
+  return html`<span class="bc-float-mark" role="img" aria-label="Same clock time in any zone" title="Same clock time in any zone"><${Icon} name="clock" size=${10} /></span>`;
+}
+
 // Small stack glyph marking a near-duplicate group chip.
 function StackGlyph() {
   return html`<span class="bc-stack-glyph" aria-hidden="true"><${Icon} name="stack" size=${11} /></span>`;
@@ -195,6 +201,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     ${timeLabel !== null
       ? html`<span class="bc-chip-time">${timeLabel}</span>`
       : timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
+    ${occ.floating && !occ.isGroup && html`<${FloatMark} />`}
     ${occ.isGroup && html`<${StackGlyph} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     <${DurationSuffix} occ=${occ} />
@@ -241,6 +248,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
     ${!seg.contLeft && occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
     ${!seg.contLeft && occ.relationship !== 'context' && barMark(cal)}
+    ${!seg.contLeft && occ.floating && !occ.isGroup && html`<${FloatMark} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     ${note ? html`<span class="bc-bar-note">${note}</span>` : html`<${DurationSuffix} occ=${occ} />`}
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
@@ -295,6 +303,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
       ${occ.isGroup && html`<${StackGlyph} />`}
       ${occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
       ${occ.relationship !== 'context' && barMark(cal)}
+      ${occ.floating && !occ.isGroup && html`<${FloatMark} />`}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
       <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}

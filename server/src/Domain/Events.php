@@ -379,11 +379,11 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null): void
     {
         $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
         if ($google !== null) {
-            $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, null, 'update', $tables);
+            $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, $touches, 'update', $tables);
             return;
         }
         // No snapshots, but what it changed is known: the event, which an
@@ -517,6 +517,16 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        if (array_key_exists('useSeries', $in)) {
+            // "Use series value" by the master and the day's key, as on a local calendar.
+            if (!is_array($in['useSeries']) || array_diff_key($in, array_flip(['scope', 'instanceStart', 'useSeries'])) !== []) {
+                throw HttpError::badRequest('useSeries is a list of field names, sent on its own with scope this and instanceStart');
+            }
+            if ($existing !== null) {
+                $this->useSeriesValues($userId, $master, $existing, $in['useSeries'], $calendar, $authority);
+            }
+            return;
+        }
         // An edited day never takes the flag this way (forOverride): the
         // rows stand as the commit will leave them.
         $this->tripRules();
@@ -751,7 +761,10 @@ final class Events
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
         $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
-        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo);
+        // What it changed, as on a local calendar: the series' skipped days
+        // (and the day's row, when it had one: its snapshot says so), not the series whole.
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo, null,
+            [[Undo::keyOf('events', ['id' => (int) $master['id']]), 'exdates_json']]);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
@@ -1646,10 +1659,12 @@ final class Events
                 throw HttpError::badRequest('useSeries is a list of field names, sent on its own with scope this');
             }
             $master = $this->get($userId, (int) $event['recurrence_parent_id']);
-            if ($event['source'] === 'feed') {
-                throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+            // A writable Google calendar's day takes it as any edit does (Google first).
+            $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+            if ($event['source'] === 'feed' && $google === null) {
+                throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
             }
-            $this->useSeriesValues($userId, $master, $event, $in['useSeries']);
+            $this->useSeriesValues($userId, $master, $event, $in['useSeries'], $google, $authority);
             return;
         }
         if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
@@ -1657,10 +1672,11 @@ final class Events
         }
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
+        // What a feed's day may be given is what is held here alone (OwnFields::feedEditKeys, read from the one list).
+        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', ...\BetterCal\Domain\Series\OwnFields::feedEditKeys()]);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
-            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags, reminders and a place\'s coordinates');
         }
         if ($google !== null && self::isCalendarChange($event, $in)) {
             throw HttpError::forbidden('google_move', 'Events on a Google calendar stay there; create it on the other calendar instead');

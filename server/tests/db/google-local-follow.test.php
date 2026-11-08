@@ -375,4 +375,31 @@ return static function (Db $db): void {
         checkEq('the day has a row, at the series\' place text, its coordinates, owning its place', ['Sample walk', 'Sample park', 37.5, '["location"]'],
             [$row['title'] ?? null, $row['location'] ?? null, isset($row['location_lat']) ? (float) $row['location_lat'] : null, $row['override_fields'] ?? null]);
     });
+
+    scenario('feed local follow: an ICS feed\'s day takes coordinates alone, as it takes a tag; its title stays read-only', function () use ($db, $icsFeed, $vevent): void {
+        $f = $icsFeed();
+        ($f->sync)($vevent(';TZID=America/Los_Angeles:20270301T100000', 'FREQ=WEEKLY;COUNT=5'));
+        $master = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND recurrence_instance_utc IS NULL', [$f->calendarId]);
+        $placed = refusal(fn() => $f->d->events->patch($f->u, $master, ['scope' => 'this', 'instanceStart' => '2027-03-08T18:00:00+00:00', 'locationLat' => 37.5, 'locationLng' => -122.25]));
+        $row = $db->one('SELECT location, location_lat FROM events WHERE recurrence_parent_id = ?', [$master]) ?? [];
+        $renamed = refusal(fn() => $f->d->events->patch($f->u, $master, ['scope' => 'this', 'instanceStart' => '2027-03-15T17:00:00+00:00', 'title' => 'Sample rename']));
+        checkEq('coordinates accepted, on the day\'s row at the feed\'s text; a title refused', [null, 'Sample field', 37.5, 'feed_readonly'],
+            [$placed, $row['location'] ?? null, isset($row['location_lat']) ? (float) $row['location_lat'] : null, $renamed]);
+        // Every field held here alone, read from the one list: people too.
+        $people = refusal(fn() => $f->d->events->patch($f->u, $master, ['scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00', 'personNames' => ['Sam Sample']]));
+        $people22 = (int) $db->scalar('SELECT COUNT(*) FROM event_people ep JOIN events e ON e.id = ep.event_id WHERE e.recurrence_parent_id = ? AND e.recurrence_instance_utc = ?', [$master, '2027-03-22 17:00:00']);
+        checkEq('a person accepted on a feed\'s day, on its row', [null, 1], [$people, $people22]);
+        checkEq('the gate\'s keys are those of every field on the list (an answer and an icon have no patch key) and the coordinates\'',
+            ['locationLat', 'locationLng', 'locationSource', 'locationProvider', 'reminders', 'tagNames', 'personIds', 'personNames'], \BetterCal\Domain\Series\OwnFields::feedEditKeys());
+    });
+
+    scenario('held here alone: one list, and none of its columns is one Undo counts as Google\'s', function (): void {
+        $google = (new ReflectionClassConstant(\BetterCal\Domain\Undo::class, 'GOOGLE_HELD'))->getValue()['events'];
+        $cols = \BetterCal\Domain\Series\OwnFields::COORDINATE_COLUMNS;
+        foreach (\BetterCal\Domain\Series\OwnFields::HELD_HERE as $field) {
+            $cols = array_merge($cols, \BetterCal\Domain\Series\OwnFields::COLUMNS[$field] ?? []);
+        }
+        checkEq('held-here columns that Undo holds as Google\'s', [], array_values(array_intersect($cols, $google)));
+        checkEq('Feeds reads the same list', \BetterCal\Domain\Series\OwnFields::HELD_HERE, (new ReflectionClassConstant(Feeds::class, 'HELD_HERE_FIELDS'))->getValue());
+    });
 };

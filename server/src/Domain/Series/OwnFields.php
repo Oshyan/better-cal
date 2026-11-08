@@ -86,6 +86,43 @@ final class OwnFields
         return self::normalize(array_merge(array_diff($fields, array_keys(self::REFERENCES)), $kinds));
     }
 
+    /**
+     * The one list of what an edited day holds here alone, which no feed,
+     * Google or ICS, carries: these own fields, and a place's coordinates
+     * (COORDINATE_COLUMNS: a feed carries a place's text, never where it
+     * is). Read by the sync (Feeds::heldHere, recordHolds), by recovery's
+     * carry-over (GoogleSeries::heldHere), by the gate on a read-only
+     * feed's day (feedEditKeys) and checked against what Undo holds as
+     * Google's (Undo::GOOGLE_HELD, whose complement these columns are),
+     * so the four can't drift.
+     */
+    public const HELD_HERE = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+
+    /** The place's columns no feed carries: its coordinates and where they came from. */
+    public const COORDINATE_COLUMNS = ['location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at', 'geocoded_at'];
+
+    /** The request keys that set each field held here alone (attendance is answered by its own path, and an icon is set by whoever made the event, a plugin or quick add: no patch key sets either). */
+    private const HELD_HERE_INPUT = ['reminders' => ['reminders'], 'attendance' => [], 'tags' => ['tagNames'], 'people' => ['personIds', 'personNames'], 'icon' => []];
+
+    /** The request keys that set a place's coordinates. */
+    private const COORDINATE_INPUT = ['locationLat', 'locationLng', 'locationSource', 'locationProvider'];
+
+    /**
+     * A request's keys for what is held here alone, which a day of a
+     * read-only (ICS) feed may still be given: every field of HELD_HERE,
+     * read from the list, and a place's coordinates.
+     *
+     * @return list<string>
+     */
+    public static function feedEditKeys(): array
+    {
+        $out = self::COORDINATE_INPUT;
+        foreach (self::HELD_HERE as $field) {
+            $out = array_merge($out, self::HELD_HERE_INPUT[$field] ?? throw new \LogicException("no request key for the held-here field $field"));
+        }
+        return $out;
+    }
+
     /** The content fields and the columns each one writes. */
     public const COLUMNS = [
         'title' => ['title'],

@@ -667,4 +667,236 @@ return static function (Db $db): void {
         }
         checkEq('the case is exercised for both', true, $ran >= 2);
     });
+
+    // ---- the sweep: Finish applies the change's deltas over what holds now (rule A); Put back's
+    // "nothing changed since" is every field of every resource (rule B); a day with only local data
+    // is ordinary to Google (rule D); a delete of one day touches that day and the skips -----------
+
+    // Another client's write to Google, straight to the stand-in.
+    $elsewhereAtGoogle = static function (object $s, string $id, array $body): void {
+        ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/sample-crew%40group.calendar.google.com/events/' . $id, $body, ['Authorization: Bearer sample-access']);
+    };
+    $lostRename = static function (object $s, array $more = []) use ($masterId): void {
+        $s->t->loseAt = $s->t->writes + 1;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample pending rename'] + $more);
+        } catch (HttpError) {
+        }
+    };
+    $day = static function (object $s, string $suffix): ?array {
+        $r = $s->fake->records('smpl3weekly')[$suffix] ?? null;
+        return $r === null ? null : [$r['summary'] ?? null, $r['status'] ?? 'confirmed', $r['description'] ?? null, $r['location'] ?? null, $r['start']['dateTime'] ?? null];
+    };
+    $writesOf = static fn(object $s): array => array_values(array_map(static fn(array $c): string => $c[0] . ' ' . $c[1], array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET')));
+
+    scenario('google recovery sweep F1: a rename whose answer was lost, then a skipped day brought back or an edited day reset elsewhere: Put back sends nothing and names the series', function () use ($setup, $lostRename, $elsewhereAtGoogle, $refused, $held, $iso): void {
+        $arms = [
+            'the skipped 5 April brought back' => static fn(object $s) => $elsewhereAtGoogle($s, 'smpl3weekly_20270405T170000Z', ['status' => 'confirmed']),
+            'the moved 22 March reset to the series\' time' => static fn(object $s) => $elsewhereAtGoogle($s, 'smpl3weekly_20270322T170000Z',
+                ['start' => ['dateTime' => $iso('2027-03-22 10:00'), 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => $iso('2027-03-22 11:00'), 'timeZone' => 'America/Los_Angeles']]),
+            'a note on the ordinary 8 March (control)' => static fn(object $s) => $elsewhereAtGoogle($s, 'smpl3weekly_20270308T180000Z', ['description' => 'Sample remote note']),
+        ];
+        foreach ($arms as $what => $arm) {
+            $s = $setup();
+            $lostRename($s);
+            $arm($s);
+            $there = $held($s, 'smpl3weekly');
+            $writes = $s->t->writes;
+            [$ok, $code, $words, $listedAfter] = $refused($s);
+            checkEq("$what: not ok, google_changed_since, the series named; nothing sent; Google as it was; still in Review",
+                [false, 'google_changed_since', true, $writes, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $s->t->writes, $held($s, 'smpl3weekly'), $listedAfter]);
+        }
+    });
+
+    scenario('google recovery sweep F2: Finish of a rename whose answer was lost keeps what changed elsewhere on days the rename did not change', function () use ($setup, $lostRename, $elsewhereAtGoogle, $recover, $day, $rowAt, $pending, $db): void {
+        $s = $setup();
+        $lostRename($s);
+        $elsewhereAtGoogle($s, 'smpl3weekly_20270308T180000Z', ['description' => 'Sample remote note']);
+        $out = $recover($s, 'finish');
+        $here = $rowAt($s, '2027-03-08 18:00:00');
+        checkEq('a note added elsewhere to the ordinary 8 March: kept at Google with the new title, and here; no difference named; no pending row',
+            [true, [], ['Sample pending rename', 'confirmed', 'Sample remote note'], ['Sample pending rename', 'Sample remote note'], []],
+            [$out['ok'], $out['differences'], array_slice($day($s, '20270308T180000Z') ?? [], 0, 3), [$here['title'] ?? null, $here['description'] ?? null], $pending($s)]);
+
+        $s = $setup();
+        $lostRename($s);
+        $elsewhereAtGoogle($s, 'smpl3weekly_20270329T170000Z', ['location' => 'Sample remote room']);
+        $out = $recover($s, 'finish');
+        checkEq('a place changed elsewhere on the edited 29 March: kept, with the day\'s own title; the series renamed', [true, [], 'Sample weekly, special', 'Sample remote room', 'Sample pending rename'],
+            [$out['ok'], $out['differences'], $day($s, '20270329T170000Z')[0] ?? null, $day($s, '20270329T170000Z')[3] ?? null, $s->fake->events['smpl3weekly']['summary']]);
+    });
+
+    scenario('google recovery sweep F3: a day deleted here while a rename was half done stays deleted through Finish', function () use ($setup, $lostRename, $recover, $day, $masterId, $iso, $db): void {
+        $s = $setup();
+        $lostRename($s);
+        $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+        $s->events->throwDeferred();
+        $out = $recover($s, 'finish');
+        checkEq('Finish ok; 8 March cancelled at Google and skipped here; the rename landed', [true, 'cancelled', true, 'Sample pending rename'],
+            [$out['ok'], $day($s, '20270308T180000Z')[1] ?? null, in_array('2027-03-08 18:00:00', Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$masterId($s)])), true),
+                $s->fake->events['smpl3weekly']['summary']]);
+    });
+
+    scenario('google recovery sweep F4: a split whose insert answer was lost, then any field of the new series changed elsewhere: Put back cancels nothing', function () use ($setup, $masterId, $refused, $iso): void {
+        foreach (['colorId' => '5', 'attendees' => [['email' => 'guest@example.test', 'responseStatus' => 'needsAction']], 'transparency' => 'transparent',
+            'visibility' => 'private', 'reminders' => ['useDefault' => false, 'overrides' => [['method' => 'popup', 'minutes' => 45]]], 'guestsCanModify' => true] as $field => $value) {
+            $s = $setup();
+            $s->t->loseFirstPost = true;
+            try {
+                planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+            } catch (HttpError) {
+            }
+            $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+            $s->fake->seed(array_replace($s->fake->events[$new], [$field => $value]));
+            $writes = $s->t->writes;
+            [$ok, $code, , $listedAfter] = $refused($s);
+            checkEq("$field changed elsewhere: refused, nothing sent, the new series live with it; still in Review", [false, 'google_changed_since', $writes, 'confirmed', $value, 1],
+                [$ok, $code, $s->t->writes, $s->fake->events[$new]['status'] ?? 'confirmed', $s->fake->events[$new][$field] ?? null, $listedAfter]);
+        }
+    });
+
+    scenario('google recovery sweep F5: tags set here while a rename with a tag was half done are kept by Finish and named', function () use ($setup, $lostRename, $recover, $masterId, $db): void {
+        $s = $setup();
+        $lostRename($s, ['tagNames' => ['Sample tag A']]);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => ['Sample tag B']]);
+        $s->events->throwDeferred();
+        $out = $recover($s, 'finish');
+        $tags = array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$masterId($s)]), 'name');
+        checkEq('Finish ok; the later tag kept, the change\'s tag left out and named; the rename landed', [true, ['Sample tag B'], true, 'Sample pending rename'],
+            [$out['ok'], $tags, str_contains(implode(' ', $out['differences']), 'tags'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)])]);
+    });
+
+    scenario('google recovery sweep F6: the trip flag set on the series while a rename was half done reaches every day Finish or Put back brings back', function () use ($setup, $lostRename, $recover, $masterId, $db, $writesOf): void {
+        foreach (['finish', 'putBack'] as $how) {
+            $s = $setup();
+            $lostRename($s);
+            $s->t->calls = [];
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'isContainer' => true]);
+            $s->events->throwDeferred();
+            $flagWrites = $writesOf($s);
+            $out = $recover($s, $how);
+            $flags = array_map('intval', array_column($db->all('SELECT is_container FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY recurrence_instance_utc', [$masterId($s)]), 'is_container'));
+            checkEq("$how: the flag edit sent Google nothing; ok; the series and each of its three edited days carry the flag", [[], true, 1, [1, 1, 1]],
+                [$flagWrites, $out['ok'], (int) $db->scalar('SELECT is_container FROM events WHERE id = ?', [$masterId($s)]), $flags]);
+        }
+    });
+
+    scenario('google recovery sweep F7: a record Google holds at the series\' own values is an ordinary day: a rename never writes it nor names it', function () use ($setup, $masterId, $when, $writesOf, $db): void {
+        $s = $setup();
+        $s->fake->seed(['id' => 'smpl3weekly_20270308T180000Z', 'iCalUID' => 'smpl3weekly@google.com', 'recurringEventId' => 'smpl3weekly', 'summary' => 'Sample weekly', 'description' => 'Sample notes',
+            'location' => 'Sample room 1', 'originalStartTime' => $when('2027-03-08 10:00'), 'start' => $when('2027-03-08 10:00'), 'end' => $when('2027-03-08 11:00')]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $s->t->calls = [];
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample renamed']);
+        $s->events->throwDeferred();
+        $summary = (string) $db->scalar('SELECT summary FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
+        checkEq('the writes are the master and the day with its own title; Activity names no difference', [['PATCH smpl3weekly', 'PATCH smpl3weekly_20270329T170000Z'], false],
+            [$writesOf($s), str_contains($summary, 'Google kept')]);
+    });
+
+    scenario('google recovery sweep F8: a day with only a tag is an ordinary day to Google: a rename sends it nothing and its undo keeps the tag', function () use ($setup, $masterId, $iso, $rowAt, $writesOf, $day, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample renamed']);
+        $entry = lastEntry($db, $s->u);
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample day tag']]);
+        $s->t->calls = [];
+        $s->undo->undoById($s->u, $entry);
+        $row = $rowAt($s, '2027-03-08 18:00:00');
+        checkEq('undone: the master and the own-title day written, 8 March not; it keeps its tag and its series\' title back; Google holds no record of it',
+            [['PATCH smpl3weekly', 'PATCH smpl3weekly_20270329T170000Z'], 'Sample weekly', 1, null],
+            [$writesOf($s), $row['title'] ?? null, (int) $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [(int) ($row['id'] ?? 0)]), $day($s, '20270308T180000Z')]);
+
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample day tag']]);
+        $s->t->calls = [];
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample renamed']);
+        checkEq('a rename with the tagged day there writes the master and the own-title day only', ['PATCH smpl3weekly', 'PATCH smpl3weekly_20270329T170000Z'], $writesOf($s));
+    });
+
+    scenario('google recovery sweep F9: deleting one day touches that day and the skips, so an earlier rename still undoes and the day stays deleted', function () use ($setup, $masterId, $iso, $day, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample renamed']);
+        $entry = lastEntry($db, $s->u);
+        $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+        $s->undo->undoById($s->u, $entry);
+        checkEq('the title back at Google and here; 8 March cancelled at Google and skipped here', ['Sample weekly', 'Sample weekly', 'cancelled', true],
+            [$s->fake->events['smpl3weekly']['summary'], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $day($s, '20270308T180000Z')[1] ?? null,
+                in_array('2027-03-08 18:00:00', Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$masterId($s)])), true)]);
+    });
+
+    scenario('google recovery sweep P3: undoing an earlier change of a series while a later one is half done names the half-done change', function () use ($setup, $masterId, $lostRename, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'description' => 'Sample new notes']);
+        $entry = lastEntry($db, $s->u);
+        $lostRename($s);
+        checkEq('refused with the real reason: the change half done at Google, and Review', 'google_pending', refusal(fn() => $s->undo->undoById($s->u, $entry)));
+    });
+
+    scenario('google: "use series value" on a day of a writable Google calendar goes to Google first, by its row or by the master and the day\'s key', function () use ($setup, $masterId, $rowAt, $day, $iso, $db): void {
+        $s = $setup();
+        $row = $rowAt($s, '2027-03-29 17:00:00');
+        $s->events->patch($s->u, (int) $row['id'], ['useSeries' => ['title']]);
+        checkEq('by its row: Google\'s 29 March back to the series\' title; no row here (an ordinary day again)', ['Sample weekly', null], [$day($s, '20270329T170000Z')[0] ?? null, $rowAt($s, '2027-03-29 17:00:00')]);
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-22 10:00'), 'useSeries' => ['time']]);
+        checkEq('by the master and the day\'s key: 22 March back at the series\' time at Google', $iso('2027-03-22 10:00'), $day($s, '20270322T170000Z')[4] ?? null);
+
+        // Undone by the fields it changed at Google, and redone by the undo's own entry.
+        $s = $setup();
+        $id = (int) $rowAt($s, '2027-03-29 17:00:00')['id'];
+        $tag = $s->events->patch($s->u, $id, ['tagNames' => ['Sample label']]);
+        $s->events->patch($s->u, $id, ['useSeries' => ['title']]);
+        $entry = lastEntry($db, $s->u);
+        $kind = json_decode((string) $db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true)['google']['changed'] ?? null;
+        $s->undo->undoById($s->u, $entry);
+        $back = $rowAt($s, '2027-03-29 17:00:00');
+        $tags = static fn(?array $r): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) ($r['id'] ?? 0)]), 'name');
+        checkEq('the entry names the title it changed at Google; undone: the own title back at Google and here, the tag kept', [['summary'], 'Sample weekly, special', 'Sample weekly, special', ['Sample label']],
+            [$kind, $day($s, '20270329T170000Z')[0] ?? null, $back['title'] ?? null, $tags($back)]);
+        $s->undo->undoById($s->u, lastEntry($db, $s->u));
+        $again = $rowAt($s, '2027-03-29 17:00:00');
+        checkEq('redone: the series\' title again at Google, and the day ordinary again here (its row went, as the first time)', ['Sample weekly', null], [$day($s, '20270329T170000Z')[0] ?? null, $again]);
+        unset($tag);
+    });
+
+    scenario('google recovery sweep F5, a split: the part here goes over what is there now; a later tag list is kept and named, one equal to the plan\'s is not named', function () use ($setup, $masterId, $recover, $iso, $db): void {
+        $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
+        $newSeries = static fn(object $s): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND google_event_id <> ? AND deleted_at IS NULL', [$s->calendarId, 'smpl3weekly']);
+        foreach (['Sample tag B' => true, 'Sample split tag' => false] as $later => $named) {
+            $s = $setup();
+            $s->t->loseFirstPost = true;
+            try {
+                planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split', 'tagNames' => ['Sample split tag']]);
+            } catch (HttpError) {
+            }
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => [$later]]);
+            $s->events->throwDeferred();
+            $out = $recover($s, 'finish');
+            $new = $newSeries($s);
+            checkEq("a tag list set on the series meanwhile ($later): Finish ok, the new series takes it as it is now, " . ($named ? 'named' : 'not named'),
+                [true, [$later], $named], [$out['ok'], $tagsOf((int) ($new['id'] ?? 0)), str_contains(implode(' ', $out['differences']), 'tags')]);
+        }
+    });
+
+    scenario('google recovery sweep controls: Finish with nothing changed meanwhile lands everything; Put back of a rename with nothing changed restores it', function () use ($setup, $move, $held, $stored, $recover, $lostRename): void {
+        $dry = $setup();
+        $move($dry);
+        $finished = $held($dry, 'smpl3weekly');
+        foreach ([1, 2, 3] as $n) {
+            $s = $setup();
+            $s->t->loseAt = $n;
+            try {
+                $move($s);
+            } catch (HttpError) {
+            }
+            $out = $recover($s, 'finish');
+            checkEq("the clock change's answer $n lost, nothing changed since: Finish lands the whole change, at Google and here, naming nothing",
+                [true, [], $finished, $finished], [$out['ok'], $out['differences'], $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly')]);
+        }
+        $s = $setup();
+        $was = $held($s, 'smpl3weekly');
+        $lostRename($s);
+        $out = $recover($s, 'putBack');
+        checkEq('a rename\'s answer lost, nothing changed since: Put back restores it', [true, $was], [$out['ok'], $held($s, 'smpl3weekly')]);
+    });
 };

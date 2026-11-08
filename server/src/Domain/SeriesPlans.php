@@ -939,7 +939,9 @@ trait SeriesPlans
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
             $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
+                // `was`: the master's own columns before this change wrote any of them here
+                // (the trip rules write the flag first), for Finish's "changed here since".
+                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return;
@@ -986,7 +988,7 @@ trait SeriesPlans
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
             $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
+                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return null;
@@ -1031,13 +1033,28 @@ trait SeriesPlans
      */
     private function googleLocalPlan(int $userId): \Closure
     {
-        return function (array $plan, array $out) use ($userId): void {
+        return function (array $plan, array $out, array $local = []) use ($userId): array {
             $id = (int) $plan['eventId'];
             $w = (array) $plan['writes'];
             $in = (array) $plan['input'];
             $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             if ($master === null) {
                 throw HttpError::notFound('The series this change was for is no longer here');
+            }
+            $words = [];
+            $was = (array) ($plan['was'] ?? []);
+            if (($plan['kind'] ?? '') !== 'split') {
+                [$w, $in, $words] = self::localDeltasOver($w, $in, $local, $master, $this->db, $was);
+            } else {
+                // A split: the old part's own columns, and the new series' (its plan,
+                // over the series it is copied from as that series is now).
+                [$old, , $oldWords] = self::localDeltasOver(['master' => (array) ($w['old'] ?? [])], $in, $local, $master, $this->db, $was);
+                $w['old'] = $old['master'];
+                $words = $oldWords;
+                if (is_array($w['plan'] ?? null)) {
+                    [$w['plan'], $in, $newWords] = self::localDeltasOver($w['plan'], $in, $local, $master, $this->db, $was);
+                    $words = array_values(array_unique(array_merge($words, $newWords)));
+                }
             }
             $byId = [];
             foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $r) {
@@ -1050,11 +1067,107 @@ trait SeriesPlans
                 if (isset($out['targets'][1])) {
                     $this->googleSeries()->adoptSingles($out['targets'][1], $out['inserted'], $created);
                 }
-                return;
+                return $words;
             }
             ($this->seriesPlanWriter($userId, $id, $w, $in, $byId, $created, $createdEdited))();
             $this->googleSeries()->adoptSingles($out['targets'][0], $out['inserted'], $created);
+            return $words;
         };
+    }
+
+    /**
+     * Rule A for the part here: the plan's fields held here alone (a flag,
+     * reminders, an icon, tags, people) applied over the rows as they stand,
+     * each left out where the row it sets changed in that field here since
+     * the change's snapshot ($local), and named. The series' columns a plan
+     * carries onto its edited days go with the master's. Pure but for the
+     * reads of tags and people.
+     *
+     * @return array{0:array,1:array,2:list<string>} the writes, the input, and the words
+     */
+    private static function localDeltasOver(array $w, array $in, array $local, array $master, \BetterCal\Infra\Db $db, array $before = []): array
+    {
+        $id = (int) $master['id'];
+        $snap = [];
+        foreach ($local['events'] ?? [] as $r) {
+            $snap[(int) $r['id']] = $r;
+        }
+        $was = isset($snap[$id]) ? array_merge($snap[$id], $before) : null;
+        if ($was === null) {
+            return [$w, $in, []];
+        }
+        $names = [];
+        foreach (array_keys((array) ($w['master'] ?? [])) as $col) {
+            if (in_array($col, GoogleWriter::GOOGLE_COLUMNS, true) || !array_key_exists($col, $was) || !array_key_exists($col, $master)) {
+                continue;
+            }
+            // Changed since: neither as the change found it nor as it sets it.
+            if ((string) $master[$col] !== (string) $was[$col] && (string) $master[$col] !== (string) $w['master'][$col]) {
+                unset($w['master'][$col]);
+                foreach ($w['overrides'] ?? [] as $rid => $cols) {
+                    if (array_key_exists($col, Model::SERIES_COLUMNS)) {
+                        unset($w['overrides'][$rid][$col]);
+                    }
+                }
+                $names[] = match (true) {
+                    isset(Model::SERIES_COLUMNS[$col]) => strtolower(Model::SERIES_COLUMNS[$col]) . ' flag',
+                    default => OwnFields::fieldOf($col) ?? $col,
+                };
+            }
+        }
+        $setOf = static function (array $rows, string $col) use ($id): array {
+            $out = [];
+            foreach ($rows as $r) {
+                if ((int) ($r['event_id'] ?? 0) === $id) {
+                    $out[] = (int) $r[$col];
+                }
+            }
+            sort($out);
+            return $out;
+        };
+        foreach (['tags' => ['event_tags', 'tag_id', ['tagNames']], 'people' => ['event_people', 'person_id', ['personIds', 'personNames']]] as $field => [$table, $col, $keys]) {
+            if (!isset($w[$field]['master'])) {
+                continue;
+            }
+            $now = array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
+            // Changed since, as sets: neither the set the change found nor the one it sets.
+            if ($now !== $setOf($local[$table] ?? [], $col) && $now !== self::plannedSet($field, $w[$field]['master'], $in, (int) $master['user_id'], $db)) {
+                unset($w[$field]['master']);
+                foreach ($keys as $k) {
+                    unset($in[$k]);
+                }
+                $names[] = $field;
+            }
+        }
+        $words = $names === [] ? [] : ["The " . implode(', ', $names) . " of '" . (string) $master['title'] . "' changed here while this change was half done; left as they are."];
+        return [$w, $in, $words];
+    }
+
+    /** The ids a plan's tag names or the request's people name, sorted; null when one of them isn't there yet (a set it makes, never one there now). */
+    private static function plannedSet(string $field, mixed $planned, array $in, int $userId, \BetterCal\Infra\Db $db): ?array
+    {
+        if ($field === 'tags') {
+            $names = array_values(array_unique(array_map('strval', (array) $planned)));
+            $table = 'tags';
+        } elseif (is_array($in['personIds'] ?? null)) {
+            $ids = array_values(array_unique(array_map('intval', $in['personIds'])));
+            sort($ids);
+            return $ids;
+        } else {
+            $names = array_values(array_unique(array_map('strval', (array) ($in['personNames'] ?? []))));
+            $table = 'people';
+        }
+        if ($names === []) {
+            return [];
+        }
+        [$q, $params] = \BetterCal\Infra\Db::in($names);
+        $rows = $db->all("SELECT id FROM `$table` WHERE user_id = ? AND name IN $q", array_merge([$userId], $params));
+        if (count($rows) < count($names)) {
+            return null;
+        }
+        $ids = array_map('intval', array_column($rows, 'id'));
+        sort($ids);
+        return $ids;
     }
 
     /**
@@ -1225,7 +1338,7 @@ trait SeriesPlans
      * no field and no trip, is an occurrence again, and its row goes (its
      * key in Undo).
      */
-    private function useSeriesValues(int $userId, array $master, array $row, array $fields): void
+    private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
         $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
@@ -1273,6 +1386,20 @@ trait SeriesPlans
         // The write rule every writer shares: a row goes only when nothing of
         // its own is left, nor anything referring to it (OwnFields::own).
         $gone = OwnFields::own($left, self::referencesNaming($this->db, [$id])[$id] ?? []) === [];
+        // On a writable Google calendar, Google first: the day's record given
+        // the series' values for what it takes back (all of them when no own
+        // field is left), sent only when a field Google holds changes; its
+        // answer is stored on top of the write here, as a poll stores it.
+        $resp = null;
+        if ($google !== null) {
+            $googleSet = array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS));
+            $changed = array_filter($googleSet, static fn(mixed $v, string $col): bool => (string) $v !== (string) ($row[$col] ?? ''), ARRAY_FILTER_USE_BOTH);
+            if ($changed !== []) {
+                $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1, (string) $master['tzid']);
+                $resp = $this->google()->patch($google, $googleId, self::patchBody($row, $googleSet), $this->googleBeforeSend($authority));
+            }
+        }
         $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {
             if ($gone) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
@@ -1289,9 +1416,24 @@ trait SeriesPlans
             }
             unset($userId);
         });
-        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
-        $this->undo->record($userId, 'event', $id, 'update', ['events' => [$row]] + $links, ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id])),
-            "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'");
+        if ($resp !== null) {
+            $this->google()->apply($google, [$resp]);
+        }
+        $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
+        $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";
+        $beforeTables = ['events' => [$row]] + $links;
+        $afterTables = ['events' => $after === null ? [] : [$after]] + ($after === null ? [] : Undo::linksOf($this->db, [$id]));
+        if ($resp !== null) {
+            // A Google edit like every other: undone by the fields it changed at Google, its rows by their snapshots (GoogleUndo).
+            $was = GoogleUndo::bodyOf($row);
+            $this->googleJournal($userId, $summary, $google, (int) $master['id'],
+                GoogleUndo::details(GoogleUndo::EDIT, $google, $googleId, $was, $row['google_etag'] ?? null, self::answerEtag($resp),
+                    ['changed' => GoogleUndo::editChanged($was, $after, $resp)]),
+                [$beforeTables, $afterTables]);
+            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+            return;
+        }
+        $this->undo->record($userId, 'event', $id, 'update', $beforeTables, $afterTables, $summary);
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 }

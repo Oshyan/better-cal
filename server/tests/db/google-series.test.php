@@ -202,8 +202,8 @@ return static function (Db $db): void {
         ], 'cancelled' => ['20270405T180000Z']];
         checkEq('the stand-in holds the plan: the master at 11:00 and every exception and skip under its new instance id', $want, $held($s, 'smpl1weekly'));
         checkEq('the rows here hold what the stand-in holds', $want, $stored($s, 'smpl1weekly'));
-        checkEq('the sequence: the master with If-Match, a read-back, one PATCH per edited or skipped day, a read-back; no pending row left', [
-            ['PATCH', 'GET', 'PATCH', 'PATCH', 'PATCH', 'PATCH', 'GET'], $etag0, [],
+        checkEq('the sequence: the series read (what the master write should leave), the master with If-Match, a read-back, one PATCH per edited or skipped day, a read-back; no pending row left', [
+            ['GET', 'PATCH', 'GET', 'PATCH', 'PATCH', 'PATCH', 'PATCH', 'GET'], $etag0, [],
         ], [array_column($s->t->calls, 0), $ifMatches($s)[0], $pending($s)]);
         check('every write after the first carries the etag the write before it answered with', count(array_filter($ifMatches($s), static fn(?string $m): bool => $m !== null)) === 5);
         [$before, $after] = $secondSync($s);
@@ -219,7 +219,7 @@ return static function (Db $db): void {
             'Sample weekly, renamed', ['Sample weekly, renamed', 'Sample weekly, renamed', 'Sample weekly, special'], ['20270405T170000Z'],
         ], [$h['title'], array_values(array_map(static fn(array $r): string => $r[0], $h['records'])), $h['cancelled']]);
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
-        checkEq('the own title\'s PATCH is the one step after the master', ['PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the own title\'s PATCH is the one step after the master', ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', [$before, []], [$after, $pending($s)]);
     });
@@ -263,7 +263,7 @@ return static function (Db $db): void {
         checkEq('Mondays and Wednesdays: the exceptions kept with their keys, the skip a cancelled record again', [
             'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=20', ['20270315T170000Z', '20270322T170000Z', '20270329T170000Z'], ['20270405T170000Z'],
         ], [$h['rule'], array_keys($h['records']), $h['cancelled']]);
-        checkEq('the one step after the master is the skip\'s', ['PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('the one step after the master is the skip\'s', ['GET', 'PATCH', 'GET', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         checkEq('the rows here hold what the stand-in holds', $h, $stored($s, 'smpl1weekly'));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
@@ -397,7 +397,7 @@ return static function (Db $db): void {
         $s->events->throwDeferred();
         $posts = array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] === 'POST'));
         $gets = array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] === 'GET' && $c[1] === $newIds[0]));
-        checkEq('Finish inserted again with the same id, was told it exists (409), read it back and carried on', [true, 1, $newIds[0], 1],
+        checkEq('Finish inserted again with the same id, was told it exists (409), read it back and carried on (read by its id twice: Finish finds it to rebase on it, the insert after the 409)', [true, 1, $newIds[0], 2],
             [$out['ok'], count($posts), $posts[0][2]['id'] ?? null, count($gets)]);
         $new = $held($s, (string) $newIds[0]);
         checkEq('the new series holds the plan: its exceptions after the cut and its skip', [['20270322T170000Z', '20270329T170000Z'], ['20270405T170000Z'], 'Sample weekly, spring', []],

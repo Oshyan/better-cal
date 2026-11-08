@@ -154,4 +154,46 @@ return static function (Db $db): void {
         $s->undo->undoLatest($s->u);
         checkEq('and the bare Undo takes the redo back', ['Sample review', 'Sample review'], [$row($s)['title'], $s->fake->events['smpl4single']['summary'] ?? null]);
     });
+
+    $tagsOf = static fn(object $s): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$s->id]), 'name');
+    $count = static fn(object $s): int => (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$s->u]);
+
+    scenario('google local undo: a PATCH of local fields alone on a Google event is one entry with snapshots, undone by entry and by the bare Undo, Google sent nothing', function () use ($setup, $last, $row, $tagsOf, $count): void {
+        $s = $setup();
+        $n = $count($s);
+        $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-tag'], 'reminders' => [['minutes' => 15]], 'isContainer' => true]);
+        $entry = $last($s);
+        checkEq('one entry, with snapshots; tag, reminder and trip flag set; no call to Google', [1, true, ['sample-tag'], '[{"minutes":15}]', 1, []],
+            [$count($s) - $n, $entry['before_json'] !== null && $entry['after_json'] !== null, $tagsOf($s), $row($s)['reminders_json'], (int) $row($s)['is_container'], $s->t->calls]);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        checkEq('undone by its entry: no tag, no reminder, no trip flag, no call to Google', [[], null, 0, []],
+            [$tagsOf($s), $row($s)['reminders_json'], (int) $row($s)['is_container'], $s->t->calls]);
+        $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-other']]);
+        $s->undo->undoLatest($s->u);
+        checkEq('a second one undone by the bare Undo', [[], []], [$tagsOf($s), $s->t->calls]);
+    });
+
+    scenario('google local undo: a mixed PATCH (title and tags) is one entry; its undo puts the title back at Google and the tags back here, and redo puts both forward', function () use ($setup, $last, $row, $tagsOf, $count): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-kept']]);
+        $n = $count($s);
+        $s->events->patch($s->u, $s->id, ['title' => 'Sample review, renamed', 'tagNames' => ['sample-new']]);
+        $entry = $last($s);
+        checkEq('one entry for the edit, title at Google and tag here', [1, 'Sample review, renamed', ['sample-new']],
+            [$count($s) - $n, $s->fake->events['smpl4single']['summary'] ?? null, $tagsOf($s)]);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        checkEq('undone: one entry more (the undo\'s own), the title back here and at Google, the tag back here', [2, 'Sample review', 'Sample review', ['sample-kept']],
+            [$count($s) - $n, $row($s)['title'], $s->fake->events['smpl4single']['summary'] ?? null, $tagsOf($s)]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        checkEq('redo by the undo\'s entry: both forward again', ['Sample review, renamed', 'Sample review, renamed', ['sample-new']],
+            [$row($s)['title'], $s->fake->events['smpl4single']['summary'] ?? null, $tagsOf($s)]);
+    });
+
+    scenario('google local undo: a PATCH of local fields that changes nothing records no entry', function () use ($setup, $count): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-tag']]);
+        $n = $count($s);
+        $s->events->patch($s->u, $s->id, ['tagNames' => ['sample-tag']]);
+        checkEq('no entry, no call to Google', [0, []], [$count($s) - $n, $s->t->calls]);
+    });
 };

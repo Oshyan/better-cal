@@ -847,6 +847,30 @@ final class Undo
     }
 
     /**
+     * Whether two snapshots differ: a row made or removed, or a column
+     * changed (changedColumns). Pure.
+     */
+    public static function anyChange(array $before, array $after): bool
+    {
+        foreach (array_unique(array_merge(array_keys($before), array_keys($after))) as $table) {
+            $was = [];
+            foreach ($before[$table] ?? [] as $row) {
+                $was[self::keyOf($table, $row)] = $row;
+            }
+            $now = [];
+            foreach ($after[$table] ?? [] as $row) {
+                $now[self::keyOf($table, $row)] = $row;
+            }
+            foreach ($was + $now as $key => $_) {
+                if (!isset($was[$key], $now[$key]) || self::changedColumns($table, $was[$key], $now[$key]) !== []) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * One stored value, as two reads of it can come back: the same text
      * (the driver may answer 1 or "1"), or both NULL. Not loose equality:
      * "01" and "1", or "" and NULL, are different values. Pure.
@@ -1688,13 +1712,16 @@ final class Undo
      * then syncs Google's values onto. Inside write() for the entry's
      * account.
      */
-    public function restoreSnapshots(array $mutation): void
+    public function restoreSnapshots(array $mutation, bool $hereAlone = false): void
     {
         if (!isset(self::$writing[spl_object_id($this->db) . ':' . (int) $mutation['user_id']])) {
             self::misuse('Undo::restoreSnapshots outside Undo::write');
         }
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
+        if ($hereAlone) {
+            $before = self::googleHeldAsAfter($before, $after);
+        }
         $mutationId = (int) $mutation['id'];
         $this->lockRows($before, $after);
         $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
@@ -1710,6 +1737,31 @@ final class Undo
     }
 
     /**
+     * $before with what Google holds of each event row (GOOGLE_HELD) as it
+     * is in $after, so putting it back leaves those columns to Google: an
+     * edit's undo sends them to Google and puts back only the rest here
+     * (GoogleUndo). Pure.
+     */
+    private static function googleHeldAsAfter(array $before, array $after): array
+    {
+        $now = [];
+        foreach ($after['events'] ?? [] as $row) {
+            $now[self::keyOf('events', $row)] = $row;
+        }
+        foreach ($before['events'] ?? [] as $i => $row) {
+            $kept = $now[self::keyOf('events', $row)] ?? null;
+            if ($kept !== null) {
+                foreach (self::GOOGLE_HELD['events'] as $col) {
+                    if (array_key_exists($col, $kept)) {
+                        $before['events'][$i][$col] = $kept[$col];
+                    }
+                }
+            }
+        }
+        return $before;
+    }
+
+    /**
      * The snapshots put back in a write of their own that is rolled back
      * after: what putting them back would refuse (the trip rules over what
      * it leaves, a row it belongs to gone since) is refused now, for a
@@ -1718,15 +1770,15 @@ final class Undo
      * savepoint over the events' full-text index is not safe on MariaDB),
      * and the check is left to the restore itself.
      */
-    public function checkRestore(array $mutation): void
+    public function checkRestore(array $mutation, bool $hereAlone = false): void
     {
         if ($this->db->pdo()->inTransaction()) {
             return;
         }
         $done = new \RuntimeException('checked');
         try {
-            $this->write((int) $mutation['user_id'], function () use ($mutation, $done): void {
-                $this->restoreSnapshots($mutation);
+            $this->write((int) $mutation['user_id'], function () use ($mutation, $done, $hereAlone): void {
+                $this->restoreSnapshots($mutation, $hereAlone);
                 throw $done;
             });
         } catch (\RuntimeException $e) {

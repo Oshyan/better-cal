@@ -104,13 +104,43 @@ final class Report
         'c-untouched' => ['master', 'edited row stays', 'edited row leaves', 'edited row goes', 'control, same calendar', 'control, another calendar', 'insertion', 'calendar', 'link'],
     ];
 
-    public static function tally(Runner $runner): array
+    /**
+     * The required categories a mode can't run, each with why: one rule, a category is required in a mode when the
+     * mode can run it. Google mode (README, Google) counts as not applicable what no Google calendar holds, so the
+     * categories only that runs are listed there as not applicable, not required: a rule the expander can't read
+     * (GoogleStand::unheld; validateRrule refuses every such rule, so the sync never reads one as a series and no edit
+     * writes one), and an edited timed day of an all-day series, the only entry of coming up that names its own zone
+     * (PlanChecks::entryOf names a zone only where the plan has none), which the product refuses there before
+     * anything is sent (google_all_day).
+     */
+    public const NOT_APPLICABLE = [
+        'google' => [
+            'c-next | unreadable next' => 'a rule the expander can\'t read is never a series on a Google calendar, GoogleStand::unheld',
+            'c-next | entry edited, own zone' => 'only a timed day of an all-day series names its own zone, and Google can\'t hold one, google_all_day',
+        ],
+    ];
+
+    /** The categories required in a mode ('local' or 'google'), as "check | role". */
+    public static function required(bool $google = false): array
     {
-        return self::tallyOf($runner->counts, $runner->failures);
+        $out = [];
+        foreach (self::REQUIRED as $check => $roles) {
+            foreach ($roles as $role) {
+                if (!isset(self::NOT_APPLICABLE[$google ? 'google' : 'local']["$check | $role"])) {
+                    $out[] = "$check | $role";
+                }
+            }
+        }
+        return $out;
     }
 
-    /** The tallies from a run's counts and failure records, one process's or several merged (harness.php --shards). */
-    public static function tallyOf(array $counts, array $failures): array
+    public static function tally(Runner $runner): array
+    {
+        return self::tallyOf($runner->counts, $runner->failures, $runner->google);
+    }
+
+    /** The tallies from a run's counts and failure records, one process's or several merged (harness.php --shards), in its mode. */
+    public static function tallyOf(array $counts, array $failures, bool $google = false): array
     {
         $byCause = [];
         $unexpected = 0;
@@ -127,17 +157,17 @@ final class Report
             }
         }
         $missing = [];
-        foreach (self::REQUIRED as $check => $roles) {
-            foreach ($roles as $role) {
-                if (($counts['runs'][$check][$role] ?? 0) === 0) {
-                    $missing[] = "$check | $role";
-                }
+        foreach (self::required($google) as $category) {
+            [$check, $role] = explode(' | ', $category, 2);
+            if (($counts['runs'][$check][$role] ?? 0) === 0) {
+                $missing[] = $category;
             }
         }
         return [
             'unexpected' => $unexpected, 'byCause' => $byCause, 'newOnKnown' => $newOnKnown,
             'unoracled' => array_sum($counts['unoracled']), 'skipped' => $counts['skipped'] ?? 0,
-            'runs' => $counts['runs'] ?? [], 'missing' => $missing,
+            'runs' => $counts['runs'] ?? [], 'missing' => $missing, 'mode' => $google ? 'google' : 'local',
+            'notApplicable' => self::NOT_APPLICABLE[$google ? 'google' : 'local'] ?? [],
         ];
     }
 
@@ -167,6 +197,10 @@ final class Report
         $out .= 'Options committed from the baseline in isolated state: ' . ($runs['every-option'] ?? 0) . ' (' . implode(', ', array_map(static fn(string $g, int $n): string => "$g $n", array_keys($t['runs']['every-option'] ?? []), $t['runs']['every-option'] ?? [])) . ").\n";
         $out .= 'Options unreachable from the baseline (counted, not failures): ' . ($runs['unreachable'] ?? 0) . ' (' . implode(', ', array_map(static fn(string $g, int $n): string => "$g $n", array_keys($t['runs']['unreachable'] ?? []), $t['runs']['unreachable'] ?? [])) . ").\n";
         $out .= $t['missing'] === [] ? "Every required category ran.\n" : 'Required categories that never ran (' . count($t['missing']) . '): ' . implode('; ', $t['missing']) . "\n";
+        if (($t['notApplicable'] ?? []) !== []) {
+            $out .= 'Not applicable in ' . $t['mode'] . ' mode, so not required (' . count($t['notApplicable']) . '): '
+                . implode('; ', array_map(static fn(string $c, string $why): string => "$c ($why)", array_keys($t['notApplicable']), $t['notApplicable'])) . ".\n";
+        }
         return $out;
     }
 }
@@ -236,7 +270,7 @@ final class Runner
     private int $seen = 0;
 
     /** $google: every case's series lives on a Google calendar served by the stand-in (harness.php --google; README, Google). */
-    public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed, private readonly bool $google = false)
+    public function __construct(private readonly Db $db, private readonly \Domains $domains, private readonly int $seed, public readonly bool $google = false)
     {
         // The evaluator every check reads must give its hand-listed examples first (rfc-examples.php): a run on a wrong oracle stops.
         $bad = Rfc::examples();

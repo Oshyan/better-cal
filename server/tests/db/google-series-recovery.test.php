@@ -436,6 +436,57 @@ return static function (Db $db): void {
             [$out['ok'], $out['left'], $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)])]);
     });
 
+    // ---- N2: the series' zone is part of "nothing changed since" ----------------------
+
+    scenario('google recovery: a step whose answer was lost, then only the zone changed elsewhere at the same first instant: Put back sends nothing and keeps the change for Review', function () use ($setup, $masterId, $move, $held, $elsewhere, $refused, $iso, $db): void {
+        // Only the zone changed at Google: the first day's instants stay, every later day's differ.
+        $rezone = static function (array $event): array {
+            foreach (['start', 'end'] as $k) {
+                $event[$k]['timeZone'] = 'America/Phoenix';
+            }
+            return $event;
+        };
+        $arms = [
+            'the insert of a split' => static function (object $s) use ($masterId, $iso, $rezone): void {
+                $s->t->loseFirstPost = true;
+                try {
+                    planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+                } catch (HttpError) {
+                }
+                $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+                $s->fake->seed($rezone($s->fake->events[$new]));
+            },
+            "the master's rename" => static function (object $s) use ($masterId, $rezone): void {
+                $s->t->loseAt = 1;
+                try {
+                    planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
+                } catch (HttpError) {
+                }
+                $s->fake->seed($rezone($s->fake->events['smpl3weekly']));
+            },
+            "an edited day's PATCH" => static function (object $s) use ($move, $rezone): void {
+                $s->t->loseAt = 2;
+                try {
+                    $move($s);
+                } catch (HttpError) {
+                }
+                $s->fake->seed($rezone($s->fake->events['smpl3weekly']));
+            },
+        ];
+        foreach ($arms as $what => $arm) {
+            $s = $setup();
+            $arm($s);
+            $there = $held($s, 'smpl3weekly');
+            $title = $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]);
+            $journal = $elsewhere($s);
+            $writes = $s->t->writes;
+            [$ok, $code, $words, $listedAfter] = $refused($s);
+            checkEq("$what's answer lost, the zone changed since: not ok, google_changed_since, Finish named; nothing sent; Google and the row here as they were; still in Review, its journal as it was",
+                [false, 'google_changed_since', true, $writes, $there, $title, 1, $journal],
+                [$ok, $code, str_contains($words, 'Finish'), $s->t->writes, $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $listedAfter, $elsewhere($s)]);
+        }
+    });
+
     // ---- R3: Finish writes the change's part here too --------------------------------
 
     scenario('google recovery: a rename with a part here (a tag, a person, reminders, the trip flag, the clock-time flag), stopped before the commit here, finishes both', function () use ($setup, $masterId, $pending, $recover, $db): void {
@@ -514,5 +565,106 @@ return static function (Db $db): void {
             [false, 'google_finish_local', 1, true, 'Sample weekly, renamed', 'Sample weekly, renamed', 0],
             [$out['ok'], $code, count($half), str_contains($half[0]['error'] ?? '', 'its part here'), $s->fake->events['smpl3weekly']['summary'],
                 $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), (int) $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [$masterId($s)])]);
+    });
+
+    // ---- N1: recovery removes only the rows it made -----------------------------------
+
+    scenario('google recovery: a rename half done, then a tag, a person or a reminder on an ordinary day here: Finish keeps that day\'s row and what it has, and the rename lands', function () use ($setup, $masterId, $rowAt, $pending, $recover, $iso, $db): void {
+        $parts = [
+            'a tag' => [['tagNames' => ['Sample later tag']], static fn(int $id): mixed => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name'), ['Sample later tag']],
+            'a person' => [['personNames' => ['Sam Sample']], static fn(int $id): mixed => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ?', [$id]), 'name'), ['Sam Sample']],
+            'a reminder' => [['reminders' => [['minutes' => 15]]], static fn(int $id): mixed => array_column(json_decode((string) $db->scalar('SELECT reminders_json FROM events WHERE id = ?', [$id]), true) ?: [], 'minutes'), [15]],
+        ];
+        foreach ($parts as $what => [$in, $read, $want]) {
+            $s = $setup();
+            $id = $masterId($s);
+            $s->t->loseAt = 1;
+            try {
+                planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample pending rename']);
+            } catch (HttpError) {
+            }
+            $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00')] + $in);
+            $s->events->throwDeferred();
+            $day = (int) ($rowAt($s, '2027-03-08 18:00:00')['id'] ?? 0);
+            $out = $recover($s, 'finish');
+            $after = $rowAt($s, '2027-03-08 18:00:00');
+            checkEq("$what: Finish ok; the day keeps its row, its id and $what, and takes the new title it inherits; the rename at Google and here; no pending row",
+                [true, true, $day, $want, 'Sample pending rename', 'Sample pending rename', 'Sample pending rename', []],
+                [$out['ok'], $day > 0, (int) ($after['id'] ?? 0), $read($day), $after['title'] ?? null, $s->fake->events['smpl3weekly']['summary'], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $pending($s)]);
+        }
+    });
+
+    scenario('google recovery: rows a store of the half-done change made are in its journal, and Finish removes exactly those before the part here', function () use ($setup, $move, $rowAt, $held, $stored, $pending, $recover, $db): void {
+        $dry = $setup();
+        $move($dry);
+        $writes = $dry->t->writes;
+        $madeAny = false;
+        for ($n = 2; $n <= $writes; $n++) {
+            $s = $setup();
+            $day = (int) ($rowAt($s, '2027-03-29 17:00:00')['id'] ?? 0);
+            $s->t->staleAt = $n;
+            try {
+                $move($s);
+            } catch (HttpError) {
+            }
+            $s->t->staleAt = null;
+            $row = $db->one('SELECT local_json, made_json FROM google_pending WHERE user_id = ?', [$s->u]);
+            $snapIds = array_map(static fn(array $r): int => (int) $r['id'], json_decode((string) $row['local_json'], true)['events'] ?? []);
+            $made = array_map('intval', json_decode((string) ($row['made_json'] ?? ''), true) ?: []);
+            $madeAny = $madeAny || $made !== [];
+            $live = $made === [] ? 0 : (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id IN (' . implode(',', $made) . ') AND deleted_at IS NULL');
+            checkEq("failure at write $n: every row the journal says a store made is a live row of the series the snapshot lacks", [count($made), []],
+                [$live, array_values(array_intersect($made, $snapIds))]);
+            $out = $recover($s, 'finish');
+            $gone = $made === [] ? 0 : (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id IN (' . implode(',', $made) . ')');
+            checkEq("failure at write $n: Finish ok; no row a store made is left; the edited day is at its new key under its own id; Google and the rows agree; no pending row",
+                [true, 0, $day, true, []],
+                [$out['ok'], $gone, (int) ($rowAt($s, '2027-03-29 18:00:00')['id'] ?? 0), $held($s, 'smpl3weekly') === $stored($s, 'smpl3weekly'), $pending($s)]);
+        }
+        checkEq('some failure point leaves a row a store made (the case is exercised)', true, $madeAny);
+    });
+
+    scenario('google recovery: a row a store of the half-done change made, then tagged here, keeps its tag on the day through Finish and Put back', function () use ($setup, $move, $rowAt, $held, $stored, $pending, $recover, $db): void {
+        $dry = $setup();
+        $move($dry);
+        $writes = $dry->t->writes;
+        $was = $held($setup(), 'smpl3weekly');
+        $tags = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name');
+        $ran = 0;
+        foreach (['finish', 'putBack'] as $how) {
+            for ($n = 2; $n <= $writes; $n++) {
+                $s = $setup();
+                $s->t->staleAt = $n;
+                try {
+                    $move($s);
+                } catch (HttpError) {
+                }
+                $s->t->staleAt = null;
+                $row = $db->one('SELECT targets_json, made_json FROM google_pending WHERE user_id = ?', [$s->u]);
+                $made = array_map('intval', json_decode((string) ($row['made_json'] ?? ''), true) ?: []);
+                $day = $made === [] ? null : $db->one('SELECT * FROM events WHERE id IN (' . implode(',', $made) . ') AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL ORDER BY id LIMIT 1');
+                if ($day === null) {
+                    continue;
+                }
+                $ran++;
+                $key = (string) $day['recurrence_instance_utc'];
+                // A "this event" tag on that day, as the editor sends it.
+                $s->events->patch($s->u, (int) $day['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => Time::fromDb($key)->format('Y-m-d\TH:i:s\Z'), 'tagNames' => ['Sample later tag']]);
+                checkEq("$how, failure at write $n: the tag is the day's own on the row the store made", true, in_array('tags', json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [(int) $day['id']]), true) ?: [], true));
+                $s->events->throwDeferred();
+                // The day the change's target names at that key: its row in the snapshot.
+                $rowId = (int) (json_decode((string) $row['targets_json'], true)[0]['exceptions'][$key]['rowId'] ?? 0);
+                $out = $recover($s, $how);
+                $there = $how === 'finish' ? $rowAt($s, $key) : $db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]);
+                checkEq("$how, failure at write $n: ok; the day the tagged row stood for keeps the tag on its row; the made row is gone; Google and the rows agree; no pending row",
+                    [true, ['Sample later tag'], 0, true, []],
+                    [$out['ok'], $tags((int) ($there['id'] ?? 0)), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE id = ? AND id <> ?', [(int) $day['id'], (int) ($there['id'] ?? 0)]),
+                        $held($s, 'smpl3weekly') === $stored($s, 'smpl3weekly'), $pending($s)]);
+                if ($how === 'putBack') {
+                    checkEq("putBack, failure at write $n: the series is as it was at Google", $was, $held($s, 'smpl3weekly'));
+                }
+            }
+        }
+        checkEq('the case is exercised for both', true, $ran >= 2);
     });
 };

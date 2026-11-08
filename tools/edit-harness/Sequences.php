@@ -86,8 +86,6 @@ trait Sequences
         $this->checkExpect(['step' => 0] + ($spec['expect'] ?? []));
         // Each writing step: the rows before and after it and the Activity entries it made, for an Undo step.
         $done = [];
-        // The entries the sequence's undos recorded (a Google calendar's undo is an entry of its own).
-        $undos = [];
         $master = $id;
         foreach ($spec['steps'] as $i => $step) {
             $this->step = $i + 1;
@@ -135,10 +133,10 @@ trait Sequences
                         $this->stepCommitHeld($step, $s0);
                         break;
                     case 'undo':
-                        $this->stepUndo($done, null, $step, $undos);
+                        $this->stepUndo($done, null, $step);
                         break;
                     case 'undoEntry':
-                        $this->stepUndo($done, (int) $step['step'], $step, $undos);
+                        $this->stepUndo($done, (int) $step['step'], $step);
                         break;
                     default:
                         throw new \RuntimeException("unknown step {$step['do']}");
@@ -270,16 +268,12 @@ trait Sequences
      * refused (undo_conflict, or not_undoable for a log-only entry), it writes nothing, says why, and leaves the step's
      * entries as they are.
      *
-     * On a Google calendar an undo is recorded as an entry of its own, which undoes back (api-contract, `POST
-     * /activity/:id/undo`), so once one is made `POST /undo` takes it, putting back what was just undone. There the
-     * latest change not undone is undone by its own entries, as the app's toast does, once `POST /undo` is checked to
-     * take the undo's own entry; while no undo's entry stands in the way, `POST /undo` is sent as on a local calendar.
-     * Google's own column (`google_etag`: every write to a series changes it at Google) is left out of the comparison
-     * there, as f-undo leaves it out.
-     *
-     * @param list<int> $undos the entries the sequence's undos recorded so far
+     * On a Google calendar an undo is recorded as an entry of its own, which `POST /undo` passes over (api-contract,
+     * `POST /undo`), so it steps back there as on a local calendar and is sent the same way. Google's own column
+     * (`google_etag`: every write to a series changes it at Google) is left out of the comparison there, as f-undo
+     * leaves it out.
      */
-    private function stepUndo(array $done, ?int $k, array $step, array &$undos): void
+    private function stepUndo(array $done, ?int $k, array $step): void
     {
         $latest = $k === null;
         if ($latest) {
@@ -303,15 +297,7 @@ trait Sequences
             return;
         }
         $byEntry = !$latest;
-        if ($latest && $this->google !== null) {
-            $takes = $this->latestOwnEntry();
-            if (!in_array($takes, $d['entries'], true)) {
-                $this->check('s-undo', in_array($takes, $undos, true), "step {$this->step}: on a Google calendar POST /undo takes step $k's newest entry, or the entry an undo recorded since, which undoes back", ['takes' => $takes, 'undos' => $undos, 'entries' => $d['entries']]);
-                $byEntry = true;
-            }
-        }
         $s0 = $this->snapshot();
-        $m0 = $this->lastEntry();
         $want = $step['refused'] ?? null;
         try {
             if (!$byEntry) {
@@ -337,7 +323,6 @@ trait Sequences
             $this->fail('s-undo', "step {$this->step}: Undo failed: $code", ['message' => mb_substr($e->getMessage(), 0, 300)]);
             return;
         }
-        array_push($undos, ...$this->entriesSince($m0));
         if ($want !== null) {
             $this->fail('s-undo', "step {$this->step}: Undo went through where the sequence states it is refused with $want", []);
             return;
@@ -345,12 +330,6 @@ trait Sequences
         $held = fn(array $snap): array => $this->google !== null ? self::withoutEtags($snap) : $snap;
         $this->same('s-undo', self::undoneOf($held($d['s0']), $held($d['s1']), $held($s0)), self::keyed($held($this->snapshot())), "step {$this->step}: Undo puts back every row step $k changed as it was before it, the rest as they are");
         $this->check('s-undo', array_filter($d['entries'], fn(int $id): bool => !$this->entryUndone($id)) === [], "step {$this->step}: every entry of step $k is undone", ['entries' => $d['entries']]);
-    }
-
-    /** The entry `POST /undo` takes from a session: the account's newest own entry not undone (Undo::undoLatest), or 0. */
-    private function latestOwnEntry(): int
-    {
-        return (int) $this->db->scalar("SELECT COALESCE(MAX(id), 0) FROM mutations WHERE user_id = ? AND undone = 0 AND source IN ('web', 'quickadd', 'review', 'rsvp', 'dedup:owner')", [$this->userId]);
     }
 
     /** The account's newest Activity entry. */

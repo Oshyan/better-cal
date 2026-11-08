@@ -77,10 +77,6 @@
             "do": "undoEntry",
             "step": 4,
             "refused": "undo_conflict",
-            "google": {
-                "refused": "not_undoable",
-                "why": "On a Google calendar a change made here alone keeps no snapshots (api-contract, Activity): the detach's entry is log-only, so its Undo is not_undoable, nothing written."
-            },
             "expect": {
                 "zone": "Europe/Paris",
                 "events": 5
@@ -96,10 +92,6 @@
         {
             "do": "undoEntry",
             "step": 4,
-            "google": {
-                "refused": "not_undoable",
-                "why": "On a Google calendar a change made here alone keeps no snapshots (api-contract, Activity): the detach's entry is log-only, so its Undo is not_undoable, nothing written."
-            },
             "expect": {
                 "zone": "Europe/Paris",
                 "events": 5,

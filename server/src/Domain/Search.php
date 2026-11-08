@@ -60,8 +60,17 @@ final class Search
      * 'viewer' (a DateTimeZone, the request's device clock as the event
      * window reads it): a floating event (Floating) is over, upcoming,
      * ordered and given its next or latest date as it shows on that clock,
-     * in the query and here alike (Floating::nowByZone), before the limit. Without
-     * one, as stored.
+     * before the limit. Without one, as stored. The query compares and
+     * orders a floating row by its stored instants moved to the viewer's
+     * clock at now, which is off by up to its zone's slack
+     * (Floating::nowByZone) where an offset changes, so it reads that much
+     * more and the rows are settled here by their exact instants as shown:
+     * the limit keeps the first of the exact order.
+     *
+     * A series stands for one of its occurrences whose own fields match:
+     * a generated one has the series' fields and tier, an edited day its
+     * own (tiersOf), so an edited day that no longer matches is passed
+     * over for the next one that does, and one that matches is listed once.
      *
      * @return list<array> event rows
      */
@@ -79,7 +88,6 @@ final class Search
             return [];
         }
         $limit = max(1, $limit); // feeds ask for 500; the search route caps at 200
-        [$where, $params, $order, $select, $selectParams, $orderParams] = $plan;
         $columns = '*';
         if ($projection !== null) {
             $allowed = [
@@ -92,17 +100,44 @@ final class Search
             }
             $columns = implode(', ', array_values(array_unique($projection)));
         }
-        $rows = $this->db->all(
-            "SELECT $columns$select FROM events WHERE $where ORDER BY $order LIMIT $limit",
-            [...$selectParams, ...$params, ...$orderParams]
-        );
-        $now = $this->nowSql($opts);
-        $dayNow = $this->dayNowSql($userId, $now);
-        $viewer = self::viewerOf($opts);
-        $clocks = Floating::nowByZone($this->db, $userId, $now, $viewer);
+        $select = "SELECT $columns, {$plan['tierSql']} AS search_tier, {$plan['keySql']} AS search_key FROM events WHERE {$plan['where']}";
+        $selectParams = [...$plan['tierParams'], ...$plan['keyParams'], ...$plan['params']];
+        // The rows on a floating zone's now give place to the ones the exact
+        // test below lets through: one more for each.
+        $sqlLimit = $limit;
+        if ($plan['near'] !== null) {
+            $sqlLimit += (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE {$plan['where']} AND {$plan['near'][0]}", [...$plan['params'], ...$plan['near'][1]]);
+        }
+        $rows = $this->db->all("$select ORDER BY search_tier, search_key {$plan['dir']} LIMIT $sqlLimit", $selectParams);
+        // A floating row's key is its start moved by its zone's distance at
+        // now, so a row past the limit in the last tier can show before the
+        // last one kept, by up to the slack (Floating::nowByZone): those rows
+        // are read too, and the exact order below settles the limit.
+        if ($plan['slack'] > 0 && count($rows) === $sqlLimit) {
+            $last = $rows[count($rows) - 1];
+            $edge = Time::fromDb(substr((string) $last['search_key'], 0, 19));
+            $band = $plan['dir'] === 'ASC'
+                ? [$edge, $edge->modify('+' . $plan['slack'] . ' seconds')]
+                : [$edge->modify('-' . $plan['slack'] . ' seconds'), $edge];
+            $have = [];
+            foreach ($rows as $r) {
+                $have[(int) $r['id']] = true;
+            }
+            foreach ($this->db->all("$select AND {$plan['keySql']} BETWEEN ? AND ?", [...$selectParams, ...$plan['keyParams'], Time::toDb($band[0]), Time::toDb($band[1])]) as $r) {
+                if ((int) $r['search_tier'] === (int) $last['search_tier'] && !isset($have[(int) $r['id']])) {
+                    $rows[] = $r;
+                }
+            }
+        }
+        $now = $plan['now'];
+        $nowAt = Time::fromDb($now);
+        $dayNow = $plan['dayNow'];
+        $viewer = $plan['viewer'];
+        $when = $opts['when'] ?? 'all';
         $expansionBudget = ExpansionBudget::standard();
         // The edited days of the series found, for their next or latest
-        // dates (Recurrence::editedDays, as the calendar window loads them).
+        // dates (Recurrence::editedDays, as the calendar window loads them),
+        // and how each matches the query on its own fields.
         $ovByParent = [];
         $seriesIds = [];
         foreach ($rows as $row) {
@@ -110,8 +145,8 @@ final class Search
                 $seriesIds[] = (int) $row['id'];
             }
         }
+        $ovTier = [];
         if ($seriesIds !== []) {
-            $nowAt = Time::fromDb($now);
             try {
                 $edited = Recurrence::editedDays($this->db, $userId, $seriesIds, $nowAt->modify('-2 years'), $nowAt->modify('+2 years'), $expansionBudget);
             } catch (WorkBudgetExceeded) {
@@ -120,45 +155,60 @@ final class Search
             foreach ($edited as $ov) {
                 $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
             }
+            $ovTier = $this->tiersOf($userId, $plan, array_map(static fn(array $ov): int => (int) $ov['id'], $edited));
         }
         $out = [];
         foreach ($rows as $row) {
             $row['_tier'] = (int) $row['search_tier'];
-            unset($row['search_tier']);
-            // A floating row is compared on its own clock: now as it stores
-            // the viewer's clock (Floating::nowByZone), as the query compared it.
-            $rowNow = Floating::is($row) ? ($clocks[(string) $row['tzid']] ?? $now) : $now;
-            $row['_upcoming'] = self::isUpcoming($row, $rowNow, $dayNow);
-            if (($opts['when'] ?? 'all') === 'upcoming' && !$row['_upcoming']) {
-                continue; // a series whose UNTIL has passed
+            unset($row['search_tier'], $row['search_key']);
+            // Over or not by its end as shown (a floating row's on the
+            // viewer's clock), whatever side of the widened query it was on.
+            $shownEnd = Floating::span($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $viewer)[1];
+            $row['_upcoming'] = self::isUpcoming(['end_utc' => Time::toDb($shownEnd)] + $row, $now, $dayNow);
+            if ($when === 'upcoming' && !$row['_upcoming']) {
+                continue; // a series whose UNTIL has passed, or one ended as shown
             }
-            if (($opts['when'] ?? 'all') === 'past' && $row['_upcoming']) {
+            $ovs = $ovByParent[(int) $row['id']] ?? [];
+            // A series' date is an occurrence whose own fields match: a
+            // generated one has the series', an edited day its own.
+            $tierOf = static fn(array $occ): ?int => isset($occ['row']) ? ($ovTier[(int) $occ['row']['id']] ?? null) : $row['_tier'];
+            if ($when === 'past' && $row['_upcoming']) {
+                if (empty($row['rrule'])) {
+                    continue; // not over as shown
+                }
                 // A series still running matched Past by its first date: show
                 // its latest occurrence that has ended (0.7.4), not its next.
                 try {
-                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget, $viewer, $ovByParent[(int) $row['id']] ?? []);
+                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget, $viewer, $ovs, static fn(array $occ): bool => $tierOf($occ) !== null);
                 } catch (WorkBudgetExceeded) {
                     throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
                 }
                 if ($prev === null) {
                     continue;
                 }
-                $row = self::atOccurrence($row, $prev);
+                $row = self::atOccurrence($row, $prev, $tierOf($prev));
                 $row['_upcoming'] = false;
-            } elseif ($row['_upcoming'] && !empty($row['rrule']) && (string) $row['end_utc'] < $rowNow) {
-                // A series that began in the past: show (and open) its next date, not its first.
+            } elseif ($row['_upcoming'] && !empty($row['rrule']) && ($shownEnd < $nowAt || $ovs !== [])) {
+                // A series that began in the past, or one with edited days:
+                // show (and open) its next date that matches, not its first.
+                $next = null;
                 try {
-                    $next = self::nextOccurrence($row, $now, null, $expansionBudget, $viewer, false, null, $ovByParent[(int) $row['id']] ?? []);
+                    foreach (self::occurrencesAfter($row, $ovs, $now, null, $expansionBudget, $viewer) as $occ) {
+                        if ($tierOf($occ) !== null) {
+                            $next = $occ;
+                            break;
+                        }
+                    }
                 } catch (WorkBudgetExceeded) {
                     throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
                 }
                 if ($next === null) {
-                    if (($opts['when'] ?? 'all') === 'upcoming') {
+                    if ($when === 'upcoming') {
                         continue;
                     }
                     $row['_upcoming'] = false;
                 } else {
-                    $row = self::atOccurrence($row, $next);
+                    $row = self::atOccurrence($row, $next, $tierOf($next));
                 }
             }
             // Its start as shown, which orders it among the others.
@@ -169,7 +219,7 @@ final class Search
             $out[] = $row;
         }
         // A running series shows its next date, known only here, so the
-        // order within a tier is settled after the query.
+        // order within a tier is settled after the query, as is the limit.
         usort($out, static function (array $a, array $b): int {
             $c = [$a['_upcoming'] ? 0 : 1, $a['_tier']] <=> [$b['_upcoming'] ? 0 : 1, $b['_tier']];
             if ($c !== 0) {
@@ -190,6 +240,9 @@ final class Search
             $seen[(int) $row['id']] = true;
             unset($row['_tier'], $row['_at']);
             $kept[] = $row;
+            if (count($kept) === $limit) {
+                break;
+            }
         }
         return $kept;
     }
@@ -201,9 +254,10 @@ final class Search
     }
 
     /**
-     * How many events match, before any limit: the query search() runs,
-     * counted. Under 'when' => 'all' search() keeps every row that query
-     * returns, so this is how many it would list with no limit.
+     * How many events match, before any limit: the rows search() starts
+     * from, counted, a floating row on a zone's now by its end as shown
+     * (Floating::nowByZone). Under 'when' => 'all' search() keeps every
+     * row, so this is how many it would list with no limit.
      */
     public function count(int $userId, string $q, array $opts = []): int
     {
@@ -211,8 +265,40 @@ final class Search
         if ($plan === null) {
             return 0;
         }
-        [$where, $params] = $plan;
-        return (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE $where", $params);
+        if ($plan['near'] === null) {
+            return (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE {$plan['where']}", $plan['params']);
+        }
+        [$nearSql, $nearParams] = $plan['near'];
+        $n = (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE {$plan['where']} AND NOT $nearSql", [...$plan['params'], ...$nearParams]);
+        $nowAt = Time::fromDb($plan['now']);
+        foreach ($this->db->all("SELECT * FROM events WHERE {$plan['where']} AND $nearSql", [...$plan['params'], ...$nearParams]) as $row) {
+            $ended = Floating::span($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $plan['viewer'])[1] < $nowAt;
+            $n += ($opts['when'] ?? 'all') === 'past' ? (int) $ended : (int) (!$ended || !empty($row['rrule']));
+        }
+        return $n;
+    }
+
+    /**
+     * How each of these rows matches the query on its own fields, by the
+     * condition and tiers the query itself uses (rank()): id => tier, a row
+     * that does not match left out.
+     *
+     * @param list<int> $ids
+     * @return array<int,int>
+     */
+    private function tiersOf(int $userId, array $plan, array $ids): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
+            [$in, $inParams] = Db::in($chunk);
+            foreach ($this->db->all(
+                "SELECT id, {$plan['tierSql']} AS search_tier FROM events WHERE user_id = ? AND id IN $in AND {$plan['matchSql']}",
+                [...$plan['tierParams'], $userId, ...$inParams, ...$plan['matchParams']]
+            ) as $r) {
+                $out[(int) $r['id']] = (int) $r['search_tier'];
+            }
+        }
+        return $out;
     }
 
     /**
@@ -319,7 +405,12 @@ final class Search
         return array_map(static fn(array $o): array => self::storedOccurrence($row, $o, $viewer), $occs);
     }
 
-    /** [start, end] of a series' latest occurrence that ended by $nowSql, within two years; null when there is none. With $viewer and $overrides, as nextOccurrence. */
+    /**
+     * [start, end] of a series' latest occurrence that ended by $nowSql,
+     * within two years; null when there is none. With $viewer and
+     * $overrides, as nextOccurrence; with $accept, the latest it accepts
+     * (given each as storedOccurrence gives it).
+     */
     public static function previousOccurrence(
         array $row,
         string $nowSql,
@@ -327,6 +418,7 @@ final class Search
         ?ExpansionBudget $budget = null,
         ?\DateTimeZone $viewer = null,
         array $overrides = [],
+        ?callable $accept = null,
     ): ?array
     {
         $to = Time::fromDb($nowSql);
@@ -337,13 +429,15 @@ final class Search
         } catch (\Throwable) {
             return null;
         }
-        $last = null;
-        foreach ($occs as $o) {
-            if ($o['end'] <= $to && ($last === null || $o['start'] >= $last['start'])) {
-                $last = $o;
+        $ended = array_values(array_filter($occs, static fn(array $o): bool => $o['end'] <= $to));
+        usort($ended, static fn(array $a, array $b): int => $a['start'] <=> $b['start']);
+        for ($i = count($ended) - 1; $i >= 0; $i--) {
+            $occ = self::storedOccurrence($row, $ended[$i], $viewer);
+            if ($accept === null || $accept($occ)) {
+                return $occ;
             }
         }
-        return $last === null ? null : self::storedOccurrence($row, $last, $viewer);
+        return null;
     }
 
     /**
@@ -369,14 +463,14 @@ final class Search
 
     /**
      * A series' row standing for one of its occurrences (nextOccurrence,
-     * previousOccurrence): an edited day is its own row, keeping the
-     * search's tier and grouping; a generated one is the series' row at that
-     * date, with the wall clock it shows at.
+     * previousOccurrence): an edited day is its own row, at its own tier
+     * ($tier) and the search's grouping; a generated one is the series' row
+     * at that date, with the wall clock it shows at.
      */
-    private static function atOccurrence(array $row, array $occ): array
+    private static function atOccurrence(array $row, array $occ, ?int $tier = null): array
     {
         if (isset($occ['row'])) {
-            return ['_tier' => $row['_tier'], '_upcoming' => $row['_upcoming']] + $occ['row'];
+            return ['_tier' => $tier ?? $row['_tier'], '_upcoming' => $row['_upcoming']] + $occ['row'];
         }
         [$row['start_utc'], $row['end_utc']] = $occ;
         if (isset($occ[2])) {
@@ -394,10 +488,12 @@ final class Search
     /**
      * SQL for a row's start as shown, to order by before the limit: a
      * floating row's moved by how far its zone's clock stands from the
-     * viewer's now (Floating::nowByZone), every other row's as stored. search() orders
-     * the rows it keeps by their exact start as shown.
+     * viewer's at now (Floating::nowByZone), within the zone's slack of its
+     * start as shown; every other row's as stored, exactly. search() reads
+     * the rows within the slack of the last one kept and orders them by
+     * their exact start as shown.
      *
-     * @param array<string,string> $clocks
+     * @param array<string,array{at:string,slack:int}> $clocks
      * @return array{0:string,1:list<string|int>}
      */
     private static function shownStartSql(array $clocks, string $nowSql): array
@@ -408,9 +504,9 @@ final class Search
         $now = Time::fromDb($nowSql)->getTimestamp();
         $sql = 'CASE';
         $params = [];
-        foreach ($clocks as $tzid => $at) {
+        foreach ($clocks as $tzid => $clock) {
             $sql .= ' WHEN floating = 1 AND all_day = 0 AND tzid = ? THEN DATE_ADD(start_utc, INTERVAL ? SECOND)';
-            array_push($params, (string) $tzid, $now - Time::fromDb($at)->getTimestamp());
+            array_push($params, (string) $tzid, $now - Time::fromDb($clock['at'])->getTimestamp());
         }
         return [$sql . ' ELSE start_utc END', $params];
     }
@@ -620,10 +716,14 @@ final class Search
     }
 
     /**
-     * The query: [where, params, order, extraSelect, selectParams,
-     * orderParams]. The extra
-     * select is the row's tier as search_tier. Null when there is nothing to
-     * search for.
+     * The query, or null when there is nothing to search for: 'where' and
+     * 'params' (the owner, the time choice widened for floating rows, a
+     * calendar, and the match), the match alone ('matchSql',
+     * 'matchParams'), the tier CASE ('tierSql', 'tierParams'), the order
+     * key ('keySql', 'keyParams', 'dir'), the floating rows on a zone's now
+     * whose side the exact test decides ('near', null when none can be) and
+     * the largest slack ('slack'), with now ('now', 'dayNow'), 'viewer' and
+     * the zones' clocks ('clocks', Floating::nowByZone).
      */
     private function plan(int $userId, string $q, array $opts): ?array
     {
@@ -645,15 +745,25 @@ final class Search
         $baseParams = [$userId];
         $now = $this->nowSql($opts);
         $dayNow = $this->dayNowSql($userId, $now);
-        $clocks = Floating::nowByZone($this->db, $userId, $now, self::viewerOf($opts));
-        [$nowSql, $nowParams] = Floating::nowOnRowSql($clocks, $now);
+        $viewer = self::viewerOf($opts);
+        $clocks = Floating::nowByZone($this->db, $userId, $now, $viewer);
         $when = $opts['when'] ?? 'all';
+        $near = null;
+        // A floating row is compared on its own clock, widened by its slack
+        // so no row that is on the side asked for as shown is left out; the
+        // ones near now are settled by their exact instants (search(), count()).
         if ($when === 'upcoming') {
+            [$nowSql, $nowParams] = Floating::nowOnRowSql($clocks, $now, '', -1);
             $base .= " AND ((all_day = 1 AND end_utc > ?) OR (all_day = 0 AND end_utc >= $nowSql) OR (rrule IS NOT NULL AND rrule <> ''))";
             array_push($baseParams, $dayNow, ...$nowParams);
         } elseif ($when === 'past') {
+            [$nowSql, $nowParams] = Floating::nowOnRowSql($clocks, $now, '', 1);
             $base .= " AND ((all_day = 1 AND end_utc <= ?) OR (all_day = 0 AND end_utc < $nowSql))";
             array_push($baseParams, $dayNow, ...$nowParams);
+        }
+        if ($when === 'upcoming' || $when === 'past') {
+            $near = Floating::nearNowSql($clocks, 'end_utc');
+            $near = $near[0] === '0 = 1' ? null : $near;
         }
         if (isset($opts['calendarId']) && $opts['calendarId'] !== null) {
             $base .= ' AND calendar_id = ?';
@@ -673,14 +783,23 @@ final class Search
         [$caseSql, $caseParams, $matchSql, $matchParams] = self::rank($fields, $labelTiers);
         // The limit keeps the best tiers, and within one the dates nearest
         // the side asked for; search() settles the final order.
-        [$startSql, $startParams] = self::shownStartSql($clocks, $now);
+        [$keySql, $keyParams] = self::shownStartSql($clocks, $now);
         return [
-            0 => "$base AND $matchSql",
-            1 => [...$baseParams, ...$matchParams],
-            2 => "search_tier, $startSql " . ($when === 'upcoming' ? 'ASC' : 'DESC'),
-            3 => ", $caseSql AS search_tier",
-            4 => $caseParams,
-            5 => $startParams,
+            'where' => "$base AND $matchSql",
+            'params' => [...$baseParams, ...$matchParams],
+            'matchSql' => $matchSql,
+            'matchParams' => $matchParams,
+            'tierSql' => $caseSql,
+            'tierParams' => $caseParams,
+            'keySql' => $keySql,
+            'keyParams' => $keyParams,
+            'dir' => $when === 'upcoming' ? 'ASC' : 'DESC',
+            'near' => $near,
+            'slack' => Floating::mostSlack($clocks),
+            'now' => $now,
+            'dayNow' => $dayNow,
+            'viewer' => $viewer,
+            'clocks' => $clocks,
         ];
     }
 }

@@ -418,6 +418,23 @@ final class Feeds
             && Events::googleAnswer(['invite_json' => $current['invite_json'] ?? null]) !== Events::googleAnswer(['invite_json' => $changed['invite_json']]);
     }
 
+    /** The own fields of an edited day that no feed carries: what is held here alone. */
+    private const HELD_HERE_FIELDS = ['reminders', 'attendance', 'tags', 'people', 'icon'];
+
+    /**
+     * Whether an edited row's own part is all held here (HELD_HERE_FIELDS
+     * and what refers to it, OwnFields::references) and not empty: a day
+     * with nothing the feed would carry of its own.
+     */
+    private static function heldHereAlone(Db $db, array $row): bool
+    {
+        $own = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null) ?? [];
+        if (array_diff($own, self::HELD_HERE_FIELDS) !== []) {
+            return false;
+        }
+        return $own !== [] || (\BetterCal\Domain\Series\OwnFields::references($db, [(int) $row['id']])[(int) $row['id']] ?? []) !== [];
+    }
+
     /**
      * The event columns a parsed VEVENT (Ics::parse's shape, which Google's
      * sync and CalDAV produce too) writes, with $parentId as an edited
@@ -517,11 +534,16 @@ final class Feeds
         // this poll brings them.
         $ownColumn = \BetterCal\Domain\Series\OwnFields::hasColumn($this->db);
         $parsedMasters = [];
+        $skippedDays = [];
         foreach ($parsed as $pm) {
             if ($pm['recurrence_instance_utc'] === null) {
                 $parsedMasters[(string) $pm['uid']] = ['title' => $pm['title'], 'description' => Sanitize::description($pm['description']), 'location' => $pm['location'],
                     'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status'],
                     'invite_json' => $pm['invite_json'] ?? null];
+                // The days it skips, for an edited day the feed lists no record of (below).
+                foreach ((array) ($pm['exdates'] ?? []) as $ex) {
+                    $skippedDays[(string) $pm['uid'] . '|' . (string) $ex] = true;
+                }
             }
         }
         // Edited days the feed carries that are ordinary occurrences here
@@ -529,7 +551,7 @@ final class Feeds
         // had goes with the rows the feed no longer carries.
         $plain = [];
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$plain, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $skippedDays, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$plain, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -662,6 +684,18 @@ final class Feeds
                     continue;
                 }
                 if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {
+                    continue;
+                }
+                // An edited day whose own part is all held here (tags,
+                // people, reminders, attendance, an icon, what refers to it)
+                // has nothing the feed would carry: Google keeps no record
+                // of a day a change held here alone left at its series'
+                // values (Events, a "this event" edit). It stays while its
+                // series carries the day; a day the series skips, or one
+                // with a field of the feed's own, goes as any row does.
+                if ($ownColumn && $row['recurrence_parent_id'] !== null && isset($seen[$row['uid'] . '|']) && !isset($plain[$key])
+                    && !isset($skippedDays[$row['uid'] . '|' . (string) $row['recurrence_instance_utc']])
+                    && self::heldHereAlone($this->db, $row)) {
                     continue;
                 }
                 $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));

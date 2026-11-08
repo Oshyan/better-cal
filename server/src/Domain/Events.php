@@ -345,10 +345,24 @@ final class Events
      */
     private static function splitGoogleFields(array $fields): array
     {
-        unset($fields['url']); // Google's event link; not ours to edit
         $google = array_intersect_key($fields, array_flip(GoogleWriter::GOOGLE_COLUMNS));
         $local = array_diff_key($fields, $google);
         return [$google, $local];
+    }
+
+    /**
+     * The body of a PATCH setting $googleFields on $row: the event's link
+     * travels as Google's `source` (GoogleWriter::body), and one removed
+     * goes as null, which clears it there (a PATCH keeps what it doesn't
+     * name).
+     */
+    private static function patchBody(array $row, array $googleFields): array
+    {
+        $body = GoogleWriter::body(array_merge($row, $googleFields));
+        if (array_key_exists('url', $googleFields) && !isset($body['source'])) {
+            $body['source'] = null;
+        }
+        return $body;
     }
 
     /**
@@ -464,7 +478,7 @@ final class Events
         $resp = null;
         if ($googleFields !== []) {
             $googleId = self::requireGoogleId($event);
-            $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($event, $googleFields)), $this->googleBeforeSend($authority));
+            $resp = $this->google()->patch($calendar, $googleId, self::patchBody($event, $googleFields), $this->googleBeforeSend($authority));
         }
         $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in): void {
             if ($resp !== null) {
@@ -478,10 +492,15 @@ final class Events
             }
             $this->applyPeoplePatch($userId, $id, $in);
         });
-        $after = ['events' => [$this->get($userId, $id)]] + $this->labels->eventLinkRows($id);
+        $left = $this->get($userId, $id);
+        $after = ['events' => [$left]] + $this->labels->eventLinkRows($id);
         if ($googleFields !== []) {
+            // The fields it changed at Google are named, so its undo sends
+            // back those alone (GoogleUndo).
+            $was = GoogleUndo::bodyOf($event);
             $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id,
-                GoogleUndo::details(GoogleUndo::EDIT, $calendar, (string) $event['google_event_id'], GoogleUndo::bodyOf($event), $event['google_etag'] ?? null, self::answerEtag($resp)),
+                GoogleUndo::details(GoogleUndo::EDIT, $calendar, (string) $event['google_event_id'], $was, $event['google_etag'] ?? null, self::answerEtag($resp),
+                    ['changed' => GoogleUndo::editChanged($was, $left, $resp)]),
                 [$before, $after]);
         } elseif (Undo::anyChange($before, $after)) {
             // Held here alone: Google is sent nothing, and the entry undoes here.
@@ -507,9 +526,9 @@ final class Events
         $occurrence = null;
         $made = null; // the occurrence as this edit leaves it, when it has no row yet
         $googleFields = [];
-        // A day with a row of its own: the row and its links before, as
-        // googlePatchAll keeps them.
-        $before = $existing !== null ? ['events' => [$existing]] + $this->labels->eventLinkRows((int) $existing['id']) : null;
+        // The row and its links before, as googlePatchAll keeps them: none
+        // for an ordinary day, whose row this edit makes.
+        $before = $existing !== null ? ['events' => [$existing]] + $this->labels->eventLinkRows((int) $existing['id']) : [];
         $changed = []; // the fields this edit changed, read from the request before placement
         if ($existing !== null) {
             // The day starts where the own list this edit leaves puts it.
@@ -522,12 +541,15 @@ final class Events
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-                $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)), $this->googleBeforeSend($authority));
+                $resp = $this->google()->patch($calendar, $googleId, self::patchBody($existing, $googleFields), $this->googleBeforeSend($authority));
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
         } else {
-            // The occurrence becomes an exception at Google: patch its
-            // instance id with the occurrence as it should now be.
+            // The occurrence becomes an exception at Google, when the edit
+            // changes what Google shows of it: its instance id patched
+            // with the occurrence as it should now be. A change held here
+            // alone (tags, people, reminders, attendance) sends nothing,
+            // so Google keeps no record of the day equal to its series.
             $duration = Recurrence::durationSeconds($master);
             $instStart = Time::fromDb($instanceUtc);
             $override = $this->copyForChild($master);
@@ -536,18 +558,24 @@ final class Events
             $override['start_utc'] = Time::toDb($instStart);
             $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
             [$patch, $changed] = $this->placedThis($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true), $master, $in);
-            [, $localFields] = self::splitGoogleFields($patch);
+            [$patchGoogle, $localFields] = self::splitGoogleFields($patch);
             // Before: the occurrence as it showed, the series' at that date.
             $shown = GoogleWriter::instanceBody($override);
             $occurrence = $override;
             $override = array_merge($override, $patch);
             self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-            $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
+            if (GoogleUndo::changedKeys($shown, GoogleWriter::instanceBody($override)) !== []) {
+                $resp = $this->google()->patch($calendar, $instanceId, self::patchBody($override, $patchGoogle), $this->googleBeforeSend($authority));
+            }
+            // Journaled as a write to that resource either way: the row it
+            // makes here is undone with the fields it changed at Google,
+            // none for a change held here alone (GoogleUndo).
             $undo = [$instanceId, $shown, null];
             $made = $override;
         }
-        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $made, $userId, $googleFields, $localFields, $in, $changed): bool {
+        $rowId = null; // the day's row as the edit leaves it, when it keeps one
+        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $made, $userId, $googleFields, $localFields, $in, $changed, &$rowId): bool {
             if ($existing !== null) {
                 $rowId = (int) $existing['id'];
                 // The row as this edit leaves it, written before Google's
@@ -569,21 +597,25 @@ final class Events
             }
             if ($existing !== null) {
                 if ($this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) === null) {
+                    $rowId = null;
                     return true; // an ordinary occurrence again: the sync took the row
                 }
             } else {
                 $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
-                if ($created === null && $resp === null) {
-                    return false; // what Google answered is still kept
-                }
                 if ($created === null) {
-                    // Google's answer equals the series on that day (what
-                    // changed is local: tags, people, reminders, attendance),
-                    // so the sync stores no row for it (Feeds::sync, an
-                    // ordinary occurrence). The day's row is this writer's,
-                    // under Google's identity for the occurrence and as the
-                    // sync would have made it (a Google calendar's rows are
-                    // Google's: a cancelled day takes it, as a poll's does).
+                    // Nothing sent (what changed is held here alone: tags,
+                    // people, reminders, attendance), or Google's answer
+                    // equals the series on that day, which the sync stores
+                    // no row for (Feeds::sync, an ordinary occurrence). The
+                    // day's row is this writer's, under Google's identity
+                    // for the occurrence (a later edit of its Google fields
+                    // patches that id) and as the sync would have made it (a
+                    // Google calendar's rows are Google's: a cancelled day
+                    // takes it, as a poll's does). A poll that reads the
+                    // calendar whole keeps it while its series has the day,
+                    // though Google holds no record of it: its own part is
+                    // held here alone (Feeds::sync, rows the feed no longer
+                    // carries).
                     $created = $this->withOwnColumn(array_merge($made, [
                         'recurrence_parent_id' => $masterId,
                         'recurrence_instance_utc' => $instanceUtc,
@@ -622,11 +654,14 @@ final class Events
         if (!$found) {
             throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
         }
-        // The row and its links after, when the day keeps its row.
-        $stored = $existing !== null ? $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $existing['id']]) : null;
-        $after = $stored !== null ? ['events' => [$stored]] + $this->labels->eventLinkRows((int) $stored['id']) : null;
+        // The row and its links after: none for a day the edit made
+        // ordinary again. With the row before, the entry says what the edit
+        // changed here, a row it made included, so its undo puts back
+        // exactly that (GoogleUndo, Undo::restoreSnapshots).
+        $stored = $rowId !== null ? $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) : null;
+        $after = $stored !== null ? ['events' => [$stored]] + $this->labels->eventLinkRows((int) $stored['id']) : [];
         $summary = "Updated one occurrence of '" . (string) $master['title'] . "'";
-        if ($undo === null && $before !== null && $after !== null) {
+        if ($undo === null) {
             // Held here alone: Google is sent nothing, and the entry undoes here.
             if (Undo::anyChange($before, $after)) {
                 $this->undo->record($userId, 'event', (int) $existing['id'], 'update', $before, $after, $summary);
@@ -634,8 +669,9 @@ final class Events
             return;
         }
         $this->googleJournal($userId, $summary, $calendar, $masterId,
-            $undo !== null ? GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp)) : null,
-            $undo !== null && $before !== null && $after !== null ? [$before, $after] : null);
+            GoogleUndo::details(GoogleUndo::EDIT, $calendar, $undo[0], $undo[1], $undo[2], self::answerEtag($resp),
+                ['changed' => GoogleUndo::editChanged($undo[1], $stored, $resp)]),
+            [$before, $after]);
     }
 
     /**

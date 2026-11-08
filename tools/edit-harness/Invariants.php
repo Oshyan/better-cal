@@ -555,7 +555,8 @@ trait Invariants
 
     /**
      * The adoptions (Changing the Series from an Edited Day): a group for each part the day acted on owns and the change
-     * moved, its "adopt" refused where the drag adopting the day would be; a whole series' and a split's part alike.
+     * moved, its "adopt" refused where the drag adopting the day would be or would leave no events (then with the code
+     * `empty`); a whole series' and a split's part alike.
      */
     private function checkAdoptions(Expect $x0, array $groups): void
     {
@@ -564,7 +565,10 @@ trait Invariants
             $this->check('c-groups', isset($groups[$part]) === ($want !== null), $want !== null ? "the day acted on owns its $part and the change moved it, and no adoption group is offered" : "an adoption group for its $part is offered where the design has none", ['offered' => isset($groups[$part]), 'design' => $want]);
             if ($want !== null && isset($groups[$part])) {
                 $adopt = array_values(array_filter($groups[$part]['options'] ?? [], static fn(array $o): bool => ($o['id'] ?? '') === 'adopt'))[0] ?? null;
-                $this->check('c-readings', $adopt !== null && empty($adopt['disabled']) === !$want['disabled'], $want['disabled'] ? "adopting the $part is offered though the drag that adopts it is refused" : "adopting the $part is refused though the design allows it", ['option' => $adopt]);
+                $this->check('c-readings', $adopt !== null && empty($adopt['disabled']) === !$want['disabled'], $want['disabled'] ? "adopting the $part is offered though the drag that adopts it is refused or leaves no events" : "adopting the $part is refused though the design allows it", ['option' => $adopt]);
+                if ($adopt !== null && !empty($adopt['disabled']) && ($want['code'] ?? null) !== null) {
+                    $this->check('c-readings', ($adopt['code'] ?? null) === $want['code'], "adopting the $part is refused because its own plan is, and the option carries that refusal's code", ['option' => $adopt, 'code' => $want['code']]);
+                }
             }
         }
     }

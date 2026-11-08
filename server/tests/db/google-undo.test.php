@@ -272,5 +272,14 @@ return static function (Db $db): void {
         checkEq('the delete is a skip; its undo reads the instance, sends {status: confirmed} to it, and the day is back as an ordinary occurrence', [
             [null, ['2027-03-08 18:00:00']], ['GET', 'PATCH'], ['status' => 'confirmed'], [], null,
         ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 2), $t->google->calls[1][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
+
+        // The undo undoes back: the day, an ordinary occurrence with no row here, is skipped again.
+        $back = $last($t);
+        $t->google->calls = [];
+        $t->undo->undoById($t->u, (int) $back['id']);
+        checkEq('undoing the undo deletes the instance at Google again and skips the day here; that undo names the entry it undid', [
+            ['DELETE', 'probe1a2b3c_20270308T180000Z'], ['2027-03-08 18:00:00'], 'cancelled', 1, (int) $back['id'],
+        ], [[$t->google->calls[0][0] ?? null, $t->google->calls[0][1] ?? null], $exdates(), $t->google->res['probe1a2b3c_20270308T180000Z']['status'] ?? null,
+            $undone((int) $back['id']), $google($last($t))['undoes'] ?? null]);
     });
 };

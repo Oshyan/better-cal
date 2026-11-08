@@ -1,0 +1,48 @@
+{
+    "n": 9812,
+    "seed": 0,
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-01-31 02:30",
+        "length": 90
+    },
+    "exceptions": [],
+    "acted": 8,
+    "from": "afterChange",
+    "vector": {
+        "scope": "following",
+        "date": 0,
+        "clock": 0,
+        "zone": "America/Los_Angeles",
+        "length": 0,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 32400,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "row"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "zone": "moment",
+            "movedDays": "keep"
+        }
+    },
+    "preselected": {
+        "edit": false
+    }
+}

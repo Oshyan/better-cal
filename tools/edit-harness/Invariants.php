@@ -242,9 +242,19 @@ trait Invariants
         if ($key === $start) {
             return true;
         }
+        return self::shownFrom($st) === 1 && $st['raw'][1]['key'] === $key;
+    }
+
+    /**
+     * The index in the raw occurrences of the series' first shown day: 1 for a start stored a period before a first
+     * day in a skipped hour (that stored day a generated skip, Zones, DST and All-Day Days), else 0.
+     */
+    private static function shownFrom(array $st): int
+    {
         $raw = $st['raw'];
+        $start = (string) ($st['row']['start_utc'] ?? '');
         return count($raw) >= 2 && $raw[0]['key'] === $start && in_array($start, $st['exdates'], true) && !$st['allDay']
-            && Clock::inGap($raw[1]['dn'], $st['clock'], $st['tz']) && $raw[1]['key'] === $key;
+            && Clock::inGap($raw[1]['dn'], $st['clock'], $st['tz']) ? 1 : 0;
     }
 
     /** The series a split made in this case, if any. */
@@ -1383,6 +1393,14 @@ trait Invariants
             $key = $r['img'] === null ? null : Truth::keyOnDay($new, $dayKey, (int) $r['img'], $tz1);
             if ($key !== null && isset($byKey[$key])) {
                 $mapped['overrides'][$id] = $byKey[$key];
+            }
+        }
+        // Every other row of the new part stays in it as stored, as compareSeries reads a whole series' rows: the row the
+        // plan created for the day acted on (where its image's key isn't where it was put) has no row of the part to match.
+        $matched = array_fill_keys(array_map(static fn(array $ov): int => (int) $ov['id'], $mapped['overrides']), true);
+        foreach ($new['overrides'] as $nid => $ov) {
+            if (!isset($matched[(int) $ov['id']])) {
+                $mapped['overrides'][isset($mapped['overrides'][$nid]) ? 'created:' . $nid : $nid] = $ov;
             }
         }
         $this->compareSeries('5', $x, $out, $part, $mapped, $choices, null, $edit);

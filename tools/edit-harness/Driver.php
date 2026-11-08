@@ -141,8 +141,17 @@ final class Driver
             if ($within === []) {
                 return $this->result('none');
             }
-            $spec += Space::exceptions($r, $spec['series'], $within);
-            $spec['vector'] = Delta::draw($r, $spec['series'], count($within));
+            // The stored day of a start in a skipped hour is no day of the series (series-model.md, Zones, DST and
+            // All-Day Days: every sentence names the first day shown, and the API never shows that one), so the days
+            // are drawn from the shown ones; their indexes stay the raw list's, which a spec names.
+            $base = self::shownFrom($st);
+            $drawn = Space::exceptions($r, $spec['series'], array_slice($within, $base));
+            $drawn['acted'] += $base;
+            foreach ($drawn['exceptions'] as $k => $ex) {
+                $drawn['exceptions'][$k]['at'] += $base;
+            }
+            $spec += $drawn;
+            $spec['vector'] = Delta::draw($r, $spec['series'], count($within) - $base);
             $spec['stack'] = Delta::stack($r);
             $this->spec = $spec + $this->spec;
         }
@@ -166,7 +175,8 @@ final class Driver
         // occurrence that is no exception, else the vector's flag is dropped and the case is an ordinary edit.
         if (!empty($spec['vector']['startOnly'])) {
             $exAt = array_fill_keys(array_column($spec['exceptions'] ?? [], 'at'), true);
-            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > 0 && $i <= 6 && !isset($exAt[$i])));
+            $base = self::shownFrom($st);
+            $later = array_values(array_filter(array_keys($st['raw']), static fn(int $i): bool => $i > $base && $i <= $base + 6 && !isset($exAt[$i])));
             if ($st['shape']->supported() && !isset($exAt[0]) && $later !== []) {
                 $spec['acted'] = 0;
                 $spec['startTo'] = $later[crc32('start:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % count($later)];

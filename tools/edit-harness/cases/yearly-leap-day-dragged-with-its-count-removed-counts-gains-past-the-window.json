@@ -1,0 +1,47 @@
+{
+    "n": 9813,
+    "seed": 0,
+    "series": {
+        "family": "yearly_day",
+        "rrule": "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
+        "import": false,
+        "bound": "count",
+        "boundAt": 11,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-02-27",
+        "length": 1
+    },
+    "exceptions": [],
+    "acted": 4,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 9000,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=MONTHLY;BYMONTHDAY=9",
+        "bound": {
+            "none": true
+        },
+        "via": "master"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": false
+    }
+}

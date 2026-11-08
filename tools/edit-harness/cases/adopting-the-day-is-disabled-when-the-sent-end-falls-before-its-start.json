@@ -1,0 +1,63 @@
+{
+    "n": 9807,
+    "seed": 0,
+    "series": {
+        "family": "onehour",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;BYHOUR=2;BYMINUTE=30",
+        "import": false,
+        "bound": "until",
+        "boundAt": 9,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2026-11-30 02:30",
+        "length": 30,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 2,
+            "mins": -30,
+            "zone": "Asia/Tokyo",
+            "len": 60
+        }
+    ],
+    "acted": 1,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 21,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": {
+            "untilAt": 3
+        },
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "choices": {
+        "edit": {
+            "day": "same",
+            "outside": "keep",
+            "movedDays": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

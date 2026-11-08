@@ -1064,7 +1064,7 @@ final class Model
             if ($mDn !== $land['dn'] || $mClock !== $land['clock']) {
                 $momentOption = ['id' => 'moment', 'label' => 'The same moment as now'];
                 if ($mDn !== $this->actedDn0 && ($this->r0->fixedDays !== null || !$this->r0->supported())) {
-                    $momentOption += ['disabled' => true, 'reason' => self::REASONS[$this->r0->fixedDays ?? 'dayset']];
+                    $momentOption += ['disabled' => true, 'code' => $this->r0->fixedDays ?? 'dayset', 'reason' => self::REASONS[$this->r0->fixedDays ?? 'dayset']];
                 }
                 $zone = $this->pick('zone', 'Zone', [
                     ['id' => 'clock', 'label' => sprintf('%02d:%02d in %s', $land['clock'][0], $land['clock'][1], self::zoneName($this->tz1))],
@@ -1097,7 +1097,7 @@ final class Model
         foreach ($readings as $r) {
             $opt = ['id' => $r['id'], 'label' => $r['label'], 'rrule' => $r['rule']->text()];
             if (!empty($r['disabled'])) {
-                $opt += ['disabled' => true, 'reason' => $r['reason']];
+                $opt += ['disabled' => true, 'code' => $r['code'], 'reason' => $r['reason']];
                 $this->refusals[] = ['group' => 'reading', 'option' => $r['id'], 'code' => $r['code'], 'words' => $r['reason']];
             } elseif ($default === null) {
                 $default = $r['id'];
@@ -1154,7 +1154,7 @@ final class Model
                 $why = $this->r0->fixedDays ?? (!$this->r0->supported() ? 'dayset' : null);
                 $enabled = $why === null ? array_filter(Readings::forDrag($this->r0, $this->actedDn0, $to, $this->old->startDn), static fn(array $r): bool => empty($r['disabled'])) : [];
                 if ($enabled === []) {
-                    $adopt += ['disabled' => true, 'reason' => self::REASONS[$why ?? 'dayset']];
+                    $adopt += ['disabled' => true, 'code' => $why ?? 'dayset', 'reason' => self::REASONS[$why ?? 'dayset']];
                 }
                 $data = ['shift' => $f['days'], 'by' => $f['days'] + $offset];
                 $default = $row['preselect'] === 'period' && $this->withinPeriod($this->actedDn0, $to) ? 'adopt' : 'same';

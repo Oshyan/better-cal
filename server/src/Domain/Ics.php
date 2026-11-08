@@ -377,10 +377,10 @@ final class Ics
         $out .= $chunk;
     }
 
-    /** The zone a timed row is written in, or null for all-day and UTC rows (written as dates or Z). */
+    /** The zone a timed row is written in, or null for all-day, floating and UTC rows (written as dates, local times or Z). */
     private static function zoneOf(array $row): ?string
     {
-        if ((int) ($row['all_day'] ?? 0) === 1) {
+        if ((int) ($row['all_day'] ?? 0) === 1 || Floating::is($row)) {
             return null;
         }
         $z = Time::normalizeTzid((string) ($row['tzid'] ?? 'UTC'));
@@ -394,6 +394,10 @@ final class Ics
         if ((int) ($shape['all_day'] ?? 0) === 1) {
             return self::fold($name . ';VALUE=DATE:' . $t->setTimezone(Time::zone($shape['tzid'] ?? null))->format('Ymd')) . "\r\n";
         }
+        if (Floating::is($shape)) {
+            // A floating time (#167, RFC 5545 3.3.5 form 1): its wall clock, no zone and no Z.
+            return self::line($name, $t->setTimezone(Time::zone((string) ($shape['tzid'] ?? 'UTC')))->format('Ymd\THis'));
+        }
         $z = self::zoneOf($shape);
         // A local time in the repeated hour when clocks go back names two
         // instants, and readers take the first (RFC 5545 3.3.5). The second
@@ -406,6 +410,24 @@ final class Ics
         return $z !== null
             ? self::fold($name . ';TZID=' . $z . ':' . $t->setTimezone(new \DateTimeZone($z))->format('Ymd\THis')) . "\r\n"
             : self::line($name, $t->format('Ymd\THis\Z'));
+    }
+
+    /**
+     * A floating series' UNTIL as a local time too (RFC 5545 3.3.10: with a
+     * floating DTSTART, UNTIL MUST be one): the stored UTC UNTIL's clock in
+     * the row's zone, with no Z. Any other rule as stored.
+     */
+    private static function floatingUntil(string $rrule, array $row): string
+    {
+        if (!Floating::is($row) || preg_match('/(^|;)UNTIL=(\d{8}T\d{6})Z/i', $rrule, $m) !== 1) {
+            return $rrule;
+        }
+        $until = \DateTimeImmutable::createFromFormat('Ymd\THis', $m[2], Time::utc());
+        if ($until === false) {
+            return $rrule;
+        }
+        $local = $until->setTimezone(Time::zone((string) ($row['tzid'] ?? 'UTC')))->format('Ymd\THis');
+        return (string) preg_replace('/(^|;)UNTIL=\d{8}T\d{6}Z/i', '${1}UNTIL=' . $local, $rrule, 1);
     }
 
     /** Is this instant the later of two that share its local clock time (the hour repeated when clocks go back)? */
@@ -501,7 +523,7 @@ final class Ics
             $out .= self::dateProp('RECURRENCE-ID', (string) $ev['recurrence_instance_utc'], $series ?? $ev);
         }
         if (!empty($ev['rrule'])) {
-            $out .= self::line('RRULE', self::structural((string) $ev['rrule']));
+            $out .= self::line('RRULE', self::structural(self::floatingUntil((string) $ev['rrule'], $ev)));
         }
         $exdates = Recurrence::decodeExdates($ev['exdates_json'] ?? null);
         foreach ($exdates as $ex) {
@@ -1057,6 +1079,9 @@ final class Ics
             'end_utc' => $end->format(Time::DB),
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
+            // A start with no zone and no Z (#167): its clock time holds in
+            // any zone. Read in $floatName above, so its wall clock is kept.
+            'floating' => $floating && !$allDay ? 1 : 0,
             'rrule' => $rrule,
             'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,

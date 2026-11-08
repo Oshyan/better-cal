@@ -64,7 +64,9 @@ final class EventsController
         // told so before any expansion, sort, filter or encoding.
         $headers = ['Cache-Control' => self::WINDOW_CACHE_CONTROL];
         if ($this->cursor !== null) {
-            $headers['ETag'] = $this->cursor->windowTag((int) $req->user['id'], $this->version);
+            // Floating events show on the device's clock, so the device's
+            // zone is part of what the window is (#167).
+            $headers['ETag'] = $this->cursor->windowTag((int) $req->user['id'], $this->version . '|' . $this->events->viewerName());
             if (StaticFiles::matches($req->header('If-None-Match'), $headers['ETag'])) {
                 return Response::notModified($headers);
             }
@@ -94,13 +96,13 @@ final class EventsController
         if (($req->body['preview'] ?? false) === true) {
             // A new series' creation plan: its words, start and first dates. Nothing is written.
             try {
-                return Response::json(['plan' => $this->events->previewCreate((int) $req->user['id'], $req->body)]);
+                return Response::json(['plan' => $this->events->previewCreate((int) $req->user['id'], $this->onRowClock($req, null))]);
             } catch (\InvalidArgumentException $e) {
                 throw HttpError::badRequest($e->getMessage());
             }
         }
         try {
-            $occurrence = $this->events->create((int) $req->user['id'], $req->body, RequestAuthority::request($req));
+            $occurrence = $this->events->create((int) $req->user['id'], $this->onRowClock($req, null), RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -122,9 +124,10 @@ final class EventsController
         if (!in_array($scope, ['this', 'all'], true)) {
             throw HttpError::badRequest('scope must be this|all');
         }
+        $body = $this->onRowClock($req, (int) $params['id'], true);
         try {
-            $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $req->str('instanceStart'),
-                $req->str('start'), $req->str('end'), $duplicate, RequestAuthority::request($req));
+            $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $body['instanceStart'] ?? null,
+                $body['start'] ?? null, $body['end'] ?? null, $duplicate, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -136,13 +139,13 @@ final class EventsController
         if (($req->body['preview'] ?? false) === true) {
             // A whole-series change's plan (series-model.md, The API): nothing written.
             try {
-                return Response::json(['plan' => $this->events->previewPatch((int) $req->user['id'], (int) $params['id'], $req->body)]);
+                return Response::json(['plan' => $this->events->previewPatch((int) $req->user['id'], (int) $params['id'], $this->onRowClock($req, (int) $params['id']))]);
             } catch (\InvalidArgumentException $e) {
                 throw HttpError::badRequest($e->getMessage());
             }
         }
         try {
-            $this->events->patch((int) $req->user['id'], (int) $params['id'], $req->body, RequestAuthority::request($req));
+            $this->events->patch((int) $req->user['id'], (int) $params['id'], $this->onRowClock($req, (int) $params['id']), RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -152,7 +155,7 @@ final class EventsController
     public function delete(Request $req, array $params): Response
     {
         $scope = $req->str('scope') ?? $req->q('scope');
-        $instance = $req->str('instanceStart') ?? $req->q('instanceStart');
+        $instance = $this->instanceOnRowClock($req, (int) $params['id']);
         if (($req->body['preview'] ?? false) === true || filter_var($req->q('preview', '0'), FILTER_VALIDATE_BOOL)) {
             // Delete following's plan (Series Plans): nothing written.
             return Response::json(['plan' => $this->events->previewDelete((int) $req->user['id'], (int) $params['id'], $scope, $instance, self::choices($req))]);
@@ -163,6 +166,36 @@ final class EventsController
             throw HttpError::badRequest($e->getMessage());
         }
         return Response::json(['ok' => true]);
+    }
+
+    /**
+     * The request's body with its instants on the event's own clock: a
+     * floating event's times arrive on the device's clock and are stored on
+     * its own (Events::fromViewer, #167). $instantsOnly keeps only the
+     * instants (a copy reads its other fields itself).
+     */
+    private function onRowClock(Request $req, ?int $id, bool $instantsOnly = false): array
+    {
+        $body = $req->body;
+        if ($instantsOnly) {
+            $body = array_intersect_key($body, array_flip(['instanceStart', 'start', 'end']));
+        }
+        $moved = $this->events->fromViewer((int) $req->user['id'], $id, $body);
+        if ($instantsOnly) {
+            return array_map(static fn($v) => is_scalar($v) && $v !== '' ? (string) $v : null, array_intersect_key($moved, array_flip(['instanceStart', 'start', 'end'])));
+        }
+        return $moved;
+    }
+
+    /** The occurrence a request names (body or query), on the event's own clock. */
+    private function instanceOnRowClock(Request $req, int $id): ?string
+    {
+        $instance = $req->str('instanceStart') ?? $req->q('instanceStart');
+        if ($instance === null) {
+            return null;
+        }
+        $moved = $this->events->fromViewer((int) $req->user['id'], $id, ['instanceStart' => $instance]);
+        return is_string($moved['instanceStart'] ?? null) ? $moved['instanceStart'] : $instance;
     }
 
     /** The plan a commit names ({hash, choices}), or null. */
@@ -194,14 +227,14 @@ final class EventsController
             throw HttpError::badRequest('scope must be this|following|all');
         }
         if (($req->body['preview'] ?? false) === true) {
-            return Response::json(['plan' => $this->events->previewRelationship((int) $req->user['id'], (int) $params['id'], (string) ($req->str('relationship') ?? ''), $scope, $req->str('instanceStart'), self::choices($req))]);
+            return Response::json(['plan' => $this->events->previewRelationship((int) $req->user['id'], (int) $params['id'], (string) ($req->str('relationship') ?? ''), $scope, $this->instanceOnRowClock($req, (int) $params['id']), self::choices($req))]);
         }
         $this->events->setRelationship(
             (int) $req->user['id'],
             (int) $params['id'],
             (string) ($req->str('relationship') ?? ''),
             $scope,
-            $req->str('instanceStart'),
+            $this->instanceOnRowClock($req, (int) $params['id']),
             RequestAuthority::request($req),
             self::plan($req)
         );
@@ -215,14 +248,14 @@ final class EventsController
             throw HttpError::badRequest('scope must be this|following|all');
         }
         if (($req->body['preview'] ?? false) === true) {
-            return Response::json(['plan' => $this->events->previewAttendance((int) $req->user['id'], (int) $params['id'], (string) ($req->str('attendance') ?? ''), $scope, $req->str('instanceStart'), self::choices($req))]);
+            return Response::json(['plan' => $this->events->previewAttendance((int) $req->user['id'], (int) $params['id'], (string) ($req->str('attendance') ?? ''), $scope, $this->instanceOnRowClock($req, (int) $params['id']), self::choices($req))]);
         }
         $this->events->setAttendance(
             (int) $req->user['id'],
             (int) $params['id'],
             (string) ($req->str('attendance') ?? ''),
             $scope,
-            $req->str('instanceStart'),
+            $this->instanceOnRowClock($req, (int) $params['id']),
             self::plan($req)
         );
         return Response::json(['ok' => true] + self::split($this->events));

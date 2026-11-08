@@ -251,11 +251,11 @@ trait PlanUntouched
             $r1 = $w1['events'][$id] ?? null;
             if ($id === $master) {
                 $role = 'master';
-                $allowed = array_merge($book, $this->masterPlacement($before, $x, $out), $edit['trip'] || !empty($edit['untrip']) ? ['is_container'] : []);
+                $allowed = array_merge($book, $this->masterPlacement($before, $x, $out), $edit['trip'] || !empty($edit['untrip']) ? ['is_container'] : [], ($edit['floating'] ?? null) !== null ? ['floating'] : []);
             } elseif (isset($fates[$id])) {
                 $role = 'edited row ' . $fates[$id];
                 [$placed, $ownPlacement] = $this->rowPlacement($id, $fates[$id], $before, $after, $edit, $choices, $ctx);
-                $allowed = array_merge($book, $placed, $edit['trip'] || !empty($edit['untrip']) ? ['is_container'] : [], $fates[$id] === 'leaves' ? self::DETACH : []);
+                $allowed = array_merge($book, $placed, $edit['trip'] || !empty($edit['untrip']) ? ['is_container'] : [], ($edit['floating'] ?? null) !== null ? ['floating'] : [], $fates[$id] === 'leaves' ? self::DETACH : []);
             } else {
                 $role = in_array($id, $this->controls, true) ? ((int) $r0['calendar_id'] === $this->calendarId ? 'control, same calendar' : 'control, another calendar') : 'other row';
                 $allowed = $book;

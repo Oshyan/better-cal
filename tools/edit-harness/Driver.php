@@ -34,6 +34,27 @@ final class Driver
     /** The share of drawn cases whose timed edits send the wall clocks typed (`typed`, README, The Delta Vector); --typed sets it. */
     public static float $typed = 0.3;
 
+    /**
+     * The share of drawn timed series made floating (#167, README, Floating), and of whole-series edits that turn a
+     * timed series' floating flag over; --floating sets the first (0 turns both off). Drawn from the case's seed and
+     * number alone, so the drawn space is untouched.
+     */
+    public static float $floating = 0.25;
+    public static float $floatFlip = 0.1;
+    private static ?bool $floatColumn = null;
+
+    /** Does this product store floating times (events.floating, migration 069)? */
+    private function floats(): bool
+    {
+        return self::$floatColumn ??= in_array('floating', array_column($this->db->all('SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', ['events']), 'name'), true);
+    }
+
+    /** A draw by the case's seed and number alone: true for $share of them. */
+    private function share(string $what, float $share): bool
+    {
+        return $share > 0 && crc32($what . ':' . ($this->spec['seed'] ?? 0) . ':' . ($this->spec['n'] ?? 0)) % 10000 < (int) round($share * 10000);
+    }
+
     /** The option combination being committed in isolated state (everyOption), or null for the case's own commit. */
     private ?string $trial = null;
 
@@ -97,6 +118,11 @@ final class Driver
         $this->fixtures = [];
         $this->tripLinks = [];
         Prof::mark('create');
+        // A share of drawn timed series float (a fixed case names it in its series).
+        if (!isset($spec['series']['floating'])) {
+            $spec['series']['floating'] = !isset($spec['fixed']) && empty($spec['series']['allDay']) && $this->floats() && $this->share('floating', self::$floating);
+            $this->spec['series'] = $spec['series'];
+        }
         $id = $this->createSeries($spec['series']);
         // A rule or start the harness wrote straight into the row goes to the stand-in too, as if Google had it so.
         $this->google?->adopt($this->row($id));
@@ -322,6 +348,9 @@ final class Driver
     {
         $in = ['calendarId' => $this->calendarId, 'title' => 'Sample series', 'location' => 'Sample Hall', 'allDay' => $s['allDay'], 'tzid' => $s['tzid'],
             'tagNames' => ['sample'], 'personNames' => ['Alex Example']];
+        if (!empty($s['floating']) && !$s['allDay']) {
+            $in['floating'] = true;
+        }
         if ($s['allDay']) {
             $in['start'] = $s['start'];
             $in['end'] = Days::date(Days::ofDate($s['start']) + $s['length']);
@@ -833,6 +862,12 @@ final class Driver
             // The trip flag cleared (a sequence's step; the drawn space never clears it).
             $in['isContainer'] = false;
         }
+        // Floating turned over (#167) for a share of whole-series edits of a series that stays timed.
+        $floatSent = null;
+        if (in_array($scope, ['all', 'following'], true) && !$st['allDay'] && !$v['allDay'] && $this->floats() && $this->share('floatFlip', self::$floating > 0 ? self::$floatFlip : 0.0)) {
+            $floatSent = (int) ($master['floating'] ?? 0) !== 1;
+            $in['floating'] = $floatSent;
+        }
         // The rule: absent, sent back unchanged (as stored, or as the editor writes it), or a new pattern; a new bound rides on it.
         $ruleText = null;
         $boundSent = null;
@@ -883,6 +918,7 @@ final class Driver
             'trip' => $v['trip'],
             'untrip' => !empty($v['untrip']),
             'startOnly' => !empty($v['startOnly']),
+            'floating' => $floatSent,
         ];
         return [$target, $in, $edit];
     }

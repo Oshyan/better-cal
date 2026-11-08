@@ -6,7 +6,7 @@
 
 import { state, set, toast } from './store.js';
 import { saveSetting } from './actions.js';
-import { loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, loadUpdates } from './api.js';
+import { refreshWindow, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, loadUpdates } from './api.js';
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
 import { restoreDraftsAfterBoot } from './drafts.js';
@@ -78,7 +78,12 @@ function wirePage() {
   // reminder text reads on this clock, so a trip shouldn't wait for a
   // restart to be noticed.
   document.addEventListener('visibilitychange', () => {
-    if (state.authed && document.visibilityState === 'visible' && state.settings.hereTz !== localTz()) saveSetting('hereTz', localTz()).catch(() => {});
+    if (state.authed && document.visibilityState === 'visible' && state.settings.hereTz !== localTz()) {
+      saveSetting('hereTz', localTz()).catch(() => {});
+      // Floating events (#167) show on this device's clock, so the window
+      // held from the old zone is fetched again in the new one.
+      refreshWindow().catch(() => {});
+    }
   });
   // Prefetch on intent (hover/focus on a chip), and warm the two lazily
   // loaded scripts at idle so the FIRST editor and the FIRST interactive

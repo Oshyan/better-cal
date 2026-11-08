@@ -69,7 +69,10 @@ final class LlmGateway
      * returns it as 'rrule' when it is one the app keeps: daily or longer,
      * valid, with the start on its first occurrence left to the caller.
      *
-     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,tzid?:string,rrule?:?string}
+     * With $repeat it also returns 'floating', true when the text says the
+     * time holds in any zone ("7am floating", #167).
+     *
+     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,tzid?:string,rrule?:?string,floating?:bool}
      */
     public function parseEvent(string $text, \DateTimeImmutable $now, string $tz, bool $placeZone = false, ?string $hereTz = null, bool $repeat = false): ?array
     {
@@ -102,7 +105,8 @@ final class LlmGateway
                     . "\"first Monday of the month\", \"until Dec 15\", \"10 times\"), rrule is the RFC 5545 RRULE without "
                     . "the RRULE: prefix (e.g. FREQ=WEEKLY;BYDAY=TU or FREQ=MONTHLY;BYDAY=1MO;UNTIL=20261215), start is the "
                     . "first occurrence, and the repeat phrases leave the title like dates do; repeats are daily or longer, "
-                    . "never hourly; otherwise rrule is empty string.\n"
+                    . "never hourly; otherwise rrule is empty string. floating is true only when the text says the time holds in "
+                    . "any time zone (\"7am floating\", \"9:00 local time\"), and those words leave the title like dates do.\n"
                 : '')
             . "Text: " . $text;
 
@@ -120,7 +124,10 @@ final class LlmGateway
                         'location' => ['type' => 'STRING'],
                         'personNames' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']],
                     ] + ($placeZone ? ['timezone' => ['type' => 'STRING', 'description' => 'IANA zone of the event\'s place']] : [])
-                      + ($repeat ? ['rrule' => ['type' => 'STRING', 'description' => 'RFC 5545 RRULE without prefix, or empty']] : []),
+                      + ($repeat ? [
+                          'rrule' => ['type' => 'STRING', 'description' => 'RFC 5545 RRULE without prefix, or empty'],
+                          'floating' => ['type' => 'BOOLEAN', 'description' => 'the time holds in any zone ("floating", "local time")'],
+                      ] : []),
                     'required' => ['title', 'start', 'end', 'allDay'],
                 ],
                 'temperature' => 0.1,
@@ -155,7 +162,7 @@ final class LlmGateway
         }
         $tzZone = Time::zone($zoneId);
         return ($placeZone ? ['tzid' => $zoneId] : [])
-            + ($repeat ? ['rrule' => self::keptRrule($parsed['rrule'] ?? null)] : [])
+            + ($repeat ? ['rrule' => self::keptRrule($parsed['rrule'] ?? null), 'floating' => ($parsed['floating'] ?? false) === true] : [])
             + [
             'title' => trim((string) ($parsed['title'] ?? '')) ?: 'New event',
             'start' => Time::iso($start->setTimezone($tzZone)),

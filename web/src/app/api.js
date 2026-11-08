@@ -4,7 +4,7 @@
 
 import { state, set, mergeWindow, keepWindow, heldTag, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast, freshRanges, recordGeneration, dataGeneration, newGeneration } from './store.js';
 import { defineReload, owe, landed, reload, reloadGeneration } from './reloads.js';
-import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
+import { toISOWithOffset, dateOfDayKey, localTz } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearAllDrafts } from './drafts.js';
 import { clearResume } from './resume-storage.js';
@@ -44,7 +44,9 @@ export async function api(path, { method = 'GET', body, formData, signal, ifNone
     if (state.offlineReadOnly) throw new ApiError('offline_read_only', 'Offline saved data is read-only', 0);
   }
   if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
-  const headers = {};
+  // The zone this device is in: floating events (#167) come on its clock,
+  // and the times a write sends for one are read on it.
+  const headers = { 'X-Device-Tz': localTz() };
   if (method !== 'GET' && state.csrf) headers['X-CSRF'] = state.csrf;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   // The tag of what the caller holds: the server answers 304 while it

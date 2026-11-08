@@ -174,7 +174,7 @@ final class Export
             $uids = array_column(array_filter($batch, static fn(array $e): bool => !empty($e['recurrence_instance_utc'])), 'uid');
             if ($uids !== []) {
                 [$in, $args] = Db::in($uids);
-                foreach ($this->db->all('SELECT uid, all_day, tzid, rrule FROM events WHERE user_id = ? AND calendar_id = ? AND deleted_at IS NULL'
+                foreach ($this->db->all('SELECT uid, all_day, tzid, rrule, floating FROM events WHERE user_id = ? AND calendar_id = ? AND deleted_at IS NULL'
                     . " AND recurrence_instance_utc IS NULL AND uid IN $in ORDER BY start_utc, id", [$userId, $calendarId, ...$args]) as $master) {
                     $masters[(string) $master['uid']] = $master;
                 }

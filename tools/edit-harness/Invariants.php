@@ -342,6 +342,14 @@ trait Invariants
                 }
             }
         }
+        // Floating (#167) is a series column like the trip flag: untouched on every row when not sent.
+        if (($sent['edit']['floating'] ?? null) === null) {
+            foreach ($rows0 as $id => $r0) {
+                if (isset($rows1[$id])) {
+                    $this->check('a-floating', (int) ($r0['floating'] ?? 0) === (int) ($rows1[$id]['floating'] ?? 0), 'the floating flag is untouched on every row when not sent', ['row' => $id, 'was' => $r0['floating'] ?? null, 'now' => $rows1[$id]['floating'] ?? null]);
+                }
+            }
+        }
         $edit = $sent['edit'];
         $choices = $sent['_choices'] ?? [];
         $timeSent = $edit['sent'] !== null;
@@ -1031,6 +1039,14 @@ trait Invariants
             foreach ([$after['row']] + $after['overrides'] as $r) {
                 $this->check('b-trip', (int) $r['is_container'] === 0, 'the trip flag cleared reaches every row of the series', ['row' => $r['id']]);
             }
+        }
+        // Floating (#167): one value for the whole series, the one sent when it was sent.
+        $master = (int) ($after['row']['floating'] ?? 0);
+        if (($edit['floating'] ?? null) !== null) {
+            $this->check('b-floating', $master === ($edit['floating'] ? 1 : 0), 'the series takes the floating flag sent', ['sent' => $edit['floating'], 'stored' => $master]);
+        }
+        foreach ($after['overrides'] as $r) {
+            $this->check('b-floating', (int) ($r['floating'] ?? 0) === $master, 'every edited day has its series\' floating flag', ['row' => $r['id'], 'series' => $master, 'row value' => $r['floating'] ?? null]);
         }
     }
 

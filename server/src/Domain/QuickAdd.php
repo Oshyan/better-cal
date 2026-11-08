@@ -280,7 +280,9 @@ final class QuickAdd
 
         $event = null;
         if ($commit) {
-            $event = ActivityContext::with(self::activitySource(), fn() => $this->events->create($userId, [
+            // Read on the clock the text was typed on; a floating draft
+            // (the words, or the calendar's setting) stored on its own (#167).
+            $event = ActivityContext::with(self::activitySource(), fn() => $this->events->create($userId, $this->events->fromViewer($userId, null, [
                 'calendarId' => $draft['calendarId'],
                 'title' => $draft['title'],
                 'start' => $draft['start'],
@@ -290,10 +292,10 @@ final class QuickAdd
                 'location' => $draft['location'],
                 'personNames' => $draft['personNames'],
                 'rrule' => $draft['rrule'] ?? null,
-            ] + ($draft['tags'] !== [] ? ['tagNames' => $draft['tags']] : []) + (!empty($draft['reminders']) ? [
+            ] + (!empty($draft['floating']) ? ['floating' => true] : []) + ($draft['tags'] !== [] ? ['tagNames' => $draft['tags']] : []) + (!empty($draft['reminders']) ? [
                 // "alert 30 minutes" (#33): this event's own reminder.
                 'reminders' => array_map(static fn($m): array => ['minutes' => (int) $m], $draft['reminders']),
-            ] : []), $authority));
+            ] : [])), $authority));
         }
 
         return ['draft' => $draft, 'event' => $event];
@@ -471,6 +473,8 @@ final class QuickAdd
             // Times already guarded above.
         }
         $merged['reminders'] = $fallback['reminders'] ?? null; // read from the text, never the model's
+        // Floating (#167): the parser's reading of the words, or the model's, on a timed draft.
+        $merged['floating'] = !($merged['allDay'] ?? false) && (($fallback['floating'] ?? false) || ($llm['floating'] ?? false));
         if ($merged['rrule'] !== null) {
             try {
                 // On the owner's clock, so a move across a DST change keeps the hour.

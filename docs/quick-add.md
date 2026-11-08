@@ -24,6 +24,8 @@ It works without AI. If you've set up an AI model, Settings → General → **Na
 | `Dinner with @Sam on Tuesday #food /friends` | Friends calendar, tagged food, Sam linked |
 | `"Wacky Wednesday" Friday 8pm` | A Friday event called Wacky Wednesday |
 | `Sam is away Aug 10-15` | An away time for Sam (someone in People) |
+| `Meditation 7am floating` | 7am wherever you are, on any device's clock |
+| `Vitamins every day 8am local time` | Daily at 8am on whatever clock you're on |
 
 ## Markers
 
@@ -50,6 +52,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Repeats:** daily, weekdays, weekends, every Tuesday, Mondays and Thursdays, every other week, every 3 days, monthly, yearly, first Monday of the month, every 1st and 3rd Monday, every 1st and 15th, last day of the month, every Jan 27. A day range with one time repeats ("Standup Mon-Fri 9am"), so does one with a time range that crosses midnight ("Shift Mon-Fri 10pm-6am", each night to the next morning), and so does "daily" with a range.
 - **Repeat start and end:** starting Nov 3, until Dec 15, for 6 weeks, 10 times.
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
+- **Floating:** "floating" or "local time" right after the time ("7am floating", "6:30am local time") keeps the event at that clock time in any zone: a routine at 7 is at 7 at home and at 7 on a trip, and so are its reminders. A calendar can make its new timed events float by default (its settings, "New timed events float"). Never all-day events or invitations.
 - **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place.
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
 - **Links:** an event page's link, pasted or shared from a phone, becomes that event. See [Event Links](#event-links).

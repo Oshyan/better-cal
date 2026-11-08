@@ -62,7 +62,7 @@ final class Reminders
     private const ROW_PROJECTION = 'id, user_id, calendar_id, uid, title,
         SUBSTR(description, 1, 8192) AS description, location, location_lat, location_lng, url,
         start_utc, end_utc, all_day, tzid, rrule, exdates_json, recurrence_parent_id,
-        recurrence_instance_utc, status, source, attendance, reminders_json';
+        recurrence_instance_utc, status, source, attendance, reminders_json, floating';
 
     private readonly SystemHealth $health;
 
@@ -517,6 +517,9 @@ final class Reminders
         // device in hand. 12- or 24-hour as the owner set it.
         $hereTzid = is_string($userSettings['hereTz'] ?? null) && $userSettings['hereTz'] !== '' ? $userSettings['hereTz'] : null;
         $this->viewTz = $hereTzid ?? $homeTzid;
+        // A floating event (#167) reminds on that same clock: where the
+        // owner's device was last seen, then Home (Floating).
+        $viewer = $this->viewTz !== null ? Time::zone($this->viewTz) : null;
         $this->h24 = (string) ($userSettings['timeFormat'] ?? '12') === '24';
 
         $phase = $phase === 'overrides' ? 'overrides' : 'masters';
@@ -525,12 +528,13 @@ final class Reminders
         if ($phase === 'masters') {
             // Masters + standalone events whose occurrences can start in the
             // window (mirrors Events::window's selection, without filters).
-            $params = [$userId, $afterId, Time::toDb($winEnd), Time::toDb($winStart), Time::toDb($winEnd)];
+            [$overlap, $overlapParams] = Floating::overlapSql($winStart, $winEnd, true);
+            $params = [$userId, $afterId, ...$overlapParams];
             $masters = $this->db->all(
                 'SELECT ' . self::ROW_PROJECTION . " FROM events
                  WHERE user_id = ? AND id > ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
                    AND attendance <> 'hidden' AND status <> 'cancelled'
-                   AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))
+                   AND $overlap
                  ORDER BY id LIMIT " . (self::MASTER_SLICE + 1),
                 $params
             );
@@ -542,14 +546,17 @@ final class Reminders
             $lastSelectedId = $masterIds !== [] ? max($masterIds) : $afterId;
             if ($masterIds !== []) {
                 [$in, $inParams] = Db::in($masterIds);
+                [$spanSql, $spanParams] = Floating::overlapSql($winStart, $winEnd);
+                [$wideStart, $wideEnd] = Floating::widened($winStart, $winEnd);
                 $overrides = $this->db->all(
                     'SELECT ' . self::ROW_PROJECTION . " FROM events
                      WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IN $in
                        AND attendance <> 'hidden' AND status <> 'cancelled'
-                       AND ((start_utc < ? AND end_utc > ?)
-                            OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))
+                       AND ($spanSql
+                            OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?
+                                AND (floating = 1 OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))))
                      ORDER BY id LIMIT " . (Limits::get('EXPANSION_OCCURRENCES') + 1),
-                    [$userId, ...$inParams, Time::toDb($winEnd), Time::toDb($winStart), Time::toDb($winStart), Time::toDb($winEnd)]
+                    [$userId, ...$inParams, ...$spanParams, Time::toDb($wideStart), Time::toDb($wideEnd), Time::toDb($winStart), Time::toDb($winEnd)]
                 );
                 if (count($overrides) > Limits::get('EXPANSION_OCCURRENCES')) {
                     // Skip only this bounded slice and continue after it; a
@@ -565,13 +572,14 @@ final class Reminders
         } else {
             $masters = [];
             $lastSelectedId = $afterId;
+            [$spanSql, $spanParams] = Floating::overlapSql($winStart, $winEnd);
             $overrides = $this->db->all(
                 'SELECT ' . self::ROW_PROJECTION . ' FROM events
                  WHERE user_id = ? AND id > ? AND deleted_at IS NULL AND recurrence_parent_id IS NOT NULL
                    AND attendance <> \'hidden\' AND status <> \'cancelled\'
-                   AND start_utc < ? AND end_utc > ?
+                   AND ' . $spanSql . '
                  ORDER BY id LIMIT ' . (self::OVERRIDE_SLICE + 1),
-                [$userId, $afterId, Time::toDb($winEnd), Time::toDb($winStart)]
+                [$userId, $afterId, ...$spanParams]
             );
             $more = count($overrides) > self::OVERRIDE_SLICE;
             if ($more) {
@@ -643,7 +651,7 @@ final class Reminders
                 continue;
             }
             try {
-                $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd, $budget);
+                $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd, $budget, $viewer);
             } catch (WorkBudgetExceeded) {
                 $limited = true;
                 $more = true;
@@ -660,8 +668,8 @@ final class Reminders
                 continue;
             }
             foreach ($ovs as $ov) {
-                $ovStart = Time::fromDb((string) $ov['start_utc']);
-                if ($ovStart < $winEnd && Time::fromDb((string) $ov['end_utc']) > $winStart) {
+                [$ovStart, $ovEnd] = Floating::span($ov, Time::fromDb((string) $ov['start_utc']), Time::fromDb((string) $ov['end_utc']), $viewer);
+                if ($ovStart < $winEnd && $ovEnd > $winStart) {
                     $budget->occurrence();
                     $this->collectDue($ov, $ovStart, $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
                 }
@@ -701,6 +709,11 @@ final class Reminders
             $allDay,
             $cal['role']
         );
+        // A floating event's clock is the one it shows on (the scan's view
+        // zone), so its times and text read there, with no zone of its own.
+        if (Floating::is($row) && $this->viewTz !== null) {
+            $row = ['tzid' => $this->viewTz] + $row;
+        }
         foreach ($entries as $entry) {
             $fire = self::fireAt(is_array($entry) ? $entry : [], $startUtc, $allDay, (string) $row['tzid'], $homeTzid);
             if ($fire === null || $fire > $now) {

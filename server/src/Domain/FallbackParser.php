@@ -55,6 +55,10 @@ final class FallbackParser
      * `reminders` is minutes before the start the text asked to be alerted
      * ("alert 30 minutes", "remind me ... to"), or null (#33).
      *
+     * `floating` is whether the text said the time holds in any zone, by
+     * "floating" or "local time" after the time ("Meditation 7am floating",
+     * #167). Never on an all-day draft.
+     *
      * `assumed` lists what the parser took for granted where the text left
      * it open, for the draft to name beside the field (1.5.1): `clock`, a
      * clock chosen for a time typed without am/pm ("at 7", "9-5pm"'s 9) or
@@ -62,7 +66,7 @@ final class FallbackParser
      * in next year; `rolled`, no day typed and the time already past today,
      * so tomorrow; `default`, no time or date read, so the next hour.
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,assumed:list<array{field:string,kind:string,typed:?string,date?:string,start?:string,end?:?string}>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool,rangeFound:bool}
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,floating:bool,assumed:list<array{field:string,kind:string,typed:?string,date?:string,start?:string,end?:?string}>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool,rangeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -97,6 +101,14 @@ final class FallbackParser
         // time, until there are reminders of their own). Before the duration,
         // which "30 minutes" would otherwise be.
         [$work, $reminders, $remindMe] = self::extractReminders($work);
+
+        // Floating (#167): "7am floating", "7:30 local time", the word right
+        // after the time it is about. The time stays for the readers below.
+        $floating = false;
+        if (preg_match('/(\d{1,2}(?::\d{2})?\s*(?:am|pm|a|p)\b|\d{1,2}:\d{2}\b|\bnoon\b|\bmidnight\b)(\s+(?:in\s+)?(?:floating|local\s+time)\b)/i', $work, $m, PREG_OFFSET_CAPTURE)) {
+            $floating = true;
+            $work = substr($work, 0, $m[2][1]) . ' ' . substr($work, $m[2][1] + strlen($m[2][0]));
+        }
 
         // Repeats first: "every Tuesday", "until Dec 15" and "for 6 weeks"
         // would otherwise read as a date, a range or a duration.
@@ -377,6 +389,7 @@ final class FallbackParser
             'personNames' => $personNames,
             'rrule' => $rrule,
             'reminders' => $reminders,
+            'floating' => $floating && !$allDay,
             'assumed' => $assumed,
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',

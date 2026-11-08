@@ -182,6 +182,11 @@ final class Recurrence
      * Overrides replace their instances; exdates suppress theirs. Overrides
      * that moved into the window from an out-of-window instance are appended.
      *
+     * With $viewer, a floating series (Floating) shows on the viewer's
+     * clock: it is expanded over the window widened by every zone's offset,
+     * each occurrence moved to the viewer's clock, and what lands outside
+     * the window dropped. instanceUtc stays the stored key.
+     *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides rows with recurrence_instance_utc
      * @return list<array{row:array,start:\DateTimeImmutable,end:\DateTimeImmutable,instanceUtc:string}>
@@ -192,8 +197,20 @@ final class Recurrence
         \DateTimeImmutable $winStart,
         \DateTimeImmutable $winEnd,
         ?ExpansionBudget $budget = null,
+        ?\DateTimeZone $viewer = null,
     ): array
     {
+        if ($viewer !== null && Floating::is($master)) {
+            [$wideStart, $wideEnd] = Floating::widened($winStart, $winEnd);
+            $shown = [];
+            foreach ($this->expand($master, $overrides, $wideStart, $wideEnd, $budget) as $occ) {
+                [$s, $e] = Floating::span($occ['row'], $occ['start'], $occ['end'], $viewer);
+                if ($s < $winEnd && $e > $winStart) {
+                    $shown[] = ['start' => $s, 'end' => $e] + $occ;
+                }
+            }
+            return $shown;
+        }
         $result = [];
         $consumed = [];
 

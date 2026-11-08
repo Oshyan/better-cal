@@ -503,8 +503,8 @@ trait SeriesPlans
         if (array_key_exists('rrule', $in)) {
             $edit['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
-        // The trip flag rides along as a series column (Model::SERIES_COLUMNS): no edited day owns it.
-        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'reminders', 'isContainer']));
+        // The trip flag and floating ride along as series columns (Model::SERIES_COLUMNS): no edited day owns them.
+        $content = array_intersect_key($in, array_flip(['title', 'description', 'location', 'url', 'locationLat', 'locationLng', 'locationSource', 'locationProvider', 'status', 'reminders', 'isContainer', 'floating']));
         $edit['columns'] = $content === [] ? [] : $this->columnPatch($master, $content);
         $ids = array_merge([$id], array_map(static fn(array $r): int => (int) $r['id'], $rows));
         $labels = $this->labels->forEvents($ids);

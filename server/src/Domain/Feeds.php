@@ -333,6 +333,11 @@ final class Feeds
                 if (array_key_exists('google_event_id', $ev)) {
                     $columns['google_event_id'] = $ev['google_event_id'];
                 }
+                // A feed's time with no zone floats (#167). Google's rows carry
+                // no flag, so a Google sync keeps the one set here.
+                if (array_key_exists('floating', $ev)) {
+                    $columns['floating'] = (int) $ev['floating'];
+                }
                 if (array_key_exists('invite_json', $ev)) {
                     $columns['invite_json'] = $ev['invite_json'];
                 }

@@ -1124,7 +1124,7 @@ final class Undo
      * trip links, duplicate decisions, plugin data), is held here alone.
      */
     private const GOOGLE_HELD = [
-        'events' => [...GoogleWriter::GOOGLE_COLUMNS, 'url', 'invite_json', 'recurrence_instance_utc', 'recurrence_parent_id',
+        'events' => [...GoogleWriter::GOOGLE_COLUMNS, 'invite_json', 'recurrence_instance_utc', 'recurrence_parent_id',
             'google_event_id', 'uid', 'calendar_id', 'source', 'deleted_at', 'user_id'],
         'calendars' => null,
     ];

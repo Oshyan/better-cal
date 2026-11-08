@@ -339,6 +339,39 @@ return static function (Db $db): void {
         checkEq('a whole read after it: still no row, still skipped', [null, true], [$dayRow($masterId, $key), $skipped()]);
     });
 
+    // An event's link travels as Google's `source`: changed, removed (sent
+    // as null) and undone, each here and at Google.
+    $linkCase = static function (object $s, string $gid, int $rowId, callable $edit) use ($db, $last): void {
+        $link = static fn(): array => [$db->scalar('SELECT url FROM events WHERE id = ?', [$rowId]), $s->fake->events[$gid]['source']['url'] ?? null];
+        $edit('https://example.test/sample-first');
+        checkEq("$gid: a link given is here and at Google", ['https://example.test/sample-first', 'https://example.test/sample-first'], $link());
+        $edit('https://example.test/sample-second');
+        $changed = (int) $last($s)['id'];
+        checkEq("$gid: a link changed is here and at Google", ['https://example.test/sample-second', 'https://example.test/sample-second'], $link());
+        $s->undo->undoById($s->u, $changed);
+        checkEq("$gid: the change undone gives the first link back, here and at Google", ['https://example.test/sample-first', 'https://example.test/sample-first'], $link());
+        $edit('');
+        $removed = (int) $last($s)['id'];
+        checkEq("$gid: the link removed is gone here and at Google", [null, null], $link());
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq("$gid: a poll after it keeps it gone", [null, null], $link());
+        $s->undo->undoById($s->u, $removed);
+        checkEq("$gid: the removal undone gives it back, here and at Google", ['https://example.test/sample-first', 'https://example.test/sample-first'], $link());
+    };
+
+    scenario('google local undo: a Google event\'s link is changed, removed and undone, here and at Google', function () use ($setup, $linkCase): void {
+        $s = $setup();
+        $linkCase($s, 'smpl4single', $s->id, fn(string $url) => $s->events->patch($s->u, $s->id, ['url' => $url]));
+    });
+
+    scenario('google local undo: an edited day\'s link is changed, removed and undone, here and at Google', function () use ($setup, $linkCase, $rowOf): void {
+        $s = $setup();
+        $gid = 'smpl4weekly_20270420T160000Z';
+        $masterId = (int) $rowOf($s, 'smpl4weekly')['id'];
+        $linkCase($s, $gid, (int) $rowOf($s, $gid)['id'],
+            fn(string $url) => $s->events->patch($s->u, $masterId, ['scope' => 'this', 'instanceStart' => '2027-04-20T16:00:00+00:00', 'url' => $url]));
+    });
+
     scenario('google local undo: a place given to an edited day that had none is cleared by its undo, here and at Google, and redo gives it back', function () use ($db, $setup, $last, $rowOf): void {
         $s = $setup();
         $gid = 'smpl4weekly_20270420T160000Z';

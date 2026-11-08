@@ -36,7 +36,7 @@ final class GoogleWriter
     private const ETAG_PAGES = 4;
     public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
     /** Event columns Google owns; everything else on a row is local metadata. */
-    public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
+    public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
 
     public function __construct(
         private readonly Db $db,

@@ -45,7 +45,15 @@ final class MailFetcher
     /** ...and a run makes at most this many: a mailbox of a million messages, crossed once. */
     public const SEARCHES_MAX = 500;
 
-    public function __construct(private readonly array $cfg)
+    /** The mailbox read: always the inbox, nothing configures another. */
+    private const FOLDER = 'INBOX';
+
+    /**
+     * @param ?\Closure(array):\Webklex\PHPIMAP\Client $makeClient builds the
+     *        IMAP client from its settings; tests pass one that talks to a
+     *        scripted server instead of a socket
+     */
+    public function __construct(private readonly array $cfg, private readonly ?\Closure $makeClient = null)
     {
     }
 
@@ -73,8 +81,7 @@ final class MailFetcher
         if (!$this->isConfigured() || !class_exists(\Webklex\PHPIMAP\ClientManager::class)) {
             return;
         }
-        $manager = new \Webklex\PHPIMAP\ClientManager();
-        $client = $manager->make([
+        $settings = [
             'host' => $this->cfg['imap']['host'],
             'port' => (int) ($this->cfg['imap']['port'] ?? 993),
             'encryption' => 'ssl',
@@ -82,22 +89,33 @@ final class MailFetcher
             'username' => $this->cfg['imap']['user'],
             'password' => $this->cfg['imap']['pass'],
             'protocol' => 'imap',
-        ]);
+        ];
+        $client = $this->makeClient !== null
+            ? ($this->makeClient)($settings)
+            : (new \Webklex\PHPIMAP\ClientManager())->make($settings);
         $client->connect();
         try {
-            $inbox = $client->getFolder('INBOX');
+            // An idle run is connect, login, STATUS, logout. The folder is
+            // built by name, as getFolders() builds each one it lists, rather
+            // than looked up with getFolder(), which LISTs every folder or
+            // label in the mailbox first; its delimiter falls back to the
+            // configured one, and a name without one never needs it. STATUS
+            // goes straight to the connection: Client::getConnection() sends
+            // a NOOP each time it is asked. Only with unread mail is the
+            // folder selected, by messages().
+            $inbox = new \Webklex\PHPIMAP\Folder($client, self::FOLDER, '', []);
+            $status = $client->connection->folderStatus(self::FOLDER)->validatedData();
+            $unseen = isset($status['unseen']) ? (int) $status['unseen'] : null;
+            if ($unseen === 0) {
+                return;
+            }
             $query = $inbox->messages()
                 ->unseen()
                 ->setFetchBody(false)
                 ->leaveUnread()
                 ->setSequence(IMAP::ST_UID);
-            $status = $inbox->status();
-            $unseen = isset($status['unseen']) ? (int) $status['unseen'] : null;
-            if ($unseen === 0) {
-                return;
-            }
             if (!isset($status['uidvalidity']) && !isset($status['UIDVALIDITY'])) {
-                throw new \RuntimeException('IMAP did not report UIDVALIDITY for INBOX');
+                throw new \RuntimeException('IMAP did not report UIDVALIDITY for ' . self::FOLDER);
             }
             $uidValidity = (string) ($status['uidvalidity'] ?? $status['UIDVALIDITY']);
             $connection = $client->getConnection();
@@ -114,7 +132,7 @@ final class MailFetcher
                 static fn(string $set): array => (array) $connection->search(['UNSEEN', $set], IMAP::ST_UID)->validatedData(),
             );
             $mailbox = (string) ($this->cfg['imap']['host'] ?? '') . "\0"
-                . (string) ($this->cfg['imap']['user'] ?? '') . "\0INBOX\0" . $uidValidity;
+                . (string) ($this->cfg['imap']['user'] ?? '') . "\0" . self::FOLDER . "\0" . $uidValidity;
             $candidates = (static function () use ($uids, $mailbox, $connection, $query): \Generator {
                 foreach ($uids as $uid) {
                     $uid = (int) $uid;
@@ -137,6 +155,10 @@ final class MailFetcher
             yield from $this->processCandidates($candidates, $begin, $identify, $abort, $failed, max(0, $limit));
         } finally {
             try {
+                // LOGOUT directly: Client::disconnect() asks isConnected()
+                // first, which is one more NOOP. Once logged out it is not
+                // connected, so disconnect() (and the destructor) send nothing.
+                $client->connection?->logout();
                 $client->disconnect();
             } catch (\Throwable) {
             }

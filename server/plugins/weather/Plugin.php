@@ -17,6 +17,9 @@ use BetterCal\Plugin\PluginInterface;
  */
 return new class implements PluginInterface, OwnCalendarsPlugin {
 
+    /** Shared-cache TTL for a forecast: the PT3H job interval in plugin.json. */
+    private const CACHE_SECONDS = 3 * 3600;
+
     /** WMO weather codes -> host icon name + words. */
     public static function describe(int $code): array
     {
@@ -125,7 +128,8 @@ return new class implements PluginInterface, OwnCalendarsPlugin {
                 'timezone' => 'auto',
                 'forecast_days' => $days,
                 'temperature_unit' => $unitParam,
-            ])
+            ]),
+            self::CACHE_SECONDS
         );
         $daily = $data['daily'] ?? [];
         $dates = $daily['time'] ?? [];
@@ -181,7 +185,8 @@ return new class implements PluginInterface, OwnCalendarsPlugin {
                         'hourly' => 'us_aqi',
                         'timezone' => 'auto',
                         'forecast_days' => min($days, 5),
-                    ])
+                    ]),
+                    self::CACHE_SECONDS
                 );
                 $aqDays = min($days, 5);
                 foreach (self::dailyMaxAqi($aq['hourly']['time'] ?? [], $aq['hourly']['us_aqi'] ?? [], $aqDays * 24 + 24) as $date => $aqi) {

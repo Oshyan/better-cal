@@ -11,6 +11,7 @@ use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Floating;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\QuickAdd;
+use BetterCal\Domain\Recurrence;
 use BetterCal\Support\Time;
 
 $fz = static fn(string $z): DateTimeZone => new DateTimeZone($z);
@@ -33,6 +34,58 @@ checkEq('floating: a pinned row\'s does not', '2027-03-04 15:00', $fs($pinS));
 check('floating: an all-day row never floats', !Floating::is(['floating' => 1, 'all_day' => 1]));
 [$ws, $we] = Floating::widened($fu('2027-03-04 00:00'), $fu('2027-03-05 00:00'));
 checkEq('floating: a window widens by the span of the clocks, UTC-12 to UTC+14', ['2027-03-02 22:00', '2027-03-06 02:00'], [$fs($ws), $fs($we)]);
+
+// A floating series' occurrences are the rule's wall clocks, and only the
+// viewer's zone decides the instant each one is (Floating::occurrence): a
+// clock the own zone skips is not skipped for a viewer whose zone has it.
+$fexp = static function (array $row, string $from, string $to, string $viewer, ?Recurrence $r = null): array {
+    $r ??= new Recurrence();
+    return $r->expand($row + ['id' => 1, 'user_id' => 1, 'calendar_id' => 1, 'title' => 'Sample series', 'all_day' => 0, 'floating' => 1, 'exdates_json' => null],
+        [], new DateTimeImmutable($from), new DateTimeImmutable($to), null, new DateTimeZone($viewer));
+};
+$fclock = static fn(array $occs, string $zone): array => array_map(static fn(array $o): string => $o['start']->setTimezone(new DateTimeZone($zone))->format('m-d H:i') . '-' . $o['end']->setTimezone(new DateTimeZone($zone))->format('H:i'), $occs);
+// Daily 02:30 to 02:45 at Home in Los Angeles, whose clocks skip 02:00 to 03:00 on 14 Mar 2027.
+$fgap = ['start_utc' => '2027-03-01 10:30:00', 'end_utc' => '2027-03-01 10:45:00', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=DAILY;COUNT=20'];
+$fTokyo = $fexp($fgap, '2027-03-13T00:00:00Z', '2027-03-16T00:00:00Z', 'Asia/Tokyo');
+checkEq('floating gap: daily 02:30 at Home is 02:30 in Tokyo on the day Home skips it', ['03-14 02:30-02:45', '03-15 02:30-02:45', '03-16 02:30-02:45'], $fclock($fTokyo, 'Asia/Tokyo'));
+checkEq('floating gap: the occurrence keys stay as stored, 03:30 at Home that day', ['2027-03-14 10:30:00', '2027-03-15 09:30:00', '2027-03-16 09:30:00'], array_column($fTokyo, 'instanceUtc'));
+checkEq('floating gap: a Home viewer sees 03:30 that day, its own zone\'s reading', ['03-13 02:30-02:45', '03-14 03:30-03:45', '03-15 02:30-02:45'],
+    $fclock($fexp($fgap, '2027-03-13T08:00:00Z', '2027-03-16T08:00:00Z', 'America/Los_Angeles'), 'America/Los_Angeles'));
+// The reverse: stored in Tokyo, which has no gap, viewed in Los Angeles, which skips 02:30 on 14 Mar.
+$fgapTokyo = ['start_utc' => '2027-02-28 17:30:00', 'end_utc' => '2027-02-28 17:45:00', 'tzid' => 'Asia/Tokyo', 'rrule' => 'FREQ=DAILY;COUNT=20'];
+checkEq('floating gap: a viewer whose zone skips 02:30 reads it by the gap rule, the range moving as one', ['03-13 02:30-02:45', '03-14 03:30-03:45', '03-15 02:30-02:45'],
+    $fclock($fexp($fgapTokyo, '2027-03-13T08:00:00Z', '2027-03-16T08:00:00Z', 'America/Los_Angeles'), 'America/Los_Angeles'));
+// The rule's own clock comes from the expander, before the zone reads it.
+$fit = Recurrence::iterator(['start_utc' => '2027-03-13 10:30:00', 'end_utc' => '2027-03-13 10:45:00', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=DAILY;COUNT=3', 'all_day' => 0]);
+$fwalls = [];
+foreach ($fit as $t) {
+    $fwalls[] = gmdate('m-d H:i', $fit->wall()) . ' at ' . $t->format('H:i');
+}
+checkEq('floating gap: the expander names 02:30 as the clock it generated 03:30 from', ['03-13 02:30 at 02:30', '03-14 02:30 at 03:30', '03-15 02:30 at 02:30'], $fwalls);
+
+// The window a floating series is expanded over is the viewer's moved to the
+// series' own clock, so the cap is spent on what the window shows.
+$fmin = ['start_utc' => '2027-01-01 00:00:00', 'end_utc' => '2027-01-01 00:01:00', 'tzid' => 'UTC', 'rrule' => 'FREQ=MINUTELY'];
+$fr = new Recurrence();
+$fm = $fexp($fmin, '2027-01-10T12:00:00Z', '2027-01-10T13:00:00Z', 'UTC', $fr);
+checkEq('floating window: minutely from 1 Jan, an hour on 10 Jan, 60 shown and nothing cut short', [60, '2027-01-10 12:00', []], [count($fm), $fs($fm[0]['start'] ?? $fu('1970-01-01 00:00')), $fr->capped()]);
+$fr = new Recurrence();
+$fm = $fexp($fmin, '2027-01-10T12:00:00Z', '2027-01-10T13:00:00Z', 'Asia/Tokyo', $fr);
+checkEq('floating window: the same seen from Tokyo, 60 from 21:00 there', [60, '2027-01-10 12:00', []], [count($fm), $fs($fm[0]['start'] ?? $fu('1970-01-01 00:00')), $fr->capped()]);
+$fr = new Recurrence();
+$fm = $fexp(['tzid' => 'America/Los_Angeles'] + $fmin, '2027-01-10T12:00:00Z', '2027-01-10T13:00:00Z', 'Asia/Tokyo', $fr);
+checkEq('floating window: stored at Home, seen from Tokyo, 60', [60, []], [count($fm), $fr->capped()]);
+$fsec = ['start_utc' => '2027-01-01 00:00:00', 'end_utc' => '2027-01-01 00:00:01', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=SECONDLY'];
+$fr = new Recurrence();
+$fm = $fexp($fsec, '2027-01-10T12:00:00Z', '2027-01-10T12:10:00Z', 'Europe/Berlin', $fr);
+checkEq('floating window: secondly, ten minutes, 600 shown', [600, '2027-01-10 12:00', []], [count($fm), $fs($fm[0]['start'] ?? $fu('1970-01-01 00:00')), $fr->capped()]);
+$fr = new Recurrence();
+$fm = $fexp($fsec, '2027-01-10T12:00:00Z', '2027-01-10T13:00:00Z', 'Europe/Berlin', $fr);
+checkEq('floating window: secondly, an hour, cut short at the window\'s start and said so', [1000, '2027-01-10 12:00', [1]], [count($fm), $fs($fm[0]['start'] ?? $fu('1970-01-01 00:00')), $fr->capped()]);
+// Near Home's change (10:00 UTC on 14 Mar) the moved window's edge widens by the hour the clocks move: more than the cap of seconds before the window.
+$fr = new Recurrence();
+$fm = $fexp($fsec, '2027-03-14T12:00:00Z', '2027-03-14T12:05:00Z', 'Europe/Berlin', $fr);
+checkEq('floating window: secondly beside a clock change still shows the window, 300', [300, '2027-03-14 12:00', []], [count($fm), $fs($fm[0]['start'] ?? $fu('1970-01-01 00:00')), $fr->capped()]);
 
 if (class_exists(\Sabre\VObject\Reader::class)) {
     // A start with no TZID and no Z comes in floating, at its wall clock in

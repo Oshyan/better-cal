@@ -33,7 +33,13 @@ final class SearchController
             $when = 'all';
         }
         $calendarId = $req->q('calendar');
-        $opts = ['when' => $when, 'calendarId' => ($calendarId !== null && $calendarId !== '' && ctype_digit((string) $calendarId)) ? (int) $calendarId : null];
+        // A floating event is over or upcoming on the clock it shows on: the
+        // device's (X-Device-Tz), as the event window reads it.
+        $opts = [
+            'when' => $when,
+            'calendarId' => ($calendarId !== null && $calendarId !== '' && ctype_digit((string) $calendarId)) ? (int) $calendarId : null,
+            'viewer' => $this->events->viewerZone($userId),
+        ];
         $rows = $this->search->search($userId, $q, $limit, true, $opts);
         $upcomingIds = [];
         foreach ($rows as $row) {
@@ -91,7 +97,7 @@ final class SearchController
         unset($occ);
         $payload = ['results' => $results];
         if ($when === 'upcoming') {
-            $payload['pastCount'] = $this->search->countPast($userId, $q, ['calendarId' => $opts['calendarId']]);
+            $payload['pastCount'] = $this->search->countPast($userId, $q, ['calendarId' => $opts['calendarId'], 'viewer' => $opts['viewer']]);
         }
         return Response::json($payload);
     }

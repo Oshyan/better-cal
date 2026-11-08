@@ -141,6 +141,10 @@ class RuleIterator extends Walk
     private int $floor = PHP_INT_MIN;
     /** The instant last yielded (the start's at first). */
     private int $last = 0;
+    /** @var array<int,int> for candidates read and not yet yielded, the wall clock each was generated from (wall) */
+    private array $walls = [];
+    /** The wall clock the current occurrence was generated from, or null to read it off the instant (wall). */
+    private ?int $currentWall = null;
     /** @var array{0:int,1:int,2:int}|null [day, smallest offset, largest offset] for the last day asked (offsetsNear) */
     private ?array $offsets = null;
 
@@ -227,6 +231,7 @@ class RuleIterator extends Walk
         // rule and no period.
         $this->ended = $this->never;
         $this->currentDate = $this->start;
+        $this->currentWall = null;
         $this->counter = 0;
         $this->restart($this->never ? null : 0);
     }
@@ -235,6 +240,7 @@ class RuleIterator extends Walk
     public function next()
     {
         if ($this->currentDate !== null) {
+            $this->currentWall = null;
             $t = $this->pull();
             if ($t === null || $t > self::UPPER_LIMIT) {
                 // The rule has no more, or the date upper limit: no instant
@@ -273,10 +279,29 @@ class RuleIterator extends Walk
         }
     }
 
+    /**
+     * The wall clock the current occurrence was generated from, before the
+     * zone read it (Wall::resolve), as Wall::asUtc gives it: the rule's own
+     * clock on that day, 02:30 on a day the zone skips 02:30 though the
+     * occurrence is the instant 03:30 names. Two clocks on one instant (a
+     * skipped clock resolved onto one the day has) give the later, the clock
+     * the instant itself shows. MINUTELY and SECONDLY step elapsed time, so
+     * theirs is the instant's own clock, as is the start's. A floating
+     * series reads its occurrences on a viewer's clock from this (Floating).
+     */
+    public function wall(): ?int
+    {
+        if ($this->currentDate === null) {
+            return null;
+        }
+        return $this->currentWall ?? $this->currentDate->getTimestamp() + $this->currentDate->getOffset();
+    }
+
     /** Starts the candidate stream at period $k with nothing merged, or ends it (null). */
     private function restart(?int $k): void
     {
         $this->merge = new \SplMinHeap();
+        $this->walls = [];
         $this->floor = PHP_INT_MIN;
         $this->taken = false;
         $this->last = $this->currentDate?->getTimestamp() ?? 0;
@@ -302,7 +327,7 @@ class RuleIterator extends Walk
     {
         for (;;) {
             while (!$this->merge->isEmpty() && $this->merge->top() <= $this->last) {
-                $this->merge->extract();
+                unset($this->walls[$this->merge->extract()]);
             }
             if (!$this->merge->isEmpty() && $this->merge->top() <= $this->floor) {
                 break;
@@ -318,27 +343,36 @@ class RuleIterator extends Walk
                 $this->stream = null;
                 continue;
             }
-            [$t, $floor] = $this->stream->current();
+            $item = $this->stream->current();
+            [$t, $floor] = $item;
             $this->taken = true;
             $this->floor = max($this->floor, $floor);
             if ($t !== null && $t > $this->last) {
                 $this->merge->insert($t);
+                if (isset($item[2])) {
+                    $this->walls[$t] = max($this->walls[$t] ?? PHP_INT_MIN, $item[2]);
+                }
             }
         }
         if ($this->merge->isEmpty()) {
             return null;
         }
-        return $this->last = $this->merge->extract();
+        $this->last = $this->merge->extract();
+        $this->currentWall = $this->walls[$this->last] ?? null;
+        unset($this->walls[$this->last]);
+        return $this->last;
     }
 
     /**
      * The candidates of period $k and every period after it, in wall-clock
-     * order, each as [instant, floor]: the floor an instant no candidate
-     * after it comes before; between periods [null, floor]. Read on until
+     * order, each as [instant, floor, wall clock]: the floor an instant no
+     * candidate after it comes before, the wall clock the one it was
+     * generated from (wall), absent for elapsed time; between periods
+     * [null, floor]. Read on until
      * the rule has ended (its UNTIL passed, year 9999 passed, or proven to
      * have no more).
      *
-     * @return \Generator<int,array{0:?int,1:int}>
+     * @return \Generator<int,array{0:?int,1:int,2?:int}>
      */
     private function candidates(int $k): \Generator
     {
@@ -385,7 +419,7 @@ class RuleIterator extends Walk
      * period's only, and yielded at the floor of its first wall clock. The
      * start is not filtered out here (pull does that).
      *
-     * @return iterable<array{0:int,1:int}>
+     * @return iterable<array{0:int,1:int,2?:int}>
      */
     private function periodCandidates(int $k): iterable
     {
@@ -398,14 +432,17 @@ class RuleIterator extends Walk
         }
         if ($this->bySetPos === null) {
             foreach ($this->periodClocks($k) as [$dn, $clock]) {
-                yield [Wall::resolve($dn, $clock, $this->zone)->getTimestamp(), $this->wallFloor($dn, $clock)];
+                yield [Wall::resolve($dn, $clock, $this->zone)->getTimestamp(), $this->wallFloor($dn, $clock), Wall::asUtc($dn, $clock)];
             }
             return;
         }
         $set = [];
+        $walls = [];
         $floor = null;
         foreach ($this->periodClocks($k) as [$dn, $clock]) {
-            $set[] = Wall::resolve($dn, $clock, $this->zone)->getTimestamp();
+            $t = Wall::resolve($dn, $clock, $this->zone)->getTimestamp();
+            $set[] = $t;
+            $walls[$t] = max($walls[$t] ?? PHP_INT_MIN, Wall::asUtc($dn, $clock));
             $floor ??= $this->wallFloor($dn, $clock);
         }
         // Two wall clocks on one instant are one member of the set.
@@ -418,7 +455,7 @@ class RuleIterator extends Walk
         }
         unset($set);
         foreach (self::setPositions($unique, $this->bySetPos) as $t) {
-            yield [$t, $floor];
+            yield [$t, $floor, $walls[$t]];
         }
     }
 

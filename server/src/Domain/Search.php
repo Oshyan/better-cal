@@ -71,6 +71,10 @@ final class Search
      * a generated one has the series' fields and tier, an edited day its
      * own (tiersOf), so an edited day that no longer matches is passed
      * over for the next one that does, and one that matches is listed once.
+     * Every matching series is resolved so before the limit (one with no
+     * matching occurrence left takes no place), and the limit keeps the
+     * first by tier, then by the start as shown (docs/design/decisions.md,
+     * Search: the limit keeps the first of the exact order).
      *
      * @return list<array> event rows
      */
@@ -102,13 +106,28 @@ final class Search
         }
         $select = "SELECT $columns, {$plan['tierSql']} AS search_tier, {$plan['keySql']} AS search_key FROM events WHERE {$plan['where']}";
         $selectParams = [...$plan['tierParams'], ...$plan['keyParams'], ...$plan['params']];
-        // The rows on a floating zone's now give place to the ones the exact
-        // test below lets through: one more for each.
+        $tooLarge = static fn(): HttpError => new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+        $expansionBudget = ExpansionBudget::standard();
+        // A series' place in the order is the occurrence that stands for it,
+        // at that occurrence's own tier, known only once its edited days are
+        // read: every matching series is read and resolved before anything
+        // is left out, within the expansion budget.
+        $seriesSql = "(rrule IS NOT NULL AND rrule <> '')";
+        $cap = $expansionBudget->candidateRowLimit();
+        $seriesRows = $this->db->all("$select AND $seriesSql LIMIT " . ($cap + 1), $selectParams);
+        if (count($seriesRows) > $cap) {
+            throw $tooLarge();
+        }
+        // Any other row shows at its own date and tier, so the query's order
+        // is its order and the limit can be taken there. The rows on a
+        // floating zone's now give place to the ones the exact test below
+        // lets through: one more for each.
+        $single = "$select AND NOT $seriesSql";
         $sqlLimit = $limit;
         if ($plan['near'] !== null) {
-            $sqlLimit += (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE {$plan['where']} AND {$plan['near'][0]}", [...$plan['params'], ...$plan['near'][1]]);
+            $sqlLimit += (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE {$plan['where']} AND NOT $seriesSql AND {$plan['near'][0]}", [...$plan['params'], ...$plan['near'][1]]);
         }
-        $rows = $this->db->all("$select ORDER BY search_tier, search_key {$plan['dir']} LIMIT $sqlLimit", $selectParams);
+        $rows = $this->db->all("$single ORDER BY search_tier, search_key {$plan['dir']} LIMIT $sqlLimit", $selectParams);
         // A floating row's key is its start moved by its zone's distance at
         // now, so a row past the limit in the last tier can show before the
         // last one kept, by up to the slack (Floating::nowByZone): those rows
@@ -123,25 +142,25 @@ final class Search
             foreach ($rows as $r) {
                 $have[(int) $r['id']] = true;
             }
-            foreach ($this->db->all("$select AND {$plan['keySql']} BETWEEN ? AND ?", [...$selectParams, ...$plan['keyParams'], Time::toDb($band[0]), Time::toDb($band[1])]) as $r) {
+            foreach ($this->db->all("$single AND {$plan['keySql']} BETWEEN ? AND ?", [...$selectParams, ...$plan['keyParams'], Time::toDb($band[0]), Time::toDb($band[1])]) as $r) {
                 if ((int) $r['search_tier'] === (int) $last['search_tier'] && !isset($have[(int) $r['id']])) {
                     $rows[] = $r;
                 }
             }
         }
+        array_push($rows, ...$seriesRows);
         $now = $plan['now'];
         $nowAt = Time::fromDb($now);
         $dayNow = $plan['dayNow'];
         $viewer = $plan['viewer'];
         $when = $opts['when'] ?? 'all';
-        $expansionBudget = ExpansionBudget::standard();
         // The edited days of the series found, for their next or latest
         // dates (Recurrence::editedDays, as the calendar window loads them),
         // and how each matches the query on its own fields.
         $ovByParent = [];
         $seriesIds = [];
-        foreach ($rows as $row) {
-            if (!empty($row['rrule']) && empty($row['recurrence_parent_id'])) {
+        foreach ($seriesRows as $row) {
+            if (empty($row['recurrence_parent_id'])) {
                 $seriesIds[] = (int) $row['id'];
             }
         }
@@ -150,7 +169,7 @@ final class Search
             try {
                 $edited = Recurrence::editedDays($this->db, $userId, $seriesIds, $nowAt->modify('-2 years'), $nowAt->modify('+2 years'), $expansionBudget);
             } catch (WorkBudgetExceeded) {
-                throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+                throw $tooLarge();
             }
             foreach ($edited as $ov) {
                 $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
@@ -172,6 +191,7 @@ final class Search
             // A series' date is an occurrence whose own fields match: a
             // generated one has the series', an edited day its own.
             $tierOf = static fn(array $occ): ?int => isset($occ['row']) ? ($ovTier[(int) $occ['row']['id']] ?? null) : $row['_tier'];
+            $matches = static fn(array $occ): bool => $tierOf($occ) !== null;
             if ($when === 'past' && $row['_upcoming']) {
                 if (empty($row['rrule'])) {
                     continue; // not over as shown
@@ -179,9 +199,9 @@ final class Search
                 // A series still running matched Past by its first date: show
                 // its latest occurrence that has ended (0.7.4), not its next.
                 try {
-                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget, $viewer, $ovs, static fn(array $occ): bool => $tierOf($occ) !== null);
+                    $prev = self::matchingOccurrence($row, $ovs, $now, false, $expansionBudget, $viewer, $matches);
                 } catch (WorkBudgetExceeded) {
-                    throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+                    throw $tooLarge();
                 }
                 if ($prev === null) {
                     continue;
@@ -191,20 +211,14 @@ final class Search
             } elseif ($row['_upcoming'] && !empty($row['rrule']) && ($shownEnd < $nowAt || $ovs !== [])) {
                 // A series that began in the past, or one with edited days:
                 // show (and open) its next date that matches, not its first.
-                $next = null;
                 try {
-                    foreach (self::occurrencesAfter($row, $ovs, $now, null, $expansionBudget, $viewer) as $occ) {
-                        if ($tierOf($occ) !== null) {
-                            $next = $occ;
-                            break;
-                        }
-                    }
+                    $next = self::matchingOccurrence($row, $ovs, $now, true, $expansionBudget, $viewer, $matches);
                 } catch (WorkBudgetExceeded) {
-                    throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+                    throw $tooLarge();
                 }
                 if ($next === null) {
                     if ($when === 'upcoming') {
-                        continue;
+                        continue; // no date ahead matches: it takes no place
                     }
                     $row['_upcoming'] = false;
                 } else {
@@ -218,19 +232,14 @@ final class Search
             }
             $out[] = $row;
         }
-        // A running series shows its next date, known only here, so the
-        // order within a tier is settled after the query, as is the limit.
-        usort($out, static function (array $a, array $b): int {
-            $c = [$a['_upcoming'] ? 0 : 1, $a['_tier']] <=> [$b['_upcoming'] ? 0 : 1, $b['_tier']];
-            if ($c !== 0) {
-                return $c;
-            }
-            return $a['_upcoming']
-                ? strcmp($a['_at'], $b['_at'])
-                : strcmp($b['_at'], $a['_at']);
-        });
-        // An edited day found by its own match and as its series' date is
-        // listed once.
+        // The limit keeps the first by tier, then (upcoming before past)
+        // by the start as shown, soonest first for upcoming and newest
+        // first for past; an edited day found by its own match and as its
+        // series' date is listed once. Under Upcoming or Past this is the
+        // order shown; under All the kept rows are then shown upcoming first.
+        $group = static fn(array $r): int => $r['_upcoming'] ? 0 : 1;
+        $byDate = static fn(array $a, array $b): int => $a['_upcoming'] ? strcmp($a['_at'], $b['_at']) : strcmp($b['_at'], $a['_at']);
+        usort($out, static fn(array $a, array $b): int => ([$a['_tier'], $group($a)] <=> [$b['_tier'], $group($b)]) ?: $byDate($a, $b));
         $seen = [];
         $kept = [];
         foreach ($out as $row) {
@@ -238,13 +247,58 @@ final class Search
                 continue;
             }
             $seen[(int) $row['id']] = true;
-            unset($row['_tier'], $row['_at']);
             $kept[] = $row;
             if (count($kept) === $limit) {
                 break;
             }
         }
+        usort($kept, static fn(array $a, array $b): int => ([$group($a), $a['_tier']] <=> [$group($b), $b['_tier']]) ?: $byDate($a, $b));
+        foreach ($kept as &$row) {
+            unset($row['_tier'], $row['_at']);
+        }
+        unset($row);
         return $kept;
+    }
+
+    /** How far a series is read for the occurrence that stands for it, nearest first: most are found in the first. */
+    private const READS = ['8 days', '2 months', '2 years'];
+
+    /**
+     * A series' next occurrence ending after $nowSql ($ahead), or its latest
+     * ended by it, that $accept takes, within two years (occurrencesAfter,
+     * previousOccurrence); null when there is none. The series is read over
+     * READS, nearest first, so a frequent one is not read two years out to
+     * find tomorrow. An occurrence found in a shorter read is kept only when
+     * it starts inside it as shown: none outside can then come before it.
+     */
+    private static function matchingOccurrence(array $row, array $ovs, string $nowSql, bool $ahead, ExpansionBudget $budget, ?\DateTimeZone $viewer, callable $accept): ?array
+    {
+        $at = Time::fromDb($nowSql);
+        $shownStart = static function (array $occ) use ($row, $viewer): \DateTimeImmutable {
+            $shown = self::atOccurrence(['_tier' => 0, '_upcoming' => true] + $row, $occ);
+            return Floating::span($shown, Time::fromDb((string) $shown['start_utc']), Time::fromDb((string) $shown['end_utc']), $viewer)[0];
+        };
+        foreach (self::READS as $i => $span) {
+            $last = $i === count(self::READS) - 1;
+            if ($ahead) {
+                $edge = $at->modify('+' . $span);
+                foreach (self::occurrencesAfter($row, $ovs, $nowSql, null, $budget, $viewer, false, $edge) as $occ) {
+                    if ($accept($occ)) {
+                        if ($last || $shownStart($occ) < $edge) {
+                            return $occ;
+                        }
+                        break;
+                    }
+                }
+            } else {
+                $edge = $at->modify('-' . $span);
+                $occ = self::previousOccurrence($row, $nowSql, null, $budget, $viewer, $ovs, $accept, $edge);
+                if ($occ !== null && ($last || $shownStart($occ) >= $edge)) {
+                    return $occ;
+                }
+            }
+        }
+        return null;
     }
 
     /** How many matches lie in the past, for "N past matches" under an Upcoming search. */
@@ -407,9 +461,9 @@ final class Search
 
     /**
      * [start, end] of a series' latest occurrence that ended by $nowSql,
-     * within two years; null when there is none. With $viewer and
-     * $overrides, as nextOccurrence; with $accept, the latest it accepts
-     * (given each as storedOccurrence gives it).
+     * within two years (or since $since); null when there is none. With
+     * $viewer and $overrides, as nextOccurrence; with $accept, the latest it
+     * accepts (given each as storedOccurrence gives it).
      */
     public static function previousOccurrence(
         array $row,
@@ -419,11 +473,12 @@ final class Search
         ?\DateTimeZone $viewer = null,
         array $overrides = [],
         ?callable $accept = null,
+        ?\DateTimeImmutable $since = null,
     ): ?array
     {
         $to = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, $overrides, $to->modify('-2 years'), $to, $budget, $viewer);
+            $occs = ($recurrence ?? new Recurrence())->expand($row, $overrides, $since ?? $to->modify('-2 years'), $to, $budget, $viewer);
         } catch (WorkBudgetExceeded $e) {
             throw $e;
         } catch (\Throwable) {

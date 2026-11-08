@@ -195,7 +195,7 @@ final class GoogleUndo
      *
      * @param list<array> $befores
      */
-    public function recordSeries(int $userId, int $eventId, string $summary, array $calendar, array $befores, array $beforeTables, array $afterTables): int
+    public function recordSeries(int $userId, int $eventId, string $summary, array $calendar, array $befores, array $beforeTables, array $afterTables, ?int $undoes = null): int
     {
         $etag = static function (array $tables, ?string $googleId): ?string {
             foreach ($tables['events'] ?? [] as $r) {
@@ -207,7 +207,8 @@ final class GoogleUndo
         };
         $googleId = (string) ($befores[0]['googleId'] ?? '');
         return $this->record($userId, $eventId, $summary,
-            self::details(self::SERIES, $calendar, $googleId, array_values($befores), $etag($beforeTables, $googleId), $etag($afterTables, $googleId)),
+            self::details(self::SERIES, $calendar, $googleId, array_values($befores), $etag($beforeTables, $googleId), $etag($afterTables, $googleId),
+                $undoes === null ? [] : ['undoes' => $undoes]),
             null, 'update', [$beforeTables, $afterTables]);
     }
 
@@ -252,7 +253,7 @@ final class GoogleUndo
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $userId, $summary, $mutation): void {
                     $writer->apply($calendar, [$resp]);
                     $this->record($userId, $this->rowId($calendar, $googleId, (int) $mutation['entity_id']), $summary,
-                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, self::etagOf($resp)));
+                        self::details(self::EDIT, $calendar, $googleId, $now, $row['google_etag'] ?? null, self::etagOf($resp), ['undoes' => (int) $mutation['id']]));
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -284,21 +285,43 @@ final class GoogleUndo
                     if ($back !== null && !$removed) {
                         $this->restoreLegacy($userId, (int) $back['id'], $legacy);
                     }
+                    // A day of a series back at the series' own values is an ordinary
+                    // occurrence again, with no row here: its series and day are kept,
+                    // for the undo's undo to skip it again.
+                    $parsed = $back === null ? GoogleSync::toParsed($resp) : null;
+                    $occurrence = is_array($parsed) && !empty($parsed['recurrence_instance_utc'])
+                        ? ['uid' => (string) $parsed['uid'], 'key' => (string) $parsed['recurrence_instance_utc'], 'status' => (string) ($resp['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed']
+                        : null;
                     $this->record($userId, $back !== null ? (int) $back['id'] : (int) $mutation['entity_id'], $summary,
-                        self::details(self::CREATE, $calendar, $googleId, null, null, self::etagOf($resp)));
+                        self::details(self::CREATE, $calendar, $googleId, null, null, self::etagOf($resp), ['undoes' => (int) $mutation['id']] + ($occurrence === null ? [] : ['occurrence' => $occurrence])));
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
             case self::CREATE:
+                $occurrence = $row === null && is_array($g['occurrence'] ?? null) && is_string($g['occurrence']['uid'] ?? null) && is_string($g['occurrence']['key'] ?? null)
+                    ? $g['occurrence'] : null;
+                if ($row === null && $occurrence !== null) {
+                    // A day of a series brought back with no row of its own: skipped again, as deleting
+                    // that one occurrence skips it (Events: the instance deleted at Google, a skip here).
+                    self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
+                    $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $googleId, $userId, $summary, $mutation, $occurrence, $g): void {
+                        $writer->apply($calendar, [], [GoogleWriter::tombstone($occurrence['uid'], $occurrence['key'])]);
+                        $master = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
+                            [(int) $calendar['id'], $occurrence['uid']]);
+                        $this->record($userId, $master !== null ? (int) $master : (int) $mutation['entity_id'], $summary,
+                            self::details(self::DELETE, $calendar, $googleId, ['status' => (string) ($occurrence['status'] ?? 'confirmed')], $g['etagAfter'] ?? null, null, ['local' => [], 'undoes' => (int) $mutation['id']]));
+                    });
+                    return ['entity' => 'event', 'op' => 'update'];
+                }
                 if ($row === null) {
                     throw HttpError::badRequest('That event is no longer here to remove', 'not_undoable');
                 }
                 $local = $this->localOf($row);
                 self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $row, $googleId, $userId, $summary, $local, $g): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $row, $googleId, $userId, $summary, $local, $g, $mutation): void {
                     $writer->apply($calendar, [], [GoogleWriter::tombstone((string) $row['uid'], $row['recurrence_instance_utc'] !== null ? (string) $row['recurrence_instance_utc'] : null)]);
                     $this->record($userId, (int) $row['id'], $summary,
-                        self::details(self::DELETE, $calendar, $googleId, ['status' => self::bodyOf($row)['status']], $g['etagAfter'] ?? null, null, ['local' => $local]));
+                        self::details(self::DELETE, $calendar, $googleId, ['status' => self::bodyOf($row)['status']], $g['etagAfter'] ?? null, null, ['local' => $local, 'undoes' => (int) $mutation['id']]));
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -321,7 +344,7 @@ final class GoogleUndo
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
                     $writer->apply($calendar, [$resp]);
                     if (is_string($g['attendance'] ?? null)) {
@@ -329,7 +352,7 @@ final class GoogleUndo
                     }
                     $this->record($userId, (int) $row['id'], $summary,
                         self::details(self::ANSWER, $calendar, $googleId, null, self::etagOf($current), self::etagOf($resp),
-                            ['responseStatus' => $was, 'attendance' => is_string($attendance) ? $attendance : null]),
+                            ['responseStatus' => $was, 'attendance' => is_string($attendance) ? $attendance : null, 'undoes' => (int) $mutation['id']]),
                         array_map(static fn(string $col) => [Undo::keyOf('events', ['id' => (int) $row['id']]), $col], ['invite_json', 'status', 'attendance']));
                 });
                 return ['entity' => 'event', 'op' => 'update'];
@@ -338,8 +361,9 @@ final class GoogleUndo
     }
 
     /**
-     * Undo a whole-series change: the trip rules checked over what the
-     * undo will leave (Undo::checkRestore), then the befores sent to Google
+     * Undo a whole-series change: the befores worked out from what putting
+     * the snapshots back leaves, refused first where the trip rules refuse
+     * that (rebased), then sent to Google
      * (GoogleSeries::apply, each series conditional on its stored etag),
      * the snapshots put back here, Google's read-back stored on top, the
      * pending row settled, the entry marked undone and the undo recorded,
@@ -362,9 +386,9 @@ final class GoogleUndo
             : self::UNDID . (string) $mutation['summary'];
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
-        $this->undo->checkRestore($mutation);
+        $befores = $this->rebased($mutation, $calendar, (array) $g['before']);
         $deferred = null;
-        $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
+        $this->undo->write($userId, function () use ($mutation, $befores, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
             $authority?->assertValid($this->db);
             $locked = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
             if ($locked === null || !GoogleSync::sameBinding($calendar, $locked)) {
@@ -374,7 +398,7 @@ final class GoogleUndo
             if ($fresh === null || (int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
-            $targets = $series->withStoredEtags($locked, (array) $g['before']);
+            $targets = $series->withStoredEtags($locked, $befores);
             $title = (string) ($targets[0]['master']['title'] ?? '');
             try {
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);
@@ -396,12 +420,61 @@ final class GoogleUndo
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
             $uids = array_merge($uids, array_keys($out['readbacks']));
             $this->recordSeries($userId, (int) $mutation['entity_id'], $summary, $locked, $out['befores'], $was,
-                $this->seriesTables((int) $locked['id'], $uids, array_merge($ids, array_map('intval', array_column($was['events'], 'id')))));
+                $this->seriesTables((int) $locked['id'], $uids, array_merge($ids, array_map('intval', array_column($was['events'], 'id')))), (int) $mutation['id']);
         });
         if ($deferred !== null) {
             throw $deferred;
         }
         return ['entity' => 'event', 'op' => 'update'];
+    }
+
+    /**
+     * The befores an undo sends: each series the entry changed as putting
+     * its snapshots back here leaves it, which gives back the columns and
+     * rows the entry changed and keeps what changed since in the rest (a
+     * rename after a new end, undone by its entry, keeps the rename), as a
+     * local undo does; a series the undo removes, and the events of their
+     * own, as recorded. Worked out in a write of its own that is rolled
+     * back, which also refuses first what putting the snapshots back would
+     * refuse (Undo::checkRestore), before Google is sent anything. Inside
+     * another transaction there is nothing to roll back to on its own, and
+     * the befores are sent as recorded.
+     *
+     * @param list<array> $befores
+     * @return list<array>
+     */
+    private function rebased(array $mutation, array $calendar, array $befores): array
+    {
+        if ($this->db->pdo()->inTransaction()) {
+            return $befores;
+        }
+        $done = new \RuntimeException('rebased');
+        $out = $befores;
+        try {
+            $this->undo->write((int) $mutation['user_id'], function () use ($mutation, $calendar, $befores, &$out, $done): void {
+                $this->undo->restoreSnapshots($mutation);
+                foreach ($befores as $i => $t) {
+                    if (!empty($t['remove'])) {
+                        continue;
+                    }
+                    $master = !empty($t['uid'])
+                        ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']])
+                        : null;
+                    $master ??= $this->writer()->rowByGoogleId((int) $calendar['id'], (string) $t['googleId']);
+                    if ($master === null || empty($master['rrule'])) {
+                        continue;
+                    }
+                    $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
+                    $out[$i] = array_replace($t, ['master' => $now['master'], 'exceptions' => $now['exceptions'], 'skips' => $now['skips']]);
+                }
+                throw $done;
+            });
+        } catch (\RuntimeException $e) {
+            if ($e !== $done) {
+                throw $e;
+            }
+        }
+        return $out;
     }
 
     private function writer(): GoogleWriter

@@ -889,6 +889,7 @@ final class Undo
     private function staleFor(array $mutation): bool
     {
         $id = (int) $mutation['id'];
+        $reverts = [];
         // A page of what it touched at a time: a calendar of tens of
         // thousands of events deleted touched each one (#191).
         [$lastRow, $lastCol] = ['', ''];
@@ -913,11 +914,14 @@ final class Undo
             foreach (array_chunk(array_keys($cols), 200) as $rows) {
                 [$in, $params] = Db::in($rows);
                 $later = $this->db->all(
-                    "SELECT DISTINCT t.row_key, t.col FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
+                    "SELECT DISTINCT t.row_key, t.col, m.id FROM mutation_touches t JOIN mutations m ON m.id = t.mutation_id
                      WHERE t.row_key IN $in AND m.user_id = ? AND m.id > ? AND m.undone = 0",
                     array_merge($params, [(int) $mutation['user_id'], $id])
                 );
                 foreach ($later as $t) {
+                    if ($reverts[(int) $t['id']] ??= $this->revertsSince((int) $t['id'], $id)) {
+                        continue;
+                    }
                     foreach (array_keys($cols[(string) $t['row_key']] ?? []) as $mine) {
                         if (self::conflicts((string) $mine, (string) $t['col'], strstr((string) $t['row_key'], ':', true) ?: '')) {
                             return true;
@@ -927,6 +931,32 @@ final class Undo
             }
         } while (count($page) === 2000);
         return false;
+    }
+
+    /**
+     * Whether a later entry only takes back a change made after entry
+     * $since: a Google calendar's undo is recorded as an entry of its own
+     * (GoogleUndo, details.google.undoes names the entry it undid), and a
+     * change undone with the undo's own entry beside it leaves the ground
+     * as it was, so neither makes an older entry stale, as a local undo,
+     * which records nothing, doesn't. An undo of an undo puts the change
+     * back and stands like it; the chain is followed to the change itself
+     * and counted.
+     */
+    private function revertsSince(int $entryId, int $since): bool
+    {
+        $hops = 0;
+        $at = $entryId;
+        for ($seen = 0; $seen < 100; $seen++) {
+            $details = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$at]), true);
+            $undoes = is_array($details) && is_array($details['google'] ?? null) ? ($details['google']['undoes'] ?? null) : null;
+            if (!is_int($undoes) || $undoes <= 0 || $undoes >= $at) {
+                break;
+            }
+            $hops++;
+            $at = $undoes;
+        }
+        return $hops % 2 === 1 && $at > $since;
     }
 
     /**

@@ -296,6 +296,32 @@ return static function (Db $db): void {
         checkEq('undoing the undo deletes it again', ['cancelled', null], [$s->fake->events['smpl2weekly']['status'], $stored($s, 'smpl2weekly')]);
     });
 
+    scenario('google series undo: two changes undone newest first, the second by its entry, the undo\'s own entry making nothing stale', function () use ($setup, $masterId, $last, $google, $undone, $held, $stored): void {
+        $s = $setup();
+        $wasHeld = $held($s, 'smpl2weekly');
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, first']);
+        $first = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, second']);
+        $second = $last($s);
+        $s->undo->undoById($s->u, (int) $second['id']);
+        $undid = $last($s);
+        checkEq('the undo of the second is an entry of its own naming the entry it undid', [(int) $second['id'], 0], [$google($undid)['undoes'] ?? null, $undone((int) $undid['id'])]);
+        $s->undo->undoById($s->u, (int) $first['id']);
+        checkEq('the first then undoes by its entry, not stale: the series as it was before both, at Google and here', [$wasHeld, $wasHeld, 1],
+            [$held($s, 'smpl2weekly'), $stored($s, 'smpl2weekly'), $undone((int) $first['id'])]);
+    });
+
+    scenario('google series undo: an older change undone by its entry keeps a newer one in another field', function () use ($setup, $masterId, $last, $held, $stored, $iso): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=8']);
+        $end = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
+        $s->undo->undoById($s->u, (int) $end['id']);
+        $now = $held($s, 'smpl2weekly');
+        checkEq('the end is undone and the rename made after it stays, at Google and here', ['RRULE:FREQ=WEEKLY;COUNT=10', 'Sample weekly, renamed', $now],
+            [$now['rule'], $now['title'], $stored($s, 'smpl2weekly')]);
+    });
+
     scenario('google series undo: a series changed at Google since refuses the undo with the conflict, nothing written', function () use ($setup, $masterId, $last, $undone, $pending, $db): void {
         $s = $setup();
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, renamed']);

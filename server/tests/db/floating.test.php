@@ -295,6 +295,68 @@ return static function (Db $db): void {
         checkEq('floating search route: from Home, upcoming', 1, count($ask('America/Los_Angeles', 'upcoming')['results']));
     });
 
+    // A person's next event (GET /people nextStart) is next on the device's
+    // clock, read the way search reads it: now on each event's own clock,
+    // and a series' next date as it shows there.
+    $people = new \BetterCal\Domain\People($db);
+    $nextOf = static function (?string $zone, string $name, string $now) use ($ev, $u, $people): ?string {
+        $ev->viewFrom($zone);
+        $viewer = $zone === null ? null : $ev->viewerZone($u);
+        foreach ($people->list($u, $viewer, new \DateTimeImmutable($now)) as $p) {
+            if ($p['name'] === $name) {
+                return $p['nextStart'];
+            }
+        }
+        throw new \RuntimeException("no person $name");
+    };
+    $from('America/Los_Angeles');
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample choir practice', 'allDay' => false, 'floating' => true,
+        'rrule' => 'FREQ=DAILY;COUNT=60', 'start' => '2027-02-01T09:00:00-08:00', 'end' => '2027-02-01T10:00:00-08:00', 'personNames' => ['Alex Example']]));
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample choir practice, pinned', 'allDay' => false, 'floating' => false,
+        'rrule' => 'FREQ=DAILY;COUNT=60', 'start' => '2027-02-01T09:00:00-08:00', 'end' => '2027-02-01T10:00:00-08:00', 'tzid' => 'America/Los_Angeles', 'personNames' => ['Sam Sample']]));
+
+    scenario('floating people: from Tokyo, today\'s 09:00 is over there while Home has it ahead, so the next is tomorrow\'s', function () use ($nextOf): void {
+        // 01:30 UTC on 10 Feb: 10:30 on 10 Feb in Tokyo, its 09:00 there over; 17:30 on 9 Feb at Home, 10 Feb's ahead.
+        checkEq('floating people: next is 09:00 on 11 Feb in Tokyo', '2027-02-11T00:00:00+00:00', $nextOf('Asia/Tokyo', 'Alex Example', '2027-02-10T01:30:00Z'));
+        checkEq('floating people: without a device, on the Home clock, 09:00 on 10 Feb there', '2027-02-10T17:00:00+00:00', $nextOf(null, 'Alex Example', '2027-02-10T01:30:00Z'));
+    });
+
+    scenario('floating people: from Honolulu, today\'s 09:00 is still ahead there while it is over at Home', function () use ($nextOf): void {
+        // 18:30 UTC on 10 Feb: 08:30 in Honolulu, before its 09:00 there; 10:30 at Home, after it.
+        checkEq('floating people: next is 09:00 on 10 Feb in Honolulu', '2027-02-10T19:00:00+00:00', $nextOf('Pacific/Honolulu', 'Alex Example', '2027-02-10T18:30:00Z'));
+    });
+
+    scenario('floating people: the pinned twin is next at its own instant from anywhere', function () use ($nextOf): void {
+        foreach (['Asia/Tokyo', 'Pacific/Honolulu', 'America/Los_Angeles', null] as $zone) {
+            checkEq('floating people: pinned, Tokyo moment, from ' . ($zone ?? 'no device'), '2027-02-10T17:00:00+00:00', $nextOf($zone, 'Sam Sample', '2027-02-10T01:30:00Z'));
+            checkEq('floating people: pinned, Honolulu moment, from ' . ($zone ?? 'no device'), '2027-02-11T17:00:00+00:00', $nextOf($zone, 'Sam Sample', '2027-02-10T18:30:00Z'));
+        }
+    });
+
+    scenario('floating people: the route reads the device clock the request names', function () use ($ev, $u, $cal, $people, $from): void {
+        // Two hours ahead at Home, so about fifteen hours over in Tokyo, whatever the date.
+        $home = new \DateTimeZone('America/Los_Angeles');
+        $ahead = (new \DateTimeImmutable('now', $home))->modify('+2 hours');
+        $start = $ahead->setTime((int) $ahead->format('G'), 0);
+        $from('America/Los_Angeles');
+        $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample seed swap', 'allDay' => false, 'floating' => true,
+            'start' => $start->format(DATE_ATOM), 'end' => $start->modify('+1 hour')->format(DATE_ATOM), 'personNames' => ['Riley Placeholder']]));
+        $route = new \BetterCal\Http\Controllers\PeopleController($people, $ev);
+        $ask = static function (string $zone) use ($ev, $u, $route): ?string {
+            $ev->viewFrom($zone);
+            $req = new \BetterCal\Http\Request('GET', '/people', []);
+            $req->user = ['id' => $u];
+            foreach (json_decode($route->index($req)->body, true)['people'] as $p) {
+                if ($p['name'] === 'Riley Placeholder') {
+                    return $p['nextStart'];
+                }
+            }
+            return 'missing';
+        };
+        checkEq('floating people route: from Tokyo, nothing next', null, $ask('Asia/Tokyo'));
+        checkEq('floating people route: from Home, the swap', $start->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:sP'), $ask('America/Los_Angeles'));
+    });
+
     scenario('floating: without a device zone, a floating event reads on the Home clock', function () use ($ev, $u, $walkId): void {
         $ev->viewFrom(null);
         $one = $ev->serializeSingle($ev->get($u, $walkId));

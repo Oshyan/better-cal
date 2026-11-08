@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Domain\Series\Wall;
+use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
 
 /**
@@ -21,8 +22,9 @@ use BetterCal\Support\Time;
  * instant's in its own zone; a generated occurrence's is the clock the rule
  * generated it from (occurrence), so a day the own zone skips that clock
  * moves nothing for a viewer whose zone has it. The window and its edges
- * (storedWindow), the single-event record, the reminder scan, search and a
- * request's instants all go through these.
+ * (storedWindow), the single-event record, the reminder scan, search, a
+ * person's next event and a request's instants all go through these; search
+ * and a person's next event read now on each row's clock by nowByZone.
  */
 final class Floating
 {
@@ -168,6 +170,59 @@ final class Floating
         return $most;
     }
 
+    /**
+     * Now as each of this user's floating events stores it, by zone: the
+     * stored instant whose clock shows at now on the viewer's clock
+     * (stored()). A floating event has started or ended for the viewer when
+     * its stored start or end is before this, as an instant moves with its
+     * clock both ways, so a query compares stored columns and keeps its
+     * index and limit (nowOnRowSql). Only zones other than the viewer's are
+     * listed (the same zone is now itself), and none without a viewer: the
+     * reads with no device (feeds, ranking, review, duplicates) compare on
+     * the Home clock, as stored. Search and a person's next event read now
+     * through this.
+     *
+     * @return array<string,string> tzid => 'Y-m-d H:i:s' UTC
+     */
+    public static function nowByZone(Db $db, int $userId, string $nowSql, ?\DateTimeZone $viewer): array
+    {
+        if ($viewer === null) {
+            return [];
+        }
+        $now = Time::fromDb($nowSql);
+        $out = [];
+        $zones = $db->all('SELECT DISTINCT tzid FROM events WHERE user_id = ? AND floating = 1 AND all_day = 0 AND deleted_at IS NULL', [$userId]);
+        foreach ($zones as $z) {
+            $tzid = (string) $z['tzid'];
+            $own = Time::zone($tzid);
+            if ($own->getName() !== $viewer->getName()) {
+                $out[$tzid] = Time::toDb(self::stored($now, $own, $viewer));
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * SQL for "now" on each row's own clock (nowByZone): the floating rows
+     * of each listed zone compare against their own, every other row against
+     * now. $alias prefixes the columns ('e.' for a joined events table).
+     *
+     * @param array<string,string> $clocks
+     * @return array{0:string,1:list<string>}
+     */
+    public static function nowOnRowSql(array $clocks, string $nowSql, string $alias = ''): array
+    {
+        if ($clocks === []) {
+            return ['?', [$nowSql]];
+        }
+        $sql = 'CASE';
+        $params = [];
+        foreach ($clocks as $tzid => $at) {
+            $sql .= " WHEN {$alias}floating = 1 AND {$alias}tzid = ? THEN ?";
+            array_push($params, (string) $tzid, $at);
+        }
+        return [$sql . ' ELSE ? END', [...$params, $nowSql]];
+    }
     /** @return array{0:\DateTimeImmutable,1:\DateTimeImmutable} the window widened by SPAN_SECONDS both ways */
     public static function widened(\DateTimeImmutable $start, \DateTimeImmutable $end): array
     {

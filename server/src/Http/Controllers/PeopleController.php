@@ -19,7 +19,10 @@ final class PeopleController
 
     public function index(Request $req): Response
     {
-        return Response::json(['people' => $this->people->list((int) $req->user['id'])]);
+        // A person's next event is next on the device's clock (X-Device-Tz),
+        // as search and the event window read it.
+        $userId = (int) $req->user['id'];
+        return Response::json(['people' => $this->people->list($userId, $this->events->viewerZone($userId))]);
     }
 
     public function create(Request $req): Response

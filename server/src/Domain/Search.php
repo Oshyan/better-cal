@@ -60,7 +60,7 @@ final class Search
      * 'viewer' (a DateTimeZone, the request's device clock as the event
      * window reads it): a floating event (Floating) is over, upcoming,
      * ordered and given its next or latest date as it shows on that clock,
-     * in the query and here alike (clocks()), before the limit. Without
+     * in the query and here alike (Floating::nowByZone), before the limit. Without
      * one, as stored.
      *
      * @return list<array> event rows
@@ -99,14 +99,14 @@ final class Search
         $now = $this->nowSql($opts);
         $dayNow = $this->dayNowSql($userId, $now);
         $viewer = self::viewerOf($opts);
-        $clocks = $this->clocks($userId, $now, $viewer);
+        $clocks = Floating::nowByZone($this->db, $userId, $now, $viewer);
         $expansionBudget = ExpansionBudget::standard();
         $out = [];
         foreach ($rows as $row) {
             $row['_tier'] = (int) $row['search_tier'];
             unset($row['search_tier']);
             // A floating row is compared on its own clock: now as it stores
-            // the viewer's clock (clocks()), as the query compared it.
+            // the viewer's clock (Floating::nowByZone), as the query compared it.
             $rowNow = Floating::is($row) ? ($clocks[(string) $row['tzid']] ?? $now) : $now;
             $row['_upcoming'] = self::isUpcoming($row, $rowNow, $dayNow);
             if (($opts['when'] ?? 'all') === 'upcoming' && !$row['_upcoming']) {
@@ -240,7 +240,9 @@ final class Search
      * two years; null when there is none. With $viewer, a floating series'
      * occurrences are read as they show on that clock (Recurrence::expand),
      * and the one found is given as stored, with the wall clock it shows at
-     * third (Floating::span reads it as '_wall').
+     * third (Floating::span reads it as '_wall'). With $notStarted, the first
+     * starting at or after $nowSql instead (a person's next event); $until
+     * looks only that far, in place of two years.
      *
      * @return array{0:string,1:string,2?:int}|null
      */
@@ -250,18 +252,20 @@ final class Search
         ?Recurrence $recurrence = null,
         ?ExpansionBudget $budget = null,
         ?\DateTimeZone $viewer = null,
+        bool $notStarted = false,
+        ?\DateTimeImmutable $until = null,
     ): ?array
     {
         $from = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $from, $from->modify('+2 years'), $budget, $viewer);
+            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $from, $until ?? $from->modify('+2 years'), $budget, $viewer);
         } catch (WorkBudgetExceeded $e) {
             throw $e;
         } catch (\Throwable) {
             return null;
         }
         foreach ($occs as $o) {
-            if ($o['end'] > $from) {
+            if ($notStarted ? $o['start'] >= $from : $o['end'] > $from) {
                 return self::storedOccurrence($row, $o, $viewer);
             }
         }
@@ -318,60 +322,9 @@ final class Search
     }
 
     /**
-     * Now as each of this user's floating events stores it, by zone: the
-     * stored instant whose clock shows at now on the viewer's clock
-     * (Floating::stored). A floating event has ended for the viewer when its
-     * stored end is before this, as an instant moves with its clock both
-     * ways, so the query compares stored columns and keeps its index and
-     * limit. Only zones other than the viewer's are listed (the same zone is
-     * now itself), and none without a viewer.
-     *
-     * @return array<string,string> tzid => 'Y-m-d H:i:s' UTC
-     */
-    private function clocks(int $userId, string $nowSql, ?\DateTimeZone $viewer): array
-    {
-        if ($viewer === null) {
-            return [];
-        }
-        $now = Time::fromDb($nowSql);
-        $out = [];
-        $zones = $this->db->all('SELECT DISTINCT tzid FROM events WHERE user_id = ? AND floating = 1 AND all_day = 0 AND deleted_at IS NULL', [$userId]);
-        foreach ($zones as $z) {
-            $tzid = (string) $z['tzid'];
-            $own = Time::zone($tzid);
-            if ($own->getName() !== $viewer->getName()) {
-                $out[$tzid] = Time::toDb(Floating::stored($now, $own, $viewer));
-            }
-        }
-        return $out;
-    }
-
-    /**
-     * SQL for "now" on each row's own clock (clocks()): the floating rows of
-     * each listed zone compare against their own, every other row against
-     * now.
-     *
-     * @param array<string,string> $clocks
-     * @return array{0:string,1:list<string>}
-     */
-    private static function nowOnRowSql(array $clocks, string $nowSql): array
-    {
-        if ($clocks === []) {
-            return ['?', [$nowSql]];
-        }
-        $sql = 'CASE';
-        $params = [];
-        foreach ($clocks as $tzid => $at) {
-            $sql .= ' WHEN floating = 1 AND tzid = ? THEN ?';
-            array_push($params, (string) $tzid, $at);
-        }
-        return [$sql . ' ELSE ? END', [...$params, $nowSql]];
-    }
-
-    /**
      * SQL for a row's start as shown, to order by before the limit: a
      * floating row's moved by how far its zone's clock stands from the
-     * viewer's now (clocks()), every other row's as stored. search() orders
+     * viewer's now (Floating::nowByZone), every other row's as stored. search() orders
      * the rows it keeps by their exact start as shown.
      *
      * @param array<string,string> $clocks
@@ -622,8 +575,8 @@ final class Search
         $baseParams = [$userId];
         $now = $this->nowSql($opts);
         $dayNow = $this->dayNowSql($userId, $now);
-        $clocks = $this->clocks($userId, $now, self::viewerOf($opts));
-        [$nowSql, $nowParams] = self::nowOnRowSql($clocks, $now);
+        $clocks = Floating::nowByZone($this->db, $userId, $now, self::viewerOf($opts));
+        [$nowSql, $nowParams] = Floating::nowOnRowSql($clocks, $now);
         $when = $opts['when'] ?? 'all';
         if ($when === 'upcoming') {
             $base .= " AND ((all_day = 1 AND end_utc > ?) OR (all_day = 0 AND end_utc >= $nowSql) OR (rrule IS NOT NULL AND rrule <> ''))";

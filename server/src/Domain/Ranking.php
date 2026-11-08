@@ -37,7 +37,7 @@ final class Ranking
 
     /**
      * Score unscored/stale future feed events for every user with enough
-     * signals. Returns the number of events scored; throws when LLM batches
+     * signals, least recently ranked first. Returns the number of events scored; throws when LLM batches
      * failed so the job retries with backoff.
      */
     public function run(): int
@@ -51,8 +51,17 @@ final class Ranking
         $calls = 0;
         $remaining = false;
         $admission = $this->admission ?? new ModelAdmission($this->db);
+        // Least recently ranked first: the account whose last ranking call
+        // (its latest model_admissions row) is oldest, one never ranked
+        // before any, so the run's few calls go round the accounts from run
+        // to run and none can keep the rest waiting.
         $users = $this->db->all(
-            'SELECT user_id, COUNT(*) AS n, MAX(created_at) AS latest FROM feedback_signals GROUP BY user_id'
+            "SELECT fs.user_id, COUNT(*) AS n, MAX(fs.created_at) AS latest,
+                    (SELECT MAX(ma.id) FROM model_admissions ma WHERE ma.user_id = fs.user_id AND ma.operation = ?) AS last_ranked
+             FROM feedback_signals fs
+             GROUP BY fs.user_id
+             ORDER BY last_ranked IS NOT NULL, last_ranked, fs.user_id",
+            [ModelAdmission::RANKING]
         );
         foreach ($users as $user) {
             if ((int) $user['n'] < self::MIN_SIGNALS) {

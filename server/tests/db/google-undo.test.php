@@ -180,17 +180,19 @@ return static function (Db $db): void {
         $t->labels->setEventTags($t->u, $id, ['sample-tag']);
         $t->events->deleteEvent($t->u, $id, null, null);
         $entry = $last($t);
-        checkEq('the delete went with If-Match "g1"; the row is gone; the entry is a delete keeping the status and the tag', [
-            [['DELETE', 'probe9z8y7x', '"g1"']], null, 'delete', 'confirmed', 1,
-        ], [$calls($t), $row($t, 'probe9z8y7x'), $google($entry)['kind'] ?? null, $google($entry)['before']['status'] ?? null, count($google($entry)['local']['tags'] ?? [])]);
+        $snapshot = json_decode((string) $entry['before_json'], true)['tables'] ?? [];
+        checkEq('the delete went with If-Match "g1"; the row is gone; the entry is a delete keeping the status, and the row and its tag as its snapshot', [
+            [['DELETE', 'probe9z8y7x', '"g1"']], null, 'delete', 'confirmed', [$id], 1, false,
+        ], [$calls($t), $row($t, 'probe9z8y7x'), $google($entry)['kind'] ?? null, $google($entry)['before']['status'] ?? null,
+            array_map('intval', array_column($snapshot['events'] ?? [], 'id')), count($snapshot['event_tags'] ?? []), array_key_exists('local', $google($entry) ?? [])]);
 
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
         $back = $row($t, 'probe9z8y7x');
         $tags = $back !== null ? array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) $back['id']]), 'name') : [];
         checkEq('read back as deleted, then one PATCH {status: confirmed} with the deleted resource\'s etag; the event is back under its id with its tag', [
-            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g2"']], ['status' => 'confirmed'], 'Sample review', ['sample-tag'], 1,
-        ], [$calls($t), $t->google->calls[1][2] ?? null, $back['title'] ?? null, $tags, $undone((int) $entry['id'])]);
+            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g2"']], ['status' => 'confirmed'], 'Sample review', $id, ['sample-tag'], 1,
+        ], [$calls($t), $t->google->calls[1][2] ?? null, $back['title'] ?? null, (int) ($back['id'] ?? 0), $tags, $undone((int) $entry['id'])]);
 
         // The undo undoes back: deleted again, conditional on what came back.
         $t->google->calls = [];

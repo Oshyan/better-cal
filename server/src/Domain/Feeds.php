@@ -384,6 +384,14 @@ final class Feeds
                     }
                 }
                 if ($current === null) {
+                    // A new edited day takes its series' own columns
+                    // (Model::SERIES_COLUMNS: the trip and floating flags),
+                    // which no edited day owns, where its record doesn't
+                    // carry them: Google's carry neither.
+                    $series = $ev['recurrence_instance_utc'] !== null ? ($existingByKey[$ev['uid'] . '|'] ?? null) : null;
+                    if ($series !== null) {
+                        $columns += array_intersect_key($series, \BetterCal\Domain\Series\Model::SERIES_COLUMNS);
+                    }
                     $id = $this->db->insert('events', $columns + ($etag !== null ? ['google_etag' => $etag] : []) + [
                         'user_id' => $userId,
                         'calendar_id' => $calendarId,
@@ -469,7 +477,7 @@ final class Feeds
                 if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {
                     continue;
                 }
-                $touches = array_merge($touches, Undo::touchesOf(['events' => [$row]] + Undo::linksOf($this->db, [(int) $row['id']]), null));
+                $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
                 $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 $changedUids[(string) $row['uid']] = true;
                 $removedCount++;

@@ -8860,7 +8860,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT, google_etag TEXT,
         location_source TEXT, location_provider TEXT, location_placed_at TEXT
     )");
-    $gw->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER, event_id INTEGER, title TEXT, summary TEXT, status TEXT, error TEXT, targets_json TEXT, befores_json TEXT, steps_json TEXT, created_at TEXT, updated_at TEXT)');
+    $gw->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER, event_id INTEGER, title TEXT, summary TEXT, status TEXT, error TEXT, targets_json TEXT, befores_json TEXT, local_json TEXT, steps_json TEXT, created_at TEXT, updated_at TEXT)');
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, google_event_id) VALUES
         (10, 1, 2, 'single@google', 'Sample meeting', '2030-06-01 10:00:00', '2030-06-01 11:00:00', 0, 'UTC', 'feed', 'g-single')");
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, rrule, source, google_event_id) VALUES

@@ -42,6 +42,10 @@ trait Sequences
         $this->ownMade = [];
         $this->wide0 = null;
         $spec += ['n' => 0, 'seed' => 0, 'exceptions' => [], 'everyOption' => true];
+        if ($this->google !== null) {
+            // The stand-in keeps what a trial commit sends it: the options are committed from the baseline on local runs only (run()).
+            $spec['everyOption'] = false;
+        }
         $this->spec = $spec;
         if (!Product::$plan && array_intersect(array_column($spec['steps'], 'do'), ['preview', 'commitHeld']) !== []) {
             // A plan held and committed stale (series_plan_changed) needs the plan API.

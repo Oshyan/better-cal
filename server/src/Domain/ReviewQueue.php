@@ -1380,22 +1380,7 @@ final class ReviewQueue
      */
     public function googleHalfDone(int $userId): array
     {
-        $out = [];
-        foreach ($this->db->all("SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status = 'half' ORDER BY p.id DESC", [$userId]) as $row) {
-            $steps = json_decode((string) $row['steps_json'], true) ?: [];
-            $out[] = [
-                'id' => (int) $row['id'],
-                'calendarId' => (int) $row['calendar_id'],
-                'calendarName' => (string) $row['calendar_name'],
-                'eventId' => $row['event_id'] !== null ? (int) $row['event_id'] : null,
-                'title' => (string) $row['title'],
-                'summary' => (string) $row['summary'],
-                'error' => (string) ($row['error'] ?? ''),
-                'stepsDone' => count($steps),
-                'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
-            ];
-        }
-        return $out;
+        return GoogleSeries::halfDoneOf($this->db, $userId);
     }
 
     /** @return array<string,mixed> */

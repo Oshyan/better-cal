@@ -40,8 +40,28 @@ final class GoogleStand
     ) {
     }
 
-    /** A stand-in, an account, a Google calendar the account can edit, and the product's Google-writing Events for $userId. */
+    /** @var \WeakMap<Db,array<int,self>>|null each database's stands, by account */
+    private static ?\WeakMap $made = null;
+
+    /**
+     * A stand-in, an account, a Google calendar the account can edit, and the product's Google-writing Events for $userId:
+     * one per account, so a case that asks for one where the run already made it (the Google split in a Google-mode run)
+     * gets that one, as the account has one Google account per address.
+     */
     public static function make(Db $db, Undo $undo, int $userId): self
+    {
+        self::$made ??= new \WeakMap();
+        $stands = self::$made[$db] ?? [];
+        if (isset($stands[$userId])) {
+            return $stands[$userId];
+        }
+        $stand = self::build($db, $undo, $userId);
+        $stands[$userId] = $stand;
+        self::$made[$db] = $stands;
+        return $stand;
+    }
+
+    private static function build(Db $db, Undo $undo, int $userId): self
     {
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
         $fake = new FakeGoogle(self::CALENDAR);

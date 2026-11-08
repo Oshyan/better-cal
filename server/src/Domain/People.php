@@ -6,7 +6,9 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 /**
  * People directory: names linked to events (event_people, populated by the
@@ -66,19 +68,23 @@ final class People
 
     /**
      * All people with usage stats and availability status, alphabetical.
-     * eventCount counts undeleted events; nextStart is the soonest future
-     * event start; currentSpan is the availability span covering "now" (the
-     * sidebar dims currently-away people from it); nextSpan the soonest
-     * future one.
+     * eventCount counts undeleted events; nextStart is the soonest start at
+     * or after now among their events (nextStarts); currentSpan is the
+     * availability span covering "now" (the sidebar dims currently-away
+     * people from it); nextSpan the soonest future one.
+     *
+     * $viewer is the request's device clock (X-Device-Tz, as the event
+     * window reads it): an event that keeps its clock time in any zone is
+     * next by when it starts there. Without one, as stored (the Home clock).
      *
      * @return list<array<string,mixed>>
      */
-    public function list(int $userId): array
+    public function list(int $userId, ?\DateTimeZone $viewer = null, ?\DateTimeImmutable $now = null): array
     {
+        $now = ($now ?? Time::nowUtc())->setTimezone(Time::utc());
+        $nowSql = Time::toDb($now);
         $rows = $this->db->all(
-            "SELECT p.id, p.name, p.notes, p.show_on_calendar,
-                    COUNT(e.id) AS event_count,
-                    MIN(CASE WHEN e.start_utc >= UTC_TIMESTAMP() THEN e.start_utc END) AS next_start
+            "SELECT p.id, p.name, p.notes, p.show_on_calendar, COUNT(e.id) AS event_count
              FROM people p
              LEFT JOIN event_people ep ON ep.person_id = p.id
              LEFT JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
@@ -87,18 +93,19 @@ final class People
              ORDER BY p.name",
             [$userId]
         );
+        $nextStart = $this->nextStarts($userId, $now, $viewer);
         // One query for everyone's current + upcoming spans.
         $current = [];
         $next = [];
         foreach ($this->db->all(
             'SELECT a.* FROM availability a JOIN people p ON p.id = a.person_id
-             WHERE p.user_id = ? AND a.end_utc >= UTC_TIMESTAMP()
+             WHERE p.user_id = ? AND a.end_utc >= ?
              ORDER BY a.start_utc',
-            [$userId]
+            [$userId, $nowSql]
         ) as $r) {
             $pid = (int) $r['person_id'];
             $span = self::spanRow($r);
-            $started = Time::fromDb((string) $r['start_utc']) <= Time::nowUtc();
+            $started = Time::fromDb((string) $r['start_utc']) <= $now;
             if ($started && !isset($current[$pid])) {
                 $current[$pid] = $span;
             } elseif (!$started && !isset($next[$pid])) {
@@ -111,12 +118,119 @@ final class People
             'notes' => $r['notes'] !== null ? (string) $r['notes'] : null,
             'showOnCalendar' => (int) ($r['show_on_calendar'] ?? 0) === 1,
             'eventCount' => (int) $r['event_count'],
-            'nextStart' => $r['next_start'] !== null
-                ? (new \DateTimeImmutable((string) $r['next_start'], new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:sP')
-                : null,
+            'nextStart' => isset($nextStart[(int) $r['id']]) ? $nextStart[(int) $r['id']]->format('Y-m-d\TH:i:sP') : null,
             'currentSpan' => $current[(int) $r['id']] ?? null,
             'nextSpan' => $next[(int) $r['id']] ?? null,
         ], $rows);
+    }
+
+    /**
+     * Each person's next event start, as it shows on the viewer's clock
+     * (UTC): the soonest start at or after now among their undeleted
+     * events. A one-off is compared on its own clock (Floating::nowByZone,
+     * as search compares it), the soonest kept per person and zone, then
+     * shown (Floating::span). A series counts its occurrences as search
+     * reads them (Search::occurrencesAfter with the edited days
+     * Recurrence::editedDays loads): a generated occurrence for the people
+     * of the series, an edited day for its own people, once, at its own
+     * start; looked for in the coming week first and then two years.
+     *
+     * @return array<int,\DateTimeImmutable> person id => start (UTC)
+     */
+    private function nextStarts(int $userId, \DateTimeImmutable $now, ?\DateTimeZone $viewer): array
+    {
+        $nowSql = Time::toDb($now);
+        $clocks = Floating::nowByZone($this->db, $userId, $nowSql, $viewer);
+        [$rowNowSql, $rowNowParams] = Floating::nowOnRowSql($clocks, $nowSql, 'e.');
+        $out = [];
+        $keep = static function (int $pid, \DateTimeImmutable $at) use (&$out): void {
+            if (!isset($out[$pid]) || $at < $out[$pid]) {
+                $out[$pid] = $at;
+            }
+        };
+        // One-offs: the soonest per person and own clock, a clock's order
+        // being the stored order. Edited days count with their series.
+        foreach ($this->db->all(
+            "SELECT ep.person_id, e.floating, e.all_day, e.tzid, MIN(e.start_utc) AS start_utc
+             FROM event_people ep
+             JOIN people p ON p.id = ep.person_id
+             JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
+             WHERE p.user_id = ? AND (e.rrule IS NULL OR e.rrule = '') AND e.recurrence_parent_id IS NULL
+               AND e.start_utc >= $rowNowSql
+             GROUP BY ep.person_id, e.floating, e.all_day, e.tzid",
+            [$userId, ...$rowNowParams]
+        ) as $r) {
+            $start = Time::fromDb((string) $r['start_utc']);
+            $keep((int) $r['person_id'], Floating::span($r, $start, $start, $viewer)[0]);
+        }
+
+        // Series: who each series row (the series' or an edited day's) is
+        // linked to, and the series they belong to.
+        $peopleOf = [];
+        $seriesIds = [];
+        foreach ($this->db->all(
+            "SELECT ep.person_id, e.id, COALESCE(e.recurrence_parent_id, e.id) AS series_id
+             FROM event_people ep
+             JOIN people p ON p.id = ep.person_id
+             JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
+             WHERE p.user_id = ? AND (e.recurrence_parent_id IS NOT NULL OR (e.rrule IS NOT NULL AND e.rrule <> ''))",
+            [$userId]
+        ) as $r) {
+            $peopleOf[(int) $r['id']][(int) $r['person_id']] = true;
+            $seriesIds[(int) $r['series_id']] = true;
+        }
+        if ($seriesIds === []) {
+            return $out;
+        }
+        $budget = ExpansionBudget::standard();
+        try {
+            $masters = [];
+            foreach (array_chunk(array_keys($seriesIds), 250) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                array_push($masters, ...$this->db->all(
+                    "SELECT * FROM events WHERE id IN $in AND user_id = ? AND deleted_at IS NULL AND rrule IS NOT NULL AND rrule <> ''",
+                    [...$params, $userId]
+                ));
+            }
+            $ovByParent = [];
+            foreach (Recurrence::editedDays($this->db, $userId, array_map(static fn(array $m): int => (int) $m['id'], $masters), $now, $now->modify('+2 years'), $budget) as $ov) {
+                $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
+            }
+            foreach ($masters as $master) {
+                $id = (int) $master['id'];
+                $ovs = $ovByParent[$id] ?? [];
+                // Everyone this series could be next for.
+                $waiting = $peopleOf[$id] ?? [];
+                foreach ($ovs as $ov) {
+                    $waiting += $peopleOf[(int) $ov['id']] ?? [];
+                }
+                foreach ([$now->modify('+8 days'), null] as $until) {
+                    if ($waiting === []) {
+                        break;
+                    }
+                    foreach (Search::occurrencesAfter($master, $ovs, $nowSql, null, $budget, $viewer, true, $until) as $occ) {
+                        $row = $occ['row'] ?? $master;
+                        if (!isset($occ['row']) && isset($occ[2])) {
+                            $row['_wall'] = $occ[2];
+                        }
+                        $shown = null;
+                        foreach ($peopleOf[(int) $row['id']] ?? [] as $pid => $_) {
+                            if (isset($waiting[$pid])) {
+                                $shown ??= Floating::span($row, Time::fromDb($occ[0]), Time::fromDb($occ[1]), $viewer)[0];
+                                $keep($pid, $shown);
+                                unset($waiting[$pid]);
+                            }
+                        }
+                        if ($waiting === []) {
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (WorkBudgetExceeded) {
+            throw new HttpError('people_too_large', 'Too many repeating events to find everyone\'s next one safely.', 422);
+        }
+        return $out;
     }
 
     /**

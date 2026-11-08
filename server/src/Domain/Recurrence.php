@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
+use BetterCal\Infra\Db;
 use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
@@ -175,6 +176,82 @@ final class Recurrence
                 );
             }
         }
+    }
+
+    /**
+     * The edited days expand() needs to give $masterIds' occurrences in
+     * [start, end): those that show in the window, and those keyed in it
+     * (the day they edit is there) wherever they moved, so a moved day
+     * takes its slot's place and is never also shown at the slot. A
+     * floating series' keys are looked for over the window widened by every
+     * zone's offset, as expand() reads it. The calendar window, search and a
+     * person's next event all load a series' edited days here; skipped days
+     * are the master's own (exdates_json). Bounded: more than $limit rows
+     * (default the budget's occurrence limit), or more stored bytes than a
+     * window may hold, is WorkBudgetExceeded.
+     *
+     * @param list<int> $masterIds
+     * @param ?list<int> $calendarIds only edited days on these calendars
+     * @return list<array> event rows
+     */
+    public static function editedDays(
+        Db $db,
+        int $userId,
+        array $masterIds,
+        \DateTimeImmutable $start,
+        \DateTimeImmutable $end,
+        ExpansionBudget $budget,
+        ?array $calendarIds = null,
+        ?int $limit = null,
+    ): array {
+        $limit ??= $budget->occurrenceLimit();
+        $calendarSql = '';
+        $calendarParams = [];
+        if ($calendarIds !== null && $calendarIds !== []) {
+            [$calIn, $calendarParams] = Db::in($calendarIds);
+            $calendarSql = " AND calendar_id IN $calIn";
+        }
+        [$overlap, $overlapParams] = Floating::overlapSql($start, $end);
+        [$wideStart, $wideEnd] = Floating::widened($start, $end);
+        // Hidden overrides still have to replace the corresponding generated
+        // occurrence, after which attendance filtering can remove them.
+        $rows = $db->all(
+            'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
+             AND recurrence_parent_id IS NOT NULL AND ' . $overlap . $calendarSql . ' LIMIT ' . ($limit + 1),
+            [$userId, ...$overlapParams, ...$calendarParams]
+        );
+        if (count($rows) > $limit) {
+            throw new WorkBudgetExceeded('too many stored recurrence exceptions');
+        }
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(int) $row['id']] = true;
+        }
+        $budget->checkpoint();
+
+        foreach (array_chunk($masterIds, 250) as $chunk) {
+            $remaining = $limit - count($byId);
+            [$in, $inParams] = Db::in($chunk);
+            // A floating series is expanded over the widened window, so its
+            // edited days keyed anywhere in it are needed (expand()).
+            $extra = $db->all(
+                "SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
+                 AND recurrence_parent_id IN $in
+                 AND recurrence_instance_utc >= ? AND recurrence_instance_utc < ?
+                 AND (floating = 1 OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))
+                 AND NOT $overlap" . $calendarSql . ' LIMIT ' . ($remaining + 1),
+                [$userId, ...$inParams, Time::toDb($wideStart), Time::toDb($wideEnd), Time::toDb($start), Time::toDb($end), ...$overlapParams, ...$calendarParams]
+            );
+            if (count($extra) > $remaining) {
+                throw new WorkBudgetExceeded('too many stored recurrence exceptions');
+            }
+            foreach ($extra as $row) {
+                $byId[(int) $row['id']] = true;
+            }
+            $budget->checkpoint();
+        }
+
+        return Events::rowsWithinBudget($db, array_keys($byId));
     }
 
     /**

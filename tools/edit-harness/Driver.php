@@ -126,10 +126,10 @@ final class Driver
         $id = $this->createSeries($spec['series']);
         // A rule or start the harness wrote straight into the row goes to the stand-in too, as if Google had it so.
         $this->google?->adopt($this->row($id));
-        if ($this->google !== null && in_array(Shape::parts((string) $spec['series']['rrule'])['FREQ'] ?? '', ['HOURLY', 'MINUTELY', 'SECONDLY'], true)) {
-            // Google refuses a rule under a day (400 "Invalid recurrence rule", probe group 1), so no such series exists
-            // on a Google calendar: the harness's adopt is the only way one gets there, and every edit of it is refused.
-            $this->na('a series several times a day: Google refuses a rule under a day (HOURLY and finer, probe group 1)');
+        if ($this->google !== null && ($why = GoogleStand::unheld((string) $spec['series']['rrule'])) !== null) {
+            // No such series exists on a Google calendar (a rule under a day, or one the sync reads as none): the
+            // harness's adopt is the only way one gets there, so the case is not applicable in this mode.
+            $this->na($why);
             return $this->result('none');
         }
         Prof::mark('state');

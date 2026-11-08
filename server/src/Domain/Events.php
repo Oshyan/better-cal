@@ -328,7 +328,21 @@ final class Events
         return $id;
     }
 
-    /** @return array{0:array,1:array} Google-owned columns and local-only columns */
+    /**
+     * A new row's identity and bookkeeping, which on a Google calendar the
+     * sync writes when it stores Google's answer (Feeds::sync): never
+     * carried over from the request's row.
+     */
+    private const GOOGLE_ROW_IDENTITY = ['user_id', 'calendar_id', 'uid', 'source', 'created_via', 'created_at', 'updated_at'];
+
+    /**
+     * Columns a write sets, split into Google's and the ones only kept here
+     * (reminders, coordinates, the trip and floating flags, and any column
+     * added later): the one split of every Google writer, a create's row
+     * as a patch's fields, so neither can keep a column the other drops.
+     *
+     * @return array{0:array,1:array} Google-owned columns and local-only columns
+     */
     private static function splitGoogleFields(array $fields): array
     {
         unset($fields['url']); // Google's event link; not ours to edit
@@ -407,7 +421,9 @@ final class Events
                 return null; // what Google answered is still kept
             }
             $id = (int) $created['id'];
-            [, $local] = self::splitGoogleFields(array_intersect_key($row, array_flip(['reminders_json', 'is_container', 'location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at'])));
+            // What the request set that Google doesn't hold, back on the
+            // row the sync stored from Google's answer.
+            [, $local] = self::splitGoogleFields(array_diff_key($row, array_flip(self::GOOGLE_ROW_IDENTITY)));
             if ($local !== []) {
                 $this->db->update('events', $local, 'id = ?', [$id]);
             }

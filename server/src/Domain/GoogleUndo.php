@@ -33,8 +33,13 @@ use BetterCal\Infra\Db;
  *   etagBefore  the row's etag before the change, when known
  *   etagAfter   the resource's etag Google answered the change with; null
  *               after a delete, which answers nothing
- *   local       delete: the row's own tags, people and reminders, put back
- *               on the row the undo brings back
+ *   local       delete, as handed to record(): the removed row whole and
+ *               what hangs off it (localOf, Undo::removedRows), which
+ *               record() keeps as the entry's before snapshot, so the undo
+ *               puts the row back under its id with every relation and
+ *               column of its own, then stores Google's answer on top.
+ *               An entry recorded before 1.5.5 keeps here the row's tags,
+ *               people, reminders, trip flag and own list (restoreLegacy).
  *   responseStatus, attendance  answer: my answer before, and my Planned or
  *               Maybe before (an answer resets it)
  *
@@ -112,30 +117,42 @@ final class GoogleUndo
         ] + $extra;
     }
 
-    /** What a row has of its own that a delete at Google takes with it: tags, people, reminders, the trip flag, an edited day's own list. */
+    /**
+     * What a delete at Google takes with a row here: the row as stored and
+     * what hangs off it, as any change that removes an event keeps it
+     * (Undo::removedRows): tags, people, trip links, duplicate decisions,
+     * plugin data, and every column of its own (reminders, the trip and
+     * floating flags, coordinates, an edited day's own list). Empty when
+     * the row is gone already.
+     *
+     * @return array<string,list<array>>
+     */
     public function localOf(array $row): array
     {
-        $id = (int) $row['id'];
-        return [
-            'tags' => array_map('intval', array_column($this->db->all('SELECT tag_id FROM event_tags WHERE event_id = ? ORDER BY tag_id', [$id]), 'tag_id')),
-            'people' => array_map('intval', array_column($this->db->all('SELECT person_id FROM event_people WHERE event_id = ? ORDER BY person_id', [$id]), 'person_id')),
-            'reminders' => $row['reminders_json'] ?? null,
-            'trip' => (int) ($row['is_container'] ?? 0),
-            'own' => $row['override_fields'] ?? null,
-        ];
+        $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]);
+        return $stored === null ? [] : Undo::removedRows($this->db, [$stored]);
     }
 
     /**
      * Record an undoable entry for a write to Google, inside Undo::write.
      * $tables: a series' snapshots [before, after] (seriesTables), whose
      * rows say what it touched; without them $touches defaults to the event
-     * whole, which an older undo of it (its tags, say) stands on.
+     * whole, which an older undo of it (its tags, say) stands on. A
+     * delete's removed row (details `local`, localOf) is kept as the
+     * entry's before snapshot, as a local change keeps what it removes.
      *
      * @param list<array{0:string,1:string}>|null $touches
      * @param array{0:array,1:array}|null $tables
      */
     public function record(int $userId, int $eventId, string $summary, array $google, ?array $touches = null, string $op = 'update', ?array $tables = null): int
     {
+        if (($google['kind'] ?? null) === self::DELETE && $tables === null && array_key_exists('local', $google)) {
+            $removed = is_array($google['local']) ? $google['local'] : [];
+            unset($google['local']);
+            if (($removed['events'] ?? []) !== []) {
+                $tables = [$removed, []];
+            }
+        }
         return $this->undo->record($userId, 'event', $eventId, $op, $tables[0] ?? [], $tables[1] ?? [], $summary, ['google' => $google], [(int) $google['calendarId']],
             $touches ?? ($tables === null && $eventId > 0 ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : []));
     }
@@ -143,7 +160,7 @@ final class GoogleUndo
     /**
      * Rows of series and events of their own on a calendar, for a series
      * entry's snapshot: the live rows of each uid (a master and its edited
-     * days), the rows $ids name, and what hangs off them (Undo::linksOf).
+     * days), the rows $ids name, and what hangs off them (Undo::removedRows).
      *
      * @param list<string> $uids
      * @param list<int> $ids
@@ -167,7 +184,7 @@ final class GoogleUndo
             }
         }
         ksort($rows);
-        return ['events' => array_values($rows)] + Undo::linksOf($this->db, array_keys($rows));
+        return Undo::removedRows($this->db, array_values($rows));
     }
 
     /**
@@ -247,13 +264,25 @@ final class GoogleUndo
                     throw self::conflict();
                 }
                 $status = (string) ($g['before']['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed';
+                // The row it removed, kept as the entry's snapshot (record),
+                // goes back first under its id with all it had, and Google's
+                // answer is stored on top, as a poll would store it; what
+                // putting it back would refuse (the trip rules over what it
+                // leaves) is refused before Google is sent anything.
+                $removed = $this->undo->snapshotEventIds($mutation) !== [];
+                if ($removed) {
+                    $this->undo->checkRestore($mutation);
+                }
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['status' => $status], $beforeSend, self::etagOf($current) ?? ''));
-                $local = is_array($g['local'] ?? null) ? $g['local'] : [];
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $local): void {
+                $legacy = is_array($g['local'] ?? null) ? $g['local'] : [];
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $removed, $legacy): void {
+                    if ($removed) {
+                        $this->undo->restoreSnapshots($mutation);
+                    }
                     $writer->apply($calendar, [$resp]);
-                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId) ?? $this->rowForLocal($calendar, $resp, $local);
-                    if ($back !== null) {
-                        $this->restoreLocal($userId, (int) $back['id'], $local);
+                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId) ?? ($removed ? null : $this->rowForLegacy($calendar, $resp, $legacy));
+                    if ($back !== null && !$removed) {
+                        $this->restoreLegacy($userId, (int) $back['id'], $legacy);
                     }
                     $this->record($userId, $back !== null ? (int) $back['id'] : (int) $mutation['entity_id'], $summary,
                         self::details(self::CREATE, $calendar, $googleId, null, null, self::etagOf($resp)));
@@ -406,14 +435,17 @@ final class GoogleUndo
     }
 
     /**
-     * The row for a day brought back at Google whose answer equals its
-     * series on that day, when the day had local things of its own (tags,
-     * people, reminders, the trip flag, an own list): the sync stores no
-     * row for such a record (Feeds::sync, an ordinary occurrence), so the
-     * undo, the writer here, makes it as the sync would have. Null when the
-     * day had nothing local, or Google's answer is no day of a series.
+     * For an entry recorded before 1.5.5, which kept only a list of the
+     * row's local parts (details `local`) and not the row: the row for a
+     * day brought back at Google whose answer equals its series on that
+     * day, when the day had local things of its own (tags, people,
+     * reminders, the trip flag, an own list): the sync stores no row for
+     * such a record (Feeds::sync, an ordinary occurrence), so the undo, the
+     * writer here, makes it as the sync would have. Null when the day had
+     * nothing local, or Google's answer is no day of a series. Such entries
+     * leave the undo window a week after the upgrade.
      */
-    private function rowForLocal(array $calendar, array $resource, array $local): ?array
+    private function rowForLegacy(array $calendar, array $resource, array $local): ?array
     {
         $hasLocal = (array) ($local['tags'] ?? []) !== [] || (array) ($local['people'] ?? []) !== [] || is_string($local['reminders'] ?? null)
             || (int) ($local['trip'] ?? 0) === 1 || (OwnFields::decode($local['own'] ?? null) ?? []) !== [];
@@ -436,8 +468,8 @@ final class GoogleUndo
         return $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
     }
 
-    /** Tags, people, reminders, the trip flag and the own list a delete took, back on the row the undo brought back (tags and people still in the account). */
-    private function restoreLocal(int $userId, int $eventId, array $local): void
+    /** For an entry recorded before 1.5.5 (rowForLegacy): the tags, people, reminders, trip flag and own list it kept, back on the row the undo brought back (tags and people still in the account). */
+    private function restoreLegacy(int $userId, int $eventId, array $local): void
     {
         $tags = array_values(array_filter(array_map('intval', (array) ($local['tags'] ?? [])), static fn(int $id): bool => $id > 0));
         if ($tags !== []) {

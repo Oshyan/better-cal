@@ -702,6 +702,21 @@ final class Undo
         return array_map('array_values', $out);
     }
 
+    /**
+     * Events a change removes, as an entry keeps them to put back: the rows
+     * whole and what hangs off them (linksOf). The one definition of what a
+     * removed event takes with it, for a sync's removal and a Google
+     * write's (GoogleUndo), so a column or relation added later is kept by
+     * every one of them.
+     *
+     * @param list<array> $rows events rows as stored
+     * @return array<string,list<array>>
+     */
+    public static function removedRows(Db $db, array $rows): array
+    {
+        return ['events' => array_values($rows)] + self::linksOf($db, array_map(static fn(array $r): int => (int) $r['id'], $rows));
+    }
+
     /** A row's key: "table:id", or the parts of a composite key joined by "|". */
     public static function keyOf(string $table, array $row): string
     {

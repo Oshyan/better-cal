@@ -150,7 +150,7 @@ trait FloatingTimes
         }
         $floats = filter_var($in['floating'], FILTER_VALIDATE_BOOL) && !$allDay;
         if ($floats && ($current['invite_json'] ?? null) !== null) {
-            throw new HttpError('floating_refused', 'An invitation can\'t float: everyone invited sees it at the same moment.', 422);
+            throw new HttpError('floating_refused', 'An invitation can\'t keep its clock time in any zone: everyone invited sees it at the same moment.', 422);
         }
         // Written only when it changes, so a pinned event's write is the
         // same write it was before floating times.

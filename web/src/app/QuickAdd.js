@@ -569,7 +569,7 @@ export function QuickAdd() {
         ${draft && draft.other && html`<button
           type="button" class="bc-qchip bc-qchip-other" title=${otherReadingWords(draft.other).title} onClick=${takeOther}
         >${otherReadingWords(draft.other).label}</button>`}
-        ${draft && draft.floating && !form.allDay && html`<span class="bc-qchip" title="Same clock time in any zone"><${Icon} name="clock" size=${12} />local</span>`}
+        ${draft && draft.floating && !form.allDay && html`<span class="bc-qchip" title="Same clock time in any zone (what iCalendar and Apple's Calendar call a floating time)"><${Icon} name="clock" size=${12} />local</span>`}
         ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft && Array.isArray(draft.tags) && draft.tags.map((t) => html`<span class="bc-qchip" title="Tag">#${t}</span>`)}

@@ -139,7 +139,7 @@ export function HiddenMark({ count, onShow }) {
 // A floating event (#167): its clock time holds in any zone, so it is not
 // pinned to a moment like the events beside it. A small clock after the time.
 export function FloatMark() {
-  return html`<span class="bc-float-mark" role="img" aria-label="Same clock time in any zone" title="Same clock time in any zone"><${Icon} name="clock" size=${10} /></span>`;
+  return html`<span class="bc-float-mark" role="img" aria-label="Same clock time in any zone" title="Same clock time in any zone (what iCalendar and Apple's Calendar call a floating time)"><${Icon} name="clock" size=${10} /></span>`;
 }
 
 // Small stack glyph marking a near-duplicate group chip.

@@ -140,7 +140,7 @@ function formInstants(form) {
   return typedInstants(form.start, form.end, form.tzTouched && form.tz && !form.floating ? form.tz : null);
 }
 
-// A calendar's "New timed events float" (#167): what a new event's toggle starts at.
+// A calendar's "New timed events keep their clock time in any zone" (#167): what a new event's toggle starts at.
 const calFloats = (calendarId) => !!(state.calendars.find((c) => c.id === Number(calendarId)) || {}).floatTimed;
 
 // The quiet zone control on the duration line. A link until clicked, because
@@ -1076,7 +1076,7 @@ export function EditorDrawer() {
             title=${durationLock ? 'Length kept: moving the start moves the end with it. Click to set them separately.' : 'Start and end set separately. Click to keep the length when the start moves.'}
             onClick=${() => setDurationLock(!durationLock)}
           ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${12} />${lengthText || 'Length'}</button>
-          ${!form.allDay && !(occ && occ.invite) && html`<label class=${'bc-check' + flash('floating')} title="Floating: shown and reminded at this clock time in whatever zone the device is in, for routines like a morning walk. Invitations keep their zone.">
+          ${!form.allDay && !(occ && occ.invite) && html`<label class=${'bc-check' + flash('floating')} title="Shown and reminded at this clock time in whatever zone the device is in (what iCalendar and Apple's Calendar call a floating time), for routines like a morning walk. Invitations keep their zone, since everyone invited sees them at the same moment.">
             <input type="checkbox" checked=${!!form.floating} onChange=${(e) => upd({ floating: e.target.checked, floatTouched: true })} />
             <span>Same clock time in any zone</span>
           </label>`}

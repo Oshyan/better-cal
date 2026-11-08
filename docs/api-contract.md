@@ -109,7 +109,7 @@ The Google connector is described in [google-calendar.md](google-calendar.md). C
 
 ### Floating times
 
-A floating event (1.5.4, [#167](https://github.com/Oshyan/better-cal/issues/167)) keeps its clock time in any zone: 7:00 is 7:00 wherever the device is. Only timed events float; invitations and events with guests never do.
+A floating event (1.5.4, [#167](https://github.com/Oshyan/better-cal/issues/167); iCalendar's word, "Same clock time in any zone" in the app) keeps its clock time in any zone: 7:00 is 7:00 wherever the device is. Only timed events float; invitations and events with guests never do.
 
 - **The device's zone:** send `X-Device-Tz: <IANA zone>` with every request (the app does). Every instant of a floating event the API answers with is on that clock: `start`, `end`, `instanceId` and an edited day's `seriesKey`, in the window, the single record, search and every other list. Every instant a request sends for one (`start`, `end`, `instanceStart`, a UTC `UNTIL` in `rrule`, the `typed` clocks) is read on that clock too and stored on the event's own. Without the header it is the Home zone (`settings.tz`). The window's `ETag` names the zone, so a device that changes zone gets the window anew.
 - **Storage:** the event's own zone (`tzid`, the Home zone when it was made) holds its wall clock, so its stored instant is that clock read there. A `tzid` sent with a floating event is ignored; a new one takes the Home zone.

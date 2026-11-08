@@ -53,7 +53,7 @@ try {
     $db->run('CREATE TABLE calendars (id INT PRIMARY KEY, user_id INT, name VARCHAR(100), position INT DEFAULT 0)');
     $db->run('CREATE TABLE events (id INT PRIMARY KEY, user_id INT, calendar_id INT, uid VARCHAR(255), title TEXT, description MEDIUMTEXT, location TEXT, url TEXT,
         start_utc DATETIME, end_utc DATETIME, all_day INT DEFAULT 0, tzid VARCHAR(100), rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT,
-        recurrence_instance_utc DATETIME, deleted_at DATETIME, is_container INT DEFAULT 0)');
+        recurrence_instance_utc DATETIME, deleted_at DATETIME, is_container INT DEFAULT 0, floating INTEGER DEFAULT 0)');
     $db->run('CREATE TABLE event_links (id INT PRIMARY KEY, container_id INT, event_id INT, position INT DEFAULT 0)');
     $db->run('CREATE TABLE marker (value VARCHAR(30))'); $db->run("INSERT INTO marker VALUES ('original')");
     $db->run('CREATE TABLE app_update_state (id INT PRIMARY KEY, minimum_secure_version VARCHAR(30))');

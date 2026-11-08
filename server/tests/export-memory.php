@@ -8,7 +8,7 @@ $db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass'
 $db->run('CREATE TABLE calendars (id INT, user_id INT, name TEXT, position INT)');
 $db->run('CREATE TABLE events (id INT PRIMARY KEY, user_id INT, calendar_id INT, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
     start_utc TEXT, end_utc TEXT, all_day INT DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT,
-    recurrence_instance_utc TEXT, deleted_at TEXT, is_container INT DEFAULT 0)');
+    recurrence_instance_utc TEXT, deleted_at TEXT, is_container INT DEFAULT 0, floating INTEGER DEFAULT 0)');
 $db->run('CREATE TABLE event_links (id INT, container_id INT, event_id INT)');
 $db->run("INSERT INTO calendars VALUES (1,1,'Sample archive',0)");
 $db->tx(static function () use ($db): void {

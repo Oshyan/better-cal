@@ -100,6 +100,9 @@ final class CalendarImport
             $importedMasters = [];
             $seen = [];
             $ownColumn = OwnFields::hasColumn($this->db);
+            // A file's zoned times float when the calendar's new timed events
+            // do (#167); a time with no zone floats in any calendar.
+            $floatTimed = isset($target['settings_json']) && Calendars::floatTimedFor((string) $target['settings_json']);
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
                 if (isset($seen[$key])) {
@@ -131,6 +134,7 @@ final class CalendarImport
                     'end_utc' => $ev['end_utc'],
                     'all_day' => $ev['all_day'],
                     'tzid' => $ev['tzid'],
+                    'floating' => (int) $ev['all_day'] !== 1 && (($ev['floating'] ?? 0) === 1 || $floatTimed) ? 1 : 0,
                     'rrule' => $ev['rrule'],
                     'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
                     // VALARM reminders become explicit overrides; none = inherit defaults.

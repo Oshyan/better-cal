@@ -43,8 +43,8 @@ final class Model
 {
     public const CONTENT_FIELDS = ['title', 'location', 'description', 'url', 'reminders', 'status', 'icon', 'attendance', 'tags', 'people'];
 
-    /** Columns of the series that no edited day owns: every row takes them (the trip flag). */
-    public const SERIES_COLUMNS = ['is_container' => 'Trip'];
+    /** Columns of the series that no edited day owns: every row takes them (the trip flag, floating). */
+    public const SERIES_COLUMNS = ['is_container' => 'Trip', 'floating' => 'Floating'];
 
     /** How many events the plan's coming-up list shows. */
     private const NEXT_SHOWN = 4;

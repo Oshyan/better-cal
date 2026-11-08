@@ -402,6 +402,10 @@ function bc_handle_api(Request $request, array $cfg): void
             }
         }
 
+        // The device's zone, which floating events show on (#167): the app
+        // names it with every call; without it they show on the Home clock.
+        $events->viewFrom($request->header('X-Device-Tz'));
+
         // Every write the handler makes is checked against the credential
         // it signed in with (Undo::write, RequestAuthority::checkedTx), or is
         // bookkeeping. A change a request (not a read) makes moves the

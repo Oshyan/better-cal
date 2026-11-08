@@ -5260,10 +5260,10 @@ checkEq('non-recurring outside window emits none', 0, count($occs));
     $wdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $wdb->run('CREATE TABLE events (
         id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT,
-        recurrence_parent_id INTEGER, rrule TEXT, start_utc TEXT, end_utc TEXT
+        recurrence_parent_id INTEGER, rrule TEXT, start_utc TEXT, end_utc TEXT, floating INTEGER DEFAULT 0
     )');
     foreach ([1, 2, 3] as $id) {
-        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, NULL, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00')", [$id]);
+        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, NULL, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00', 0)", [$id]);
     }
     $wundo = new BetterCal\Domain\Undo($wdb);
     $wevents = new BetterCal\Domain\Events(
@@ -5291,7 +5291,7 @@ checkEq('non-recurring outside window emits none', 0, count($occs));
 
     $wdb->run('DELETE FROM events');
     foreach ([11, 12] as $id) {
-        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, 7, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00')", [$id]);
+        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, 7, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00', 0)", [$id]);
     }
     $overrideLoader = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('windowOverrides');
     try {
@@ -5362,7 +5362,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $rmdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
     $rmdb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT, role TEXT, created_at TEXT DEFAULT '2026-01-01 00:00:00')");
     davJournal($rmdb);
-    $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT)");
+    $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT, floating INTEGER DEFAULT 0)");
     $rmdb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $rmdb->run('INSERT INTO users VALUES (1, ?, ?)', ['owner@example.com', json_encode(['tz' => 'America/Los_Angeles', 'reminderAllDay' => [['daysBefore' => 0, 'time' => '18:00']]])]);
     $rmdb->run("INSERT INTO calendars (id, user_id, kind, provider, settings_json, role) VALUES (1, 1, 'local', 'ics', NULL, 'mine')");
@@ -5491,7 +5491,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 // past ones are left off, never the upcoming ones (#110).
 {
     $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $odb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT)");
+    $odb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT, floating INTEGER DEFAULT 0)");
     $now = Time::nowUtc();
     $at = static fn(int $days): string => Time::toDb($now->modify(($days >= 0 ? '+' : '') . $days . ' days'));
     foreach ([-300 => 'old past', -10 => 'recent past', 5 => 'soon', 40 => 'later', -2000 => 'old series'] as $d => $title) {
@@ -5530,7 +5530,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 // ICS copies are built, and returns the same controlled result for GET/HEAD.
 {
     $fdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $fdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT, is_container INTEGER DEFAULT 0, dynamic_json TEXT)");
+    $fdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT, is_container INTEGER DEFAULT 0, dynamic_json TEXT, floating INTEGER DEFAULT 0)");
     $fdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
     $fdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
     $outfeedSecret = str_repeat('s', 32);
@@ -12153,7 +12153,7 @@ use BetterCal\Domain\GoogleWriter;
     $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
     davJournal($rdb);
-    $rdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
+    $rdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT, floating INTEGER DEFAULT 0)');
     undoJournal($rdb);
     eventLinkTables($rdb);
     $rdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT)');
@@ -12192,7 +12192,7 @@ use BetterCal\Domain\GoogleWriter;
     $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
     davJournal($pdb);
-    $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
+    $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT, floating INTEGER DEFAULT 0)');
     undoJournal($pdb);
     eventLinkTables($pdb);
     $pdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
@@ -14147,7 +14147,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     undoJournal($xdb);
     $xdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
         start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT,
-        recurrence_instance_utc TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0, created_via TEXT, source TEXT, recurrence_parent_id INTEGER)');
+        recurrence_instance_utc TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0, created_via TEXT, source TEXT, recurrence_parent_id INTEGER, floating INTEGER DEFAULT 0)');
     $xdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER DEFAULT 0)');
     $xdb->run("INSERT INTO calendars (id, user_id, name, position) VALUES (1, 1, 'Work', 0), (2, 1, 'Work', 1), (3, 1, 'Trips: \"far\" / near', 2), (4, 2, 'Someone else', 0)");
     $xdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, tzid, rrule) VALUES

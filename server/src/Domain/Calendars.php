@@ -301,7 +301,7 @@ final class Calendars
         if (array_key_exists('staleAfterDays', $in)) {
             $fields['stale_after_days'] = max(1, (int) $in['staleAfterDays']);
         }
-        if (array_key_exists('groupSimilar', $in) || array_key_exists('reminderDefaults', $in) || array_key_exists('hideCancelled', $in)) {
+        if (array_key_exists('groupSimilar', $in) || array_key_exists('reminderDefaults', $in) || array_key_exists('hideCancelled', $in) || array_key_exists('floatTimed', $in)) {
             $settings = json_decode((string) ($before['settings_json'] ?? ''), true);
             $settings = is_array($settings) ? $settings : [];
             if (array_key_exists('groupSimilar', $in)) {
@@ -312,6 +312,13 @@ final class Calendars
                     $settings['hideCancelled'] = true;
                 } else {
                     unset($settings['hideCancelled']);
+                }
+            }
+            if (array_key_exists('floatTimed', $in)) {
+                if (filter_var($in['floatTimed'], FILTER_VALIDATE_BOOL)) {
+                    $settings['floatTimed'] = true;
+                } else {
+                    unset($settings['floatTimed']);
                 }
             }
             if (array_key_exists('reminderDefaults', $in)) {
@@ -700,6 +707,9 @@ final class Calendars
             'hideCancelled' => self::hideCancelledFor(
                 $c['settings_json'] !== null ? (string) $c['settings_json'] : null
             ),
+            'floatTimed' => self::floatTimedFor(
+                $c['settings_json'] !== null ? (string) $c['settings_json'] : null
+            ),
             'health' => [
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
                 // When it last updated successfully (migration 054); null when
@@ -799,6 +809,17 @@ final class Calendars
     {
         $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
         return is_array($settings) && ($settings['hideCancelled'] ?? false) === true;
+    }
+
+    /**
+     * New timed events on this calendar float (#167): the editor, quick add
+     * and file imports with zoned times preset an event's floating flag from
+     * it. Only a preset: the flag on each event is what counts. Off unless chosen.
+     */
+    public static function floatTimedFor(?string $settingsJson): bool
+    {
+        $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
+        return is_array($settings) && ($settings['floatTimed'] ?? false) === true;
     }
 
     public static function groupSimilarFor(?string $settingsJson, string $kind): bool

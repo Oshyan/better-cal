@@ -19,6 +19,7 @@ use BetterCal\Support\WorkBudgetExceeded;
 final class Events
 {
     use SeriesPlans;
+    use FloatingTimes;
 
     public const MAX_WINDOW_SECONDS = 2 * 366 * 86400; // ~2 year hard cap per query
     // How long a genuinely-new event wears its badge. A day is long enough to
@@ -716,9 +717,12 @@ final class Events
             // meant to prevent.
             $masterLimit = $expansionBudget->candidateRowLimit();
             $qContext = $this->queryContext($userId, $q, $masterLimit);
-            $params = [$userId, Time::toDb($end), Time::toDb($start), Time::toDb($end)];
+            // A floating row shows on the viewer's clock, so it is selected
+            // over the window widened by every zone's offset (Floating).
+            [$overlap, $overlapParams] = Floating::overlapSql($start, $end, true);
+            $params = [$userId, ...$overlapParams];
             $sql = 'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
-                    AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))';
+                    AND ' . $overlap;
             $sql .= $this->windowFilters($params, $calendarIds, $qContext, $includeHidden);
             $sql .= ' LIMIT ' . ($masterLimit + 1);
             $masterIds = array_map(
@@ -744,13 +748,14 @@ final class Events
             foreach ($overrides as $ov) {
                 $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
             }
+            $viewer = $this->viewerFor([...$masters, ...$overrides], $userId);
 
             $expanded = [];
             $seenParents = [];
             foreach ($masters as $master) {
                 $mid = (int) $master['id'];
                 $seenParents[$mid] = true;
-                foreach ($this->recurrence->expand($master, $ovByParent[$mid] ?? [], $start, $end, $expansionBudget) as $occ) {
+                foreach ($this->recurrence->expand($master, $ovByParent[$mid] ?? [], $start, $end, $expansionBudget, $viewer) as $occ) {
                     $expanded[] = $occ;
                 }
             }
@@ -760,11 +765,10 @@ final class Events
                     continue;
                 }
                 foreach ($ovs as $ov) {
-                    $ovStart = Time::fromDb((string) $ov['start_utc']);
-                    $ovEnd = Time::fromDb((string) $ov['end_utc']);
+                    [$ovStart, $ovEnd] = Floating::span($ov, Time::fromDb((string) $ov['start_utc']), Time::fromDb((string) $ov['end_utc']), $viewer);
                     if ($ovStart < $end && $ovEnd > $start) {
                         $expansionBudget->occurrence();
-                        $expanded[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => Time::toDb($ovStart)];
+                        $expanded[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => (string) $ov['recurrence_instance_utc']];
                     }
                 }
             }
@@ -916,11 +920,11 @@ final class Events
         int $limit,
         ExpansionBudget $budget,
     ): array {
-        $endDb = Time::toDb($end);
-        $startDb = Time::toDb($start);
-        $params = [$userId, $endDb, $startDb];
+        [$overlap, $overlapParams] = Floating::overlapSql($start, $end);
+        [$wideStart, $wideEnd] = Floating::widened($start, $end);
+        $params = [$userId, ...$overlapParams];
         $sql = 'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
-                AND recurrence_parent_id IS NOT NULL AND start_utc < ? AND end_utc > ?';
+                AND recurrence_parent_id IS NOT NULL AND ' . $overlap;
         // Hidden overrides still have to replace the corresponding generated
         // occurrence, after which attendance filtering can remove them.
         $sql .= $this->windowFilters($params, $calendarIds, null, true);
@@ -938,11 +942,14 @@ final class Events
         foreach (array_chunk($masterIds, 250) as $chunk) {
             $remaining = $limit - count($byId);
             [$in, $inParams] = Db::in($chunk);
-            $params = [$userId, ...$inParams, $startDb, $endDb, $endDb, $startDb];
+            // A floating series is expanded over the widened window, so its
+            // edited days keyed anywhere in it are needed (Recurrence::expand).
+            $params = [$userId, ...$inParams, Time::toDb($wideStart), Time::toDb($wideEnd), Time::toDb($start), Time::toDb($end), ...$overlapParams];
             $sql = "SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
                     AND recurrence_parent_id IN $in
                     AND recurrence_instance_utc >= ? AND recurrence_instance_utc < ?
-                    AND NOT (start_utc < ? AND end_utc > ?)";
+                    AND (floating = 1 OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))
+                    AND NOT $overlap";
             $sql .= $this->windowFilters($params, $calendarIds, null, true);
             $sql .= ' LIMIT ' . ($remaining + 1);
             $extra = $this->db->all($sql, $params);
@@ -1179,6 +1186,7 @@ final class Events
             'end_utc' => $endUtc,
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
+            ...self::floatingColumn([], $in, $allDay),
             'rrule' => $rrule,
             // Only a copy of a series carries these in; the editor never sends them.
             'exdates_json' => $exdates === [] ? null : json_encode($exdates),
@@ -1286,6 +1294,7 @@ final class Events
             'end' => Time::dbToIso((string) $source['end_utc'], $tzid),
             'allDay' => (int) $source['all_day'] === 1,
             'tzid' => $tzid,
+            'floating' => Floating::is($source),
             'status' => (string) $source['status'],
             'tagNames' => $links['tags'][(int) $source['id']] ?? [],
             'personIds' => $personIds,
@@ -2333,8 +2342,9 @@ final class Events
         $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
         $links['dupes'] = $this->duplicates()->linkedFor([self::seriesId($row)]);
         $links['feedback'] = $this->feedbackFor(self::feedIds([$row]));
-        // A series' start as read is its first shown day (shownSpan).
-        [$start, $end] = self::shownSpan($row);
+        // A series' start as read is its first shown day (shownSpan), a
+        // floating one's on the viewer's clock.
+        [$start, $end] = Floating::span($row, ...self::shownSpan($row), viewer: $this->viewerFor([$row], (int) $row['user_id']));
         return $this->serialize($row, $start, $end, $links, full: true);
     }
 
@@ -2357,7 +2367,7 @@ final class Events
         $links['feedback'] = $this->feedbackFor(self::feedIds($rows));
         return array_map(
             function (array $row) use ($links): array {
-                [$start, $end] = self::shownSpan($row);
+                [$start, $end] = Floating::span($row, ...self::shownSpan($row), viewer: $this->viewerFor([$row], (int) $row['user_id']));
                 return $this->serialize($row, $start, $end, $links, full: false);
             },
             $rows
@@ -2414,7 +2424,9 @@ final class Events
     {
         $id = (int) $row['id'];
         $tzid = (string) $row['tzid'];
-        $tz = Time::zone($tzid);
+        // A floating row's instants are already on the viewer's clock, and say so.
+        $floating = Floating::is($row);
+        $tz = $floating ? $this->viewerZone((int) $row['user_id']) : Time::zone($tzid);
         $style = null;
         if (!empty($row['style_json'])) {
             $style = is_array($row['style_json']) ? $row['style_json'] : json_decode((string) $row['style_json'], true);
@@ -2474,6 +2486,8 @@ final class Events
                 : Time::iso($endUtc->setTimezone($tz)),
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
+            // Its clock time holds in any zone (#167); sent only when so.
+            'floating' => $floating ? true : null,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
             // A date of a series edited on its own (its own event); sent
             // only when so, like hasReminders, as lists drop nulls.
@@ -2489,7 +2503,9 @@ final class Events
             'seriesKey' => !empty($row['recurrence_parent_id']) && !empty($row['recurrence_instance_utc'])
                 ? ($this->parentAllDay((int) $row['recurrence_parent_id'])
                     ? Time::dayOf(Time::fromDb((string) $row['recurrence_instance_utc']), true, null)
-                    : Time::fromDb((string) $row['recurrence_instance_utc'])->format('Y-m-d\TH:i:s\Z'))
+                    : ($floating
+                        ? Floating::shown(Time::fromDb((string) $row['recurrence_instance_utc']), Time::zone($tzid), $tz)
+                        : Time::fromDb((string) $row['recurrence_instance_utc']))->format('Y-m-d\TH:i:s\Z'))
                 : null,
             'rrule' => $rrule,
             'source' => (string) $row['source'],
@@ -2741,6 +2757,8 @@ final class Events
         if (array_key_exists('rrule', $in) && !$forOverride) {
             $fields['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
+        // A series' flag, which no edited day owns (Model::SERIES_COLUMNS).
+        $fields += $forOverride ? [] : self::floatingColumn($current, $in, $allDay);
         if (array_key_exists('isContainer', $in) && !$forOverride) {
             // patch() refuses what this leaves against the trip rules (Trips::assertRules).
             $fields['is_container'] = filter_var($in['isContainer'], FILTER_VALIDATE_BOOL) ? 1 : 0;

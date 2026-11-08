@@ -24,7 +24,8 @@ use BetterCal\Support\Time;
  * moves nothing for a viewer whose zone has it. The window and its edges
  * (storedWindow), the single-event record, the reminder scan, search, a
  * person's next event and a request's instants all go through these; search
- * and a person's next event read now on each row's clock by nowByZone.
+ * and a person's next event read now on each row's clock by nowByZone,
+ * then settle the rows near it by their instants as shown.
  */
 final class Floating
 {
@@ -171,18 +172,30 @@ final class Floating
     }
 
     /**
-     * Now as each of this user's floating events stores it, by zone: the
-     * stored instant whose clock shows at now on the viewer's clock
-     * (stored()). A floating event has started or ended for the viewer when
-     * its stored start or end is before this, as an instant moves with its
-     * clock both ways, so a query compares stored columns and keeps its
-     * index and limit (nowOnRowSql). Only zones other than the viewer's are
-     * listed (the same zone is now itself), and none without a viewer: the
-     * reads with no device (feeds, ranking, review, duplicates) compare on
-     * the Home clock, as stored. Search and a person's next event read now
-     * through this.
+     * Now as each of this user's floating events stores it, by zone, with
+     * how far a comparison against it can be off. 'at' is the stored instant
+     * whose clock shows at now on the viewer's clock (stored()), so a
+     * floating event has started or ended for the viewer about when its
+     * stored start or end passes it, and a query can compare stored columns
+     * before its limit (nowOnRowSql). About, because a wall clock and an
+     * instant move together only between offset changes: where the viewer's
+     * zone repeats an hour, or a row's date has another offset in either
+     * zone than now has, a stored column and its instant as shown stand
+     * apart by up to how much the two zones' offsets vary. 'slack' (seconds)
+     * is twice that, read from both zones' offsets over the dates this
+     * user's rows of the zone hold and now, two days either side: a stored
+     * start or end more than 'slack' from 'at' is on the same side of now as
+     * shown, and two stored starts more than 'slack' apart (each moved by
+     * its zone's distance at now, Search) are in the same order as shown. A
+     * query widens by it and the caller settles the rows inside it by their
+     * exact instants as shown (Floating::span).
      *
-     * @return array<string,string> tzid => 'Y-m-d H:i:s' UTC
+     * Only zones other than the viewer's are listed (the same zone is now
+     * itself, exactly), and none without a viewer: the reads with no device
+     * (feeds, ranking, review, duplicates) compare on the Home clock, as
+     * stored. Search and a person's next event read now through this.
+     *
+     * @return array<string,array{at:string,slack:int}> tzid => now stored ('Y-m-d H:i:s' UTC) and its slack
      */
     public static function nowByZone(Db $db, int $userId, string $nowSql, ?\DateTimeZone $viewer): array
     {
@@ -191,38 +204,96 @@ final class Floating
         }
         $now = Time::fromDb($nowSql);
         $out = [];
-        $zones = $db->all('SELECT DISTINCT tzid FROM events WHERE user_id = ? AND floating = 1 AND all_day = 0 AND deleted_at IS NULL', [$userId]);
+        $zones = $db->all(
+            'SELECT tzid, MIN(start_utc) AS lo, MAX(end_utc) AS hi FROM events
+             WHERE user_id = ? AND floating = 1 AND all_day = 0 AND deleted_at IS NULL GROUP BY tzid',
+            [$userId]
+        );
         foreach ($zones as $z) {
             $tzid = (string) $z['tzid'];
             $own = Time::zone($tzid);
-            if ($own->getName() !== $viewer->getName()) {
-                $out[$tzid] = Time::toDb(self::stored($now, $own, $viewer));
+            if ($own->getName() === $viewer->getName()) {
+                continue;
             }
+            $from = min($now, Time::fromDb((string) $z['lo']))->modify('-2 days');
+            $to = max($now, Time::fromDb((string) $z['hi']))->modify('+2 days');
+            $out[$tzid] = [
+                'at' => Time::toDb(self::stored($now, $own, $viewer)),
+                'slack' => 2 * (self::offsetRange($own, $from, $to) + self::offsetRange($viewer, $from, $to)),
+            ];
         }
         return $out;
+    }
+
+    /** How far a zone's offset varies between two instants, in seconds; 0 for a zone that keeps one. */
+    private static function offsetRange(\DateTimeZone $zone, \DateTimeImmutable $from, \DateTimeImmutable $to): int
+    {
+        $offsets = array_map(static fn(array $t): int => (int) $t['offset'], $zone->getTransitions($from->getTimestamp(), $to->getTimestamp()) ?: []);
+        return $offsets === [] ? 0 : max($offsets) - min($offsets);
     }
 
     /**
      * SQL for "now" on each row's own clock (nowByZone): the floating rows
      * of each listed zone compare against their own, every other row against
-     * now. $alias prefixes the columns ('e.' for a joined events table).
+     * now. $widen moves each zone's now by its slack, -1 earlier and +1
+     * later, so a comparison holds every row that may be on its side of now
+     * as shown; 0 is the zone's now itself. $alias prefixes the columns
+     * ('e.' for a joined events table).
      *
-     * @param array<string,string> $clocks
+     * @param array<string,array{at:string,slack:int}> $clocks
      * @return array{0:string,1:list<string>}
      */
-    public static function nowOnRowSql(array $clocks, string $nowSql, string $alias = ''): array
+    public static function nowOnRowSql(array $clocks, string $nowSql, string $alias = '', int $widen = 0): array
     {
         if ($clocks === []) {
             return ['?', [$nowSql]];
         }
         $sql = 'CASE';
         $params = [];
-        foreach ($clocks as $tzid => $at) {
+        foreach ($clocks as $tzid => $clock) {
             $sql .= " WHEN {$alias}floating = 1 AND {$alias}tzid = ? THEN ?";
-            array_push($params, (string) $tzid, $at);
+            array_push($params, (string) $tzid, self::shifted($clock, $widen));
         }
         return [$sql . ' ELSE ? END', [...$params, $nowSql]];
     }
+
+    /**
+     * SQL for a floating row whose $column (start_utc, end_utc) is within
+     * its zone's slack of its zone's now (nowByZone): the rows a comparison
+     * widened by nowOnRowSql may hold on the wrong side, which the caller
+     * settles by their exact instants. '0 = 1' when no zone has any slack.
+     *
+     * @param array<string,array{at:string,slack:int}> $clocks
+     * @return array{0:string,1:list<string>}
+     */
+    public static function nearNowSql(array $clocks, string $column, string $alias = ''): array
+    {
+        $parts = [];
+        $params = [];
+        foreach ($clocks as $tzid => $clock) {
+            if ($clock['slack'] > 0) {
+                $parts[] = "({$alias}tzid = ? AND {$alias}$column >= ? AND {$alias}$column < ?)";
+                array_push($params, (string) $tzid, self::shifted($clock, -1), self::shifted($clock, 1));
+            }
+        }
+        if ($parts === []) {
+            return ['0 = 1', []];
+        }
+        return ["({$alias}floating = 1 AND {$alias}all_day = 0 AND (" . implode(' OR ', $parts) . '))', $params];
+    }
+
+    /** The largest slack among the zones (nowByZone), in seconds. @param array<string,array{at:string,slack:int}> $clocks */
+    public static function mostSlack(array $clocks): int
+    {
+        return $clocks === [] ? 0 : max(array_column($clocks, 'slack'));
+    }
+
+    /** A zone's now (nowByZone) moved by its slack $times times. @param array{at:string,slack:int} $clock */
+    private static function shifted(array $clock, int $times): string
+    {
+        return $times === 0 ? $clock['at'] : Time::toDb(Time::fromDb($clock['at'])->modify(($times * $clock['slack']) . ' seconds'));
+    }
+
     /** @return array{0:\DateTimeImmutable,1:\DateTimeImmutable} the window widened by SPAN_SECONDS both ways */
     public static function widened(\DateTimeImmutable $start, \DateTimeImmutable $end): array
     {

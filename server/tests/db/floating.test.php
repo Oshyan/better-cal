@@ -392,6 +392,101 @@ return static function (Db $db): void {
         checkEq('series next: search lists the edited day once, at 10:00', [['2027-04-10T10:00:00-07:00', '2027-04-10T11:00:00-07:00']], $tomorrow);
     });
 
+    // Where the viewer's zone repeats an hour, now on a floating event's own
+    // clock does not keep the order instants have: Berlin repeats 02:00 to
+    // 03:00 on 31 Oct 2027, while Home is still on summer time. A walk at
+    // 02:30 to 02:45 there shows at the first 02:30 (00:30 UTC).
+    $from('America/Los_Angeles');
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample lantern walk', 'allDay' => false, 'floating' => true,
+        'start' => '2027-10-31T02:30:00-07:00', 'end' => '2027-10-31T02:45:00-07:00', 'personNames' => ['Harper Example']]));
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample cider pressing', 'allDay' => false, 'floating' => true,
+        'start' => '2027-11-01T10:00:00-07:00', 'end' => '2027-11-01T11:00:00-07:00', 'personNames' => ['Harper Example']]));
+
+    scenario('floating search: the hour the viewer\'s zone repeats, both times through', function () use ($found, $search, $ev, $u): void {
+        $walk = [['2027-10-31T02:30:00+02:00', '2027-10-31T02:45:00+02:00']];
+        $past = static fn(string $now): int => $search->countPast($u, 'lantern', ['now' => new \DateTimeImmutable($now), 'viewer' => $ev->viewerZone($u)]);
+        // The first 02:15 in Berlin (00:15 UTC): the walk is ahead.
+        checkEq('floating search: first 02:15, Upcoming lists it', $walk, $found('Europe/Berlin', 'lantern', 'upcoming', '2027-10-31T00:15:00Z'));
+        checkEq('floating search: first 02:15, Past does not', [], $found('Europe/Berlin', 'lantern', 'past', '2027-10-31T00:15:00Z'));
+        checkEq('floating search: first 02:15, nothing past to count', 0, $past('2027-10-31T00:15:00Z'));
+        // The second 02:15 (01:15 UTC): it ended half an hour ago.
+        checkEq('floating search: second 02:15, Upcoming does not list it', [], $found('Europe/Berlin', 'lantern', 'upcoming', '2027-10-31T01:15:00Z'));
+        checkEq('floating search: second 02:15, Past does', $walk, $found('Europe/Berlin', 'lantern', 'past', '2027-10-31T01:15:00Z'));
+        checkEq('floating search: second 02:15, counted past', 1, $past('2027-10-31T01:15:00Z'));
+    });
+
+    scenario('floating people: the hour the viewer\'s zone repeats, both times through', function () use ($nextOf): void {
+        checkEq('floating people: first 02:15, the walk is next', '2027-10-31T00:30:00+00:00', $nextOf('Europe/Berlin', 'Harper Example', '2027-10-31T00:15:00Z'));
+        checkEq('floating people: second 02:15, the walk is over, the cider pressing is next', '2027-11-01T09:00:00+00:00', $nextOf('Europe/Berlin', 'Harper Example', '2027-10-31T01:15:00Z'));
+    });
+
+    // A date with another distance between the zones than now has: from
+    // Tokyo in January, Home is 17 hours behind, in April 16. A pinned tour
+    // at 00:30 UTC on 10 Apr comes before a floating supper at 10:00, which
+    // is 01:00 UTC in Tokyo, though January's distance would put it at 00:00.
+    $from('America/Los_Angeles');
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample lighthouse tour', 'allDay' => false, 'floating' => false,
+        'start' => '2027-04-10T00:30:00Z', 'end' => '2027-04-10T01:30:00Z', 'tzid' => 'UTC', 'personNames' => ['Rowan Example']]));
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample lighthouse supper', 'allDay' => false, 'floating' => true,
+        'start' => '2027-04-10T10:00:00-07:00', 'end' => '2027-04-10T11:00:00-07:00', 'personNames' => ['Rowan Example']]));
+    // Home's repeated hour on 7 Nov 2027: a talk at the first 01:50 and a
+    // class at the second 01:10 are stored in that order, and on Tokyo's
+    // clock, which has both times once, the class at 01:10 comes first.
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample tide talk', 'allDay' => false, 'floating' => true,
+        'start' => '2027-11-07T01:50:00-07:00', 'end' => '2027-11-07T02:00:00-08:00', 'personNames' => ['Sage Example']]));
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample tide class', 'allDay' => false, 'floating' => true,
+        'start' => '2027-11-07T01:10:00-08:00', 'end' => '2027-11-07T01:40:00-08:00', 'personNames' => ['Sage Example']]));
+
+    scenario('floating search: the limit keeps the first by the start as shown on its own date', function () use ($ev, $u, $search): void {
+        $titles = static function (string $q, int $limit, string $now) use ($ev, $u, $search): array {
+            $ev->viewFrom('Asia/Tokyo');
+            return array_column($search->search($u, $q, $limit, true, ['when' => 'upcoming', 'now' => new \DateTimeImmutable($now), 'viewer' => $ev->viewerZone($u)]), 'title');
+        };
+        checkEq('floating search: in January from Tokyo, limit 1 keeps the April tour', ['Sample lighthouse tour'], $titles('lighthouse', 1, '2027-01-10T12:00:00Z'));
+        checkEq('floating search: and limit 2 gives both in that order', ['Sample lighthouse tour', 'Sample lighthouse supper'], $titles('lighthouse', 2, '2027-01-10T12:00:00Z'));
+        checkEq('floating search: across Home\'s repeated hour, limit 1 keeps the class at 01:10', ['Sample tide class'], $titles('tide', 1, '2027-06-01T00:00:00Z'));
+        checkEq('floating search: and limit 2 gives the talk after it', ['Sample tide class', 'Sample tide talk'], $titles('tide', 2, '2027-06-01T00:00:00Z'));
+    });
+
+    scenario('floating people: the next event is the first by its start as shown on its own date', function () use ($nextOf): void {
+        checkEq('floating people: in January from Tokyo, the April tour', '2027-04-10T00:30:00+00:00', $nextOf('Asia/Tokyo', 'Rowan Example', '2027-01-10T12:00:00Z'));
+        checkEq('floating people: across Home\'s repeated hour, the class at 01:10 Tokyo time', '2027-11-06T16:10:00+00:00', $nextOf('Asia/Tokyo', 'Sage Example', '2027-06-01T00:00:00Z'));
+    });
+
+    // A series stands in search for an occurrence whose own fields match:
+    // a generated one has the series', an edited day its own. Daily at 09:00
+    // at Home from 1 Jun 2027, each with its 2 Jun edited.
+    $from('America/Los_Angeles');
+    $june = static function (string $title, array $more, array $edit) use ($ev, $u, $cal): void {
+        $id = (int) $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => $title, 'allDay' => false, 'tzid' => 'America/Los_Angeles',
+            'rrule' => 'FREQ=DAILY;COUNT=10', 'start' => '2027-06-01T09:00:00-07:00', 'end' => '2027-06-01T10:00:00-07:00'] + $more))['eventId'];
+        $ev->patch($u, $id, $ev->fromViewer($u, $id, ['scope' => 'this', 'instanceStart' => '2027-06-02T16:00:00Z'] + $edit));
+    };
+    $june('Sample dentist checkup', [], ['title' => 'Sample holiday']);
+    $june('Sample piano lesson', ['description' => 'Bring the etude book'], ['description' => 'Recital rehearsal instead']);
+    $june('Sample yoga session', ['tagNames' => ['Sampletagalpha']], ['tagNames' => ['Sampletagbeta']]);
+    $june('Sample tutoring', ['personNames' => ['Avery Example']], ['personIds' => [], 'personNames' => ['Kit Placeholder']]);
+    // 01:00 at Home on 2 Jun, that day's 09:00 ahead; 13:00, it is over.
+    $before = '2027-06-02T08:00:00Z';
+    $after = '2027-06-02T20:00:00Z';
+    $day = static fn(string $d): array => [["2027-06-{$d}T09:00:00-07:00", "2027-06-{$d}T10:00:00-07:00"]];
+
+    scenario('search series: an edited day that no longer matches is passed over for the next that does', function () use ($found, $before, $after, $day): void {
+        checkEq('search series: "dentist" is next on 3 Jun, not the renamed 2 Jun', $day('03'), $found('America/Los_Angeles', 'dentist', 'upcoming', $before));
+        checkEq('search series: "holiday" finds the renamed day', $day('02'), $found('America/Los_Angeles', 'holiday', 'upcoming', $before));
+        checkEq('search series: "dentist" in Past is 1 Jun, not the renamed day just over', $day('01'), $found('America/Los_Angeles', 'dentist', 'past', $after));
+        checkEq('search series: "holiday" in Past is the renamed day', $day('02'), $found('America/Los_Angeles', 'holiday', 'past', $after));
+    });
+
+    scenario('search series: an edited description, tag or person matches on the day\'s own', function () use ($found, $before, $day): void {
+        checkEq('search series: the series\' description is next on 3 Jun', $day('03'), $found('America/Los_Angeles', 'etude', 'upcoming', $before));
+        checkEq('search series: the edited day\'s description finds 2 Jun', $day('02'), $found('America/Los_Angeles', 'recital', 'upcoming', $before));
+        checkEq('search series: the series\' tag is next on 3 Jun', $day('03'), $found('America/Los_Angeles', '#sampletagalpha', 'upcoming', $before));
+        checkEq('search series: the edited day\'s tag finds 2 Jun', $day('02'), $found('America/Los_Angeles', '#sampletagbeta', 'upcoming', $before));
+        checkEq('search series: the series\' person is next on 3 Jun', $day('03'), $found('America/Los_Angeles', '@avery', 'upcoming', $before));
+        checkEq('search series: the edited day\'s person finds 2 Jun', $day('02'), $found('America/Los_Angeles', '@kit', 'upcoming', $before));
+    });
+
     scenario('floating: without a device zone, a floating event reads on the Home clock', function () use ($ev, $u, $walkId): void {
         $ev->viewFrom(null);
         $one = $ev->serializeSingle($ev->get($u, $walkId));

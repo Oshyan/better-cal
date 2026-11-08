@@ -129,7 +129,8 @@ final class People
      * (UTC): the soonest start at or after now among their undeleted
      * events. A one-off is compared on its own clock (Floating::nowByZone,
      * as search compares it), the soonest kept per person and zone, then
-     * shown (Floating::span). A series counts its occurrences as search
+     * shown (Floating::span); a floating one near now or near that soonest
+     * by its zone's slack is settled by its exact start as shown. A series counts its occurrences as search
      * reads them (Search::occurrencesAfter with the edited days
      * Recurrence::editedDays loads): a generated occurrence for the people
      * of the series, an edited day for its own people, once, at its own
@@ -141,27 +142,66 @@ final class People
     {
         $nowSql = Time::toDb($now);
         $clocks = Floating::nowByZone($this->db, $userId, $nowSql, $viewer);
-        [$rowNowSql, $rowNowParams] = Floating::nowOnRowSql($clocks, $nowSql, 'e.');
         $out = [];
         $keep = static function (int $pid, \DateTimeImmutable $at) use (&$out): void {
             if (!isset($out[$pid]) || $at < $out[$pid]) {
                 $out[$pid] = $at;
             }
         };
-        // One-offs: the soonest per person and own clock, a clock's order
-        // being the stored order. Edited days count with their series.
+        // One-offs: the soonest per person and own clock. Edited days count
+        // with their series. On an exact clock (every pinned row, a
+        // floating one in a zone whose offsets agree with the viewer's)
+        // the stored order is the order shown. A floating zone with slack
+        // (Floating::nowByZone) is compared widened by it, and its rows
+        // from there to the slack past the first one that has surely not
+        // started (to its widened now, when none has) are read and settled
+        // by their exact starts as shown: a row later than that shows after it.
+        [$lowSql, $lowParams] = Floating::nowOnRowSql($clocks, $nowSql, 'e.', -1);
+        [$highSql, $highParams] = Floating::nowOnRowSql($clocks, $nowSql, 'e.', 1);
+        $settle = [];
         foreach ($this->db->all(
-            "SELECT ep.person_id, e.floating, e.all_day, e.tzid, MIN(e.start_utc) AS start_utc
+            "SELECT ep.person_id, e.floating, e.all_day, e.tzid, MIN(e.start_utc) AS start_utc,
+                    MIN(CASE WHEN e.start_utc >= $highSql THEN e.start_utc END) AS sure
              FROM event_people ep
              JOIN people p ON p.id = ep.person_id
              JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
              WHERE p.user_id = ? AND (e.rrule IS NULL OR e.rrule = '') AND e.recurrence_parent_id IS NULL
-               AND e.start_utc >= $rowNowSql
+               AND e.start_utc >= $lowSql
              GROUP BY ep.person_id, e.floating, e.all_day, e.tzid",
-            [$userId, ...$rowNowParams]
+            [...$highParams, $userId, ...$lowParams]
         ) as $r) {
+            $clock = Floating::is($r) ? ($clocks[(string) $r['tzid']] ?? null) : null;
+            if ($clock !== null && $clock['slack'] > 0) {
+                $at = Time::fromDb($clock['at']);
+                $to = $r['sure'] !== null ? Time::fromDb((string) $r['sure']) : $at;
+                $settle[] = [(int) $r['person_id'], (string) $r['tzid'], Time::toDb($at->modify('-' . $clock['slack'] . ' seconds')), Time::toDb($to->modify('+' . $clock['slack'] . ' seconds'))];
+                continue;
+            }
             $start = Time::fromDb((string) $r['start_utc']);
             $keep((int) $r['person_id'], Floating::span($r, $start, $start, $viewer)[0]);
+        }
+        foreach (array_chunk($settle, 100) as $chunk) {
+            $or = [];
+            $params = [$userId];
+            foreach ($chunk as [$pid, $tzid, $from, $to]) {
+                $or[] = '(ep.person_id = ? AND e.tzid = ? AND e.start_utc >= ? AND e.start_utc < ?)';
+                array_push($params, $pid, $tzid, $from, $to);
+            }
+            foreach ($this->db->all(
+                "SELECT ep.person_id, e.floating, e.all_day, e.tzid, e.start_utc
+                 FROM event_people ep
+                 JOIN people p ON p.id = ep.person_id
+                 JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
+                 WHERE p.user_id = ? AND (e.rrule IS NULL OR e.rrule = '') AND e.recurrence_parent_id IS NULL
+                   AND e.floating = 1 AND e.all_day = 0 AND (" . implode(' OR ', $or) . ')',
+                $params
+            ) as $r) {
+                $start = Time::fromDb((string) $r['start_utc']);
+                $shown = Floating::span($r, $start, $start, $viewer)[0];
+                if ($shown >= $now) {
+                    $keep((int) $r['person_id'], $shown);
+                }
+            }
         }
 
         // Series: who each series row (the series' or an edited day's) is

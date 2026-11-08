@@ -196,6 +196,105 @@ return static function (Db $db): void {
         $db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode(['tz' => 'America/Los_Angeles', 'hereTz' => 'Asia/Tokyo']), $u]);
     });
 
+    // The reminder scan reads a floating series through the window's path
+    // (Recurrence::expand with the viewer), its clock where the device was last seen (Tokyo here).
+    $scan = static function (string $now, int $eventId) use ($db, $u): array {
+        $rc = new \ReflectionClass(Reminders::class);
+        $rm = $rc->newInstanceWithoutConstructor();
+        foreach (['db' => $db, 'recurrence' => new Recurrence()] as $k => $v) {
+            $rc->getProperty($k)->setValue($rm, $v);
+        }
+        $rc->getProperty('health')->setValue($rm, new \BetterCal\Domain\SystemHealth($db));
+        return array_values(array_filter(
+            $rc->getMethod('dueForUser')->invoke($rm, $u, new \DateTimeImmutable($now)),
+            static fn(array $x): bool => str_starts_with($x['key'], $eventId . ':')
+        ));
+    };
+
+    scenario('floating: a reminder of a series is on the rule\'s clock, not the day Home skips it', function () use ($ev, $u, $cal, $from, $scan): void {
+        // 02:30 every day at Home; Home skips 02:00 to 03:00 on 14 Mar 2027, Tokyo does not.
+        $from('America/Los_Angeles');
+        $kiln = $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample night feed', 'allDay' => false, 'floating' => true,
+            'rrule' => 'FREQ=DAILY;COUNT=30', 'start' => '2027-03-01T02:30:00-08:00', 'end' => '2027-03-01T02:45:00-08:00', 'reminders' => [['minutes' => 10]]]));
+        // 02:20 in Tokyo on 14 Mar is 17:20 UTC on 13 Mar.
+        $due = $scan('2027-03-13T17:20:30Z', (int) $kiln['eventId']);
+        checkEq('floating: due at 02:20 Tokyo time on the day Home skips 02:30', 1, count($due));
+        check('floating: and it reads 2:30 AM', str_contains((string) ($due[0]['payload']['body'] ?? ''), '2:30 AM'), (string) ($due[0]['payload']['body'] ?? ''));
+    });
+
+    scenario('floating: the reminder scan reaches a frequent series in its window, as a pinned one does', function () use ($ev, $u, $cal, $from, $scan): void {
+        $from('America/Los_Angeles');
+        $make = static fn(bool $floats): int => (int) $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample stretch break', 'allDay' => false, 'floating' => $floats,
+            'rrule' => 'FREQ=MINUTELY;INTERVAL=3', 'start' => '2027-05-01T08:00:00-07:00', 'end' => '2027-05-01T08:01:00-07:00', 'reminders' => [['minutes' => 1]]]))['eventId'];
+        $floating = $make(true);
+        $pinned = $make(false);
+        $now = '2027-05-04T03:00:30Z';
+        $f = count($scan($now, $floating));
+        check('floating: a floating series every three minutes has a reminder due', $f >= 1, "$f due");
+        checkEq('floating: as many as its pinned twin', count($scan($now, $pinned)), $f);
+    });
+
+    // Search (F8): over, upcoming, ordered and given a next or latest date on
+    // the device's clock, before the limit, as the controller asks it.
+    $search = new \BetterCal\Domain\Search($db, new \BetterCal\Domain\Labels($db));
+    $found = static function (string $zone, string $q, string $when, string $now) use ($ev, $u, $search): array {
+        $ev->viewFrom($zone);
+        $rows = $search->search($u, $q, 50, true, ['when' => $when, 'now' => new \DateTimeImmutable($now), 'viewer' => $ev->viewerZone($u)]);
+        return array_map(static fn(array $o): array => [$o['start'], $o['end']], $ev->serializeRows($rows));
+    };
+    $from('America/Los_Angeles');
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample pottery appointment', 'allDay' => false, 'floating' => true,
+        'start' => '2027-01-10T09:00:00-08:00', 'end' => '2027-01-10T10:00:00-08:00']));
+
+    scenario('floating search: over in Tokyo, east of Home, while it is still ahead at Home', function () use ($found, $search, $ev, $u): void {
+        // 12:00 UTC: 21:00 in Tokyo, after its 09:00 to 10:00 there; 04:00 at Home, before it.
+        checkEq('floating search: Upcoming does not list it', [], $found('Asia/Tokyo', 'pottery', 'upcoming', '2027-01-10T12:00:00Z'));
+        checkEq('floating search: Past does, at 09:00 Tokyo time', [['2027-01-10T09:00:00+09:00', '2027-01-10T10:00:00+09:00']], $found('Asia/Tokyo', 'pottery', 'past', '2027-01-10T12:00:00Z'));
+        checkEq('floating search: the past count agrees', 1, $search->countPast($u, 'pottery', ['now' => new \DateTimeImmutable('2027-01-10T12:00:00Z'), 'viewer' => $ev->viewerZone($u)]));
+    });
+
+    scenario('floating search: ahead in Honolulu, west of Home, while it is over at Home', function () use ($found): void {
+        // 18:30 UTC: 08:30 in Honolulu, before its 09:00 there; 10:30 at Home, after it.
+        checkEq('floating search: Upcoming lists it at 09:00 Honolulu time', [['2027-01-10T09:00:00-10:00', '2027-01-10T10:00:00-10:00']], $found('Pacific/Honolulu', 'pottery', 'upcoming', '2027-01-10T18:30:00Z'));
+        checkEq('floating search: Past does not', [], $found('Pacific/Honolulu', 'pottery', 'past', '2027-01-10T18:30:00Z'));
+    });
+
+    $from('America/Los_Angeles');
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample glazing class', 'allDay' => false, 'floating' => true,
+        'rrule' => 'FREQ=DAILY;COUNT=60', 'start' => '2027-01-01T09:00:00-08:00', 'end' => '2027-01-01T10:00:00-08:00']));
+    $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample night feed for kilns', 'allDay' => false, 'floating' => true,
+        'rrule' => 'FREQ=DAILY;COUNT=30', 'start' => '2027-03-01T02:30:00-08:00', 'end' => '2027-03-01T02:45:00-08:00']));
+
+    scenario('floating search: a series\' next and latest dates are the viewer\'s', function () use ($found): void {
+        // 01:30 UTC on 12 Jan: 10:30 in Tokyo, 12 Jan's class there just over; 17:30 on 11 Jan at Home, 11 Jan's over and 12 Jan's ahead.
+        checkEq('floating search: the next is 13 Jan in Tokyo', [['2027-01-13T09:00:00+09:00', '2027-01-13T10:00:00+09:00']], $found('Asia/Tokyo', 'glazing', 'upcoming', '2027-01-12T01:30:00Z'));
+        checkEq('floating search: the latest is 12 Jan in Tokyo', [['2027-01-12T09:00:00+09:00', '2027-01-12T10:00:00+09:00']], $found('Asia/Tokyo', 'glazing', 'past', '2027-01-12T01:30:00Z'));
+        // A minute before it starts in Tokyo, 12 Jan's is still the next.
+        checkEq('floating search: a minute before, 12 Jan\'s is next', [['2027-01-12T09:00:00+09:00', '2027-01-12T10:00:00+09:00']], $found('Asia/Tokyo', 'glazing', 'upcoming', '2027-01-11T23:59:00Z'));
+        // The next date on the day Home skips 02:30 is 02:30 in Tokyo, which has it.
+        checkEq('floating search: on the day Home skips the clock, the next is at 02:30 in Tokyo', [['2027-03-14T02:30:00+09:00', '2027-03-14T02:45:00+09:00']], $found('Asia/Tokyo', 'kilns', 'upcoming', '2027-03-13T17:00:00Z'));
+    });
+
+    scenario('floating search: the route reads the device clock the request names', function () use ($ev, $u, $cal, $db, $from, $search): void {
+        // Two hours ahead at Home, so about fifteen hours over in Tokyo, whatever the date.
+        $home = new \DateTimeZone('America/Los_Angeles');
+        $ahead = (new \DateTimeImmutable('now', $home))->modify('+2 hours');
+        $start = $ahead->setTime((int) $ahead->format('G'), 0);
+        $from('America/Los_Angeles');
+        $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => 'Sample trellis repair', 'allDay' => false, 'floating' => true,
+            'start' => $start->format(DATE_ATOM), 'end' => $start->modify('+1 hour')->format(DATE_ATOM)]));
+        $route = new \BetterCal\Http\Controllers\SearchController($search, $ev, new \BetterCal\Domain\Filters($db, new \BetterCal\Domain\Undo($db), new \BetterCal\Infra\JobQueue($db)), new \BetterCal\Domain\Labels($db));
+        $ask = static function (string $zone, string $when) use ($ev, $u, $route): array {
+            $ev->viewFrom($zone);
+            $req = new \BetterCal\Http\Request('GET', '/search', ['q' => 'trellis', 'when' => $when]);
+            $req->user = ['id' => $u];
+            return json_decode($route->search($req)->body, true);
+        };
+        checkEq('floating search route: from Tokyo, not upcoming', [], $ask('Asia/Tokyo', 'upcoming')['results']);
+        checkEq('floating search route: from Tokyo, past, and counted so', [1, 1], [count($ask('Asia/Tokyo', 'past')['results']), $ask('Asia/Tokyo', 'upcoming')['pastCount'] ?? null]);
+        checkEq('floating search route: from Home, upcoming', 1, count($ask('America/Los_Angeles', 'upcoming')['results']));
+    });
+
     scenario('floating: without a device zone, a floating event reads on the Home clock', function () use ($ev, $u, $walkId): void {
         $ev->viewFrom(null);
         $one = $ev->serializeSingle($ev->get($u, $walkId));

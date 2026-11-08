@@ -183,9 +183,7 @@ final class Recurrence
      * that moved into the window from an out-of-window instance are appended.
      *
      * With $viewer, a floating series (Floating) shows on the viewer's
-     * clock: it is expanded over the window widened by every zone's offset,
-     * each occurrence moved to the viewer's clock, and what lands outside
-     * the window dropped. instanceUtc stays the stored key.
+     * clock (expandShown). instanceUtc stays the stored key.
      *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides rows with recurrence_instance_utc
@@ -201,15 +199,7 @@ final class Recurrence
     ): array
     {
         if ($viewer !== null && Floating::is($master)) {
-            [$wideStart, $wideEnd] = Floating::widened($winStart, $winEnd);
-            $shown = [];
-            foreach ($this->expand($master, $overrides, $wideStart, $wideEnd, $budget) as $occ) {
-                [$s, $e] = Floating::span($occ['row'], $occ['start'], $occ['end'], $viewer);
-                if ($s < $winEnd && $e > $winStart) {
-                    $shown[] = ['start' => $s, 'end' => $e] + $occ;
-                }
-            }
-            return $shown;
+            return $this->expandShown($master, $overrides, $winStart, $winEnd, $budget, $viewer);
         }
         $result = [];
         $consumed = [];
@@ -275,7 +265,7 @@ final class Recurrence
                     }
                     continue;
                 }
-                $result[] = ['row' => $master, 'start' => $inst['start'], 'end' => $inst['end'], 'instanceUtc' => $instanceUtc];
+                $result[] = ['row' => $master, 'start' => $inst['start'], 'end' => $inst['end'], 'instanceUtc' => $instanceUtc, 'wall' => $inst['wall'] ?? null];
             }
         }
 
@@ -294,6 +284,71 @@ final class Recurrence
         }
 
         return $result;
+    }
+
+    /**
+     * A floating series' occurrences on the viewer's clock, those that show
+     * in [winStart, winEnd). The window is moved to the series' own clock
+     * (Floating::storedWindow, the viewer's bounds read as wall clocks
+     * there), the series expanded over that, and each occurrence placed by
+     * Floating: a generated one at the wall clock the rule generated it from
+     * (Floating::occurrence), an edited day at its own clock (Floating::span).
+     * What lands outside the window is dropped. The cap is spent on the
+     * window: where the series was cut short before any occurrence reached
+     * the window (the moved window's edges, where a zone changes its
+     * offset, can hold more than the cap of a minutely or secondly rule),
+     * the expansion goes on from past the last one read, so the window is
+     * never empty for having been cut short; cut short only after one past
+     * the window's end, it is not cut short.
+     *
+     * @return list<array{row:array,start:\DateTimeImmutable,end:\DateTimeImmutable,instanceUtc:string}>
+     */
+    private function expandShown(
+        array $master,
+        array $overrides,
+        \DateTimeImmutable $winStart,
+        \DateTimeImmutable $winEnd,
+        ?ExpansionBudget $budget,
+        \DateTimeZone $viewer,
+    ): array
+    {
+        $own = Time::zone((string) ($master['tzid'] ?? 'UTC'));
+        [$from, $to] = Floating::storedWindow($winStart, $winEnd, $own, $viewer);
+        $id = (int) ($master['id'] ?? 0);
+        $wasCapped = isset($this->capped[$id]);
+        $shown = [];
+        for (;;) {
+            unset($this->capped[$id]);
+            $last = null;
+            $past = false;
+            foreach ($this->expand($master, $overrides, $from, $to, $budget) as $occ) {
+                if (($occ['row']['id'] ?? null) === ($master['id'] ?? null)) {
+                    $last = max($last ?? $occ['start'], $occ['start']);
+                    [$s, $e] = Floating::occurrence($occ['start'], $occ['end'], $occ['wall'] ?? null, $own, $viewer);
+                    $past = $past || $s >= $winEnd;
+                } else {
+                    [$s, $e] = Floating::span($occ['row'], $occ['start'], $occ['end'], $viewer);
+                }
+                if ($s < $winEnd && $e > $winStart) {
+                    $shown[$occ['instanceUtc']] = ['start' => $s, 'end' => $e] + $occ;
+                }
+            }
+            // Cut short after an occurrence past the window's end (the
+            // moved window's far edge) leaves nothing of the window out.
+            $cutShort = isset($this->capped[$id]) && !$past;
+            // Read on from the occurrence after the last one read: one
+            // overlaps $from when it ends after it (occurrences()).
+            $next = $last?->modify('+' . self::durationSeconds($master) . ' seconds');
+            if (!$cutShort || $shown !== [] || $next === null || $next <= $from || $next >= $to) {
+                break;
+            }
+            $from = $next;
+        }
+        unset($this->capped[$id]);
+        if ($wasCapped || $cutShort) {
+            $this->capped[$id] = true;
+        }
+        return array_values($shown);
     }
 
     /** Validate an RRULE string; throws HttpError(invalid_rrule) on failure. Returns normalized form. */
@@ -558,7 +613,10 @@ final class Recurrence
      * Series\RuleNotReadable and a walk that can't be completed
      * Series\WalkIncomplete; neither is ever a shorter series.
      *
-     * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
+     * Each carries the wall clock it was generated from (RuleIterator::wall),
+     * which a floating series shows at on a viewer's clock (Floating).
+     *
+     * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable,wall:?int}>
      */
     public static function occurrences(
         array $master,
@@ -580,7 +638,7 @@ final class Recurrence
                 break;
             }
             if ($at + $length > $from->getTimestamp()) {
-                $out[] = ['start' => new \DateTimeImmutable('@' . $at), 'end' => new \DateTimeImmutable('@' . ($at + $length))];
+                $out[] = ['start' => new \DateTimeImmutable('@' . $at), 'end' => new \DateTimeImmutable('@' . ($at + $length)), 'wall' => $it->wall()];
             }
             $budget?->checkpoint();
             $it->next();

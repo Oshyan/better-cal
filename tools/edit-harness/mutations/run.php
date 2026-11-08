@@ -110,7 +110,10 @@ try {
     // Every case the harness mutations name, unmutated: clean. A failure here
     // is a finding about the tree, named; each mutation is then judged by the
     // failures it adds to these, record by record.
-    $cases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => $m['cases'] ?? [], $selected ?: [['cases' => []]]))));
+    // An interleaving mutation (`interleave: true`) runs its cases in that mode (cases/interleave/), judged the same way.
+    $modeArgs = static fn(array $m): array => !empty($m['interleave']) ? ['--interleave'] : [];
+    $cases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => empty($m['interleave']) ? ($m['cases'] ?? []) : [], $selected ?: [['cases' => []]]))));
+    $icases = array_values(array_unique(array_merge(...array_map(static fn(array $m): array => !empty($m['interleave']) ? ($m['cases'] ?? []) : [], $selected ?: [['cases' => []]]))));
     $sig = static fn(array $r): string => ($r['spec']['fixed'] ?? (string) $r['n']) . '|' . json_encode([$r['invariant'], $r['what'], $r['detail']]);
     $baseline = [];
     if ($cases !== []) {
@@ -120,6 +123,15 @@ try {
             $baseline[$sig($rec)] = true;
         }
         echo ($clean ? 'ok  ' : 'FAIL') . "  baseline: the mutations' " . count($cases) . " fixed cases pass unmutated" . ($clean ? '' : ': ' . json_encode($base['byCase'])) . "\n";
+        $failed += $clean ? 0 : 1;
+    }
+    if ($icases !== []) {
+        $base = $harness(null, ['--interleave', '--cases', '0', '--fixed=' . implode(',', $icases)]);
+        $clean = $base['byCase'] === [];
+        foreach ($base['records'] as $rec) {
+            $baseline[$sig($rec)] = true;
+        }
+        echo ($clean ? 'ok  ' : 'FAIL') . "  baseline: the interleaving mutations' " . count($icases) . " fixed cases pass unmutated" . ($clean ? '' : ': ' . json_encode($base['byCase'])) . "\n";
         $failed += $clean ? 0 : 1;
     }
     // Each database test a mutation names, unmutated: it must run to the end with no failure, and its failures, if any,
@@ -162,7 +174,7 @@ try {
             $failed += $ok ? 0 : 1;
             continue;
         }
-        $r = $harness($copy, ['--cases', '0', '--fixed=' . implode(',', $m['cases'])]);
+        $r = $harness($copy, array_merge($modeArgs($m), ['--cases', '0', '--fixed=' . implode(',', $m['cases'])]));
         $tripped = [];
         $others = [];
         foreach ($r['records'] as $rec) {

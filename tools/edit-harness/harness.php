@@ -24,6 +24,12 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
     exit;
 }
 
+// --interleave is a mode of its own (README, Interleaving): its command line is interleave-cli.php.
+if (in_array('--interleave', $argv, true)) {
+    require __DIR__ . '/interleave-cli.php';
+    exit(0);
+}
+
 $opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'product:', 'google']);
 if (isset($opts['help'])) {
     echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]\n";

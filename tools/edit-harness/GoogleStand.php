@@ -37,6 +37,7 @@ final class GoogleStand
         public readonly GoogleWriter $writer,
         public readonly GoogleSync $sync,
         public readonly Events $events,
+        public readonly \stdClass $knobs,
     ) {
     }
 
@@ -74,9 +75,39 @@ final class GoogleStand
         $inner = $fake->writerTransport();
         // HARNESS_GOOGLE_TRACE=1 prints every request to the stand-in on stderr.
         $trace = getenv('HARNESS_GOOGLE_TRACE') !== false;
-        $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace): array {
+        // Failures injected into the app's writes (the interleaving mode, Interleave.php): the write numbered beforeAt
+        // is refused before Google takes it (a 403), loseAt is taken and its answer lost, fatalAt is taken and an Error unwinds the
+        // process's transaction (as the recovery tests' knobs do). Writes counts the app's writes, taken those the
+        // stand-in took. All null by default, so every other mode sends as before.
+        $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'fired' => null];
+        $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace, $knobs): array {
+            $n = null;
+            if ($method !== 'GET') {
+                $n = ++$knobs->writes;
+                if ($knobs->beforeAt === $n) {
+                    // Refused before Google took it: a 4xx answer, which tells the app nothing was written (series-model.md,
+                    // Recovery: "a refusal (any 4xx, a 412 among them) removes it"). A transport error before sending
+                    // would be a lost answer to the app, which can't tell the two apart.
+                    $knobs->beforeAt = null;
+                    $knobs->fired = 'before';
+                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'Rate Limit Exceeded', 'errors' => [['reason' => 'rateLimitExceeded']]]])];
+                }
+            }
             // The writer sends its bearer token among the headers, as to Google.
             $answer = $inner($method, $url, $payload, $headers);
+            if ($n !== null) {
+                $knobs->taken++;
+                if ($knobs->fatalAt === $n) {
+                    $knobs->fatalAt = null;
+                    $knobs->fired = 'fatal';
+                    throw new \Error('sample fatal error after the stand-in took the write');
+                }
+                if ($knobs->loseAt === $n) {
+                    $knobs->loseAt = null;
+                    $knobs->fired = 'lost';
+                    throw new \RuntimeException('HTTP error for the stand-in: the answer was lost');
+                }
+            }
             if ($trace) {
                 fwrite(STDERR, "google: $method " . rawurldecode(basename((string) parse_url($url, PHP_URL_PATH))) . ' ' . json_encode($payload, JSON_UNESCAPED_SLASHES) . ' -> ' . $answer['status'] . ' ' . mb_substr((string) $answer['body'], 0, 300) . "\n");
             }
@@ -91,7 +122,7 @@ final class GoogleStand
         $calendarId = (int) $db->insert('calendars', ['user_id' => $userId, 'name' => 'Sample Google calendar', 'color' => '#336699', 'kind' => 'subscribed', 'provider' => 'google',
             'google_account_id' => $account, 'google_calendar_id' => self::CALENDAR, 'google_access_role' => 'owner', 'subscription_authority' => 'owner',
             'position' => \BetterCal\Domain\Order::endOfList($db, $userId), 'role' => 'mine']);
-        return new self($db, $fake, $calendarId, $writer, $sync, $events);
+        return new self($db, $fake, $calendarId, $writer, $sync, $events, $knobs);
     }
 
     /** The stand-in's occurrences of a master: the harness's own evaluator over the resource read as a row, 730 at most. @return list<\DateTimeImmutable> */

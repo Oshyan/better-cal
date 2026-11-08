@@ -413,6 +413,7 @@ return static function (Db $db): void {
         $day = BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 3, 29), (int) gmdate('Y'));
         checkEq('the Activity entry and the notice say what Google kept, in words naming the day', [true, 'Sample weekly', ["Google kept 'Sample weekly, renamed' on $day; the plan had 'Sample weekly, special'."]],
             [str_contains((string) ($entry['summary'] ?? ''), 'Google kept something else'), $notice['title'] ?? null, $lines]);
-        checkEq('the row here shows what Google stores, not the plan', 'Sample weekly, renamed', $db->scalar('SELECT title FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl1weekly_20270329T170000Z']));
+        // Google holds the day at the series' own values, so here it is an ordinary occurrence again: no row, not the plan's.
+        checkEq('the rows here show what Google stores, not the plan: the day has no row of its own', null, $db->scalar('SELECT title FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl1weekly_20270329T170000Z']));
     });
 };

@@ -578,7 +578,7 @@ trait Invariants
                 $last = $o;
             }
         }
-        if ($last === null || $after['row']['deleted_at'] !== null) {
+        if ($last === null || $after['row'] === [] || $after['row']['deleted_at'] !== null) {
             return;
         }
         $u = Shape::parts((string) $after['row']['rrule'])['UNTIL'] ?? null;
@@ -1393,7 +1393,8 @@ trait Invariants
     private function checkDeleteFollowing(array $before, array $after, array $acted, bool $first): void
     {
         if ($first) {
-            $this->check('7-following', $after['row']['deleted_at'] !== null, 'from the first day the whole series is deleted', []);
+            // Deleted: the row marked so, or gone (a Google calendar's rows are what Google lists, and a removed series is not listed).
+            $this->check('7-following', $after['row'] === [] || $after['row']['deleted_at'] !== null, 'from the first day the whole series is deleted', []);
             $this->check('7-following', $after['overrides'] === [], 'its edited days go with it', ['left' => count($after['overrides'])]);
             return;
         }

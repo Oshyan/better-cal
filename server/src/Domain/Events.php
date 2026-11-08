@@ -476,6 +476,8 @@ final class Events
         $instanceId = null;
         $undo = null; // what to send back (GoogleUndo)
         $occurrence = null;
+        $made = null; // the occurrence as this edit leaves it, when it has no row yet
+        $googleFields = [];
         if ($existing !== null) {
             [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
             self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
@@ -508,17 +510,55 @@ final class Events
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
             $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
             $undo = [$instanceId, $shown, null];
+            $made = $override;
         }
-        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $userId, $localFields, $in): bool {
+        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $master, $instanceUtc, $occurrence, $made, $userId, $googleFields, $localFields, $in): bool {
+            if ($existing !== null) {
+                $rowId = (int) $existing['id'];
+                // The row as this edit leaves it, written before Google's
+                // answer is stored: the sync reads a field it finds unchanged
+                // as keeping its ownership (Rows from Elsewhere), so a value
+                // the person set to the series' own stays the day's own, and
+                // a day left with nothing of its own goes back to the series.
+                $fields = $googleFields + $localFields;
+                if ($this->ownFieldsColumn()) {
+                    $after = array_merge($existing, $fields);
+                    $fields['override_fields'] = $this->ownAfterThis($after, $master, self::changedOwnFields($existing, $after, $in));
+                }
+                if ($fields !== []) {
+                    $this->db->update('events', $fields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
+                }
+            }
             if ($resp !== null) {
                 $this->google()->apply($calendar, [$resp]);
             }
             if ($existing !== null) {
-                $rowId = (int) $existing['id'];
+                if ($this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) === null) {
+                    return true; // an ordinary occurrence again: the sync took the row
+                }
             } else {
                 $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
-                if ($created === null) {
+                if ($created === null && $resp === null) {
                     return false; // what Google answered is still kept
+                }
+                if ($created === null) {
+                    // Google's answer equals the series on that day (what
+                    // changed is local: tags, people, reminders, attendance),
+                    // so the sync stores no row for it (Feeds::sync, an
+                    // ordinary occurrence). The day's row is this writer's,
+                    // under Google's identity for the occurrence and as the
+                    // sync would have made it (a Google calendar's rows are
+                    // Google's: a cancelled day takes it, as a poll's does).
+                    $created = $this->withOwnColumn(array_merge($made, [
+                        'recurrence_parent_id' => $masterId,
+                        'recurrence_instance_utc' => $instanceUtc,
+                        'google_event_id' => (string) ($resp['id'] ?? $instanceId),
+                        'google_etag' => is_string($resp['etag'] ?? null) && $resp['etag'] !== '' ? $resp['etag'] : null,
+                        'source' => 'feed',
+                        'created_via' => 'feed',
+                        'override_fields' => null,
+                    ]));
+                    $created['id'] = (int) $this->db->insert('events', $created);
                 }
                 $rowId = (int) $created['id'];
                 // Same event on one day: it starts with the series' tags and people, and its trip flag (a series column).
@@ -580,19 +620,34 @@ final class Events
         // What the row has of its own goes with it, and comes back with an
         // undo: an event's in the entry's details, a series' as its rows'
         // snapshot, with the series as it was to send back (GoogleSeries).
-        $series = !empty($event['rrule']);
-        $undo = $series ? null : GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
-            $event['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($event)]);
-        $befores = $series ? [GoogleSeries::stateOf($event, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $event['id']]))] : [];
-        $beforeTables = $series ? $this->googleSeriesTables($calendar, [(string) $event['uid']]) : [];
-        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
-        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
-        if ($series) {
-            $this->googleSeriesJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id'], $befores, $beforeTables,
-                $this->googleSeriesTables($calendar, [(string) $event['uid']]));
+        $summary = "Deleted '" . (string) $event['title'] . "'";
+        if (!empty($event['rrule'])) {
+            // A series goes through GoogleSeries as its removal target: the
+            // master cancelled, then every record of it Google still lists
+            // live (Google lists a removed series' records with it), so no
+            // edited day outlives its series there or comes back by a poll.
+            $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $event['id']]);
+            $before = GoogleSeries::stateOf($event, $rows);
+            $beforeTables = $this->googleSeriesTables($calendar, [(string) $event['uid']]);
+            try {
+                $out = $this->googleSeries()->apply($userId, $calendar, [GoogleSeries::removalOf($before)], (string) $event['title'], $summary, (int) $event['id'], $this->googleBeforeSend($authority));
+            } catch (HttpError $e) {
+                $this->googleDeferred = $e;
+                return;
+            }
+            $this->googleCommit($authority, function () use ($calendar, $out): void {
+                $this->googleSeries()->store($calendar, $out['readbacks'], $out['targets']);
+                $this->googleSeries()->settle($out['pending']);
+            });
+            $this->googleAfter($userId, $calendar, (int) $event['id'], (string) $event['title'], $summary, $out['differences'],
+                [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $event['uid']])]);
             return;
         }
-        $this->googleJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id'], $undo);
+        $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
+            $event['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($event)]);
+        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
+        $this->googleJournal($userId, $summary, $calendar, (int) $event['id'], $undo);
     }
 
     private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void

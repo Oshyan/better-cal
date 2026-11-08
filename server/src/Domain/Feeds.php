@@ -232,6 +232,46 @@ final class Feeds
     }
 
     /**
+     * The event columns a parsed VEVENT (Ics::parse's shape, which Google's
+     * sync and CalDAV produce too) writes, with $parentId as an edited
+     * day's master. The one mapping from the parsed shape to a row, for the
+     * sync and for a writer that makes a row the sync would have (an edited
+     * day of a Google series that holds only local things). Pure.
+     */
+    public static function columnsOf(array $ev, ?int $parentId): array
+    {
+        $columns = [
+            'title' => $ev['title'],
+            // Cleaned on the way in like every other source (#58):
+            // only allowlisted HTML is ever stored.
+            'description' => Sanitize::description($ev['description']),
+            'location' => $ev['location'],
+            'url' => $ev['url'],
+            'start_utc' => $ev['start_utc'],
+            'end_utc' => $ev['end_utc'],
+            'all_day' => $ev['all_day'],
+            'tzid' => $ev['tzid'],
+            'rrule' => $ev['rrule'],
+            'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
+            'status' => $ev['status'],
+            'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
+            'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null ? $parentId : null,
+        ];
+        if (array_key_exists('google_event_id', $ev)) {
+            $columns['google_event_id'] = $ev['google_event_id'];
+        }
+        // A feed's time with no zone floats (#167). Google's rows carry
+        // no flag, so a Google sync keeps the one set here.
+        if (array_key_exists('floating', $ev)) {
+            $columns['floating'] = (int) $ev['floating'];
+        }
+        if (array_key_exists('invite_json', $ev)) {
+            $columns['invite_json'] = $ev['invite_json'];
+        }
+        return $columns;
+    }
+
+    /**
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
@@ -293,11 +333,16 @@ final class Feeds
         foreach ($parsed as $pm) {
             if ($pm['recurrence_instance_utc'] === null) {
                 $parsedMasters[(string) $pm['uid']] = ['title' => $pm['title'], 'description' => Sanitize::description($pm['description']), 'location' => $pm['location'],
-                    'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status']];
+                    'url' => $pm['url'], 'start_utc' => $pm['start_utc'], 'end_utc' => $pm['end_utc'], 'all_day' => $pm['all_day'], 'tzid' => $pm['tzid'], 'status' => $pm['status'],
+                    'invite_json' => $pm['invite_json'] ?? null];
             }
         }
+        // Edited days the feed carries that are ordinary occurrences here
+        // (nothing of their own; below), by key: not stored, and a row one
+        // had goes with the rows the feed no longer carries.
+        $plain = [];
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$plain, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -311,36 +356,7 @@ final class Feeds
                 // reminders_json is deliberately not synced: reminders on feed
                 // events are user-local (like tags), and feed VALARMs must not
                 // overwrite them on every poll.
-                $columns = [
-                    'title' => $ev['title'],
-                    // Cleaned on the way in like every other source (#58):
-                    // only allowlisted HTML is ever stored.
-                    'description' => Sanitize::description($ev['description']),
-                    'location' => $ev['location'],
-                    'url' => $ev['url'],
-                    'start_utc' => $ev['start_utc'],
-                    'end_utc' => $ev['end_utc'],
-                    'all_day' => $ev['all_day'],
-                    'tzid' => $ev['tzid'],
-                    'rrule' => $ev['rrule'],
-                    'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
-                    'status' => $ev['status'],
-                    'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
-                    'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null
-                        ? ($masterIdByUid[(string) $ev['uid']] ?? null)
-                        : null,
-                ];
-                if (array_key_exists('google_event_id', $ev)) {
-                    $columns['google_event_id'] = $ev['google_event_id'];
-                }
-                // A feed's time with no zone floats (#167). Google's rows carry
-                // no flag, so a Google sync keeps the one set here.
-                if (array_key_exists('floating', $ev)) {
-                    $columns['floating'] = (int) $ev['floating'];
-                }
-                if (array_key_exists('invite_json', $ev)) {
-                    $columns['invite_json'] = $ev['invite_json'];
-                }
+                $columns = self::columnsOf($ev, $ev['recurrence_instance_utc'] !== null ? ($masterIdByUid[(string) $ev['uid']] ?? null) : null);
                 // Google's etag (GoogleSync::toParsed) is kept, not compared:
                 // every write to a series changes every row's etag (probe,
                 // group 5), and a new etag alone is no change to the event.
@@ -351,6 +367,21 @@ final class Feeds
                 if ($ownColumn && $feedMaster !== null) {
                     $own = \BetterCal\Domain\Series\OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
                     $columns['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode($own);
+                    // An edited day with nothing of its own is an ordinary
+                    // occurrence again (series-model.md, Own Fields), from
+                    // elsewhere as from a writer here: a record equal to its
+                    // series at its occurrence, with no field of its own, no
+                    // guest list of its own and nothing here that refers to
+                    // it, is no row. Google keeps one for every day a write
+                    // touched (a day put back to the series' values, a
+                    // skipped day brought back), so the rule is what keeps
+                    // those from becoming edited days here.
+                    $ownInvite = ($columns['invite_json'] ?? null) !== null && !self::sameValue('invite_json', $feedMaster['invite_json'] ?? null, $columns['invite_json']);
+                    if ($own === [] && !$ownInvite
+                        && ($current === null || \BetterCal\Domain\Series\OwnFields::references($this->db, [(int) $current['id']]) === [])) {
+                        $plain[$key] = true;
+                        continue;
+                    }
                 }
                 if ($current === null) {
                     $id = $this->db->insert('events', $columns + ($etag !== null ? ['google_etag' => $etag] : []) + [
@@ -432,7 +463,7 @@ final class Feeds
                 if (($removeIndex++ & 127) === 0) {
                     self::assertSyncDeadline($deadline);
                 }
-                if ($unknownSkipped || isset($protected[$row['uid']]) || isset($seen[$key])) {
+                if ($unknownSkipped || isset($protected[$row['uid']]) || (isset($seen[$key]) && !isset($plain[$key]))) {
                     continue;
                 }
                 if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {

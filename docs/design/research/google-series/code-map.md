@@ -51,7 +51,7 @@ Fetch:
 
 Shape (`GS::toParsed` GS:321-413), per resource:
 - Key: `uid` = `iCalUID` (or `id`), `recurrence_instance_utc` = `originalStartTime` as UTC (GS:330-341). The key used everywhere is `uid|instance` (GS:540-543, F:258).
-- Kept: `google_event_id` = the resource `id` (GS:345-347, GS:406), title, description, location, url (`source.url` else `htmlLink`, GS:386-389), start/end, all_day, tzid (from `start.timeZone`, else UTC), rrule, EXDATEs (GS:365-376, GS:653-681), status (confirmed or tentative), and `invite_json` only when `attendees` is present (GS:407-412).
+- Kept: `google_event_id` = the resource `id` (GS:345-347, GS:406), title, description, location, url (`source.url` alone; Google's `htmlLink` is its own page for the event, not stored, since 1.5.4), start/end, all_day, tzid (from `start.timeZone`, else UTC), rrule, EXDATEs (GS:365-376, GS:653-681), status (confirmed or tentative), and `invite_json` only when `attendees` is present (GS:407-412).
 - Dropped: `etag`, `updated`, `sequence`, `recurringEventId`, `iCalUID` vs `id` distinction beyond the uid, `originalStartTime.timeZone`, attendees beyond the invite block, reminders (`reminders => []`).
 - Cancelled: a resource with `status: cancelled` becomes a tombstone `{cancelled, uid, recurrence_instance_utc}` (GS:342-344).
 

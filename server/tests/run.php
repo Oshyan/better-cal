@@ -11791,7 +11791,7 @@ use BetterCal\Infra\Secrets;
     checkEq('google->parsed: timed end in UTC', '2026-09-21 20:00:00', $timed['end_utc']);
     checkEq('google->parsed: tzid from the event', 'Europe/Lisbon', $timed['tzid']);
     checkEq('google->parsed: not all-day', 0, $timed['all_day']);
-    checkEq('google->parsed: event link becomes the url', 'https://www.google.com/calendar/event?eid=abc', $timed['url']);
+    checkEq('google->parsed: Google\'s page for the event is not its link', null, $timed['url']);
     checkEq('google->parsed: no instance for a plain event', null, $timed['recurrence_instance_utc']);
 
     $allDay = GoogleSync::toParsed([
@@ -11887,6 +11887,33 @@ use BetterCal\Infra\Secrets;
     checkEq('merge: cancelled instance became an EXDATE on the series', ['2026-09-28 08:00:00', '2026-10-05 08:00:00', '2026-10-19 08:00:00'], $byUid['r1@google.com|']['exdates']);
     $gone = GoogleSync::applyChanges($merged, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null]]);
     check('merge: cancelling the series removes master and exception', count(array_filter($gone, static fn(array $e): bool => $e['uid'] === 'r1@google.com')) === 0);
+    // Google lists a removed series' records with it, live or not: none of them is a row without its series.
+    $ofSeries = static fn(array $list): int => count(array_filter($list, static fn(array $e): bool => $e['uid'] === 'r1@google.com'));
+    checkEq('merge: a record listed live beside its series\' cancellation makes no row', 0,
+        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception])));
+    checkEq('merge: a series listed live again after its cancellation is back with its record', 2,
+        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception, $series])));
+
+    // GoogleSeries: a link is a value like every other field Google holds, compared on the read-back, sent where it differs, cleared where the plan has none.
+    $gm = ['title' => 'Sample weekly', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00',
+        'all_day' => 0, 'tzid' => 'UTC', 'url' => 'https://example.test/series', 'rrule' => 'FREQ=WEEKLY'];
+    $cleared = BetterCal\Domain\GoogleSeries::masterBody($gm, ['url' => null] + $gm);
+    check('google series: a link removed from the series is cleared at Google (source null)', array_key_exists('source', $cleared) && $cleared['source'] === null);
+    $gItem = static fn(string $id, string $day, ?string $link, string $title = 'Sample weekly'): array => [
+        'id' => $id, 'iCalUID' => 'smpl1@google.com', 'summary' => $title, 'status' => 'confirmed', 'etag' => '"1"',
+        'start' => ['dateTime' => "{$day}T18:00:00+00:00", 'timeZone' => 'UTC'], 'end' => ['dateTime' => "{$day}T19:00:00+00:00", 'timeZone' => 'UTC'],
+    ] + ($link === null ? [] : ['source' => ['url' => $link, 'title' => 'example.test']])
+      + ($id === 'smpl1' ? ['recurrence' => ['RRULE:FREQ=WEEKLY']] : ['recurringEventId' => 'smpl1', 'originalStartTime' => ['dateTime' => "{$day}T18:00:00+00:00", 'timeZone' => 'UTC']]);
+    $inherits = ['own' => [], 'rowId' => 7] + ['start_utc' => '2027-03-08 18:00:00', 'end_utc' => '2027-03-08 19:00:00'] + $gm;
+    $gTarget = ['googleId' => 'smpl1', 'master' => $gm, 'exceptions' => ['2027-03-08 18:00:00' => $inherits], 'skips' => []];
+    $stale = BetterCal\Domain\GoogleSeries::stepsFor($gTarget, [$gItem('smpl1', '2027-03-01', 'https://example.test/series'), $gItem('smpl1_20270308T180000Z', '2027-03-08', 'https://example.test/old')]);
+    checkEq('google series: a record holding the series\' old link is sent again with the one it inherits', [['exception', 'smpl1_20270308T180000Z', 'https://example.test/series']],
+        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['source']['url'] ?? null], $stale));
+    checkEq('google series: a record holding the link the plan has is left alone', [],
+        BetterCal\Domain\GoogleSeries::stepsFor($gTarget, [$gItem('smpl1', '2027-03-01', 'https://example.test/series'), $gItem('smpl1_20270308T180000Z', '2027-03-08', 'https://example.test/series')]));
+    $plain = BetterCal\Domain\GoogleSeries::stepsFor(['exceptions' => []] + $gTarget, [$gItem('smpl1', '2027-03-01', 'https://example.test/series'), $gItem('smpl1_20270308T180000Z', '2027-03-08', null, 'Sample weekly, once')]);
+    checkEq('google series: a record the plan has no edited day for is put back to the series\' values, its link included', [['plain', 'smpl1_20270308T180000Z', 'Sample weekly', 'https://example.test/series']],
+        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['summary'] ?? null, $s[2]['source']['url'] ?? null], $plain));
     $atGoogleCap = GoogleSync::applyChanges([$timed], [array_merge($timed, ['title' => 'Updated'])], 1);
     checkEq('merge budget: an update at the exact snapshot cap remains allowed', 'Updated', $atGoogleCap[0]['title']);
     $googleMergeRejected = false;

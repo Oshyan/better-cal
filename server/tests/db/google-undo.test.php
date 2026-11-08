@@ -255,8 +255,9 @@ return static function (Db $db): void {
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
         $patch = $t->google->calls[0] ?? [];
-        checkEq('one PATCH of the instance with the recorded etag, then the series\' etags read back; the occurrence has its title again', [
-            ['PATCH', 'probe1a2b3c_20270308T180000Z', $g['etagAfter']], 'GET', 'Sample standup', 1,
+        // Back at the series' own values, the day is an ordinary occurrence again, as before the edit: Google's record for it makes no row.
+        checkEq('one PATCH of the instance with the recorded etag, then the series\' etags read back; the occurrence is an ordinary day again, no row', [
+            ['PATCH', 'probe1a2b3c_20270308T180000Z', $g['etagAfter']], 'GET', null, 1,
         ], [[$patch[0] ?? null, $patch[1] ?? null, $patch[3] ?? null], $t->google->calls[1][0] ?? null, $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null, $undone((int) $entry['id'])]);
 
         // This occurrence deleted, then undone: back live, no longer skipped.
@@ -266,8 +267,8 @@ return static function (Db $db): void {
         $gone = [$row($t, 'probe1a2b3c_20270308T180000Z'), $exdates()];
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $deleted['id']);
-        checkEq('the delete is a skip; its undo reads the instance, sends {status: confirmed} to it, and the day is back', [
-            [null, ['2027-03-08 18:00:00']], ['GET', 'PATCH'], ['status' => 'confirmed'], [], 'Sample standup',
+        checkEq('the delete is a skip; its undo reads the instance, sends {status: confirmed} to it, and the day is back as an ordinary occurrence', [
+            [null, ['2027-03-08 18:00:00']], ['GET', 'PATCH'], ['status' => 'confirmed'], [], null,
         ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 2), $t->google->calls[1][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
     });
 };

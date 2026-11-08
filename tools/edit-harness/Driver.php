@@ -126,6 +126,12 @@ final class Driver
         $id = $this->createSeries($spec['series']);
         // A rule or start the harness wrote straight into the row goes to the stand-in too, as if Google had it so.
         $this->google?->adopt($this->row($id));
+        if ($this->google !== null && in_array(Shape::parts((string) $spec['series']['rrule'])['FREQ'] ?? '', ['HOURLY', 'MINUTELY', 'SECONDLY'], true)) {
+            // Google refuses a rule under a day (400 "Invalid recurrence rule", probe group 1), so no such series exists
+            // on a Google calendar: the harness's adopt is the only way one gets there, and every edit of it is refused.
+            $this->na('a series several times a day: Google refuses a rule under a day (HOURLY and finer, probe group 1)');
+            return $this->result('none');
+        }
         Prof::mark('state');
         $st = $this->state($id);
         $this->checkSeries('g-created', $st);
@@ -249,6 +255,13 @@ final class Driver
         $this->checkTripRule('b-trip');
         if ($sent === null) {
             return $this->result($path); // refused, checked
+        }
+        if ($this->google !== null && $this->pastGoogleListing($id, $sent['_plan'] ?? null)) {
+            // Google lists the first 730 occurrences of a series with no end and no more (probe 7.3), so a day the plan
+            // keeps past them has no instance id there: the product leaves it as Google has it and names the difference
+            // (GoogleSeries), and the rows here are Google's. The plan's checks don't apply to that day.
+            $this->na('an edited or skipped day past the 730th occurrence Google lists of a series with no end (probe 7.3): left as Google has it, named as a difference');
+            return $this->result($path);
         }
         Prof::mark('state');
         $after = $this->state($id);
@@ -1157,6 +1170,30 @@ final class Driver
             return null;
         }
         return ['kind' => $scope, 'instanceStart' => $inst, '_plan' => $plan, '_choices' => $choices];
+    }
+
+    /**
+     * Whether the plan keeps an edited or skipped day keyed past the last occurrence the stand-in lists for the
+     * series as it now is at Google, when that listing is Google's cap of 730 (an unbounded series; probe 7.3).
+     */
+    private function pastGoogleListing(int $id, ?array $plan): bool
+    {
+        $row = $this->row($id);
+        $master = $this->google->fake->events[(string) ($row['google_event_id'] ?? '')] ?? null;
+        if ($plan === null || $master === null || ($master['status'] ?? '') === 'cancelled' || empty($master['recurrence'])) {
+            return false;
+        }
+        $occ = GoogleStand::expand($master);
+        if (count($occ) < 730) {
+            return false;
+        }
+        $last = end($occ)->getTimestamp();
+        foreach ($plan['days'] ?? [] as $d) {
+            if (isset($d['newKey']) && in_array($d['outcome'] ?? '', ['stays', 'moves'], true) && Clock::parse((string) $d['newKey'])->getTimestamp() > $last) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

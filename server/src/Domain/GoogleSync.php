@@ -398,10 +398,13 @@ final class GoogleSync
         $title = trim((string) ($item['summary'] ?? ''));
         $description = isset($item['description']) ? (string) $item['description'] : null;
         // The event's own link when it has one (GoogleWriter sends it as
-        // `source`), else Google's page for the event.
+        // `source`), else none: Google's page for the event (htmlLink) is
+        // not the event's link, and stored as one it would travel back to
+        // Google as the link and sit on every edited day as a value of its
+        // own (#172).
         $link = isset($item['source']['url']) && preg_match('#^https?://#i', (string) $item['source']['url']) === 1
             ? (string) $item['source']['url']
-            : (isset($item['htmlLink']) ? (string) $item['htmlLink'] : null);
+            : null;
         $url = Ics::webUrl($link);
 
         return [
@@ -509,6 +512,10 @@ final class GoogleSync
         $live = [];
         $droppedKeys = [];
         $changedMasters = [];
+        // Series the changes cancel whole: a record of one listed live in
+        // the same list (Google lists a removed series' records with it, and
+        // what it does with them is its own) makes no row without its series.
+        $removed = [];
         foreach ($changes as $index => $ev) {
             if (($index & 127) === 0) {
                 self::assertWithinDeadline($deadline);
@@ -521,6 +528,7 @@ final class GoogleSync
                         unset($byKey[$key]);
                     }
                     unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid]);
+                    $removed[$uid] = true;
                 } elseif (!empty($ev['dropped'])) {
                     // A dropped exception record: its row goes unless a live
                     // row in this list takes the key; the day is no skip.
@@ -540,10 +548,17 @@ final class GoogleSync
             $keysByUid[$uid][$key] = true;
             if ($instance === null) {
                 $changedMasters[$uid] = true;
+                unset($removed[$uid]);
             } else {
                 unset($skipped[$uid][$instance]);
                 $live[$uid][$instance] = true;
             }
+        }
+        foreach (array_keys($removed) as $uid) {
+            foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
+                unset($byKey[$key]);
+            }
+            unset($keysByUid[$uid], $skipped[$uid], $live[$uid]);
         }
         foreach ($droppedKeys as $uid => $keys) {
             foreach ($keys as $key => $instance) {

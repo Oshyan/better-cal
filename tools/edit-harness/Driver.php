@@ -1174,22 +1174,41 @@ final class Driver
 
     /**
      * Whether the plan keeps an edited or skipped day keyed past the last occurrence the stand-in lists for the
-     * series as it now is at Google, when that listing is Google's cap of 730 (an unbounded series; probe 7.3).
+     * series it is in at Google as it now is, when that listing is Google's cap of 730 (an unbounded series; probe 7.3).
+     * Every series the edit leaves counts: the one edited and any it made (a split's new series, dense where the old
+     * one was not), a day being in the last of them to start at or before it.
      */
     private function pastGoogleListing(int $id, ?array $plan): bool
     {
-        $row = $this->row($id);
-        $master = $this->google->fake->events[(string) ($row['google_event_id'] ?? '')] ?? null;
-        if ($plan === null || $master === null || ($master['status'] ?? '') === 'cancelled' || empty($master['recurrence'])) {
+        if ($plan === null) {
             return false;
         }
-        $occ = GoogleStand::expand($master);
-        if (count($occ) < 730) {
-            return false;
+        $series = [];
+        $masters = $this->db->all('SELECT google_event_id FROM events WHERE user_id = ? AND id >= ? AND calendar_id = ? AND rrule IS NOT NULL AND recurrence_parent_id IS NULL AND deleted_at IS NULL ORDER BY id',
+            [$this->userId, min($id, $this->firstId), $this->calendarId]);
+        foreach ($masters as $m) {
+            $master = $this->google->fake->events[(string) ($m['google_event_id'] ?? '')] ?? null;
+            if ($master === null || ($master['status'] ?? '') === 'cancelled' || empty($master['recurrence'])) {
+                continue;
+            }
+            $occ = GoogleStand::expand($master);
+            if ($occ !== []) {
+                $series[] = [$occ[0]->getTimestamp(), count($occ) >= 730 ? end($occ)->getTimestamp() : null];
+            }
         }
-        $last = end($occ)->getTimestamp();
+        usort($series, static fn(array $a, array $b): int => $a[0] <=> $b[0]);
         foreach ($plan['days'] ?? [] as $d) {
-            if (isset($d['newKey']) && in_array($d['outcome'] ?? '', ['stays', 'moves'], true) && Clock::parse((string) $d['newKey'])->getTimestamp() > $last) {
+            if (!isset($d['newKey']) || !in_array($d['outcome'] ?? '', ['stays', 'moves'], true)) {
+                continue;
+            }
+            $at = Clock::parse((string) $d['newKey'])->getTimestamp();
+            $in = null;
+            foreach ($series as $s) {
+                if ($s[0] <= $at) {
+                    $in = $s;
+                }
+            }
+            if ($in !== null && $in[1] !== null && $at > $in[1]) {
                 return true;
             }
         }

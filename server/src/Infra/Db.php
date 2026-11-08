@@ -57,8 +57,69 @@ final class Db
         $this->checked[$identity] = true;
     }
 
+    /** The connection of journal(), opened when first asked for. */
+    private ?self $journal = null;
+
+    /** @var list<\Closure(bool):void> what runs once the transaction open now ends (whenTxEnds) */
+    private array $onEnd = [];
+
     public function __construct(private readonly array $cfg)
     {
+    }
+
+    /**
+     * A connection of its own for a record that has to outlive whatever the
+     * transaction open here does: GoogleSeries' recovery journal, written
+     * before a request to Google and after its answer, while the account's
+     * transaction that wraps the edit is still open (and may roll back, or
+     * the process stop). Same credentials, autocommit: each statement on it
+     * is committed when it returns. Its writes check no foreign keys: the
+     * account's row is locked by the transaction here (Undo::write), and an
+     * insert naming it would wait on that lock, from the same process, for
+     * as long as the lock wait allows. What it writes names an account this
+     * connection's transaction has just read and locked. On SQLite (the unit
+     * tests) it is this connection: an in-memory database is per connection,
+     * and a file has one writer at a time.
+     */
+    public function journal(): self
+    {
+        if ($this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'mysql') {
+            return $this;
+        }
+        if ($this->journal === null) {
+            $journal = new self($this->cfg);
+            $journal->pdo()->exec('SET SESSION foreign_key_checks = 0');
+            $this->journal = $journal;
+        }
+        return $this->journal;
+    }
+
+    /**
+     * $fn(true) once the transaction open now commits, $fn(false) once it
+     * rolls back; with none open, $fn(true) now. A journal settled by what
+     * the transaction saves (GoogleSeries::settle) goes when it commits.
+     * Each runs after the transaction is over, once; one that fails is
+     * logged, and the rest still run.
+     */
+    public function whenTxEnds(callable $fn): void
+    {
+        if (!$this->pdo()->inTransaction()) {
+            $fn(true);
+            return;
+        }
+        $this->onEnd[] = \Closure::fromCallable($fn);
+    }
+
+    private function txEnded(bool $committed): void
+    {
+        [$hooks, $this->onEnd] = [$this->onEnd, []];
+        foreach ($hooks as $fn) {
+            try {
+                $fn($committed);
+            } catch (\Throwable $e) {
+                error_log('db: after a transaction ' . ($committed ? 'committed' : 'rolled back') . ': ' . $e->getMessage());
+            }
+        }
     }
 
     public function pdo(): \PDO
@@ -178,13 +239,15 @@ final class Db
         try {
             $result = $fn();
             $pdo->commit();
-            return $result;
         } catch (\Throwable $e) {
             $pdo->rollBack();
-            throw $e;
-        } finally {
             $this->txSerial++;
+            $this->txEnded(false);
+            throw $e;
         }
+        $this->txSerial++;
+        $this->txEnded(true);
+        return $result;
     }
 
     /**

@@ -40,15 +40,26 @@ use BetterCal\Support\Time;
  * and a Review notice.
  *
  * Recovery: a transaction can't span the requests, so a pending row
- * (google_pending, migration 068) records the targets, the series as they
- * were (every exception's complete state) and each step done with the etag
- * it left, before the first request. Every step is safe to retry: an
- * insert carries an id the app chose (a 409 on retry means it landed), and
- * every other step follows from a fresh read-back. A failure mid-way
- * stops, stores what Google has, and leaves the row for Review ("Half done
- * at Google"): Finish runs the same targets from Google's state, Put back
- * runs the befores, each series only while its etag is the one its last
- * step left.
+ * (google_pending, migrations 068 and 070) records the targets, the series
+ * as they were (every exception's complete state), the rows here as they
+ * were with what hangs off them (tags, people, trip links: the shape Undo
+ * keeps), and each step: written as sent before its request and as done,
+ * with the etag it left, after its answer. The row is written on a
+ * connection of its own (Db::journal), so it is committed before the first
+ * request whatever the account's transaction does after: a failure of any
+ * kind, a lost connection or a stopped process leaves it. It goes only once
+ * the edit here has committed (settle); a transaction that rolls back
+ * leaves it for Review, unless nothing was sent. Every step is safe to
+ * retry: an insert carries an id the app chose (a 409 on retry means it
+ * landed), and every other step follows from a fresh read-back. A failure
+ * mid-way stops, stores what Google has, and leaves the row for Review
+ * ("Half done at Google"): Finish runs the same targets from Google's
+ * state, Put back runs the befores, each series only while its etag is the
+ * one its last step left, or one left by a step whose answer was lost when
+ * the read-back shows what that step sent. A row still marked running whose
+ * run holds no lock (a process that stopped) is half done too. Either way
+ * the rows a recovery brings back take their ids, tags, people and links
+ * from the snapshot (reattach).
  *
  * Undo (GoogleUndo, kind series) calls the same function with the befores
  * apply() returned as the targets, each conditional on its series' etag as
@@ -59,12 +70,29 @@ final class GoogleSeries
 {
     public const STATUS_RUNNING = 'running';
     public const STATUS_HALF = 'half';
+    /** A step written before its request: it may or may not have reached Google (its answer never came). */
+    private const SENT = 'sent';
+    /** A step Google answered. */
+    private const DONE = 'done';
+    /** What Review says of a change that stopped with no error to name (the process stopped, or the edit here was not saved). */
+    public const STOPPED_WORDS = 'It stopped before the change was saved here.';
+    /**
+     * The columns a sync writes on a row (Feeds::columnsOf, the etag and own
+     * list, and its identity): a row a recovery brings back takes these from
+     * what Google holds, the rest (reminders, the trip flag, an icon) from
+     * the snapshot.
+     */
+    private const SYNCED = ['user_id', 'calendar_id', 'uid', 'source', 'title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule',
+        'exdates_json', 'status', 'recurrence_instance_utc', 'recurrence_parent_id', 'google_event_id', 'google_etag', 'invite_json', 'override_fields', 'deleted_at'];
     public const HALF_WORDS = 'Part of this change reached Google. Review lists it as half done at Google, with Finish and Put back.';
     /** Read-backs of a write not yet showing it, with backoff (seconds); never a wait for correctness. */
     private const READBACK_TRIES = 4;
     private const BACKOFF = [0.3, 0.6, 1.2];
     private const PAGES = 4;
     private const FIELDS = ['title', 'description', 'location', 'status', 'start_utc', 'end_utc', 'all_day'];
+
+    /** @var array<int,true> pending rows whose change the transaction open now saves (settle) */
+    private array $settled = [];
 
     public function __construct(
         private readonly Db $db,
@@ -215,7 +243,7 @@ final class GoogleSeries
         foreach ($targets as $i => $t) {
             $befores[$i] = $this->beforeOf($calendar, $t);
         }
-        $pendingId = (int) $this->db->insert('google_pending', [
+        $pendingId = $this->journaled(fn(Db $j): int => $j->insert('google_pending', [
             'user_id' => $userId,
             'calendar_id' => (int) $calendar['id'],
             'event_id' => $eventId,
@@ -224,12 +252,151 @@ final class GoogleSeries
             'status' => self::STATUS_RUNNING,
             'targets_json' => json_encode($targets),
             'befores_json' => json_encode($befores),
+            'local_json' => json_encode($this->localOf($calendar, array_merge($targets, $befores))),
             'steps_json' => '[]',
             'created_at' => Time::nowDb(),
             'updated_at' => Time::nowDb(),
-        ]);
-        $steps = [];
-        return $this->run($calendar, $pendingId, $targets, $steps, $beforeSend) + ['befores' => array_values($befores)];
+        ]));
+        $this->open($pendingId, true);
+        return $this->run($calendar, $pendingId, $targets, [], $beforeSend) + ['befores' => array_values($befores)];
+    }
+
+    /**
+     * The rows here a change's series are made of, with what hangs off them
+     * (Undo::linksOf: tags, people, trip links, duplicate decisions, plugin
+     * data): every live row of each series' uid, and every row a target
+     * names (an edited day moving to another series, a day kept outside).
+     * What a recovery puts back on the rows it brings back (reattach).
+     *
+     * @param list<array> $targets
+     * @return array<string,list<array>>
+     */
+    private function localOf(array $calendar, array $targets): array
+    {
+        $uids = [];
+        $ids = [];
+        foreach ($targets as $t) {
+            $master = empty($t['insert']) ? $this->masterRow($calendar, $t) : null;
+            if ($master !== null) {
+                $uids[] = (string) $master['uid'];
+            }
+            foreach ($t['exceptions'] ?? [] as $x) {
+                if (!empty($x['rowId'])) {
+                    $ids[] = (int) $x['rowId'];
+                }
+            }
+            foreach ($t['singles'] ?? [] as $single) {
+                if (!empty($single['rowId'])) {
+                    $ids[] = (int) $single['rowId'];
+                }
+            }
+        }
+        $rows = [];
+        $uids = array_values(array_unique($uids));
+        if ($uids !== []) {
+            [$in, $params] = Db::in($uids);
+            foreach ($this->db->all("SELECT * FROM events WHERE calendar_id = ? AND uid IN $in AND deleted_at IS NULL", array_merge([(int) $calendar['id']], $params)) as $r) {
+                $rows[(int) $r['id']] = $r;
+            }
+        }
+        $ids = array_values(array_diff(array_unique($ids), array_keys($rows)));
+        if ($ids !== []) {
+            [$in, $params] = Db::in($ids);
+            foreach ($this->db->all("SELECT * FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $rows[(int) $r['id']] = $r;
+            }
+        }
+        ksort($rows);
+        return ['events' => array_values($rows)] + Undo::linksOf($this->db, array_keys($rows));
+    }
+
+    // ---- the journal ----------------------------------------------------------
+
+    /**
+     * $fn on the journal's connection (Db::journal), as the server's own
+     * record of its work at Google rather than a change made under the
+     * request's credential (RequestAuthority::asServer, as a job queue's
+     * state is): written whatever the account's transaction does.
+     */
+    private function journaled(callable $fn): mixed
+    {
+        return RequestAuthority::asServer(fn(): mixed => $fn($this->db->journal()));
+    }
+
+    /** The lock a run holds on its pending row, on the journal's connection: free once the run ends or its process stops. */
+    private static function lockName(Db $db, int $pendingId): string
+    {
+        static $names = null;
+        $names ??= new \WeakMap();
+        $names[$db] ??= substr(sha1((string) $db->journal()->scalar('SELECT DATABASE()')), 0, 24);
+        return 'bc_google_pending_' . $names[$db] . '_' . $pendingId;
+    }
+
+    private static function mysql(Db $db): bool
+    {
+        return $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql';
+    }
+
+    /**
+     * A run of a pending row begins: its lock taken (false when another run
+     * holds it), and, inside a transaction, its end decided by how that
+     * transaction ends (ended). $created: the row was made for this run.
+     */
+    private function open(int $pendingId, bool $created): bool
+    {
+        if (self::mysql($this->db) && (int) $this->db->journal()->scalar('SELECT GET_LOCK(?, 0)', [self::lockName($this->db, $pendingId)]) !== 1) {
+            return false;
+        }
+        if ($this->db->pdo()->inTransaction()) {
+            $this->db->whenTxEnds(fn(bool $committed) => $this->ended($pendingId, $committed, $created));
+        }
+        return true;
+    }
+
+    /**
+     * A run of a pending row is over. Its change saved here (settle, then a
+     * commit): the row goes. A transaction rolled back with nothing sent to
+     * Google, on a row made for it: the row goes too, as nothing happened.
+     * Anything else (the edit here not saved, a step sent): the row stays,
+     * half done, for Review. The lock goes either way.
+     */
+    private function ended(int $pendingId, bool $committed, bool $created): void
+    {
+        $settled = isset($this->settled[$pendingId]);
+        unset($this->settled[$pendingId]);
+        try {
+            $this->journaled(function (Db $j) use ($pendingId, $committed, $created, $settled): void {
+                $steps = json_decode((string) $j->scalar('SELECT steps_json FROM google_pending WHERE id = ?', [$pendingId]), true) ?: [];
+                if (($committed && $settled) || (!$committed && $created && $steps === [])) {
+                    $j->run('DELETE FROM google_pending WHERE id = ?', [$pendingId]);
+                    return;
+                }
+                $j->run('UPDATE google_pending SET status = ?, error = COALESCE(error, ?), updated_at = ? WHERE id = ? AND status = ?',
+                    [self::STATUS_HALF, self::STOPPED_WORDS, Time::nowDb(), $pendingId, self::STATUS_RUNNING]);
+            });
+        } finally {
+            if (self::mysql($this->db)) {
+                $this->db->journal()->scalar('SELECT RELEASE_LOCK(?)', [self::lockName($this->db, $pendingId)]);
+            }
+        }
+    }
+
+    /** A run made outside any transaction, over: what a transaction's end does, now (inside one, its end does it). */
+    private function endUnlessTx(int $pendingId, bool $committed, bool $created = false): void
+    {
+        if (!$this->db->pdo()->inTransaction()) {
+            $this->ended($pendingId, $committed, $created);
+        }
+    }
+
+    /** A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them). */
+    private static function refused(HttpError $e): bool
+    {
+        if ($e->errorCode === 'google_conflict') {
+            return true;
+        }
+        $status = (int) ($e->extra['googleStatus'] ?? 0);
+        return $status >= 400 && $status < 500;
     }
 
     /** A series' removal: the target that cancels it at Google (a series inserted, or one not here). Pure. */
@@ -266,10 +433,10 @@ final class GoogleSeries
         return $targets;
     }
 
-    /** How many steps a pending change has done (0: nothing reached Google). */
+    /** How many steps of a pending change may have reached Google, answered or not (0: nothing did). */
     public function stepsDone(int $pendingId): int
     {
-        return count(json_decode((string) $this->db->scalar('SELECT steps_json FROM google_pending WHERE id = ?', [$pendingId]), true) ?: []);
+        return count($this->journaled(fn(Db $j): array => json_decode((string) $j->scalar('SELECT steps_json FROM google_pending WHERE id = ?', [$pendingId]), true) ?: []));
     }
 
     /**
@@ -314,9 +481,10 @@ final class GoogleSeries
 
     /**
      * @param list<array> $targets
-     * @param list<array> $steps done so far (a retry)
+     * @param list<array> $steps the pending row's steps so far (a retry, or a Put back after the change's)
+     * @param bool $back the steps are a Put back's (the befores), told apart from the change's own
      */
-    private function run(array $calendar, int $pendingId, array $targets, array $steps, ?\Closure $beforeSend): array
+    private function run(array $calendar, int $pendingId, array $targets, array $steps, ?\Closure $beforeSend, bool $back = false): array
     {
         $readbacks = [];
         $differences = [];
@@ -324,33 +492,53 @@ final class GoogleSeries
         $thisYear = (int) Time::nowUtc()->format('Y');
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $save = function () use ($pendingId, &$steps): void {
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['steps_json' => json_encode(array_values($steps)), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+        };
         try {
             foreach ($targets as $i => $t) {
-                $record = function (string $kind, string $id, ?string $etag) use ($pendingId, &$steps, $i): void {
-                    $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'etag' => $etag, 'at' => Time::nowDb()];
-                    $this->db->update('google_pending', ['steps_json' => json_encode($steps), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]);
+                // One write to Google, in the journal as sent before it goes
+                // and as done, with the etag it left, once answered. A
+                // refusal (Google answered and wrote nothing) leaves no step;
+                // no answer at all leaves it sent: it may have landed.
+                $step = function (string $kind, string $id, ?string $key, \Closure $write) use (&$steps, $save, $i, $back): mixed {
+                    $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'key' => $key, 'etag' => null, 'state' => self::SENT, 'back' => $back, 'at' => Time::nowDb()];
+                    $n = array_key_last($steps);
+                    $save();
+                    try {
+                        $resource = $write();
+                    } catch (HttpError $e) {
+                        if (self::refused($e)) {
+                            unset($steps[$n]);
+                            $steps = array_values($steps);
+                            $save();
+                        }
+                        throw $e;
+                    }
+                    $steps[$n]['state'] = self::DONE;
+                    $steps[$n]['etag'] = is_array($resource) && isset($resource['etag']) && is_string($resource['etag']) ? $resource['etag'] : null;
+                    $save();
+                    return $resource;
                 };
                 foreach ($t['singles'] ?? [] as $si => $s) {
                     $sid = (string) $s['id'];
                     if (!empty($s['remove'])) {
-                        if (!self::stepDone($steps, $i, 'single-remove', $sid)) {
-                            $this->cancel($send, $sid, $s['etag'] ?? null);
-                            $record('single-remove', $sid, null);
+                        if (!self::stepDone($steps, $i, 'single-remove', $sid, $back)) {
+                            $step('single-remove', $sid, null, fn() => $this->cancel($send, $sid, $s['etag'] ?? null));
                         }
                         continue;
                     }
-                    $resource = $this->insertChosen($send, $sid, GoogleWriter::body(self::rowOf($s['row'])));
+                    $body = GoogleWriter::body(self::rowOf($s['row']));
+                    $resource = self::stepDone($steps, $i, 'single', $sid, $back)
+                        ? $this->insertChosen($send, $sid, $body)
+                        : $step('single', $sid, null, fn() => $this->insertChosen($send, $sid, $body));
                     $inserted[$sid] = $resource;
                     $targets[$i]['singles'][$si]['uid'] = (string) ($resource['iCalUID'] ?? '');
-                    if (!self::stepDone($steps, $i, 'single', $sid)) {
-                        $record('single', $sid, $resource['etag'] ?? null);
-                    }
                     $readbacks[(string) ($resource['iCalUID'] ?? $sid)] = [$resource];
                 }
                 if (!empty($t['remove'])) {
-                    if (!self::stepDone($steps, $i, 'remove', (string) $t['googleId'])) {
-                        $this->cancel($send, (string) $t['googleId'], $t['etag'] ?? null);
-                        $record('remove', (string) $t['googleId'], null);
+                    if (!self::stepDone($steps, $i, 'remove', (string) $t['googleId'], $back)) {
+                        $step('remove', (string) $t['googleId'], null, fn() => $this->cancel($send, (string) $t['googleId'], $t['etag'] ?? null));
                     }
                     $uid = $t['uid'] ?? null;
                     $items = $this->readBack($calendar, $send, $uid, (string) $t['googleId'], null, $beforeSend);
@@ -359,8 +547,7 @@ final class GoogleSeries
                     // a series' records when its master goes.
                     $live = array_filter($items, static fn(array $item): bool => (string) ($item['recurringEventId'] ?? '') === (string) $t['googleId'] && (string) ($item['status'] ?? '') !== 'cancelled');
                     foreach ($live as $item) {
-                        $this->cancel($send, (string) $item['id'], null);
-                        $record('record-remove', (string) $item['id'], null);
+                        $step('record-remove', (string) $item['id'], null, fn() => $this->cancel($send, (string) $item['id'], null));
                     }
                     if ($live !== []) {
                         $items = $this->readBack($calendar, $send, $uid, (string) $t['googleId'], null, $beforeSend);
@@ -370,27 +557,26 @@ final class GoogleSeries
                 }
                 $chain = $t['etag'] ?? null;
                 if (!empty($t['insert'])) {
-                    $resource = $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master']));
+                    $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master'])));
                     $targets[$i]['uid'] = $t['uid'] = (string) ($resource['iCalUID'] ?? $t['googleId']);
                     $targets[$i]['insert'] = false;
                     $inserted[(string) $t['googleId']] = $resource;
                     $chain = $resource['etag'] ?? null;
-                    $record('insert', (string) $t['googleId'], $chain);
-                    $this->db->update('google_pending', ['targets_json' => json_encode($targets)], 'id = ?', [$pendingId]);
+                    $snapshot = $targets;
+                    $this->journaled(fn(Db $j) => $j->update('google_pending', ['targets_json' => json_encode($snapshot)], 'id = ?', [$pendingId]));
                 } else {
                     $before = $this->masterRow($calendar, $t);
                     $body = self::masterBody($before === null ? null : self::stateOf($before, [])['master'], $t['master']);
                     if ($body !== []) {
-                        $resource = $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain);
+                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain));
                         $chain = $resource['etag'] ?? $chain;
-                        $record('master', (string) $t['googleId'], $chain);
                     }
                 }
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 $chain = self::masterEtag($items, (string) $t['googleId']) ?? $chain;
-                foreach (self::stepsFor($t, $items) as [$kind, $id, $body]) {
+                foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
                     try {
-                        $resource = $send('PATCH', '/' . rawurlencode($id), $body, $chain);
+                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain));
                     } catch (HttpError $e) {
                         // Google lists no such instance (404): a day past the
                         // 730 occurrences an unbounded series expands to
@@ -402,14 +588,21 @@ final class GoogleSeries
                         throw $e;
                     }
                     $chain = $resource['etag'] ?? $chain;
-                    $record($kind, $id, $chain);
                 }
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 $readbacks[(string) $t['uid']] = $items;
                 $differences = array_merge($differences, self::differences($t, $items, $thisYear));
             }
-        } catch (HttpError | \RuntimeException $e) {
-            $this->db->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($e->getMessage(), 0, 2000), 'targets_json' => json_encode($targets), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]);
+        } catch (\Throwable $e) {
+            // Half done, in the journal before anything else is tried: a
+            // failure of any kind, whatever the transaction here does next.
+            $snapshot = $targets;
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($e->getMessage(), 0, 2000),
+                'targets_json' => json_encode($snapshot), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+            if (!$e instanceof HttpError && !$e instanceof \RuntimeException) {
+                $this->endUnlessTx($pendingId, false);
+                throw $e;
+            }
             // What Google has now is what the calendar shows: best effort,
             // the pending row says what happened either way.
             try {
@@ -424,6 +617,7 @@ final class GoogleSeries
                 }
             } catch (\Throwable) {
             }
+            $this->endUnlessTx($pendingId, true);
             $code = $e instanceof HttpError ? $e->errorCode : 'google_write_failed';
             $status = $e instanceof HttpError ? $e->status : 502;
             $message = $e instanceof HttpError ? $e->getMessage() : 'Google could not be reached: ' . $e->getMessage();
@@ -432,10 +626,19 @@ final class GoogleSeries
         return ['pending' => $pendingId, 'readbacks' => $readbacks, 'differences' => $differences, 'inserted' => $inserted, 'targets' => $targets];
     }
 
-    private static function stepDone(array $steps, int $series, string $kind, string $id): bool
+    /**
+     * Whether a step of this kind on this id is done in the run under way:
+     * the steps of the same side (the change's, or a Put back's) since the
+     * last one of the other side, answered.
+     */
+    private static function stepDone(array $steps, int $series, string $kind, string $id, bool $back = false): bool
     {
-        foreach ($steps as $s) {
-            if ((int) $s['series'] === $series && $s['kind'] === $kind && $s['id'] === $id) {
+        for ($n = count($steps) - 1; $n >= 0; $n--) {
+            $s = $steps[$n];
+            if (!empty($s['back']) !== $back) {
+                return false;
+            }
+            if ((int) $s['series'] === $series && $s['kind'] === $kind && $s['id'] === $id && ($s['state'] ?? self::DONE) === self::DONE) {
                 return true;
             }
         }
@@ -703,7 +906,7 @@ final class GoogleSeries
      * series' values at its occurrence (a day rejoining the series, or one
      * Google kept cancelled that the target shows).
      *
-     * @return list<array{0:string,1:string,2:array}> kind, instance id, body
+     * @return list<array{0:string,1:string,2:array,3:string}> kind, instance id, body, occurrence key
      */
     public static function stepsFor(array $t, array $items): array
     {
@@ -713,12 +916,12 @@ final class GoogleSeries
         foreach ($t['exceptions'] as $key => $x) {
             $record = $held['records'][$key] ?? null;
             if ($record === null || !self::sameEvent($record, $x)) {
-                $steps[] = ['exception', self::instanceId((string) $t['googleId'], (string) $key, $allDay), self::exceptionBody($x)];
+                $steps[] = ['exception', self::instanceId((string) $t['googleId'], (string) $key, $allDay), self::exceptionBody($x), (string) $key];
             }
         }
         foreach ($t['skips'] as $key) {
             if (!isset($held['skips'][$key])) {
-                $steps[] = ['skip', self::instanceId((string) $t['googleId'], (string) $key, $allDay), ['status' => 'cancelled']];
+                $steps[] = ['skip', self::instanceId((string) $t['googleId'], (string) $key, $allDay), ['status' => 'cancelled'], (string) $key];
             }
         }
         $skipSet = array_flip($t['skips']);
@@ -728,7 +931,7 @@ final class GoogleSeries
             if (isset($t['exceptions'][$key]) || isset($skipSet[$key])) {
                 continue;
             }
-            $steps[] = ['plain', self::instanceId((string) $t['googleId'], $key, $allDay), self::exceptionBody(self::plainAt($t['master'], $key, $len))];
+            $steps[] = ['plain', self::instanceId((string) $t['googleId'], $key, $allDay), self::exceptionBody(self::plainAt($t['master'], $key, $len)), $key];
         }
         return $steps;
     }
@@ -886,19 +1089,38 @@ final class GoogleSeries
         }
     }
 
-    /** The change completed: its pending row goes. */
+    /**
+     * The change is saved here: its pending row goes once the transaction
+     * saving it commits (a rollback leaves it half done, for Review), or now
+     * outside one.
+     */
     public function settle(int $pendingId): void
     {
-        $this->db->run('DELETE FROM google_pending WHERE id = ?', [$pendingId]);
+        $this->settled[$pendingId] = true;
+        $this->endUnlessTx($pendingId, true);
     }
 
     // ---- recovery -----------------------------------------------------------
 
-    /** The half-done changes of an account, newest first. @return list<array> */
-    public function halfDone(int $userId): array
+    /**
+     * The half-done changes of an account, newest first: those a run left
+     * half done, and those still marked running whose run holds no lock
+     * (its process stopped), read on the journal's connection (what the
+     * transaction here began before can't hide them).
+     *
+     * @return list<array>
+     */
+    public static function halfDoneOf(Db $db, int $userId): array
     {
         $out = [];
-        foreach ($this->db->all("SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status = 'half' ORDER BY p.id DESC", [$userId]) as $row) {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            'SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status IN (?, ?) ORDER BY p.id DESC',
+            [$userId, self::STATUS_HALF, self::STATUS_RUNNING]
+        ));
+        foreach ($rows as $row) {
+            if ((string) $row['status'] === self::STATUS_RUNNING && !self::stopped($db, (int) $row['id'])) {
+                continue;
+            }
             $steps = json_decode((string) $row['steps_json'], true) ?: [];
             $out[] = [
                 'id' => (int) $row['id'],
@@ -907,7 +1129,7 @@ final class GoogleSeries
                 'eventId' => $row['event_id'] !== null ? (int) $row['event_id'] : null,
                 'title' => (string) $row['title'],
                 'summary' => (string) $row['summary'],
-                'error' => (string) ($row['error'] ?? ''),
+                'error' => (string) (($row['error'] ?? '') !== '' ? $row['error'] : self::STOPPED_WORDS),
                 'stepsDone' => count($steps),
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
             ];
@@ -915,22 +1137,44 @@ final class GoogleSeries
         return $out;
     }
 
+    /** The half-done changes of an account, newest first (halfDoneOf). @return list<array> */
+    public function halfDone(int $userId): array
+    {
+        return self::halfDoneOf($this->db, $userId);
+    }
+
+    /** A pending row of the account, as the journal holds it now, or null. */
+    public function pendingOf(int $userId, int $pendingId): ?array
+    {
+        return $this->journaled(fn(Db $j): ?array => $j->one('SELECT * FROM google_pending WHERE id = ? AND user_id = ?', [$pendingId, $userId]));
+    }
+
+    /** A row marked running whose run is no longer under way: no lock held on it (a process that stopped holds none). */
+    private static function stopped(Db $db, int $pendingId): bool
+    {
+        return self::mysql($db) && (int) $db->journal()->scalar('SELECT IS_FREE_LOCK(?)', [self::lockName($db, $pendingId)]) === 1;
+    }
+
+    /** A half-done row, taken for a recovery run (its lock held, running again); a run under way is refused. */
     private function pendingRow(int $userId, int $pendingId): array
     {
-        $row = $this->db->one('SELECT * FROM google_pending WHERE id = ? AND user_id = ?', [$pendingId, $userId]);
+        $row = $this->pendingOf($userId, $pendingId);
         if ($row === null) {
             throw HttpError::notFound('No such half-done Google change');
         }
-        if ((string) $row['status'] !== self::STATUS_HALF) {
+        $half = (string) $row['status'] === self::STATUS_HALF || ((string) $row['status'] === self::STATUS_RUNNING && self::stopped($this->db, $pendingId));
+        if (!$half || !$this->open($pendingId, false)) {
             throw HttpError::conflict('google_pending_running', 'This change is still under way.');
         }
+        $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_RUNNING, 'error' => null, 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
         return $row;
     }
 
     /**
      * Finish: the same targets from Google's state, which is what is
      * stored here (the half state was written from a read-back), so each
-     * series' first write is conditional on its stored etag.
+     * series' first write is conditional on its stored etag; then the rows
+     * the change kept take back their ids and what hung off them (reattach).
      *
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>}
      */
@@ -938,20 +1182,28 @@ final class GoogleSeries
     {
         $row = $this->pendingRow($userId, $pendingId);
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
+        $this->refresh($calendar, json_decode((string) $row['targets_json'], true) ?: [], $beforeSend);
         $targets = $this->withStoredEtags($calendar, json_decode((string) $row['targets_json'], true) ?: []);
-        $this->db->update('google_pending', ['status' => self::STATUS_RUNNING, 'error' => null, 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]);
         $out = $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
         $this->store($calendar, $out['readbacks'], $out['targets']);
+        $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
         $this->settle($pendingId);
         return $out;
     }
 
     /**
-     * Put back: the series as they were, each only while its etag at
-     * Google is the one its last step left (a change made since, at Google
-     * or here, leaves it as it is, named in `left`); an inserted series is
+     * Put back: the series as they were, each one any step of the change
+     * was sent for (answered or not: an insert whose answer was lost is
+     * found by the id it carried), and only while its etag at Google is the
+     * one the last answered step left, the one the change started from, or
+     * one left by a last step whose answer was lost when the read-back
+     * shows what that step sent (a change made since, at Google or here,
+     * leaves the series as it is, named in `left`); an inserted series is
      * cancelled, a single made is cancelled, a dropped exception is sent
-     * again from its complete before state.
+     * again from its complete before state, and the rows brought back take
+     * their ids and what hung off them from the snapshot (reattach). Its
+     * own steps follow the change's in the journal, so a Put back that
+     * stops half way is put back again from where it got to.
      *
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>, left:list<string>}
      */
@@ -959,51 +1211,246 @@ final class GoogleSeries
     {
         $row = $this->pendingRow($userId, $pendingId);
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
+        $targets = json_decode((string) $row['targets_json'], true) ?: [];
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
+        $this->refresh($calendar, $befores, $beforeSend);
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
         $left = [];
         $run = [];
         foreach ($befores as $i => $b) {
+            $mine = array_values(array_filter($steps, static fn(array $s): bool => (int) $s['series'] === $i));
+            if ($mine === []) {
+                continue; // nothing was sent for this series
+            }
             $last = null;
-            $singleEtags = [];
-            foreach ($steps as $s) {
-                if ((int) $s['series'] !== $i) {
+            $lastStep = null;
+            $made = [];
+            foreach ($mine as $s) {
+                if ($s['kind'] === 'single') {
+                    $made[(string) $s['id']] = ($s['state'] ?? self::DONE) === self::DONE ? ($s['etag'] ?? null) : null;
                     continue;
                 }
-                if ($s['kind'] === 'single') {
-                    $singleEtags[(string) $s['id']] = $s['etag'];
-                } else {
-                    $last = $s['etag'] ?? $last;
+                if ($s['kind'] === 'single-remove') {
+                    continue;
+                }
+                $lastStep = $s;
+                if (($s['state'] ?? self::DONE) === self::DONE && ($s['etag'] ?? null) !== null) {
+                    $last = (string) $s['etag'];
                 }
             }
-            $touched = array_filter($steps, static fn(array $s): bool => (int) $s['series'] === $i);
-            if ($touched === []) {
-                continue; // nothing was done to this series
-            }
+            $base = $last ?? ($targets[$i]['etag'] ?? null);
             $current = self::masterEtag($this->readBack($calendar, $send, null, (string) $b['googleId'], null, $beforeSend), (string) $b['googleId']);
-            if ($last !== null && $current !== null && $current !== $last) {
-                $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since, and was left as it is.";
-                continue;
+            if ($base !== null && $current !== null && $current !== $base) {
+                $uncertain = $lastStep !== null && ($lastStep['state'] ?? self::DONE) === self::SENT;
+                $sent = empty($lastStep['back']) ? ($targets[$i] ?? null) : $b;
+                if (!$uncertain || $sent === null || !$this->landed($calendar, $send, $sent, $lastStep, $beforeSend)) {
+                    $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since, and was left as it is.";
+                    continue;
+                }
             }
             $b['etag'] = $current;
-            foreach ($b['singles'] ?? [] as $si => $s) {
-                if (!isset($singleEtags[(string) $s['id']])) {
-                    unset($b['singles'][$si]); // never made
+            foreach ($b['singles'] ?? [] as $si => $single) {
+                if (!array_key_exists((string) $single['id'], $made)) {
+                    unset($b['singles'][$si]); // never sent
                     continue;
                 }
-                $b['singles'][$si]['etag'] = $singleEtags[(string) $s['id']];
+                $b['singles'][$si]['etag'] = $made[(string) $single['id']];
             }
             $b['singles'] = array_values($b['singles'] ?? []);
-            $run[] = $b;
+            $run[$i] = $b;
         }
-        $this->db->update('google_pending', ['status' => self::STATUS_RUNNING, 'error' => null, 'steps_json' => '[]', 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]);
         $out = ['readbacks' => [], 'differences' => [], 'targets' => [], 'inserted' => []];
         if ($run !== []) {
-            $out = $this->run($calendar, $pendingId, array_values($run), [], $beforeSend);
+            $out = $this->run($calendar, $pendingId, $run, $steps, $beforeSend, true);
             $this->store($calendar, $out['readbacks'], $out['targets']);
+            $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
         }
         $this->settle($pendingId);
+        $out['targets'] = array_values($out['targets']);
         return $out + ['left' => $left];
+    }
+
+    /**
+     * Before a recovery runs, what Google holds for each series it names is
+     * stored here, so its steps follow from Google's state: a change that
+     * stopped with its edit here rolled back (or its process stopped) left
+     * the rows as they were before it, not as Google has them. Each series
+     * known by its uid; an insert whose answer was lost has none, and is
+     * found by the id it carried.
+     *
+     * @param list<array> $series
+     */
+    private function refresh(array $calendar, array $series, ?\Closure $beforeSend): void
+    {
+        $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
+            => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $got = [];
+        foreach ($series as $t) {
+            if (!empty($t['uid']) && empty($t['insert']) && !isset($got[(string) $t['uid']])) {
+                $got[(string) $t['uid']] = $this->readBack($calendar, $send, (string) $t['uid'], (string) $t['googleId'], null, $beforeSend);
+            }
+        }
+        if ($got !== []) {
+            $this->store($calendar, $got, []);
+        }
+    }
+
+    /**
+     * Whether a step whose answer was lost landed: Google holds what it
+     * sent for what it wrote ($t is the state it was a step towards).
+     */
+    private function landed(array $calendar, \Closure $send, array $t, array $step, ?\Closure $beforeSend): bool
+    {
+        $id = (string) $step['id'];
+        if (in_array($step['kind'], ['insert', 'single', 'remove', 'record-remove', 'single-remove'], true)) {
+            try {
+                $found = $send('GET', '/' . rawurlencode($id), null, null);
+            } catch (HttpError $e) {
+                if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
+                    throw $e;
+                }
+                $found = null;
+            }
+            $live = $found !== null && (string) ($found['status'] ?? '') !== 'cancelled';
+            return in_array($step['kind'], ['insert', 'single'], true) ? $live : !$live;
+        }
+        $googleId = (string) $t['googleId'];
+        $held = self::held($this->readBack($calendar, $send, isset($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend), $googleId);
+        $key = (string) ($step['key'] ?? '');
+        $m = $t['master'];
+        switch ($step['kind']) {
+            case 'master':
+                $g = $held['master'];
+                return $g !== null && self::sameRule((string) ($g['rrule'] ?? ''), (string) $m['rrule']) && (int) $g['all_day'] === (int) $m['all_day'] && self::sameEvent($g, $m);
+            case 'exception':
+                return isset($held['records'][$key], $t['exceptions'][$key]) && self::sameEvent($held['records'][$key], $t['exceptions'][$key]);
+            case 'skip':
+                return isset($held['skips'][$key]);
+            case 'plain':
+                $len = max(0, Time::fromDb($m['end_utc'])->getTimestamp() - Time::fromDb($m['start_utc'])->getTimestamp());
+                return !isset($held['cancelled'][$key]) && (!isset($held['records'][$key]) || self::sameEvent($held['records'][$key], self::plainAt($m, $key, $len)));
+        }
+        return false;
+    }
+
+    /**
+     * After a recovery stored what Google holds: each row the targets name
+     * that the store brought back under another id (an edited day Google
+     * dropped and was sent again, an event of its own made again) takes
+     * back its id, its own columns (reminders, the trip flag, an icon) and
+     * what hung off it (tags, people, trip links, duplicate decisions,
+     * plugin data) from the snapshot the pending row kept (localOf), with
+     * anything the new row had gained since. A master made again keeps its
+     * new id (its edited days hang off it) and takes back what hung off the
+     * old one.
+     *
+     * @param array<string,list<array>> $local
+     * @param list<array> $targets
+     */
+    private function reattach(array $calendar, array $local, array $targets): void
+    {
+        $snap = [];
+        foreach ($local['events'] ?? [] as $r) {
+            $snap[(int) $r['id']] = $r;
+        }
+        if ($snap === []) {
+            return;
+        }
+        $calendarId = (int) $calendar['id'];
+        $live = fn(int $id): bool => $this->db->scalar('SELECT 1 FROM events WHERE id = ? AND deleted_at IS NULL', [$id]) !== null;
+        foreach ($targets as $t) {
+            if (!empty($t['remove']) || empty($t['uid'])) {
+                continue;
+            }
+            $uid = (string) $t['uid'];
+            $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [$calendarId, $uid]);
+            if ($master !== null) {
+                foreach ($snap as $id => $r) {
+                    if ((string) $r['uid'] === $uid && $r['recurrence_instance_utc'] === null && (int) $r['calendar_id'] === $calendarId && $id !== (int) $master['id'] && !$live($id)) {
+                        $this->relink($r, $master, $local, false);
+                    }
+                }
+            }
+            foreach ($t['exceptions'] ?? [] as $key => $x) {
+                $rid = (int) ($x['rowId'] ?? 0);
+                if (!isset($snap[$rid]) || $live($rid)) {
+                    continue;
+                }
+                $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$calendarId, $uid, (string) $key]);
+                if ($now !== null) {
+                    $this->relink($snap[$rid], $now, $local, true);
+                }
+            }
+            foreach ($t['singles'] ?? [] as $single) {
+                $rid = (int) ($single['rowId'] ?? 0);
+                if (!empty($single['remove']) || !isset($snap[$rid]) || $live($rid)) {
+                    continue;
+                }
+                $now = $this->writer->rowByGoogleId($calendarId, (string) $single['id']);
+                if ($now !== null) {
+                    $this->relink($snap[$rid], $now, $local, true);
+                }
+            }
+        }
+    }
+
+    /**
+     * $was (a row of the snapshot, gone) is $now (the row a store made in
+     * its place): with $identity, $now takes $was's id; either way it takes
+     * $was's own columns and what hung off it. A link whose other end is
+     * gone since is left out.
+     *
+     * @param array<string,list<array>> $local
+     */
+    private function relink(array $was, array $now, array $local, bool $identity): void
+    {
+        $wasId = (int) $was['id'];
+        $nowId = (int) $now['id'];
+        $to = $identity ? $wasId : $nowId;
+        $eventCols = ['event_tags' => ['event_id'], 'event_people' => ['event_id']];
+        foreach (OwnFields::REFERENCES as [$table, , $cols]) {
+            $eventCols[$table] = $cols;
+        }
+        $links = [];
+        $gained = $identity ? Undo::linksOf($this->db, [$nowId]) : [];
+        foreach ($eventCols as $table => $cols) {
+            foreach ([[$local[$table] ?? [], $wasId], [$gained[$table] ?? [], $nowId]] as [$rows, $from]) {
+                foreach ($rows as $link) {
+                    $named = false;
+                    foreach ($cols as $col) {
+                        if ((int) ($link[$col] ?? 0) === $from) {
+                            $link[$col] = $to;
+                            $named = true;
+                        }
+                    }
+                    if ($named) {
+                        $links[$table][] = $link;
+                    }
+                }
+            }
+        }
+        $own = array_diff_key($was, array_flip(self::SYNCED), ['id' => true, 'created_at' => true, 'updated_at' => true]);
+        if ((string) ($was['location'] ?? '') !== (string) ($now['location'] ?? '')) {
+            // Where it is placed belongs to the place Google holds now.
+            $own = array_filter($own, static fn(string $col): bool => !str_starts_with($col, 'location_') && $col !== 'geocoded_at', ARRAY_FILTER_USE_KEY);
+        }
+        if ($identity) {
+            $this->db->run('DELETE FROM events WHERE id = ?', [$nowId]);
+            $this->db->upsert('events', array_merge($now, $own, ['id' => $wasId, 'updated_at' => Time::nowDb()]));
+        } elseif ($own !== []) {
+            $this->db->update('events', $own + ['updated_at' => Time::nowDb()], 'id = ?', [$nowId]);
+        }
+        foreach ($links as $table => $rows) {
+            foreach ($rows as $link) {
+                try {
+                    $this->db->upsert($table, $link);
+                } catch (\PDOException $e) {
+                    if (!Db::isForeignKeyViolation($e)) {
+                        throw $e;
+                    }
+                }
+            }
+        }
     }
 }

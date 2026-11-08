@@ -1071,7 +1071,7 @@ trait SeriesPlans
     {
         return $this->undo->write($userId, function () use ($userId, $pendingId, $authority, $how): array {
             $authority?->assertValid($this->db);
-            $row = $this->db->one('SELECT * FROM google_pending WHERE id = ? AND user_id = ?', [$pendingId, $userId]);
+            $row = $this->googleSeries()->pendingOf($userId, $pendingId);
             if ($row === null) {
                 throw HttpError::notFound('No such half-done Google change');
             }

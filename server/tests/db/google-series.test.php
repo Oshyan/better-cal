@@ -325,7 +325,7 @@ return static function (Db $db): void {
         ], 'cancelled' => ['20270405T180000Z']];
         checkEq('Finish carries the rest from Google\'s state: the plan holds at Google and here, the pending row is gone', [true, $want, $want, []],
             [$out['ok'], $held($s, 'smpl1weekly'), $stored($s, 'smpl1weekly'), $pending($s)]);
-        checkEq('Finish sent no master PATCH again (nothing on it differed), only the steps left', ['GET', 'PATCH', 'PATCH', 'PATCH', 'GET'], array_column($s->t->calls, 0));
+        checkEq('Finish read the series afresh, sent no master PATCH again (nothing on it differed), only the steps left', ['GET', 'GET', 'PATCH', 'PATCH', 'PATCH', 'GET'], array_column($s->t->calls, 0));
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
     });

@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.4 (2026-11-07)
+
+Google calendars go onto the same series model as local ones, after a probe of what Google actually does with recurring events, and every change made to a Google calendar undoes. Events can float ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
+
+- **Repeating events on Google calendars take every change a local one does** ([#172](https://github.com/Oshyan/better-cal/issues/172)): drags that rewrite the rule, "this and following", delete following and answers from a day on. Each change is sent to Google and read back, edited and skipped days are carried where Google drops them, and the calendar shows what Google stores; a change that stops half way is listed in Review with Finish and Put back. A day Google holds at the series' own values is an ordinary occurrence here, an event with no link of its own no longer shows Google's page as its link, and deleting a series removes its edited days at Google with it.
+- **Changes to Google calendars undo** ([#172](https://github.com/Oshyan/better-cal/issues/172)): a change for all events, this and following, an answer from a day on, a new repeating event or a series deleted has Undo in its notice and in Activity, sending the series back to Google as it was and keeping its tags, people and edited days' own fields here. A change to one Google event undoes too: a field or time change, a delete, a new event, Planned or Maybe on an event you organize, and an invitation answer. Every undo and every edit is sent only if the event hasn't changed at Google since it was last read; if it has, you're told to refresh instead of overwriting it. Activity shows what a Google poll changed under its own Google source.
+- **Events can float** ([#167](https://github.com/Oshyan/better-cal/issues/167)): an event can keep its clock time in any zone, so "Meditation 7am floating" is at 7 at home and at 7 on a trip, reminders included. Turn it on in the editor ("Same clock time in any zone"), with "floating" or "local time" after the time in quick add, or for a whole calendar's new timed events in its settings; ICS times with no zone now come in floating.
+- **A choice the series dialog can't make is disabled with its reason** instead of failing after you pick it: on a Google calendar, keeping a timed day inside an all-day series; a same-moment zone reading that leaves a position no place in some months.
+- **Place suggestions have to contain every word you typed:** "venue town" finds the venue instead of other things in the town, an address no longer turns up the same number on another street, a trailing town or county narrows the search, and when nothing matches the dropdown says so.
+- Maintainers: `tools/google-probe` runs the Google recurring-event probe against a throwaway calendar and writes a report; its 2026-11-07 run is [the contract](docs/design/series-model.md) the Google work follows, with [the survey](docs/design/google-series-survey.md) of how other handlers do it ([#225](https://github.com/Oshyan/better-cal/issues/225)). The series harness has a Google mode that runs every case against a stand-in built from that contract.
+
+Operators: migrations 067 to 069 add the Google etag, the Google pending rows and the floating flag; `update.php` or the update page as usual.
+
 ## 1.5.3 (2026-11-07)
 
 The layered fixes since 1.4.0 are replaced by one rule per area, an unbounded series is read one whole cycle past a change, and a batch of small follow-ups from the audit of closed issues ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).

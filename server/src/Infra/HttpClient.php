@@ -71,7 +71,8 @@ final class HttpClient
         private readonly ?\Closure $beforeSend = null,
         // Tests only: stands in for the network after every policy check,
         // fn(string $method, string $url, array $headers, ?string $body):
-        // array{status:int,body:string}. Never set by app code.
+        // array{status:int,body:string,headers?:array<string,string>}.
+        // Never set by app code.
         private readonly ?\Closure $transport = null,
     ) {
     }
@@ -144,8 +145,10 @@ final class HttpClient
     }
 
     /**
-     * GET a URL under policy. Returns ['status'=>int,'body'=>string] or
-     * throws \RuntimeException with a human reason (budget, policy, network).
+     * GET a URL under policy. Returns ['status'=>int,'body'=>string,
+     * 'headers'=>array<string,string>] (the final hop's response headers,
+     * names in lower case, the last of a repeated one) or throws
+     * \RuntimeException with a human reason (budget, policy, network).
      */
     public function get(string $url, array $headers = []): array
     {
@@ -169,7 +172,10 @@ final class HttpClient
         $results = array_fill(0, count($urls), null);
         $batch = (object) ['bytes' => 0, 'overflow' => false];
         $deadline = $this->operationDeadline();
-        if (!function_exists('curl_multi_init') || $this->transport !== null || $this->beforeSend !== null) {
+        // One URL goes through request(), on the pooled handle for its host,
+        // so a lone lookup (a sweep's, a pin's, the Open-Meteo fallback)
+        // reuses the connection the last one to that host left open.
+        if (count($urls) === 1 || !function_exists('curl_multi_init') || $this->transport !== null || $this->beforeSend !== null) {
             foreach (array_values($urls) as $index => $url) {
                 if (!is_string($url)) {
                     $results[$index] = ['status' => 0, 'body' => '', 'error' => 'HTTP URL must be a string'];
@@ -179,7 +185,7 @@ final class HttpClient
                     // The shared counter includes every redirect body, not
                     // merely the final response returned by request().
                     $response = $this->request('GET', $url, $headers, null, $deadline, $batch);
-                    $results[$index] = $response + ['error' => null];
+                    $results[$index] = ['status' => $response['status'], 'body' => $response['body'], 'error' => null];
                 } catch (\Throwable $e) {
                     $results[$index] = ['status' => 0, 'body' => '', 'error' => $e->getMessage()];
                 }
@@ -223,6 +229,9 @@ final class HttpClient
                     // Environment HTTP(S)_PROXY/ALL_PROXY settings would move
                     // DNS and the TCP connection outside this policy boundary.
                     CURLOPT_PROXY => '',
+                ]);
+                self::attachShare($ch, $this->ipv4Only);
+                curl_setopt_array($ch, [
                     CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use ($transfer, $batch): int {
                         $bytes = strlen($chunk);
                         if (strlen($transfer->body) + $bytes > $this->maxBytes) {
@@ -412,12 +421,19 @@ final class HttpClient
             $this->used++;
             if ($this->transport !== null) {
                 $answer = ($this->transport)($method, $url, $headers, $body);
-                return ['status' => (int) $answer['status'], 'body' => (string) $answer['body']];
+                $answerHeaders = [];
+                foreach ((array) ($answer['headers'] ?? []) as $name => $value) {
+                    $answerHeaders[strtolower((string) $name)] = (string) $value;
+                }
+                return ['status' => (int) $answer['status'], 'body' => (string) $answer['body'], 'headers' => $answerHeaders];
             }
             $ch = self::handleFor($url, $this->ipv4Only);
             $response = '';
             $overflow = false;
             $totalOverflow = false;
+            // This hop's headers only: each hop is its own transfer, and an
+            // interim answer (100 Continue) within one starts the list again.
+            $responseHeaders = [];
             if ($method !== 'GET') {
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
                 if ($body !== null) {
@@ -436,6 +452,10 @@ final class HttpClient
                 CURLOPT_RESOLVE => [$destination['resolve']],
                 CURLOPT_IPRESOLVE => $this->ipv4Only ? CURL_IPRESOLVE_V4 : CURL_IPRESOLVE_WHATEVER,
                 CURLOPT_PROXY => '',
+                CURLOPT_HEADERFUNCTION => static function ($c, string $line) use (&$responseHeaders): int {
+                    self::headerLine($responseHeaders, $line);
+                    return strlen($line);
+                },
                 CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$response, &$overflow, &$totalOverflow, $batch): int {
                     $bytes = strlen($chunk);
                     if (strlen($response) + $bytes > $this->maxBytes) {
@@ -477,7 +497,7 @@ final class HttpClient
                 $url = $redirect; // loop re-runs full policy on the new URL
                 continue;
             }
-            return ['status' => $status, 'body' => $response];
+            return ['status' => $status, 'body' => $response, 'headers' => $responseHeaders];
         }
         throw new \RuntimeException('Too many redirects');
     }
@@ -515,8 +535,60 @@ final class HttpClient
                 unset(self::$handles[$oldest]);
             }
         }
+        // curl_reset clears the share with every other option: set again.
+        self::attachShare($ch, $ipv4Only);
         self::$handles[$key] = $ch;
         return $ch;
+    }
+
+    /**
+     * Connections and TLS sessions shared by every handle of this process,
+     * the pooled ones and a batch's (getMany), so sequential and parallel
+     * requests to a host reuse one connection and resume one TLS session.
+     * Two shares, as the pool has two keys: an IPv4-only client never takes
+     * a connection another client opened over IPv6. DNS is never shared:
+     * each request's pinned, vetted address (CURLOPT_RESOLVE) would serve
+     * another client's request to the same host.
+     *
+     * @var array<string,\CurlShareHandle>
+     */
+    private static array $shares = [];
+
+    private static function attachShare(\CurlHandle $ch, bool $ipv4Only): void
+    {
+        if (!function_exists('curl_share_init') || !defined('CURL_LOCK_DATA_CONNECT')) {
+            return;
+        }
+        $key = $ipv4Only ? 'v4' : 'any';
+        if (!isset(self::$shares[$key])) {
+            $share = curl_share_init();
+            curl_share_setopt($share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+            curl_share_setopt($share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+            self::$shares[$key] = $share;
+        }
+        curl_setopt($ch, CURLOPT_SHARE, self::$shares[$key]);
+    }
+
+    /**
+     * One header line of a response into $headers: a status line starts the
+     * list again (an interim 1xx, a redirect's), so what is left at the end
+     * is the final answer's. Names in lower case; a repeated one keeps the
+     * last. Pure.
+     *
+     * @param array<string,string> $headers
+     */
+    private static function headerLine(array &$headers, string $line): void
+    {
+        $line = rtrim($line, "\r\n");
+        if (preg_match('#^HTTP/\S+\s+\d{3}#', $line) === 1) {
+            $headers = [];
+            return;
+        }
+        $colon = strpos($line, ':');
+        if ($colon === false || $colon === 0) {
+            return;
+        }
+        $headers[strtolower(trim(substr($line, 0, $colon)))] = trim(substr($line, $colon + 1));
     }
 
     /** Each call keeps its normal timeout but may never outlive its owner. */

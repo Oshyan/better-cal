@@ -4356,6 +4356,8 @@ checkEq('fallback: an answer without every typed word (things in the town, not t
 // is whole, the last word may be partial, a trailing state or postal code
 // may be missing.
 checkEq('word rule: words are lowercased, accents and apostrophes off', ['cafe', 'joes', 'harbor', 'light'], $PS::words("Café Joe's: Harbor-Light"));
+checkEq('word rule: accents come off without intl too, through the Latin table', ['cafe', 'joes', 'senor', 'Zurich', 'łódź'],
+    [$PS::foldAccents('café', false), $PS::foldAccents('joes', false), $PS::foldAccents('señor', false), $PS::foldAccents('Zürich', false), mb_strtolower($PS::foldAccents('Łódź', false)) === 'lodz' ? 'łódź' : 'kept']);
 checkEq('word rule: street words have short forms, other words are themselves', ['st', 'blvd', 'n', 'harbor'], array_map([$PS, 'shortWord'], ['street', 'boulevard', 'north', 'harbor']));
 $wordRow = static fn(string $name, string $address = ''): array => ['name' => $name, 'address' => $address];
 checkEq('word rule: every typed word, the last as a prefix; street words either way; numbers whole',

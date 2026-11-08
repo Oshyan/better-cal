@@ -1125,7 +1125,12 @@ trait Invariants
         }
         $codes = array_values(array_unique(array_column($g['refusals'] ?? [], 'code')));
         if ($timedUnderAllDay) {
-            $this->check('i-google', $google['refused'] && $codes === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes]);
+            // plan.refusals also carries a disabled option's reason (api-contract,
+            // series_refused), the same locally and on Google; Google's own
+            // refusal is what the Google plan adds.
+            $localCodes = array_column($plan['refusals'] ?? [], 'code');
+            $googleOnly = array_values(array_diff($codes, $localCodes));
+            $this->check('i-google', $google['refused'] && $googleOnly === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes, 'local' => $localCodes]);
             return;
         }
         // An option the local plan offers can be disabled on Google with

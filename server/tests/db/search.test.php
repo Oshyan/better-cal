@@ -121,6 +121,57 @@ return static function (Db $db): void {
         check('search: and that date has ended', ($past[0]['end_utc'] ?? '9') <= $now->format('Y-m-d H:i:s'));
     });
 
+    // A series stands for the occurrence that is its date here, at that
+    // occurrence's own tier, and every series is resolved before the limit:
+    // the limit keeps the first of the exact order, by tier and then the
+    // start as shown (docs/design/decisions.md, Search).
+    scenario('search limit: a series takes its place by the occurrence that stands for it', function () use ($db, $d, $make, $search, $titles): void {
+        $u = freshUser($db);
+        $first = static fn(string $q, string $when, string $at, int $limit) => $titles($search->search($u, $q, $limit, true, ['when' => $when, 'now' => new DateTimeImmutable($at)]));
+        // Daily from 1 Mar; its 2 Mar renamed, the word left only in its
+        // description; a single event that afternoon holds the word in its
+        // title. At 09:00 on 2 Mar the series' date is the renamed day.
+        $dentist = $make($u, 'Sample Dentist', '2027-03-01', ['rrule' => 'FREQ=DAILY;COUNT=10']);
+        $d->events->patch($u, $dentist, ['scope' => 'this', 'instanceStart' => '2027-03-02T18:00:00Z', 'title' => 'Sample Holiday', 'description' => 'Dentist']);
+        $d->events->create($u, ['start' => '2027-03-02T20:00:00Z', 'end' => '2027-03-02T21:00:00Z'] + eventAt((int) Settings::defaultCalendarId($db, $u), 'Sample Dentist appointment'));
+        $at = '2027-03-02T09:00:00Z';
+        $full = $first('dentist', 'upcoming', $at, 200);
+        checkEq('search limit: the title match first, then the series at its renamed day, which matches by description', ['Sample Dentist appointment', 'Sample Holiday'], $full);
+        foreach ([1, 2, 20] as $n) {
+            checkEq("search limit: limit $n keeps the first $n of the full order", array_slice($full, 0, $n), $first('dentist', 'upcoming', $at, $n));
+        }
+        checkEq('search limit: the series is listed at its renamed day, its own row', ['2027-03-02 18:00:00', $dentist],
+            [$search->search($u, 'dentist', 2, true, ['when' => 'upcoming', 'now' => new DateTimeImmutable($at)])[1]['start_utc'] ?? null,
+                (int) ($db->scalar('SELECT recurrence_parent_id FROM events WHERE title = ? AND user_id = ?', ['Sample Holiday', $u]))]);
+
+        // A series begun long ago is shown at its next date, after a single
+        // event of the same tier: the series' first date does not put it first.
+        $make($u, 'Sample choir rehearsal', '2026-01-04', ['rrule' => 'FREQ=WEEKLY']);
+        $make($u, 'Sample choir social', '2027-03-03');
+        checkEq('search limit: the next rehearsal (7 Mar) comes after the social (3 Mar)', ['Sample choir social', 'Sample choir rehearsal'], $first('choir', 'upcoming', $at, 200));
+        checkEq('search limit: limit 1 keeps the social', ['Sample choir social'], $first('choir', 'upcoming', $at, 1));
+        // Under Past on 8 Mar the series' date is its latest ended, 7 Mar,
+        // newer than the social's.
+        checkEq('search limit: under Past the series\' latest date comes first', ['Sample choir rehearsal', 'Sample choir social'], $first('choir', 'past', '2027-03-08T09:00:00Z', 200));
+        checkEq('search limit: and limit 1 keeps it', ['Sample choir rehearsal'], $first('choir', 'past', '2027-03-08T09:00:00Z', 1));
+
+        // A series is read near now first and further only when needed: a
+        // yearly one three months out and its latest a year back are found.
+        $make($u, 'Sample anniversary dinner', '2020-06-01', ['rrule' => 'FREQ=YEARLY']);
+        checkEq('search limit: a yearly series\' next date three months out', '2027-06-01 18:00:00', $search->search($u, 'anniversary', 1, true, ['when' => 'upcoming', 'now' => new DateTimeImmutable($at)])[0]['start_utc'] ?? null);
+        checkEq('search limit: and its latest, nine months back', '2026-06-01 18:00:00', $search->search($u, 'anniversary', 1, true, ['when' => 'past', 'now' => new DateTimeImmutable($at)])[0]['start_utc'] ?? null);
+
+        // A series whose remaining days were all renamed has no date that
+        // matches, so it takes no place and leaves the slot to the next result.
+        $cello = $make($u, 'Sample cello practice', '2027-03-01', ['rrule' => 'FREQ=DAILY;COUNT=3']);
+        foreach (['2027-03-02', '2027-03-03'] as $day) {
+            $d->events->patch($u, $cello, ['scope' => 'this', 'instanceStart' => $day . 'T18:00:00Z', 'title' => 'Sample free evening']);
+        }
+        $make($u, 'Sample cello concert', '2027-04-10');
+        checkEq('search limit: the series with no matching day ahead is not listed', ['Sample cello concert'], $first('cello', 'upcoming', $at, 200));
+        checkEq('search limit: and does not take limit 1\'s slot', ['Sample cello concert'], $first('cello', 'upcoming', $at, 1));
+    });
+
     scenario('search: the time a search takes over 20,000 events', function () use ($db, $make, $search, $now): void {
         $u = freshUser($db);
         $first = $make($u, 'Sample template', '2026-01-01');

@@ -1,0 +1,57 @@
+{
+    "n": 9810,
+    "seed": 0,
+    "series": {
+        "family": "monthly_day_list",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=5,28",
+        "import": false,
+        "bound": "none",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-01-05",
+        "length": 1
+    },
+    "exceptions": [
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "allDay"
+            ],
+            "days": 0,
+            "mins": 0,
+            "zone": "Europe/Berlin",
+            "len": 0
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "America/Los_Angeles",
+        "toClock": 0,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=FR",
+        "bound": null,
+        "via": "master"
+    },
+    "stack": null,
+    "everyOption": true,
+    "typed": false,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    }
+}

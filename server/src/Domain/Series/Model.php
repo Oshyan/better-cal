@@ -1753,7 +1753,11 @@ final class Model
         return $from;
     }
 
-    /** Readings whose whole plans are equal merge into the first (Finding the Readings); one whose plan leaves no events is refused. */
+    /**
+     * Readings whose whole plans are equal merge into the first (Finding the Readings); one whose plan leaves no events
+     * is refused, and so is one whose own plan map() refuses (a timed day kept under an all-day series at Google): it
+     * has no writes to compare, so it is disabled with that refusal's reason, as a refused option of any other group is.
+     */
     private function merged(array $readings, array $land): array
     {
         if (count($readings) < 2) {
@@ -1774,6 +1778,11 @@ final class Model
             if ($m === null) {
                 // Nothing left (Bounds): refused, and the rest of the plan stands.
                 $out[] = ['disabled' => true, 'code' => 'empty', 'reason' => self::REASONS['empty']] + $r;
+                continue;
+            }
+            if ($m['writes'] === null) {
+                $why = $m['plan']['refusals'][count($m['plan']['refusals']) - 1];
+                $out[] = ['disabled' => true, 'code' => (string) $why['code'], 'reason' => (string) $why['words']] + $r;
                 continue;
             }
             $sig = json_encode([$m['walk'], $m['writes']['master']['start_utc'] ?? null, $m['boundKey'], $m['writes']['overrides'], $m['writes']['exdates'], $m['writes']['createEdited'], $m['writes']['detach'], $m['writes']['delete']]);

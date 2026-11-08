@@ -1134,7 +1134,36 @@ trait Invariants
             // refusal is what the Google plan adds.
             $localCodes = array_column($plan['refusals'] ?? [], 'code');
             $googleOnly = array_values(array_diff($codes, $localCodes));
+            // A reading that keeps the timed day is a disabled option on Google, as one that leaves no events is
+            // (api-contract, series_refused): when the local plan's reading is one, Google offers the plan of another
+            // reading it can hold, and the change is refused only when every reading keeps such a day.
+            $localReading = null;
+            foreach ($plan['groups'] ?? [] as $grp) {
+                if (($grp['id'] ?? '') === 'reading') {
+                    $localReading = $grp['selected'] ?? null;
+                }
+            }
+            $googleReading = null;
+            $localOnGoogle = null;
+            foreach ($g['groups'] ?? [] as $grp) {
+                if (($grp['id'] ?? '') === 'reading') {
+                    $googleReading = $grp['selected'] ?? null;
+                    foreach ($grp['options'] ?? [] as $o) {
+                        if ($o['id'] === $localReading) {
+                            $localOnGoogle = $o;
+                        }
+                    }
+                }
+            }
+            if (!$google['refused'] && $localReading !== null && $googleReading !== $localReading) {
+                $this->check('i-google', !empty($localOnGoogle['disabled']) && ($localOnGoogle['code'] ?? '') === 'googleAllDay' && $googleOnly === ['googleAllDay'],
+                    'a reading that keeps a timed day under an all-day series is disabled on Google with its reason, another reading offered',
+                    ['local' => $localReading, 'google' => $googleReading, 'option' => $localOnGoogle, 'refusals' => $codes]);
+                return;
+            }
             $this->check('i-google', $google['refused'] && $googleOnly === ['googleAllDay'], 'a day that stays timed under an all-day series refuses the change on Google, with its reason', ['refusals' => $codes, 'local' => $localCodes]);
+            $held = array_keys(array_filter($google['otherReadings'] ?? [], static fn(?bool $refused): bool => $refused === false));
+            $this->check('i-google', !$google['refused'] || $held === [], 'the change is refused on Google only when every reading keeps a timed day under an all-day series', ['readings Google can hold' => $held]);
             return;
         }
         // An option the local plan offers can be disabled on Google with

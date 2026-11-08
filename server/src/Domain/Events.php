@@ -379,11 +379,11 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null): void
     {
         $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
         if ($google !== null) {
-            $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, null, 'update', $tables);
+            $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, $touches, 'update', $tables);
             return;
         }
         // No snapshots, but what it changed is known: the event, which an
@@ -751,7 +751,10 @@ final class Events
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
         $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
-        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo);
+        // What it changed, as on a local calendar: the series' skipped days
+        // (and the day's row, when it had one: its snapshot says so), not the series whole.
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo, null,
+            [[Undo::keyOf('events', ['id' => (int) $master['id']]), 'exdates_json']]);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void

@@ -939,7 +939,9 @@ trait SeriesPlans
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
             $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
+                // `was`: the master's own columns before this change wrote any of them here
+                // (the trip rules write the flag first), for Finish's "changed here since".
+                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return;
@@ -1031,13 +1033,17 @@ trait SeriesPlans
      */
     private function googleLocalPlan(int $userId): \Closure
     {
-        return function (array $plan, array $out) use ($userId): void {
+        return function (array $plan, array $out, array $local = []) use ($userId): array {
             $id = (int) $plan['eventId'];
             $w = (array) $plan['writes'];
             $in = (array) $plan['input'];
             $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             if ($master === null) {
                 throw HttpError::notFound('The series this change was for is no longer here');
+            }
+            $words = [];
+            if (($plan['kind'] ?? '') !== 'split') {
+                [$w, $in, $words] = self::localDeltasOver($w, $in, $local, $master, $this->db, (array) ($plan['was'] ?? []));
             }
             $byId = [];
             foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $r) {
@@ -1050,11 +1056,79 @@ trait SeriesPlans
                 if (isset($out['targets'][1])) {
                     $this->googleSeries()->adoptSingles($out['targets'][1], $out['inserted'], $created);
                 }
-                return;
+                return $words;
             }
             ($this->seriesPlanWriter($userId, $id, $w, $in, $byId, $created, $createdEdited))();
             $this->googleSeries()->adoptSingles($out['targets'][0], $out['inserted'], $created);
+            return $words;
         };
+    }
+
+    /**
+     * Rule A for the part here: the plan's fields held here alone (a flag,
+     * reminders, an icon, tags, people) applied over the rows as they stand,
+     * each left out where the row it sets changed in that field here since
+     * the change's snapshot ($local), and named. The series' columns a plan
+     * carries onto its edited days go with the master's. Pure but for the
+     * reads of tags and people.
+     *
+     * @return array{0:array,1:array,2:list<string>} the writes, the input, and the words
+     */
+    private static function localDeltasOver(array $w, array $in, array $local, array $master, \BetterCal\Infra\Db $db, array $before = []): array
+    {
+        $id = (int) $master['id'];
+        $snap = [];
+        foreach ($local['events'] ?? [] as $r) {
+            $snap[(int) $r['id']] = $r;
+        }
+        $was = isset($snap[$id]) ? array_merge($snap[$id], $before) : null;
+        if ($was === null) {
+            return [$w, $in, []];
+        }
+        $names = [];
+        foreach (array_keys((array) ($w['master'] ?? [])) as $col) {
+            if (in_array($col, GoogleWriter::GOOGLE_COLUMNS, true) || !array_key_exists($col, $was) || !array_key_exists($col, $master)) {
+                continue;
+            }
+            // Changed since: neither as the change found it nor as it sets it.
+            if ((string) $master[$col] !== (string) $was[$col] && (string) $master[$col] !== (string) $w['master'][$col]) {
+                unset($w['master'][$col]);
+                foreach ($w['overrides'] ?? [] as $rid => $cols) {
+                    if (array_key_exists($col, Model::SERIES_COLUMNS)) {
+                        unset($w['overrides'][$rid][$col]);
+                    }
+                }
+                $names[] = match (true) {
+                    isset(Model::SERIES_COLUMNS[$col]) => strtolower(Model::SERIES_COLUMNS[$col]) . ' flag',
+                    default => OwnFields::fieldOf($col) ?? $col,
+                };
+            }
+        }
+        $setOf = static function (array $rows, string $col) use ($id): array {
+            $out = [];
+            foreach ($rows as $r) {
+                if ((int) ($r['event_id'] ?? 0) === $id) {
+                    $out[] = (int) $r[$col];
+                }
+            }
+            sort($out);
+            return $out;
+        };
+        foreach (['tags' => ['event_tags', 'tag_id', ['tagNames']], 'people' => ['event_people', 'person_id', ['personIds', 'personNames']]] as $field => [$table, $col, $keys]) {
+            if (!isset($w[$field]['master'])) {
+                continue;
+            }
+            $now = array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
+            if ($now !== $setOf($local[$table] ?? [], $col)) {
+                unset($w[$field]['master']);
+                foreach ($keys as $k) {
+                    unset($in[$k]);
+                }
+                $names[] = $field;
+            }
+        }
+        $words = $names === [] ? [] : ["The " . implode(', ', $names) . " of '" . (string) $master['title'] . "' changed here while this change was half done; left as they are."];
+        return [$w, $in, $words];
     }
 
     /**

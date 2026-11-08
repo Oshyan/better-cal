@@ -137,12 +137,33 @@ final class GoogleSeries
         ];
     }
 
-    /** The series as stored: a target (the before side of a plan, or the undo stage's target). */
+    /**
+     * The own fields Google holds of an edited day: placement and content.
+     * The rest (reminders, an answer, tags, people, an icon) are held here
+     * alone, as Feeds::heldHereAlone and the rewind read them.
+     */
+    private const GOOGLE_OWN = ['date', 'time', 'length', 'allDay', 'title', 'location', 'description', 'url', 'status'];
+
+    /**
+     * Whether a row is an edited day to Google: it owns a field Google
+     * holds. A day with only local data (tags, people, reminders, an answer,
+     * an icon, or only something that refers to it) is an ordinary day to
+     * every Google write and every undo: no PATCH, no own values (rule D).
+     */
+    private static function editedAtGoogle(array $own): bool
+    {
+        return array_intersect($own, self::GOOGLE_OWN) !== [];
+    }
+
+    /** The series as stored: a target (the before side of a plan, or the undo stage's target); a day with only local data is an ordinary day. */
     public static function stateOf(array $master, array $rows): array
     {
         $exceptions = [];
         foreach ($rows as $row) {
             $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+            if (!self::editedAtGoogle($own)) {
+                continue;
+            }
             $exceptions[(string) $row['recurrence_instance_utc']] = self::cols($row) + ['own' => $own, 'rowId' => (int) $row['id']];
         }
         ksort($exceptions);
@@ -182,11 +203,17 @@ final class GoogleSeries
             }
             $r = array_merge($row, $w['overrides'][$id] ?? []);
             $own = OwnFields::decode($r['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+            if (!self::editedAtGoogle($own)) {
+                continue; // only local data: an ordinary day to Google
+            }
             $t['exceptions'][(string) $r['recurrence_instance_utc']] = self::cols($r) + ['own' => $own, 'rowId' => $id];
         }
         foreach ($w['createEdited'] ?? [] as $cols) {
             $r = array_merge($after, $cols);
-            $t['exceptions'][(string) $cols['recurrence_instance_utc']] = self::cols($r) + ['own' => OwnFields::decode($cols['override_fields'] ?? null) ?? [], 'rowId' => null];
+            $own = OwnFields::decode($cols['override_fields'] ?? null) ?? [];
+            if (self::editedAtGoogle($own)) {
+                $t['exceptions'][(string) $cols['recurrence_instance_utc']] = self::cols($r) + ['own' => $own, 'rowId' => null];
+            }
         }
         ksort($t['exceptions']);
         $skips = array_values(array_unique($w['exdates'] ?? Recurrence::decodeExdates($after['exdates_json'] ?? null)));
@@ -510,10 +537,9 @@ final class GoogleSeries
                 // refusal (Google answered and wrote nothing) leaves no step;
                 // no answer at all leaves it sent: it may have landed.
                 // $check: what the series holds at Google once the write
-                // lands (`expect`, a digest of content()), or for the
-                // master the series it was sent against and the fields it
-                // sent (`pre`, `fields`): how Put back tells a write whose
-                // answer was lost from a change made since.
+                // lands (`expect`: the digest of its state, rule B, every
+                // field of Google's resources): how Put back tells a write
+                // whose answer was lost from a change made since.
                 $step = function (string $kind, string $id, ?string $key, \Closure $write, array $check = []) use (&$steps, $save, $i, $back): mixed {
                     $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'key' => $key, 'etag' => null, 'state' => self::SENT, 'back' => $back, 'at' => Time::nowDb()] + $check;
                     $n = array_key_last($steps);
@@ -570,8 +596,9 @@ final class GoogleSeries
                 }
                 $chain = $t['etag'] ?? null;
                 if (!empty($t['insert'])) {
+                    // Once it lands: the series as sent, no edited or skipped day, and no field of the resource but what it sent.
                     $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master'])),
-                        ['expect' => self::digest(self::content(self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []])))]);
+                        ['expect' => self::digest(self::state(self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []]), true)), 'extras' => true]);
                     $targets[$i]['uid'] = $t['uid'] = (string) ($resource['iCalUID'] ?? $t['googleId']);
                     $targets[$i]['insert'] = false;
                     $inserted[(string) $t['googleId']] = $resource;
@@ -580,12 +607,22 @@ final class GoogleSeries
                     $this->journaled(fn(Db $j) => $j->update('google_pending', ['targets_json' => json_encode($snapshot)], 'id = ?', [$pendingId]));
                 } else {
                     $before = $this->masterRow($calendar, $t);
-                    $body = self::masterBody($before === null ? null : self::stateOf($before, [])['master'], $t['master']);
+                    $old = $before === null ? null : self::stateOf($before, [])['master'];
+                    $body = self::masterBody($old, $t['master']);
                     if ($body !== []) {
-                        $pre = $before === null ? null : self::content(self::heldOf(self::stateOf($before,
-                            $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]))));
-                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain),
-                            ['pre' => $pre, 'fields' => array_keys($body)]);
+                        // What the series holds once this write lands (rule
+                        // B): Google's resources as read just before it,
+                        // every field, with the write's own effect on the
+                        // days (afterMaster). Read with the etag the write
+                        // is conditional on, so a change since is a 412.
+                        $check = [];
+                        if ($old !== null && !empty($t['uid'])) {
+                            $pre = self::held($this->readBack($calendar, $send, (string) $t['uid'], (string) $t['googleId'], null, $beforeSend), (string) $t['googleId']);
+                            if ($pre['master'] !== null) {
+                                $check = ['expect' => self::digest(self::state(self::afterMaster($pre, $old, $t['master']), true)), 'extras' => true];
+                            }
+                        }
+                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain), $check);
                         $chain = $resource['etag'] ?? $chain;
                     }
                 }
@@ -596,7 +633,7 @@ final class GoogleSeries
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
                     $after = self::heldAfter($now, $kind, $key, $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null));
                     try {
-                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::content($after))]);
+                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
                     } catch (HttpError $e) {
                         // Google lists no such instance (404): a day past the
                         // 730 occurrences an unbounded series expands to
@@ -827,14 +864,15 @@ final class GoogleSeries
         return GoogleWriter::instanceId($googleId, $key, $allDay, 'UTC');
     }
 
-    // ---- the comparison (pure) --------------------------------------------------
+    // ---- what a series holds (pure; rule B) -----------------------------------------
 
     /**
      * What Google holds for a series, read from a read-back: the master as
      * parsed (null when not live), the live exception records and the
      * cancelled ones by occurrence key, and the skips (cancelled records
      * and EXDATE lines). A dropped record (cancelled, no originalStartTime)
-     * says nothing.
+     * says nothing. The master and each live record carry `extras`, the
+     * every other field of the resource (extrasOf).
      *
      * @return array{master:?array, records:array<string,array>, cancelled:array<string,true>, skips:array<string,true>, etags:array<string,string>}
      */
@@ -845,7 +883,7 @@ final class GoogleSeries
             if (isset($item['id'], $item['etag']) && is_string($item['etag'])) {
                 $out['etags'][(string) $item['id']] = $item['etag'];
             }
-            $parsed = GoogleSync::toParsed($item);
+            $parsed = self::parsed($item);
             if ($parsed === null) {
                 continue;
             }
@@ -869,6 +907,16 @@ final class GoogleSeries
             }
         }
         return $out;
+    }
+
+    /** A Google resource as the sync reads it (GoogleSync::toParsed), with the fields Google keeps that no column holds (`extras`). */
+    private static function parsed(array $item): ?array
+    {
+        $parsed = GoogleSync::toParsed($item);
+        if ($parsed !== null && empty($parsed['cancelled'])) {
+            $parsed['extras'] = self::extrasOf($item);
+        }
+        return $parsed;
     }
 
     /** Two rule texts as the same rule: the same parts with the same values, each list a set, INTERVAL=1 as none (Google reorders). */
@@ -900,24 +948,95 @@ final class GoogleSeries
         return $parts;
     }
 
-    /** Whether two rows hold the same event in the fields Google keeps. */
-    private static function sameEvent(array $a, array $b): bool
+    /**
+     * Rule B: "nothing changed since" means nothing on the Google event
+     * resource changed. A series' state is every field of the master's
+     * resource and of each record's, less what Google rewrites on its own
+     * (VOLATILE), plus the cancelled set. The fields a column here holds are
+     * compared normalized (fieldsOf: READ); every other one is compared as
+     * Google gives it (`extras`): guests, colour, busy or free, visibility,
+     * reminders, the guests' permissions, attachments, a call, private
+     * properties, and any field Google adds later, by default.
+     *
+     * What Google rewrites on its own, never a change made by anyone:
+     */
+    private const VOLATILE = [
+        'etag',              // changes on every write to any row of the series (probe 5.1)
+        'updated',           // the time of the last write
+        'created',           // the time of the insert
+        'sequence',          // counted up by Google on a time, rule or status change
+        'htmlLink',          // Google's page for the event, derived from its id
+        'iCalUID',           // the series' identity, never changed
+        'id',                // the resource's identity, never changed
+        'kind',              // always calendar#event
+        'creator',           // who made it, stamped at the insert
+        'organizer',         // the calendar that owns it, stamped at the insert
+        'recurringEventId',  // a record's series, part of its identity
+        'originalStartTime', // a record's occurrence, its key
+        'hangoutLink',       // derived by Google from conferenceData, which is compared
+    ];
+
+    /** The resource's fields a column here holds, compared normalized by fieldsOf (and a rule by its parts), not raw. */
+    private const READ = ['summary', 'description', 'location', 'status', 'source', 'start', 'end', 'recurrence'];
+
+    /** The value Google shows for a field it was given none for: equal to it is the same as absent, so an insert that set none is what it sent. */
+    private const DEFAULTS = [
+        'attendees' => [], 'transparency' => 'opaque', 'visibility' => 'default', 'reminders' => ['useDefault' => true],
+        'guestsCanModify' => false, 'guestsCanInviteOthers' => true, 'guestsCanSeeOtherGuests' => true, 'anyoneCanAddSelf' => false,
+        'attachments' => [], 'eventType' => 'default', 'endTimeUnspecified' => false, 'attendeesOmitted' => false, 'locked' => false, 'privateCopy' => false,
+    ];
+
+    /** A resource's fields beyond what a column holds (rule B), each in one canonical form, a default left out. @return array<string,mixed> */
+    private static function extrasOf(array $item): array
     {
-        return self::fieldsOf($a) === self::fieldsOf($b);
+        $out = [];
+        foreach ($item as $field => $value) {
+            $field = (string) $field;
+            if (in_array($field, self::VOLATILE, true) || in_array($field, self::READ, true) || $value === null) {
+                continue;
+            }
+            $value = self::canonical($value);
+            if (array_key_exists($field, self::DEFAULTS) && $value === self::canonical(self::DEFAULTS[$field])) {
+                continue;
+            }
+            $out[$field] = $value;
+        }
+        ksort($out);
+        return $out;
+    }
+
+    private static function canonical(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        $out = [];
+        foreach ($value as $k => $v) {
+            $out[$k] = self::canonical($v);
+        }
+        if (!array_is_list($out)) {
+            ksort($out);
+        }
+        return $out;
     }
 
     /**
-     * A row's fields Google keeps, normalized as Google gives them back:
-     * everything that places its occurrences, the zone of a timed event
-     * among them (a series' zone decides where every later day falls, so
-     * two series with the same first instant in different zones are not
-     * the same series). The zone is the string a write sends (Time::
-     * normalizeTzid, as GoogleWriter::body names it, and as GoogleSync
-     * reads Google's back): two spellings of one zone are two strings, a
-     * difference, which errs on the side of "changed". An all-day event
-     * has no zone at Google.
+     * An event's fields as Google holds them, normalized as Google gives
+     * them back: the one field list every comparison of a Google series
+     * reads (rule B). It is the union of what GoogleWriter::body sends and
+     * what GoogleSync::toParsed reads into a column: the title, notes,
+     * place, status, link (`source`), and everything that places its
+     * occurrences, the zone of a timed event among them (a series' zone
+     * decides where every later day falls). The zone is the string a write
+     * sends (Time::normalizeTzid, as GoogleWriter::body names it and
+     * GoogleSync reads it back): two spellings of one zone are two strings,
+     * a difference, which errs on the side of "changed"; an all-day event
+     * has no zone at Google. A rule is compared as its parts beside these
+     * (state). With $extras, the fields Google keeps that no column holds
+     * (extrasOf). The guest list the sync
+     * reads (into invite_json) is among those, as Google holds it.
      */
-    private static function fieldsOf(array $r): array
+    private static function fieldsOf(array $r, bool $extras = false): array
     {
         $title = trim((string) ($r['title'] ?? ''));
         $allDay = (int) ($r['all_day'] ?? 0);
@@ -931,31 +1050,52 @@ final class GoogleSeries
             'all_day' => $allDay,
             'tzid' => $allDay === 1 ? '' : Time::normalizeTzid((string) ($r['tzid'] ?? 'UTC')),
             'url' => (string) (Ics::webUrl(isset($r['url']) ? (string) $r['url'] : null) ?? ''),
-        ];
+        ] + ($extras ? ['extras' => (array) ($r['extras'] ?? [])] : []);
     }
 
-    // ---- what a series holds, for "nothing changed since" (pure) ----------------
+    /** Whether two events are the same event in the fields both sides know (fieldsOf; a target has no extras). */
+    private static function sameEvent(array $a, array $b): bool
+    {
+        return self::fieldsOf($a) === self::fieldsOf($b);
+    }
 
     /**
-     * A series as Google holds it, in what a write sends: the master's
-     * fields and rule (as parts), each edited day's fields by its key (a
-     * record at the series' own values is no edited day), and the skipped
-     * keys. Two series are the same series when these are equal; an etag
-     * plays no part. $h is held()'s shape (or heldOf()'s).
+     * Whether a record holds its series' own values at its occurrence
+     * (plainAt): an ordinary day, in every comparison and every send, never
+     * written and never reported (rule A). With $extras, its extras are the
+     * master's too.
+     */
+    private static function isPlain(array $record, array $master, string $key, bool $extras = false): bool
+    {
+        return self::fieldsOf($record, $extras) === self::fieldsOf(self::plainAt($master, $key, self::lengthOf($master)), $extras);
+    }
+
+    private static function lengthOf(array $m): int
+    {
+        return max(0, Time::fromDb((string) $m['end_utc'])->getTimestamp() - Time::fromDb((string) $m['start_utc'])->getTimestamp());
+    }
+
+    /**
+     * A series' state at Google (rule B): the master's fields (fieldsOf)
+     * and its rule as parts, each edited day's fields by its key (a record
+     * at the series' own values is an ordinary day, isPlain), and the
+     * skipped keys; with $extras, the extras of the master and every day.
+     * Two readings are the same series when their digests are equal; an
+     * etag plays no part. The one thing "nothing changed since" (a step's
+     * `expect`, unchangedSince) is read from. $h is held()'s shape (or
+     * heldOf()'s, or afterMaster()'s).
      *
      * @return array{master:?array, records:array<string,array>, skips:list<string>}
      */
-    public static function content(array $h): array
+    public static function state(array $h, bool $extras = false): array
     {
         $m = $h['master'];
-        $out = ['master' => $m === null ? null : self::fieldsOf($m) + ['rule' => self::ruleParts((string) ($m['rrule'] ?? ''))], 'records' => [], 'skips' => []];
-        $len = $m === null ? 0 : max(0, Time::fromDb((string) $m['end_utc'])->getTimestamp() - Time::fromDb((string) $m['start_utc'])->getTimestamp());
+        $out = ['master' => $m === null ? null : self::fieldsOf($m, $extras) + ['rule' => self::ruleParts((string) ($m['rrule'] ?? ''))], 'records' => [], 'skips' => []];
         foreach ($h['records'] as $key => $r) {
-            $fields = self::fieldsOf($r);
-            if ($m !== null && $fields === self::fieldsOf(self::plainAt($m, (string) $key, $len))) {
+            if ($m !== null && self::isPlain($r, $m, (string) $key, $extras)) {
                 continue;
             }
-            $out['records'][(string) $key] = $fields;
+            $out['records'][(string) $key] = self::fieldsOf($r, $extras);
         }
         ksort($out['records']);
         $out['skips'] = array_map('strval', array_keys($h['skips']));
@@ -963,105 +1103,177 @@ final class GoogleSeries
         return $out;
     }
 
-    private static function digest(array $content): string
+    /** A state's digest: what a step journals as what it leaves (`expect`), and what Put back compares Google's now against. */
+    private static function digest(array $state): string
     {
-        return sha1((string) json_encode($content));
+        return sha1((string) json_encode($state));
     }
 
-    /** A target (or a series as stored, stateOf) in held()'s shape: what Google holds once it holds the target. */
+    /** A target (or a series as stored, stateOf) in held()'s shape: what Google holds once it holds the target (a skip is a cancelled instance). */
     private static function heldOf(array $t): array
     {
         $records = [];
         foreach ($t['exceptions'] as $key => $x) {
             $records[(string) $key] = $x;
         }
-        return ['master' => $t['master'], 'records' => $records, 'cancelled' => [], 'skips' => array_fill_keys(array_map('strval', $t['skips']), true), 'etags' => []];
+        $skips = array_fill_keys(array_map('strval', $t['skips']), true);
+        return ['master' => $t['master'], 'records' => $records, 'cancelled' => $skips, 'skips' => $skips, 'etags' => []];
     }
 
-    /** What Google holds once an instance write lands: the record at $key as $row, or the day skipped. */
+    /**
+     * What Google holds once an instance write lands: the record at $key as
+     * $row, or the day skipped. A record keeps the extras it had, and one
+     * made of an occurrence takes its series' (Google's instances inherit them).
+     */
     private static function heldAfter(array $h, string $kind, string $key, ?array $row): array
     {
+        $extras = $h['records'][$key]['extras'] ?? $h['master']['extras'] ?? [];
         unset($h['records'][$key], $h['cancelled'][$key], $h['skips'][$key]);
         if ($kind === 'skip') {
             $h['cancelled'][$key] = true;
             $h['skips'][$key] = true;
         } else {
-            $h['records'][$key] = $row;
+            $h['records'][$key] = ['extras' => $extras] + (array) $row;
         }
         return $h;
     }
 
     /**
-     * Whether, since a master write whose answer was lost, the series
-     * changed only by that write: the master as it sent it, and each edited
-     * day as it was ($pre) but for the fields the write sent, which may
-     * hold the master's new value (Google overwrites them), or gone (Google
-     * drops them on a new time); no edited day or skip that wasn't there.
+     * What Google holds once a master write lands, from what it held before
+     * ($h, held()'s shape) and the master before and after ($old, $new: a
+     * target's master): Google's own effect on a series' days, as the probe
+     * found it (the contract's "Exceptions on a master change", group 3).
+     * The write is masterBody($old, $new); nothing sent, nothing changes. A
+     * record stays only while its key is an occurrence of the new master (a
+     * clock, zone, start-day or pattern change drops them all, a bound
+     * change those past the end), follows a changed start onto its
+     * occurrence with the new length (and a changed length alone with its
+     * end), and takes every title, notes, place or status the write sends;
+     * a cancelled record goes the same way and with any pattern change, and
+     * comes back with a status; a skip held as an EXDATE line goes with the
+     * rule line the write sends alone. The state a master step journals it
+     * leaves (rule B), and what "the change's own effect" is to Finish
+     * (rebase).
      */
-    public static function onlyMasterChanged(array $pre, array $now, array $sentMaster, array $fields): bool
+    public static function afterMaster(array $h, array $old, array $new): array
     {
-        $target = self::content(['master' => $sentMaster, 'records' => [], 'skips' => []])['master'];
-        if ($now['master'] !== $target) {
-            return false;
+        $body = self::masterBody($old, $new);
+        if ($body === [] || $h['master'] === null) {
+            return $h;
         }
-        $columns = ['summary' => ['title'], 'description' => ['description'], 'location' => ['location'], 'status' => ['status'], 'source' => ['url'],
-            'start' => ['start_utc', 'end_utc', 'all_day', 'tzid'], 'end' => ['start_utc', 'end_utc', 'all_day', 'tzid']];
-        $sent = [];
-        foreach ($fields as $field) {
-            foreach ($columns[$field] ?? [] as $col) {
-                $sent[$col] = true;
+        $zoneOf = static fn(array $m): string => (int) $m['all_day'] === 1 ? '' : Time::normalizeTzid((string) $m['tzid']);
+        $startChanged = (string) $old['start_utc'] !== (string) $new['start_utc'] || (int) $old['all_day'] !== (int) $new['all_day'] || $zoneOf($old) !== $zoneOf($new);
+        $lenOld = self::lengthOf($old);
+        $lenNew = self::lengthOf($new);
+        $pattern = static function (string $rrule): array {
+            $parts = self::ruleParts($rrule);
+            unset($parts['COUNT'], $parts['UNTIL']);
+            return $parts;
+        };
+        $patternChanged = $pattern((string) $old['rrule']) !== $pattern((string) $new['rrule']);
+        $set = [];
+        foreach (['summary' => 'title', 'description' => 'description', 'location' => 'location', 'status' => 'status'] as $field => $col) {
+            if (array_key_exists($field, $body)) {
+                $set[$col] = $new[$col] ?? null;
             }
         }
-        foreach ($now['records'] as $key => $record) {
-            $was = $pre['records'][$key] ?? null;
-            if ($was === null) {
+        $allDay = (int) $new['all_day'] === 1;
+        $series = ['start_utc' => $new['start_utc'], 'end_utc' => $new['end_utc'], 'all_day' => (int) $new['all_day'], 'tzid' => (string) $new['tzid'], 'rrule' => (string) $new['rrule'], 'exdates_json' => null];
+        $isDay = static function (string $key) use ($series, $allDay): bool {
+            if ($series['rrule'] === '') {
                 return false;
             }
-            foreach ($record as $col => $value) {
-                if ($value !== ($was[$col] ?? null) && !(isset($sent[$col]) && $value === ($target[$col] ?? null))) {
-                    return false;
+            $at = Time::fromDb($key);
+            foreach (Recurrence::occurrences($series, $at->modify('-1 day'), $at->modify('+2 days'), null, 8) as $o) {
+                if ($allDay ? $o['start']->setTimezone(Time::zone($series['tzid']))->format('Y-m-d') === $at->format('Y-m-d') : $o['start']->getTimestamp() === $at->getTimestamp()) {
+                    return true;
                 }
             }
+            return false;
+        };
+        $follow = static function (array $r, string $key) use ($startChanged, $lenOld, $lenNew, $new, $allDay, $set): array {
+            if ($startChanged) {
+                $at = Time::fromDb($key);
+                $r['start_utc'] = Time::toDb($at);
+                $r['end_utc'] = Time::toDb($allDay ? $at->modify('+' . max(1, intdiv($lenNew, 86400)) . ' days') : $at->modify('+' . $lenNew . ' seconds'));
+                $r['all_day'] = (int) $new['all_day'];
+                $r['tzid'] = (string) $new['tzid'];
+            } elseif ($lenNew !== $lenOld) {
+                $start = Time::fromDb((string) $r['start_utc']);
+                $r['end_utc'] = Time::toDb((int) ($r['all_day'] ?? 0) === 1 ? $start->modify('+' . max(1, intdiv($lenNew, 86400)) . ' days') : $start->modify('+' . $lenNew . ' seconds'));
+            }
+            return array_merge($r, $set);
+        };
+        $out = $h;
+        $out['master'] = ['extras' => $h['master']['extras'] ?? []] + $new;
+        foreach ($h['records'] as $key => $r) {
+            $key = (string) $key;
+            unset($out['records'][$key]);
+            if ($isDay($key)) {
+                $out['records'][$key] = $follow($r, $key);
+            }
         }
-        return array_diff($now['skips'], $pre['skips']) === [];
+        foreach (array_keys($h['skips']) as $key) {
+            $key = (string) $key;
+            unset($out['cancelled'][$key], $out['skips'][$key]);
+            if (!isset($h['cancelled'][$key]) || !$isDay($key) || $patternChanged) {
+                continue;
+            }
+            if (array_key_exists('status', $set)) {
+                // Un-cancelled: the day as its record held it, the series' then.
+                $out['records'][$key] = $follow(['extras' => $h['master']['extras'] ?? []] + self::plainAt($old, $key, $lenOld), $key);
+                continue;
+            }
+            $out['cancelled'][$key] = true;
+            $out['skips'][$key] = true;
+        }
+        ksort($out['records']);
+        return $out;
     }
 
     /**
-     * The steps a read-back calls for, each a PATCH on an instance id: an
-     * exception Google doesn't hold as the target has it (dropped, reset,
-     * overwritten, or never there) sent whole; a skipped day not cancelled
-     * cancelled; a record the target has no exception for put back to the
-     * series' values at its occurrence (a day rejoining the series, or one
-     * Google kept cancelled that the target shows).
+     * The steps a read-back calls for, each a PATCH on an instance id, from
+     * one comparison per day (rule A): what the target wants of the day (an
+     * edited day, a skip, or an ordinary day: no edited day, or one at the
+     * series' own values) against what Google holds (a record, a cancelled
+     * one, or none; a record at the series' values is none). An edited day
+     * Google doesn't hold as the target has it (dropped, reset,
+     * overwritten, or never there) is sent whole; a skipped day not
+     * cancelled is cancelled; a day Google holds as an edited or cancelled
+     * record that the target has as ordinary is put back to the series'
+     * values at its occurrence. A day both have as ordinary is never sent,
+     * whatever records Google keeps for it.
      *
      * @return list<array{0:string,1:string,2:array,3:string}> kind, instance id, body, occurrence key
      */
     public static function stepsFor(array $t, array $items): array
     {
         $held = self::held($items, (string) $t['googleId']);
-        $allDay = (int) $t['master']['all_day'] === 1;
-        $steps = [];
-        foreach ($t['exceptions'] as $key => $x) {
+        $m = $t['master'];
+        $allDay = (int) $m['all_day'] === 1;
+        $skipSet = array_fill_keys(array_map('strval', $t['skips']), true);
+        $keys = array_values(array_unique(array_map('strval', array_merge(array_keys($t['exceptions']), $t['skips'], array_keys($held['records']), array_keys($held['cancelled'])))));
+        sort($keys);
+        $out = ['exception' => [], 'skip' => [], 'plain' => []];
+        foreach ($keys as $key) {
+            $x = $t['exceptions'][$key] ?? null;
+            $want = isset($skipSet[$key]) ? 'skip' : ($x !== null && !self::isPlain($x, $m, $key) ? $x : null);
             $record = $held['records'][$key] ?? null;
-            if ($record === null || !self::sameEvent($record, $x)) {
-                $steps[] = ['exception', self::instanceId((string) $t['googleId'], (string) $key, $allDay), self::exceptionBody($x), (string) $key];
+            $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && !self::isPlain($record, $m, $key) ? $record : null);
+            $id = self::instanceId((string) $t['googleId'], $key, $allDay);
+            if ($want === 'skip') {
+                if ($has !== 'skip') {
+                    $out['skip'][] = ['skip', $id, ['status' => 'cancelled'], $key];
+                }
+            } elseif ($want === null) {
+                if ($has !== null) {
+                    $out['plain'][] = ['plain', $id, self::exceptionBody(self::plainAt($m, $key, self::lengthOf($m))), $key];
+                }
+            } elseif (!is_array($has) || !self::sameEvent($has, $want)) {
+                $out['exception'][] = ['exception', $id, self::exceptionBody($want), $key];
             }
         }
-        foreach ($t['skips'] as $key) {
-            if (!isset($held['skips'][$key])) {
-                $steps[] = ['skip', self::instanceId((string) $t['googleId'], (string) $key, $allDay), ['status' => 'cancelled'], (string) $key];
-            }
-        }
-        $skipSet = array_flip($t['skips']);
-        $len = max(0, Time::fromDb($t['master']['end_utc'])->getTimestamp() - Time::fromDb($t['master']['start_utc'])->getTimestamp());
-        foreach (array_keys($held['records'] + $held['cancelled']) as $key) {
-            $key = (string) $key;
-            if (isset($t['exceptions'][$key]) || isset($skipSet[$key])) {
-                continue;
-            }
-            $steps[] = ['plain', self::instanceId((string) $t['googleId'], $key, $allDay), self::exceptionBody(self::plainAt($t['master'], $key, $len)), $key];
-        }
-        return $steps;
+        return array_merge($out['exception'], $out['skip'], $out['plain']);
     }
 
     /** The series' own values at an occurrence: the master's fields, the occurrence's start and the series' length. */
@@ -1077,7 +1289,9 @@ final class GoogleSeries
     /**
      * Where Google and the target differ after the steps, in words for the
      * Activity entry and the Review notice (invented examples: "Google kept
-     * 'Rehearsal' on Tue 13 Apr; the plan had Wed 14 Apr.").
+     * 'Rehearsal' on Tue 13 Apr; the plan had Wed 14 Apr."). Read from the
+     * same day comparison as stepsFor: a day both have as ordinary (no
+     * record, or one at the series' own values) is no difference.
      *
      * @return list<string>
      */
@@ -1111,13 +1325,21 @@ final class GoogleSeries
             $out[] = "Google kept the series in the zone '" . self::fieldsOf($g)['tzid'] . "'; the plan had '" . self::fieldsOf($m)['tzid'] . "'.";
         }
         foreach (['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link'] as $col => $word) {
-            if (!self::sameEvent(['start_utc' => $m['start_utc'], 'end_utc' => $m['end_utc'], 'all_day' => $m['all_day']] + [$col => $g[$col] ?? null] + $m, $m)) {
+            if (self::fieldsOf($g)[$col] !== self::fieldsOf($m)[$col]) {
                 $out[] = "Google kept the series' $word as '" . (string) ($g[$col] ?? '') . "'; the plan had '" . (string) ($m[$col] ?? '') . "'.";
             }
         }
+        $skipSet = array_fill_keys(array_map('strval', $t['skips']), true);
+        $edited = static fn(?array $r, string $key): bool => $r !== null && !self::isPlain($r, $m, $key);
         foreach ($t['exceptions'] as $key => $x) {
             $key = (string) $key;
+            if (isset($skipSet[$key])) {
+                continue;
+            }
             $record = $held['records'][$key] ?? null;
+            if (!$edited($x, $key)) {
+                continue; // an ordinary day to the plan: below, with the records the plan has none for
+            }
             $name = "'" . $x['title'] . "'";
             if ($record === null) {
                 $out[] = 'Google kept ' . $day($key) . (isset($held['cancelled'][$key]) ? ' skipped' : ' as an ordinary day') . "; the plan had $name on " . $shown($x) . '.';
@@ -1134,22 +1356,210 @@ final class GoogleSeries
                 $out[] = "Google kept $name on " . $day($key) . ' with other details than the plan had.';
             }
         }
-        $skipSet = array_flip($t['skips']);
         foreach ($t['skips'] as $key) {
             if (!isset($held['skips'][$key])) {
                 $out[] = 'Google kept ' . $day((string) $key) . '; the plan skipped it.';
             }
         }
         foreach ($held['records'] as $key => $record) {
-            if (!isset($t['exceptions'][$key]) && !isset($skipSet[$key])) {
-                $out[] = "Google kept '" . $record['title'] . "' on " . $day((string) $key) . '; the plan had an ordinary day.';
+            $key = (string) $key;
+            if (!isset($skipSet[$key]) && !$edited($t['exceptions'][$key] ?? null, $key) && $edited($record, $key)) {
+                $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . '; the plan had an ordinary day.';
             }
         }
         foreach (array_keys($held['cancelled']) as $key) {
-            if (!isset($t['exceptions'][(string) $key]) && !isset($skipSet[$key])) {
-                $out[] = 'Google kept ' . $day((string) $key) . ' skipped; the plan had it.';
+            $key = (string) $key;
+            if (!isset($skipSet[$key]) && !$edited($t['exceptions'][$key] ?? null, $key)) {
+                $out[] = 'Google kept ' . $day($key) . ' skipped; the plan had it.';
             }
         }
+        return $out;
+    }
+
+    // ---- the change over what Google holds now (pure; rule A) -------------------------
+
+    /** The groups a day's or a master's fields are compared in: each content field, and its placement as one. */
+    private const GROUPS = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'status' => ['status'], 'url' => ['url'],
+        'when' => ['start_utc', 'end_utc', 'all_day', 'tzid']];
+    private const GROUP_WORDS = ['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link', 'when' => 'time', 'rule' => 'rule'];
+    /** An edited day's own field, by the group it is compared in. */
+    private const OWN_GROUP = ['date' => 'when', 'time' => 'when', 'length' => 'when', 'allDay' => 'when', 'title' => 'title', 'description' => 'description',
+        'location' => 'location', 'url' => 'url', 'status' => 'status'];
+
+    /** An event's fields (fieldsOf) by group; a master's with its rule as parts. @return array<string,mixed> */
+    private static function groupsOf(array $r, bool $master = false): array
+    {
+        $f = self::fieldsOf($r);
+        $out = [];
+        foreach (self::GROUPS as $g => $cols) {
+            $out[$g] = count($cols) === 1 ? $f[$cols[0]] : array_intersect_key($f, array_flip($cols));
+        }
+        return $master ? $out + ['rule' => self::ruleParts((string) ($r['rrule'] ?? ''))] : $out;
+    }
+
+    /** A day of a series in held()'s shape, compared by group: 'skip', or its fields by group (its record's, else the series' values there). */
+    private static function dayIn(array $h, string $key): string|array
+    {
+        if (isset($h['skips'][$key])) {
+            return 'skip';
+        }
+        return self::groupsOf($h['records'][$key] ?? self::plainAt($h['master'], $key, self::lengthOf($h['master'])));
+    }
+
+    /** What a change changes of one value, read three ways: whether Google's value now is one the change explains, else whether the change changes it at all. */
+    private static function threeWay(mixed $now, array $explained, mixed $before, mixed $after): string
+    {
+        if (in_array($now, $explained, true)) {
+            return 'change';
+        }
+        return $before === $after ? 'kept' : 'conflict';
+    }
+
+    /**
+     * Rule A: a change applied as its deltas over what Google holds now.
+     * $before is the series as the change found it (stateOf, journaled),
+     * $target what the change makes of it, $now what Google holds (held()).
+     * A delta is what the change changes: each field group of the master,
+     * and each day's own part (its own fields, or that it is skipped), from
+     * $before to $target. Google's value now is the change's to set where
+     * the change explains it: as it was before, as the change's own master
+     * write leaves it (afterMaster: Google writes a series' fields into its
+     * days, and drops them on a new time), or as the target has it (a step
+     * that landed). Any other value was changed elsewhere since: kept as
+     * Google holds it where the change doesn't change that group of that
+     * day, and kept and named where it does (a day deleted since, a field
+     * changed since): never overwritten. So every field and day the change
+     * did not change stays exactly as Google holds it. A day is an edited
+     * day of the result where it differs from the series there, with its
+     * own fields the target's and whatever else of its own it holds now.
+     *
+     * @return array{0:array,1:list<string>} the target over what Google holds now, and words for what was left as Google has it
+     */
+    public static function rebase(array $before, array $target, array $now, int $thisYear): array
+    {
+        if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
+            return [$target, []];
+        }
+        $B = self::heldOf($before);
+        $T = self::heldOf($target);
+        $P = self::afterMaster($B, $before['master'], $target['master']);
+        $C = $now;
+        $words = [];
+        // The master, a group at a time (its own write's effect is the target's values).
+        $mb = self::groupsOf($before['master'], true);
+        $mt = self::groupsOf($target['master'], true);
+        $mc = self::groupsOf($C['master'], true);
+        $master = $target['master'];
+        $left = [];
+        foreach ($mt as $g => $t) {
+            $how = self::threeWay($mc[$g], [$mb[$g], $t], $mb[$g], $t);
+            if ($how === 'change') {
+                continue;
+            }
+            foreach ($g === 'rule' ? ['rrule'] : self::GROUPS[$g] as $col) {
+                $master[$col] = $col === 'rrule' ? (string) ($C['master']['rrule'] ?? '') : ($C['master'][$col] ?? null);
+            }
+            if ($how === 'conflict') {
+                $left[] = self::GROUP_WORDS[$g];
+            }
+        }
+        if ($left !== []) {
+            $words[] = "The series' " . implode(', ', $left) . " changed at Google since this change stopped; left as Google has it.";
+        }
+        $len = self::lengthOf($master);
+        $allDay = (int) $master['all_day'] === 1;
+        $dayWords = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($allDay ? 'UTC' : (string) $master['tzid']))), $thisYear);
+        // Each day: the change's own before by the row it is (an edited day may move key), else the day at the key.
+        $byRow = [];
+        foreach ($before['exceptions'] as $k => $x) {
+            if (!empty($x['rowId'])) {
+                $byRow[(int) $x['rowId']] = (string) $k;
+            }
+        }
+        $keys = [];
+        foreach ([$T, $B, $C, $P] as $h) {
+            foreach (array_merge(array_keys($h['records']), array_keys($h['skips'])) as $k) {
+                $keys[(string) $k] = true;
+            }
+        }
+        ksort($keys);
+        $exceptions = [];
+        $skips = [];
+        foreach (array_keys($keys) as $key) {
+            $key = (string) $key;
+            $x = $target['exceptions'][$key] ?? null;
+            $wasKey = $x !== null && isset($byRow[(int) ($x['rowId'] ?? 0)]) ? $byRow[(int) $x['rowId']] : $key;
+            $bOwn = self::dayIn($B, $wasKey);
+            $bHere = $wasKey === $key ? $bOwn : self::dayIn($B, $key);
+            $p = self::dayIn($P, $key);
+            $t = self::dayIn($T, $key);
+            $c = self::dayIn($C, $key);
+            // What the change wants of the day over the series as it will be: its own fields, the rest the series'.
+            $want = self::plainAt($master, $key, $len);
+            foreach (OwnFields::normalize((array) ($x['own'] ?? [])) as $field) {
+                foreach (self::GROUPS[self::OWN_GROUP[$field] ?? ''] ?? [] as $col) {
+                    $want[$col] = $x[$col] ?? null;
+                }
+            }
+            $nowRow = $C['records'][$key] ?? self::plainAt($C['master'], $key, self::lengthOf($C['master']));
+            if ($c === 'skip' || $t === 'skip' || $bOwn === 'skip') {
+                // A day skipped on one side: the day as a whole.
+                $wantsChange = self::ownPart($bOwn, $before['exceptions'][$wasKey] ?? null) !== self::ownPart($t, $x);
+                $how = self::threeWay($c, [$bOwn, $bHere, $p, $t], $wantsChange, false);
+                $result = $how === 'change' ? ($t === 'skip' ? 'skip' : $want) : ($c === 'skip' ? 'skip' : $nowRow);
+                if ($how === 'conflict') {
+                    $words[] = $c === 'skip'
+                        ? $dayWords($key) . ' was deleted at Google since this change stopped; it stays deleted.'
+                        : $dayWords($key) . ' was changed at Google since this change stopped; left as Google has it.';
+                }
+            } else {
+                $result = $want;
+                $left = [];
+                foreach (self::GROUPS as $g => $cols) {
+                    $how = self::threeWay($c[$g], [$bOwn[$g], $bHere[$g], is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
+                    if ($how === 'change') {
+                        continue;
+                    }
+                    foreach ($cols as $col) {
+                        $result[$col] = $nowRow[$col] ?? null;
+                    }
+                    if ($how === 'conflict') {
+                        $left[] = self::GROUP_WORDS[$g];
+                    }
+                }
+                if ($left !== []) {
+                    $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . ' changed at Google since this change stopped (its ' . implode(', ', $left) . '); left as Google has it.';
+                }
+            }
+            if ($result === 'skip') {
+                $skips[] = $key;
+                continue;
+            }
+            $row = self::cols($result);
+            if (self::isPlain($row, $master, $key)) {
+                continue;
+            }
+            $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), OwnFields::infer($row + ['recurrence_instance_utc' => $key], $master)));
+            $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
+        }
+        sort($skips);
+        return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words];
+    }
+
+    /** A day's own part, for "does the change change this day": skipped, or its own fields' values (none for an ordinary day). */
+    private static function ownPart(string|array $day, ?array $x): mixed
+    {
+        if ($day === 'skip') {
+            return 'skip';
+        }
+        $out = [];
+        foreach (OwnFields::normalize((array) ($x['own'] ?? [])) as $field) {
+            $g = self::OWN_GROUP[$field] ?? null;
+            if ($g !== null) {
+                $out[$g] = $day[$g];
+            }
+        }
+        ksort($out);
         return $out;
     }
 
@@ -1346,36 +1756,71 @@ final class GoogleSeries
     }
 
     /**
-     * Finish: the same targets from Google's state, which is what is
-     * stored here (the half state was written from a read-back), so each
-     * series' first write is conditional on its stored etag; then the
-     * change's part here (its plan, kept with the pending row) written as
-     * the change would have written it: the rows put back where the
-     * snapshot has them (rewind), $commit run on them (the caller's writer,
-     * the one the change uses), and what Google holds stored on top; the
-     * rows the change kept take back their ids and what hung off them
-     * (reattach). A part here that can't be written is reported, and the
-     * pending row stays for Review with what Google holds stored.
+     * Finish (rule A): the change's deltas applied over what Google and the
+     * rows hold now. Each series is read back (and stored here, so its
+     * first write is conditional on the etag Google has now), and its
+     * target is rebased on that read (rebase): what the change changes is
+     * set where Google's value is one the change explains, and every field
+     * and day it did not change stays exactly as Google holds it; a day or
+     * field changed since in what the change changes is left as it is and
+     * named. Then the change's part here (its plan, kept with the pending
+     * row) written by the writer the change uses, on the rows put back
+     * where the snapshot has them (rewind), each of its fields held here
+     * alone left out where it changed here since (named, as Google's are),
+     * and what Google holds stored on top; the rows the change kept take
+     * back their ids and what hung off them (reattach). A part here that
+     * can't be written is reported, and the pending row stays for Review
+     * with what Google holds stored.
      *
-     * @param ?\Closure $commit fn(array $plan, array $out): void, the change's writer
+     * @param ?\Closure $commit fn(array $plan, array $out, array $local): list<string>, the change's writer; returns words for what it left as it is
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>}
      */
     public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?\Closure $commit = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
-        $this->refresh($calendar, json_decode((string) $row['targets_json'], true) ?: [], $beforeSend, $pendingId);
-        $targets = $this->withStoredEtags($calendar, json_decode((string) $row['targets_json'], true) ?: []);
+        $targets = json_decode((string) $row['targets_json'], true) ?: [];
+        $befores = json_decode((string) $row['befores_json'], true) ?: [];
+        $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
+            => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $now = $this->refresh($calendar, $targets, $beforeSend, $pendingId);
+        $targets = $this->withStoredEtags($calendar, $targets);
+        $year = (int) Time::nowUtc()->format('Y');
+        $kept = [];
+        foreach ($targets as $i => $t) {
+            if (!empty($t['remove'])) {
+                continue;
+            }
+            $before = $befores[$i] ?? null;
+            $items = !empty($t['uid']) ? ($now[(string) $t['uid']] ?? null) : null;
+            if (!empty($t['insert'])) {
+                // An insert that landed (its answer lost): the change's before is the series as inserted.
+                $found = $this->found($send, (string) $t['googleId']);
+                $uid = is_array($found) && is_string($found['iCalUID'] ?? null) && $found['iCalUID'] !== '' ? $found['iCalUID'] : null;
+                if ($uid === null) {
+                    continue;
+                }
+                $items = $this->readBack($calendar, $send, $uid, (string) $t['googleId'], null, $beforeSend);
+                $before = ['master' => $t['master'], 'exceptions' => [], 'skips' => []];
+            }
+            if ($items === null || !is_array($before) || empty($before['master'])) {
+                continue;
+            }
+            [$rebased, $words] = self::rebase($before, $t, self::held($items, (string) $t['googleId']), $year);
+            $targets[$i] = $rebased;
+            $kept = array_merge($kept, $words);
+        }
         $out = $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
         $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
         $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
         $held = [];
         if (is_array($plan) && $commit !== null) {
-            $held = $this->commitLocal($calendar, $pendingId, $local, $plan, $out, $commit);
+            [$held, $words] = $this->commitLocal($calendar, $pendingId, $local, $plan, $out, $commit);
+            $kept = array_merge($kept, $words);
         }
         $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
         $this->reattach($calendar, $local, $out['targets']);
-        $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $out['targets']));
+        $out['differences'] = array_merge($kept, $out['differences'], $this->carryHeld($calendar, $held, $out['targets']));
         $this->settle($pendingId);
         return $out;
     }
@@ -1386,17 +1831,19 @@ final class GoogleSeries
      * nothing. A failure leaves the rows as Google holds them, keeps the
      * pending row half done with words for what stopped, and is thrown.
      * Returns what rewind took off the rows it made that hold something
-     * here alone (heldHere), for carryHeld once Google's state is stored.
+     * here alone (heldHere), for carryHeld once Google's state is stored,
+     * and the writer's words for what it left as it is.
      *
-     * @return list<array>
+     * @return array{0:list<array>, 1:list<string>}
      */
     private function commitLocal(array $calendar, int $pendingId, array $local, array $plan, array $out, \Closure $commit): array
     {
         $made = $this->madeOf($pendingId);
         $held = [];
-        $write = function () use ($calendar, $local, $plan, $out, $commit, $made, &$held): void {
+        $words = [];
+        $write = function () use ($calendar, $local, $plan, $out, $commit, $made, &$held, &$words): void {
             [$kept, $held] = $this->rewind($calendar, $local, $out['targets'], $made);
-            $commit($plan, $out);
+            $words = (array) ($commit($plan, $out, $local) ?? []);
             $this->follow($local, $kept);
         };
         try {
@@ -1420,7 +1867,7 @@ final class GoogleSeries
             $this->endUnlessTx($pendingId, true);
             throw new HttpError('google_finish_local', $words, 409, ['pending' => $pendingId]);
         }
-        return $held;
+        return [$held, $words];
     }
 
     /**
@@ -1512,6 +1959,15 @@ final class GoogleSeries
             if (isset($live[$id])) {
                 $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
             } else {
+                // Brought back whole, but a day's series columns are its series' now (rule C).
+                if ($r['recurrence_parent_id'] !== null) {
+                    $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $r['recurrence_parent_id']]);
+                    foreach (array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS) as $col) {
+                        if ($master !== null && array_key_exists($col, $master)) {
+                            $r[$col] = $master[$col];
+                        }
+                    }
+                }
                 $this->db->upsert('events', $r);
                 $gone[$id] = true;
             }
@@ -1863,8 +2319,9 @@ final class GoogleSeries
                         unset($b['singles'][$si]); // it never landed
                         continue;
                     }
-                    $parsed = GoogleSync::toParsed($found);
-                    if ($parsed === null || !self::sameEvent($parsed, $sentSingles[$sid]['row'])) {
+                    // Rule B: every field of the resource as sent, and none it didn't send.
+                    $parsed = self::parsed($found);
+                    if ($parsed === null || self::fieldsOf($parsed, true) !== self::fieldsOf($sentSingles[$sid]['row'], true)) {
                         $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed at Google since.";
                         unset($b['singles'][$si]);
                         continue;
@@ -1919,7 +2376,8 @@ final class GoogleSeries
      *
      * @param list<array> $series
      */
-    private function refresh(array $calendar, array $series, ?\Closure $beforeSend, int $pendingId): void
+    /** @return array<string,list<array>> what was read, by uid */
+    private function refresh(array $calendar, array $series, ?\Closure $beforeSend, int $pendingId): array
     {
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
@@ -1932,6 +2390,7 @@ final class GoogleSeries
         if ($got !== []) {
             $this->store($calendar, $got, [], $pendingId);
         }
+        return $got;
     }
 
     /** An event as Google holds it now by its id, or null when it is gone (404, 410, or cancelled). */
@@ -1951,15 +2410,17 @@ final class GoogleSeries
     /**
      * Whether a series whose last step's answer was lost changed only by
      * that step, so Put back may reverse it ($t is the state the step was
-     * towards): an insert that never landed (nothing to reverse), or the
-     * series exactly as the step leaves it (`expect`); a master write by
-     * onlyMasterChanged. Removals, and a step journaled with neither, by
-     * whether it landed.
+     * towards), rule B: an insert that never landed (nothing to reverse),
+     * else the digest of what Google holds now, every field of every
+     * resource of the series, equal to the one the step journaled it
+     * leaves (`expect`). A removal journals none and is read by whether it
+     * landed; any other step without one (journaled before rule B) can't be
+     * told from a change since, and is refused.
      */
     private function unchangedSince(array $calendar, \Closure $send, array $t, array $step, ?\Closure $beforeSend): bool
     {
-        if (!isset($step['expect']) && !array_key_exists('pre', $step)) {
-            return $this->landed($calendar, $send, $t, $step, $beforeSend);
+        if (!isset($step['expect'])) {
+            return $this->landed($send, $step);
         }
         $googleId = (string) $t['googleId'];
         $uid = isset($t['uid']) && $t['uid'] !== '' ? (string) $t['uid'] : null;
@@ -1970,49 +2431,17 @@ final class GoogleSeries
             }
             $uid = isset($found['iCalUID']) && is_string($found['iCalUID']) && $found['iCalUID'] !== '' ? $found['iCalUID'] : null;
         }
-        $now = self::content(self::held($this->readBack($calendar, $send, $uid, $googleId, null, $beforeSend), $googleId));
-        if ($step['kind'] === 'master') {
-            return is_array($step['pre'] ?? null) && self::onlyMasterChanged($step['pre'], $now, $t['master'], (array) ($step['fields'] ?? []));
-        }
+        $now = self::state(self::held($this->readBack($calendar, $send, $uid, $googleId, null, $beforeSend), $googleId), (bool) ($step['extras'] ?? false));
         return self::digest($now) === (string) $step['expect'];
     }
 
-    /**
-     * Whether a step whose answer was lost landed: Google holds what it
-     * sent for what it wrote ($t is the state it was a step towards).
-     */
-    private function landed(array $calendar, \Closure $send, array $t, array $step, ?\Closure $beforeSend): bool
+    /** Whether a removal whose answer was lost landed: the resource is gone or cancelled. Any other step without an `expect` is refused. */
+    private function landed(\Closure $send, array $step): bool
     {
-        $id = (string) $step['id'];
-        if (in_array($step['kind'], ['insert', 'single', 'remove', 'record-remove', 'single-remove'], true)) {
-            try {
-                $found = $send('GET', '/' . rawurlencode($id), null, null);
-            } catch (HttpError $e) {
-                if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
-                    throw $e;
-                }
-                $found = null;
-            }
-            $live = $found !== null && (string) ($found['status'] ?? '') !== 'cancelled';
-            return in_array($step['kind'], ['insert', 'single'], true) ? $live : !$live;
+        if (!in_array($step['kind'], ['remove', 'record-remove', 'single-remove'], true)) {
+            return false;
         }
-        $googleId = (string) $t['googleId'];
-        $held = self::held($this->readBack($calendar, $send, isset($t['uid']) ? (string) $t['uid'] : null, $googleId, null, $beforeSend), $googleId);
-        $key = (string) ($step['key'] ?? '');
-        $m = $t['master'];
-        switch ($step['kind']) {
-            case 'master':
-                $g = $held['master'];
-                return $g !== null && self::sameRule((string) ($g['rrule'] ?? ''), (string) $m['rrule']) && (int) $g['all_day'] === (int) $m['all_day'] && self::sameEvent($g, $m);
-            case 'exception':
-                return isset($held['records'][$key], $t['exceptions'][$key]) && self::sameEvent($held['records'][$key], $t['exceptions'][$key]);
-            case 'skip':
-                return isset($held['skips'][$key]);
-            case 'plain':
-                $len = max(0, Time::fromDb($m['end_utc'])->getTimestamp() - Time::fromDb($m['start_utc'])->getTimestamp());
-                return !isset($held['cancelled'][$key]) && (!isset($held['records'][$key]) || self::sameEvent($held['records'][$key], self::plainAt($m, $key, $len)));
-        }
-        return false;
+        return $this->found($send, (string) $step['id']) === null;
     }
 
     /**
@@ -2112,6 +2541,17 @@ final class GoogleSeries
             }
         }
         $own = array_diff_key($was, array_flip(self::SYNCED), ['id' => true, 'created_at' => true, 'updated_at' => true]);
+        // A day's series columns (the trip and clock-time flags) are its
+        // series' now, never the snapshot's: a flag set on the series while
+        // the change was pending reaches the day brought back (rule C).
+        if ($was['recurrence_instance_utc'] !== null && $now['recurrence_parent_id'] !== null) {
+            $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $now['recurrence_parent_id']]);
+            foreach (array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS) as $col) {
+                if ($master !== null && array_key_exists($col, $master)) {
+                    $own[$col] = $master[$col];
+                }
+            }
+        }
         if ((string) ($was['location'] ?? '') !== (string) ($now['location'] ?? '')) {
             // Where it is placed belongs to the place Google holds now.
             $own = array_filter($own, static fn(string $col): bool => !str_starts_with($col, 'location_') && $col !== 'geocoded_at', ARRAY_FILTER_USE_KEY);

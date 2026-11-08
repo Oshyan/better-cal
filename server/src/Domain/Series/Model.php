@@ -3465,11 +3465,12 @@ final class Model
             }
         } else {
             // The series' time. On its occurrence's day: the new key's instant
-            // as the expander gives it. On a date of its own: the time it shows
-            // moved by the series' clock change, as every inherited value takes
-            // the edit's delta (a day of the other kind, all-day until now, has
-            // no time to move and takes the series' clock). The key's clock is
-            // its own day's, which a skipped hour or a carried clock shifts.
+            // as the expander gives it. On a date of its own: the series' clock
+            // on that date, so a skipped hour on its old date shifts nothing
+            // here. Only a rule several times a day has no one clock to take:
+            // there the time it shows is moved by the series' clock change.
+            // The key's clock is its own day's, which a skipped hour or a
+            // carried clock shifts.
             $tz = $this->allDay1 ? (string) $row['tzid'] : $this->tz1;
             $secs = static fn(array $c): int => $c[0] * 3600 + $c[1] * 60 + $c[2];
             if ($this->allDay1) {
@@ -3477,18 +3478,22 @@ final class Model
             } elseif (in_array('date', $own, true) && $rowAllDay) {
                 $clock = $seriesClock;
             } elseif (in_array('date', $own, true)) {
-                // The change is read on the clock the day showed on: under
-                // the same moment, the old zone's, where the series' clock
-                // moves only by a drag, so its instant is kept as an own
-                // time's is, and the zone it is written in is the series'.
+                // Read on the clock the day showed on: under the same moment,
+                // the old zone's, where the series' clock moves only by a
+                // drag, so its instant is kept as an own time's is, and the
+                // zone it is written in is the series'.
                 if ($this->shownFrame !== null && Time::normalizeTzid($rowTz) === Time::normalizeTzid($this->shownFrame[0])) {
                     [$atTz, $seriesClock] = $this->shownFrame;
                 }
-                $sec = $secs(self::clockOf($shown)) + $secs($seriesClock) - $secs($fromClock);
-                $carry = intdiv($sec - ((($sec % 86400) + 86400) % 86400), 86400);
-                $sec -= $carry * 86400;
-                $date += $carry;
-                $clock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
+                if ($this->r0->several) {
+                    $sec = $secs(self::clockOf($shown)) + $secs($seriesClock) - $secs($fromClock);
+                    $carry = intdiv($sec - ((($sec % 86400) + 86400) % 86400), 86400);
+                    $sec -= $carry * 86400;
+                    $date += $carry;
+                    $clock = [intdiv($sec, 3600), intdiv($sec % 3600, 60), $sec % 60];
+                } else {
+                    $clock = $seriesClock;
+                }
             } else {
                 $given = Time::fromDb($newKey);
                 $clock = self::clockOf($given->setTimezone(Time::zone($this->tz1)));

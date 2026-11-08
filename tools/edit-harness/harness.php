@@ -249,7 +249,7 @@ $merge = static function (array $parts): array {
 };
 
 /** The findings file and the printed report from a merged result; the exit code. */
-$report = static function (array $p, float $casesSeconds, float $elapsed) use ($seed, $shrink, $findingsFile, $full): int {
+$report = static function (array $p, float $casesSeconds, float $elapsed) use ($seed, $shrink, $findingsFile, $full, $googleMode): int {
     $bySignature = [];
     foreach ($p['failures'] as $f) {
         $bySignature[Runner::signature($f)][] = $f;
@@ -282,7 +282,7 @@ $report = static function (array $p, float $casesSeconds, float $elapsed) use ($
         'records' => $p['failures'],
         'journalMisuses' => $misuses,
         'revision' => Revision::get(),
-        'tally' => Report::tallyOf($counts, $p['failures']),
+        'tally' => Report::tallyOf($counts, $p['failures'], $googleMode),
     ];
     // A product without the plan API never runs the plan's categories (README, Other Products): reported, not failed.
     $missingFails = $full && $out['tally']['missing'] !== [] && BetterCal\EditHarness\Product::$plan;

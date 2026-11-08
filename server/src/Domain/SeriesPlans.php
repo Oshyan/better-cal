@@ -938,7 +938,8 @@ trait SeriesPlans
         $target = GoogleSeries::targetOf($master, $rows, $w);
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
-            $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority));
+            $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
+                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return;
@@ -984,16 +985,13 @@ trait SeriesPlans
         $targets = $newTarget === null ? [$oldTarget] : [$oldTarget, $newTarget];
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
-            $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority));
+            $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
+                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in]);
         } catch (HttpError $e) {
             $this->googleDeferred = $e;
             return null;
         }
-        $identity = $newTarget === null ? [] : [
-            'uid' => (string) ($out['targets'][1]['uid'] ?? ''),
-            'google_event_id' => (string) $newTarget['googleId'],
-            'google_etag' => $out['inserted'][(string) $newTarget['googleId']]['etag'] ?? null,
-        ];
+        $identity = self::splitIdentity($out);
         $created = [];
         $createdEdited = [];
         $newId = $this->googleCommit($authority, function () use ($userId, $id, $w, $in, $master, $byId, $identity, $calendar, $out, $newTarget, &$created, &$createdEdited): ?int {
@@ -1012,6 +1010,51 @@ trait SeriesPlans
             $this->splitEventId = $newId;
         }
         return $newId;
+    }
+
+    /** The new series' identity at Google, from what the split's run returned (none for a delete). */
+    private static function splitIdentity(array $out): array
+    {
+        $new = $out['targets'][1] ?? null;
+        return $new === null ? [] : [
+            'uid' => (string) ($new['uid'] ?? ''),
+            'google_event_id' => (string) $new['googleId'],
+            'google_etag' => $out['inserted'][(string) $new['googleId']]['etag'] ?? null,
+        ];
+    }
+
+    /**
+     * Finish's part here (GoogleSeries::finish): the plan a change kept
+     * with its pending row, written by the writer the change itself uses,
+     * on the rows as they were read for it (put back where they were
+     * first), then the events of their own it made given Google's identity.
+     */
+    private function googleLocalPlan(int $userId): \Closure
+    {
+        return function (array $plan, array $out) use ($userId): void {
+            $id = (int) $plan['eventId'];
+            $w = (array) $plan['writes'];
+            $in = (array) $plan['input'];
+            $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
+            if ($master === null) {
+                throw HttpError::notFound('The series this change was for is no longer here');
+            }
+            $byId = [];
+            foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]) as $r) {
+                $byId[(int) $r['id']] = $r;
+            }
+            $created = [];
+            $createdEdited = [];
+            if (($plan['kind'] ?? '') === 'split') {
+                ($this->splitWriter($userId, $id, $w, $in, $master, $byId, $created, $createdEdited, self::splitIdentity($out)))();
+                if (isset($out['targets'][1])) {
+                    $this->googleSeries()->adoptSingles($out['targets'][1], $out['inserted'], $created);
+                }
+                return;
+            }
+            ($this->seriesPlanWriter($userId, $id, $w, $in, $byId, $created, $createdEdited))();
+            $this->googleSeries()->adoptSingles($out['targets'][0], $out['inserted'], $created);
+        };
     }
 
     /**
@@ -1081,7 +1124,7 @@ trait SeriesPlans
             }
             try {
                 $out = $how === 'finish'
-                    ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority))
+                    ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority), $this->googleLocalPlan($userId))
                     : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
             } catch (HttpError $e) {
                 $this->googleDeferred = $e;

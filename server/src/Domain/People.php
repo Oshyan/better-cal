@@ -129,10 +129,11 @@ final class People
      * (UTC): the soonest start at or after now among their undeleted
      * events. A one-off is compared on its own clock (Floating::nowByZone,
      * as search compares it), the soonest kept per person and zone, then
-     * shown (Floating::span). A series gives its first occurrence starting
-     * at or after now (Search::nextOccurrence, read on the viewer's clock as
-     * search reads a series' next date), looked for in the coming week
-     * first and then two years.
+     * shown (Floating::span). A series counts its occurrences as search
+     * reads them (Search::occurrencesAfter with the edited days
+     * Recurrence::editedDays loads): a generated occurrence for the people
+     * of the series, an edited day for its own people, once, at its own
+     * start; looked for in the coming week first and then two years.
      *
      * @return array<int,\DateTimeImmutable> person id => start (UTC)
      */
@@ -148,48 +149,86 @@ final class People
             }
         };
         // One-offs: the soonest per person and own clock, a clock's order
-        // being the stored order.
+        // being the stored order. Edited days count with their series.
         foreach ($this->db->all(
             "SELECT ep.person_id, e.floating, e.all_day, e.tzid, MIN(e.start_utc) AS start_utc
              FROM event_people ep
              JOIN people p ON p.id = ep.person_id
              JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
-             WHERE p.user_id = ? AND (e.rrule IS NULL OR e.rrule = '') AND e.start_utc >= $rowNowSql
+             WHERE p.user_id = ? AND (e.rrule IS NULL OR e.rrule = '') AND e.recurrence_parent_id IS NULL
+               AND e.start_utc >= $rowNowSql
              GROUP BY ep.person_id, e.floating, e.all_day, e.tzid",
             [$userId, ...$rowNowParams]
         ) as $r) {
             $start = Time::fromDb((string) $r['start_utc']);
             $keep((int) $r['person_id'], Floating::span($r, $start, $start, $viewer)[0]);
         }
-        // Series: each once, however many people it has.
-        $series = [];
-        $budget = ExpansionBudget::standard();
+
+        // Series: who each series row (the series' or an edited day's) is
+        // linked to, and the series they belong to.
+        $peopleOf = [];
+        $seriesIds = [];
         foreach ($this->db->all(
-            "SELECT ep.person_id, e.* FROM event_people ep
+            "SELECT ep.person_id, e.id, COALESCE(e.recurrence_parent_id, e.id) AS series_id
+             FROM event_people ep
              JOIN people p ON p.id = ep.person_id
              JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL
-             WHERE p.user_id = ? AND e.rrule IS NOT NULL AND e.rrule <> ''",
+             WHERE p.user_id = ? AND (e.recurrence_parent_id IS NOT NULL OR (e.rrule IS NOT NULL AND e.rrule <> ''))",
             [$userId]
         ) as $r) {
-            $id = (int) $r['id'];
-            if (!array_key_exists($id, $series)) {
-                $series[$id] = null;
-                try {
-                    $occ = Search::nextOccurrence($r, $nowSql, null, $budget, $viewer, true, $now->modify('+8 days'))
-                        ?? Search::nextOccurrence($r, $nowSql, null, $budget, $viewer, true);
-                } catch (WorkBudgetExceeded) {
-                    throw new HttpError('people_too_large', 'Too many repeating events to find everyone\'s next one safely.', 422);
+            $peopleOf[(int) $r['id']][(int) $r['person_id']] = true;
+            $seriesIds[(int) $r['series_id']] = true;
+        }
+        if ($seriesIds === []) {
+            return $out;
+        }
+        $budget = ExpansionBudget::standard();
+        try {
+            $masters = [];
+            foreach (array_chunk(array_keys($seriesIds), 250) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                array_push($masters, ...$this->db->all(
+                    "SELECT * FROM events WHERE id IN $in AND user_id = ? AND deleted_at IS NULL AND rrule IS NOT NULL AND rrule <> ''",
+                    [...$params, $userId]
+                ));
+            }
+            $ovByParent = [];
+            foreach (Recurrence::editedDays($this->db, $userId, array_map(static fn(array $m): int => (int) $m['id'], $masters), $now, $now->modify('+2 years'), $budget) as $ov) {
+                $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
+            }
+            foreach ($masters as $master) {
+                $id = (int) $master['id'];
+                $ovs = $ovByParent[$id] ?? [];
+                // Everyone this series could be next for.
+                $waiting = $peopleOf[$id] ?? [];
+                foreach ($ovs as $ov) {
+                    $waiting += $peopleOf[(int) $ov['id']] ?? [];
                 }
-                if ($occ !== null) {
-                    if (isset($occ[2])) {
-                        $r['_wall'] = $occ[2];
+                foreach ([$now->modify('+8 days'), null] as $until) {
+                    if ($waiting === []) {
+                        break;
                     }
-                    $series[$id] = Floating::span($r, Time::fromDb($occ[0]), Time::fromDb($occ[1]), $viewer)[0];
+                    foreach (Search::occurrencesAfter($master, $ovs, $nowSql, null, $budget, $viewer, true, $until) as $occ) {
+                        $row = $occ['row'] ?? $master;
+                        if (!isset($occ['row']) && isset($occ[2])) {
+                            $row['_wall'] = $occ[2];
+                        }
+                        $shown = null;
+                        foreach ($peopleOf[(int) $row['id']] ?? [] as $pid => $_) {
+                            if (isset($waiting[$pid])) {
+                                $shown ??= Floating::span($row, Time::fromDb($occ[0]), Time::fromDb($occ[1]), $viewer)[0];
+                                $keep($pid, $shown);
+                                unset($waiting[$pid]);
+                            }
+                        }
+                        if ($waiting === []) {
+                            break;
+                        }
+                    }
                 }
             }
-            if ($series[$id] !== null) {
-                $keep((int) $r['person_id'], $series[$id]);
-            }
+        } catch (WorkBudgetExceeded) {
+            throw new HttpError('people_too_large', 'Too many repeating events to find everyone\'s next one safely.', 422);
         }
         return $out;
     }

@@ -1021,9 +1021,9 @@ final class Events
     }
 
     /**
-     * Load recurrence exceptions without one unbounded query or an enormous
-     * IN list. In-window exceptions are loaded once; exceptions outside the
-     * window are needed only for selected masters and arrive in small chunks.
+     * The window's edited days of its series (Recurrence::editedDays, the
+     * one loader every reader of a series' occurrences uses), filtered to
+     * $calendarIds when given.
      *
      * @param list<int> $masterIds
      * @return list<array>
@@ -1037,49 +1037,13 @@ final class Events
         int $limit,
         ExpansionBudget $budget,
     ): array {
-        [$overlap, $overlapParams] = Floating::overlapSql($start, $end);
-        [$wideStart, $wideEnd] = Floating::widened($start, $end);
-        $params = [$userId, ...$overlapParams];
-        $sql = 'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
-                AND recurrence_parent_id IS NOT NULL AND ' . $overlap;
-        // Hidden overrides still have to replace the corresponding generated
-        // occurrence, after which attendance filtering can remove them.
-        $sql .= $this->windowFilters($params, $calendarIds, null, true);
-        $sql .= ' LIMIT ' . ($limit + 1);
-        $rows = $this->db->all($sql, $params);
-        if (count($rows) > $limit) {
-            throw new WorkBudgetExceeded('too many stored recurrence exceptions');
-        }
-        $byId = [];
-        foreach ($rows as $row) {
-            $byId[(int) $row['id']] = true;
-        }
-        $budget->checkpoint();
+        return Recurrence::editedDays($this->db, $userId, $masterIds, $start, $end, $budget, $calendarIds, $limit);
+    }
 
-        foreach (array_chunk($masterIds, 250) as $chunk) {
-            $remaining = $limit - count($byId);
-            [$in, $inParams] = Db::in($chunk);
-            // A floating series is expanded over the widened window, so its
-            // edited days keyed anywhere in it are needed (Recurrence::expand).
-            $params = [$userId, ...$inParams, Time::toDb($wideStart), Time::toDb($wideEnd), Time::toDb($start), Time::toDb($end), ...$overlapParams];
-            $sql = "SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
-                    AND recurrence_parent_id IN $in
-                    AND recurrence_instance_utc >= ? AND recurrence_instance_utc < ?
-                    AND (floating = 1 OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))
-                    AND NOT $overlap";
-            $sql .= $this->windowFilters($params, $calendarIds, null, true);
-            $sql .= ' LIMIT ' . ($remaining + 1);
-            $extra = $this->db->all($sql, $params);
-            if (count($extra) > $remaining) {
-                throw new WorkBudgetExceeded('too many stored recurrence exceptions');
-            }
-            foreach ($extra as $row) {
-                $byId[(int) $row['id']] = true;
-            }
-            $budget->checkpoint();
-        }
-
-        return $this->windowRowsWithinBudget(array_keys($byId));
+    /** @param list<int> $ids @return list<array> rowsWithinBudget() on this connection */
+    private function windowRowsWithinBudget(array $ids): array
+    {
+        return self::rowsWithinBudget($this->db, $ids);
     }
 
     /**
@@ -1090,25 +1054,25 @@ final class Events
      * @param list<int> $ids
      * @return list<array>
      */
-    private function windowRowsWithinBudget(array $ids): array
+    public static function rowsWithinBudget(Db $db, array $ids): array
     {
         if ($ids === []) {
             return [];
         }
-        return $this->db->tx(function () use ($ids): array {
+        return $db->tx(function () use ($db, $ids): array {
             $bytes = 0;
             $rows = [];
             $limit = Limits::get('EVENT_WINDOW_BYTES');
             foreach (array_chunk($ids, 250) as $chunk) {
                 [$in, $params] = Db::in($chunk);
-                $bytes += (int) $this->db->scalar(
+                $bytes += (int) $db->scalar(
                     'SELECT COALESCE(SUM(' . self::WINDOW_SIZE_SQL . "), 0) FROM events WHERE id IN $in",
                     $params
                 );
                 if ($bytes > $limit) {
                     throw new WorkBudgetExceeded('stored event candidates are too large');
                 }
-                array_push($rows, ...$this->db->all("SELECT * FROM events WHERE id IN $in", $params));
+                array_push($rows, ...$db->all("SELECT * FROM events WHERE id IN $in", $params));
             }
             return $rows;
         });

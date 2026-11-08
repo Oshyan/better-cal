@@ -101,6 +101,26 @@ final class Search
         $viewer = self::viewerOf($opts);
         $clocks = Floating::nowByZone($this->db, $userId, $now, $viewer);
         $expansionBudget = ExpansionBudget::standard();
+        // The edited days of the series found, for their next or latest
+        // dates (Recurrence::editedDays, as the calendar window loads them).
+        $ovByParent = [];
+        $seriesIds = [];
+        foreach ($rows as $row) {
+            if (!empty($row['rrule']) && empty($row['recurrence_parent_id'])) {
+                $seriesIds[] = (int) $row['id'];
+            }
+        }
+        if ($seriesIds !== []) {
+            $nowAt = Time::fromDb($now);
+            try {
+                $edited = Recurrence::editedDays($this->db, $userId, $seriesIds, $nowAt->modify('-2 years'), $nowAt->modify('+2 years'), $expansionBudget);
+            } catch (WorkBudgetExceeded) {
+                throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+            }
+            foreach ($edited as $ov) {
+                $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
+            }
+        }
         $out = [];
         foreach ($rows as $row) {
             $row['_tier'] = (int) $row['search_tier'];
@@ -116,22 +136,19 @@ final class Search
                 // A series still running matched Past by its first date: show
                 // its latest occurrence that has ended (0.7.4), not its next.
                 try {
-                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget, $viewer);
+                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget, $viewer, $ovByParent[(int) $row['id']] ?? []);
                 } catch (WorkBudgetExceeded) {
                     throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
                 }
                 if ($prev === null) {
                     continue;
                 }
-                [$row['start_utc'], $row['end_utc']] = $prev;
-                if (isset($prev[2])) {
-                    $row['_wall'] = $prev[2];
-                }
+                $row = self::atOccurrence($row, $prev);
                 $row['_upcoming'] = false;
             } elseif ($row['_upcoming'] && !empty($row['rrule']) && (string) $row['end_utc'] < $rowNow) {
                 // A series that began in the past: show (and open) its next date, not its first.
                 try {
-                    $next = self::nextOccurrence($row, $now, null, $expansionBudget, $viewer);
+                    $next = self::nextOccurrence($row, $now, null, $expansionBudget, $viewer, false, null, $ovByParent[(int) $row['id']] ?? []);
                 } catch (WorkBudgetExceeded) {
                     throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
                 }
@@ -141,10 +158,7 @@ final class Search
                     }
                     $row['_upcoming'] = false;
                 } else {
-                    [$row['start_utc'], $row['end_utc']] = $next;
-                    if (isset($next[2])) {
-                        $row['_wall'] = $next[2];
-                    }
+                    $row = self::atOccurrence($row, $next);
                 }
             }
             // Its start as shown, which orders it among the others.
@@ -165,11 +179,19 @@ final class Search
                 ? strcmp($a['_at'], $b['_at'])
                 : strcmp($b['_at'], $a['_at']);
         });
-        foreach ($out as &$row) {
+        // An edited day found by its own match and as its series' date is
+        // listed once.
+        $seen = [];
+        $kept = [];
+        foreach ($out as $row) {
+            if (isset($seen[(int) $row['id']])) {
+                continue;
+            }
+            $seen[(int) $row['id']] = true;
             unset($row['_tier'], $row['_at']);
+            $kept[] = $row;
         }
-        unset($row);
-        return $out;
+        return $kept;
     }
 
     /** How many matches lie in the past, for "N past matches" under an Upcoming search. */
@@ -237,14 +259,13 @@ final class Search
 
     /**
      * [start, end] of a series' first occurrence ending after $nowSql, within
-     * two years; null when there is none. With $viewer, a floating series'
-     * occurrences are read as they show on that clock (Recurrence::expand),
-     * and the one found is given as stored, with the wall clock it shows at
-     * third (Floating::span reads it as '_wall'). With $notStarted, the first
-     * starting at or after $nowSql instead (a person's next event); $until
-     * looks only that far, in place of two years.
+     * two years; null when there is none. As occurrencesAfter() reads them:
+     * the series' edited days ($overrides, Recurrence::editedDays) in place
+     * of the days they edit, its skipped days left out, and with $viewer a
+     * floating series read on that clock. With $notStarted, the first
+     * starting at or after $nowSql instead; $until looks only that far.
      *
-     * @return array{0:string,1:string,2?:int}|null
+     * @return array{0:string,1:string,2?:int,row?:array}|null
      */
     public static function nextOccurrence(
         array $row,
@@ -254,36 +275,63 @@ final class Search
         ?\DateTimeZone $viewer = null,
         bool $notStarted = false,
         ?\DateTimeImmutable $until = null,
+        array $overrides = [],
     ): ?array
+    {
+        return self::occurrencesAfter($row, $overrides, $nowSql, $recurrence, $budget, $viewer, $notStarted, $until)[0] ?? null;
+    }
+
+    /**
+     * A series' occurrences ending after $nowSql (with $notStarted, starting
+     * at or after it), soonest first, within two years or up to $until: the
+     * occurrences Recurrence::expand gives it with its edited days
+     * ($overrides, as Recurrence::editedDays loads them for the window), so
+     * a moved day is here at its own start and never at the slot it left,
+     * and a skipped day (the master's exdates) is not here at all. Each is
+     * given as stored (storedOccurrence). A series the expander cannot read
+     * has none.
+     *
+     * @param list<array> $overrides
+     * @return list<array{0:string,1:string,2?:int,row?:array}>
+     */
+    public static function occurrencesAfter(
+        array $row,
+        array $overrides,
+        string $nowSql,
+        ?Recurrence $recurrence = null,
+        ?ExpansionBudget $budget = null,
+        ?\DateTimeZone $viewer = null,
+        bool $notStarted = false,
+        ?\DateTimeImmutable $until = null,
+    ): array
     {
         $from = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $from, $until ?? $from->modify('+2 years'), $budget, $viewer);
+            $occs = ($recurrence ?? new Recurrence())->expand($row, $overrides, $from, $until ?? $from->modify('+2 years'), $budget, $viewer);
         } catch (WorkBudgetExceeded $e) {
             throw $e;
         } catch (\Throwable) {
-            return null;
+            return [];
         }
-        foreach ($occs as $o) {
-            if ($notStarted ? $o['start'] >= $from : $o['end'] > $from) {
-                return self::storedOccurrence($row, $o, $viewer);
-            }
-        }
-        return null;
+        $occs = array_values(array_filter($occs, static fn(array $o): bool => $notStarted ? $o['start'] >= $from : $o['end'] > $from));
+        // Edited days moved in from elsewhere come after the generated ones.
+        usort($occs, static fn(array $a, array $b): int => $a['start'] <=> $b['start']);
+        return array_map(static fn(array $o): array => self::storedOccurrence($row, $o, $viewer), $occs);
     }
 
-    /** [start, end] of a series' latest occurrence that ended by $nowSql, within two years; null when there is none. With $viewer, as nextOccurrence. */
+    /** [start, end] of a series' latest occurrence that ended by $nowSql, within two years; null when there is none. With $viewer and $overrides, as nextOccurrence. */
     public static function previousOccurrence(
         array $row,
         string $nowSql,
         ?Recurrence $recurrence = null,
         ?ExpansionBudget $budget = null,
         ?\DateTimeZone $viewer = null,
+        array $overrides = [],
     ): ?array
     {
         $to = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $to->modify('-2 years'), $to, $budget, $viewer);
+            $occs = ($recurrence ?? new Recurrence())->expand($row, $overrides, $to->modify('-2 years'), $to, $budget, $viewer);
         } catch (WorkBudgetExceeded $e) {
             throw $e;
         } catch (\Throwable) {
@@ -299,20 +347,42 @@ final class Search
     }
 
     /**
-     * An occurrence Recurrence::expand gave, as the row stores it: as given,
-     * or for a floating series read on a viewer's clock its stored key and
-     * length, with the wall clock it shows at.
+     * An occurrence Recurrence::expand gave, as the row stores it. An edited
+     * day is its own row, as stored, under 'row'. A generated one is as
+     * given, or for a floating series read on a viewer's clock its stored
+     * key and length, with the wall clock it shows at.
      *
-     * @return array{0:string,1:string,2?:int}
+     * @return array{0:string,1:string,2?:int,row?:array}
      */
     private static function storedOccurrence(array $row, array $o, ?\DateTimeZone $viewer): array
     {
+        if (isset($o['row']['id'], $row['id']) && (int) $o['row']['id'] !== (int) $row['id']) {
+            return [(string) $o['row']['start_utc'], (string) $o['row']['end_utc'], 'row' => $o['row']];
+        }
         if ($viewer === null || !Floating::is($row)) {
             return [Time::toDb($o['start']), Time::toDb($o['end'])];
         }
         $start = Time::fromDb((string) $o['instanceUtc']);
         $stored = [Time::toDb($start), Time::toDb($start->modify('+' . Recurrence::durationSeconds($row) . ' seconds'))];
         return isset($o['wall']) ? [...$stored, (int) $o['wall']] : $stored;
+    }
+
+    /**
+     * A series' row standing for one of its occurrences (nextOccurrence,
+     * previousOccurrence): an edited day is its own row, keeping the
+     * search's tier and grouping; a generated one is the series' row at that
+     * date, with the wall clock it shows at.
+     */
+    private static function atOccurrence(array $row, array $occ): array
+    {
+        if (isset($occ['row'])) {
+            return ['_tier' => $row['_tier'], '_upcoming' => $row['_upcoming']] + $occ['row'];
+        }
+        [$row['start_utc'], $row['end_utc']] = $occ;
+        if (isset($occ[2])) {
+            $row['_wall'] = $occ[2];
+        }
+        return $row;
     }
 
     /** The viewer's clock search reads floating events on, if one was given. */

@@ -357,6 +357,41 @@ return static function (Db $db): void {
         checkEq('floating people route: from Home, the swap', $start->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:sP'), $ask('America/Los_Angeles'));
     });
 
+    // A series' next date counts its edited and skipped days as the calendar
+    // shows them: a moved day at its own start and never at the slot it
+    // left, a skipped day not at all, an edited day for its own people once.
+    // 18:00 UTC on 9 Apr is 11:00 at Home, that day's 09:00 over.
+    $nineApr = '2027-04-09T18:00:00Z';
+    $from('America/Los_Angeles');
+    $daily = static fn(string $title, array $names): int => (int) $ev->create($u, $ev->fromViewer($u, null, ['calendarId' => $cal, 'title' => $title, 'allDay' => false,
+        'rrule' => 'FREQ=DAILY;COUNT=60', 'start' => '2027-04-01T09:00:00-07:00', 'end' => '2027-04-01T10:00:00-07:00', 'tzid' => 'America/Los_Angeles', 'personNames' => $names]))['eventId'];
+    $wheel = $daily('Sample wheel throwing', ['Jordan Sample']);
+    $bread = $daily('Sample bread class', ['Casey Example']);
+    $club = $daily('Sample book club', ['Morgan Sample']);
+    $ev->patch($u, $wheel, $ev->fromViewer($u, $wheel, ['scope' => 'this', 'instanceStart' => '2027-04-10T16:00:00Z',
+        'start' => '2027-04-17T13:00:00-07:00', 'end' => '2027-04-17T14:00:00-07:00']));
+    $ev->deleteEvent($u, $bread, 'this', '2027-04-10T16:00:00Z');
+    $ev->patch($u, $club, $ev->fromViewer($u, $club, ['scope' => 'this', 'instanceStart' => '2027-04-10T16:00:00Z', 'title' => 'Sample book club, author visit',
+        'start' => '2027-04-10T10:00:00-07:00', 'end' => '2027-04-10T11:00:00-07:00', 'personIds' => [], 'personNames' => ['Quinn Placeholder']]));
+
+    scenario('series next: a day moved to next week is not next at the slot it left', function () use ($nextOf, $found, $nineApr): void {
+        checkEq('series next: the person\'s next is the day after tomorrow', '2027-04-11T16:00:00+00:00', $nextOf('America/Los_Angeles', 'Jordan Sample', $nineApr));
+        $dates = array_column($found('America/Los_Angeles', 'wheel throwing', 'upcoming', $nineApr), 0);
+        checkEq('series next: search gives the series the day after tomorrow, and the moved day its own date', ['2027-04-11T09:00:00-07:00', '2027-04-17T13:00:00-07:00'], $dates);
+    });
+
+    scenario('series next: a skipped day is not next', function () use ($nextOf, $found, $nineApr): void {
+        checkEq('series next: the person\'s next is the following day', '2027-04-11T16:00:00+00:00', $nextOf('America/Los_Angeles', 'Casey Example', $nineApr));
+        checkEq('series next: search gives the following day', [['2027-04-11T09:00:00-07:00', '2027-04-11T10:00:00-07:00']], $found('America/Los_Angeles', 'bread class', 'upcoming', $nineApr));
+    });
+
+    scenario('series next: an edited day counts for its own people, once, at its own start', function () use ($nextOf, $found, $nineApr): void {
+        checkEq('series next: someone taken off the edited day is next the day after', '2027-04-11T16:00:00+00:00', $nextOf('America/Los_Angeles', 'Morgan Sample', $nineApr));
+        checkEq('series next: someone on the edited day only is next at its 10:00', '2027-04-10T17:00:00+00:00', $nextOf('America/Los_Angeles', 'Quinn Placeholder', $nineApr));
+        $tomorrow = array_values(array_filter($found('America/Los_Angeles', 'book club', 'upcoming', $nineApr), static fn(array $o): bool => str_starts_with($o[0], '2027-04-10')));
+        checkEq('series next: search lists the edited day once, at 10:00', [['2027-04-10T10:00:00-07:00', '2027-04-10T11:00:00-07:00']], $tomorrow);
+    });
+
     scenario('floating: without a device zone, a floating event reads on the Home clock', function () use ($ev, $u, $walkId): void {
         $ev->viewFrom(null);
         $one = $ev->serializeSingle($ev->get($u, $walkId));

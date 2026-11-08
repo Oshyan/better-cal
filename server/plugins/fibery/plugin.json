@@ -33,7 +33,9 @@
     "unreachable": "Couldn't reach Fibery on the last try. It tries again every minute; the calendar keeps what it last had.",
     "busy": "Fibery asked for a pause (too many requests). It tries again in a minute.",
     "refused": "Fibery refused a request. Check the chosen databases and fields in the plugin settings.",
-    "too-many": "A database has more dated items than one run reads, so only the first 3,000 show."
+    "too-many": "A database has more dated items than one run reads, so only the first 3,000 show.",
+    "task-read-failed": "Fibery refused reading the task database on the last try. Its calendar keeps what it last had; check the task settings if this stays.",
+    "project-read-failed": "Fibery refused reading the project database on the last try. Its calendar keeps what it last had; check the project settings if this stays."
   },
   "settings": [
     {

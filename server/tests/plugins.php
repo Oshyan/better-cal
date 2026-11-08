@@ -335,7 +335,7 @@ checkEq('fibery: a key with only a trailing newline is fine (it is trimmed)', []
 checkEq("fibery: Fibery refusing the key is a message, not a crash", 'key-refused', callPrivate($fb, 'failureCode', [new RuntimeException('x', 7101)]));
 checkEq('fibery: any other exception stays an error', null, callPrivate($fb, 'failureCode', [new RuntimeException('x', 0)]));
 $fm = $manifestOf('fibery');
-foreach (['needs-setup', 'choose-database', 'key-refused', 'unreachable', 'busy', 'refused', 'too-many', 'task-database-gone', 'project-date-gone', 'task-date-missing'] as $code) {
+foreach (['needs-setup', 'choose-database', 'key-refused', 'unreachable', 'busy', 'refused', 'too-many', 'task-database-gone', 'project-date-gone', 'task-date-missing', 'task-read-failed', 'project-read-failed'] as $code) {
     check("fibery: declares the '$code' message it uses", is_string($fm['messages'][$code] ?? null));
 }
 

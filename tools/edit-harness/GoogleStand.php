@@ -90,10 +90,17 @@ final class GoogleStand
             return [];
         }
         $row = ['start_utc' => Clock::db($start), 'end_utc' => Clock::db($end), 'all_day' => $allDay ? 1 : 0, 'tzid' => $zone, 'rrule' => $rrule, 'exdates_json' => null];
-        // The evaluator's own window for an unbounded series (never 730 of a
-        // yearly rule, which would run it past its horizon), 730 at most.
-        $occ = array_slice(Truth::expand($row)['occ'], 0, 730);
-        return array_map(static fn(array $o): \DateTimeImmutable => Clock::parse($o['key'])->setTimezone(Clock::zone($zone)), $occ);
+        // As Google lists an unbounded series: its first 730 occurrences and
+        // no more (probe 7.3), whatever the harness's own window for the
+        // checks is; a bounded rule ends where it ends. An instance past
+        // the 730th is one Google has no id for. On a copy of the evaluator,
+        // so a listing run to its horizon never marks the checks' shared
+        // one incomplete.
+        $ev = clone Rfc::ofRow($row);
+        $keys = $ev->refused
+            ? array_column(array_slice(Truth::expand($row)['occ'], 0, 730), 'key')
+            : array_map(static fn(array $o): string => gmdate('Y-m-d H:i:s', $o[0]), $ev->first(730));
+        return array_map(static fn(string $key): \DateTimeImmutable => Clock::parse($key)->setTimezone(Clock::zone($zone)), $keys);
     }
 
     public function calendar(): array
@@ -160,6 +167,8 @@ final class GoogleStand
                 }
             }
         }
+        $series = [(string) ($m['summary'] ?? ''), $utc($m['start']), $utc($m['end']), (string) ($m['status'] ?? 'confirmed'), $allDay ? 1 : 0,
+            (string) ($m['description'] ?? ''), (string) ($m['location'] ?? ''), (string) ($m['source']['url'] ?? '')];
         $records = [];
         foreach ($this->fake->records($googleId) as $r) {
             $k = $utc($r['originalStartTime']);
@@ -167,7 +176,11 @@ final class GoogleStand
                 $skips[] = $k;
                 continue;
             }
-            $records[$k] = [(string) ($r['summary'] ?? ''), $utc($r['start']), $utc($r['end']), (string) ($r['status'] ?? 'confirmed'), isset($r['start']['date']) ? 1 : 0];
+            $rec = [(string) ($r['summary'] ?? ''), $utc($r['start']), $utc($r['end']), (string) ($r['status'] ?? 'confirmed'), isset($r['start']['date']) ? 1 : 0,
+                (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['source']['url'] ?? '')];
+            if (!self::plainAt($rec, $series, $k)) {
+                $records[$k] = $rec;
+            }
         }
         ksort($records);
         $skips = array_values(array_unique($skips));
@@ -202,13 +215,35 @@ final class GoogleStand
             unset($parts['INTERVAL']);
         }
         ksort($parts);
+        $tuple = static fn(array $r): array => [(string) $r['title'], (string) $r['start_utc'], (string) $r['end_utc'], (string) $r['status'], (int) $r['all_day'],
+            (string) ($r['description'] ?? ''), (string) ($r['location'] ?? ''), (string) ($r['url'] ?? '')];
+        $series = $tuple($master);
         $records = [];
         foreach ($rows as $r) {
-            $records[(string) $r['recurrence_instance_utc']] = [(string) $r['title'], (string) $r['start_utc'], (string) $r['end_utc'], (string) $r['status'], (int) $r['all_day']];
+            $rec = $tuple($r);
+            if (!self::plainAt($rec, $series, (string) $r['recurrence_instance_utc'])) {
+                $records[(string) $r['recurrence_instance_utc']] = $rec;
+            }
         }
         ksort($records);
         $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
         sort($skips);
         return ['rule' => $parts, 'start' => (string) $master['start_utc'], 'end' => (string) $master['end_utc'], 'allDay' => (int) $master['all_day'], 'title' => (string) $master['title'], 'records' => $records, 'skips' => $skips];
+    }
+
+    /**
+     * Whether a record (title, start, end, status, all-day, description,
+     * location, link) is the series' own values at its occurrence $key: the
+     * series' fields, the key as its start and the series' length from it.
+     * Such a record is no edited day (series-model.md, Google as a
+     * Contract): Google keeps one for every day a write touched, and a row
+     * here whose Google-held values are the series' owns only local things
+     * (tags, people, reminders), so neither side lists it.
+     */
+    private static function plainAt(array $rec, array $series, string $key): bool
+    {
+        $len = Clock::parse($series[2])->getTimestamp() - Clock::parse($series[1])->getTimestamp();
+        $at = Clock::parse($key);
+        return $rec === [$series[0], Clock::db($at), Clock::db(Clock::plus($at, $len)), $series[3], $series[4], $series[5], $series[6], $series[7]];
     }
 }

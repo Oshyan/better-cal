@@ -251,7 +251,7 @@ final class GoogleUndo
                 $local = is_array($g['local'] ?? null) ? $g['local'] : [];
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $local): void {
                     $writer->apply($calendar, [$resp]);
-                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId);
+                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId) ?? $this->rowForLocal($calendar, $resp, $local);
                     if ($back !== null) {
                         $this->restoreLocal($userId, (int) $back['id'], $local);
                     }
@@ -403,6 +403,37 @@ final class GoogleUndo
     {
         $row = $this->writer()->rowByGoogleId((int) $calendar['id'], $googleId);
         return $row !== null ? (int) $row['id'] : $fallback;
+    }
+
+    /**
+     * The row for a day brought back at Google whose answer equals its
+     * series on that day, when the day had local things of its own (tags,
+     * people, reminders, the trip flag, an own list): the sync stores no
+     * row for such a record (Feeds::sync, an ordinary occurrence), so the
+     * undo, the writer here, makes it as the sync would have. Null when the
+     * day had nothing local, or Google's answer is no day of a series.
+     */
+    private function rowForLocal(array $calendar, array $resource, array $local): ?array
+    {
+        $hasLocal = (array) ($local['tags'] ?? []) !== [] || (array) ($local['people'] ?? []) !== [] || is_string($local['reminders'] ?? null)
+            || (int) ($local['trip'] ?? 0) === 1 || (OwnFields::decode($local['own'] ?? null) ?? []) !== [];
+        $parsed = GoogleSync::toParsed($resource);
+        if (!$hasLocal || $parsed === null || !empty($parsed['cancelled']) || $parsed['recurrence_instance_utc'] === null) {
+            return null;
+        }
+        $masterId = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $parsed['uid']]);
+        if ($masterId === null) {
+            return null;
+        }
+        $columns = Feeds::columnsOf($parsed, (int) $masterId) + [
+            'user_id' => (int) $calendar['user_id'],
+            'calendar_id' => (int) $calendar['id'],
+            'uid' => (string) $parsed['uid'],
+            'source' => 'feed',
+            'created_via' => 'feed',
+        ] + (isset($parsed['google_etag']) ? ['google_etag' => $parsed['google_etag']] : []);
+        $id = (int) $this->db->insert('events', $columns);
+        return $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
     }
 
     /** Tags, people, reminders, the trip flag and the own list a delete took, back on the row the undo brought back (tags and people still in the account). */

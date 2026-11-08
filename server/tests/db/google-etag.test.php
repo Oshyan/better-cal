@@ -224,7 +224,8 @@ return static function (Db $db): void {
             'start' => ['dateTime' => '2027-03-15T10:00:00-07:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-03-15T10:30:00-07:00', 'timeZone' => 'America/Los_Angeles']] + $cancelled('"e4"');
         $t->google->pages = static fn(array $q): array => $page([$master('"e4"', 'Sample standup again'), $back], 'sync-4');
         $t->sync->poll($calendar($t));
-        checkEq('a day the delta brings back live is no longer skipped, and is a row of its own', [[], 'Sample standup again'], [$exdates($t), $row($t, 'probe1a2b3c_20270315T170000Z')['title'] ?? null]);
+        // Back at the series' own values, it is an ordinary occurrence again: Google's record for it makes no row here.
+        checkEq('a day the delta brings back live is no longer skipped, and is an ordinary occurrence, no row of its own', [[], null], [$exdates($t), $row($t, 'probe1a2b3c_20270315T170000Z')['title'] ?? null]);
     });
 
     scenario('google 410: an expired sync token lists everything again and replaces the calendar\'s rows whole', function () use ($db, $setup, $firstPoll, $calendar, $master, $etags, $exdates): void {

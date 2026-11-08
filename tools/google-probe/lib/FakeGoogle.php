@@ -307,7 +307,8 @@ final class FakeGoogle
             if ($startChanged) {
                 [$r['start'], $r['end']] = $this->span($occ[$key], $newLen, $allDay, (string) ($new['start']['timeZone'] ?? $this->zone));
             } elseif ($newLen !== $oldLen) {
-                $r['end'] = $this->endOf($r['start'], $newLen, $allDay);
+                // In the record's own form: an all-day day of a timed series keeps whole days.
+                $r['end'] = $this->endOf($r['start'], $newLen, isset($r['start']['date']));
             }
             foreach ($fields as $k => $v) {
                 $r[$k] = $v;

@@ -389,7 +389,18 @@ final class GoogleSeries
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 $chain = self::masterEtag($items, (string) $t['googleId']) ?? $chain;
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body]) {
-                    $resource = $send('PATCH', '/' . rawurlencode($id), $body, $chain);
+                    try {
+                        $resource = $send('PATCH', '/' . rawurlencode($id), $body, $chain);
+                    } catch (HttpError $e) {
+                        // Google lists no such instance (404): a day past the
+                        // 730 occurrences an unbounded series expands to
+                        // there (the contract's cap). The day stays as Google
+                        // has it, and the read-back names the difference.
+                        if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
+                            continue;
+                        }
+                        throw $e;
+                    }
                     $chain = $resource['etag'] ?? $chain;
                     $record($kind, $id, $chain);
                 }
@@ -562,9 +573,8 @@ final class GoogleSeries
             $body['end'] = $full['end'];
         }
         if ($before === null || (string) ($before['url'] ?? '') !== (string) ($after['url'] ?? '')) {
-            if (isset($full['source'])) {
-                $body['source'] = $full['source'];
-            }
+            // The link as Google's source; null clears one (a PATCH leaves out what it doesn't name).
+            $body['source'] = $full['source'] ?? null;
         }
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
             $body['recurrence'] = $after['rrule'] !== '' ? ['RRULE:' . $after['rrule']] : [];
@@ -572,14 +582,19 @@ final class GoogleSeries
         return $body;
     }
 
-    /** An exception's body on its instance id: its fields and placement, its link only when its own. */
+    /**
+     * An exception's body on its instance id: its fields and placement and
+     * the link it shows (its own, or the series' it inherits: Google holds
+     * values, and a record's is compared and sent as every other field is),
+     * cleared when it has none.
+     */
     private static function exceptionBody(array $x): array
     {
-        $row = self::rowOf($x);
-        if (!in_array('url', $x['own'] ?? [], true)) {
-            $row['url'] = null;
+        $body = GoogleWriter::instanceBody(self::rowOf($x));
+        if (!isset($body['source'])) {
+            $body['source'] = null;
         }
-        return GoogleWriter::instanceBody($row);
+        return $body;
     }
 
     /** The instance id of an occurrence key under a master. */
@@ -674,6 +689,7 @@ final class GoogleSeries
                 'start_utc' => (string) $r['start_utc'],
                 'end_utc' => (string) $r['end_utc'],
                 'all_day' => (int) ($r['all_day'] ?? 0),
+                'url' => (string) (Ics::webUrl(isset($r['url']) ? (string) $r['url'] : null) ?? ''),
             ];
         };
         return $norm($a) === $norm($b);
@@ -761,7 +777,7 @@ final class GoogleSeries
         if ((string) $g['start_utc'] !== (string) $m['start_utc'] || (string) $g['end_utc'] !== (string) $m['end_utc'] || (int) $g['all_day'] !== (int) $m['all_day']) {
             $out[] = 'Google kept the series starting ' . $shown($g) . '; the plan had ' . $shown($m) . '.';
         }
-        foreach (['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status'] as $col => $word) {
+        foreach (['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link'] as $col => $word) {
             if (!self::sameEvent(['start_utc' => $m['start_utc'], 'end_utc' => $m['end_utc'], 'all_day' => $m['all_day']] + [$col => $g[$col] ?? null] + $m, $m)) {
                 $out[] = "Google kept the series' $word as '" . (string) ($g[$col] ?? '') . "'; the plan had '" . (string) ($m[$col] ?? '') . "'.";
             }

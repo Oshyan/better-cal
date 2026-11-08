@@ -124,7 +124,13 @@ final class GoogleSync
         // token. The rows here are then the snapshot, and Feeds::sync of the
         // rows against themselves finds no difference and writes nothing, so
         // neither the snapshot nor the sync is made: the poll records the new
-        // token and its success under the same checks a sync takes.
+        // token and its success under the same checks a sync takes. One thing
+        // that sync would have written is skipped with it: an edited day
+        // stored before migration 063 whose own list is still unknown (null)
+        // would have its list inferred by equality (OwnFields::afterSync).
+        // It stays null until the next poll that brings a change or the next
+        // whole read; every reader of the list treats null the same way
+        // meanwhile, so nothing shows differently.
         $unchanged = $syncToken !== null && $changes === [];
         if ($unchanged) {
             $snapshot = [];
@@ -173,8 +179,7 @@ final class GoogleSync
             }
             if ($unchanged) {
                 $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
-                $stored = (int) $this->db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]);
-                $this->feeds->pollSucceeded($current, $stored, 0);
+                $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), 0);
                 return 0;
             }
             // Feeds::sync loads and indexes every stored row (including a
@@ -185,9 +190,21 @@ final class GoogleSync
             $count = $this->feeds->sync($current, $snapshot, true, $deadline);
             self::assertWithinDeadline($deadline);
             $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
-            $this->feeds->pollSucceeded($current, count($snapshot), $count);
+            $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+    }
+
+    /**
+     * A Google calendar's count for its day's feed stats (feed_stats.raw_count):
+     * the live rows it holds after the poll, the same under a whole read, a
+     * delta and an empty delta (a delta knows only what changed, so Google's
+     * own record count is not to be had there). Masters and edited days alike,
+     * as the rows stand here.
+     */
+    private function storedCount(int $calendarId): int
+    {
+        return (int) $this->db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]);
     }
 
     /**

@@ -151,6 +151,21 @@ return static function (Db $db): void {
         checkEq('feed reads: and records the failure', 'error', $db->scalar('SELECT last_poll_status FROM calendars WHERE id = ?', [$calendar]));
     });
 
+    scenario('feed reads: a limit the parse reads, changed in configuration, reads the feed in full', function () use ($feeds, $calendar, $lastAsked, $title, $touchByHand): void {
+        $feeds->poll($calendar);
+        $feeds->poll($calendar);
+        checkEq('feed reads: with the limits as they were, the validator is sent', '"v3"', $lastAsked()['if-none-match'] ?? null);
+        $touchByHand();
+        $old = \BetterCal\Support\Limits::get('DESCRIPTION_CHARS');
+        \BetterCal\Support\Limits::configure(['DESCRIPTION_CHARS' => $old - 1]);
+        try {
+            $feeds->poll($calendar);
+            checkEq('feed reads: a new description limit sends no validator and syncs the answer', [false, 'Monthly meetup, old room'], [isset($lastAsked()['if-none-match']), $title()]);
+        } finally {
+            \BetterCal\Support\Limits::configure(['DESCRIPTION_CHARS' => $old]);
+        }
+    });
+
     scenario('feed reads: a kept read goes with its calendar', function () use ($db, $feeds, $calendar): void {
         $feeds->poll($calendar);
         checkEq('feed reads: a row is kept', 1, (int) $db->scalar('SELECT COUNT(*) FROM feed_reads WHERE calendar_id = ?', [$calendar]));

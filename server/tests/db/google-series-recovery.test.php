@@ -340,4 +340,179 @@ return static function (Db $db): void {
             }
         }
     });
+
+    // ---- R2: a write whose answer was lost is put back only while nothing changed since
+
+    // Put back that finds a change made at Google since: [its answer's ok, the error's code and words, the change still in Review].
+    $refused = static function (object $s) use ($listed): array {
+        $out = $s->events->googlePutBack($s->u, (int) $listed($s)[0]['id']);
+        $error = null;
+        try {
+            $s->events->throwDeferred();
+        } catch (HttpError $e) {
+            $error = $e;
+        }
+        return [$out['ok'], $error?->errorCode, (string) $error?->getMessage(), count($listed($s))];
+    };
+
+    scenario('google recovery: a split whose insert answer was lost, the new series renamed elsewhere since: Put back sends nothing, changes nothing here, and names the series and Finish', function () use ($setup, $masterId, $held, $stored, $elsewhere, $refused, $iso): void {
+        $s = $setup();
+        $s->t->loseFirstPost = true;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+        } catch (HttpError) {
+        }
+        $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+        $s->fake->seed(array_replace($s->fake->events[$new], ['summary' => 'Sample renamed elsewhere']));
+        $old = $held($s, 'smpl3weekly');
+        $here = $stored($s, 'smpl3weekly');
+        $journal = $elsewhere($s);
+        $writes = $s->t->writes;
+        [$ok, $code, $words, $listedAfter] = $refused($s);
+        checkEq('not ok, google_changed_since; the words name the series and Finish; the change is still in Review, its journal as it was',
+            [false, 'google_changed_since', true, true, 1, $journal],
+            [$ok, $code, str_contains($words, "'Sample split' changed at Google since"), str_contains($words, 'Finish'), $listedAfter, $elsewhere($s)]);
+        checkEq("nothing sent; the old series keeps the change's end at Google and here; the new series stands as edited",
+            [$writes, $old, $here, true, 'confirmed', 'Sample renamed elsewhere'],
+            [$s->t->writes, $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), str_contains((string) $old['rule'], 'UNTIL='), $s->fake->events[$new]['status'] ?? 'confirmed', $s->fake->events[$new]['summary']]);
+    });
+
+    scenario('google recovery: an answered step and a step whose answer was lost both unchanged since: Put back reverses the whole change', function () use ($setup, $masterId, $held, $stored, $pending, $elsewhere, $recover, $iso): void {
+        $s = $setup();
+        $was = $held($s, 'smpl3weekly');
+        $s->t->loseFirstPost = true;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split']);
+        } catch (HttpError) {
+        }
+        $states = $elsewhere($s)[0][1] ?? [];
+        checkEq("the journal holds the old series' write answered and the insert sent with no answer", [true, 'insert:sent'], [in_array('master:done', $states, true), end($states) ?: null]);
+        $new = array_values(array_filter(array_keys($s->fake->events), static fn(string $k): bool => !empty($s->fake->events[$k]['recurrence']) && $k !== 'smpl3weekly'))[0];
+        $out = $recover($s, 'putBack');
+        checkEq('both reversed: the new series cancelled, the old one as it was at Google and here; nothing left; no pending row', [true, [], 'cancelled', $was, $was, []],
+            [$out['ok'], $out['left'], $s->fake->events[$new]['status'] ?? 'confirmed', $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), $pending($s)]);
+    });
+
+    scenario('google recovery: a PATCH whose answer was lost, then another part of the series changed elsewhere: Put back sends nothing and names the series', function () use ($setup, $masterId, $move, $held, $refused, $when, $db): void {
+        // An edited day's PATCH lost, then the series' place changed elsewhere.
+        $s = $setup();
+        $s->t->loseAt = 2;
+        try {
+            $move($s);
+        } catch (HttpError) {
+        }
+        $s->fake->seed(array_replace($s->fake->events['smpl3weekly'], ['location' => 'Sample room elsewhere']));
+        $there = $held($s, 'smpl3weekly');
+        [$ok, $code, $words, $listedAfter] = $refused($s);
+        checkEq("an edited day's answer lost, the place changed since: refused, the series named; Google keeps both; still in Review",
+            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
+
+        // The master's PATCH (a rename) lost, then a day edited elsewhere.
+        $s = $setup();
+        $s->t->loseAt = 1;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
+        } catch (HttpError) {
+        }
+        $s->fake->seed(['id' => 'smpl3weekly_20270308T180000Z', 'iCalUID' => 'smpl3weekly@google.com', 'recurringEventId' => 'smpl3weekly', 'summary' => 'Sample weekly, renamed',
+            'description' => 'Sample notes', 'location' => 'Sample room 2', 'originalStartTime' => $when('2027-03-08 10:00'), 'start' => $when('2027-03-08 10:00'), 'end' => $when('2027-03-08 11:00')]);
+        $there = $held($s, 'smpl3weekly');
+        $title = $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]);
+        [$ok, $code, , $listedAfter] = $refused($s);
+        checkEq("the master's answer lost, a day edited since: refused; Google and the row here as they were; still in Review",
+            [false, 'google_changed_since', $there, $title, 1], [$ok, $code, $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $listedAfter]);
+    });
+
+    scenario('google recovery: a rename whose answer was lost, nothing changed since: Put back restores the series', function () use ($setup, $masterId, $held, $recover, $db): void {
+        $s = $setup();
+        $was = $held($s, 'smpl3weekly');
+        $s->t->loseAt = 1;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
+        } catch (HttpError) {
+        }
+        $out = $recover($s, 'putBack');
+        checkEq("the master's answer lost, nothing changed since: Put back restores the series; nothing left", [true, [], $was, 'Sample weekly'],
+            [$out['ok'], $out['left'], $held($s, 'smpl3weekly'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)])]);
+    });
+
+    // ---- R3: Finish writes the change's part here too --------------------------------
+
+    scenario('google recovery: a rename with a part here (a tag, a person, reminders, the trip flag, the clock-time flag), stopped before the commit here, finishes both', function () use ($setup, $masterId, $pending, $recover, $db): void {
+        $parts = [
+            'a tag' => [['tagNames' => ['Sample new tag']], static fn(int $id): mixed => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name'), ['Sample new tag']],
+            'a person' => [['personNames' => ['Alex Example']], static fn(int $id): mixed => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ?', [$id]), 'name'), ['Alex Example']],
+            'reminders' => [['reminders' => [['minutes' => 25]]], static fn(int $id): mixed => array_column(json_decode((string) $db->scalar('SELECT reminders_json FROM events WHERE id = ?', [$id]), true) ?: [], 'minutes'), [25]],
+            'the trip flag' => [['isContainer' => true], static fn(int $id): mixed => (int) $db->scalar('SELECT is_container FROM events WHERE id = ?', [$id]), 1],
+            'the clock-time flag' => [['floating' => true], static fn(int $id): mixed => (int) $db->scalar('SELECT floating FROM events WHERE id = ?', [$id]), 1],
+        ];
+        foreach ($parts as $what => [$in, $read, $want]) {
+            foreach (['the first answer lost' => 'loseAt', 'a fatal error after the first write' => 'fatalAt'] as $how => $knob) {
+                $s = $setup();
+                $id = $masterId($s);
+                $s->t->{$knob} = 1;
+                try {
+                    planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample weekly, renamed'] + $in);
+                } catch (Throwable) {
+                }
+                $out = $recover($s, 'finish');
+                checkEq("$what, $how: Finish leaves the new title at Google and here and $what on the series; nothing left; no pending row",
+                    [true, [], 'Sample weekly, renamed', 'Sample weekly, renamed', $want, []],
+                    [$out['ok'], $out['left'], $s->fake->events['smpl3weekly']['summary'], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $read($masterId($s)), $pending($s)]);
+            }
+        }
+    });
+
+    scenario('google recovery: a split with a new title and tag from the day on, stopped at the old series or at the insert, finishes with the new series as planned', function () use ($setup, $masterId, $pending, $recover, $iso, $db): void {
+        $arms = [
+            "the old series' answer lost" => static function (object $s): void {
+                $s->t->loseAt = 1;
+            },
+            "the insert's answer lost" => static function (object $s): void {
+                $s->t->loseFirstPost = true;
+            },
+        ];
+        $newSeries = 'SELECT * FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND google_event_id <> ? AND deleted_at IS NULL';
+        $tags = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name');
+        foreach ($arms as $what => $arm) {
+            $s = $setup();
+            $arm($s);
+            try {
+                planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split', 'tagNames' => ['Sample split tag']]);
+            } catch (HttpError) {
+            }
+            $out = $recover($s, 'finish');
+            $new = $db->all($newSeries, [$s->calendarId, 'smpl3weekly']);
+            checkEq("$what: Finish leaves one new series here, titled and tagged as planned, held at Google under its id; the old one ends before it, untagged; no pending row",
+                [true, 1, 'Sample split', ['Sample split tag'], 'Sample split', true, [], []],
+                [$out['ok'], count($new), $new[0]['title'] ?? null, $tags((int) ($new[0]['id'] ?? 0)), $s->fake->events[(string) ($new[0]['google_event_id'] ?? '')]['summary'] ?? null,
+                    str_contains((string) $db->scalar('SELECT rrule FROM events WHERE id = ?', [$masterId($s)]), 'UNTIL='), $tags($masterId($s)), $pending($s)]);
+        }
+    });
+
+    scenario('google recovery: a part here Finish cannot write is reported, and the change stays half done for Review with what Google holds stored', function () use ($setup, $masterId, $listed, $db): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->t->loseAt = 1;
+        try {
+            planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample weekly, renamed', 'tagNames' => ['Sample new tag']]);
+        } catch (HttpError) {
+        }
+        $row = $db->one('SELECT id, plan_json FROM google_pending WHERE user_id = ?', [$s->u]);
+        $plan = json_decode((string) $row['plan_json'], true);
+        $plan['writes']['master']['sample_no_such_column'] = 1;
+        $db->update('google_pending', ['plan_json' => json_encode($plan)], 'id = ?', [(int) $row['id']]);
+        $out = $s->events->googleFinish($s->u, (int) $listed($s)[0]['id']);
+        $code = null;
+        try {
+            $s->events->throwDeferred();
+        } catch (HttpError $e) {
+            $code = $e->errorCode;
+        }
+        $half = $listed($s);
+        checkEq('Finish says so (not ok, google_finish_local); Review still lists the change with words for the part here; Google and the row here hold the new title; no tag',
+            [false, 'google_finish_local', 1, true, 'Sample weekly, renamed', 'Sample weekly, renamed', 0],
+            [$out['ok'], $code, count($half), str_contains($half[0]['error'] ?? '', 'its part here'), $s->fake->events['smpl3weekly']['summary'],
+                $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), (int) $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [$masterId($s)])]);
+    });
 };

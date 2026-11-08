@@ -40,11 +40,12 @@ use BetterCal\Support\Time;
  * and a Review notice.
  *
  * Recovery: a transaction can't span the requests, so a pending row
- * (google_pending, migrations 068 and 070) records the targets, the series
- * as they were (every exception's complete state), the rows here as they
- * were with what hangs off them (tags, people, trip links: the shape Undo
- * keeps), and each step: written as sent before its request and as done,
- * with the etag it left, after its answer. The row is written on a
+ * (google_pending, migrations 068, 070, 071 and 074) records the targets,
+ * the series as they were (every exception's complete state), the rows here
+ * as they were with what hangs off them (tags, people, trip links: the
+ * shape Undo keeps), the change's part here (its plan, for Finish), and
+ * each step: written as sent before its request (with what the series
+ * holds once it lands) and as done, with the etag it left, after its answer. The row is written on a
  * connection of its own (Db::journal), so it is committed before the first
  * request whatever the account's transaction does after: a failure of any
  * kind, a lost connection or a stopped process leaves it. It goes only once
@@ -54,9 +55,11 @@ use BetterCal\Support\Time;
  * landed), and every other step follows from a fresh read-back. A failure
  * mid-way stops, stores what Google has, and leaves the row for Review
  * ("Half done at Google"): Finish runs the same targets from Google's
- * state, Put back runs the befores, each series only while its etag is the
- * one its last step left, or one left by a step whose answer was lost when
- * the read-back shows what that step sent. A row still marked running whose
+ * state and then the change's part here, Put back runs the befores, all
+ * or none: only while every series' etag is the one its last step left,
+ * or, a last step's answer lost, the read-back is what that step leaves
+ * (an insert's series as sent; compared field by field, etag aside). A row
+ * still marked running whose
  * run holds no lock (a process that stopped) is half done too. Either way
  * the rows a recovery brings back take their ids, tags, people and links
  * from the snapshot (reattach).
@@ -233,11 +236,13 @@ final class GoogleSeries
      *
      * @param list<array> $targets
      * `befores` are the series as they were before (beforeOf), the targets
-     * that undo the change.
+     * that undo the change. $plan is the change's part here, as the caller
+     * writes it once Google has the targets (its writer's inputs): kept with
+     * the pending row, so Finish writes it with the same writer.
      *
      * @return array{pending:int, readbacks:array<string,list<array>>, differences:list<string>, inserted:array<string,array>, targets:list<array>, befores:list<array>}
      */
-    public function apply(int $userId, array $calendar, array $targets, string $title, string $summary, ?int $eventId = null, ?\Closure $beforeSend = null): array
+    public function apply(int $userId, array $calendar, array $targets, string $title, string $summary, ?int $eventId = null, ?\Closure $beforeSend = null, ?array $plan = null): array
     {
         $befores = [];
         foreach ($targets as $i => $t) {
@@ -253,6 +258,7 @@ final class GoogleSeries
             'targets_json' => json_encode($targets),
             'befores_json' => json_encode($befores),
             'local_json' => json_encode($this->localOf($calendar, array_merge($targets, $befores))),
+            'plan_json' => $plan === null ? null : json_encode($plan),
             'steps_json' => '[]',
             'created_at' => Time::nowDb(),
             'updated_at' => Time::nowDb(),
@@ -501,8 +507,13 @@ final class GoogleSeries
                 // and as done, with the etag it left, once answered. A
                 // refusal (Google answered and wrote nothing) leaves no step;
                 // no answer at all leaves it sent: it may have landed.
-                $step = function (string $kind, string $id, ?string $key, \Closure $write) use (&$steps, $save, $i, $back): mixed {
-                    $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'key' => $key, 'etag' => null, 'state' => self::SENT, 'back' => $back, 'at' => Time::nowDb()];
+                // $check: what the series holds at Google once the write
+                // lands (`expect`, a digest of content()), or for the
+                // master the series it was sent against and the fields it
+                // sent (`pre`, `fields`): how Put back tells a write whose
+                // answer was lost from a change made since.
+                $step = function (string $kind, string $id, ?string $key, \Closure $write, array $check = []) use (&$steps, $save, $i, $back): mixed {
+                    $steps[] = ['series' => $i, 'kind' => $kind, 'id' => $id, 'key' => $key, 'etag' => null, 'state' => self::SENT, 'back' => $back, 'at' => Time::nowDb()] + $check;
                     $n = array_key_last($steps);
                     $save();
                     try {
@@ -557,7 +568,8 @@ final class GoogleSeries
                 }
                 $chain = $t['etag'] ?? null;
                 if (!empty($t['insert'])) {
-                    $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master'])));
+                    $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master'])),
+                        ['expect' => self::digest(self::content(self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []])))]);
                     $targets[$i]['uid'] = $t['uid'] = (string) ($resource['iCalUID'] ?? $t['googleId']);
                     $targets[$i]['insert'] = false;
                     $inserted[(string) $t['googleId']] = $resource;
@@ -568,15 +580,21 @@ final class GoogleSeries
                     $before = $this->masterRow($calendar, $t);
                     $body = self::masterBody($before === null ? null : self::stateOf($before, [])['master'], $t['master']);
                     if ($body !== []) {
-                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain));
+                        $pre = $before === null ? null : self::content(self::heldOf(self::stateOf($before,
+                            $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]))));
+                        $resource = $step('master', (string) $t['googleId'], null, fn() => $send('PATCH', '/' . rawurlencode((string) $t['googleId']), $body, $chain),
+                            ['pre' => $pre, 'fields' => array_keys($body)]);
                         $chain = $resource['etag'] ?? $chain;
                     }
                 }
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 $chain = self::masterEtag($items, (string) $t['googleId']) ?? $chain;
+                $now = self::held($items, (string) $t['googleId']);
+                $len = max(0, Time::fromDb($t['master']['end_utc'])->getTimestamp() - Time::fromDb($t['master']['start_utc'])->getTimestamp());
                 foreach (self::stepsFor($t, $items) as [$kind, $id, $body, $key]) {
+                    $after = self::heldAfter($now, $kind, $key, $kind === 'exception' ? $t['exceptions'][$key] : ($kind === 'plain' ? self::plainAt($t['master'], $key, $len) : null));
                     try {
-                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain));
+                        $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::content($after))]);
                     } catch (HttpError $e) {
                         // Google lists no such instance (404): a day past the
                         // 730 occurrences an unbounded series expands to
@@ -588,6 +606,7 @@ final class GoogleSeries
                         throw $e;
                     }
                     $chain = $resource['etag'] ?? $chain;
+                    $now = $after;
                 }
                 $items = $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
                 $readbacks[(string) $t['uid']] = $items;
@@ -882,20 +901,115 @@ final class GoogleSeries
     /** Whether two rows hold the same event in the fields Google keeps. */
     private static function sameEvent(array $a, array $b): bool
     {
-        $norm = static function (array $r): array {
-            $title = trim((string) ($r['title'] ?? ''));
-            return [
-                'title' => $title === '(No title)' ? '' : $title,
-                'description' => Sanitize::description(isset($r['description']) && $r['description'] !== '' ? (string) $r['description'] : null) ?? '',
-                'location' => trim((string) ($r['location'] ?? '')),
-                'status' => (string) ($r['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
-                'start_utc' => (string) $r['start_utc'],
-                'end_utc' => (string) $r['end_utc'],
-                'all_day' => (int) ($r['all_day'] ?? 0),
-                'url' => (string) (Ics::webUrl(isset($r['url']) ? (string) $r['url'] : null) ?? ''),
-            ];
-        };
-        return $norm($a) === $norm($b);
+        return self::fieldsOf($a) === self::fieldsOf($b);
+    }
+
+    /** A row's fields Google keeps, normalized as Google gives them back. */
+    private static function fieldsOf(array $r): array
+    {
+        $title = trim((string) ($r['title'] ?? ''));
+        return [
+            'title' => $title === '(No title)' ? '' : $title,
+            'description' => Sanitize::description(isset($r['description']) && $r['description'] !== '' ? (string) $r['description'] : null) ?? '',
+            'location' => trim((string) ($r['location'] ?? '')),
+            'status' => (string) ($r['status'] ?? 'confirmed') === 'tentative' ? 'tentative' : 'confirmed',
+            'start_utc' => (string) $r['start_utc'],
+            'end_utc' => (string) $r['end_utc'],
+            'all_day' => (int) ($r['all_day'] ?? 0),
+            'url' => (string) (Ics::webUrl(isset($r['url']) ? (string) $r['url'] : null) ?? ''),
+        ];
+    }
+
+    // ---- what a series holds, for "nothing changed since" (pure) ----------------
+
+    /**
+     * A series as Google holds it, in what a write sends: the master's
+     * fields and rule (as parts), each edited day's fields by its key (a
+     * record at the series' own values is no edited day), and the skipped
+     * keys. Two series are the same series when these are equal; an etag
+     * plays no part. $h is held()'s shape (or heldOf()'s).
+     *
+     * @return array{master:?array, records:array<string,array>, skips:list<string>}
+     */
+    public static function content(array $h): array
+    {
+        $m = $h['master'];
+        $out = ['master' => $m === null ? null : self::fieldsOf($m) + ['rule' => self::ruleParts((string) ($m['rrule'] ?? ''))], 'records' => [], 'skips' => []];
+        $len = $m === null ? 0 : max(0, Time::fromDb((string) $m['end_utc'])->getTimestamp() - Time::fromDb((string) $m['start_utc'])->getTimestamp());
+        foreach ($h['records'] as $key => $r) {
+            $fields = self::fieldsOf($r);
+            if ($m !== null && $fields === self::fieldsOf(self::plainAt($m, (string) $key, $len))) {
+                continue;
+            }
+            $out['records'][(string) $key] = $fields;
+        }
+        ksort($out['records']);
+        $out['skips'] = array_map('strval', array_keys($h['skips']));
+        sort($out['skips']);
+        return $out;
+    }
+
+    private static function digest(array $content): string
+    {
+        return sha1((string) json_encode($content));
+    }
+
+    /** A target (or a series as stored, stateOf) in held()'s shape: what Google holds once it holds the target. */
+    private static function heldOf(array $t): array
+    {
+        $records = [];
+        foreach ($t['exceptions'] as $key => $x) {
+            $records[(string) $key] = $x;
+        }
+        return ['master' => $t['master'], 'records' => $records, 'cancelled' => [], 'skips' => array_fill_keys(array_map('strval', $t['skips']), true), 'etags' => []];
+    }
+
+    /** What Google holds once an instance write lands: the record at $key as $row, or the day skipped. */
+    private static function heldAfter(array $h, string $kind, string $key, ?array $row): array
+    {
+        unset($h['records'][$key], $h['cancelled'][$key], $h['skips'][$key]);
+        if ($kind === 'skip') {
+            $h['cancelled'][$key] = true;
+            $h['skips'][$key] = true;
+        } else {
+            $h['records'][$key] = $row;
+        }
+        return $h;
+    }
+
+    /**
+     * Whether, since a master write whose answer was lost, the series
+     * changed only by that write: the master as it sent it, and each edited
+     * day as it was ($pre) but for the fields the write sent, which may
+     * hold the master's new value (Google overwrites them), or gone (Google
+     * drops them on a new time); no edited day or skip that wasn't there.
+     */
+    public static function onlyMasterChanged(array $pre, array $now, array $sentMaster, array $fields): bool
+    {
+        $target = self::content(['master' => $sentMaster, 'records' => [], 'skips' => []])['master'];
+        if ($now['master'] !== $target) {
+            return false;
+        }
+        $columns = ['summary' => ['title'], 'description' => ['description'], 'location' => ['location'], 'status' => ['status'], 'source' => ['url'],
+            'start' => ['start_utc', 'end_utc', 'all_day'], 'end' => ['start_utc', 'end_utc', 'all_day']];
+        $sent = [];
+        foreach ($fields as $field) {
+            foreach ($columns[$field] ?? [] as $col) {
+                $sent[$col] = true;
+            }
+        }
+        foreach ($now['records'] as $key => $record) {
+            $was = $pre['records'][$key] ?? null;
+            if ($was === null) {
+                return false;
+            }
+            foreach ($record as $col => $value) {
+                if ($value !== ($was[$col] ?? null) && !(isset($sent[$col]) && $value === ($target[$col] ?? null))) {
+                    return false;
+                }
+            }
+        }
+        return array_diff($now['skips'], $pre['skips']) === [];
     }
 
     /**
@@ -1173,32 +1287,175 @@ final class GoogleSeries
     /**
      * Finish: the same targets from Google's state, which is what is
      * stored here (the half state was written from a read-back), so each
-     * series' first write is conditional on its stored etag; then the rows
-     * the change kept take back their ids and what hung off them (reattach).
+     * series' first write is conditional on its stored etag; then the
+     * change's part here (its plan, kept with the pending row) written as
+     * the change would have written it: the rows put back where the
+     * snapshot has them (rewind), $commit run on them (the caller's writer,
+     * the one the change uses), and what Google holds stored on top; the
+     * rows the change kept take back their ids and what hung off them
+     * (reattach). A part here that can't be written is reported, and the
+     * pending row stays for Review with what Google holds stored.
      *
+     * @param ?\Closure $commit fn(array $plan, array $out): void, the change's writer
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>}
      */
-    public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null): array
+    public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?\Closure $commit = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
         $this->refresh($calendar, json_decode((string) $row['targets_json'], true) ?: [], $beforeSend);
         $targets = $this->withStoredEtags($calendar, json_decode((string) $row['targets_json'], true) ?: []);
         $out = $this->run($calendar, $pendingId, $targets, $steps, $beforeSend);
+        $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
+        $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+        if (is_array($plan) && $commit !== null) {
+            $this->commitLocal($calendar, $pendingId, $local, $plan, $out, $commit);
+        }
         $this->store($calendar, $out['readbacks'], $out['targets']);
-        $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
+        $this->reattach($calendar, $local, $out['targets']);
         $this->settle($pendingId);
         return $out;
     }
 
     /**
+     * The change's part here, once Google holds its targets: the rows put
+     * back where they were (rewind), then the change's writer, all or
+     * nothing. A failure leaves the rows as Google holds them, keeps the
+     * pending row half done with words for what stopped, and is thrown.
+     */
+    private function commitLocal(array $calendar, int $pendingId, array $local, array $plan, array $out, \Closure $commit): void
+    {
+        $write = function () use ($calendar, $local, $plan, $out, $commit): void {
+            $this->rewind($calendar, $local, $out['targets']);
+            $commit($plan, $out);
+        };
+        try {
+            if ($this->db->pdo()->inTransaction()) {
+                $this->db->run('SAVEPOINT bc_google_finish');
+                try {
+                    $write();
+                } catch (\Throwable $e) {
+                    $this->db->run('ROLLBACK TO SAVEPOINT bc_google_finish');
+                    throw $e;
+                }
+                $this->db->run('RELEASE SAVEPOINT bc_google_finish');
+            } else {
+                $this->db->tx($write);
+            }
+        } catch (\Throwable $e) {
+            $this->store($calendar, $out['readbacks'], $out['targets']);
+            $this->reattach($calendar, $local, $out['targets']);
+            $words = 'Google has the change, but its part here (tags, people, reminders, flags) could not be saved: ' . rtrim($e->getMessage(), '.') . '.';
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+            $this->endUnlessTx($pendingId, true);
+            throw new HttpError('google_finish_local', $words, 409, ['pending' => $pendingId]);
+        }
+    }
+
+    /**
+     * The rows a change's series are made of put back where the snapshot
+     * (localOf) has them, so the change's writer finds what it was planned
+     * on: every row of those series and events here that the snapshot
+     * doesn't have goes (made by a store since: an edited day at a new key,
+     * the inserted series, an event of its own), each snapshot row takes
+     * back its place and Google's columns (SYNCED), and a row gone since
+     * comes back whole with what hung off it. What a live row has of its
+     * own (reminders, flags, tags, people) stays as it is now.
+     *
+     * @param array<string,list<array>> $local
+     * @param list<array> $targets
+     */
+    private function rewind(array $calendar, array $local, array $targets): void
+    {
+        $calendarId = (int) $calendar['id'];
+        $snap = [];
+        foreach ($local['events'] ?? [] as $r) {
+            $snap[(int) $r['id']] = $r;
+        }
+        $uids = [];
+        $googleIds = [];
+        foreach ($snap as $r) {
+            if ((int) $r['calendar_id'] === $calendarId) {
+                $uids[] = (string) $r['uid'];
+            }
+        }
+        foreach ($targets as $t) {
+            if (!empty($t['uid'])) {
+                $uids[] = (string) $t['uid'];
+            }
+            if (!empty($t['googleId'])) {
+                $googleIds[] = (string) $t['googleId'];
+            }
+            foreach ($t['singles'] ?? [] as $single) {
+                $googleIds[] = (string) $single['id'];
+                if (!empty($single['uid'])) {
+                    $uids[] = (string) $single['uid'];
+                }
+            }
+        }
+        [$inUids, $uidParams] = Db::in(array_values(array_unique($uids)));
+        [$inIds, $idParams] = Db::in(array_values(array_unique($googleIds)));
+        foreach ($this->db->all("SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND (uid IN $inUids OR google_event_id IN $inIds)", array_merge([$calendarId], $uidParams, $idParams)) as $r) {
+            if (!isset($snap[(int) $r['id']])) {
+                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $r['id']]);
+            }
+        }
+        $live = [];
+        if ($snap !== []) {
+            [$in, $params] = Db::in(array_keys($snap));
+            foreach ($this->db->all("SELECT id FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $live[(int) $r['id']] = true;
+            }
+        }
+        // A key may be one another of these rows holds now.
+        Events::parkInstanceKeys($this->db, array_keys($live));
+        $gone = [];
+        foreach ($snap as $id => $r) {
+            if (isset($live[$id])) {
+                $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
+            } else {
+                $this->db->upsert('events', $r);
+                $gone[$id] = true;
+            }
+        }
+        if ($gone === []) {
+            return;
+        }
+        $eventCols = ['event_tags' => ['event_id'], 'event_people' => ['event_id']];
+        foreach (OwnFields::REFERENCES as [$table, , $cols]) {
+            $eventCols[$table] = $cols;
+        }
+        foreach ($eventCols as $table => $cols) {
+            foreach ($local[$table] ?? [] as $link) {
+                $names = false;
+                foreach ($cols as $col) {
+                    $names = $names || isset($gone[(int) ($link[$col] ?? 0)]);
+                }
+                if (!$names) {
+                    continue;
+                }
+                try {
+                    $this->db->upsert($table, $link);
+                } catch (\PDOException $e) {
+                    if (!Db::isForeignKeyViolation($e)) {
+                        throw $e;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Put back: the series as they were, each one any step of the change
      * was sent for (answered or not: an insert whose answer was lost is
-     * found by the id it carried), and only while its etag at Google is the
-     * one the last answered step left, the one the change started from, or
-     * one left by a last step whose answer was lost when the read-back
-     * shows what that step sent (a change made since, at Google or here,
-     * leaves the series as it is, named in `left`); an inserted series is
+     * found by the id it carried), and only while nothing changed since:
+     * its etag at Google is the one the last answered step left or the one
+     * the change started from, or, the last step's answer lost, the series
+     * is what that step leaves (unchangedSince; an event of its own made
+     * with its answer lost, as sent). A change made at Google since,
+     * to any series, puts nothing back: nothing is sent or stored, the
+     * pending row stays for Finish, and the 409 names each series (`left`
+     * in its extra). Otherwise every series is put back: an inserted series is
      * cancelled, a single made is cancelled, a dropped exception is sent
      * again from its complete before state, and the rows brought back take
      * their ids and what hung off them from the snapshot (reattach). Its
@@ -1213,9 +1470,11 @@ final class GoogleSeries
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
         $targets = json_decode((string) $row['targets_json'], true) ?: [];
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
-        $this->refresh($calendar, $befores, $beforeSend);
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        // Every series checked before anything is sent or stored: Put back
+        // is the whole change's, or none of it (half of a split put back
+        // would leave two series overlapping).
         $left = [];
         $run = [];
         foreach ($befores as $i => $b) {
@@ -1241,25 +1500,61 @@ final class GoogleSeries
             }
             $base = $last ?? ($targets[$i]['etag'] ?? null);
             $current = self::masterEtag($this->readBack($calendar, $send, null, (string) $b['googleId'], null, $beforeSend), (string) $b['googleId']);
-            if ($base !== null && $current !== null && $current !== $base) {
-                $uncertain = $lastStep !== null && ($lastStep['state'] ?? self::DONE) === self::SENT;
+            // Nothing changed since: the etag the last answered step left
+            // (or the change started from) is the one Google has; or, the
+            // last step's answer lost, Google holds what it sent and no more
+            // (an insert's series exactly as sent, the series as the step
+            // left it, compared field by field, etag aside).
+            $uncertain = $lastStep !== null && ($lastStep['state'] ?? self::DONE) === self::SENT;
+            if ($uncertain) {
                 $sent = empty($lastStep['back']) ? ($targets[$i] ?? null) : $b;
-                if (!$uncertain || $sent === null || !$this->landed($calendar, $send, $sent, $lastStep, $beforeSend)) {
-                    $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since, and was left as it is.";
-                    continue;
-                }
+                $safe = ($base !== null && $current === $base) || ($sent !== null && $this->unchangedSince($calendar, $send, $sent, $lastStep, $beforeSend));
+            } else {
+                $safe = $base === null || $current === null || $current === $base;
+            }
+            if (!$safe) {
+                $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since.";
+                continue;
             }
             $b['etag'] = $current;
+            $sentSingles = [];
+            foreach ($targets[$i]['singles'] ?? [] as $single) {
+                $sentSingles[(string) $single['id']] = $single;
+            }
             foreach ($b['singles'] ?? [] as $si => $single) {
-                if (!array_key_exists((string) $single['id'], $made)) {
+                $sid = (string) $single['id'];
+                if (!array_key_exists($sid, $made)) {
                     unset($b['singles'][$si]); // never sent
                     continue;
                 }
-                $b['singles'][$si]['etag'] = $made[(string) $single['id']];
+                $etag = $made[$sid];
+                if ($etag === null && !empty($single['remove']) && isset($sentSingles[$sid]['row'])) {
+                    // Its answer lost: put back only while it is as sent.
+                    $found = $this->found($send, $sid);
+                    if ($found === null) {
+                        unset($b['singles'][$si]); // it never landed
+                        continue;
+                    }
+                    $parsed = GoogleSync::toParsed($found);
+                    if ($parsed === null || !self::sameEvent($parsed, $sentSingles[$sid]['row'])) {
+                        $left[] = "'" . (string) $sentSingles[$sid]['row']['title'] . "' changed at Google since.";
+                        unset($b['singles'][$si]);
+                        continue;
+                    }
+                    $etag = isset($found['etag']) && is_string($found['etag']) ? $found['etag'] : null;
+                }
+                $b['singles'][$si]['etag'] = $etag;
             }
             $b['singles'] = array_values($b['singles'] ?? []);
             $run[$i] = $b;
         }
+        if ($left !== []) {
+            $words = implode(' ', $left) . ' Nothing was put back; Finish completes the change from what Google has now.';
+            $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+            $this->endUnlessTx($pendingId, true);
+            throw new HttpError('google_changed_since', $words, 409, ['pending' => $pendingId, 'left' => $left]);
+        }
+        $this->refresh($calendar, $befores, $beforeSend);
         $out = ['readbacks' => [], 'differences' => [], 'targets' => [], 'inserted' => []];
         if ($run !== []) {
             $out = $this->run($calendar, $pendingId, $run, $steps, $beforeSend, true);
@@ -1294,6 +1589,49 @@ final class GoogleSeries
         if ($got !== []) {
             $this->store($calendar, $got, []);
         }
+    }
+
+    /** An event as Google holds it now by its id, or null when it is gone (404, 410, or cancelled). */
+    private function found(\Closure $send, string $id): ?array
+    {
+        try {
+            $found = $send('GET', '/' . rawurlencode($id), null, null);
+        } catch (HttpError $e) {
+            if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
+                throw $e;
+            }
+            return null;
+        }
+        return (string) ($found['status'] ?? '') === 'cancelled' ? null : $found;
+    }
+
+    /**
+     * Whether a series whose last step's answer was lost changed only by
+     * that step, so Put back may reverse it ($t is the state the step was
+     * towards): an insert that never landed (nothing to reverse), or the
+     * series exactly as the step leaves it (`expect`); a master write by
+     * onlyMasterChanged. Removals, and a step journaled with neither, by
+     * whether it landed.
+     */
+    private function unchangedSince(array $calendar, \Closure $send, array $t, array $step, ?\Closure $beforeSend): bool
+    {
+        if (!isset($step['expect']) && !array_key_exists('pre', $step)) {
+            return $this->landed($calendar, $send, $t, $step, $beforeSend);
+        }
+        $googleId = (string) $t['googleId'];
+        $uid = isset($t['uid']) && $t['uid'] !== '' ? (string) $t['uid'] : null;
+        if ($step['kind'] === 'insert') {
+            $found = $this->found($send, $googleId);
+            if ($found === null) {
+                return true;
+            }
+            $uid = isset($found['iCalUID']) && is_string($found['iCalUID']) && $found['iCalUID'] !== '' ? $found['iCalUID'] : null;
+        }
+        $now = self::content(self::held($this->readBack($calendar, $send, $uid, $googleId, null, $beforeSend), $googleId));
+        if ($step['kind'] === 'master') {
+            return is_array($step['pre'] ?? null) && self::onlyMasterChanged($step['pre'], $now, $t['master'], (array) ($step['fields'] ?? []));
+        }
+        return self::digest($now) === (string) $step['expect'];
     }
 
     /**

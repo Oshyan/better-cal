@@ -424,6 +424,25 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $local = smPlan($allDay, [$timedDay], ['columns' => ['title' => 'Sample market']]);
     checkEq('Acceptance 5: a timed day under an all-day series refuses the change on Google, with its reason; locally the rename goes through', [true, 'googleAllDay', Model::REASONS['googleAllDay'], false],
         [$g['refused'], $g['plan']['refusals'][0]['code'] ?? null, $g['plan']['refusals'][0]['words'] ?? null, $local['refused']]);
+    // Every reading of a drag keeps the timed day: each reading's own plan is
+    // refused, so each is a disabled option with Google's reason (never two
+    // refused plans compared as equal and merged), and the change is refused
+    // with it. Worked out without a PHP warning.
+    $fair = smSeries('Sample fair', 'FREQ=WEEKLY;BYDAY=TU,SA', '2027-01-05 00:00', 60, true);
+    $fairTimed = smEdited($fair, 3, '2027-01-12 00:00', ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => smAt('2027-01-12 09:00'), 'end_utc' => smAt('2027-01-12 10:00')], null, ['allDay', 'time']);
+    $warned = [];
+    set_error_handler(static function (int $level, string $message) use (&$warned): bool {
+        $warned[] = $message;
+        return true;
+    }, E_WARNING | E_NOTICE);
+    try {
+        $g = smPlan($fair, [$fairTimed], smDrag($fair, '2027-01-16 00:00', '2027-01-17 00:00'), [], ['google' => true]);
+    } finally {
+        restore_error_handler();
+    }
+    $local = smPlan($fair, [$fairTimed], smDrag($fair, '2027-01-16 00:00', '2027-01-17 00:00'));
+    checkEq('Acceptance 5: every reading keeping a timed day under an all-day series is disabled on Google with its reason and the change refused; locally both are offered', [true, [['reading', 'member', 'googleAllDay'], ['reading', 'pattern', 'googleAllDay'], [null, null, 'googleAllDay']], [], ['member', 'pattern'], false],
+        [$g['refused'], array_map(static fn(array $r): array => [$r['group'] ?? null, $r['option'] ?? null, $r['code']], $g['plan']['refusals']), $warned, smOptions($local, 'reading'), $local['refused']]);
 
     // Acceptance 6: a rule the expander can't read.
     $holiday = smSeries('Holiday dinner', 'RSCALE=HEBREW;FREQ=YEARLY;BYMONTH=5L', '2027-02-10 18:00');

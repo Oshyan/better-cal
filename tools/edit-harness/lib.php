@@ -51,6 +51,39 @@ final class Known
 }
 
 /**
+ * A PHP warning or notice raised while a case runs is a failure of its own (p-warning, README, The Invariants): a shard
+ * prints nothing, so a warning that trips no other check would otherwise pass unseen. Each is recorded once per case
+ * with its message and where it was raised; a call silenced with @ is not counted.
+ */
+final class Warnings
+{
+    public const LEVELS = E_WARNING | E_NOTICE | E_USER_WARNING | E_USER_NOTICE;
+
+    /** @param callable():array $case a driver's run; its result gets a p-warning record for each warning raised */
+    public static function during(callable $case): array
+    {
+        $seen = [];
+        set_error_handler(static function (int $level, string $message, string $file = '', int $line = 0) use (&$seen): bool {
+            if ((error_reporting() & $level) === 0) {
+                return false;
+            }
+            $root = dirname(__DIR__, 2) . '/';
+            $seen[$message . ' at ' . (str_starts_with($file, $root) ? substr($file, strlen($root)) : $file) . ':' . $line] = true;
+            return true;
+        }, self::LEVELS);
+        try {
+            $result = $case();
+        } finally {
+            restore_error_handler();
+        }
+        foreach (array_keys($seen) as $where) {
+            $result['records'][] = ['invariant' => 'p-warning', 'what' => 'PHP raised a warning or notice during the case: ' . $where, 'detail' => ['warning' => $where]];
+        }
+        return $result;
+    }
+}
+
+/**
  * The tallies a run reports and fails on (README, Reporting): failures
  * outside the known paths, accepted ones by cause, failures of the plan's
  * data checks on known-path cases (never accepted), unoracled and skipped
@@ -230,7 +263,7 @@ final class Runner
             }
             $r = new Rng($this->seed * 1_000_003 + $i);
             $spec = ['n' => $i, 'seed' => $this->seed, 'series' => Space::series($r, $onlyFamily)];
-            $result = $driver->run($spec, $r);
+            $result = Warnings::during(static fn(): array => $driver->run($spec, $r));
             $this->count($result);
             if ($progress !== null) {
                 $progress($i, $result);
@@ -262,11 +295,11 @@ final class Runner
             $spec = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             $spec['fixed'] = basename($file, '.json');
             // A sequence (sequences/*.json) is its steps, one after another on one series (README, The Sequences).
-            $result = match (true) {
+            $result = Warnings::during(static fn(): array => match (true) {
                 isset($spec['steps']) => $driver->runSequence($spec),
                 !empty($spec['googleSplit']) => $driver->runGoogleSplit($spec),
                 default => $driver->run($spec, new Rng(0)),
-            };
+            });
             $this->count($result);
         }
     }
@@ -366,7 +399,7 @@ final class Runner
             $budget--;
             unset($candidate['request'], $candidate['create']);
             try {
-                $result = $driver->run($candidate, new Rng(0));
+                $result = Warnings::during(static fn(): array => $driver->run($candidate, new Rng(0)));
             } catch (\Throwable) {
                 return false;
             }

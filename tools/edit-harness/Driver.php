@@ -1092,6 +1092,21 @@ final class Driver
             $this->same('e-preview', $s0, $this->snapshot(), 'a preview writes nothing');
         }
         $google = $slot === 'edit' && !$replay && $v['scope'] === 'all' && $this->google === null && ($this->spec['n'] ?? 0) % 2 === 0 ? $this->googlePlan($target, $in, $choices) : null;
+        if ($google !== null && !isset($google['error']) && $google['refused']) {
+            // A Google refusal stands only when no reading Google could hold is left (invariant i): each other reading
+            // the local plan offers, planned for Google from the same rows before the commit.
+            foreach ($plan['groups'] ?? [] as $grp) {
+                if (($grp['id'] ?? '') !== 'reading') {
+                    continue;
+                }
+                foreach ($grp['options'] as $o) {
+                    if (empty($o['disabled']) && $o['id'] !== $grp['selected']) {
+                        $alt = $this->googlePlan($target, $in, ['reading' => $o['id']] + $choices);
+                        $google['otherReadings'][$o['id']] = $alt === null || isset($alt['error']) ? null : (bool) $alt['refused'];
+                    }
+                }
+            }
+        }
         try {
             $this->events->patch($this->userId, $target, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
         } catch (HttpError $e) {

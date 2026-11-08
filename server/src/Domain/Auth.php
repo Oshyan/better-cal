@@ -220,7 +220,8 @@ final class Auth
                 $googleAccounts = (int) $this->db->scalar('SELECT COUNT(*) FROM google_accounts WHERE user_id = ?', [$userId]);
                 $this->db->run(
                     "UPDATE google_accounts
-                     SET reauth_required_at = ?, status = 'error', last_error = ?
+                     SET reauth_required_at = ?, status = 'error', last_error = ?,
+                         access_token_enc = NULL, access_token_expires_at = NULL
                      WHERE user_id = ?",
                     [$now, 'Paused by the account compromise reset; reconnect this Google account to resume.', $userId]
                 );

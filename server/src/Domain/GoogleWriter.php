@@ -409,7 +409,7 @@ final class GoogleWriter
                 ? ($this->jsonTransport)($method, $url, $payload, $headers)
                 : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
             // A held token Google no longer takes: once more with a fresh one.
-            if ($this->jsonTransport === null && GoogleAuth::tokenRejected($account, (int) $r['status'])) {
+            if ($this->jsonTransport === null && $this->auth->tokenRejected($account, (int) $r['status'])) {
                 $access = $this->auth->accessToken($account);
                 $r = $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
             }

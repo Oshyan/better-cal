@@ -414,7 +414,7 @@ final class HttpClient
                 $answer = ($this->transport)($method, $url, $headers, $body);
                 return ['status' => (int) $answer['status'], 'body' => (string) $answer['body']];
             }
-            $ch = self::handleFor($url);
+            $ch = self::handleFor($url, $this->ipv4Only);
             $response = '';
             $overflow = false;
             $totalOverflow = false;
@@ -483,7 +483,7 @@ final class HttpClient
     }
 
     /**
-     * cURL handles by scheme and host for this process, so requests to the
+     * cURL handles by scheme, host, port and address family for this process, so requests to the
      * same host reuse its connection (one TLS handshake for a run of Google
      * writes or a poll's pages) instead of opening one per request. A handle
      * is reset before each use, so every option above is set afresh; the
@@ -496,10 +496,12 @@ final class HttpClient
     /** How many hosts keep a connection at once; the least recently used goes first. */
     private const HANDLE_POOL = 8;
 
-    private static function handleFor(string $url): \CurlHandle
+    private static function handleFor(string $url, bool $ipv4Only = false): \CurlHandle
     {
         $parts = parse_url($url);
-        $key = strtolower((string) ($parts['scheme'] ?? 'http')) . '://' . strtolower((string) ($parts['host'] ?? '')) . ':' . (string) ($parts['port'] ?? '');
+        // An IPv4-only client never gets a connection another client opened
+        // over IPv6: its key may be restricted to IPv4 source addresses.
+        $key = ($ipv4Only ? 'v4|' : '') . strtolower((string) ($parts['scheme'] ?? 'http')) . '://' . strtolower((string) ($parts['host'] ?? '')) . ':' . (string) ($parts['port'] ?? '');
         $ch = self::$handles[$key] ?? null;
         if ($ch !== null) {
             unset(self::$handles[$key]);
@@ -539,6 +541,54 @@ final class HttpClient
         return true;
     }
 
+    /**
+     * What the system resolver answered, by host, for this process: most
+     * callers build a client per call, and each lookup is a child process
+     * (resolveHost), so a run of Google calls looked the same host up again
+     * for every one. Only the raw answers are kept, in memory, for a short
+     * time; destination() judges them (private addresses, IPv4-only, NAT64)
+     * on every use exactly as it judges a fresh answer. Used only by the
+     * default resolver; a client given its own resolver asks it each time.
+     *
+     * @var array<string,array{ips:list<string>,at:float}>
+     */
+    private static array $answers = [];
+
+    /** How long an answer is reused, so a changed record is picked up. */
+    private const ANSWER_TTL_SECONDS = 60;
+
+    /** How many hosts' answers are kept at once; the oldest goes first. */
+    private const ANSWER_HOSTS = 256;
+
+    /** Tests only: stands in for the system lookup beneath the process cache. */
+    private static ?\Closure $systemLookup = null;
+
+    /** @return mixed the resolver's answer: a list of addresses, or anything else for a failure */
+    private function lookup(string $host, int $remainingMs): mixed
+    {
+        if ($this->resolver !== null) {
+            return ($this->resolver)($host, $remainingMs);
+        }
+        $key = strtolower($host);
+        $now = microtime(true);
+        $held = self::$answers[$key] ?? null;
+        if ($held !== null && $now - $held['at'] < self::ANSWER_TTL_SECONDS) {
+            return $held['ips'];
+        }
+        unset(self::$answers[$key]);
+        $ips = self::$systemLookup !== null
+            ? (self::$systemLookup)($host, $remainingMs)
+            : self::resolveHost($host, $remainingMs);
+        // A failed or empty lookup is not kept: the next call asks again.
+        if (is_array($ips) && $ips !== []) {
+            if (count(self::$answers) >= self::ANSWER_HOSTS) {
+                unset(self::$answers[array_key_first(self::$answers)]);
+            }
+            self::$answers[$key] = ['ips' => array_values($ips), 'at' => $now];
+        }
+        return $ips;
+    }
+
     /** @return array{host:string,resolve:string} */
     private function destination(string $url, float $deadline): array
     {
@@ -556,9 +606,7 @@ final class HttpClient
             $ips = $this->resolvedHosts[$lookupHost];
         } else {
             $remainingMs = max(1, (int) floor(($deadline - microtime(true)) * 1000));
-            $ips = $this->resolver !== null
-                ? ($this->resolver)($lookupHost, $remainingMs)
-                : self::resolveHost($lookupHost, $remainingMs);
+            $ips = $this->lookup($lookupHost, $remainingMs);
             if (microtime(true) >= $deadline) {
                 throw new \RuntimeException('DNS resolution deadline exceeded for ' . $lookupHost);
             }
@@ -620,9 +668,7 @@ final class HttpClient
             throw new \RuntimeException('HTTP deadline exceeded before NAT64 discovery');
         }
         $remainingMs = max(1, (int) floor(($deadline - microtime(true)) * 1000));
-        $answers = $this->resolver !== null
-            ? ($this->resolver)('ipv4only.arpa', $remainingMs)
-            : self::resolveHost('ipv4only.arpa', $remainingMs);
+        $answers = $this->lookup('ipv4only.arpa', $remainingMs);
         if (!is_array($answers) || $answers === []) {
             throw new \RuntimeException('NAT64 prefix discovery failed; IPv6 destination refused');
         }

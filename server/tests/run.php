@@ -1145,6 +1145,65 @@ try {
     $oneAnchorRefused = str_contains($e->getMessage(), 'no verifiable RFC 7050');
 }
 check('http policy refuses an unverified NAT64 prefix learned from only one RFC 7050 anchor', $oneAnchorRefused);
+// The default resolver's answers are kept for the process for a short time:
+// new clients to the same host make one lookup (and one NAT64 probe), while
+// every use still judges the answer (private addresses, IPv4-only) afresh.
+// A client given its own resolver asks it each time.
+$answersProperty = new ReflectionProperty(HttpClient::class, 'answers');
+$systemLookupProperty = new ReflectionProperty(HttpClient::class, 'systemLookup');
+$answersProperty->setValue(null, []);
+$systemLookups = [];
+$systemLookupProperty->setValue(null, static function (string $host, int $remainingMs) use (&$systemLookups): array {
+    $systemLookups[] = $host;
+    return match ($host) {
+        'ipv4only.arpa' => ['192.0.0.170', '192.0.0.171'],
+        'dual.example.test' => ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'],
+        'inside.example.test' => ['10.0.0.8'],
+        default => [],
+    };
+});
+$dualResolves = [];
+for ($i = 0; $i < 3; $i++) {
+    $dualResolves[] = $destinationMethod->invoke(new HttpClient(allowedSchemes: ['https']), 'https://dual.example.test/x', microtime(true) + 1)['resolve'];
+}
+checkEq('http dns: three new clients to one dual-stack host make one lookup and one NAT64 probe in the process',
+    [['dual.example.test', 'ipv4only.arpa'], 1], [$systemLookups, count(array_unique($dualResolves))]);
+checkEq('http dns: an IPv4-only client filters the cached answer itself, with no new lookup',
+    ['DUAL.example.test:443:93.184.216.34', 2],
+    [$destinationMethod->invoke(new HttpClient(allowedSchemes: ['https'], ipv4Only: true), 'https://DUAL.example.test/x', microtime(true) + 1)['resolve'], count($systemLookups)]);
+$insideRefusals = 0;
+for ($i = 0; $i < 2; $i++) {
+    try {
+        $destinationMethod->invoke(new HttpClient(allowedSchemes: ['https']), 'https://inside.example.test/', microtime(true) + 1);
+    } catch (RuntimeException $e) {
+        $insideRefusals += str_contains($e->getMessage(), 'Refused private/internal') ? 1 : 0;
+    }
+}
+checkEq('http dns: a cached private answer is refused on every use, from one lookup', [2, 3], [$insideRefusals, count($systemLookups)]);
+$heldAnswers = $answersProperty->getValue();
+$heldAnswers['dual.example.test']['at'] -= 61;
+$answersProperty->setValue(null, $heldAnswers);
+$destinationMethod->invoke(new HttpClient(allowedSchemes: ['https']), 'https://dual.example.test/x', microtime(true) + 1);
+checkEq('http dns: an answer older than a minute is looked up again', ['dual.example.test', 4], [end($systemLookups), count($systemLookups)]);
+$ownResolverCalls = 0;
+$ownResolver = static function (string $host, int $remainingMs) use (&$ownResolverCalls): array {
+    $ownResolverCalls++;
+    return ['93.184.216.34'];
+};
+$destinationMethod->invoke(new HttpClient(allowedSchemes: ['https'], resolver: $ownResolver), 'https://own.example.test/', microtime(true) + 1);
+$destinationMethod->invoke(new HttpClient(allowedSchemes: ['https'], resolver: $ownResolver), 'https://own.example.test/', microtime(true) + 1);
+checkEq('http dns: a client with its own resolver asks it every time and the process cache keeps nothing for it',
+    [2, false, 4], [$ownResolverCalls, isset($answersProperty->getValue()['own.example.test']), count($systemLookups)]);
+$systemLookupProperty->setValue(null, null);
+$answersProperty->setValue(null, []);
+// The connection pool keys by address family too: an IPv4-only client never
+// reuses a connection another client may have opened over IPv6.
+$handleForMethod = new ReflectionMethod(HttpClient::class, 'handleFor');
+$anyFamilyHandle = $handleForMethod->invoke(null, 'https://pool.example.test/a', false);
+$sameFamilyHandle = $handleForMethod->invoke(null, 'https://pool.example.test/b', false);
+$ipv4OnlyHandle = $handleForMethod->invoke(null, 'https://pool.example.test/a', true);
+check('http pool: the same host reuses its handle, and an IPv4-only client gets a handle of its own',
+    $anyFamilyHandle === $sameFamilyHandle && $ipv4OnlyHandle !== $anyFamilyHandle);
 $resolverMethod = new ReflectionMethod(HttpClient::class, 'resolveHost');
 $dnsStarted = microtime(true);
 $dnsTimedOut = false;
@@ -8842,7 +8901,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $gw->run("INSERT INTO users VALUES (1, 'owner@example.com', '{\"tz\":\"UTC\"}')");
     $gw->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
     $gw->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
-    $gw->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
+    $gw->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, access_token_enc TEXT, access_token_expires_at TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
     $gw->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, created_at) VALUES (1, 1, ?, ?, ?, ?, ?)', [
         'owner@example.com', BetterCal\Infra\Secrets::seal('1//sample-refresh', 'secret-a'), BetterCal\Domain\GoogleAuth::SCOPES, 'ok', BetterCal\Support\Time::nowDb(),
     ]);
@@ -10575,7 +10634,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT, expires_at TEXT)');
     $pdb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
     $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, created_by_token_id INTEGER)');
-    $pdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT DEFAULT "ok", reauth_required_at TEXT, last_error TEXT)');
+    $pdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, access_token_enc TEXT, access_token_expires_at TEXT, scopes TEXT, status TEXT DEFAULT "ok", reauth_required_at TEXT, last_error TEXT)');
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
     davJournal($pdb);
     $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
@@ -10594,7 +10653,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         password_hash('other-password', PASSWORD_DEFAULT),
     ]);
     $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'a'), (1, 'b'), (2, 'c')");
-    $pdb->run("INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes) VALUES (1, 1, 'owner@gmail.com', 'sealed-owner', 'scope'), (2, 2, 'other@gmail.com', 'sealed-other', 'scope')");
+    $pdb->run("INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, access_token_enc, access_token_expires_at, scopes) VALUES (1, 1, 'owner@gmail.com', 'sealed-owner', 'sealed-access-owner', '2099-01-01 00:00:00', 'scope'), (2, 2, 'other@gmail.com', 'sealed-other', 'sealed-access-other', '2099-01-01 00:00:00', 'scope')");
     $pdb->run("INSERT INTO calendars (id, user_id, kind, provider, source_url, subscription_authority, created_by_token_id, google_account_id, google_access_role, last_poll_status) VALUES
         (1, 1, 'subscribed', 'google', NULL, 'owner', NULL, 1, 'owner', 'ok'),
         (2, 2, 'subscribed', 'google', NULL, 'owner', NULL, 2, 'writer', 'ok'),
@@ -10716,6 +10775,11 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $revoked['googleAccounts'],
         $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1') !== null,
         $pdb->scalar('SELECT status FROM google_accounts WHERE id = 1'),
+    ]);
+    checkEq('reset --revoke-tokens: the stored access token is cleared, another user\'s is not', [null, null, 'sealed-access-other'], [
+        $pdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 1'),
+        $pdb->scalar('SELECT access_token_expires_at FROM google_accounts WHERE id = 1'),
+        $pdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 2'),
     ]);
     checkEq('reset --revoke-tokens: cached Google calendars stay but become read-only', [1, null, 'error'], [
         (int) $pdb->scalar('SELECT COUNT(*) FROM calendars WHERE id = 1'),
@@ -11680,7 +11744,7 @@ use BetterCal\Infra\Secrets;
     // and accessToken re-reads it so a stale worker snapshot cannot bypass it.
     $gdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $gdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
-    $gdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
+    $gdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, access_token_enc TEXT, access_token_expires_at TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
     $gdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, expires_at TEXT, authenticated_at TEXT)');
     $gdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, google_account_id INTEGER, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT)');
     davJournal($gdb);
@@ -11700,35 +11764,65 @@ use BetterCal\Infra\Secrets;
     }
     checkEq('google quarantine: a stale account snapshot is refused before any token request', 'google_reconnect_needed', $quarantineCode);
 
-    // The access token is held for the process while it is good and came from
-    // the account's current grant: one refresh request serves a run of calls,
-    // a 401 drops it, a changed grant drops it, and a short-lived token is
-    // not held.
-    GoogleAuth::forgetTokens();
+    // The access token is stored on the account row, sealed, while it is good
+    // and came from the account's current grant: two processes (two
+    // GoogleAuth instances) share one refresh, a 401 clears it, a changed
+    // grant or an expiry refreshes, and a short-lived token is not stored.
     $gdb->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, reauth_required_at, created_at) VALUES (2, 7, ?, ?, ?, ?, NULL, ?)', [
         'owner2@example.test', Secrets::seal('1//grant-one', 'secret-a'), GoogleAuth::SCOPES, 'ok', BetterCal\Support\Time::nowDb(),
     ]);
     $tokenRequests = 0;
     $tokenLifetime = 3600;
-    $cauth = new GoogleAuth($gdb, $gcfg, static function (string $url, array $fields, ?float $deadline) use (&$tokenRequests, &$tokenLifetime): array {
+    $tokenTransport = static function (string $url, array $fields, ?float $deadline) use (&$tokenRequests, &$tokenLifetime): array {
         $tokenRequests++;
         return ['status' => 200, 'body' => json_encode(['access_token' => 'tok-' . $tokenRequests, 'expires_in' => $tokenLifetime, 'token_type' => 'Bearer'])];
-    });
+    };
+    $cauth = new GoogleAuth($gdb, $gcfg, $tokenTransport);
+    $otherProcess = new GoogleAuth($gdb, $gcfg, $tokenTransport);
     $acct2 = $gdb->one('SELECT * FROM google_accounts WHERE id = 2');
     $first = $cauth->accessToken($acct2);
-    $second = $cauth->accessToken($acct2);
-    checkEq('token held: two calls in one process make one refresh request and get the same token', ['tok-1', 'tok-1', 1], [$first, $second, $tokenRequests]);
-    checkEq('token held: a 401 from Google drops it and asks for a retry; the next call refreshes', [true, false, 'tok-2', 2],
-        [GoogleAuth::tokenRejected($acct2, 401), GoogleAuth::tokenRejected($acct2, 403), $cauth->accessToken($acct2), $tokenRequests]);
+    $second = $otherProcess->accessToken($acct2);
+    $third = $cauth->accessToken($acct2);
+    checkEq('token stored: two processes share one refresh request and get the same token', ['tok-1', 'tok-1', 'tok-1', 1], [$first, $second, $third, $tokenRequests]);
+    $storedRow = $gdb->one('SELECT access_token_enc, access_token_expires_at FROM google_accounts WHERE id = 2');
+    check('token stored: sealed on the row with its expiry, never in the clear',
+        is_string($storedRow['access_token_enc']) && str_starts_with($storedRow['access_token_enc'], 'v1:')
+        && !str_contains($storedRow['access_token_enc'], 'tok-1')
+        && abs(BetterCal\Support\Time::fromDb((string) $storedRow['access_token_expires_at'])->getTimestamp() - (time() + 3600)) <= 5);
+    checkEq('token stored: a 403 is not a token problem and keeps it', [false, true],
+        [$cauth->tokenRejected($acct2, 403), $gdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 2') !== null]);
+    checkEq('token stored: a 401 from Google clears it and asks for a retry; the next call, in any process, refreshes', [true, null, 'tok-2', 2],
+        [$cauth->tokenRejected($acct2, 401), $gdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 2'), $otherProcess->accessToken($acct2), $tokenRequests]);
+    // A new grant whose row still carries the old grant's token (no clear ran)
+    // is refused by the grant fingerprint inside the sealed value.
     $gdb->run('UPDATE google_accounts SET refresh_token_enc = ? WHERE id = 2', [Secrets::seal('1//grant-two', 'secret-a')]);
-    checkEq('token held: a reconnected account (new grant) refreshes instead of reusing the old grant\'s token', ['tok-3', 3], [$cauth->accessToken($gdb->one('SELECT * FROM google_accounts WHERE id = 2')), $tokenRequests]);
-    GoogleAuth::forgetTokens();
-    $tokenLifetime = 30;
+    checkEq('token stored: a reconnected account (new grant) refreshes instead of using the old grant\'s token', ['tok-3', 3], [$cauth->accessToken($gdb->one('SELECT * FROM google_accounts WHERE id = 2')), $tokenRequests]);
+    $gdb->run('UPDATE google_accounts SET access_token_expires_at = ? WHERE id = 2', [BetterCal\Support\Time::toDb(new DateTimeImmutable('@' . (time() + 30)))]);
     $acct2 = $gdb->one('SELECT * FROM google_accounts WHERE id = 2');
+    checkEq('token stored: one that expires within the margin is refreshed and replaced', ['tok-4', 'tok-4', 4], [$cauth->accessToken($acct2), $otherProcess->accessToken($acct2), $tokenRequests]);
+    $gdb->run('UPDATE google_accounts SET access_token_enc = NULL, access_token_expires_at = NULL WHERE id = 2');
+    $tokenLifetime = 30;
     $cauth->accessToken($acct2);
     $cauth->accessToken($acct2);
-    checkEq('token held: a token that expires within the margin is not held, so each call refreshes', 5, $tokenRequests);
-    GoogleAuth::forgetTokens();
+    checkEq('token stored: a token that expires within the margin is not stored, so each call refreshes', [6, null], [$tokenRequests, $gdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 2')]);
+    $tokenLifetime = 3600;
+    $cauth->accessToken($acct2);
+    $storeConnectionForToken = new ReflectionMethod(GoogleAuth::class, 'storeConnection');
+    $storeConnectionForToken->invoke($cauth, 7, 'session-a', 'owner2@example.test', Secrets::seal('1//grant-three', 'secret-a'), GoogleAuth::SCOPES);
+    checkEq('token stored: reconnecting the account clears the old grant\'s token', [true, null],
+        [$tokenRequests === 7, $gdb->scalar('SELECT access_token_enc FROM google_accounts WHERE id = 2')]);
+    $sealedElsewhere = Secrets::seal(json_encode(['token' => 'tok-forged', 'grant' => hash('sha256', (string) $gdb->scalar('SELECT refresh_token_enc FROM google_accounts WHERE id = 2'))]), 'secret-a');
+    $gdb->run('UPDATE google_accounts SET access_token_enc = ?, access_token_expires_at = ? WHERE id = 2', [$sealedElsewhere, BetterCal\Support\Time::toDb(new DateTimeImmutable('@' . (time() + 3600)))]);
+    checkEq('token stored: a sealed value of another purpose is never used as the access token', 'tok-8', $cauth->accessToken($gdb->one('SELECT * FROM google_accounts WHERE id = 2')));
+    $gdb->run("UPDATE google_accounts SET reauth_required_at = ? WHERE id = 2", [BetterCal\Support\Time::nowDb()]);
+    $quarantinedCode = null;
+    try {
+        $cauth->accessToken($gdb->one('SELECT * FROM google_accounts WHERE id = 2'));
+    } catch (BetterCal\Http\HttpError $e) {
+        $quarantinedCode = $e->errorCode;
+    }
+    checkEq('token stored: a quarantined account refuses even while a good token is stored', ['google_reconnect_needed', 8], [$quarantinedCode, $tokenRequests]);
+    $gdb->run('UPDATE google_accounts SET reauth_required_at = NULL WHERE id = 2');
 
     // The final persistence boundary rechecks and locks the exact initiating
     // session. A reset that deletes it cannot be raced by an OAuth callback.

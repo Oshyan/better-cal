@@ -238,7 +238,7 @@ final class GoogleSync
                 $headers = ['Authorization: Bearer ' . $access, 'Accept: application/json'];
                 $r = $this->transport !== null ? ($this->transport)($url, $headers) : $http->get($url, $headers);
                 // A held token Google no longer takes: once more with a fresh one.
-                if ($this->transport === null && GoogleAuth::tokenRejected($account, (int) $r['status'])) {
+                if ($this->transport === null && $this->auth->tokenRejected($account, (int) $r['status'])) {
                     $access = $this->auth->accessToken($account);
                     $headers = ['Authorization: Bearer ' . $access, 'Accept: application/json'];
                     $r = $http->get($url, $headers);

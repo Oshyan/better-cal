@@ -11700,6 +11700,36 @@ use BetterCal\Infra\Secrets;
     }
     checkEq('google quarantine: a stale account snapshot is refused before any token request', 'google_reconnect_needed', $quarantineCode);
 
+    // The access token is held for the process while it is good and came from
+    // the account's current grant: one refresh request serves a run of calls,
+    // a 401 drops it, a changed grant drops it, and a short-lived token is
+    // not held.
+    GoogleAuth::forgetTokens();
+    $gdb->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, reauth_required_at, created_at) VALUES (2, 7, ?, ?, ?, ?, NULL, ?)', [
+        'owner2@example.test', Secrets::seal('1//grant-one', 'secret-a'), GoogleAuth::SCOPES, 'ok', BetterCal\Support\Time::nowDb(),
+    ]);
+    $tokenRequests = 0;
+    $tokenLifetime = 3600;
+    $cauth = new GoogleAuth($gdb, $gcfg, static function (string $url, array $fields, ?float $deadline) use (&$tokenRequests, &$tokenLifetime): array {
+        $tokenRequests++;
+        return ['status' => 200, 'body' => json_encode(['access_token' => 'tok-' . $tokenRequests, 'expires_in' => $tokenLifetime, 'token_type' => 'Bearer'])];
+    });
+    $acct2 = $gdb->one('SELECT * FROM google_accounts WHERE id = 2');
+    $first = $cauth->accessToken($acct2);
+    $second = $cauth->accessToken($acct2);
+    checkEq('token held: two calls in one process make one refresh request and get the same token', ['tok-1', 'tok-1', 1], [$first, $second, $tokenRequests]);
+    checkEq('token held: a 401 from Google drops it and asks for a retry; the next call refreshes', [true, false, 'tok-2', 2],
+        [GoogleAuth::tokenRejected($acct2, 401), GoogleAuth::tokenRejected($acct2, 403), $cauth->accessToken($acct2), $tokenRequests]);
+    $gdb->run('UPDATE google_accounts SET refresh_token_enc = ? WHERE id = 2', [Secrets::seal('1//grant-two', 'secret-a')]);
+    checkEq('token held: a reconnected account (new grant) refreshes instead of reusing the old grant\'s token', ['tok-3', 3], [$cauth->accessToken($gdb->one('SELECT * FROM google_accounts WHERE id = 2')), $tokenRequests]);
+    GoogleAuth::forgetTokens();
+    $tokenLifetime = 30;
+    $acct2 = $gdb->one('SELECT * FROM google_accounts WHERE id = 2');
+    $cauth->accessToken($acct2);
+    $cauth->accessToken($acct2);
+    checkEq('token held: a token that expires within the margin is not held, so each call refreshes', 5, $tokenRequests);
+    GoogleAuth::forgetTokens();
+
     // The final persistence boundary rechecks and locks the exact initiating
     // session. A reset that deletes it cannot be raced by an OAuth callback.
     $storeConnection = new ReflectionMethod(GoogleAuth::class, 'storeConnection');

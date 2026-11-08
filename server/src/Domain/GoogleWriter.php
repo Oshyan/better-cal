@@ -408,6 +408,11 @@ final class GoogleWriter
             $r = $this->jsonTransport !== null
                 ? ($this->jsonTransport)($method, $url, $payload, $headers)
                 : $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
+            // A held token Google no longer takes: once more with a fresh one.
+            if ($this->jsonTransport === null && GoogleAuth::tokenRejected($account, (int) $r['status'])) {
+                $access = $this->auth->accessToken($account);
+                $r = $http->json($method, $url, $payload, array_merge(['Authorization: Bearer ' . $access], $headers));
+            }
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
         }

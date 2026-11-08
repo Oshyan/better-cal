@@ -414,7 +414,7 @@ final class HttpClient
                 $answer = ($this->transport)($method, $url, $headers, $body);
                 return ['status' => (int) $answer['status'], 'body' => (string) $answer['body']];
             }
-            $ch = curl_init($url);
+            $ch = self::handleFor($url);
             $response = '';
             $overflow = false;
             $totalOverflow = false;
@@ -480,6 +480,41 @@ final class HttpClient
             return ['status' => $status, 'body' => $response];
         }
         throw new \RuntimeException('Too many redirects');
+    }
+
+    /**
+     * cURL handles by scheme and host for this process, so requests to the
+     * same host reuse its connection (one TLS handshake for a run of Google
+     * writes or a poll's pages) instead of opening one per request. A handle
+     * is reset before each use, so every option above is set afresh; the
+     * pinned address (CURLOPT_RESOLVE) is set per request as before.
+     *
+     * @var array<string,\CurlHandle>
+     */
+    private static array $handles = [];
+
+    /** How many hosts keep a connection at once; the least recently used goes first. */
+    private const HANDLE_POOL = 8;
+
+    private static function handleFor(string $url): \CurlHandle
+    {
+        $parts = parse_url($url);
+        $key = strtolower((string) ($parts['scheme'] ?? 'http')) . '://' . strtolower((string) ($parts['host'] ?? '')) . ':' . (string) ($parts['port'] ?? '');
+        $ch = self::$handles[$key] ?? null;
+        if ($ch !== null) {
+            unset(self::$handles[$key]);
+            curl_reset($ch);
+            curl_setopt($ch, CURLOPT_URL, $url);
+        } else {
+            $ch = curl_init($url);
+            if (count(self::$handles) >= self::HANDLE_POOL) {
+                $oldest = array_key_first(self::$handles);
+                curl_close(self::$handles[$oldest]);
+                unset(self::$handles[$oldest]);
+            }
+        }
+        self::$handles[$key] = $ch;
+        return $ch;
     }
 
     /** Each call keeps its normal timeout but may never outlive its owner. */

@@ -1090,7 +1090,9 @@ final class Interleave
         $undoOfDelete = in_array($asked['kind'], ['undo', 'redo'], true) && ($this->done[$asked['of'] ?? 0]['asked']['kind'] ?? '') === 'del1';
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
-            $this->expect('x-conflict', !$out['ok'] && $error === 'google_conflict', "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused with google_conflict", $context);
+            $deletedThere = in_array('series', array_column(array_filter($this->touches, static fn(array $t): bool => !empty($t['remote']) && !$t['polled'] && $t['gid'] === $gid), 'field'), true);
+            // A series deleted at Google answers google_deleted (a 404 or 410 on the target, rule 8); any other change since, google_conflict.
+            $this->expect('x-conflict', !$out['ok'] && ($error === 'google_conflict' || ($deletedThere && $error === 'google_deleted')), "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused with google_conflict (google_deleted when deleted there)", $context);
             if (!$out['ok']) {
                 $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
             }

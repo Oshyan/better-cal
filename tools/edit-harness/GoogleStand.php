@@ -102,10 +102,11 @@ final class GoogleStand
                 if ($knobs->beforeAt === $n) {
                     // Refused before Google took it: a 4xx answer, which tells the app nothing was written (series-model.md,
                     // Recovery: "a refusal (any 4xx, a 412 among them) removes it"). A transport error before sending
-                    // would be a lost answer to the app, which can't tell the two apart.
+                    // would be a lost answer to the app, which can't tell the two apart. A permission 403, which the app does
+                    // not retry; a rate-limit 403 or a 429 is "Google is busy" and retried (GoogleWriter's BUSY_REASONS).
                     $knobs->beforeAt = null;
                     $knobs->fired = 'before';
-                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'Rate Limit Exceeded', 'errors' => [['reason' => 'rateLimitExceeded']]]])];
+                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'The caller does not have permission', 'errors' => [['reason' => 'forbidden']]]])];
                 }
             }
             // The writer sends its bearer token among the headers, as to Google.

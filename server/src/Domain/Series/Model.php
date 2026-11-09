@@ -522,7 +522,8 @@ final class Model
      * fields. The master then takes $set as given (the values the undo
      * restores), and a day placed on a key that is no occurrence of that
      * master is a removed day as well. Returns the writes (plan()'s shape,
-     * skipMoves among them), or null and the planner's refusal code. Pure.
+     * skipMoves and added among them), or null and the planner's refusal
+     * code. Pure.
      *
      * @param array<string,string> $back
      * @return array{writes:?array,code?:string}
@@ -1572,7 +1573,7 @@ final class Model
             // 'drag': where the occurrence goes on the old zone's calendar,
             // by which a row placed on its own (its own time or date) moves:
             // the carry relabels days, it moves no instant.
-            $out[] = ['rule' => $pick['rule'], 'textKept' => false, 'drag' => $first,
+            $out[] = ['rule' => $pick['rule'], 'textKept' => false, 'drag' => $first, 'keepsDates' => false,
                 'image' => static fn(int $dn, ?int $m = null): ?int => ($i = $first($dn, $m)) === null ? null : $second($i, $rule->memberOf($i)),
             ] + $r;
         }
@@ -1599,7 +1600,7 @@ final class Model
         $probe = new Calc($pattern, $start, $this->tz1, $this->allDay1, $this->clock1, $this->len1, true, $this->old->storedStart());
         $keep = [
             'id' => 'keep', 'label' => 'Keep them where they are, as events of their own', 'rule' => $pattern, 'start' => $start,
-            'image' => static fn(int $dn): ?int => $probe->patternHas($dn) ? $dn : null, 'textKept' => false, 'newRule' => $rule,
+            'image' => static fn(int $dn): ?int => $probe->patternHas($dn) ? $dn : null, 'textKept' => false, 'newRule' => $rule, 'keepsDates' => true,
         ];
         $out = [$keep];
         $map = $this->ruleDelta === 'pattern' ? $this->dragMaking($rule) : null;
@@ -3039,6 +3040,35 @@ final class Model
             'fields' => $fieldsWords,
             'summary' => $summary,
         ] + ($ownership !== null ? ['ownership' => $ownership] : []);
+        // The days this change brings into being: the new series' days that
+        // are no old day's image, as this reading maps them (Undo::ADDED;
+        // decisions.md "The days a change brought into being are its
+        // ground"). A reading that keeps every day on its date says so: a
+        // day is one it adds when the series it found has no day on that
+        // date. One that carries days lists their dates: every one of a bounded
+        // series; of one with no end, those through the span read (a whole
+        // cycle past every day the change names, after which its days come
+        // round as before), and every day past the last image when the
+        // series it found ended there.
+        $added = null;
+        if (!$probe) {
+            if ($unchanged || !$this->readable || !empty($reading['keepsDates'])) {
+                $added = ['keeps' => true];
+            } else {
+                // Days by the rule's own arithmetic, as its images and gains are read (never an expansion of
+                // the span, which for a monthly rule is centuries), each named by its date on the new series' calendar.
+                $isImage = array_flip(array_values($imageSet));
+                $spanTo = $cycle !== null ? (int) $gainTo : (int) $latest;
+                $spanDays = $all1 ?? ($latest === null ? [] : (isset($gainSet) ? array_keys($gainSet) : self::patternDays($r1p, $newStart, $spanTo)));
+                $addedDays = [];
+                foreach ($spanDays as $d) {
+                    if (!isset($isImage[$d])) {
+                        $addedDays[] = Cal::date((int) $d);
+                    }
+                }
+                $added = ['days' => $addedDays, 'after' => $all1 === null && $cycle === null && $latest !== null ? Cal::date((int) $latest) : null];
+            }
+        }
         unset($probe);
         return [
             'plan' => $plan,
@@ -3053,6 +3083,7 @@ final class Model
                 'people' => $people,
                 'exdates' => $newExdates,
                 'skipMoves' => $skipMoves,
+                'added' => $added,
             ],
             'selected' => $selected,
             'nextDates' => $nextDates,

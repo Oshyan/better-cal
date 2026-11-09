@@ -528,13 +528,20 @@ final class Feeds
         return ($row['invite_json'] ?? null) !== null && !self::sameValue('invite_json', $series['invite_json'] ?? null, $row['invite_json']);
     }
 
-    /** $row as it follows its series ($target, ofSeries): a new place text clears its coordinates. Pure. */
+    /**
+     * $row as it follows its series ($target, ofSeries): a place's text and
+     * the coordinates picked for it are one value, so coordinates the
+     * target carries with its text are taken with it, and a new text that
+     * comes without them clears the row's. Pure.
+     */
     public static function followed(array $row, array $target): array
     {
         $after = array_merge($row, $target);
         if (array_key_exists('location', $target) && (string) ($row['location'] ?? '') !== (string) ($target['location'] ?? '')) {
             foreach (self::COORDINATE_COLUMNS as $col) {
-                $after[$col] = null;
+                if (!array_key_exists($col, $target)) {
+                    $after[$col] = null;
+                }
             }
         }
         return $after;
@@ -548,7 +555,7 @@ final class Feeds
      *
      * @return list<string>
      */
-    private function ownOf(array $row, array $master): array
+    public function ownOf(array $row, array $master): array
     {
         $known = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null);
         if ($known !== null) {

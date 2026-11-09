@@ -292,12 +292,14 @@ final class Events
      * The write gate: an edit, delete or answer touching a series with
      * changes not yet at Google is refused before anything is read or sent
      * (GoogleSeries::refusePending), inside the account's write so the
-     * refusal writes nothing. Only a row of a calendar that writes to
-     * Google can be in such a series.
+     * refusal writes nothing. Any row of a calendar that writes to Google
+     * can be in such a series, whoever made it (a series a split made here
+     * whose insert's answer was lost is one), so the calendar decides,
+     * never the row's source.
      */
     private function refuseWhilePending(int $userId, array $event): void
     {
-        if (($event['source'] ?? '') === 'feed' && $this->googleCalendarFor((int) $event['calendar_id']) !== null) {
+        if ($this->googleCalendarFor((int) $event['calendar_id']) !== null) {
             GoogleSeries::refusePending($this->db, $userId, (int) $event['calendar_id'], GoogleSeries::namesOf($event));
         }
     }
@@ -397,9 +399,11 @@ final class Events
             $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, $touches, 'update', $tables);
             return;
         }
-        // No snapshots, but what it changed is known: the event, which an
-        // older undo of it (its tags, say) stands on.
-        $touches = $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
+        // No snapshots, but what it changed is known: what the caller read
+        // it changed (Review's Finish and Put back: the series' rows before
+        // and after, Undo::touchesOf), else the event, which an older undo
+        // of it (its tags, say) stands on.
+        $touches ??= $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
         $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, $details, touches: $touches);
     }
 
@@ -2934,6 +2938,14 @@ final class Events
         // Provenance changes only when the coordinates do: the editor sends an
         // event's coordinates back with every save, and a title edit mustn't
         // turn a looked-up place into a picked one or restamp its time.
+        // A place's text and the coordinates picked for it are one value: a
+        // new text sent without coordinates leaves none (the sweep may look
+        // the new text up), for a single event, a day and a series alike.
+        if (array_key_exists('location', $fields) && (string) $fields['location'] !== (string) ($current['location'] ?? '')
+            && !array_key_exists('locationLat', $in) && !array_key_exists('locationLng', $in)
+            && (($current['location_lat'] ?? null) !== null || ($current['location_lng'] ?? null) !== null)) {
+            $fields += ['location_lat' => null, 'location_lng' => null] + self::locationProvenance($in, false);
+        }
         if (array_key_exists('locationLat', $in) || array_key_exists('locationLng', $in)) {
             $newLat = array_key_exists('location_lat', $fields) ? $fields['location_lat'] : ($current['location_lat'] ?? null);
             $newLng = array_key_exists('location_lng', $fields) ? $fields['location_lng'] : ($current['location_lng'] ?? null);

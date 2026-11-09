@@ -667,7 +667,7 @@ trait SeriesPlans
             ['events' => $beforeRows] + $beforeLinks,
             ['events' => $afterRows] + Undo::linksOf($this->db, array_merge([$id], $touchedIds, $created, $createdEdited)),
             mb_substr((string) $result['plan']['summary'], 0, 300),
-            touches: Undo::skipMoveGrounds($id, $w['skipMoves'] ?? [])
+            touches: array_merge(Undo::skipMoveGrounds($id, $w['skipMoves'] ?? []), Undo::addedGrounds($id, $w['added'] ?? null))
         );
         ChangeLog::recordUpdate($this->db, $master, $afterMaster);
         foreach ($w['detach'] + array_flip($created) as $rid => $_) {
@@ -971,7 +971,7 @@ trait SeriesPlans
         });
         $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
             [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid']], array_merge(array_keys($w['detach'] ?? []), $created)),
-                Undo::skipMoveGrounds($id, $w['skipMoves'] ?? [])]);
+                array_merge(Undo::skipMoveGrounds($id, $w['skipMoves'] ?? []), Undo::addedGrounds($id, $w['added'] ?? null))]);
     }
 
     /**
@@ -1210,12 +1210,12 @@ trait SeriesPlans
      * after tables]) makes the entry undoable (googleSeriesJournal); Review's
      * Finish and Put back pass none, being the way back themselves.
      */
-    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null): void
+    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null, ?array $touches = null): void
     {
         if ($undo !== null && $id !== null) {
             $this->googleSeriesJournal($userId, $summary, $calendar, $id, $undo[0], $undo[1], $undo[2], $differences, $undo[3] ?? []);
         } else {
-            $this->googleJournal($userId, $summary, $calendar, $id, details: $details, kept: $differences);
+            $this->googleJournal($userId, $summary, $calendar, $id, touches: $touches, details: $details, kept: $differences);
         }
         if ($differences !== []) {
             (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
@@ -1274,6 +1274,15 @@ trait SeriesPlans
             $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
             $isUndo = is_array($plan) && isset($plan['undo']);
             // The entry it undoes as its pending row kept it (its snapshots), the live row's when still there.
+            // Finish's entry's ground is what the change it completes changed here, as any change's is
+            // (Undo::touchesOf): the series' rows as they were before that change began (its pending row's
+            // own record of them, local_json), against the rows it leaves. Put back leaves the rows as they
+            // were before the change, so its ground is the half-done change it closes (its pending row) and
+            // no row: no earlier entry stands on it, and the bare Undo still answers with its line.
+            $uidsOf = static fn(?string $json): array => array_map(static fn(array $t): string => (string) $t['uid'], array_filter(json_decode((string) $json, true) ?: [], static fn($t): bool => is_array($t) && !empty($t['uid'])));
+            $recovered = array_values(array_unique(array_merge($uidsOf($row['targets_json'] ?? null), $uidsOf($row['befores_json'] ?? null))));
+            $began = json_decode((string) ($row['local_json'] ?? ''), true);
+            $was = $isUndo || $how !== 'finish' ? null : (is_array($began) && $began !== [] ? $began : $this->googleSeriesTables($calendar, $recovered));
             $undone = $isUndo ? ($this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId])
                 ?? (is_array($plan['entry'] ?? null) ? $plan['entry'] + ['user_id' => $userId] : null)) : null;
             try {
@@ -1304,7 +1313,8 @@ trait SeriesPlans
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
                 . ($left !== [] ? ' ' . implode(' ', $left) : '');
             $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences'],
-                details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null);
+                details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null,
+                touches: $was === null ? [['google_pending:' . $pendingId, '*']] : Undo::touchesOf($was, $this->googleSeriesTables($calendar, $recovered)));
             return ['ok' => true, 'differences' => $out['differences'], 'left' => $left];
         });
     }

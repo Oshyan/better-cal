@@ -58,7 +58,7 @@ final class Readings
     /** The reading that leaves the days where they are (a time, zone, all-day, bound or field edit). */
     public static function same(Rule $r0): array
     {
-        return self::reading('same', '', $r0, static fn(int $dn): int => $dn, true);
+        return self::reading('same', '', $r0, static fn(int $dn): int => $dn, true) + ['keepsDates' => true];
     }
 
     private static function reading(string $id, string $label, Rule $rule, callable $image, bool $textKept): array

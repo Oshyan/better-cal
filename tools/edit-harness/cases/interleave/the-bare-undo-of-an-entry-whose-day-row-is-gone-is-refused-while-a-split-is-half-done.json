@@ -1,0 +1,85 @@
+{
+    "about": "A day given coordinates and tags, a split whose answer was lost, then the bare Undo of the tags entry, whose day row a later step removed: refused with google_pending, its series named by the rows its snapshots hold (x-pending, one gate).",
+    "seed": 11,
+    "n": 42,
+    "series": {
+        "family": "monthly_bare",
+        "rrule": "FREQ=MONTHLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 5,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2028-02-28 21:15",
+        "length": 30
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.448,
+            "what": "title",
+            "ran": "ok"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.246,
+            "what": "coords",
+            "ran": "ok"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.233,
+            "what": "tags",
+            "ran": "ok"
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.227,
+            "k": 1,
+            "write": "w-follow",
+            "what": "title",
+            "ran": "google_write_failed"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.68,
+            "what": "people",
+            "ran": "google_pending"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.021,
+            "ran": "google_pending",
+            "target": "no row"
+        },
+        {
+            "do": "r-rule",
+            "pick": 0.117,
+            "ran": "ok"
+        },
+        {
+            "do": "w-this-m",
+            "pick": 0.979,
+            "what": "title+tags",
+            "ran": "google_pending"
+        },
+        {
+            "do": "w-follow",
+            "pick": 0.711,
+            "what": "tags",
+            "ran": "google_pending"
+        },
+        {
+            "do": "p-410-pending",
+            "pick": 0.298,
+            "ran": "ok"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.32,
+            "what": "time",
+            "ran": "google_pending"
+        }
+    ]
+}

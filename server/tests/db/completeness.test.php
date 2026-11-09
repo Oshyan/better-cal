@@ -140,6 +140,14 @@ return static function (Db $db): void {
                 if (str_starts_with($key, 'events:') && 'events:' . ($row['recurrence_parent_id'] ?? '') === (string) $t['row_key']
                     && ($col === '*' || in_array((string) ($row['recurrence_instance_utc'] ?? ''), $days, true))) {
                     $said[$key]['*'] = true;
+                    // A day's tags or people (day:<key>|tags) say its link rows: a link of a day is that day's field alone.
+                    $field = str_starts_with($col, BetterCal\Domain\Undo::DAY) ? (explode('|', $col, 2)[1] ?? '') : '';
+                    $link = ['tags' => 'event_tags:', 'people' => 'event_people:'][$field] ?? null;
+                    foreach ($link === null ? [] : array_keys($before + $after) as $k2) {
+                        if (str_starts_with($k2, $link . ($row['id'] ?? '') . '|')) {
+                            $said[$k2]['*'] = true;
+                        }
+                    }
                 }
             }
         }

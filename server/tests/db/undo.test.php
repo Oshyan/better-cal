@@ -762,4 +762,56 @@ return static function (Db $db): void {
             [refusal(fn() => $d->undo->undoById($u, $rename)), array_map(static fn(array $r): array => [$r['title'], $r['description']],
                 $db->all('SELECT title, description FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]))]);
     });
+
+    // The sixth adversarial read on a calendar here: the days a change added are its planner's record (f6), a place
+    // is its text and its coordinates (f8), and a row brought back where a row holds its day is composed onto it (f9, f10).
+    scenario('undo: an all-day change in a zone west of UTC, then a day edit: not refused as a day the change added (f6)', function () use ($db, $d, $u, $home): void {
+        $s = (int) $d->events->create($u, ['calendarId' => $home, 'title' => 'Sample west', 'start' => '2027-01-04T09:00:00-08:00', 'end' => '2027-01-04T10:00:00-08:00',
+            'tzid' => 'America/Los_Angeles', 'allDay' => false, 'rrule' => 'FREQ=WEEKLY;COUNT=8'])['eventId'];
+        planned($d->events, $u, $s, ['scope' => 'all', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true]);
+        $allDay = lastEntry($db, $u);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-18', 'title' => 'Sample day title']);
+        $words = null;
+        try {
+            $d->undo->undoById($u, $allDay);
+        } catch (BetterCal\Http\HttpError $e) {
+            $words = $e->getMessage();
+        }
+        checkEq('undo: no "exists because of this change" for a day the all-day change only carried', false, str_contains((string) $words, 'exists because'));
+    });
+
+    scenario('undo: a place renamed for all events without coordinates clears the series\' coordinates; undone, a row made since shows the old place with its coordinates (f8)', function () use ($db, $d, $u, $home): void {
+        $s = (int) $d->events->create($u, eventAt($home, 'Sample placed', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;COUNT=8', 'location' => 'Sample Hall', 'locationLat' => 37.1, 'locationLng' => -122.1]))['eventId'];
+        planned($d->events, $u, $s, ['scope' => 'all', 'location' => 'Sample Annex']);
+        $rename = lastEntry($db, $u);
+        $master = $db->one('SELECT location, location_lat FROM events WHERE id = ?', [$s]);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'description' => 'Sample day notes']);
+        $error = refusal(fn() => $d->undo->undoById($u, $rename));
+        $row = $db->one('SELECT location, location_lat, location_lng FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        checkEq('undo: the rename leaves no coordinates; undone, the row takes the place text and coordinates together', [['Sample Annex', null], null, ['Sample Hall', 37.1, -122.1]],
+            [[$master['location'], $master['location_lat']], $error, [$row['location'] ?? null, (float) ($row['location_lat'] ?? 0), (float) ($row['location_lng'] ?? 0)]]);
+    });
+
+    scenario('undo: a forced undo bringing a day back where a row holds that day now composes onto it, no database error (f9, f10)', function () use ($db, $d, $u, $home): void {
+        $s = (int) $d->events->create($u, eventAt($home, 'Sample count', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;COUNT=8']))['eventId'];
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-15T18:00:00+00:00', 'title' => 'Sample A', 'tagNames' => ['Sample tag A']]);
+        planned($d->events, $u, $s, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+        $lower = lastEntry($db, $u);
+        planned($d->events, $u, $s, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;COUNT=8']);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-15T18:00:00+00:00', 'description' => 'Sample B notes']);
+        $forced = refusal(fn() => $d->undo->undoById($u, $lower, true));
+        checkEq('undo: forced, one row at the day, the restored title over the later notes (f9)', [null, [['Sample A', 'Sample B notes']]],
+            [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
+                $db->all("SELECT title, description FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-02-15 18:00:00' AND deleted_at IS NULL", [$s]))]);
+        $s = (int) $d->events->create($u, eventAt($home, 'Sample bound', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;COUNT=8']))['eventId'];
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'title' => 'Sample A']);
+        planned($d->events, $u, $s, ['scope' => 'all', 'start' => '2027-01-11T18:00:00+00:00', 'end' => '2027-01-11T19:00:00+00:00']);
+        $bound = lastEntry($db, $u);
+        planned($d->events, $u, $s, ['scope' => 'all', 'start' => '2027-01-04T18:00:00+00:00', 'end' => '2027-01-04T19:00:00+00:00']);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-04T18:00:00+00:00', 'description' => 'Sample B notes']);
+        $forced = refusal(fn() => $d->undo->undoById($u, $bound, true));
+        checkEq('undo: a later start bound brought the day back; forced, composed onto the row there (f10)', [null, [['Sample A', 'Sample B notes']]],
+            [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
+                $db->all("SELECT title, description FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-04 18:00:00' AND deleted_at IS NULL", [$s]))]);
+    });
 };

@@ -781,7 +781,14 @@ final class Interleave
             $this->na["$do refused by the stand-in: HTTP {$answer['status']}"] = 1;
             return ['skip' => true];
         }
-        $this->dirty[$gid] = true;
+        if ($do === 'r-gonly') {
+            // A change at Google only in fields the rows here don't hold: no conflict for a write, whose body never carries
+            // them (decisions.md, "A write is conditional on what is shown here; Put back on everything"); Put back still
+            // counts it (unseen, and the pending change's since).
+            $this->etagOnly[$gid] = true;
+        } else {
+            $this->dirty[$gid] = true;
+        }
         $this->unseen[$gid] = true;
         foreach ($touched as $t) {
             $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false] + $t;
@@ -1094,21 +1101,18 @@ final class Interleave
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
             // Its code goes in the tally.
             $this->ran('x-conflict', 'refused: ' . ($error ?? 'went through'));
-            $since = array_filter($this->touches, static fn(array $t): bool => !empty($t['remote']) && !$t['polled'] && $t['gid'] === $gid);
-            // A change at Google only to fields the rows here don't hold (r-gonly) is an open question with the owner: counted
-            // under its own signature, the expectation unchanged.
-            $onlyGoogleFields = $since !== [] && array_diff(array_column($since, 'field'), ['gonly']) === [];
-            $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused",
-                ($onlyGoogleFields ? ['do' => 'r-gonly', 'stepDo' => $do] : []) + $context);
+            $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused", $context);
             if (!$out['ok']) {
                 $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
             }
         }
 
-        // x-conflict, the digest's rule: a series whose etag alone moved at Google is not refused.
-        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && !isset($this->dirty[$gid]) && !$onPending && $failure === null && empty($asked['local'])) {
-            $this->ran('x-conflict', 'etag only');
-            $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose etag alone moved at Google (its content as here) is no conflict", $context);
+        // x-conflict, the shown-fields rule: a series whose etag alone moved at Google, or that changed there only in fields
+        // the rows here don't hold, is no conflict for a write (x-write-asked checks those fields keep Google's values).
+        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && !isset($this->dirty[$gid]) && !$onPending && $failure === null && empty($asked['local'])
+            && !in_array($asked['kind'], ['finish', 'putback', 'create'], true)) {
+            $this->ran('x-conflict', 'etag or Google-only fields');
+            $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose shown fields at Google are as here (its etag or a Google-only field moved) is no conflict", $context);
         }
 
         // x-pending: what a failure leaves.

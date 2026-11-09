@@ -2897,17 +2897,9 @@ final class GoogleSeries
                 $day = Words::date(Cal::dnOf($key->setTimezone($zone)), (int) Time::nowUtc()->format('Y'));
                 throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here after this change stopped, and the change leaves the series without that day");
             }
+            // What it inherits, tags and people among them: the one composition (Feeds::followSeries).
+            $followed = Feeds::followSeries($this->db, $row, $master, $own);
             $patch = [];
-            foreach (OwnFields::COLUMNS as $field => $cols) {
-                if (in_array($field, $own, true)) {
-                    continue;
-                }
-                foreach ($cols as $col) {
-                    if (array_key_exists($col, $master) && array_key_exists($col, $row) && $row[$col] !== $master[$col]) {
-                        $patch[$col] = $master[$col];
-                    }
-                }
-            }
             foreach (array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS) as $col) {
                 if (array_key_exists($col, $master) && array_key_exists($col, $row) && $row[$col] !== $master[$col]) {
                     $patch[$col] = $master[$col];
@@ -2930,15 +2922,8 @@ final class GoogleSeries
                     $patch[$col] = $value;
                 }
             }
-            if ($patch !== []) {
+            if ($patch !== [] || $followed) {
                 $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
-            }
-            foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
-                if (in_array($field, $own, true)) {
-                    continue;
-                }
-                $this->db->run("DELETE FROM `$table` WHERE event_id = ?", [$id]);
-                $this->db->run($this->db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$id, $masterId]);
             }
         }
     }

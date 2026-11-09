@@ -606,6 +606,26 @@ final class GoogleUndo
     }
 
     /**
+     * Each day's row as the undo's series places it, by row id: its
+     * target's key. Pure.
+     *
+     * @param list<array> $targets
+     * @return array<int,string>
+     */
+    private static function placedOf(array $targets): array
+    {
+        $placed = [];
+        foreach ($targets as $tg) {
+            foreach ((array) ($tg['exceptions'] ?? []) as $key => $x) {
+                if (!empty($x['rowId'])) {
+                    $placed[(int) $x['rowId']] = (string) $key;
+                }
+            }
+        }
+        return $placed;
+    }
+
+    /**
      * Undo a whole-series change: an ordinary series write. What it asks of
      * each series is the inverse of the undone change's own deltas, applied
      * over the series as stored now (inverseOf); it is refused first where
@@ -632,7 +652,8 @@ final class GoogleUndo
         $summary = self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? ''));
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
-        $this->undo->checkRestore($mutation);
+        // The check is the restore it guards: the same snapshots at the keys the undo's series gives them.
+        $this->undo->checkRestore($mutation, false, fn(): array => self::placedOf($series->withStoredIds($calendar, $this->inverseOf($mutation, $calendar, (array) $g['before'], $force)[0])));
         $deferred = null;
         $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, $force, &$deferred): void {
             $authority?->assertValid($this->db);
@@ -669,16 +690,7 @@ final class GoogleUndo
             $ids = $this->undo->snapshotEventIds($fresh);
             $uids = array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets));
             $was = $this->seriesTables((int) $locked['id'], $uids, $ids);
-            // Each day's row comes back where the undo's series has it (its target's key).
-            $placed = [];
-            foreach ($targets as $tg) {
-                foreach ((array) ($tg['exceptions'] ?? []) as $key => $x) {
-                    if (!empty($x['rowId'])) {
-                        $placed[(int) $x['rowId']] = (string) $key;
-                    }
-                }
-            }
-            $this->undo->restoreSnapshots($fresh, false, $placed);
+            $this->undo->restoreSnapshots($fresh, false, self::placedOf($targets));
             $series->store($locked, $out['readbacks'], $out['targets']);
             // A day the undo keeps from Google (changed there while the
             // change ran) stands as the row it was, not one made again.
@@ -859,7 +871,7 @@ final class GoogleUndo
                         : "This change can't be undone as a whole: " . Model::REASONS[$planned['code']], 'not_undoable');
                 }
                 $writes = $planned['writes'];
-                $moves = array_merge($moves, Undo::skipMoveGrounds((int) $master['id'], $writes['skipMoves'] ?? []));
+                $moves = array_merge($moves, Undo::skipMoveGrounds((int) $master['id'], $writes['skipMoves'] ?? []), Undo::addedGrounds((int) $master['id'], $writes['added'] ?? null));
                 $target = GoogleSeries::targetOf($master, $rows, $writes);
                 $after = array_merge($master, $writes['master']);
                 // A day the restored series no longer has is removed, and named by its row and date.
@@ -879,11 +891,10 @@ final class GoogleUndo
                 return $at === null ? null : (string) ($at['recurrence_instance_utc'] ?? $key);
             };
             $found = array_merge($master, $t['master']);
-            $left = array_merge($master, $asked['master']);
-            $follow = function (?string $kb, ?string $ka) use ($mutation, $master, $now, $target, $writes, $after, $rowAt, $imageIn, $found, $left): array {
-                // A day the change itself dropped is no day of the series it left, whatever is on its date now.
-                $kc = $imageIn((string) ($ka ?? $kb), $left, $left) !== (string) ($ka ?? $kb) ? null
-                    : $this->undo->dayNow((int) $mutation['id'], $master, (string) ($ka ?? $kb));
+            $follow = function (?string $kb, ?string $ka) use ($mutation, $master, $now, $target, $writes, $after, $rowAt, $imageIn, $found): array {
+                // Where the day is now (dayNow, the one walk of a day's identity): a day the change
+                // dropped whose date a day holds now is that day, and what the undo brings back is composed onto it.
+                $kc = $this->undo->dayNow((int) $mutation['id'], $master, (string) ($ka ?? $kb));
                 if ($kc === null) {
                     // A day the series no longer has comes back on its date where the undo's series has it.
                     return [null, $imageIn((string) ($kb ?? $ka), $found, $after)];
@@ -914,8 +925,9 @@ final class GoogleUndo
      * refused before anything is read or sent (GoogleSeries::refusePending):
      * the series its entry names (what it sends back to Google: a series'
      * uid and id, an event's or a day's id, a day's series), and those of
-     * the event the entry is about and of the rows its snapshots hold, each
-     * on its calendar. Asked for every entry (Undo::undoById), one sent to
+     * the event the entry is about and of the rows its snapshots hold, as
+     * they are now and as the snapshots hold them (a row gone since still
+     * names its series), each on its calendar. Asked for every entry (Undo::undoById), one sent to
      * Google or one put back here alone.
      */
     public static function refuseWhilePending(Db $db, Undo $undo, array $mutation): void
@@ -936,10 +948,18 @@ final class GoogleUndo
         if ((string) ($mutation['entity'] ?? '') === 'event' && (int) ($mutation['entity_id'] ?? 0) > 0) {
             $ids[] = (int) $mutation['entity_id'];
         }
+        // The rows as they are now, and as its snapshots hold them: a row gone since still names its series.
+        $rows = $undo->snapshotEventRows($mutation);
         if ($ids !== []) {
             [$in, $params] = Db::in($ids);
-            foreach ($db->all("SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id WHERE e.id IN $in AND c.provider = 'google'", $params) as $row) {
-                $names[(int) $row['calendar_id']] = array_merge($names[(int) $row['calendar_id']] ?? [], GoogleSeries::namesOf($row));
+            $rows = array_merge($rows, $db->all("SELECT * FROM events WHERE id IN $in", $params));
+        }
+        $google = [];
+        foreach ($rows as $row) {
+            $calendarId = (int) ($row['calendar_id'] ?? 0);
+            $google[$calendarId] ??= $calendarId > 0 && $db->scalar("SELECT 1 FROM calendars WHERE id = ? AND provider = 'google'", [$calendarId]) !== null;
+            if ($google[$calendarId]) {
+                $names[$calendarId] = array_merge($names[$calendarId] ?? [], GoogleSeries::namesOf($row));
             }
         }
         foreach ($names as $calendarId => $list) {

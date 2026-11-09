@@ -1,0 +1,70 @@
+{
+    "about": "A day given its own time, a time change for all events failing before Google took it and finished from Review, then the undo of the day's own time: Finish's ground is what the change it completes changed, so the undo is not stale (x-undo-fields).",
+    "seed": 7,
+    "n": 403,
+    "series": {
+        "family": "yearly_day",
+        "rrule": "FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=31",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2027-03-22 00:30",
+        "length": 30
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.879,
+            "what": "time",
+            "ran": "ok"
+        },
+        {
+            "do": "w-this-m",
+            "pick": 0.749,
+            "what": "location+coords",
+            "ran": "ok"
+        },
+        {
+            "do": "w-del1",
+            "pick": 0.983,
+            "ran": "ok"
+        },
+        {
+            "do": "f-before",
+            "pick": 0.138,
+            "k": 3,
+            "write": "w-all",
+            "what": "time",
+            "ran": "google_write_failed"
+        },
+        {
+            "do": "redo",
+            "pick": 0.065,
+            "ran": "skipped"
+        },
+        {
+            "do": "redo",
+            "pick": 0.197,
+            "ran": "skipped"
+        },
+        {
+            "do": "finish",
+            "pick": 0.053,
+            "ran": "ok"
+        },
+        {
+            "do": "putback",
+            "pick": 0.474,
+            "ran": "skipped"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.799,
+            "ran": "ok",
+            "target": "no row"
+        }
+    ]
+}

@@ -939,4 +939,39 @@ return static function (Db $db): void {
             false, false, 1, true,
         ], [array_key_exists('summary', $plan), str_contains((string) ($plan['action'] ?? ''), 'on Google calendar'), substr_count($line, 'on Google calendar'), str_starts_with($line, 'Put back at Google: a redo')]);
     });
+
+    // The sixth adversarial read: the days a change added are its planner's record (f4), and a row brought back where a
+    // row holds that day now is composed onto it, in the check and the restore alike (f9).
+    scenario('google series undo: a start dragged Monday to Tuesday, then a day edit, undoes and carries the day back; the drag added no day (f4)', function () use ($setup, $masterId, $last, $iso, $dayRow): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-02 10:00'), 'end' => $iso('2027-03-02 11:00')]);
+        $s->events->throwDeferred();
+        $drag = $last($s);
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-09 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $words = null;
+        try {
+            $s->undo->undoById($s->u, (int) $drag['id']);
+        } catch (HttpError $e) {
+            $words = $e->getMessage();
+        }
+        checkEq('the undo goes through; the edited day is back on Monday 8 Mar', [null, 'Sample day title'], [$words, $dayRow($s, '2027-03-08 18:00:00')['title'] ?? null]);
+    });
+
+    scenario('google series undo: a forced undo bringing a day back where a row holds that day now composes onto it, no database error (f9)', function () use ($setup, $masterId, $last, $iso, $db): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample A', 'tagNames' => ['sample-a']]);
+        $s->events->throwDeferred();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=1']);
+        $s->events->throwDeferred();
+        $lower = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=10']);
+        $s->events->throwDeferred();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'description' => 'Sample B notes']);
+        $s->events->throwDeferred();
+        $forced = refusal(fn() => $s->undo->undoById($s->u, (int) $lower['id'], true));
+        checkEq('forced: one row at 8 Mar, the restored title over the later notes', [null, [['Sample A', 'Sample B notes']]],
+            [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
+                $db->all("SELECT title, description FROM events WHERE calendar_id = ? AND recurrence_instance_utc = '2027-03-08 18:00:00' AND deleted_at IS NULL", [$s->calendarId]))]);
+    });
 };

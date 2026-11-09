@@ -1062,4 +1062,37 @@ return static function (Db $db): void {
         checkEq('an answered step, then the place changed at Google: Put back sends nothing, names the series, and keeps the change in Review',
             [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
     });
+
+    // ---- Put back restores every row of the snapshot, a day holding only local data included ----------
+
+    scenario('google recovery: a split or a delete from a later day whose first answer was lost, after a tag on an ordinary day past the cut: Put back brings that day back as it was, its id and tag', function () use ($setup, $masterId, $rowAt, $held, $recover, $iso, $db): void {
+        $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
+        $key = '2027-04-19 17:00:00';
+        $changes = [
+            'a split with a new description' => fn(object $s) => planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-04-12 10:00'), 'description' => 'Sample notes, later']),
+            'a delete from a later day' => function (object $s) use ($masterId, $iso): void {
+                $plan = $s->events->previewDelete($s->u, $masterId($s), 'following', $iso('2027-04-12 10:00'));
+                $s->events->deleteEvent($s->u, $masterId($s), 'following', $iso('2027-04-12 10:00'), null, !empty($plan['whole']) ? null : ['hash' => $plan['hash'], 'choices' => []]);
+            },
+        ];
+        foreach ($changes as $what => $change) {
+            $s = $setup();
+            $was = $held($s, 'smpl3weekly');
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-04-19 10:00'), 'tagNames' => ['Sample tag']]);
+            $s->events->throwDeferred();
+            $day = $rowAt($s, $key);
+            check("$what: the tag on the ordinary day makes its row", $day !== null);
+            $s->t->writes = 0;
+            $s->t->loseAt = 1;
+            try {
+                $change($s);
+                $s->events->throwDeferred();
+            } catch (HttpError) {
+            }
+            $out = $recover($s, 'putBack');
+            $after = $rowAt($s, $key);
+            checkEq("$what, its first answer lost: Put back restores the series at Google, and the day past the cut keeps its row, its id and its tag",
+                [true, $was, (int) $day['id'], ['Sample tag']], [$out['ok'], $held($s, 'smpl3weekly'), (int) ($after['id'] ?? 0), $tagsOf((int) ($after['id'] ?? 0))]);
+        }
+    });
 };

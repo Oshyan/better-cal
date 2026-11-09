@@ -2339,21 +2339,55 @@ final class GoogleSeries
             if (isset($live[$id])) {
                 $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
             } else {
-                // Brought back whole, but a day's series columns are its series' now (rule C).
-                if ($r['recurrence_parent_id'] !== null) {
-                    $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $r['recurrence_parent_id']]);
+                $gone[] = $r;
+            }
+        }
+        $this->bringBack($calendar, $gone, $local);
+        return [$kept, $taken];
+    }
+
+    /** Whether a target has a day of the series at $row's key (an edited day of its own, by key). */
+    private static function namesDay(array $targets, array $row): bool
+    {
+        foreach ($targets as $t) {
+            if ((string) ($t['uid'] ?? '') === (string) $row['uid'] && isset($t['exceptions'][(string) $row['recurrence_instance_utc']])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Rows of the snapshot (localOf) brought back whole where nothing stands
+     * in their place, with what hung off them there; a day's series
+     * columns and its master are its series' now (rule C: the master by
+     * the snapshot's id, else the series' master here now by its uid). A
+     * link whose other end is gone since is left out.
+     *
+     * @param list<array> $rows
+     * @param array<string,list<array>> $local
+     */
+    private function bringBack(array $calendar, array $rows, array $local): void
+    {
+        $gone = [];
+        foreach ($rows as $r) {
+            if ($r['recurrence_parent_id'] !== null) {
+                $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $r['recurrence_parent_id']])
+                    ?? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $r['uid']]);
+                if ($master !== null) {
+                    $r['recurrence_parent_id'] = (int) $master['id'];
                     foreach (array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS) as $col) {
-                        if ($master !== null && array_key_exists($col, $master)) {
+                        if (array_key_exists($col, $master)) {
                             $r[$col] = $master[$col];
                         }
                     }
                 }
-                $this->db->upsert('events', $r);
-                $gone[$id] = true;
             }
+            $this->db->upsert('events', $r);
+            $gone[(int) $r['id']] = true;
         }
         if ($gone === []) {
-            return [$kept, $taken];
+            return;
         }
         $eventCols = ['event_tags' => ['event_id'], 'event_people' => ['event_id']];
         foreach (OwnFields::REFERENCES as [$table, , $cols]) {
@@ -2377,18 +2411,6 @@ final class GoogleSeries
                 }
             }
         }
-        return [$kept, $taken];
-    }
-
-    /** Whether a target has a day of the series at $row's key (an edited day of its own, by key). */
-    private static function namesDay(array $targets, array $row): bool
-    {
-        foreach ($targets as $t) {
-            if ((string) ($t['uid'] ?? '') === (string) $row['uid'] && isset($t['exceptions'][(string) $row['recurrence_instance_utc']])) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -2746,7 +2768,13 @@ final class GoogleSeries
                 }
             }
             $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
-            $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
+            // Every row the snapshot holds for these series is put back: one
+            // the store made again takes back its id (reattach), and one
+            // nothing stands in for comes back whole, a day that held only
+            // local data among them (an ordinary day to Google, so no
+            // target names it, dropped by a store of the change).
+            $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
+            $this->bringBack($calendar, $this->reattach($calendar, $local, $out['targets']), $local);
             $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $targets));
         }
         $out = self::withRemoved($out, $this->feeds->takeDropped());
@@ -2834,27 +2862,32 @@ final class GoogleSeries
     }
 
     /**
-     * After a recovery stored what Google holds: each row the targets name
-     * that the store brought back under another id (an edited day Google
-     * dropped and was sent again, an event of its own made again) takes
-     * back its id, its own columns (reminders, the trip flag, an icon) and
-     * what hung off it (tags, people, trip links, duplicate decisions,
-     * plugin data) from the snapshot the pending row kept (localOf), with
-     * anything the new row had gained since. A master made again keeps its
-     * new id (its edited days hang off it) and takes back what hung off the
-     * old one.
+     * After a recovery stored what Google holds: each row of the snapshot
+     * the pending row kept (localOf) for a series the targets name, and
+     * each event of its own they name, that the store brought back under
+     * another id (an edited day Google dropped and was sent again, an event
+     * of its own made again) takes back its id, its own columns (reminders,
+     * the trip flag, an icon) and what hung off it (tags, people, trip
+     * links, duplicate decisions, plugin data), with anything the new row
+     * had gained since. A master made again keeps its new id (its edited
+     * days hang off it) and takes back what hung off the old one. Returns
+     * the snapshot's days of those series with no row at their key now
+     * (one gone from Google's series, or one Google holds as an ordinary
+     * day: a day that held only local data), for Put back to bring back.
      *
      * @param array<string,list<array>> $local
      * @param list<array> $targets
+     * @return list<array> the snapshot's rows with nothing in their place
      */
-    private function reattach(array $calendar, array $local, array $targets): void
+    private function reattach(array $calendar, array $local, array $targets): array
     {
         $snap = [];
         foreach ($local['events'] ?? [] as $r) {
             $snap[(int) $r['id']] = $r;
         }
+        $whole = [];
         if ($snap === []) {
-            return;
+            return $whole;
         }
         $calendarId = (int) $calendar['id'];
         $live = fn(int $id): bool => $this->db->scalar('SELECT 1 FROM events WHERE id = ? AND deleted_at IS NULL', [$id]) !== null;
@@ -2871,14 +2904,15 @@ final class GoogleSeries
                     }
                 }
             }
-            foreach ($t['exceptions'] ?? [] as $key => $x) {
-                $rid = (int) ($x['rowId'] ?? 0);
-                if (!isset($snap[$rid]) || $live($rid)) {
+            foreach ($snap as $id => $r) {
+                if ((string) $r['uid'] !== $uid || (int) $r['calendar_id'] !== $calendarId || $r['recurrence_instance_utc'] === null || $live($id)) {
                     continue;
                 }
-                $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$calendarId, $uid, (string) $key]);
+                $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$calendarId, $uid, (string) $r['recurrence_instance_utc']]);
                 if ($now !== null) {
-                    $this->relink($snap[$rid], $now, $local, true);
+                    $this->relink($r, $now, $local, true);
+                } else {
+                    $whole[] = $r;
                 }
             }
             foreach ($t['singles'] ?? [] as $single) {
@@ -2892,6 +2926,7 @@ final class GoogleSeries
                 }
             }
         }
+        return $whole;
     }
 
     /**

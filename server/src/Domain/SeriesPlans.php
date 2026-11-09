@@ -666,7 +666,8 @@ trait SeriesPlans
             'update',
             ['events' => $beforeRows] + $beforeLinks,
             ['events' => $afterRows] + Undo::linksOf($this->db, array_merge([$id], $touchedIds, $created, $createdEdited)),
-            mb_substr((string) $result['plan']['summary'], 0, 300)
+            mb_substr((string) $result['plan']['summary'], 0, 300),
+            touches: Undo::skipMoveGrounds($id, $w['skipMoves'] ?? [])
         );
         ChangeLog::recordUpdate($this->db, $master, $afterMaster);
         foreach ($w['detach'] + array_flip($created) as $rid => $_) {
@@ -969,7 +970,8 @@ trait SeriesPlans
             $this->googleSeries()->settle($out['pending']);
         });
         $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
-            [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid']], array_merge(array_keys($w['detach'] ?? []), $created))]);
+            [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid']], array_merge(array_keys($w['detach'] ?? []), $created)),
+                Undo::skipMoveGrounds($id, $w['skipMoves'] ?? [])]);
     }
 
     /**
@@ -1211,7 +1213,7 @@ trait SeriesPlans
     private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null): void
     {
         if ($undo !== null && $id !== null) {
-            $this->googleSeriesJournal($userId, $summary, $calendar, $id, $undo[0], $undo[1], $undo[2], $differences);
+            $this->googleSeriesJournal($userId, $summary, $calendar, $id, $undo[0], $undo[1], $undo[2], $differences, $undo[3] ?? []);
         } else {
             $this->googleJournal($userId, $summary, $calendar, $id, details: $details, kept: $differences);
         }
@@ -1322,13 +1324,15 @@ trait SeriesPlans
     private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, array $undone, string $how, array $out): array
     {
         $differences = array_values(array_merge((array) ($plan['kept'] ?? []), $out['differences']));
-        $summary = (string) ($plan['summary'] ?? $row['summary']);
+        // The undo's bare action, kept with its pending row; a row written
+        // before the action was kept (1.5.5) has its summary, the same text.
+        $summary = rtrim(trim((string) ($plan['action'] ?? $plan['summary'] ?? $row['summary'])), ' .');
         if ($how === 'finish') {
             $targets = json_decode((string) $row['targets_json'], true) ?: [];
             $uids = array_values(array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets)));
             $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
             (new GoogleUndo($this->db, $this->undo))->finishUndo($undone, $calendar, $summary, $differences,
-                json_decode((string) $row['befores_json'], true) ?: [], $local, $uids, array_keys($out['readbacks']), (array) ($plan['forced'] ?? []), GoogleUndo::FINISHED);
+                json_decode((string) $row['befores_json'], true) ?: [], $local, $uids, array_keys($out['readbacks']), (array) ($plan['forced'] ?? []), GoogleUndo::FINISHED, (array) ($plan['removedDays'] ?? []), (array) ($plan['moves'] ?? []));
             if ($differences !== []) {
                 (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], (string) $calendar['name'], $differences);
             }
@@ -1336,7 +1340,7 @@ trait SeriesPlans
             // Named for what it was: an undo of a change, or a redo (an undo of an undo's entry).
             $redo = (json_decode((string) ($undone['details_json'] ?? ''), true)['google']['undoes'] ?? null) !== null;
             // The action the undo kept with its pending row, never one cut from a line.
-            $what = rtrim(trim((string) ($plan['action'] ?? $plan['summary'] ?? '')), ' .');
+            $what = $summary;
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
                 GoogleUndo::line(($redo ? 'Put back at Google: a redo that stopped part way is taken back, so this stays undone: ' . $what
                     : 'Put back at Google: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));

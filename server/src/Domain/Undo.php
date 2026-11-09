@@ -338,7 +338,7 @@ final class Undo
         // snapshots back, what that restore puts back besides; an entry
         // sent to Google is undone by a planned write (GoogleUndo), which
         // carries the days, and stands on what it changed alone.
-        $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables),
+        $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables, $touches),
             GoogleUndo::carries($details) ? [] : self::restoredGround($beforeTables, $afterTables), $touches));
         // A write to Google that undo can send back keeps what to send in
         // its details (GoogleUndo): no snapshot for one resource, the rows'
@@ -634,7 +634,7 @@ final class Undo
             // What each step changed, snapshots or not: a step's own
             // touches would be lost in the merge (a row changed and changed
             // back is the same in the merged snapshots).
-            $touches = array_merge($touches, self::touchesOf($r['beforeTables'], $r['afterTables']),
+            $touches = array_merge($touches, self::touchesOf($r['beforeTables'], $r['afterTables'], $r['touches']),
                 GoogleUndo::carries($r['details']) ? [] : self::restoredGround($r['beforeTables'], $r['afterTables']), $r['touches']);
             $b = $r['beforeTables'] ?? [];
             $a = $r['afterTables'] ?? [];
@@ -742,15 +742,26 @@ final class Undo
      * owns (tags and people among them, which their links touch too). A day
      * carried to another occurrence with its own part as it was touches only
      * its move (MOVE), which a later judgement follows. A skip is its own
-     * date's (SKIP); skips a times or zone change carried are moves too. The
-     * own list and the skips are never grounds themselves: their contents
-     * are. This is a planned change's ground and a poll's; a snapshot entry
-     * adds what its restore puts back besides (restoredGround). Pure.
+     * date's (SKIP); a skip a change carried to another occurrence is the
+     * move its planner recorded ($recorded: the caller's own grounds, whose
+     * MOVE entries say which skip went where, Series\Model's skipMoves),
+     * never one paired up here. A series whose rule, start, times or zone
+     * changed stands on the days it brought into being (ADDED). The own
+     * list and the skips are never grounds themselves: their contents are.
+     * This is a planned change's ground and a poll's; a snapshot entry adds
+     * what its restore puts back besides (restoredGround). Pure.
      *
+     * @param list<array{0:string,1:string}> $recorded
      * @return list<array{0:string,1:string}>
      */
-    public static function touchesOf(?array $before, ?array $after): array
+    public static function touchesOf(?array $before, ?array $after, array $recorded = []): array
     {
+        $carried = [];
+        foreach ($recorded as [$rowKey, $col]) {
+            if (str_starts_with((string) $col, self::MOVE)) {
+                $carried[(string) $rowKey][] = (string) $col;
+            }
+        }
         $out = [];
         // Each day's row in either snapshot: its series' key and its occurrence (the later side's).
         $days = [];
@@ -796,12 +807,16 @@ final class Undo
                 } else {
                     foreach ($changed as $col) {
                         if ($table === 'events' && $col === 'exdates_json') {
-                            foreach (self::skipsChanged($was, $now) as $ground) {
+                            foreach (self::skipsChanged($was, $now, $carried[$k] ?? []) as $ground) {
                                 $out[] = [$k, $ground];
                             }
                             continue;
                         }
                         $out[] = [$k, $col];
+                    }
+                    if ($table === 'events' && !empty($now['rrule']) && ($now['recurrence_instance_utc'] ?? null) === null
+                        && array_intersect($changed, array_merge(['rrule'], self::SERIES_TIMES)) !== []) {
+                        $out[] = [$k, self::ADDED];
                     }
                 }
                 foreach (self::parentsOf($table) as $col => [$parent, $mark]) {
@@ -903,6 +918,23 @@ final class Undo
         return self::DAY . $key . '|' . $field;
     }
 
+    /**
+     * The skips a plan carried to other occurrences (Series\Model's
+     * skipMoves, from => to) as the grounds its entry records: the
+     * planner's own record of which skip went where. Pure.
+     *
+     * @param array<string,string> $moves
+     * @return list<array{0:string,1:string}>
+     */
+    public static function skipMoveGrounds(int $seriesId, array $moves): array
+    {
+        $out = [];
+        foreach ($moves as $from => $to) {
+            $out[] = [self::keyOf('events', ['id' => $seriesId]), self::MOVE . $from . '>' . $to];
+        }
+        return $out;
+    }
+
     /** The ground of one field of one day (dayGround). */
     public const DAY = 'day:';
 
@@ -911,6 +943,14 @@ final class Undo
 
     /** Every day of a series, as a snapshot restore of its times or zone puts them back (restoredGround). */
     public const OCCURRENCES = 'occurrences';
+
+    /**
+     * The days a change to a series' rule, start, times or zone brought
+     * into being: those of the series it left whose date the series it
+     * found doesn't have. Read against the days a later change touches
+     * (staleFor, addedDays), each such day the ground "day:<key>|*".
+     */
+    public const ADDED = 'added';
 
     /**
      * The ground a snapshot entry's restore adds to its change's
@@ -959,14 +999,14 @@ final class Undo
 
     /**
      * What a series' skips gained or lost between two versions of its row,
-     * as grounds: each date skipped or brought back (SKIP), or, where a
-     * times or zone change carried them, each skip's move (MOVE): the skips
-     * the change took away and those it made, in order, are the same days
-     * at their new occurrences when there are as many of each. Pure.
+     * as grounds: each date skipped or brought back (SKIP), less those the
+     * change carried to another occurrence ($moves, "move:<from>><to>" as
+     * its planner recorded them), which are those moves alone. Pure.
      *
+     * @param list<string> $moves
      * @return list<string>
      */
-    private static function skipsChanged(?array $was, ?array $now): array
+    private static function skipsChanged(?array $was, ?array $now, array $moves = []): array
     {
         $of = static function (?array $r): array {
             try {
@@ -975,15 +1015,14 @@ final class Undo
                 return [];
             }
         };
-        $a = $of($was);
-        $b = $of($now);
-        $gone = array_values(array_diff($a, $b));
-        $made = array_values(array_diff($b, $a));
-        sort($gone);
-        sort($made);
-        if ($was !== null && $now !== null && $gone !== [] && count($gone) === count($made)
-            && array_intersect(self::changedColumns('events', $was, $now), self::SERIES_TIMES) !== []) {
-            return array_map(static fn(string $from, string $to): string => self::MOVE . $from . '>' . $to, $gone, $made);
+        $gone = array_values(array_diff($of($was), $of($now)));
+        $made = array_values(array_diff($of($now), $of($was)));
+        foreach ($moves as $move) {
+            [$from, $to] = explode('>', substr($move, strlen(self::MOVE)), 2) + [1 => ''];
+            if (in_array($from, $gone, true) && in_array($to, $made, true)) {
+                $gone = array_values(array_diff($gone, [$from]));
+                $made = array_values(array_diff($made, [$to]));
+            }
         }
         $out = array_map(static fn(string $d): string => self::SKIP . $d, array_merge($gone, $made));
         sort($out);
@@ -1113,18 +1152,22 @@ final class Undo
     }
 
     /**
-     * Whether a later change, not undone, changed the ground this one
-     * stands on: anything of its ground that conflicts with what it
-     * touched. One definition for every entry (decisions.md): each side's
-     * ground is what its entry recorded (touchesOf, and restoredGround for
-     * a snapshot entry), and a day this entry touched is followed to the
-     * occurrence later changes carried it to (MOVE) before it is compared,
-     * a day being its series and its occurrence.
+     * Why a later change, not undone, makes undoing this one stale, or
+     * null: anything of its ground that conflicts with what it touched.
+     * One definition for every entry (decisions.md): each side's ground is
+     * what its entry recorded (touchesOf, and restoredGround for a snapshot
+     * entry), and a day this entry touched is followed to the occurrence
+     * later changes carried it to (MOVE) before it is compared, a day being
+     * its series and its occurrence. The days a change brought into being
+     * (ADDED) are its ground too: each day a later change touched that the
+     * series as this change found it doesn't have is "day:<key>|*" of it,
+     * and is said by name, since undoing would remove that day.
      */
-    private function staleFor(array $mutation): bool
+    private function staleFor(array $mutation): ?string
     {
         $id = (int) $mutation['id'];
         $reverts = [];
+        $added = [];
         // A page of what it touched at a time: a calendar of tens of
         // thousands of events deleted touched each one (#191).
         [$lastRow, $lastCol] = ['', ''];
@@ -1140,11 +1183,10 @@ final class Undo
             [$lastRow, $lastCol] = [(string) $page[count($page) - 1]['row_key'], (string) $page[count($page) - 1]['col']];
             $mine = [];
             foreach ($page as $t) {
-                // A row joined or left (an event added to a calendar): nothing
-                // later takes that ground away; its own moves are no ground.
-                if ((string) $t['col'] !== '+' && !str_starts_with((string) $t['col'], self::MOVE)) {
-                    $mine[(string) $t['row_key']][(string) $t['col']] = true;
+                if ((string) $t['col'] === self::ADDED) {
+                    $added[(string) $t['row_key']] ??= $this->addedDays($mutation, (string) $t['row_key']);
                 }
+                $mine[(string) $t['row_key']][(string) $t['col']] = true;
             }
             foreach (array_chunk(array_keys($mine), 200) as $rows) {
                 [$in, $params] = Db::in($rows);
@@ -1172,16 +1214,76 @@ final class Undo
                         $mine[$row] = self::moved($mine[$row] ?? [], $list);
                     }
                     foreach ($touches as [$row, $col]) {
+                        // A day it brought into being, touched since: its ground, named.
+                        $key = self::dayKeyOf($col);
+                        if ($key !== null && isset($added[$row]) && ($added[$row])($key)) {
+                            $mine[$row][self::dayGround($key, '*')] = true;
+                            if (self::conflicts(self::dayGround($key, '*'), $col)) {
+                                return 'Newer changes exist for this item: ' . self::dayWords($key) . ' exists because of this change and was changed since, so undoing it would remove that day.';
+                            }
+                        }
                         foreach (array_keys($mine[$row] ?? []) as $own) {
                             if (self::conflicts((string) $own, $col, strstr($row, ':', true) ?: '')) {
-                                return true;
+                                return 'Newer changes exist for this item; undoing would overwrite them';
                             }
                         }
                     }
                 }
             }
         } while (count($page) === 2000);
-        return false;
+        return null;
+    }
+
+    /** The occurrence key a day's or skip's ground names, or null. Pure. */
+    private static function dayKeyOf(string $ground): ?string
+    {
+        if (str_starts_with($ground, self::SKIP)) {
+            return substr($ground, strlen(self::SKIP));
+        }
+        if (str_starts_with($ground, self::DAY)) {
+            return explode('|', substr($ground, strlen(self::DAY)), 2)[0];
+        }
+        return null;
+    }
+
+    /**
+     * Whether the day at a key is one entry $mutation brought into being on
+     * the series $rowKey names (ADDED): a day of the series as the entry
+     * left it whose date the series as it found it doesn't have, each read
+     * from the entry's own snapshots of that series' row, its skips among
+     * its days. A series the expander can't read brought none.
+     *
+     * @return \Closure(string):bool
+     */
+    private function addedDays(array $mutation, string $rowKey): \Closure
+    {
+        $rowOf = static function (?string $json) use ($rowKey): ?array {
+            foreach (self::tables($json)['events'] ?? [] as $r) {
+                if (is_array($r) && self::keyOf('events', $r) === $rowKey && ($r['recurrence_instance_utc'] ?? null) === null && !empty($r['rrule'])) {
+                    return $r;
+                }
+            }
+            return null;
+        };
+        [$was, $now] = [$rowOf($mutation['before_json'] ?? null), $rowOf($mutation['after_json'] ?? null)];
+        try {
+            [$found, $left] = [$was === null ? null : Series\Calc::fromRow(['exdates_json' => null] + $was), $now === null ? null : Series\Calc::fromRow(['exdates_json' => null] + $now)];
+        } catch (\Throwable) {
+            return static fn(string $key): bool => false;
+        }
+        return static function (string $key) use ($found, $left): bool {
+            try {
+                return $found !== null && $left !== null && $left->isOccurrence($left->dnOf($key)) && !$found->isOccurrence($found->dnOf($key));
+            } catch (\Throwable) {
+                return false;
+            }
+        };
+    }
+
+    /** A day named by its date, for the words of a refusal. */
+    private static function dayWords(string $key): string
+    {
+        return Time::fromDb($key)->format('D j M Y');
     }
 
     /**
@@ -1349,7 +1451,7 @@ final class Undo
         if (str_ends_with($later, '^')) {
             return $mine === substr($later, 0, -1);
         }
-        if (str_starts_with($mine, self::MOVE) || str_starts_with($later, self::MOVE)) {
+        if (str_starts_with($mine, self::MOVE) || str_starts_with($later, self::MOVE) || $mine === self::ADDED || $later === self::ADDED) {
             return false;
         }
         $times = $table === 'events' ? self::SERIES_TIMES : [];
@@ -1649,15 +1751,15 @@ final class Undo
             // check here is the journal's; Google's own (If-Match) follows.
             // A day that left its series is said so first, plainly.
             GoogleUndo::refuseLeftSeriesOf($this->db, $this, $mutation);
-            if (!$force && $this->staleFor($mutation)) {
-                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+            if (!$force && ($why = $this->staleFor($mutation)) !== null) {
+                throw HttpError::badRequest($why, 'stale_undo');
             }
             return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force);
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.
-            if (!$force && $this->staleFor($mutation)) {
-                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+            if (!$force && ($why = $this->staleFor($mutation)) !== null) {
+                throw HttpError::badRequest($why, 'stale_undo');
             }
             return $this->undoPluginEdit($mutation, $authority);
         }
@@ -1847,11 +1949,16 @@ final class Undo
                     }
                 }
             }
-            if (!$force && $this->staleFor($mutation)) {
-                throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+            if (!$force && ($why = $this->staleFor($mutation)) !== null) {
+                throw HttpError::badRequest($why, 'stale_undo');
             }
-            $this->putBack($mutation, $before, $after, $pieces, $eventIds);
+            $removed = $this->putBack($mutation, $before, $after, $pieces, $eventIds);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
+            // The rows the undo removed, named by row and date in a line of its own (it touches nothing).
+            if ($removed !== []) {
+                $this->record((int) $mutation['user_id'], (string) $mutation['entity'], (int) $mutation['entity_id'], 'update', null, null,
+                    'Undo removed here: ' . Feeds::droppedWords($removed) . '.', ['removedDays' => $removed]);
+            }
         });
 
         return ['entity' => (string) $mutation['entity'], 'op' => (string) $mutation['op']];
@@ -1867,7 +1974,7 @@ final class Undo
      * @param array<string,list<string>> $pieces
      * @param list<int> $eventIds
      */
-    private function putBack(array $mutation, array $before, array $after, array $pieces, array $eventIds): void
+    private function putBack(array $mutation, array $before, array $after, array $pieces, array $eventIds): array
     {
         // Lists put back by their deltas over what they hold now, never whole.
         $before = $this->ownDeltas($before, $after);
@@ -2019,6 +2126,9 @@ final class Undo
         if (is_array($details) && is_array($details['settings'] ?? null)) {
             Settings::restore($this->db, (int) $mutation['user_id'], $details['settings']);
         }
+        // Every row of a series it put back follows that series as restored
+        // (followRestored): the rows past a shortened end go, named.
+        $removed = $this->followRestored($before);
         // Each day's row whose own part it changed stays only while it owns
         // anything or holds anything here alone: the retention rule, the
         // one every remover applies (Feeds::retained).
@@ -2052,6 +2162,58 @@ final class Undo
         foreach ($uids as $calendarId => $ofCalendar) {
             ChangeLog::recordMany($this->db, (int) $calendarId, array_map('strval', array_keys($ofCalendar)), ChangeLog::OP_MODIFY);
         }
+        return $removed;
+    }
+
+    /**
+     * Every day's row of each series on a calendar here whose master the
+     * restore put back, made to follow that series as it now stands, as
+     * a forward change leaves them: in each field it doesn't own, the
+     * series' value (Feeds::ofSeries, composed by Feeds::followed, so a
+     * new place text clears the coordinates), so a row made after the
+     * undone change never keeps a value copied from it; and a row whose day
+     * the series no longer has (a count or rule put back shorter) removed,
+     * named by its row and date as the sync names one (Feeds::droppedDay).
+     * A Google calendar's rows are Google's answer stored on top, through
+     * the same functions (GoogleSeries::store). Returns the rows removed.
+     *
+     * @return list<array>
+     */
+    private function followRestored(array $before): array
+    {
+        $removed = [];
+        foreach ($before['events'] ?? [] as $m) {
+            if (($m['recurrence_instance_utc'] ?? null) !== null || empty($m['rrule']) || !isset($m['id'])) {
+                continue;
+            }
+            $master = $this->db->one("SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id WHERE e.id = ? AND e.deleted_at IS NULL AND COALESCE(c.provider, '') <> 'google'", [(int) $m['id']]);
+            if ($master === null || empty($master['rrule'])) {
+                continue;
+            }
+            foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $master['id']]) as $row) {
+                $at = Feeds::ofSeries($row, null, ['exdates_json' => null] + $master);
+                $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::FIELDS;
+                if ($at === null) {
+                    $removed[] = Feeds::droppedDay($row, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
+                    $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
+                    continue;
+                }
+                $set = [];
+                foreach (array_diff(['title', 'location', 'description', 'url', 'reminders', 'status', 'icon', 'attendance'], $own) as $field) {
+                    foreach (OwnFields::columnsOf($field) as $col) {
+                        if (array_key_exists($col, $master) && !in_array($col, OwnFields::COORDINATE_COLUMNS, true)) {
+                            $set[$col] = $master[$col];
+                        }
+                    }
+                }
+                $after = Feeds::followed($row, $set);
+                $changed = array_filter(array_keys($after), static fn(string $c): bool => array_key_exists($c, $row) && !self::same($row[$c], $after[$c]));
+                if ($changed !== []) {
+                    $this->db->update('events', array_intersect_key($after, array_flip($changed)), 'id = ?', [(int) $row['id']]);
+                }
+            }
+        }
+        return $removed;
     }
 
     /**
@@ -2061,7 +2223,7 @@ final class Undo
      * then syncs Google's values onto. Inside write() for the entry's
      * account.
      */
-    public function restoreSnapshots(array $mutation, bool $hereAlone = false): void
+    public function restoreSnapshots(array $mutation, bool $hereAlone = false, array $placed = []): void
     {
         if (!isset(self::$writing[spl_object_id($this->db) . ':' . (int) $mutation['user_id']])) {
             self::misuse('Undo::restoreSnapshots outside Undo::write');
@@ -2071,7 +2233,7 @@ final class Undo
         if ($hereAlone) {
             $before = self::googleHeldAsAfter($before, $after);
         }
-        $before = $this->overCurrent($before, $after, (int) $mutation['id']);
+        $before = $this->overCurrent($before, $after, (int) $mutation['id'], $placed);
         $mutationId = (int) $mutation['id'];
         $this->lockRows($before, $after);
         $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
@@ -2133,9 +2295,11 @@ final class Undo
      * was. A row that owns a field Google holds and has no row at its day
      * now takes those from Google's answer to the undo, stored on top.
      * The day is its series and its occurrence: one a later change carried
-     * to another occurrence (dayNow) comes back there.
+     * to another occurrence (dayNow) comes back there, and one a planned
+     * undo places (a Google series undo, $placed) comes back where the
+     * undo's series has it.
      */
-    private function overCurrent(array $before, array $after, int $entryId): array
+    private function overCurrent(array $before, array $after, int $entryId, array $placed = []): array
     {
         $kept = [];
         foreach ($after['events'] ?? [] as $row) {
@@ -2158,7 +2322,8 @@ final class Undo
                 }
             }
             $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
-            $at = $series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc']);
+            // Where a planned undo puts the day ($placed: row id => its key in the series the undo restores), else where later changes carried it.
+            $at = $placed[(int) ($row['id'] ?? 0)] ?? ($series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc']));
             if ($at !== null) {
                 $row['recurrence_instance_utc'] = $before['events'][$i]['recurrence_instance_utc'] = $at;
             }

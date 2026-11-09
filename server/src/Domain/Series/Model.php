@@ -377,9 +377,14 @@ final class Model
         // occurrence is its own image, and the series starts there, so the
         // days before it, and their exceptions, are outside it. Put on a day
         // the pattern doesn't give, the pattern changes too, and the first
-        // occurrence moves there as a drag.
+        // occurrence moves there as a drag. A day before the start is one
+        // the pattern gives when it is a member of the rule and the pattern
+        // from there gives the start: the series starts earlier, its days
+        // unmoved, as one started later does.
         if (!$named && $this->readable && !$this->r0->several && !$this->newRule() && !$this->zoneChanged && $this->allDay1 === $this->allDay0
-            && $this->landedDn !== $this->actedDn0 && $this->old->patternHas($this->landedDn)) {
+            && $this->landedDn !== $this->actedDn0 && ($this->landedDn > $this->old->startDn ? $this->old->patternHas($this->landedDn)
+                : $this->r0->supported() && $this->r0->memberOf($this->landedDn) !== null
+                    && (new Calc($this->r0->withBound(null, null), $this->landedDn, $this->old->tz, $this->old->allDay, $this->old->clock, $this->old->length, false))->isOccurrence($this->old->startDn))) {
             $this->startTo = $this->landedDn;
             $this->landedDn = $this->actedDn0;
         }
@@ -501,86 +506,129 @@ final class Model
      * columns of the master, its times, zone and rule among them), the
      * planner's input for an undo (GoogleUndo: the inverse of what a
      * change asked, decisions.md "An undo of a Google series change is
-     * planned as a forward change is"): the master takes $set, and every
-     * edited day and skip is carried to its place in the series (the nth
-     * occurrence of the series as it is, skips counted, goes to the nth
-     * occurrence of the series as $set leaves it), as a times, zone or
-     * count change carries them: a day keeps what it owns, its placement
-     * among them, and one that places itself by the series takes its new
-     * occurrence's time. A day or skip with no place in the new series
-     * goes with its occurrence. Returns the writes (the shape plan()'s
-     * writer and GoogleSeries::targetOf read), or null when the series
-     * can't be walked (a rule the expander can't read). Pure.
+     * planned as a forward change is"). The set is read as the request a
+     * person would send for the whole series from the editor, naming no
+     * day: the series' first occurrence put where $set starts it when its
+     * times or zone differ, the rule where $set has one, the content
+     * columns. plan() plans it with its readings as it plans a person's
+     * change, so every edited day and skip follows by the same rules: a
+     * day keeps its date through a rule, count, bound or start change, a
+     * times or zone change moves it with its occurrence, and a day whose
+     * date is no occurrence of the series it leaves is a removed day (the
+     * "outside" group's delete). The days the undone change itself carried
+     * to other occurrences ($back: each one's key now => the key the change
+     * found it at, from the change's recorded moves) go back where it found
+     * them: an undo takes back its change's carrying, as it takes back its
+     * fields. The master then takes $set as given (the values the undo
+     * restores), and a day placed on a key that is no occurrence of that
+     * master is a removed day as well. Returns the writes (plan()'s shape,
+     * skipMoves among them), or null and the planner's refusal code. Pure.
      *
-     * @return array{writes:?array}
+     * @param array<string,string> $back
+     * @return array{writes:?array,code?:string}
      */
-    public static function setPlan(array $master, array $rows, array $set): array
+    public static function setPlan(array $master, array $rows, array $set, array $opts = [], array $back = []): array
     {
         $after = array_merge($master, $set);
+        $edit = ['columns' => array_diff_key($set, array_flip(['start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json']))];
+        if (array_intersect_key($set, array_flip(['start_utc', 'end_utc', 'all_day', 'tzid'])) !== []) {
+            $edit['landed'] = ['start_utc' => (string) $after['start_utc'], 'end_utc' => (string) $after['end_utc'], 'all_day' => (int) ($after['all_day'] ?? 0), 'tzid' => (string) ($after['tzid'] ?? 'UTC')];
+        }
+        if (array_key_exists('rrule', $set)) {
+            $edit['rrule'] = ($set['rrule'] === null || $set['rrule'] === '') ? null : (string) $set['rrule'];
+        }
         try {
-            $skips = \BetterCal\Domain\Recurrence::decodeExdates($master['exdates_json'] ?? null);
-            $keys = array_merge(array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $rows), $skips);
-            $from = $keys === [] ? [] : self::placesThrough($master, max($keys));
-            $place = array_flip($from);
-            $to = $from === [] ? [] : self::placesThrough($after, null, count($from));
+            // A new rule keeps every day on its date (the reading 'keep'); a day off the series is removed.
+            $out = self::plan($master, $rows, $edit, ['reading' => 'keep', 'outside' => 'delete'], $opts);
+            // A start the drag table can't carry (a refused reading) is
+            // set as values: the days keep their dates, then follow their
+            // occurrence below, as the sync follows a series changed at Google.
+            if ((!empty($out['refused']) || !is_array($out['writes'] ?? null)) && isset($edit['landed'])) {
+                unset($edit['landed']);
+                $out = self::plan($master, $rows, $edit, ['reading' => 'keep', 'outside' => 'delete'], $opts);
+            }
+            $w = $out['writes'] ?? null;
+            if (!empty($out['refused']) || !is_array($w)) {
+                return ['writes' => null, 'code' => (string) ($out['plan']['refusals'][0]['code'] ?? 'refused')];
+            }
+            // The master as restored: $set as given, and its rule and times as they stand where $set
+            // doesn't restore them: an undo changes what its change changed, no reading rewrites the rest.
+            $w['master'] = array_merge($w['master'] ?? [], array_intersect_key($master, array_flip(['rrule', 'start_utc', 'end_utc', 'all_day', 'tzid'])), array_diff_key($set, ['exdates_json' => 1]));
+            $final = array_merge($master, $w['master']);
+            $calc = Calc::fromRow(['exdates_json' => null] + $final);
+            // The change's own carrying, taken back.
+            $allDay = (int) ($final['all_day'] ?? 0) === 1;
+            $length = max(0, Time::fromDb((string) $final['end_utc'])->getTimestamp() - Time::fromDb((string) $final['start_utc'])->getTimestamp());
+            foreach ($rows as $r) {
+                $id = (int) $r['id'];
+                $to = $back[(string) $r['recurrence_instance_utc']] ?? null;
+                if ($to === null) {
+                    continue;
+                }
+                $w['delete'] = array_values(array_filter(array_map('intval', $w['delete']), static fn(int $d): bool => $d !== $id));
+                $cols = ['recurrence_instance_utc' => $to] + ($w['overrides'][$id] ?? []);
+                $cols['recurrence_instance_utc'] = $to;
+                if (array_intersect(OwnFields::decode($r['override_fields'] ?? null) ?? [], OwnFields::PLACEMENT) === []) {
+                    $start = Time::fromDb($to);
+                    $cols['start_utc'] = $to;
+                    $cols['end_utc'] = Time::toDb($allDay ? $start->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $start->modify('+' . $length . ' seconds'));
+                }
+                $w['overrides'][$id] = $cols;
+            }
+            foreach (\BetterCal\Domain\Recurrence::decodeExdates($master['exdates_json'] ?? null) as $k) {
+                if (isset($back[$k])) {
+                    $w['exdates'] = array_values(array_diff($w['exdates'], [(string) ($w['skipMoves'][$k] ?? $k)]));
+                    $w['exdates'][] = $back[$k];
+                    $w['skipMoves'][$k] = $back[$k];
+                    if ($back[$k] === $k) {
+                        unset($w['skipMoves'][$k]);
+                    }
+                }
+            }
+            sort($w['exdates']);
+            // A day placed off the restored series' occurrences follows the
+            // occurrence on its date (Feeds::ofSeries, the sync's one rule),
+            // and is a removed day where that date has none.
+            $byId = [];
+            foreach ($rows as $r) {
+                $byId[(int) $r['id']] = $r;
+            }
+            // A day the planner put outside stays where it is when the restored series has it there.
+            foreach (array_map('intval', $w['delete']) as $id) {
+                $key = (string) ($byId[$id]['recurrence_instance_utc'] ?? '');
+                if ($key !== '' && !isset($w['overrides'][$id]) && in_array($key, $calc->keysOn($calc->dnOf($key)), true)) {
+                    $w['overrides'][$id] = ['recurrence_instance_utc' => $key];
+                    $w['delete'] = array_values(array_diff(array_map('intval', $w['delete']), [$id]));
+                }
+            }
+            foreach ($w['overrides'] as $id => $cols) {
+                $key = (string) ($cols['recurrence_instance_utc'] ?? '');
+                if ($key === '' || in_array($key, $calc->keysOn($calc->dnOf($key)), true)) {
+                    continue;
+                }
+                $at = \BetterCal\Domain\Feeds::ofSeries(['recurrence_instance_utc' => $key] + ($byId[(int) $id] ?? []), null, ['exdates_json' => null] + $final);
+                if ($at === null || !isset($at['recurrence_instance_utc'])) {
+                    unset($w['overrides'][$id]);
+                    $w['delete'][] = (int) $id;
+                    continue;
+                }
+                $w['overrides'][$id]['recurrence_instance_utc'] = (string) $at['recurrence_instance_utc'];
+                if (array_intersect(OwnFields::decode($byId[(int) $id]['override_fields'] ?? null) ?? [], OwnFields::PLACEMENT) === []) {
+                    $w['overrides'][$id]['start_utc'] = (string) $at['start_utc'];
+                    $w['overrides'][$id]['end_utc'] = (string) $at['end_utc'];
+                }
+            }
+            foreach ($w['skipMoves'] ?? [] as $from => $to) {
+                if (!in_array((string) $to, $calc->keysOn($calc->dnOf((string) $to)), true)) {
+                    unset($w['skipMoves'][$from]);
+                    $w['exdates'] = array_values(array_diff($w['exdates'], [(string) $to]));
+                }
+            }
         } catch (\InvalidArgumentException | WalkIncomplete | RuleNotReadable) {
-            return ['writes' => null];
+            return ['writes' => null, 'code' => 'unreadable'];
         }
-        $allDay = (int) ($after['all_day'] ?? 0) === 1;
-        $length = max(0, Time::fromDb((string) $after['end_utc'])->getTimestamp() - Time::fromDb((string) $after['start_utc'])->getTimestamp());
-        $overrides = [];
-        $delete = [];
-        foreach ($rows as $r) {
-            $id = (int) $r['id'];
-            $new = $to[$place[(string) $r['recurrence_instance_utc']] ?? -1] ?? null;
-            if ($new === null) {
-                $delete[] = $id;
-                continue;
-            }
-            $cols = ['recurrence_instance_utc' => $new];
-            $own = OwnFields::decode($r['override_fields'] ?? null) ?? [];
-            if (array_intersect($own, OwnFields::PLACEMENT) === []) {
-                $start = Time::fromDb($new);
-                $cols += [
-                    'start_utc' => $new,
-                    'end_utc' => Time::toDb($allDay ? $start->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $start->modify('+' . $length . ' seconds')),
-                    'all_day' => $allDay ? 1 : 0,
-                    'tzid' => (string) $after['tzid'],
-                ];
-            }
-            $overrides[$id] = $cols;
-        }
-        $exdates = [];
-        foreach ($skips as $k) {
-            if (isset($to[$place[$k] ?? -1])) {
-                $exdates[] = $to[$place[$k]];
-            }
-        }
-        sort($exdates);
-        return ['writes' => [
-            'master' => $set + ['exdates_json' => $exdates === [] ? null : json_encode($exdates)],
-            'overrides' => $overrides, 'detach' => [], 'delete' => $delete, 'create' => [], 'createEdited' => [],
-            'tags' => [], 'people' => [], 'exdates' => $exdates,
-        ]];
-    }
-
-    /**
-     * A series' occurrence keys in order, its skips counted as the days
-     * they are: those up to the key $through, or the first $count. Pure.
-     *
-     * @return list<string>
-     */
-    public static function placesThrough(array $master, ?string $through, int $count = PHP_INT_MAX): array
-    {
-        $calc = Calc::fromRow(['exdates_json' => null] + $master);
-        $out = [];
-        foreach ($calc->keysFrom(Cal::dnOf(Time::fromDb((string) $master['start_utc'])->setTimezone($calc->zone()))) as [, $key]) {
-            if (($through !== null && strcmp((string) $key, $through) > 0) || count($out) >= $count) {
-                break;
-            }
-            $out[] = (string) $key;
-        }
-        return $out;
+        $w['master']['exdates_json'] = $w['exdates'] === [] ? null : json_encode(array_values($w['exdates']));
+        return ['writes' => $w];
     }
 
     public static function plan(array $master, array $overrides, array $edit, array $choices = [], array $opts = []): array
@@ -2171,7 +2219,9 @@ final class Model
             // outside the series, before its start or after its end (Bounds:
             // the first or last k periods of a member moved k periods); any
             // other gain is a day the new form gives where the old gave none.
-            $edgeAt = $this->edgeSources($gainSet, $image, $images, $cycle['moved'] ?? null);
+            // A start moved alone is a bound: the days it brings in before the
+            // old start are the ones asked for, never at an edge.
+            $edgeAt = $this->startTo !== null ? [] : $this->edgeSources($gainSet, $image, $images, $cycle['moved'] ?? null);
             foreach (array_keys($gainSet) as $d) {
                 if (isset($edgeAt[$d])) {
                     $edgeGains[] = $d;
@@ -2360,8 +2410,10 @@ final class Model
         $separate = $actedOut && $actedOutcome === 'separate';
         $actedDeleted = $actedOut && $actedOutcome === 'deleted';
 
-        // Skipped days.
+        // Skipped days, and where each went (skipMoves: the planner's
+        // record of which skip went where, a change's ground for its skips).
         $newExdates = [];
+        $skipMoves = [];
         $days = [];
         foreach ($this->exdates as $key) {
             $odn = $this->old->dnOf($key);
@@ -2369,6 +2421,9 @@ final class Model
             $nk = $newKey($key, $img);
             if ($nk !== null) {
                 $newExdates[] = $nk;
+                if ($nk !== $key) {
+                    $skipMoves[$key] = $nk;
+                }
                 $days[] = ['key' => $key, 'newKey' => $nk, 'kind' => 'skipped', 'outcome' => $nk === $key ? 'stays' : 'moves', 'shows' => $this->identityOut($key), 'to' => self::patternOut($calc1, (int) $img)]
                     + Words::dayParts(Words::date($odn, $this->thisYear), $img === $odn ? 'stays skipped' : 'moves to ' . Words::date((int) $img, $this->thisYear), ' ', 'Skipped ');
             } else {
@@ -2997,6 +3052,7 @@ final class Model
                 'tags' => $tags,
                 'people' => $people,
                 'exdates' => $newExdates,
+                'skipMoves' => $skipMoves,
             ],
             'selected' => $selected,
             'nextDates' => $nextDates,

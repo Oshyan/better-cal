@@ -132,7 +132,7 @@ return static function (Db $db): void {
             'position' => \BetterCal\Domain\Order::endOfList($db, $u), 'role' => 'mine']);
         $sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]));
         $google->calls = [];
-        return (object) ['u' => $u, 'google' => $google, 'writer' => $writer, 'events' => $events, 'calendarId' => $calendarId,
+        return (object) ['u' => $u, 'google' => $google, 'writer' => $writer, 'events' => $events, 'calendarId' => $calendarId, 'sync' => $sync,
             'undo' => new Undo($db, null, $writer), 'labels' => new BetterCal\Domain\Labels($db)];
     };
     $row = static fn(object $t, string $googleId): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$t->calendarId, $googleId]);
@@ -325,5 +325,42 @@ return static function (Db $db): void {
     scenario('google undo: a Redo after a change at Google to a field only Google holds goes through', function () use ($redoAfterRemote): void {
         $r = $redoAfterRemote(['colorId' => '4']);
         checkEq('no refusal, one PATCH, the day takes the Redo\'s place', [null, ['PATCH'], 'Sample room A'], [$r['caught'], $r['writes'], $r['location']]);
+    });
+
+    // One stored form of a ground (2026-11-09): an answer on a day is that day's ground on its series' row, as every day's is.
+    scenario('google undo: an answer on a day of a recurring invitation, then a later attendance change of that day: the answer\'s undo is stale; on a single event the answer\'s ground stays on its row', function () use ($db, $setup, $row, $last): void {
+        $t = $setup();
+        $when = static fn(string $at): array => ['dateTime' => $at, 'timeZone' => 'America/Los_Angeles'];
+        $invite = ['organizer' => ['email' => 'host@example.test'],
+            'attendees' => [['email' => 'host@example.test', 'responseStatus' => 'accepted'], ['email' => 'owner@example.test', 'self' => true, 'responseStatus' => 'needsAction']]];
+        $t->google->res['probe7inv'] = ['kind' => 'calendar#event', 'id' => 'probe7inv', 'iCalUID' => 'probe7inv@google.com', 'status' => 'confirmed', 'summary' => 'Sample sync',
+            'start' => $when('2027-03-02T09:00:00-08:00'), 'end' => $when('2027-03-02T10:00:00-08:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4'], 'etag' => '"g1"'] + $invite;
+        $t->google->res['probe7inv_20270309T170000Z'] = ['kind' => 'calendar#event', 'id' => 'probe7inv_20270309T170000Z', 'iCalUID' => 'probe7inv@google.com', 'status' => 'confirmed',
+            'summary' => 'Sample sync', 'location' => 'Sample room 9', 'recurringEventId' => 'probe7inv', 'originalStartTime' => $when('2027-03-09T09:00:00-08:00'),
+            'start' => $when('2027-03-09T09:00:00-08:00'), 'end' => $when('2027-03-09T10:00:00-08:00'), 'etag' => '"g1"'] + $invite;
+        $t->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$t->calendarId]));
+        $day = (int) ($row($t, 'probe7inv_20270309T170000Z')['id'] ?? 0);
+        $series = (int) ($row($t, 'probe7inv')['id'] ?? 0);
+        check('the invitation and its edited 9 March are here', $day > 0 && $series > 0);
+        $session = bin2hex(random_bytes(16));
+        $db->insert('sessions', ['token_hash' => hash('sha256', $session), 'user_id' => $t->u, 'csrf' => 'x', 'authenticated_at' => Time::nowDb(), 'expires_at' => '2030-01-01 00:00:00']);
+        (new Rsvp($db, new EmailSender([]), [], $t->writer))->answer($t->u, $day, 'accepted', $session);
+        $answer = (int) $last($t)['id'];
+        $grounds = static fn(int $entry): array => array_map(static fn(array $r): string => $r['row_key'] . ' ' . $r['col'],
+            $db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ? ORDER BY row_key, col', [$entry]));
+        checkEq('the answer\'s ground is the day\'s, on its series\' row at its occurrence, never its own row\'s key', [true, false],
+            [in_array("events:$series day:2027-03-09 17:00:00|status", $grounds($answer), true), (bool) array_filter($grounds($answer), static fn(string $g): bool => str_starts_with($g, "events:$day "))]);
+        $t->events->setAttendance($t->u, $day, 'hidden', 'this', '2027-03-09T17:00:00Z');
+        $code = null;
+        try {
+            $t->undo->undoById($t->u, $answer);
+        } catch (HttpError $e) {
+            $code = $e->errorCode;
+        }
+        checkEq('the answer\'s undo is stale after a later attendance change of that day', 'stale_undo', $code);
+
+        $single = (int) ($row($t, 'probe5k6m7n')['id'] ?? 0);
+        (new Rsvp($db, new EmailSender([]), [], $t->writer))->answer($t->u, $single, 'accepted', $session);
+        checkEq('on a single event the answer\'s ground is its own row\'s fields', ["events:$single attendance", "events:$single invite_json", "events:$single status"], $grounds((int) $last($t)['id']));
     });
 };

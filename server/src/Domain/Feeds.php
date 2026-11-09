@@ -1038,6 +1038,13 @@ final class Feeds
                         'source' => 'feed',
                         'created_via' => 'feed',
                     ]);
+                    // A day's row starts with its series' tags and people, a
+                    // copy it does not own, as every row a writer here makes
+                    // does: the one composition (followSeries), links alone.
+                    if ($series !== null) {
+                        self::followSeries($this->db, $columns + ['id' => $id], $series,
+                            \BetterCal\Domain\Series\OwnFields::decode($columns['override_fields'] ?? null) ?? [], ['tags', 'people']);
+                    }
                     // The row, not its calendar: undoing the subscription
                     // still takes what its polls brought (a day's row: the
                     // fields it owns of that day, Undo::touchesOf).

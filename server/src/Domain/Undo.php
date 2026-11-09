@@ -1343,11 +1343,51 @@ final class Undo
     }
 
     /** @param list<array{0:string,1:string}> $touches */
+    /**
+     * Grounds in their one stored form: a ground a caller names against a
+     * day's own row (an answer's `invite_json`, `status`, `attendance`, or
+     * `*` for the whole row) is that day's, on its series' row at its
+     * occurrence (dayGround), as touchesOf writes every day's ground, so a
+     * later change of the same field of that day stales it whichever path
+     * wrote either. Any other ground is kept as it is.
+     *
+     * @param list<array{0:string,1:string}> $touches
+     * @return list<array{0:string,1:string}>
+     */
+    private function dayForm(array $touches): array
+    {
+        $ids = [];
+        foreach ($touches as [$row]) {
+            if (preg_match('/^events:(\d+)$/', (string) $row, $m) === 1) {
+                $ids[(int) $m[1]] = true;
+            }
+        }
+        if ($ids === []) {
+            return $touches;
+        }
+        $days = [];
+        [$in, $params] = Db::in(array_keys($ids));
+        foreach ($this->db->all("SELECT * FROM events WHERE id IN $in", $params) as $r) {
+            if (($r['recurrence_parent_id'] ?? null) !== null && ($r['recurrence_instance_utc'] ?? null) !== null) {
+                $days[self::keyOf('events', $r)] = [self::keyOf('events', ['id' => $r['recurrence_parent_id']]), (string) $r['recurrence_instance_utc']];
+            }
+        }
+        $out = [];
+        foreach ($touches as [$row, $col]) {
+            $day = $days[(string) $row] ?? null;
+            $field = $day === null || str_starts_with((string) $col, self::DAY) || str_starts_with((string) $col, self::MOVE) ? null
+                : ((string) $col === '*' ? '*' : self::fieldOfColumn((string) $col));
+            $out[] = $field === null ? [$row, $col] : [$day[0], self::dayGround($day[1], $field)];
+        }
+        return $out;
+    }
+
     private function recordTouches(int $mutationId, array $touches): void
     {
         if ($mutationId <= 0 || $touches === []) {
             return;
         }
+        $touches = $this->dayForm($touches);
         $unique = [];
         foreach ($touches as [$row, $col]) {
             $unique[mb_substr($row, 0, 160) . "\n" . mb_substr($col, 0, 64)] = [mb_substr($row, 0, 160), mb_substr($col, 0, 64)];

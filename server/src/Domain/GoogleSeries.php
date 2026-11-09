@@ -764,7 +764,7 @@ final class GoogleSeries
                         try {
                             $singleEtags[(string) $s['id']] = $this->condition($calendar, (string) $s['id'], $beforeSend)['etag'];
                         } catch (HttpError $e) {
-                            if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
+                            if (!GoogleWriter::gone($e)) {
                                 throw $e;
                             }
                         }
@@ -778,7 +778,7 @@ final class GoogleSeries
                         try {
                             $first[$i] = $this->condition($calendar, (string) $t['googleId'], $beforeSend)['etag'];
                         } catch (HttpError $e) {
-                            if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
+                            if (!GoogleWriter::gone($e)) {
                                 throw $e;
                             }
                         }
@@ -838,8 +838,8 @@ final class GoogleSeries
                     }
                     $body = GoogleWriter::body(self::rowOf($s['row']));
                     $resource = self::stepDone($steps, $i, 'single', $sid, $back)
-                        ? $this->insertChosen($send, $sid, $body)
-                        : $step('single', $sid, null, fn() => $this->insertChosen($send, $sid, $body));
+                        ? $this->insertChosen($calendar, $send, $sid, $body, $beforeSend)
+                        : $step('single', $sid, null, fn() => $this->insertChosen($calendar, $send, $sid, $body, $beforeSend));
                     $inserted[$sid] = $resource;
                     $targets[$i]['singles'][$si]['uid'] = (string) ($resource['iCalUID'] ?? '');
                     $readbacks[(string) ($resource['iCalUID'] ?? $sid)] = [$resource];
@@ -874,7 +874,7 @@ final class GoogleSeries
                 $read = $reads[$i] ?? null;
                 if (!empty($t['insert'])) {
                     // Once it lands: the series as sent, no edited or skipped day, and no field of the resource but what it sent.
-                    $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($send, (string) $t['googleId'], self::insertBody($t['master'])),
+                    $resource = $step('insert', (string) $t['googleId'], null, fn() => $this->insertChosen($calendar, $send, (string) $t['googleId'], self::insertBody($t['master']), $beforeSend),
                         ['expect' => self::digest(self::state(self::heldOf(['master' => $t['master'], 'exceptions' => [], 'skips' => []]), true)), 'extras' => true]);
                     $targets[$i]['uid'] = $t['uid'] = (string) ($resource['iCalUID'] ?? $t['googleId']);
                     $targets[$i]['insert'] = false;
@@ -1003,10 +1003,13 @@ final class GoogleSeries
     /**
      * An insert with the id the app chose: a 409 means the id is taken, by
      * the first attempt that landed or by the event itself cancelled (an
-     * undo's undo making it again), so it is read back, and a cancelled
-     * one is sent again as the body has it, conditional on its etag.
+     * undo's undo making it again), so it is read back. A cancelled one is
+     * made live again by the one conditional write every PATCH goes through
+     * (GoogleWriter::patch: that read compared with the rows here by
+     * GoogleSeries::condition, its etag the If-Match), its body what differs
+     * from that read in the allowed list (GoogleWriter::patchOf).
      */
-    private function insertChosen(\Closure $send, string $id, array $body): array
+    private function insertChosen(array $calendar, \Closure $send, string $id, array $body, ?\Closure $beforeSend): array
     {
         try {
             return $send('POST', '', ['id' => $id] + $body, null);
@@ -1018,7 +1021,7 @@ final class GoogleSeries
             if ((string) ($found['status'] ?? '') !== 'cancelled') {
                 return $found;
             }
-            return $send('PATCH', '/' . rawurlencode($id), $body + ['status' => 'confirmed'], isset($found['etag']) && is_string($found['etag']) ? $found['etag'] : null);
+            return $this->writer->patch($calendar, $id, GoogleWriter::patchOf($found, $body + ['status' => 'confirmed']), $beforeSend, $found, false);
         }
     }
 
@@ -1028,7 +1031,7 @@ final class GoogleSeries
         try {
             $send('DELETE', '/' . rawurlencode($id), null, $etag);
         } catch (HttpError $e) {
-            if (!in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true)) {
+            if (!GoogleWriter::gone($e)) {
                 throw $e;
             }
         }
@@ -2117,11 +2120,27 @@ final class GoogleSeries
         $rows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [(int) $calendar['id']]);
         $others = array_values(array_filter($rows, static fn(array $r): bool => !isset($uids[(string) $r['uid']])));
         // What each day of these series holds here alone, as the rows stand
-        // before the store: its local part of the own list, kept through it.
+        // before the store: its local part of the own list, kept through it,
+        // found by where the target's series has the day (whereNow).
         $local = [];
+        $mastersHere = [];
+        foreach ($rows as $r) {
+            if ($r['recurrence_instance_utc'] === null) {
+                $mastersHere[(int) $r['id']] = $r;
+            }
+        }
+        $targetOf = [];
+        foreach ($targets as $t) {
+            if (!empty($t['uid'])) {
+                $targetOf[(string) $t['uid']] = $t;
+            }
+        }
         foreach ($rows as $r) {
             if (isset($uids[(string) $r['uid']]) && $r['recurrence_instance_utc'] !== null) {
-                $local[(string) $r['uid'] . '|' . (string) $r['recurrence_instance_utc']] = Feeds::heldHere(OwnFields::decode($r['override_fields'] ?? null) ?? [], $r);
+                $t = $targetOf[(string) $r['uid']] ?? null;
+                $key = $t === null ? (string) $r['recurrence_instance_utc'] : self::whereNow($t, (string) $r['recurrence_instance_utc'], $mastersHere[(int) ($r['recurrence_parent_id'] ?? 0)] ?? null);
+                $at = (string) $r['uid'] . '|' . $key;
+                $local[$at] = array_values(array_unique(array_merge($local[$at] ?? [], Feeds::heldHere(OwnFields::decode($r['override_fields'] ?? null) ?? [], $r))));
             }
         }
         $had = [];
@@ -2151,7 +2170,8 @@ final class GoogleSeries
                 // The day's own list: the target's (the change's, and what
                 // Google changed since), with what it held here alone kept,
                 // a place by its coordinates only while it shows the text
-                // they were picked for (Feeds::heldHere, on the row as stored).
+                // they were picked for (Feeds::heldHere, on the row as stored;
+                // read above where the target's series has its day, whereNow).
                 $own = (array) ($x['own'] ?? []);
                 $held = $local[(string) $t['uid'] . '|' . (string) $key] ?? [];
                 if ($held !== []) {
@@ -2527,7 +2547,7 @@ final class GoogleSeries
         $write = function () use ($calendar, $local, $plan, $out, $commit, $made, &$held, &$words): void {
             [$kept, $held] = $this->rewind($calendar, $local, $out['targets'], $made);
             $words = (array) ($commit($plan, $out, $local) ?? []);
-            $this->follow($local, $kept);
+            $this->placeKept($kept);
         };
         try {
             $this->db->tx($write);
@@ -2650,12 +2670,12 @@ final class GoogleSeries
                 continue;
             }
             if (!isset($made[$id])) {
-                $kept[] = $id;
+                $kept[$id] = $this->seriesOf($r);
                 continue;
             }
             $held = Feeds::retained($this->db, $r);
-            if ($held !== null && !self::namesDay($targets, $r)) {
-                $kept[] = $id;
+            if ($held !== null && !$this->namesDay($targets, $r)) {
+                $kept[$id] = $this->seriesOf($r);
                 continue;
             }
             if ($held !== null) {
@@ -2666,15 +2686,60 @@ final class GoogleSeries
         return [$kept, $taken];
     }
 
-    /** Whether a target has a day of the series at $row's key (an edited day of its own, by key). */
-    private static function namesDay(array $targets, array $row): bool
+    /** Whether a target has an edited day of its own on $row's day, the day found where it is now (exceptionOn). */
+    private function namesDay(array $targets, array $row): bool
     {
+        $series = $this->seriesOf($row);
         foreach ($targets as $t) {
-            if ((string) ($t['uid'] ?? '') === (string) $row['uid'] && isset($t['exceptions'][(string) $row['recurrence_instance_utc']])) {
+            if ((string) ($t['uid'] ?? '') === (string) $row['uid'] && self::exceptionOn($t, (string) $row['recurrence_instance_utc'], $series) !== null) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** The series' row a day's row stands under here now (its master), or null. */
+    private function seriesOf(array $row): ?array
+    {
+        return ($row['recurrence_parent_id'] ?? null) === null ? null
+            : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+    }
+
+    /**
+     * Where a day is in a target's series: the key the target's series
+     * gives the day $key showed under the series it was read under ($was;
+     * null, the target's own), by the one day identity the sync follows
+     * (Feeds::ofSeries, skips aside: a day the target skips is still that
+     * day). Recovery finds a day's row by where it is now, never by the key
+     * a snapshot or an earlier store gave it, so a Finish whose rebase moved
+     * the series' clock or zone matches the same days. The key itself where
+     * the series can't be read or has no such day. Pure.
+     */
+    private static function whereNow(array $target, string $key, ?array $was): string
+    {
+        if (empty($target['master']) || empty($target['master']['rrule'])) {
+            return $key;
+        }
+        $at = Feeds::ofSeries(['recurrence_instance_utc' => $key], $was === null ? null : ['exdates_json' => null] + $was, ['exdates_json' => null] + $target['master']);
+        return (string) ($at['recurrence_instance_utc'] ?? $key);
+    }
+
+    /**
+     * The key of the target's edited day on the same day as $key (read
+     * under $was), both found where the target's series has them now
+     * (whereNow): a target's days may be keyed as the change planned them
+     * while its master is Google's (a Finish whose rebase kept a clock
+     * changed at Google). Null when it names none. Pure.
+     */
+    private static function exceptionOn(array $target, string $key, ?array $was): ?string
+    {
+        $day = self::whereNow($target, $key, $was);
+        foreach (array_keys($target['exceptions'] ?? []) as $x) {
+            if (self::whereNow($target, (string) $x, null) === $day) {
+                return (string) $x;
+            }
+        }
+        return null;
     }
 
     /**
@@ -2743,7 +2808,7 @@ final class GoogleSeries
      */
     private function taken(array $row, array $kept): array
     {
-        return ['row' => $row, 'fields' => $kept['fields'], 'links' => Undo::linksOf($this->db, [(int) $row['id']])];
+        return ['row' => $row, 'series' => $this->seriesOf($row), 'fields' => $kept['fields'], 'links' => Undo::linksOf($this->db, [(int) $row['id']])];
     }
 
     /**
@@ -2770,8 +2835,14 @@ final class GoogleSeries
             $key = (string) $was['recurrence_instance_utc'];
             $dest = null;
             foreach ($targets as $t) {
-                $rid = (int) ($t['exceptions'][$key]['rowId'] ?? 0);
-                if ((string) ($t['uid'] ?? '') === (string) $was['uid'] && $rid > 0 && $rid !== $wasId) {
+                if ((string) ($t['uid'] ?? '') !== (string) $was['uid']) {
+                    continue;
+                }
+                // The day where the target's series has it now (whereNow, exceptionOn).
+                $x = self::exceptionOn($t, (string) $was['recurrence_instance_utc'], $h['series'] ?? null);
+                $key = self::whereNow($t, (string) $was['recurrence_instance_utc'], $h['series'] ?? null);
+                $rid = $x === null ? 0 : (int) ($t['exceptions'][$x]['rowId'] ?? 0);
+                if ($rid > 0 && $rid !== $wasId) {
                     $dest = $live($rid);
                 }
             }
@@ -2853,78 +2924,53 @@ final class GoogleSeries
     }
 
     /**
-     * The plan applied over each row rewind kept (a day changed here since
-     * the change stopped, which the plan doesn't name), once the change's
-     * writer has run: what it owns stays; what it inherits follows its
-     * series as written (each content field, the series' columns, the
-     * series' tags and people, and its place: at its occurrence with the
-     * series' clock, zone and length where it owns none of them; a timed
-     * day's). A day the
+     * Each row rewind kept (a day changed here since the change stopped,
+     * which the plan doesn't name), once the change's writer has run,
+     * follows its series as written by the one composition the sync and an
+     * undo use: its day is where the series has it now (Feeds::ofSeries,
+     * read from the series the row stood under), its own placement read by
+     * OwnFields::placed, and each field it doesn't own, tags and people
+     * among them, the series' (Feeds::followSeries, over Feeds::followed: a
+     * place's text and the coordinates picked for it one value). A day the
      * series as written no longer has can't be placed: the part here is
      * refused (the writer's work rolled back, the row and what hangs off it
      * kept), and Review says why.
      *
-     * @param array<string,list<array>> $local
-     * @param list<int> $kept
+     * @param array<int,?array> $kept id => the series' row it stood under
      */
-    private function follow(array $local, array $kept): void
+    private function placeKept(array $kept): void
     {
-        $snap = [];
-        foreach ($local['events'] ?? [] as $r) {
-            $snap[(int) $r['id']] = $r;
-        }
-        foreach ($kept as $id) {
+        foreach ($kept as $id => $was) {
             $row = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
-            if ($row === null || $row['recurrence_parent_id'] === null || $row['recurrence_instance_utc'] === null) {
+            $master = $row === null ? null : $this->seriesOf($row);
+            if ($row === null || $master === null || $row['recurrence_instance_utc'] === null) {
                 continue;
             }
-            $masterId = (int) $row['recurrence_parent_id'];
-            $master = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$masterId]);
-            if ($master === null) {
-                continue;
-            }
-            // Its own list as it was made; a row with none, by equality with the series it was made under.
-            $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $snap[$masterId] ?? $master);
-            $key = Time::fromDb((string) $row['recurrence_instance_utc']);
-            $allDay = (int) $master['all_day'] === 1;
-            $zone = Time::zone($allDay ? 'UTC' : (string) $master['tzid']);
-            $isDay = false;
-            foreach (Recurrence::occurrences($master, $key->modify('-1 day'), $key->modify('+1 day'), null, 8) as $o) {
-                $isDay = $isDay || ($allDay ? $o['start']->setTimezone(Time::zone((string) $master['tzid']))->format('Y-m-d') === $key->format('Y-m-d')
-                    : $o['start']->getTimestamp() === $key->getTimestamp());
-            }
-            if (!$isDay) {
-                $day = Words::date(Cal::dnOf($key->setTimezone($zone)), (int) Time::nowUtc()->format('Y'));
+            $own = $this->feeds->ownOf($row, $was ?? $master);
+            $target = Feeds::ofSeries($row, $was, $master);
+            if ($target === null) {
+                $key = Time::fromDb((string) $row['recurrence_instance_utc']);
+                $day = Words::date(Cal::dnOf($key->setTimezone(Time::zone((int) $master['all_day'] === 1 ? 'UTC' : (string) $master['tzid']))), (int) Time::nowUtc()->format('Y'));
                 throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here after this change stopped, and the change leaves the series without that day");
             }
-            // What it inherits, tags and people among them: the one composition (Feeds::followSeries).
-            $followed = Feeds::followSeries($this->db, $row, $master, $own);
+            // Its day and its times: where the series has the day now (Feeds::ofSeries), its own placement read by OwnFields::placed.
+            $placing = ['recurrence_instance_utc', 'google_event_id', ...array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS)];
+            if (array_intersect(OwnFields::PLACEMENT, $own) === []) {
+                $placing = array_merge($placing, ['start_utc', 'end_utc', 'all_day', 'tzid']);
+            }
+            $after = OwnFields::placed(array_merge($row, array_intersect_key($target, array_flip($placing))), $master, $own);
             $patch = [];
-            foreach (array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS) as $col) {
-                if (array_key_exists($col, $master) && array_key_exists($col, $row) && $row[$col] !== $master[$col]) {
-                    $patch[$col] = $master[$col];
-                }
-            }
-            $len = max(0, Time::fromDb((string) $master['end_utc'])->getTimestamp() - Time::fromDb((string) $master['start_utc'])->getTimestamp());
-            if ($allDay) {
-                $placed = []; // an all-day day keeps its date: its key is that date
-            } elseif (array_intersect(['date', 'time', 'length', 'allDay'], $own) === []) {
-                $placed = ['start_utc' => Time::toDb($key), 'end_utc' => Time::toDb($key->modify('+' . $len . ' seconds')), 'all_day' => (int) $master['all_day'], 'tzid' => (string) $master['tzid']];
-            } else {
-                $placed = $row;
-                if (!in_array('length', $own, true)) {
-                    $placed['end_utc'] = Time::toDb(Time::fromDb((string) $row['start_utc'])->modify('+' . $len . ' seconds'));
-                }
-                $placed = array_intersect_key(OwnFields::placed($placed, $master, $own), array_flip(['start_utc', 'end_utc', 'all_day', 'tzid']));
-            }
-            foreach ($placed as $col => $value) {
-                if ((string) $row[$col] !== (string) $value) {
+            foreach ($after as $col => $value) {
+                if (array_key_exists($col, $row) && !Feeds::sameValue($col, $row[$col], $value)) {
                     $patch[$col] = $value;
                 }
             }
-            if ($patch !== [] || $followed) {
+            if ($patch !== []) {
                 $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+                $row = array_merge($row, $patch);
             }
+            // What it inherits, tags and people among them: the one composition (Feeds::followSeries).
+            Feeds::followSeries($this->db, $row, $master, $own);
         }
     }
 
@@ -3217,11 +3263,19 @@ final class GoogleSeries
                     }
                 }
             }
+            $snapMaster = null;
+            foreach ($snap as $r) {
+                if ((string) $r['uid'] === $uid && $r['recurrence_instance_utc'] === null && (int) $r['calendar_id'] === $calendarId) {
+                    $snapMaster = $r;
+                }
+            }
             foreach ($snap as $id => $r) {
                 if ((string) $r['uid'] !== $uid || (int) $r['calendar_id'] !== $calendarId || $r['recurrence_instance_utc'] === null || $live($id)) {
                     continue;
                 }
-                $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$calendarId, $uid, (string) $r['recurrence_instance_utc']]);
+                // The day where the series stored now has it (whereNow), not the snapshot's key.
+                $key = $master === null ? (string) $r['recurrence_instance_utc'] : self::whereNow(['master' => $master], (string) $r['recurrence_instance_utc'], $snapMaster);
+                $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$calendarId, $uid, $key]);
                 if ($now !== null) {
                     $this->relink($r, $now, $local, true);
                 } else {

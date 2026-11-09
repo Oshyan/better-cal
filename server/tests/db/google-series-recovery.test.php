@@ -1184,4 +1184,68 @@ return static function (Db $db): void {
             [$out['ok'], $held($s, 'smpl3weekly'), $tagsOf($early), $tagsOf($late), array_values(array_intersect($lastRemoved($s), $liveIds($s))), $out['removedDays'] ?? [],
                 str_contains($words, 'Removed here') || str_contains($words, 'already has')]);
     });
+
+
+    // ---- one composition, one day identity --------------------------------------------------
+
+    $tagRows = static fn(object $s): array => array_map(static fn(array $r): array => [$r['k'], $r['tags']], $db->all(
+        "SELECT e.recurrence_instance_utc k, GROUP_CONCAT(t.name) tags FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id WHERE e.calendar_id = ? AND e.deleted_at IS NULL GROUP BY e.id ORDER BY k", [$s->calendarId]));
+
+    // Another client moves the series to 12:00 at Google (its edited days dropped, as Google does).
+    $clockAtGoogle = static function (object $s) use ($iso): void {
+        ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/sample-crew%40group.calendar.google.com/events/smpl3weekly',
+            ['start' => ['dateTime' => $iso('2027-03-01 12:00'), 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => $iso('2027-03-01 13:00'), 'timeZone' => 'America/Los_Angeles']], ['Authorization: Bearer sample-access']);
+    };
+
+    scenario('google recovery: a times change stopped after Google took its master write, a tag on an ordinary day here, then the clock moved again at Google: Finish places that day\'s row where the series has it, its tag kept (the sync\'s composition, Feeds::ofSeries and followed)', function () use ($unguarded, $setup, $masterId, $rowAt, $held, $pending, $recover, $tagRows, $clockAtGoogle, $iso, $db): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->t->fatalAt = 1;
+        try {
+            planned($s->events, $s->u, $id, ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+        } catch (Error) {
+        }
+        $unguarded($s, fn() => $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample later tag']]));
+        $s->events->throwDeferred();
+        $day = (int) ($rowAt($s, '2027-03-08 18:00:00')['id'] ?? 0);
+        $clockAtGoogle($s);
+        $there = $held($s, 'smpl3weekly');
+        $out = $recover($s, 'finish');
+        $placed = $rowAt($s, '2027-03-08 20:00:00');
+        checkEq('Finish ok and settled; Google as the other client left it; the tagged day is the same row at the series\' time, with its tag and its own list; no other tagged row',
+            [true, [], $there, $day, '["tags"]', [['2027-03-08 20:00:00', 'Sample later tag']]],
+            [$out['ok'], $pending($s), $held($s, 'smpl3weekly'), (int) ($placed['id'] ?? 0), $placed['override_fields'] ?? null, $tagRows($s)]);
+    });
+
+    scenario('google recovery: a row a store of a times change made, tagged here, then the clock moved at Google: Finish finds the day where the series has it now and completes, the tag on that day\'s one row', function () use ($unguarded, $setup, $move, $held, $pending, $recover, $tagRows, $clockAtGoogle, $db): void {
+        $dry = $setup();
+        $move($dry);
+        $writes = $dry->t->writes;
+        $ran = 0;
+        for ($n = 2; $n <= $writes; $n++) {
+            $s = $setup();
+            $s->t->loseAt = $n;
+            try {
+                $move($s);
+            } catch (HttpError) {
+            }
+            $made = array_map('intval', json_decode((string) ($db->scalar('SELECT made_json FROM google_pending WHERE user_id = ?', [$s->u]) ?? ''), true) ?: []);
+            $day = $made === [] ? null : $db->one('SELECT * FROM events WHERE id IN (' . implode(',', $made) . ') AND recurrence_instance_utc IS NOT NULL AND deleted_at IS NULL ORDER BY id LIMIT 1');
+            if ($day === null) {
+                continue;
+            }
+            $ran++;
+            $key = (string) $day['recurrence_instance_utc'];
+            $unguarded($s, fn() => $s->events->patch($s->u, (int) $day['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => Time::fromDb($key)->format('Y-m-d\TH:i:s\Z'), 'tagNames' => ['Sample later tag']]));
+            $s->events->throwDeferred();
+            $clockAtGoogle($s);
+            $there = $held($s, 'smpl3weekly');
+            $out = $recover($s, 'finish');
+            $newKey = Time::toDb(Time::fromDb($key)->modify('+1 hour'));
+            checkEq("failure at write $n: Finish ok and settled; Google as the other client left it; the tag on one row, on that day at the series' new time, its own list the tag alone; no row at the old time",
+                [true, [], $there, [[$newKey, 'Sample later tag']], '["tags"]', 0],
+                [$out['ok'], $pending($s), $held($s, 'smpl3weekly'), $tagRows($s), $db->scalar('SELECT override_fields FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$s->calendarId, $newKey]), (int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$s->calendarId, $key])]);
+        }
+        checkEq('the case is exercised', true, $ran >= 2);
+    });
 };

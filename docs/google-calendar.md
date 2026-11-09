@@ -125,7 +125,7 @@ See the [API contract, Google Calendar](api-contract.md#google-calendar).
 
 - Poll error "Google token request failed: HTTP 400 (Token has been expired or revoked.)", Google's `invalid_grant`: the refresh token was revoked (you removed Better-Cal under Google Account → Security → Third-party access, or the OAuth client was in Testing status for over seven days). Reconnect the account.
 - "Google is busy and refused the change for now": Google answered that a rate or quota limit was reached. Better-Cal tried twice more with a pause in between; nothing was changed. Try again in a minute.
-- "This event was deleted at Google": the event an edit was for no longer exists there. Nothing was changed; refresh the calendar.
+- "This event was deleted at Google": the event an edit was for no longer exists there. Nothing was changed; refresh the calendar. A delete of something Google had already removed is not refused: it completes here, and for an event or one day Activity says Google had already removed it.
 - Poll error "Google listed no events for this calendar": a full listing came back empty while the calendar has events here, so nothing was removed. Check that the calendar is still shared with the connected account at Google.
 - Poll error "Google account disconnected": you disconnected the account. Connect it again and use **Re-attach** on the calendar in its list, or adopt the calendar as local.
 - "Google did not return a refresh token" on connect: Google issues one only on first consent unless asked, and Better-Cal does ask (`prompt=consent`). If it still happens, remove Better-Cal under Third-party access and connect again.

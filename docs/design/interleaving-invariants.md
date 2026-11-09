@@ -126,7 +126,7 @@ Since the 2026-11-09 review the check is exact, against the rows as they were be
 
 ### x-undo-bare: the bare Undo steps back one change at a time
 
-After `u-bare`, the entry undone is the newest one from the session's sources that is neither undone nor an undo's own entry, exactly as on a local calendar; an undo's entry names the entry it undid (`details.google.undoes`), and a change with its undo beside it makes no older entry stale.
+After `u-bare`, the entry undone is the newest one from the session's sources that is neither undone nor an undo's own entry, exactly as on a local calendar; a redo's entry (one that undoes an undo's) is a change of its own, so the bare Undo after an edit, its undo and a redo takes the redo back (decisions.md, the same entry, settled 2026-11-09 when the harness asked); an undo's entry names the entry it undid (`details.google.undoes`), and a change with its undo beside it makes no older entry stale.
 
 From: decisions.md, "The bare Undo steps one change further back on a Google calendar as it does locally"; api-contract.md, `POST /undo` ("so each call steps one change further back, on a Google calendar as on a local one").
 

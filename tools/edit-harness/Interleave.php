@@ -966,8 +966,16 @@ final class Interleave
         $entries = $this->db->all('SELECT id, source, details_json, undone FROM mutations WHERE user_id = ? ORDER BY id DESC', [$this->userId]);
         if ($do === 'u-bare') {
             $expect = null;
+            // Passed over: an undo's own entry. A redo's entry (one that undoes an undo's) is a change of its own, so the bare
+            // Undo after an edit, its undo and a redo takes the redo back (decisions.md, "The bare Undo steps one change further
+            // back on a Google calendar as it does locally", settled 2026-11-09).
+            $byId = array_column($entries, null, 'id');
+            $passedOver = static function (array $e) use ($byId): bool {
+                $of = self::undoes($e['details_json']);
+                return $of !== null && self::undoes($byId[$of]['details_json'] ?? null) === null;
+            };
             foreach ($entries as $e) {
-                if ((int) $e['undone'] === 0 && in_array($e['source'], ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'], true) && self::undoes($e['details_json']) === null) {
+                if ((int) $e['undone'] === 0 && in_array($e['source'], ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'], true) && !$passedOver($e)) {
                     $expect = (int) $e['id'];
                     break;
                 }

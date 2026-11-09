@@ -493,7 +493,7 @@ return static function (Db $db): void {
         check('a poll after changes nothing', $sameAfterPoll($s));
     });
 
-    scenario('google undo: a redo bringing a day back where a poll made a row since takes that row, its id and tag kept', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $remote, $dayRow): void {
+    scenario('google undo: a redo bringing a day back where a poll made a row since takes that row, its id and tag kept (what that row owns is its place and tag, not the title)', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $remote, $dayRow): void {
         $s = $setup();
         $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
         $s->events->throwDeferred();
@@ -645,7 +645,7 @@ return static function (Db $db): void {
         $after = $last($s);
         checkEq('forced: the before title at Google and here, undone, the overwrite named', ['Sample weekly', 'Sample weekly', 1, true],
             [$s->fake->events['smpl2weekly']['summary'], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $undone((int) $entry['id']),
-                str_contains((string) $after['summary'], 'put back over it, as forced')]);
+                str_contains((string) $after['summary'], 'Put back over a change made at Google since, as forced:') && !str_contains((string) $after['summary'], 'Google kept something else')]);
     });
 
     scenario('google series undo: Finish of a half-done undo whose entry is gone completes from what the pending row kept (R4)', function () use ($setup, $masterId, $last, $iso, $pending, $db): void {
@@ -723,5 +723,89 @@ return static function (Db $db): void {
         }
         checkEq('stale, saying the day left its series; nothing sent', [['stale_undo', true], []],
             [$caught, array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET'))]);
+    });
+
+    // The third read (F1 to F6) and the validated cases 178 and 368: grounds by date and by what a row owns, and lines composed whole.
+    scenario('google undo: two days deleted in one series undo in either order; a skip is its own date\'s (F1)', function () use ($setup, $masterId, $last, $iso): void {
+        foreach ([false, true] as $reverse) {
+            $s = $setup();
+            $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+            $s->events->throwDeferred();
+            $first = $last($s);
+            $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-04-12 10:00'));
+            $s->events->throwDeferred();
+            $second = $last($s);
+            [$a, $b] = $reverse ? [$second, $first] : [$first, $second];
+            checkEq(($reverse ? 'newest first' : 'oldest first') . ': both undo, both days back at Google', [null, null, 'confirmed', 'confirmed'], [
+                refusal(fn() => $s->undo->undoById($s->u, (int) $a['id'])), refusal(fn() => $s->undo->undoById($s->u, (int) $b['id'])),
+                $s->fake->events['smpl2weekly_20270308T180000Z']['status'] ?? null, $s->fake->events['smpl2weekly_20270412T170000Z']['status'] ?? null]);
+        }
+    });
+
+    scenario('google undo: the edit that made a day\'s row is not staled by a later edit of another field of that row (F2)', function () use ($setup, $masterId, $last, $iso, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $made = $last($s);
+        $s->events->patch($s->u, (int) $dayRow($s, '2027-03-08 18:00:00')['id'], ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'description' => 'Sample day notes']);
+        $s->events->throwDeferred();
+        checkEq('the title undone; the notes stay, at Google and here', [null, 'Sample weekly', 'Sample day notes', 'Sample day notes'], [
+            refusal(fn() => $s->undo->undoById($s->u, (int) $made['id'])), $s->fake->events['smpl2weekly_20270308T180000Z']['summary'] ?? null,
+            $s->fake->events['smpl2weekly_20270308T180000Z']['description'] ?? null, $dayRow($s, '2027-03-08 18:00:00')['description'] ?? null]);
+    });
+
+    scenario('google series undo: a count change undoes after a later time change; the days come back at the new time (seed 307 case 178)', function () use ($setup, $masterId, $last, $iso, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=12']);
+        $count = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+        checkEq('not stale; the rule back to ten, the start at the new time', [null, 'FREQ=WEEKLY;COUNT=10', $iso('2027-03-01 11:00')], [
+            refusal(fn() => $s->undo->undoById($s->u, (int) $count['id'])), $db->scalar('SELECT rrule FROM events WHERE id = ?', [$masterId($s)]), $s->fake->events['smpl2weekly']['start']['dateTime'] ?? null]);
+    });
+
+    scenario('google undo: lines composed from their parts: a Finish\'s note after the calendar, a forced overwrite under its own heading, a line written before actions were kept not doubled (F3 to F5)', function () use ($setup, $masterId, $last, $iso, $remote, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        $s->t->writes = 0;
+        $s->t->staleAt = 2;
+        try {
+            $s->undo->undoById($s->u, (int) $entry['id']);
+        } catch (HttpError) {
+        }
+        $s->t->staleAt = null;
+        $s->events->googleFinish($s->u, (int) $db->scalar('SELECT id FROM google_pending WHERE user_id = ?', [$s->u]));
+        $s->events->throwDeferred();
+        $finished = (string) $last($s)['summary'];
+        check('Finish: "on Google calendar" then the note, one full stop each, no ". on"', str_contains($finished, "on Google calendar 'Sample crew'. Finished at Google from Review.") && !str_contains($finished, '. on '));
+
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        $remote($s, 'smpl2weekly', ['summary' => 'Sample remote title']);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $s->undo->undoById($s->u, (int) $entry['id'], true);
+        $forced = (string) $last($s)['summary'];
+        check('forced: its own heading, nothing said kept', str_contains($forced, 'Put back over a change made at Google since, as forced:') && !str_contains($forced, 'Google kept something else'));
+
+        $legacy = "Changed Sample weekly (all events): title from 'Sample weekly' to 'Sample renamed'. on Google calendar 'Sample crew' Google kept something else: a day changed at Google.";
+        checkEq('a line written before actions were kept: its action alone, the calendar not repeated', [
+            "Undid: Changed Sample weekly (all events): title from 'Sample weekly' to 'Sample renamed' on Google calendar 'Sample crew'.",
+        ], [BetterCal\Domain\GoogleUndo::line(BetterCal\Domain\GoogleUndo::undoSummary($legacy, json_encode(['google' => ['kind' => 'series']])), 'Sample crew')]);
+    });
+
+    scenario('google undo: a deleted day\'s undo after the series\' clock moved says the times changed (F6)', function () use ($setup, $masterId, $last, $iso): void {
+        $s = $setup();
+        $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+        $s->events->throwDeferred();
+        $delete = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+        $caught = null;
+        try {
+            $s->undo->undoById($s->u, (int) $delete['id']);
+        } catch (HttpError $e) {
+            $caught = [$e->errorCode, str_contains($e->getMessage(), "times changed")];
+        }
+        checkEq('stale, saying the times changed', ['stale_undo', true], $caught);
     });
 };

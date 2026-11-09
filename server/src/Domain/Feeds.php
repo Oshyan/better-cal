@@ -1004,8 +1004,16 @@ final class Feeds
                         $changed['location_provider'] = null;
                         $changed['location_placed_at'] = null;
                     }
+                    // What a person would undo, by the one reading (Undo::touchesOf: a skip is its own date's).
+                    foreach (Undo::touchesOf(['events' => [$current]], ['events' => [array_merge($current, $changed)]]) as [$key, $col]) {
+                        if (array_key_exists((string) $col, $changed) || str_starts_with((string) $col, Undo::SKIP)) {
+                            $touches[] = [$key, (string) $col];
+                        }
+                    }
                     foreach (array_keys($changed) as $col) {
-                        $touches[] = [Undo::keyOf('events', ['id' => (int) $current['id']]), (string) $col];
+                        if ((string) $col !== 'exdates_json') {
+                            $touches[] = [Undo::keyOf('events', ['id' => (int) $current['id']]), (string) $col];
+                        }
                     }
                     $changed['updated_at'] = Time::nowDb();
                     if ($etag !== null && $etag !== ($current['google_etag'] ?? null)) {

@@ -1327,14 +1327,18 @@ trait SeriesPlans
             $targets = json_decode((string) $row['targets_json'], true) ?: [];
             $uids = array_values(array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets)));
             $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
-            (new GoogleUndo($this->db, $this->undo))->finishUndo($undone, $calendar, $summary . GoogleUndo::FINISHED, $differences,
-                json_decode((string) $row['befores_json'], true) ?: [], $local, $uids, array_keys($out['readbacks']));
+            (new GoogleUndo($this->db, $this->undo))->finishUndo($undone, $calendar, $summary, $differences,
+                json_decode((string) $row['befores_json'], true) ?: [], $local, $uids, array_keys($out['readbacks']), (array) ($plan['forced'] ?? []), GoogleUndo::FINISHED);
             if ($differences !== []) {
                 (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], (string) $calendar['name'], $differences);
             }
         } else {
+            // Named for what it was: an undo of a change, or a redo (an undo of an undo's entry).
+            $redo = (json_decode((string) ($undone['details_json'] ?? ''), true)['google']['undoes'] ?? null) !== null;
+            $what = GoogleUndo::actionOf((string) ($plan['summary'] ?? ''));
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
-                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900));
+                GoogleUndo::line(($redo ? 'Put back at Google: a redo that stopped part way is taken back, so this stays undone: ' . $what
+                    : 'Put back at Google: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));
         }
         return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }

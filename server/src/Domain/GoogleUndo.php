@@ -249,6 +249,10 @@ final class GoogleUndo
      * names (a later "this and following" took it into a series of its own,
      * a rule or bound change dropped it) is refused as stale, plainly, with
      * nothing sent. An id that names no day of a series is itself.
+     * dayAt answers the day's whole identity, its Google id and its
+     * occurrence key there (null for no day of a series), and the undo
+     * acts on that alone: the remote id, the skip here and the ground its
+     * own entry records are one day.
      */
     /** dayAt for an entry, before any other check (Undo::undoById): its day, by the Google id it names. */
     public static function refuseLeftSeriesOf(Db $db, Undo $undo, array $mutation): void
@@ -263,22 +267,22 @@ final class GoogleUndo
         }
     }
 
-    private function dayAt(array $mutation, array $calendar, string $googleId): string
+    private function dayAt(array $mutation, array $calendar, string $googleId): array
     {
         $key = GoogleSync::droppedInstance($googleId);
         $cut = strrpos($googleId, '_');
         if ($key === null || $cut === false) {
-            return $googleId;
+            return ['googleId' => $googleId, 'key' => null];
         }
         $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [(int) $calendar['id'], substr($googleId, 0, $cut)]);
         if ($master !== null && empty($master['rrule'])) {
-            return $googleId;
+            return ['googleId' => $googleId, 'key' => (string) $key];
         }
         if ($master !== null) {
             $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
             if ($at !== null) {
-                return $at === (string) $key ? $googleId
-                    : GoogleWriter::instanceId(substr($googleId, 0, $cut), $at, (int) $master['all_day'] === 1, (string) $master['tzid']);
+                return ['googleId' => $at === (string) $key ? $googleId
+                    : GoogleWriter::instanceId(substr($googleId, 0, $cut), $at, (int) $master['all_day'] === 1, (string) $master['tzid']), 'key' => $at];
             }
         }
         throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');
@@ -448,8 +452,12 @@ final class GoogleUndo
         if ($calendar === null || !GoogleWriter::writable($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
-        // A day is where its series has it now (dayAt): a later change may have carried it.
-        $googleId = $this->dayAt($mutation, $calendar, (string) $g['googleId']);
+        // A day is where its series has it now (dayAt): a later change may have carried it. Its id
+        // and its occurrence there are the day's identity for the whole undo, at Google and here
+        // alike; the occurrence the entry recorded is never read past this point.
+        $day = $this->dayAt($mutation, $calendar, (string) $g['googleId']);
+        $googleId = $day['googleId'];
+        unset($g['occurrence']['key']);
         $writer = $this->writer();
         $summary = self::line(self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? '')), (string) $calendar['name']);
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
@@ -565,8 +573,8 @@ final class GoogleUndo
                 return ['entity' => 'event', 'op' => 'update'];
 
             case self::CREATE:
-                $occurrence = $row === null && is_array($g['occurrence'] ?? null) && is_string($g['occurrence']['uid'] ?? null) && is_string($g['occurrence']['key'] ?? null)
-                    ? $g['occurrence'] : null;
+                $occurrence = $row === null && $day['key'] !== null && is_array($g['occurrence'] ?? null) && is_string($g['occurrence']['uid'] ?? null)
+                    ? ['key' => $day['key']] + $g['occurrence'] : null;
                 if ($row === null && $occurrence !== null) {
                     // A day of a series brought back with no row of its own: skipped again, as deleting
                     // that one occurrence skips it (Events: the instance deleted at Google, a skip here).

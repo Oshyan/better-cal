@@ -2928,11 +2928,10 @@ final class GoogleSeries
      * which the plan doesn't name), once the change's writer has run,
      * follows its series as written by the one composition the sync and an
      * undo use: its day is where the series has it now (Feeds::ofSeries,
-     * read from the series the row stood under), each field it doesn't own
-     * is the series' (Feeds::followed: a place's text and the coordinates
-     * picked for it one value), its own placement is read by
-     * OwnFields::placed, and it has the series' tags and people where it
-     * owns none (a day's row carries its series' as a copy). A day the
+     * read from the series the row stood under), its own placement read by
+     * OwnFields::placed, and each field it doesn't own, tags and people
+     * among them, the series' (Feeds::followSeries, over Feeds::followed: a
+     * place's text and the coordinates picked for it one value). A day the
      * series as written no longer has can't be placed: the part here is
      * refused (the writer's work rolled back, the row and what hangs off it
      * kept), and Review says why.
@@ -2954,12 +2953,12 @@ final class GoogleSeries
                 $day = Words::date(Cal::dnOf($key->setTimezone(Time::zone((int) $master['all_day'] === 1 ? 'UTC' : (string) $master['tzid']))), (int) Time::nowUtc()->format('Y'));
                 throw HttpError::conflict('google_finish_kept', "'" . (string) $row['title'] . "' on $day was changed here after this change stopped, and the change leaves the series without that day");
             }
-            // The series' place is its text and the coordinates picked for it, one value.
-            $target += array_intersect_key($master, array_flip(OwnFields::COORDINATE_COLUMNS));
-            foreach ($own as $field) {
-                $target = array_diff_key($target, array_flip(OwnFields::columnsOf($field)));
+            // Its day and its times: where the series has the day now (Feeds::ofSeries), its own placement read by OwnFields::placed.
+            $placing = ['recurrence_instance_utc', 'google_event_id', ...array_keys(\BetterCal\Domain\Series\Model::SERIES_COLUMNS)];
+            if (array_intersect(OwnFields::PLACEMENT, $own) === []) {
+                $placing = array_merge($placing, ['start_utc', 'end_utc', 'all_day', 'tzid']);
             }
-            $after = OwnFields::placed(Feeds::followed($row, $target), $master, $own);
+            $after = OwnFields::placed(array_merge($row, array_intersect_key($target, array_flip($placing))), $master, $own);
             $patch = [];
             foreach ($after as $col => $value) {
                 if (array_key_exists($col, $row) && !Feeds::sameValue($col, $row[$col], $value)) {
@@ -2968,14 +2967,10 @@ final class GoogleSeries
             }
             if ($patch !== []) {
                 $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+                $row = array_merge($row, $patch);
             }
-            foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
-                if (in_array($field, $own, true)) {
-                    continue;
-                }
-                $this->db->run("DELETE FROM `$table` WHERE event_id = ?", [$id]);
-                $this->db->run($this->db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$id, (int) $master['id']]);
-            }
+            // What it inherits, tags and people among them: the one composition (Feeds::followSeries).
+            Feeds::followSeries($this->db, $row, $master, $own);
         }
     }
 

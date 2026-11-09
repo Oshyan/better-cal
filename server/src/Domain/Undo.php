@@ -1025,6 +1025,187 @@ final class Undo
         return $out;
     }
 
+    /**
+     * An entry's ground as stored before 1.5.5 rewritten in today's form,
+     * once, by migration 077 (whose docblock lists every form and why):
+     * one representation of grounds in the database, so a later change is
+     * always found under the keys an older entry recorded (staleFor reads
+     * them as stored, never two ways). Each stored touch is read from what
+     * the entry's own snapshots ($before, $after, pieces included) say of
+     * its row: a touch of a day's row becomes the day's ground on its
+     * series' row (a field, dayGround; the whole row, the fields it owned,
+     * as touchesOf writes a day made or removed; a column that places the
+     * day in its series, what dayTouches reads from the row's two sides),
+     * a tag or person of a day the day's tags or people, a series' whole
+     * skips column the dates it skipped or brought back (skipsChanged),
+     * an older day's mark on its series ("~") nothing beyond the day's own
+     * grounds. A touch whose row the snapshots don't show, of a row that
+     * is a day of a series now ($rowsNow: events rows read now, by id), or
+     * a series' skips column with no snapshot of it, can't be read safely:
+     * it becomes the whole series ("*"), which every later change to that
+     * series makes stale. Today's ground of the snapshots (touchesOf, and
+     * restoredGround for an entry whose undo restores them, $restores)
+     * is added, as record() adds it. Anything else stays as stored. Pure.
+     *
+     * @param list<array{0:string,1:string}> $touches
+     * @param array<int,array> $rowsNow
+     * @return list<array{0:string,1:string}>
+     */
+    public static function legacyGround(array $touches, array $before, array $after, array $rowsNow, bool $restores): array
+    {
+        $sides = [];
+        foreach (['was' => $before, 'now' => $after] as $side => $tables) {
+            foreach ($tables['events'] ?? [] as $r) {
+                if (is_array($r) && isset($r['id'])) {
+                    $sides[(int) $r['id']][$side] = $r;
+                }
+            }
+        }
+        $isDay = static fn(?array $r): bool => $r !== null && ($r['recurrence_instance_utc'] ?? null) !== null && !empty($r['recurrence_parent_id']);
+        $seriesOf = static fn(array $r): string => self::keyOf('events', ['id' => $r['recurrence_parent_id']]);
+        $whole = static function (array $r) use ($seriesOf): array {
+            return array_map(static fn(string $f): array => [$seriesOf($r), self::dayGround((string) $r['recurrence_instance_utc'], $f)], self::ownOf($r));
+        };
+        // A row of events by id: [was, now] from the snapshots, or null when they don't show it.
+        $snap = static fn(int $id): ?array => isset($sides[$id]) ? [$sides[$id]['was'] ?? null, $sides[$id]['now'] ?? null] : null;
+        // A day's row's ground in today's form, for one stored column of it.
+        $ofDay = static function (array $pair, string $col) use ($whole): array {
+            [$was, $now] = $pair;
+            $row = $now ?? $was;
+            if ($col === '+') {
+                return []; // a row joining it: never a conflict, then or now
+            }
+            if ($col === '*') {
+                return array_merge($was === null ? [] : $whole($was), $now === null ? [] : $whole($now));
+            }
+            $field = self::fieldOfColumn($col);
+            if ($field !== null) {
+                return [[self::keyOf('events', ['id' => $row['recurrence_parent_id']]), self::dayGround((string) $row['recurrence_instance_utc'], $field)]];
+            }
+            return $was !== null && $now !== null ? self::dayTouches($was, $now) : $whole($row);
+        };
+        $links = [];
+        foreach ([$before, $after] as $tables) {
+            foreach (self::LINK_FIELDS as $table => $field) {
+                foreach ($tables[$table] ?? [] as $r) {
+                    if (is_array($r) && isset($r['event_id'])) {
+                        $links[self::keyOf($table, $r)] = [(int) $r['event_id'], $field];
+                    }
+                }
+            }
+        }
+        $out = [];
+        foreach ($touches as [$rowKey, $col]) {
+            [$rowKey, $col] = [(string) $rowKey, (string) $col];
+            if (isset($links[$rowKey])) {
+                [$eventId, $field] = $links[$rowKey];
+                $pair = $snap($eventId);
+                $row = $pair === null ? null : ($pair[1] ?? $pair[0]);
+                if ($isDay($row)) {
+                    $out[] = [$seriesOf($row), self::dayGround((string) $row['recurrence_instance_utc'], $field)];
+                } elseif ($pair === null && $isDay($rowsNow[$eventId] ?? null)) {
+                    $out[] = [$seriesOf($rowsNow[$eventId]), '*'];
+                } else {
+                    $out[] = [$rowKey, $col];
+                }
+                continue;
+            }
+            if (!preg_match('/^events:(\d+)$/', $rowKey, $m)) {
+                $out[] = [$rowKey, $col];
+                continue;
+            }
+            $id = (int) $m[1];
+            $pair = $snap($id);
+            $row = $pair === null ? null : ($pair[1] ?? $pair[0]);
+            if ($isDay($row)) {
+                $out = array_merge($out, $ofDay($pair, $col));
+            } elseif ($pair === null && $isDay($rowsNow[$id] ?? null)) {
+                $out[] = [$seriesOf($rowsNow[$id]), '*'];
+            } elseif ($col === 'exdates_json') {
+                $out = array_merge($out, $pair !== null && $pair[0] !== null && $pair[1] !== null
+                    ? array_map(static fn(string $g): array => [$rowKey, $g], self::skipsChanged($pair[0], $pair[1]))
+                    : [[$rowKey, '*']]);
+            } elseif ($col === '~') {
+                $carried = false;
+                foreach ($sides as $s) {
+                    foreach ($s as $r) {
+                        $carried = $carried || ($isDay($r) && $seriesOf($r) === $rowKey);
+                    }
+                }
+                if (!$carried) {
+                    $out[] = [$rowKey, '*'];
+                }
+            } else {
+                $out[] = [$rowKey, $col];
+            }
+        }
+        $out = array_merge($out, self::touchesOf($before === [] ? null : $before, $after === [] ? null : $after), $restores ? self::restoredGround($before, $after) : []);
+        $unique = [];
+        foreach ($out as [$rowKey, $col]) {
+            $unique[$rowKey . "\n" . $col] = [$rowKey, $col];
+        }
+        return array_values($unique);
+    }
+
+    /**
+     * Migration 077 for one entry: its stored ground rewritten in today's
+     * form (legacyGround), read from its snapshots and pieces and the
+     * events rows now. Returns whether anything changed.
+     */
+    public function rewriteLegacyGround(int $mutationId): bool
+    {
+        $m = $this->db->one('SELECT id, before_json, after_json, details_json FROM mutations WHERE id = ?', [$mutationId]);
+        if ($m === null) {
+            return false;
+        }
+        $stored = array_map(static fn(array $t): array => [(string) $t['row_key'], (string) $t['col']],
+            $this->db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ? ORDER BY row_key, col', [$mutationId]));
+        [$before, $after] = [self::tables($m['before_json'] ?? null), self::tables($m['after_json'] ?? null)];
+        foreach (['before' => &$before, 'after' => &$after] as $side => &$tables) {
+            foreach ($this->db->all('SELECT DISTINCT table_name FROM mutation_rows WHERE mutation_id = ? AND side = ?', [$mutationId, $side]) as $t) {
+                try {
+                    foreach ($this->piecesOf($mutationId, $side, (string) $t['table_name']) as $rows) {
+                        $tables[(string) $t['table_name']] = array_merge($tables[(string) $t['table_name']] ?? [], $rows);
+                    }
+                } catch (HttpError) {
+                    // A piece that can't be read back: its rows aren't shown, and a day's touch of them reads as one the snapshots don't show.
+                }
+            }
+        }
+        unset($tables);
+        $ids = [];
+        foreach ($stored as [$rowKey]) {
+            if (preg_match('/^events:(\d+)$/', $rowKey, $mm)) {
+                $ids[] = (int) $mm[1];
+            } elseif (preg_match('/^event_(?:tags|people):(\d+)\|/', $rowKey, $mm)) {
+                $ids[] = (int) $mm[1];
+            }
+        }
+        $rowsNow = [];
+        foreach (array_chunk(array_values(array_unique($ids)), 200) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            foreach ($this->db->all("SELECT id, recurrence_parent_id, recurrence_instance_utc FROM events WHERE id IN $in", $params) as $r) {
+                $rowsNow[(int) $r['id']] = $r;
+            }
+        }
+        $details = json_decode((string) ($m['details_json'] ?? ''), true);
+        $ground = self::legacyGround($stored, $before, $after, $rowsNow, !GoogleUndo::carries(is_array($details) ? $details : null));
+        $norm = static function (array $list): array {
+            $keys = array_map(static fn(array $t): string => mb_substr($t[0], 0, 160) . "\n" . mb_substr($t[1], 0, 64), $list);
+            $keys = array_values(array_unique($keys));
+            sort($keys);
+            return $keys;
+        };
+        if ($norm($ground) === $norm($stored)) {
+            return false;
+        }
+        $this->db->tx(function () use ($mutationId, $ground): void {
+            $this->db->run('DELETE FROM mutation_touches WHERE mutation_id = ?', [$mutationId]);
+            $this->recordTouches($mutationId, $ground);
+        });
+        return true;
+    }
+
     /** The ground of one skipped date of a series (touchesOf): the prefix, then the occurrence key. */
     public const SKIP = 'skip:';
 
@@ -1540,14 +1721,10 @@ final class Undo
         if ($mine === self::OCCURRENCES || $later === self::OCCURRENCES) {
             $other = $mine === self::OCCURRENCES ? $later : $mine;
             return $other === self::OCCURRENCES || $other === '~' || $dayOf($other) !== null
-                || in_array($other, ['rrule', 'exdates_json'], true) || in_array($other, $times, true);
+                || $other === 'rrule' || in_array($other, $times, true);
         }
         [$d1, $d2] = [$dayOf($mine), $dayOf($later)];
         if ($d1 !== null || $d2 !== null) {
-            // An older entry's whole skips column stands on every skip.
-            if ($mine === 'exdates_json' || $later === 'exdates_json') {
-                return str_starts_with($d1 === null ? $later : $mine, self::SKIP);
-            }
             return $d1 !== null && $d2 !== null && $d1[0] === $d2[0] && ($d1[1] === $d2[1] || $d1[1] === '*' || $d2[1] === '*');
         }
         return $mine === $later || (in_array($mine, $times, true) && in_array($later, $times, true));
@@ -2210,13 +2387,14 @@ final class Undo
         if (is_array($details) && is_array($details['settings'] ?? null)) {
             Settings::restore($this->db, (int) $mutation['user_id'], $details['settings']);
         }
-        // Every row of a series it put back follows that series as restored
-        // (followRestored): the rows past a shortened end go, named.
-        $removed = $this->followRestored($before);
         // Each day's row whose own part it changed stays only while it owns
         // anything or holds anything here alone: the retention rule, the
-        // one every remover applies (Feeds::retained).
+        // one every remover applies (Feeds::retained). Before the rows
+        // follow their series, which gives a row the series' tags and people.
         $this->retain($ownChanged);
+        // Every row of a series it put back follows that series as restored
+        // (followRestored): the rows past a shortened end go, named.
+        $removed = $this->followRestored($before, $after);
         // What it put back passes the trip rules as it now stands, under
         // force too: a refusal throws, rolling all of it back, and the
         // entry stays to undo once the conflict is gone.
@@ -2250,12 +2428,62 @@ final class Undo
     }
 
     /**
+     * The fields of series $seriesId an entry changed, read from its two
+     * snapshots: each content column of the master that differs, and its
+     * tags or people where its links differ; none when the entry removed
+     * the series whole, whose restore brings its rows back with it as
+     * they were. The fields a restore of that entry puts back on the
+     * series, so the ones its days follow again (followRestored). Pure.
+     *
+     * @return list<string>
+     */
+    private static function seriesFieldsChanged(int $seriesId, array $before, array $after): array
+    {
+        $masterOf = static function (array $tables) use ($seriesId): ?array {
+            foreach ($tables['events'] ?? [] as $r) {
+                if (is_array($r) && (int) ($r['id'] ?? 0) === $seriesId) {
+                    return $r;
+                }
+            }
+            return null;
+        };
+        [$was, $now] = [$masterOf($before), $masterOf($after)];
+        if ($was === null || $now === null) {
+            return [];
+        }
+        $fields = [];
+        foreach (self::changedColumns('events', $was, $now) as $col) {
+            if (($field = OwnFields::fieldOf($col)) !== null) {
+                $fields[] = $field;
+            }
+        }
+        foreach (self::LINK_FIELDS as $table => $field) {
+            $set = static function (array $tables) use ($table, $seriesId): array {
+                $ids = [];
+                foreach ($tables[$table] ?? [] as $r) {
+                    if (is_array($r) && (int) ($r['event_id'] ?? 0) === $seriesId) {
+                        $ids[] = json_encode($r);
+                    }
+                }
+                sort($ids);
+                return $ids;
+            };
+            if ($set($before) !== $set($after)) {
+                $fields[] = $field;
+            }
+        }
+        return array_values(array_unique($fields));
+    }
+
+    /**
      * Every day's row of each series whose master the restore put back,
      * made to follow that series as it now stands, as a forward change
-     * leaves them: in each field it doesn't own (Feeds::ownOf), the
-     * series' value, a place's text and the coordinates picked for it
-     * taken together as one value (Feeds::followed), so a row made after
-     * the undone change never keeps a value copied from it; and a row
+     * leaves them: in each field the restore puts back on the series
+     * (seriesFieldsChanged) that the row doesn't own (Feeds::ownOf), tags
+     * and people included, the series' value, through the one composition
+     * (Feeds::followSeries), so a row made after the undone change never
+     * keeps a value or a link copied from it, and a field the change left
+     * alone is left alone on every row; and a row
      * whose day the series no longer has (a count or rule put back
      * shorter) removed, named by its row and date as the sync names one
      * (Feeds::droppedDay). The same on a calendar here and on a Google
@@ -2264,7 +2492,7 @@ final class Undo
      *
      * @return list<array>
      */
-    private function followRestored(array $before): array
+    private function followRestored(array $before, array $after): array
     {
         $removed = [];
         $feeds = new Feeds($this->db);
@@ -2276,6 +2504,7 @@ final class Undo
             if ($master === null || empty($master['rrule'])) {
                 continue;
             }
+            $fields = self::seriesFieldsChanged((int) $m['id'], $before, $after);
             foreach ($this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [(int) $master['id']]) as $row) {
                 $at = Feeds::ofSeries($row, null, ['exdates_json' => null] + $master);
                 $own = $feeds->ownOf($row, $master);
@@ -2284,19 +2513,7 @@ final class Undo
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                     continue;
                 }
-                $set = [];
-                foreach (array_diff(['title', 'location', 'description', 'url', 'reminders', 'status', 'icon', 'attendance'], $own) as $field) {
-                    foreach (OwnFields::columnsOf($field) as $col) {
-                        if (array_key_exists($col, $master)) {
-                            $set[$col] = $master[$col];
-                        }
-                    }
-                }
-                $after = Feeds::followed($row, $set);
-                $changed = array_filter(array_keys($after), static fn(string $c): bool => array_key_exists($c, $row) && !self::same($row[$c], $after[$c]));
-                if ($changed !== []) {
-                    $this->db->update('events', array_intersect_key($after, array_flip($changed)), 'id = ?', [(int) $row['id']]);
-                }
+                Feeds::followSeries($this->db, $row, $master, $own, $fields);
             }
         }
         return $removed;

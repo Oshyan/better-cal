@@ -67,6 +67,7 @@ Filters that say what they do and can do more, a note of your own on any event, 
 - Quick add previews the draft on the calendar while you type ([#87](https://github.com/Oshyan/better-cal/issues/87))
 - A sidebar that slides out on hover at the left edge ([#115](https://github.com/Oshyan/better-cal/issues/115))
 - See which events have a call, and Join when it's time ([#98](https://github.com/Oshyan/better-cal/issues/98))
+- Undo on a calendar here moves onto the deltas model a Google series undo uses, so staleness reads one way everywhere (decisions.md, stale undo)
 
 ## 1.7: Places and context
 

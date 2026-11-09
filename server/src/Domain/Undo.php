@@ -1769,7 +1769,7 @@ final class Undo
         $below = PHP_INT_MAX;
         do {
             $last = $this->db->one(
-                "SELECT id, summary, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
+                "SELECT id, user_id, summary, details_json, before_json IS NULL AND after_json IS NULL AS log_only FROM mutations
                  WHERE user_id = ? AND undone = 0 AND id < ? AND source IN $in ORDER BY id DESC LIMIT 1",
                 array_merge([$userId, $below], $params)
             );
@@ -1780,8 +1780,11 @@ final class Undo
             // Passed over: an undo's own entry, and a line that changed no
             // row (log-only and touching nothing), whoever wrote it: it is
             // no change to take back. One that changed rows it can't put
-            // back is the answer, below.
-        } while ($this->takesBack($below) || ((int) $last['log_only'] === 1 && $this->db->scalar('SELECT 1 FROM mutation_touches WHERE mutation_id = ? LIMIT 1', [$below]) === null));
+            // back is the answer, below. A whole-series change on a Google
+            // calendar whose undo is held back (GoogleUndo::seriesUndoOff)
+            // is passed over too, so an older change undoes.
+        } while ($this->takesBack($below) || GoogleUndo::seriesUndoOff($this->db, $last)
+            || ((int) $last['log_only'] === 1 && $this->db->scalar('SELECT 1 FROM mutation_touches WHERE mutation_id = ? LIMIT 1', [$below]) === null));
         if ((int) $last['log_only'] === 1) {
             throw HttpError::badRequest("The last change can't be undone here: " . $last['summary'], 'not_undoable');
         }
@@ -1813,6 +1816,10 @@ final class Undo
             $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
             throw HttpError::badRequest(is_string($details['notUndoable'] ?? null) ? $details['notUndoable']
                 : 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)', 'not_undoable');
+        }
+        // Undo and redo of a whole-series change on a Google calendar wait for the setting (Settings google_series_undo).
+        if (GoogleUndo::seriesUndoOff($this->db, $mutation)) {
+            throw HttpError::conflict('not_undoable', GoogleUndo::SERIES_UNDO_OFF);
         }
         // A series with changes not yet at Google takes no undo or redo until they are finished or put back.
         GoogleUndo::refuseWhilePending($this->db, $this, $mutation);

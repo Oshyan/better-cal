@@ -180,7 +180,19 @@ function refusal(callable $fn): ?string
 /** A new account (Setup, as an install makes one): its first calendar and default. */
 function freshUser(Db $db): int
 {
-    return Setup::createOwner($db, 'owner-' . bin2hex(random_bytes(4)) . '@example.test', 'correct horse battery');
+    $u = Setup::createOwner($db, 'owner-' . bin2hex(random_bytes(4)) . '@example.test', 'correct horse battery');
+    // Undo of a whole-series change on a Google calendar is off in 1.5.5
+    // (Settings google_series_undo); the suite and the edit harness measure
+    // it on, as it will ship in 1.5.6. One scenario in google-series-undo.test.php turns it off.
+    seriesUndo($db, $u, true);
+    return $u;
+}
+
+/** Turn the google_series_undo switch on or off for an account (Settings::DEFAULTS). */
+function seriesUndo(Db $db, int $userId, bool $on): void
+{
+    $settings = json_decode((string) $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]), true) ?: [];
+    $db->update('users', ['settings_json' => json_encode(['google_series_undo' => $on] + $settings)], 'id = ?', [$userId]);
 }
 
 /** The newest journal entry's id for an account. */

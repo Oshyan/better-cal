@@ -439,7 +439,9 @@ return [
                 'the series made a trip this and following from the first day: 400 trip_nested, naming the day and its stop, nothing written',
                 'a trip attached to a trip, and a trip to itself: 400 trip_invalid each, naming the rule, nothing written',
                 'a stop on a Google calendar renamed and made a trip: 400 trip_nested, no call to Google, nothing written',
-                'out of its trip, the same edit: sent to Google once, renamed and a trip',
+                // Not named: 'out of its trip, the same edit ...' is the refusal's positive half. Under this mutation the refused
+                // edit already went through, so the same edit again changes nothing and sends nothing, and the assertion's
+                // calls are the first edit's (read, PATCH): it holds whatever the trip rule says, so no gate mutation can fail it.
             ],
         ),
     ],
@@ -447,7 +449,8 @@ return [
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,
         'what' => 'every body sent to Google carries a colorId, a field only Google holds that the app never sends',
-        'patch' => [["'status' => (string) (\$row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',\n        ];", "'status' => (string) (\$row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',\n            'colorId' => '1',\n        ];"]],
+        // Where every body leaves for Google (GoogleWriter::call), after the allowed-list builder, so the check sees what Google would.
+        'patch' => [["        \$http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));", "        if (\$payload !== null) {\n            \$payload['colorId'] = '1';\n        }\n        \$http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));"]],
         'cases' => ['a-color-at-google-survives-writes-here'],
     ],
     [

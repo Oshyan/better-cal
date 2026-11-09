@@ -86,13 +86,16 @@ final class Activity
             array_pop($rows);
         }
         $cutoff = new \DateTimeImmutable('-' . self::UNDO_DAYS . ' days', new \DateTimeZone('UTC'));
-        $entries = array_map(static function (array $r) use ($cutoff): array {
+        $seriesUndo = Settings::googleSeriesUndo($this->db, $userId);
+        $entries = array_map(static function (array $r) use ($cutoff, $seriesUndo): array {
             $at = new \DateTimeImmutable((string) $r['created_at'], new \DateTimeZone('UTC'));
             $details = null;
             if ($r['details_json'] !== null) {
                 $decoded = json_decode((string) $r['details_json'], true);
                 $details = is_array($decoded) ? $decoded : null;
             }
+            // Held back by the setting (GoogleUndo::seriesUndoOff): not undoable, and why.
+            $heldBack = !$seriesUndo && (int) $r['has_snapshot'] === 1 && GoogleUndo::seriesEntry($details);
             return [
                 'id' => (int) $r['id'],
                 'at' => $at->format('Y-m-d\TH:i:sP'),
@@ -103,8 +106,8 @@ final class Activity
                 'summary' => $r['summary'] !== null ? (string) $r['summary'] : '',
                 'details' => $details,
                 'undone' => (int) $r['undone'] === 1,
-                'undoable' => (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff,
-            ];
+                'undoable' => (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff && !$heldBack,
+            ] + ($heldBack ? ['notUndoable' => GoogleUndo::SERIES_UNDO_OFF] : []);
         }, $rows);
 
         return [

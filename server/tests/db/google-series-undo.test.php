@@ -974,4 +974,50 @@ return static function (Db $db): void {
             [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
                 $db->all("SELECT title, description FROM events WHERE calendar_id = ? AND recurrence_instance_utc = '2027-03-08 18:00:00' AND deleted_at IS NULL", [$s->calendarId]))]);
     });
+
+    scenario('google series undo off (1.5.5): undo and redo of a whole-series change refuse with nothing sent to Google; Activity shows it not undoable; a day still undoes; the bare Undo passes over it to an older change', function () use ($setup, $masterId, $last, $undone, $iso, $db): void {
+        $s = $setup();
+        $personal = (int) BetterCal\Domain\Settings::defaultCalendarId($db, $s->u);
+        $local = (int) $s->events->create($s->u, eventAt($personal, 'Pizza night'))['eventId'];
+        $s->events->patch($s->u, $local, ['title' => 'Pizza night, later']);
+        $localEntry = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $seriesEntry = $last($s);
+        // Undone and redone-able while on, then turned off: the redo is held back as well.
+        $s->undo->undoById($s->u, (int) $seriesEntry['id']);
+        $undoEntry = $last($s);
+        seriesUndo($db, $s->u, false);
+        $s->t->calls = [];
+        $words = static function (callable $fn): array {
+            try {
+                $fn();
+                return [];
+            } catch (HttpError $e) {
+                return [$e->status, $e->errorCode, $e->getMessage()];
+            }
+        };
+        $off = [409, 'not_undoable', 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.'];
+        checkEq('the redo of the series undo refuses with the words, nothing sent to Google, the entry not undone', [$off, [], 0],
+            [$words(fn() => $s->undo->undoById($s->u, (int) $undoEntry['id'])), $s->t->calls, $undone((int) $undoEntry['id'])]);
+        checkEq('the Activity entry of the series undo is not undoable, with the reason', [false, $off[2]],
+            [(new BetterCal\Domain\Activity($db))->list($s->u, [])['entries'][0]['undoable'], (new BetterCal\Domain\Activity($db))->list($s->u, [])['entries'][0]['notUndoable'] ?? null]);
+        // A new change for all events while off: refused the same way, forced too.
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed again']);
+        $again = $last($s);
+        $s->t->calls = [];
+        checkEq('its undo, forced or not, refuses with the words and sends nothing', [$off, $off, [], 0],
+            [$words(fn() => $s->undo->undoById($s->u, (int) $again['id'])), $words(fn() => $s->undo->undoById($s->u, (int) $again['id'], true)), $s->t->calls, $undone((int) $again['id'])]);
+        // A single day still undoes.
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $dayEntry = $last($s);
+        $s->undo->undoById($s->u, (int) $dayEntry['id']);
+        check('the undo of a single day goes through', $undone((int) $dayEntry['id']) === 1);
+        // The bare Undo passes over the day's undo, the held-back series entries and the earlier undo, to the local change.
+        $s->t->calls = [];
+        $s->undo->undoLatest($s->u);
+        checkEq('the bare Undo undoes the older local change and sends nothing to Google; the series entries stay', [1, 'Pizza night', [], 0, 0, 'Sample renamed again'],
+            [$undone((int) $localEntry['id']), (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$local]), $s->t->calls,
+                $undone((int) $again['id']), $undone((int) $undoEntry['id']), $s->fake->events['smpl2weekly']['summary'] ?? null]);
+    });
 };

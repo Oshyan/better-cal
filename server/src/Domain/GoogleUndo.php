@@ -99,6 +99,29 @@ final class GoogleUndo
     ) {
     }
 
+    /** What an entry held back by seriesUndoOff says, from undo, redo and the Activity list alike. */
+    public const SERIES_UNDO_OFF = 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.';
+
+    /**
+     * Is this entry's undo held back by the account's google_series_undo
+     * setting being off (Settings)? A whole-series entry on a Google
+     * calendar (kind series: all events, this and following, delete
+     * following, answers from a day on, a series made or deleted, and the
+     * entry of such an undo, which its redo undoes). Everything else undoes
+     * as built.
+     */
+    public static function seriesUndoOff(Db $db, array $mutation): bool
+    {
+        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+        return self::seriesEntry(is_array($details) ? $details : null) && !Settings::googleSeriesUndo($db, (int) $mutation['user_id']);
+    }
+
+    /** Is this a whole-series entry on a Google calendar (kind series)? Pure. */
+    public static function seriesEntry(?array $details): bool
+    {
+        return self::carries($details) && (string) $details['google']['kind'] === self::SERIES;
+    }
+
     /** Does this entry's details carry a Google before state undo can send back? */
     public static function carries(?array $details): bool
     {

@@ -416,10 +416,10 @@ final class Events
      *
      * @param list<array> $befores
      */
-    private function googleSeriesJournal(int $userId, string $summary, array $calendar, int $eventId, array $befores, array $beforeTables, array $afterTables, array $kept = []): void
+    private function googleSeriesJournal(int $userId, string $summary, array $calendar, int $eventId, array $befores, array $beforeTables, array $afterTables, array $kept = [], array $touches = []): void
     {
         // Composed from its parts (GoogleUndo::line): what was done, the calendar, what Google kept.
-        $this->googleUndo()->recordSeries($userId, $eventId, $summary, $calendar, $befores, $beforeTables, $afterTables, null, $kept);
+        $this->googleUndo()->recordSeries($userId, $eventId, $summary, $calendar, $befores, $beforeTables, $afterTables, null, $kept, touches: $touches);
     }
 
     /**

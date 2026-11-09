@@ -1,0 +1,31 @@
+{
+    "about": "A count raised for all events (8 to 10), then a day the raise added given its own title at Google, then the raise's entry undone: stale, since undoing it would remove that day and its edit (x-undo-fields; decisions.md, \"The days a change brought into being are its ground\").",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-all",
+            "pick": 0.99,
+            "what": "count"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.55,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.0
+        }
+    ]
+}

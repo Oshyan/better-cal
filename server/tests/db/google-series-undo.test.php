@@ -877,4 +877,66 @@ return static function (Db $db): void {
             [refusal(fn() => $s->undo->undoById($s->u, (int) $first['id'])),
                 array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$row]), 'name')]);
     });
+
+    // The undo carries days as a forward change does (rule A), the days a change brought into being are its ground (rule B), and a pending undo keeps its bare action (rule D): the fifth adversarial read's p1, p5 and p13.
+    scenario('google series undo: a rule change undone after a later edit of a day both rules have keeps that day on its date (p1)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10']);
+        $s->events->throwDeferred();
+        $rule = $last($s);
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $error = refusal(fn() => $s->undo->undoById($s->u, (int) $rule['id']));
+        $g = $held($s, 'smpl2weekly');
+        checkEq('the undo goes through; 8 Mar keeps its title on its own date at Google and here', [null, ['Sample day title', $iso('2027-03-08 10:00')], 'Sample day title'],
+            [$error, $g['records']['20270308T180000Z'] ?? null, $dayRow($s, '2027-03-08 18:00:00')['title'] ?? null]);
+    });
+
+    scenario('google series undo: a count raise undone after a later edit of a day it added is stale, saying why; forced, the day goes and is named (p5)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=14']);
+        $s->events->throwDeferred();
+        $count = $last($s);
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-05-24 10:00'), 'title' => 'Sample day title', 'tagNames' => ['sample-tag']]);
+        $s->events->throwDeferred();
+        $row = $dayRow($s, '2027-05-24 17:00:00');
+        $caught = null;
+        try {
+            $s->undo->undoById($s->u, (int) $count['id']);
+        } catch (HttpError $e) {
+            $caught = $e;
+        }
+        checkEq('stale, naming the day the change brought into being; nothing written', ['stale_undo', true, 'Sample day title'],
+            [$caught?->errorCode, $caught !== null && str_contains($caught->getMessage(), 'Mon 24 May 2027 exists because of this change'), $dayRow($s, '2027-05-24 17:00:00')['title'] ?? null]);
+        $s->undo->undoById($s->u, (int) $count['id'], true);
+        $entry = $last($s);
+        $removed = json_decode((string) $entry['details_json'], true)['google']['removedDays'] ?? [];
+        checkEq('forced: the count is back, the day is gone at Google and here, and the entry names it by row and date', [
+            true, null, [[(int) $row['id'], '2027-05-24']], true,
+        ], [str_contains((string) $held($s, 'smpl2weekly')['rule'], 'COUNT=10'), $dayRow($s, '2027-05-24 17:00:00'),
+            array_map(static fn(array $d): array => [(int) $d['id'], (string) $d['day']], $removed), str_contains((string) $entry['summary'], "Removed here: 'Sample day title' on 2027-05-24")]);
+    });
+
+    scenario('google series undo: Put back of a half-done redo names the calendar once, the pending row keeping the bare action (p13)', function () use ($setup, $masterId, $last, $iso, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $undoEntry = $last($s);
+        $s->t->writes = 0;
+        $s->t->staleAt = 2;
+        try {
+            $s->undo->undoById($s->u, (int) $undoEntry['id']);
+        } catch (HttpError) {
+        }
+        $s->t->staleAt = null;
+        $p = $db->one('SELECT id, plan_json FROM google_pending WHERE user_id = ?', [$s->u]);
+        $plan = json_decode((string) $p['plan_json'], true);
+        $s->events->googlePutBack($s->u, (int) $p['id']);
+        $s->events->throwDeferred();
+        $line = (string) $last($s)['summary'];
+        checkEq('the pending plan keeps the bare action and no composed line; the Put back line names the calendar once', [
+            false, false, 1, true,
+        ], [array_key_exists('summary', $plan), str_contains((string) ($plan['action'] ?? ''), 'on Google calendar'), substr_count($line, 'on Google calendar'), str_starts_with($line, 'Put back at Google: a redo')]);
+    });
 };

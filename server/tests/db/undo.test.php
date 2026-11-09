@@ -732,4 +732,34 @@ return static function (Db $db): void {
         checkEq('undo: a clock change for all events is stale once a date at the new clock was skipped: its restore puts every date back (t1, a calendar here)', 'stale_undo',
             refusal(fn() => $d->undo->undoById($u, $clock)));
     });
+
+    // A snapshot undo leaves every row following the series it restores, and the days a change brought into being are its ground (rules B and C, the fifth adversarial read's p6 and p11 on a calendar here).
+    scenario('undo: a count raise undone after a later edit of a day it added is stale, saying why; forced, the day goes and is named; a rename undone leaves a row made since following the old title', function () use ($db, $d, $u, $series): void {
+        $s = $series('Sample stretch', '2027-02-01');
+        planned($d->events, $u, $s, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'rrule' => 'FREQ=DAILY;COUNT=14']);
+        $count = lastEntry($db, $u);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-13T18:00:00+00:00', 'title' => 'Sample day title', 'tagNames' => ['Sample tag D']]);
+        $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        $caught = null;
+        try {
+            $d->undo->undoById($u, $count);
+        } catch (BetterCal\Http\HttpError $e) {
+            $caught = $e;
+        }
+        checkEq('undo: stale, naming the day the count raise brought into being (p6)', ['stale_undo', true],
+            [$caught?->errorCode, $caught !== null && str_contains($caught->getMessage(), 'Sat 13 Feb 2027 exists because of this change')]);
+        $d->undo->undoById($u, $count, true);
+        $note = $db->one('SELECT summary, details_json FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$u]);
+        checkEq('undo: forced, the count is back, no row is left past the end, and a line names the day by row and date (p6)', [
+            'FREQ=DAILY;COUNT=10', [], [[$row, '2027-02-13']],
+        ], [$db->scalar('SELECT rrule FROM events WHERE id = ?', [$s]), $db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]),
+            array_map(static fn(array $x): array => [(int) $x['id'], (string) $x['day']], json_decode((string) $note['details_json'], true)['removedDays'] ?? [])]);
+        $s = $series('Sample walk', '2027-02-01');
+        planned($d->events, $u, $s, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'title' => 'Sample renamed']);
+        $rename = lastEntry($db, $u);
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-03T18:00:00+00:00', 'description' => 'Sample day notes']);
+        checkEq('undo: the rename undoes; the row made since shows the old title with its own notes (p11)', [null, [['Sample walk', 'Sample day notes']]],
+            [refusal(fn() => $d->undo->undoById($u, $rename)), array_map(static fn(array $r): array => [$r['title'], $r['description']],
+                $db->all('SELECT title, description FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]))]);
+    });
 };

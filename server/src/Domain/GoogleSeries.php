@@ -1953,66 +1953,63 @@ final class GoogleSeries
      * The days a series change changed beyond carrying them, put back as
      * the rest of its inverse (inverseEdit is the series' part): a day it
      * skipped or brought back, or a field of its own it gave, took or
-     * changed (on a day it kept, or one it dropped with a shorter count or
-     * a split), found by its place in the series (the nth occurrence of
-     * the series as the change found it and as it left it, so a day carried
-     * to another time, by the change or since, is the same day). Each such
-     * part goes back to what it was, over the day as the planner leaves it
-     * in $target (the planned undo of the series as stored now); every
-     * other part of every day is the planner's, carried as any change
-     * carries it. A part that holds otherwise now than the change left it
-     * is kept and named, or, forced, put back over and named. Pure.
+     * changed (a Google-held group of it, or a field held here alone), on
+     * a day it kept or one it dropped with a shorter count or a split.
+     * A day is the same day through every state by what carried it, never
+     * by its place in a count: from the series as the change found it to
+     * the series as it left it by the change's own moves ($moved, the
+     * entry's MOVE grounds: from => to), and on to the series as it is now
+     * and to $target (the planned undo of it) by $follow, which answers,
+     * for the day at its found and left keys, its key now and in $target
+     * (null where that series has no such day). Each part goes back to
+     * what it was, over the day as the planner leaves it in $target; every
+     * other part of every day is the planner's. A part that holds otherwise
+     * now than the change left it is kept and named, or, forced, put back
+     * over and named. Pure.
      *
+     * @param array<string,string> $moved
+     * @param \Closure(?string,?string):array{0:?string,1:?string} $follow
      * @return array{0:array,1:list<string>,2:list<string>} the target, words for what was kept, words for what was put back over
      */
-    public static function withDayDeltas(array $target, array $before, array $asked, array $now, int $thisYear, bool $force = false): array
+    public static function withDayDeltas(array $target, array $before, array $asked, array $now, int $thisYear, bool $force, array $moved, \Closure $follow): array
     {
-        $states = ['b' => $before, 'a' => $asked, 'c' => $now, 't' => $target];
         $daysOf = static fn(array $s): array => array_map('strval', array_merge(array_keys($s['exceptions']), $s['skips']));
-        $keys = [];
-        $places = [];
-        try {
-            foreach (['b', 'a'] as $s) {
-                $days = $daysOf($states[$s]);
-                $placeOf = $days === [] ? [] : array_flip(\BetterCal\Domain\Series\Model::placesThrough($states[$s]['master'], max($days)));
-                foreach ($days as $k) {
-                    if (isset($placeOf[$k])) {
-                        $places[$placeOf[$k]] = true;
-                    }
-                }
-            }
-            if ($places === []) {
-                return [$target, [], []];
-            }
-            ksort($places);
-            foreach (['b', 'a', 'c', 't'] as $s) {
-                $keys[$s] = \BetterCal\Domain\Series\Model::placesThrough($states[$s]['master'], null, max(array_keys($places)) + 1);
-            }
-        } catch (\InvalidArgumentException | \BetterCal\Domain\Series\WalkIncomplete | \BetterCal\Domain\Series\RuleNotReadable) {
-            return [$target, [], []];
+        // Each day the change found or left, by its key on both sides.
+        $back = array_flip($moved);
+        $days = [];
+        foreach ($daysOf($before) as $kb) {
+            $days[$kb] = [$kb, $moved[$kb] ?? $kb];
         }
-        // A day of a state: whether it is there, skipped, and its own groups' values (the fields Google holds).
+        foreach ($daysOf($asked) as $ka) {
+            $kb = $back[$ka] ?? $ka;
+            $days[$kb] = [$kb, $ka];
+        }
+        ksort($days);
+        // A day of a state: whether it is there, skipped, and its parts:
+        // each Google-held group of its own with its values, each field
+        // it holds here alone (OwnFields::HELD_HERE) as owned.
         $dayOf = static function (array $s, ?string $key): array {
-            if ($key === null) {
-                return ['there' => false, 'skip' => false, 'groups' => []];
-            }
-            $x = $s['exceptions'][$key] ?? null;
-            $groups = [];
-            foreach ($x === null ? [] : OwnFields::googleHeld((array) ($x['own'] ?? [])) as $field) {
+            $x = $key === null ? null : ($s['exceptions'][$key] ?? null);
+            $parts = [];
+            $own = (array) ($x['own'] ?? []);
+            foreach (OwnFields::googleHeld($own) as $field) {
                 $g = self::OWN_GROUP[$field] ?? null;
                 if ($g !== null) {
-                    $groups[$g] = array_map(static fn(string $col): mixed => $x[$col] ?? null, self::GROUPS[$g]);
+                    $parts[$g] = array_map(static fn(string $col): mixed => $x[$col] ?? null, self::GROUPS[$g]);
                 }
             }
-            return ['there' => true, 'skip' => in_array($key, $s['skips'], true), 'groups' => $groups];
+            foreach (array_intersect($own, OwnFields::HELD_HERE) as $field) {
+                $parts['held:' . $field] = true;
+            }
+            return ['there' => $key !== null, 'skip' => $key !== null && in_array($key, $s['skips'], true), 'parts' => $parts, 'own' => $own];
         };
         $kept = [];
         $over = [];
         $len = self::lengthOf($target['master']);
-        foreach (array_keys($places) as $i) {
-            $kt = $keys['t'][$i] ?? null;
-            [$b, $a, $c] = [$dayOf($before, $keys['b'][$i] ?? null), $dayOf($asked, $keys['a'][$i] ?? null), $dayOf($now, $keys['c'][$i] ?? null)];
-            if ($kt === null || !$b['there']) {
+        foreach ($days as [$kb, $ka]) {
+            [$kc, $kt] = $follow($kb, $ka);
+            [$b, $a, $c] = [$dayOf($before, $kb), $dayOf($asked, $ka), $dayOf($now, $kc)];
+            if ($kt === null) {
                 continue;
             }
             $at = Words::date(Cal::dnOf(Time::fromDb($kt)->setTimezone(Time::zone((int) $target['master']['all_day'] === 1 ? 'UTC' : (string) $target['master']['tzid']))), $thisYear);
@@ -2033,26 +2030,22 @@ final class GoogleSeries
             $day = $x === null ? self::cols(self::plainAt($target['master'], $kt, $len)) : array_diff_key($x, ['own' => 1, 'rowId' => 1]);
             $plain = self::cols(self::plainAt($target['master'], $kt, $len));
             $touched = false;
-            foreach (array_unique(array_merge(array_keys($b['groups']), array_keys($a['groups']))) as $g) {
-                if (($b['groups'][$g] ?? null) === ($a['groups'][$g] ?? null)
-                    || !$since($c['there'] && ($c['groups'][$g] ?? null) !== ($a['groups'][$g] ?? null), self::GROUP_WORDS[$g])) {
+            foreach (array_unique(array_merge(array_keys($b['parts']), array_keys($a['parts']))) as $part) {
+                if (($b['parts'][$part] ?? null) === ($a['parts'][$part] ?? null)) {
                     continue;
                 }
-                $fields = array_keys(array_filter(self::OWN_GROUP, static fn(string $og): bool => $og === $g));
+                $held = str_starts_with($part, 'held:');
+                if (!$since($c['there'] && ($c['parts'][$part] ?? null) !== ($a['parts'][$part] ?? null), $held ? substr($part, 5) : self::GROUP_WORDS[$part])) {
+                    continue;
+                }
+                $fields = $held ? [substr($part, 5)] : array_keys(array_filter(self::OWN_GROUP, static fn(string $og): bool => $og === $part));
                 $own = array_values(array_diff($own, $fields));
-                foreach (self::GROUPS[$g] as $j => $col) {
-                    $day[$col] = isset($b['groups'][$g]) ? $b['groups'][$g][$j] : $plain[$col];
+                if (isset($b['parts'][$part])) {
+                    $own = array_merge($own, array_intersect($b['own'], $fields));
                 }
-                if (isset($b['groups'][$g])) {
-                    $own = array_merge($own, array_intersect((array) ($before['exceptions'][$keys['b'][$i]]['own'] ?? []), $fields));
+                foreach ($held ? [] : self::GROUPS[$part] as $j => $col) {
+                    $day[$col] = isset($b['parts'][$part]) ? $b['parts'][$part][$j] : $plain[$col];
                 }
-                $touched = true;
-            }
-            // What the day held here alone that the change gave or took (tags for all events, say): that delta back too.
-            $held = static fn(array $s, ?string $k): array => OwnFields::normalize(array_intersect((array) ($s['exceptions'][$k ?? '']['own'] ?? []), OwnFields::HELD_HERE));
-            [$hb, $ha] = [$held($before, $keys['b'][$i] ?? null), $held($asked, $keys['a'][$i] ?? null)];
-            if ($x !== null && $hb !== $ha) {
-                $own = array_values(array_merge(array_diff($own, array_diff($ha, $hb)), array_diff($hb, $ha)));
                 $touched = true;
             }
             if ($b['skip'] !== $a['skip'] && $since($c['there'] && $c['skip'] !== $a['skip'], 'skip')) {
@@ -2071,7 +2064,7 @@ final class GoogleSeries
                 unset($target['exceptions'][$kt]);
                 continue;
             }
-            $target['exceptions'][$kt] = self::cols($day) + ['own' => $own, 'rowId' => $x['rowId'] ?? ($before['exceptions'][$keys['b'][$i]]['rowId'] ?? null)];
+            $target['exceptions'][$kt] = self::cols($day) + ['own' => $own, 'rowId' => $x['rowId'] ?? ($before['exceptions'][$kb]['rowId'] ?? null)];
         }
         sort($target['skips']);
         ksort($target['exceptions']);

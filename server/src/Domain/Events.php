@@ -787,7 +787,7 @@ final class Events
         // What it changed, as on a local calendar: the series' skipped days
         // (and the day's row, when it had one: its snapshot says so), not the series whole.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo, null,
-            [[Undo::keyOf('events', ['id' => (int) $master['id']]), 'exdates_json']]);
+            [[Undo::keyOf('events', ['id' => (int) $master['id']]), Undo::SKIP . $instanceUtc]]);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void

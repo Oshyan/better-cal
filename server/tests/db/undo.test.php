@@ -135,15 +135,16 @@ return static function (Db $db): void {
 
         // A split carrying a skipped date, then another date skipped on the
         // old series: since 1.5.1 the split takes the carried skip off the
-        // old series (a skip belongs to the occurrence it removed), so it
-        // changed the old series' skipped dates, and undoing it would put
-        // back the list from before the later skip: stale.
+        // old series (a skip belongs to the occurrence it removed). A skip is
+        // its own date's (2026-11-09): the split's undo puts its own skip
+        // back and leaves the later one, so it is not stale.
         $h = $series('Jog', '2026-12-01');
         $d->events->deleteEvent($u, $h, 'this', '2026-12-08T18:00:00+00:00');
         planned($d->events, $u, $h, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Jog, later']);
         $carried = lastEntry($db, $u);
         $d->events->deleteEvent($u, $h, 'this', '2026-12-03T18:00:00+00:00');
-        checkEq('undo: a split carrying a skipped date, then an earlier date skipped: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $carried)));
+        checkEq('undo: a split carrying a skipped date, then an earlier date skipped: undoes, both dates skipped on the series', [null, ['2026-12-03 18:00:00', '2026-12-08 18:00:00']],
+            [refusal(fn() => $d->undo->undoById($u, $carried)), json_decode((string) $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$h]), true)]);
     });
 
     // A setting turned off from unset is a change, and its undo unsets it.
@@ -663,5 +664,27 @@ return static function (Db $db): void {
         checkEq('undo: it is done, the event is back and its journal row is written', [1, null, $was + 1], [
             $count('SELECT undone FROM mutations WHERE id = ?', [$entry]), $db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$event]), $journal(),
         ]);
+    });
+
+    // A skip is its own date's, and a row an edit made stands on what it owns (2026-11-09, F1 and F2 of the third read).
+    scenario('undo: two dates of a series deleted undo in either order; the edit that made a date\'s row is not staled by another field of it', function () use ($db, $d, $u, $series): void {
+        foreach ([false, true] as $reverse) {
+            $s = $series($reverse ? 'Sample walk' : 'Sample run', '2027-02-01');
+            $d->events->deleteEvent($u, $s, 'this', '2027-02-03T18:00:00+00:00');
+            $first = lastEntry($db, $u);
+            $d->events->deleteEvent($u, $s, 'this', '2027-02-05T18:00:00+00:00');
+            $second = lastEntry($db, $u);
+            [$a, $b] = $reverse ? [$second, $first] : [$first, $second];
+            checkEq('undo: two skipped dates, ' . ($reverse ? 'newest' : 'oldest') . ' first: both undo, no skip left', [null, null, []],
+                [refusal(fn() => $d->undo->undoById($u, $a)), refusal(fn() => $d->undo->undoById($u, $b)),
+                    json_decode((string) ($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s]) ?? '[]'), true) ?: []]);
+        }
+        $s = $series('Sample swim', '2027-02-01');
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-02-04T18:00:00+00:00', 'title' => 'Sample swim, long']);
+        $made = lastEntry($db, $u);
+        $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        $d->events->patch($u, $row, ['description' => 'Sample notes']);
+        checkEq('undo: the edit that made the row undoes; the later notes stay', [null, 'Sample notes'],
+            [refusal(fn() => $d->undo->undoById($u, $made)), $db->scalar('SELECT description FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s])]);
     });
 };

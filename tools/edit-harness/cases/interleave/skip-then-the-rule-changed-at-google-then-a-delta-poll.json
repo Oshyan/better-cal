@@ -1,0 +1,29 @@
+{
+    "about": "A day skipped, then the rule changed at Google, which drops the skip there; the next delta poll drops it here too, so the rows agree with Google and a whole read after changes nothing (a skip is Google-held; x-agree).",
+    "series": {
+        "family": "monthly_nth",
+        "rrule": "FREQ=MONTHLY;INTERVAL=2;BYDAY=2SU",
+        "import": false,
+        "bound": "until",
+        "boundAt": 3,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-03-30 00:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-del1",
+            "pick": 0.179
+        },
+        {
+            "do": "r-rule",
+            "pick": 0.838
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.533
+        }
+    ]
+}

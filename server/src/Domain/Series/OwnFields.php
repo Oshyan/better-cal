@@ -90,8 +90,8 @@ final class OwnFields
      * The one list of what an edited day holds here alone, which no feed,
      * Google or ICS, carries: these own fields, and a place's coordinates
      * (COORDINATE_COLUMNS: a feed carries a place's text, never where it
-     * is). Read by the sync (Feeds::heldHere, recordHolds), by recovery's
-     * carry-over (GoogleSeries::heldHere), by the gate on a read-only
+     * is). Read by the sync (Feeds::retained, recordHolds), by recovery's
+     * carry-over (Feeds::retained), by the gate on a read-only
      * feed's day (feedEditKeys) and checked against what Undo holds as
      * Google's (Undo::GOOGLE_HELD, whose complement these columns are),
      * so the four can't drift.

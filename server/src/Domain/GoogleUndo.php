@@ -132,14 +132,16 @@ final class GoogleUndo
      * The PATCH that puts the fields $changed back as $before had them: each
      * at its before value, and one $before has none of (a link the edit
      * added, which GoogleWriter::body sends as `source` only when there is
-     * one) as null, which clears it at Google. Pure.
+     * one) as null, which clears it at Google. Only the keys of what Google
+     * holds (GoogleWriter::allowedKeys), the one list every body is built
+     * from: an entry that changed nothing Google holds sends nothing. Pure.
      *
      * @param list<string> $changed
      */
     public static function inverse(array $before, array $changed): array
     {
         $out = [];
-        foreach ($changed as $key) {
+        foreach (array_intersect($changed, GoogleWriter::allowedKeys()) as $key) {
             $out[$key] = array_key_exists($key, $before) ? $before[$key] : null;
         }
         return $out;

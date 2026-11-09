@@ -351,18 +351,15 @@ final class Events
     }
 
     /**
-     * The body of a PATCH setting $googleFields on $row: the event's link
-     * travels as Google's `source` (GoogleWriter::body), and one removed
-     * goes as null, which clears it there (a PATCH keeps what it doesn't
-     * name).
+     * The body of a PATCH setting $googleFields on $row (GoogleWriter::patchOf):
+     * only the fields Google holds that it changes; the event's link travels
+     * as Google's `source`, and one removed goes as null, which clears it
+     * there (a PATCH keeps what it doesn't name). Empty when it changes
+     * nothing Google holds: the change is held here alone and sends nothing.
      */
     private static function patchBody(array $row, array $googleFields): array
     {
-        $body = GoogleWriter::body(array_merge($row, $googleFields));
-        if (array_key_exists('url', $googleFields) && !isset($body['source'])) {
-            $body['source'] = null;
-        }
-        return $body;
+        return GoogleWriter::patchOf(GoogleWriter::body($row), GoogleWriter::body(array_merge($row, $googleFields)));
     }
 
     /**
@@ -476,9 +473,15 @@ final class Events
         // to Google on undo, the rest put back here (GoogleUndo).
         $before = ['events' => [$event]] + $this->labels->eventLinkRows($id);
         $resp = null;
-        if ($googleFields !== []) {
+        // Only what Google holds goes to Google; a change of nothing it
+        // holds sends nothing and is written here as a local change.
+        $body = $googleFields === [] ? [] : self::patchBody($event, $googleFields);
+        if ($body !== []) {
             $googleId = self::requireGoogleId($event);
-            $resp = $this->google()->patch($calendar, $googleId, self::patchBody($event, $googleFields), $this->googleBeforeSend($authority));
+            $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
+        } else {
+            $localFields += $googleFields;
+            $googleFields = [];
         }
         $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in): void {
             if ($resp !== null) {
@@ -545,13 +548,14 @@ final class Events
             [$cols, $changed] = $this->placedThis($existing, $this->columnPatch($existing, $in, $instanceUtc, forOverride: true), $master, $in);
             [$googleFields, $localFields] = self::splitGoogleFields($cols);
             self::refuseTimedUnderAllDay($master, (int) ($googleFields['all_day'] ?? $existing['all_day']));
-            if ($googleFields !== []) {
+            $body = $googleFields === [] ? [] : self::patchBody($existing, $googleFields);
+            if ($body !== []) {
                 // A local-only override (attendance, reminders) has no Google
                 // id; the occurrence's instance id addresses it at Google.
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-                $resp = $this->google()->patch($calendar, $googleId, self::patchBody($existing, $googleFields), $this->googleBeforeSend($authority));
+                $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
         } else {
@@ -575,8 +579,9 @@ final class Events
             $override = array_merge($override, $patch);
             self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-            if (GoogleUndo::changedKeys($shown, GoogleWriter::instanceBody($override)) !== []) {
-                $resp = $this->google()->patch($calendar, $instanceId, self::patchBody($override, $patchGoogle), $this->googleBeforeSend($authority));
+            $body = self::patchBody($occurrence, $patchGoogle);
+            if ($body !== []) {
+                $resp = $this->google()->patch($calendar, $instanceId, $body, $this->googleBeforeSend($authority));
             }
             // Journaled as a write to that resource either way: the row it
             // makes here is undone with the fields it changed at Google,

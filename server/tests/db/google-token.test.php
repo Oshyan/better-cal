@@ -94,6 +94,8 @@ return static function (Db $db): void {
             public int $meeting = 0;
             public ?\Closure $auth = null;
             public ?\Closure $answer = null;
+            /** @var ?array the event as Google holds it, which a PATCH answers whole */
+            public ?array $resource = null;
         };
         $t->u = $u;
         $t->auth = static fn(): GoogleAuth => new GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use ($t): array {
@@ -135,8 +137,13 @@ return static function (Db $db): void {
     // One request's Events, writing through its own GoogleAuth and GoogleWriter.
     $events = static function (object $t) use ($db): Events {
         $d = domains($db);
-        $transport = static fn(string $method, string $url, ?array $payload, array $headers = []): array
-            => ($t->answer)($method, $headers, ($payload ?? []) + ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'etag' => '"e1"']);
+        // Google answers a PATCH with the whole event as it now is (a body carries only what changes).
+        $t->resource ??= ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'etag' => '"e1"', 'summary' => 'Sample meeting',
+            'start' => ['dateTime' => '2027-01-11T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00+00:00', 'timeZone' => 'UTC']];
+        $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use ($t): array {
+            $t->resource = array_merge($t->resource, $payload ?? []);
+            return ($t->answer)($method, $headers, $t->resource);
+        };
         return new Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
             new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
             new GoogleWriter($db, ($t->auth)(), new Feeds($db), $transport));

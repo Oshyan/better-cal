@@ -623,10 +623,14 @@ trait SeriesPlans
         return $result;
     }
 
-    /** patchAll on the plan: every row it writes, in one transaction and one Undo entry. */
-    private function patchAllPlanned(int $userId, array $event, array $in): void
+    /**
+     * patchAll on the plan: every row it writes, in one transaction and one
+     * Undo entry. $result: the plan already committed (a Google series'
+     * change that sends Google nothing, googlePatchAllPlanned).
+     */
+    private function patchAllPlanned(int $userId, array $event, array $in, ?array $result = null): void
     {
-        $result = $this->committedPlan($userId, $event, $in, false);
+        $result ??= $this->committedPlan($userId, $event, $in, false);
         $w = $result['writes'];
         $id = (int) $event['id'];
         $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
@@ -922,6 +926,14 @@ trait SeriesPlans
         $w = $result['writes'];
         $master = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
         $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [$id]);
+        $target = GoogleSeries::targetOf($master, $rows, $w);
+        if (GoogleSeries::sendsNothing(GoogleSeries::stateOf($master, $rows), $target)) {
+            // Nothing Google holds changes (tags, people, reminders for all
+            // events): written by the same writer as on a local calendar,
+            // journaled and undone as a local change, Google sent nothing.
+            $this->patchAllPlanned($userId, $event, $in, $result);
+            return;
+        }
         $byId = [];
         foreach ($rows as $r) {
             $byId[(int) $r['id']] = $r;
@@ -935,7 +947,6 @@ trait SeriesPlans
         $this->flagPlannedRows($w['overrides']);
         $this->tripRules($id, $localFields);
         self::requireGoogleId($master);
-        $target = GoogleSeries::targetOf($master, $rows, $w);
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
         try {
             $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
@@ -1410,12 +1421,11 @@ trait SeriesPlans
         // answer is stored on top of the write here, as a poll stores it.
         $resp = null;
         if ($google !== null) {
-            $googleSet = array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS));
-            $changed = array_filter($googleSet, static fn(mixed $v, string $col): bool => (string) $v !== (string) ($row[$col] ?? ''), ARRAY_FILTER_USE_BOTH);
-            if ($changed !== []) {
+            $body = self::patchBody($row, array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
+            if ($body !== []) {
                 $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1, (string) $master['tzid']);
-                $resp = $this->google()->patch($google, $googleId, self::patchBody($row, $googleSet), $this->googleBeforeSend($authority));
+                $resp = $this->google()->patch($google, $googleId, $body, $this->googleBeforeSend($authority));
             }
         }
         $this->db->tx(function () use ($id, $set, $left, $gone, $fields, $master, $userId): void {

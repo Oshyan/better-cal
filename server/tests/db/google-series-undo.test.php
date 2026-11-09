@@ -974,4 +974,42 @@ return static function (Db $db): void {
             [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
                 $db->all("SELECT title, description FROM events WHERE calendar_id = ? AND recurrence_instance_utc = '2027-03-08 18:00:00' AND deleted_at IS NULL", [$s->calendarId]))]);
     });
+    // The seventh adversarial read: a day's Google id is its series and its occurrence, so a row holding only local
+    // data carried by a clock change is found by its undo (P2-1); a row an undo would bring back onto a day skipped
+    // since is not brought back, and is named, as on a calendar here (P2-2).
+    scenario('google undo: a tag on a day with no row, then a clock change for all events: the row carries the instance id of its new occurrence and the tag undoes (P2-1)', function () use ($setup, $masterId, $last, $iso, $dayRow, $db): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['sample-tag']]);
+        $s->events->throwDeferred();
+        $tag = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+        $s->events->throwDeferred();
+        $moved = $dayRow($s, '2027-03-08 19:00:00');
+        $undone = refusal(fn() => $s->undo->undoById($s->u, (int) $tag['id']));
+        $s->events->throwDeferred();
+        $tags = $moved === null ? null : $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [(int) $moved['id']]);
+        checkEq('the moved row is the 11:00 occurrence at Google; the tag\'s undo goes through and leaves the day with no tag', [
+            'smpl2weekly_20270308T190000Z', null, 0,
+        ], [$moved['google_event_id'] ?? null, $undone, (int) $tags]);
+    });
+
+    scenario('google series undo: a forced undo bringing a day\'s row back onto a day deleted since leaves the skip, no row, and names the row (P2-2)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample A', 'tagNames' => ['sample-a']]);
+        $s->events->throwDeferred();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=1']);
+        $s->events->throwDeferred();
+        $lower = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=10']);
+        $s->events->throwDeferred();
+        $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+        $s->events->throwDeferred();
+        $forced = refusal(fn() => $s->undo->undoById($s->u, (int) $lower['id'], true));
+        $s->events->throwDeferred();
+        $removed = json_decode((string) $last($s)['details_json'], true)['google']['removedDays'] ?? [];
+        checkEq('forced: the day stays skipped at Google and here, no row, and the entry names the row', [
+            null, true, null, true,
+        ], [$forced, in_array('20270308T180000Z', $held($s, 'smpl2weekly')['cancelled'], true), $dayRow($s, '2027-03-08 18:00:00'),
+            in_array(['Sample A', '2027-03-08'], array_map(static fn(array $d): array => [(string) $d['title'], (string) $d['day']], $removed), true)]);
+    });
 };

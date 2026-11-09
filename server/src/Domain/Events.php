@@ -807,7 +807,9 @@ final class Events
             $override['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($override)]);
         $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
-        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo);
+        // The day's skip is its ground, as googleDeleteThis records it: the undo takes that skip back.
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo, null,
+            empty($override['recurrence_parent_id']) ? [] : [[Undo::keyOf('events', ['id' => (int) $override['recurrence_parent_id']]), Undo::SKIP . (string) $override['recurrence_instance_utc']]]);
     }
 
 

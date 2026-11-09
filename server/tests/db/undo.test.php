@@ -814,4 +814,22 @@ return static function (Db $db): void {
             [$forced, array_map(static fn(array $r): array => [$r['title'], $r['description']],
                 $db->all("SELECT title, description FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = '2027-01-04 18:00:00' AND deleted_at IS NULL", [$s]))]);
     });
+    // The seventh adversarial read: a skip is the day's value as it stands, so a row an undo would bring back onto a
+    // day skipped since is not brought back, and what it held is named (P2-2; the Google counterpart in google-series-undo).
+    scenario('undo: a forced undo bringing a day\'s row back onto a day deleted since leaves the skip, no row, and names the row (P2-2)', function () use ($db, $d, $u, $home): void {
+        $s = (int) $d->events->create($u, eventAt($home, 'Sample skipped', '2027-01-04', ['rrule' => 'FREQ=WEEKLY;COUNT=8']))['eventId'];
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => '2027-01-18T18:00:00+00:00', 'title' => 'Sample skipped day', 'tagNames' => ['Sample tag A']]);
+        planned($d->events, $u, $s, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;COUNT=2']);
+        $lower = lastEntry($db, $u);
+        planned($d->events, $u, $s, ['scope' => 'all', 'rrule' => 'FREQ=WEEKLY;COUNT=8']);
+        $d->events->deleteEvent($u, $s, 'this', '2027-01-18T18:00:00+00:00');
+        $forced = refusal(fn() => $d->undo->undoById($u, $lower, true));
+        $note = $db->one('SELECT details_json FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$u]);
+        checkEq('undo: forced, the day stays skipped, no row of it here or as an event of its own, and the line names it', [
+            null, true, [], [], [['Sample skipped day', '2027-01-18']],
+        ], [$forced, str_contains((string) $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s]), '2027-01-18 18:00:00'),
+            $db->all('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]),
+            $db->all("SELECT id FROM events WHERE user_id = ? AND title = 'Sample skipped day' AND deleted_at IS NULL", [$u]),
+            array_map(static fn(array $x): array => [(string) $x['title'], (string) $x['day']], json_decode((string) $note['details_json'], true)['removedDays'] ?? [])]);
+    });
 };

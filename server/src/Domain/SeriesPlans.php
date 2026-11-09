@@ -1210,14 +1210,10 @@ trait SeriesPlans
      */
     private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null): void
     {
-        $words = $summary;
-        if ($differences !== []) {
-            $words .= ' Google kept something else: ' . implode(' ', $differences);
-        }
         if ($undo !== null && $id !== null) {
-            $this->googleSeriesJournal($userId, mb_substr($words, 0, 900), $calendar, $id, $undo[0], $undo[1], $undo[2]);
+            $this->googleSeriesJournal($userId, $summary, $calendar, $id, $undo[0], $undo[1], $undo[2], $differences);
         } else {
-            $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id, details: $details);
+            $this->googleJournal($userId, $summary, $calendar, $id, details: $details, kept: $differences);
         }
         if ($differences !== []) {
             (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
@@ -1274,12 +1270,24 @@ trait SeriesPlans
             // the entry it undoes): recovered, its journal is what the undo
             // would have written had it completed (recoveredUndo).
             $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
-            $undone = is_array($plan) && isset($plan['undo']) ? $this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId]) : null;
+            $isUndo = is_array($plan) && isset($plan['undo']);
+            // The entry it undoes as its pending row kept it (its snapshots), the live row's when still there.
+            $undone = $isUndo ? ($this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId])
+                ?? (is_array($plan['entry'] ?? null) ? $plan['entry'] + ['user_id' => $userId] : null)) : null;
             try {
                 $out = $how === 'finish'
                     ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority),
-                        $undone !== null ? function () use ($undone): array {
-                            $this->undo->restoreSnapshots($undone); // the undo's part here: the rows as the change found them
+                        $isUndo ? function () use ($undone): array {
+                            // The undo's part here: the rows as the change found them.
+                            // What can't be put back is said, and Google's side completes.
+                            if ($undone === null || ($undone['before_json'] ?? null) === null) {
+                                return ["The rows here could not be put back as they were before the change: what it kept of them is gone."];
+                            }
+                            try {
+                                $this->undo->restoreSnapshots($undone);
+                            } catch (HttpError $e) {
+                                return ['The rows here could not all be put back as they were before the change: ' . rtrim($e->getMessage(), '.') . '.'];
+                            }
                             return [];
                         } : $this->googleLocalPlan($userId))
                     : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
@@ -1287,8 +1295,8 @@ trait SeriesPlans
                 $stopped = $e;
                 throw $e;
             }
-            if ($undone !== null) {
-                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone, $how, $out);
+            if ($isUndo) {
+                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone ?? ['id' => (int) $plan['undo'], 'user_id' => $userId, 'entity_id' => (int) ($row['event_id'] ?? 0), 'summary' => (string) ($plan['summary'] ?? '')], $how, $out);
             }
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")

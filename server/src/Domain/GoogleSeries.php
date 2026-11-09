@@ -1732,7 +1732,7 @@ final class GoogleSeries
      *
      * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it, and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
      */
-    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped'): array
+    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
             return [$target, [], []];
@@ -1749,8 +1749,15 @@ final class GoogleSeries
         $mc = self::groupsOf($C['master'], true);
         $master = $target['master'];
         $left = [];
+        $overwrote = [];
         foreach ($mt as $g => $t) {
             $how = self::threeWay($mc[$g], [$mb[$g], $t], $mb[$g], $t);
+            if ($how === 'conflict' && $force) {
+                // Forced: the change's reading over the value changed since, named.
+                $overwrote[] = self::GROUP_WORDS[$g];
+                $conflicts[] = [null, $g];
+                continue;
+            }
             if ($how === 'change') {
                 continue;
             }
@@ -1764,6 +1771,9 @@ final class GoogleSeries
         }
         if ($left !== []) {
             $words[] = "The series' " . implode(', ', $left) . " changed at Google $since; left as Google has it.";
+        }
+        if ($overwrote !== []) {
+            $words[] = "The series' " . implode(', ', $overwrote) . " changed at Google $since; put back over it, as forced.";
         }
         $len = self::lengthOf($master);
         $allDay = (int) $master['all_day'] === 1;
@@ -1816,6 +1826,11 @@ final class GoogleSeries
                 // A day skipped on one side: the day as a whole.
                 $wantsChange = self::ownPart($bOwn, $before['exceptions'][$wasKey] ?? null) !== self::ownPart($t, $x);
                 $how = self::threeWay($c, [$bOwn, $bHere, $p, $t], $wantsChange, false);
+                if ($how === 'conflict' && $force) {
+                    $conflicts[] = [$key, 'day'];
+                    $words[] = $dayWords($key) . " was changed at Google $since; put back over it, as forced.";
+                    $how = 'change';
+                }
                 if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $c !== 'skip') {
                     // A skipped day the change's own master write brought
                     // back (a status sent): its record returns with fields
@@ -1837,9 +1852,15 @@ final class GoogleSeries
             } else {
                 $result = $want;
                 $left = [];
+                $forced = [];
                 foreach (self::GROUPS as $g => $cols) {
                     // A skip at the destination (the day the edited day moves onto) is that day's value, explaining no field.
                     $how = self::threeWay($c[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
+                    if ($how === 'conflict' && $force) {
+                        $conflicts[] = [$key, $g];
+                        $forced[] = self::GROUP_WORDS[$g];
+                        continue;
+                    }
                     if ($how === 'change') {
                         continue;
                     }
@@ -1854,6 +1875,9 @@ final class GoogleSeries
                 }
                 if ($left !== []) {
                     $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " changed at Google $since (its " . implode(', ', $left) . '); left as Google has it.';
+                }
+                if ($forced !== []) {
+                    $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " changed at Google $since (its " . implode(', ', $forced) . '); put back over it, as forced.';
                 }
             }
             if ($result === 'skip') {
@@ -1888,13 +1912,14 @@ final class GoogleSeries
      * it. What an undo or redo of a series change asks (GoogleUndo): the
      * inverse of what the change asked, never a snapshot of what it learned
      * from Google on the way. A value the deltas change that $current holds
-     * otherwise is kept and named, as rebase keeps one. Pure.
+     * otherwise is kept and named, as rebase keeps one; forced ($force,
+     * decisions.md, stale undo), it is put back over and named. Pure.
      *
      * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} as rebase
      */
-    public static function deltasOver(array $from, array $to, array $current, int $thisYear): array
+    public static function deltasOver(array $from, array $to, array $current, int $thisYear, bool $force = false): array
     {
-        return self::rebase($from, $to, self::heldOf($current), $thisYear, 'since this change');
+        return self::rebase($from, $to, self::heldOf($current), $thisYear, 'since this change', $force);
     }
 
     /**

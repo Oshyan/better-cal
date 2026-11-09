@@ -270,9 +270,10 @@ return static function (Db $db): void {
         $gone = [$row($t, 'probe1a2b3c_20270308T180000Z'), $exdates()];
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $deleted['id']);
-        checkEq('the delete is a skip; its undo reads the instance, then the series for the write\'s condition, sends {status: confirmed} to it, and the day is back as an ordinary occurrence', [
-            [null, ['2027-03-08 18:00:00']], ['GET', 'GET', 'PATCH'], ['status' => 'confirmed'], [], null,
-        ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 3), $t->google->calls[2][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
+        // Sent as the series' occurrence there now (status and every field Google holds at the series' value), never the values the cancelled instance kept.
+        checkEq('the delete is a skip; its undo reads the instance, then the series for the write\'s condition, sends it confirmed at the series\' values, and the day is back as an ordinary occurrence', [
+            [null, ['2027-03-08 18:00:00']], ['GET', 'GET', 'PATCH'], ['confirmed', 'Sample standup'], [], null,
+        ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 3), [$t->google->calls[2][2]['status'] ?? null, $t->google->calls[2][2]['summary'] ?? null], $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
 
         // The undo undoes back: the day, an ordinary occurrence with no row here, is skipped again.
         $back = $last($t);

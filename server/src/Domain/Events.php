@@ -390,9 +390,9 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null, array $kept = []): void
     {
-        $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
+        $summary = GoogleUndo::line($summary, (string) $calendar['name'], $kept);
         if ($google !== null) {
             $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, $touches, 'update', $tables);
             return;
@@ -416,10 +416,10 @@ final class Events
      *
      * @param list<array> $befores
      */
-    private function googleSeriesJournal(int $userId, string $summary, array $calendar, int $eventId, array $befores, array $beforeTables, array $afterTables): void
+    private function googleSeriesJournal(int $userId, string $summary, array $calendar, int $eventId, array $befores, array $beforeTables, array $afterTables, array $kept = []): void
     {
-        $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
-        $this->googleUndo()->recordSeries($userId, $eventId, $summary, $calendar, $befores, $beforeTables, $afterTables);
+        // Composed from its parts (GoogleUndo::line): what was done, the calendar, what Google kept.
+        $this->googleUndo()->recordSeries($userId, $eventId, $summary, $calendar, $befores, $beforeTables, $afterTables, null, $kept);
     }
 
     /**

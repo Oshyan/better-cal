@@ -1653,6 +1653,11 @@ final class Interleave
         foreach ((array) ($row['own'] ?? []) as $o) {
             $out = array_merge($out, $map[$o] ?? [$o]);
         }
+        // People are held here alone, so a day's row holding some owns them (tags owned are in its own list; tags it shows
+        // from its series are inherited).
+        if (!empty($row['people'])) {
+            $out[] = 'people';
+        }
         return array_values(array_unique($out));
     }
 
@@ -1702,8 +1707,8 @@ final class Interleave
         foreach ($change as $ident => $fields) {
             $b = $state['after'][$ident] ?? null;
             $c = $now[$ident] ?? null;
-            // A series the entry made that a newer change has added a day to, removed one of or changed one of: the newer
-            // change stands on the item this one made (api-contract.md, stale_undo: "added something to an item this one made").
+            // A series the entry made (a split from a day on) that a newer change has added a day to, removed one of or changed
+            // one of: every day of it is a day the entry made, so the newer change is on the same day.
             if ($fields === ['+'] && str_starts_with($ident, 'series:')) {
                 $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
                 $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
@@ -1740,8 +1745,14 @@ final class Interleave
                     // own dates has been skipped or brought back since (seed 307 case 463: another day edited stales nothing).
                     $a = $state['before'][$ident]['skips'] ?? [];
                     $mineDates = array_merge(array_diff($a, $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a));
+                    $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
+                    $g = substr($ident, strlen('series:'));
                     foreach ($mineDates as $k) {
-                        if (in_array($k, $b['skips'] ?? [], true) !== in_array($k, $c['skips'] ?? [], true)) {
+                        // Its date skipped or brought back since, or the day at that date made, removed or changed since
+                        // (the same day).
+                        $day = 'day:' . $g . ':' . $k;
+                        if (in_array($k, $b['skips'] ?? [], true) !== in_array($k, $c['skips'] ?? [], true)
+                            || $plain($state['after'][$day] ?? null) != $plain($now[$day] ?? null)) {
                             $out[$ident][] = 'skips';
                             break;
                         }
@@ -1810,7 +1821,19 @@ final class Interleave
                 continue;
             }
             if ($fields === ['+']) {
-                $this->expect('x-undo-fields', $r === null, "step {$this->step} ($do): an undo left a row its entry made", $where + ['now' => $r]);
+                // The undo takes back only what the entry gave the row it made, the fields that row owned; the row stays,
+                // following its series in those fields, when a later change gave it something of its own (decisions.md,
+                // "An undo is stale when a poll has since brought a remote change of the same field", the third read F2).
+                $gave = self::ground($state['after'][$ident] ?? null);
+                $later = $c === null ? [] : array_values(array_diff(self::ground($c), $gave));
+                if ($r === null || $later === []) {
+                    $this->expect('x-undo-fields', $r === null || array_intersect(self::ground($r), $gave) === [], "step {$this->step} ($do): an undo left a row its entry made", $where + ['now' => $r]);
+                    continue;
+                }
+                $this->expect('x-undo-fields', array_intersect(self::ground($r), $gave) === [], "step {$this->step} ($do): an undo left the row its entry made owning what the entry gave it", $where + ['gave' => $gave, 'now' => $r]);
+                foreach ($later as $f) {
+                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($c[$f] ?? null), "step {$this->step} ($do): an undo took from the row its entry made what a later change gave it", $where + ['field' => $f, 'was' => $c[$f] ?? null, 'now' => $r[$f] ?? null]);
+                }
                 continue;
             }
             $was = $state['before'][$ident];

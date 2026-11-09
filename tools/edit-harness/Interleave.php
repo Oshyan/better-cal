@@ -76,8 +76,12 @@ final class Interleave
     private array $unseen = [];
     /** @var array<string,true> series whose etag alone changed at Google since the last poll (r-etag) */
     private array $etagOnly = [];
-    /** The change a w-race step made at Google between the master write and its read-back: [gid, key, title], or null. */
+    /** The change a w-race step (or an undo step given "race") made at Google between the master write and its read-back: [gid, key or null for the master, title], or null. */
     private ?array $raced = null;
+    /** The instance id a w-race step renamed a day of, for an undo step given "race": "day" (fixed cases) to rename it again. */
+    private ?array $lastRace = null;
+    /** The race run during the step being checked, as $raced (its title there is x-readback's to judge), or null. */
+    private ?array $racedNow = null;
     /** What a p-overlap step wrote here while the poll fetched: [row key, tag], or null. */
     private ?array $overlap = null;
     /** What a p-budget step held after its stopped read: the comparable state then. */
@@ -588,23 +592,23 @@ final class Interleave
     {
         $rows = $s0['rows'];
         if ($do === 'w-race') {
+            // A day renamed at Google between the series write's master write and its read-back; with "race": "master"
+            // (fixed cases), the series' own title instead, under a write of `what` (title when drawn).
             $master = $this->seriesOf($rows, $step['pick']);
             $occ = $master === null ? null : $this->occurrenceOf($master, fmod($step['pick'] * 11.0, 1.0), 1);
             if ($master === null || $occ === null || empty($master['google_event_id'])) {
                 return ['skip' => true];
             }
             $gid = (string) $master['google_event_id'];
-            $instance = GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1, (string) $master['tzid']);
-            $title = "Sample remote day {$this->step}";
-            $this->raced = [$gid, $occ[0], $title];
-            $this->racedIdent = 'day:' . $gid . ':' . $occ[0];
-            $fake = $this->stand->fake;
-            $this->stand->knobs->race = static function () use ($fake, $instance, $title): void {
-                $url = 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($instance);
-                ($fake->transport())('PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], ['summary' => $title]);
-            };
+            $onMaster = ($step['race'] ?? 'day') === 'master';
+            $instance = $onMaster ? $gid : GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1, (string) $master['tzid']);
+            $title = $onMaster ? "Sample remote series {$this->step}" : "Sample remote day {$this->step}";
+            $this->raced = [$gid, $onMaster ? null : $occ[0], $title];
+            $this->lastRace = $onMaster ? null : [$gid, $occ[0], $instance];
+            $this->racedIdent = $onMaster ? null : 'day:' . $gid . ':' . $occ[0];
+            $this->armRace($instance, $title);
             try {
-                return $this->write('w-all', ['what' => 'title'] + $step, $s0);
+                return $this->write('w-all', $step + ['what' => 'title'], $s0);
             } finally {
                 $this->stand->knobs->race = null;
             }
@@ -987,7 +991,34 @@ final class Interleave
         return isset($d['google']['undoes']) ? (int) $d['google']['undoes'] : null;
     }
 
+    /** A rename at Google of $instance, run right after the app's next accepted write (the stand's race knob). */
+    private function armRace(string $instance, string $title): void
+    {
+        $fake = $this->stand->fake;
+        $this->stand->knobs->race = static function () use ($fake, $instance, $title): void {
+            $url = 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($instance);
+            ($fake->transport())('PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], ['summary' => $title]);
+        };
+    }
+
     private function undoStep(string $do, array $step): array
+    {
+        // "race": "day" (fixed cases): the day the last w-race renamed is renamed at Google again right after the undo's
+        // first accepted write, before its read-back.
+        if (($step['race'] ?? null) === 'day' && $this->lastRace !== null) {
+            [$gid, $key, $instance] = $this->lastRace;
+            $title = "Sample remote day {$this->step}";
+            $this->raced = [$gid, $key, $title];
+            $this->armRace($instance, $title);
+        }
+        try {
+            return $this->undoOrRedo($do, $step);
+        } finally {
+            $this->stand->knobs->race = null;
+        }
+    }
+
+    private function undoOrRedo(string $do, array $step): array
     {
         $entries = $this->db->all('SELECT id, source, details_json, undone FROM mutations WHERE user_id = ? ORDER BY id DESC', [$this->userId]);
         if ($do === 'u-bare') {
@@ -1199,13 +1230,14 @@ final class Interleave
             $this->expect('x-pending', $was == $now, "step {$this->step} ($do): a poll while a series has changes not yet at Google left that series' rows as they were", $context + ['diff' => self::diff($was, $now)]);
         }
         // x-readback: a change made at Google between the app's master write and its read-back is kept or named.
-        if ($do === 'w-race' && $this->raced !== null) {
+        $this->racedNow = $this->raced;
+        if ($this->raced !== null) {
             [$rg, $rkey, $rtitle] = $this->raced;
             $this->raced = null;
-            $rec = $s1['g']['digest'][$rg]['records'][$rkey] ?? null;
-            $this->ran('x-readback', 'race');
+            $rec = $rkey === null ? [$s1['g']['digest'][$rg]['title'] ?? null] : ($s1['g']['digest'][$rg]['records'][$rkey] ?? null);
+            $this->ran('x-readback', $rkey === null ? 'race on the series' : 'race');
             $this->expect('x-readback', ($rec !== null && $rec[0] === $rtitle) || $s1['differs'] > $s0['differs'] || !$out['ok'],
-                "step {$this->step} ($do): a day renamed at Google between the series' write and its read-back keeps its title there, or the change names it", $context + ['key' => $rkey, 'record' => $rec]);
+                "step {$this->step} ($do): " . ($rkey === null ? 'a series' : 'a day') . " renamed at Google between the write's master write and its read-back keeps its title there, or the change names it", $context + ['key' => $rkey, 'record' => $rec]);
         }
 
         // x-sync-silent: a poll sends Google nothing.
@@ -1385,6 +1417,9 @@ final class Interleave
         }
         $this->ran('x-write-asked', 'only asked');
         $changed = array_intersect_key(['title' => 1, 'description' => 1, 'location' => 1, 'url' => 1], $asked['fields']);
+        if ($this->racedNow !== null && $this->racedNow[0] === $gid && $this->racedNow[1] === null) {
+            $changed['title'] = 1; // the series renamed at Google during the write: x-readback's to judge
+        }
         $series = ['title', 'description', 'location', 'url', 'zone', 'rule', 'start', 'end', 'allDay', 'skips'];
         foreach ($series as $f) {
             if (($asked['kind'] === 'this' || !isset($changed[$f])) && ($a[$f] ?? null) !== ($b[$f] ?? null)) {
@@ -1661,6 +1696,13 @@ final class Interleave
      */
     private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
     {
+        // A day renamed at Google while this undo or redo ran ("race": "day", fixed cases) is someone else's change, judged
+        // by x-readback: kept out of the comparison here as a w-race's day is kept out of its entry.
+        if (($this->racedNow[1] ?? null) !== null) {
+            $day = 'day:' . $this->racedNow[0] . ':' . $this->racedNow[1];
+            unset($now[$day], $result[$day]);
+            $state['exclude'] = array_merge($state['exclude'] ?? [], [$day]);
+        }
         $change = self::entryChange($state);
         $since = $this->changedSince($state, $now);
         if ($since !== []) {

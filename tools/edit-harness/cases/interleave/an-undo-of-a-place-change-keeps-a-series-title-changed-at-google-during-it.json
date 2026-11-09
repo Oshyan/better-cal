@@ -1,0 +1,31 @@
+{
+    "about": "A place change for all events with the series renamed at Google between its master write and its read-back (kept), then the place change undone by its entry: the undo puts the place back and sends no title, so the series keeps the title from Google, at Google and here, and a poll after changes nothing (N2 of the review of 9de4e3dc..8e568077; x-undo-fields, x-agree)",
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",
+        "import": false,
+        "bound": "until",
+        "boundAt": 11,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2028-02-28 00:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-race",
+            "pick": 0.019,
+            "what": "location",
+            "race": "master"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.136
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.5
+        }
+    ]
+}

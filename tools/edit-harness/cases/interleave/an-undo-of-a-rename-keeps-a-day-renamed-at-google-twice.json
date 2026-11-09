@@ -1,0 +1,31 @@
+{
+    "about": "A rename for all events with a day renamed at Google between its master write and its read-back, then the rename undone by its entry while the same day is renamed at Google again between the undo's master write and its read-back: the undo puts the series' title back and the day keeps the newer title from Google, at Google and here, and a poll after changes nothing (N1 of the review of 9de4e3dc..8e568077; x-readback, x-undo-fields, x-agree)",
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",
+        "import": false,
+        "bound": "until",
+        "boundAt": 11,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2028-02-28 00:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-race",
+            "pick": 0.019,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.136,
+            "race": "day"
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.5
+        }
+    ]
+}

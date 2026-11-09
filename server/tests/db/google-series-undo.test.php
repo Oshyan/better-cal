@@ -80,6 +80,8 @@ return static function (Db $db): void {
             /** The write (1-based) that answers 412 instead of reaching the stand-in. */
             public ?int $staleAt = null;
             public int $writes = 0;
+            /** A change made at Google right after the next write the stand-in accepts (another client between a write and its read-back): [Google id, body]. */
+            public ?array $race = null;
         };
         $inner = $fake->writerTransport();
         $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use ($t, $inner): array {
@@ -96,7 +98,13 @@ return static function (Db $db): void {
                     return ['status' => 412, 'body' => json_encode(['error' => ['code' => 412, 'message' => 'Precondition Failed']])];
                 }
             }
-            return $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
+            $answer = $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
+            if ($method !== 'GET' && $t->race !== null && (int) ($answer['status'] ?? 500) < 400) {
+                [$raceId, $raceBody] = $t->race;
+                $t->race = null;
+                $inner('PATCH', dirname($url) . '/' . rawurlencode($raceId), $raceBody, ['Authorization: Bearer sample-access']);
+            }
+            return $answer;
         };
         $auth = new GoogleAuth($db, $cfg, static fn(string $url, array $fields, ?float $deadline): array
             => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
@@ -368,5 +376,76 @@ return static function (Db $db): void {
         $s->events->googleFinish($s->u, (int) $listed[0]['id']);
         $s->events->throwDeferred();
         checkEq('Finish completes the undo at Google and here; the pending row is gone', [$wasHeld, $wasHeld, []], [$held($s, 'smpl2weekly'), $stored($s, 'smpl2weekly'), $pending($s)]);
+    });
+
+    // An undo of a series change is an ordinary series write: what it asks is the inverse of what the change asked,
+    // over the series as it stands, and what Google changed meanwhile, during the change or during the undo, stays.
+    $day = 'smpl2weekly_20270308T180000Z'; // 8 March 2027, an ordinary occurrence
+    $row = static fn(object $s, string $googleId): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, $googleId]);
+
+    scenario('google series undo: a day renamed at Google during a rename and again during its undo keeps the newer title, at Google and here', function () use ($setup, $masterId, $last, $pending, $sameAfterPoll, $iso, $row, $day): void {
+        $s = $setup();
+        $s->t->race = [$day, ['summary' => 'Sample remote A']];
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        checkEq('the rename keeps the day renamed at Google during it', ['Sample remote A', 'Sample remote A'], [$s->fake->events[$day]['summary'] ?? null, $row($s, $day)['title'] ?? null]);
+        $s->t->race = [$day, ['summary' => 'Sample remote B']];
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $here = $row($s, $day);
+        checkEq('the undo puts the series title back and the day keeps the newer title from Google, there and here, owned; nothing pending', [
+            'Sample weekly', 'Sample weekly', 'Sample remote B', 'Sample remote B', true, [],
+        ], [$s->fake->events['smpl2weekly']['summary'], $row($s, 'smpl2weekly')['title'] ?? null, $s->fake->events[$day]['summary'] ?? null, $here['title'] ?? null,
+            in_array('title', json_decode((string) ($here['override_fields'] ?? '[]'), true) ?: [], true), $pending($s)]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google series undo: a series renamed at Google during a place change keeps that title when the place change is undone', function () use ($setup, $masterId, $last, $pending, $sameAfterPoll, $iso, $row): void {
+        $s = $setup();
+        $s->t->race = ['smpl2weekly', ['summary' => 'Sample remote series']];
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'location' => 'Sample room 2']);
+        $entry = $last($s);
+        checkEq('the place change keeps the title from Google', ['Sample remote series', 'Sample room 2', 'Sample remote series'],
+            [$s->fake->events['smpl2weekly']['summary'], $s->fake->events['smpl2weekly']['location'] ?? null, $row($s, 'smpl2weekly')['title'] ?? null]);
+        $s->t->calls = [];
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $sent = array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] === 'PATCH' && $c[1] === 'smpl2weekly'));
+        $m = $row($s, 'smpl2weekly');
+        checkEq('the undo sends the place back and no title; the series keeps the title from Google, there and here; nothing pending', [
+            [['Sample room 1', false]], 'Sample remote series', 'Sample room 1', 'Sample remote series', 'Sample room 1', [],
+        ], [array_map(static fn(array $c): array => [$c[2]['location'] ?? null, array_key_exists('summary', (array) $c[2])], $sent), $s->fake->events['smpl2weekly']['summary'], $s->fake->events['smpl2weekly']['location'] ?? null,
+            $m['title'] ?? null, $m['location'] ?? null, $pending($s)]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google undo: a day\'s own title undone after a rename for all events inherits the series\' title as it is now', function () use ($setup, $masterId, $last, $sameAfterPoll, $iso, $row, $day): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $entry = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        checkEq('the rename keeps the day\'s own title', ['Sample day title', 'Sample day title'], [$s->fake->events[$day]['summary'] ?? null, $row($s, $day)['title'] ?? null]);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $here = $row($s, $day);
+        checkEq('the day follows the series again: the series\' title now at Google and here, not owned', [
+            'Sample renamed', 'Sample renamed', false,
+        ], [$s->fake->events[$day]['summary'] ?? null, $here['title'] ?? 'Sample renamed', in_array('title', json_decode((string) ($here['override_fields'] ?? '[]'), true) ?: [], true)]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google undo: a tag on a day redone after its undo and a notes change for all events shows the series\' notes as they are now', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $day): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['sample-day-tag']]);
+        $s->events->throwDeferred();
+        $s->undo->undoLatest($s->u);
+        $redo = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'description' => 'Sample newer notes']);
+        $s->t->calls = [];
+        $s->undo->undoById($s->u, (int) $redo['id']);
+        $here = $db->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$masterId($s), '2027-03-08 18:00:00']);
+        $tags = $here === null ? [] : array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) $here['id']]), 'name');
+        checkEq('the redo sends Google nothing; the row is back with its tag over the series\' notes now', [
+            [], 'Sample newer notes', '["tags"]', ['sample-day-tag'],
+        ], [array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET')), $here['description'] ?? null, $here['override_fields'] ?? null, $tags]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
     });
 };

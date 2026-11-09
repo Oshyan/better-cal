@@ -567,6 +567,33 @@ return static function (Db $db): void {
                 $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), (int) $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [$masterId($s)])]);
     });
 
+    scenario('google recovery: a shortened series half done, then a day past the new end tagged here: Finish\'s part here fails, its transaction rolls back whole (no savepoint), and what Google holds is stored after it', function () use ($setup, $masterId, $rowAt, $listed, $held, $stored, $iso, $db): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->t->loseAt = 1;
+        try {
+            planned($s->events, $s->u, $id, ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+        } catch (HttpError) {
+        }
+        // A day the shortened series no longer has, tagged and given a person here while the change is half done.
+        $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-04-19 10:00'), 'tagNames' => ['Sample later tag'], 'personNames' => ['Alex Example']]);
+        $s->events->throwDeferred();
+        $day = $rowAt($s, '2027-04-19 17:00:00');
+        $out = $s->events->googleFinish($s->u, (int) $listed($s)[0]['id']);
+        $error = null;
+        try {
+            $s->events->throwDeferred();
+        } catch (HttpError $e) {
+            $error = [$e->status, $e->errorCode, $e->getMessage()];
+        }
+        $half = $listed($s);
+        checkEq('Finish fails with google_finish_local naming the day; Review still lists the change with those words; the day had its row before; Google holds the shortened series and the rows here hold exactly that (the day Google lacks has no row); no transaction left open',
+            [[409, 'google_finish_local', true], false, 1, true, true, 'RRULE:FREQ=WEEKLY;COUNT=4', $held($s, 'smpl3weekly'), null, false],
+            [[$error[0] ?? null, $error[1] ?? null, str_contains((string) ($error[2] ?? ''), 'changed here after this change stopped')], $out['ok'], count($half),
+                str_contains((string) ($half[0]['error'] ?? ''), 'its part here'), $day !== null, $held($s, 'smpl3weekly')['rule'], $stored($s, 'smpl3weekly'),
+                $rowAt($s, '2027-04-19 17:00:00'), $db->pdo()->inTransaction()]);
+    });
+
     // ---- N1: recovery removes only the rows it made -----------------------------------
 
     scenario('google recovery: a rename half done, then a tag, a person or a reminder on an ordinary day here: Finish keeps that day\'s row and what it has, and the rename lands', function () use ($setup, $masterId, $rowAt, $pending, $recover, $iso, $db): void {

@@ -1210,7 +1210,9 @@ trait SeriesPlans
     /**
      * Review's Finish on a change half done at Google: the same targets
      * from Google's state (GoogleSeries::finish), the rows here then
-     * Google's. A failure is deferred as the change's was.
+     * Google's. A failure rolls the whole transaction back, what Google
+     * holds is stored after it in one of its own (GoogleSeries::keepAfterTx),
+     * and the error is deferred as the change's is (throwDeferred).
      */
     public function googleFinish(int $userId, int $pendingId, ?RequestAuthority $authority = null): array
     {
@@ -1225,7 +1227,23 @@ trait SeriesPlans
 
     private function googleRecover(int $userId, int $pendingId, ?RequestAuthority $authority, string $how): array
     {
-        return $this->undo->write($userId, function () use ($userId, $pendingId, $authority, $how): array {
+        $stopped = null;
+        try {
+            return $this->recoverTx($userId, $pendingId, $authority, $how, $stopped);
+        } catch (HttpError $e) {
+            if ($e !== $stopped) {
+                throw $e;
+            }
+            // The run's failure: its transaction rolled back whole, the
+            // error thrown once the request is answered (throwDeferred).
+            $this->googleDeferred = $e;
+            return ['ok' => false];
+        }
+    }
+
+    private function recoverTx(int $userId, int $pendingId, ?RequestAuthority $authority, string $how, ?HttpError &$stopped): array
+    {
+        return $this->undo->write($userId, function () use ($userId, $pendingId, $authority, $how, &$stopped): array {
             $authority?->assertValid($this->db);
             $row = $this->googleSeries()->pendingOf($userId, $pendingId);
             if ($row === null) {
@@ -1240,8 +1258,8 @@ trait SeriesPlans
                     ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority), $this->googleLocalPlan($userId))
                     : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
             } catch (HttpError $e) {
-                $this->googleDeferred = $e;
-                return ['ok' => false];
+                $stopped = $e;
+                throw $e;
             }
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")

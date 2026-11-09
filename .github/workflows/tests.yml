@@ -103,11 +103,15 @@ jobs:
         run: php server/tests/db/run.php
       # Each mutation (tools/edit-harness/mutations) patches a copy of the
       # series model, or of the Undo gate, and must trip the check it names
-      # while every other check passes.
+      # while every other check passes. Then the interleaving oracle's own
+      # probes (OracleProbes.php): damage injected into what a check reads,
+      # which the check must fail on.
       - name: Edit harness mutations
         env:
           BC_TEST_DB: mariadb:3306
-        run: php tools/edit-harness/mutations/run.php
+        run: |
+          php tools/edit-harness/mutations/run.php
+          ./tools/edit-harness/run.sh --interleave --oracle-probes
       # A full run of one seed (the fixed cases included, every required
       # category of the plan-data checks executed), on four processes at once.
       - name: Edit harness, a full seed
@@ -131,13 +135,9 @@ jobs:
       # 300 cases on one process with the fixed cases, about two and a half
       # minutes (one process, a fresh database every 50 cases: the load known
       # not to crash MariaDB's fulltext cache).
-      # The interleaving mode: writes here, changes at Google, polls,
-      # failures, Finish, Put back and undo interleaved, checked by the
-      # invariants of docs/design/interleaving-invariants.md. One process
-      # on purpose: a long run grows the server's fulltext cache.
-      # Report-only until every check has its corruption probes (a check
-      # must fail on injected damage before its pass means anything); the
-      # change that adds them makes this a gate.
+      # Report-only while the last undo-composition findings are fixed
+      # (seed 7 case 35, seed 419 case 607); the change that fixes them
+      # removes continue-on-error. Every check has its oracle probe now.
       - name: Edit harness, interleaving
         continue-on-error: true
         env:

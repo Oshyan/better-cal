@@ -1,0 +1,35 @@
+{
+    "about": "A day given a tag, the tag undone (its row goes), then a new length for all events, then the tag redone: stale, since the newer change moved the times where the entry edited a date (x-undo-fields; api-contract.md, stale_undo, \"changed its times where this deleted, edited or split off a date\").",
+    "series": {
+        "family": "monthly_setpos_set",
+        "rrule": "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=2",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-06 00:30",
+        "length": 90
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.15,
+            "what": "tags"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.751
+        },
+        {
+            "do": "w-all",
+            "pick": 0.723,
+            "what": "length"
+        },
+        {
+            "do": "redo",
+            "pick": 0.888
+        }
+    ]
+}

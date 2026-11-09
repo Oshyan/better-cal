@@ -824,6 +824,15 @@ final class Interleave
             $this->expect('x-sync-silent', $writes === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a poll sends Google nothing", $context + ['writes' => self::brief($writes)]);
         }
 
+        // A write of the app's own that reached Google on a series whose change is half done (A6 refuses it; until then it
+        // goes through) is a change at Google since that change, as a remote one is, for Put back's check.
+        if ($onPending && $out['ok'] && $writes !== [] && !in_array($do, ['finish', 'putback'], true)) {
+            foreach ($this->pendings as $id => $p) {
+                if (isset($p['gids'][$gid])) {
+                    $this->pendings[$id]['since'][$gid] = true;
+                }
+            }
+        }
         // A6: a write to a series whose change is half done is refused with the pending reason, writing nothing.
         if ($isWrite && $onPending && !in_array($do, ['finish', 'putback'], true) && $failure === null) {
             $this->ran('x-pending', 'write while half done');
@@ -968,7 +977,11 @@ final class Interleave
         if ($failure !== 'fatal') {
             $this->expect('x-pending', (int) ($out['extra']['pending'] ?? 0) === (int) $new[0]['id'], "step {$this->step}: the error names the half-done change (pending)", $context + ['extra' => $out['extra']]);
         }
-        $m = ['id' => (int) $new[0]['id'], 'step' => $this->step, 'asked' => $asked, 's0' => $s0, 'gids' => [(string) $asked['gid'] => true], 'since' => []];
+        // A change made at Google before this one and not yet read here is a change since the state this one started
+        // from (series-model.md, Recovery: "its etag at Google is the one its last answered step left or the one the
+        // change started from"), as much as one made after it.
+        $m = ['id' => (int) $new[0]['id'], 'step' => $this->step, 'asked' => $asked, 's0' => $s0, 'gids' => [(string) $asked['gid'] => true],
+            'since' => isset($this->dirty[(string) $asked['gid']]) ? [(string) $asked['gid'] => true] : []];
         // A split's insert is a series of the change too.
         foreach ($this->stand->fake->events as $id => $e) {
             if (!empty($e['recurrence']) && !str_contains((string) $id, '_') && !array_key_exists((string) $id, $s0['g']['digest'])) {
@@ -1074,7 +1087,8 @@ final class Interleave
         $undone = (int) $this->db->scalar('SELECT undone FROM mutations WHERE id = ?', [$entry]) === 1;
         if ($do === 'u-bare') {
             $this->ran('x-undo-bare', 'newest own');
-            $this->expect('x-undo-bare', $out['ok'] ? $undone : self::same($s0['l'], $s1['l']), "step {$this->step}: the bare Undo takes the newest of the account's own changes not undone, passing over an undo's own entry", $context + ['undone' => $undone]);
+            // Which entry it took; what a refusal wrote is x-conflict's and x-undo-fields' to judge.
+            $this->expect('x-undo-bare', $out['ok'] ? $undone : !$undone, "step {$this->step}: the bare Undo takes the newest of the account's own changes not undone, passing over an undo's own entry", $context + ['undone' => $undone]);
         }
         $of = $asked['of'] ?? null;
         $orig = $of === null ? null : ($this->done[$of] ?? null);

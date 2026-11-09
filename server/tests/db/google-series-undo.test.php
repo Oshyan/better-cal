@@ -1039,6 +1039,31 @@ return static function (Db $db): void {
         ], [$moved['google_event_id'] ?? null, $undone, (int) $tags]);
     });
 
+    scenario('google undo: a tag on a day with no row, then "this and following" from before it: the row carries the new series\' instance id, a later edit of that day reaches it, and the tag\'s undo is refused plainly (P2-1, split)', function () use ($setup, $masterId, $last, $iso, $dayRow, $db): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-04-12 10:00'), 'tagNames' => ['sample-tag']]);
+        $s->events->throwDeferred();
+        $tag = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample weekly, later']);
+        $s->events->throwDeferred();
+        $moved = $dayRow($s, '2027-04-12 17:00:00');
+        $newSeries = (string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [(int) ($moved['recurrence_parent_id'] ?? 0)]);
+        $dayId = $newSeries . '_20270412T170000Z';
+        // The tag was given in the series the day has left: its undo is refused with that reason, not "no longer here".
+        $undo = null;
+        try {
+            $s->undo->undoById($s->u, (int) $tag['id']);
+        } catch (HttpError $e) {
+            $undo = $e->getMessage();
+        }
+        $s->events->patch($s->u, (int) $moved['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => $iso('2027-04-12 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        checkEq('the row is the new series\' occurrence at Google; a later title on it reaches that instance; the tag\'s undo names the series the day left', [
+            true, $dayId, 'Sample day title', true,
+        ], [$newSeries !== '' && $newSeries !== 'smpl2weekly', $moved['google_event_id'] ?? null, $s->fake->events[$dayId]['summary'] ?? null,
+            str_contains((string) $undo, 'no longer part of the series this change was made in')]);
+    });
+
     scenario('google series undo: a forced undo bringing a day\'s row back onto a day deleted since leaves the skip, no row, and names the row (P2-2)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow): void {
         $s = $setup();
         $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample A', 'tagNames' => ['sample-a']]);

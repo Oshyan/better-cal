@@ -528,8 +528,7 @@ final class GoogleUndo
             try {
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);
             } catch (HttpError $e) {
-                $pending = isset($e->extra['pending']) ? (int) $e->extra['pending'] : null;
-                if ($pending === null || $series->stepsDone($pending) === 0) {
+                if (!GoogleSeries::reachedGoogle($e)) {
                     throw $e->errorCode === 'google_conflict' ? self::conflict() : $e; // nothing reached Google: all of it rolls back
                 }
                 $deferred = $e;

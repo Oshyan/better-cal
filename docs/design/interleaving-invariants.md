@@ -46,7 +46,7 @@ From: google-calendar.md, intro ("write-through, not two-way sync: each change g
 
 ### x-local-silent: a change here alone sends Google nothing
 
-After `w-this-l`, and after an undo or redo of an entry whose `asked` holds only local-only fields, the stand-in took no write and `gfull` is unchanged; the row a `w-this-l` makes for an ordinary day is under its instance key and survives the next poll while the series has the day.
+After `w-this-l`, after a change for all events of only fields held here alone, and after an undo or redo of an entry that was such a change, the stand-in took no write and `gfull` is unchanged; the row a `w-this-l` makes for an ordinary day is under its instance key and survives the next poll while the series has the day. A change is local only when it leaves every Google-held field of every series as it is: "this and following" and an answer from a later day are splits at Google whatever fields they carry ("'this and following' ends the old series at Google and inserts the new one", google-calendar.md, What Writes Send; an answer from a day on is among the changes to a whole repeating series that undo by a second write to Google, google-calendar.md, Activity), so x-local-silent doesn't apply to them; from the series' first day they are the whole series' change and it does.
 
 From: decisions.md, "A local-only 'this event' edit of an ordinary day sends Google nothing"; "A change made here alone to a Google event undoes like any local change" ("keep their snapshots and undo here, sending Google nothing"); api-contract.md, Activity ("A change made here alone to an event on a Google calendar ... undoes here as on a local calendar, sending Google nothing").
 

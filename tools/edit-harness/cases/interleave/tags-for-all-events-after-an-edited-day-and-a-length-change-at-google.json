@@ -1,0 +1,33 @@
+{
+    "about": "A day's notes changed, the length changed at Google and not read here, then a change of only tags for all events: it sends Google nothing (x-local-silent; the failure point it names is never reached).",
+    "series": {
+        "family": "monthly_nth_list",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=MONTHLY;BYDAY=1SA,-1SU",
+        "bound": "count",
+        "boundAt": 3,
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-10-23 01:30"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.634,
+            "what": "description"
+        },
+        {
+            "do": "r-length",
+            "pick": 0.521
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.089,
+            "k": 2,
+            "write": "w-all",
+            "what": "tags"
+        }
+    ]
+}

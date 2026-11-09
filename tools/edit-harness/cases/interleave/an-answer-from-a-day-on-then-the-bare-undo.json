@@ -1,0 +1,25 @@
+{
+    "about": "An answer from a day on (Planned), a split at Google, then the bare Undo: the split and its undo go to Google, and the answer held here alone undoes with them (worker D's shortest sequence).",
+    "series": {
+        "family": "monthly_nth_list",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=MONTHLY;BYDAY=1SA,-1SU",
+        "bound": "count",
+        "boundAt": 3,
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2026-10-24 21:15"
+    },
+    "steps": [
+        {
+            "do": "w-answer",
+            "pick": 0.894
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.217
+        }
+    ]
+}

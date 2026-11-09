@@ -1596,8 +1596,20 @@ final class Interleave
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
-            if ($error === 'stale_undo' && $state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
-                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since", $context);
+            if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
+                // An undo of an entry nothing has changed since goes through (decisions.md, "An undo is stale when a poll has
+                // since brought a remote change of the same field" and "Staleness has one definition: grounds are fields"):
+                // the only refusals left are the pending gate while a change is half done, not_undoable from the release
+                // gate, and Google's refusal of a series changed there and not yet read (x-conflict's to judge).
+                $gids = array_map(static fn(string $i): string => substr($i, strlen('series:')), array_filter(array_keys(self::entryChange($state)), static fn(string $i): bool => str_starts_with($i, 'series:')));
+                $unread = array_intersect($gids, array_keys($this->dirty)) !== [] || isset($this->dirty[(string) ($asked['gid'] ?? '')]);
+                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true));
+                if (!$allowed) {
+                    $this->fail('x-undo-fields', $error === 'stale_undo'
+                        ? "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since"
+                        : "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused ($error) though nothing it changed has changed since",
+                        ['do' => "$do $error"] + $context);
+                }
             }
             return;
         }

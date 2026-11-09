@@ -337,7 +337,10 @@ final class GoogleSeries
         self::refusePending($this->db, $userId, (int) $calendar['id'], array_filter($names));
         $befores = [];
         foreach ($targets as $i => $t) {
-            $befores[$i] = $this->beforeOf($calendar, $t);
+            // With what this change asks of the series (`asked`): an undo of
+            // it applies its deltas from there, so what Google changed in
+            // the meantime, the change's own write included, stands.
+            $befores[$i] = $this->beforeOf($calendar, $t) + ['asked' => ['master' => $t['master'], 'exceptions' => $t['exceptions'] ?? [], 'skips' => $t['skips'] ?? []]];
         }
         $pendingId = $this->journaled(fn(Db $j): int => $j->insert('google_pending', [
             'user_id' => $userId,
@@ -594,14 +597,20 @@ final class GoogleSeries
      * occurrence Google keeps no record of (an ordinary day, addressed by
      * its instance id) is read by its id for it. Nothing stored here for
      * $googleId (a calendar a move is filling, a series this calendar no
-     * longer has) leaves the read's etag alone as the condition.
+     * longer has) leaves the read's etag alone as the condition. $read: the
+     * resource $googleId as the caller has just read it (and built its body
+     * from): the same comparison is made, the series read for it when
+     * $googleId is in one, and $read's etag is the If-Match.
      *
      * @return array{etag:string, items:list<array>}
      */
-    public function condition(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?array $items = null): array
+    public function condition(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?array $items = null, ?array $read = null): array
     {
         [$master, $rows] = $this->storedOf($calendar, $googleId);
         $seriesId = $master !== null ? (string) $master['google_event_id'] : $googleId;
+        if ($items === null && $read !== null && ($master === null || empty($master['rrule']))) {
+            $items = [$read]; // an event in no series: the caller's read is the whole read
+        }
         if ($items === null) {
             $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
                 => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
@@ -617,7 +626,7 @@ final class GoogleSeries
         if ($master !== null && !self::sameAsStored($items, $seriesId, $master, $rows)) {
             throw new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
         }
-        $etag = self::held($items, $seriesId)['etags'][$googleId] ?? null;
+        $etag = $read !== null && isset($read['etag']) && is_string($read['etag']) ? $read['etag'] : (self::held($items, $seriesId)['etags'][$googleId] ?? null);
         if ($etag === null && $googleId !== $seriesId) {
             $etag = $this->writer->send($calendar, 'GET', '/' . rawurlencode($googleId), null, [], null, $beforeSend)['etag'] ?? null;
         }
@@ -768,7 +777,13 @@ final class GoogleSeries
                 }
                 $before = $this->masterRow($calendar, $t);
                 $old = $before === null ? null : self::stateOf($before, [])['master'];
-                if ($before !== null) {
+                // The series as the change finds it, for its deltas: as an
+                // undone change asked it (an undo's target carries it; a Put
+                // back's never reads it, its change having stopped part way),
+                // else as stored here (which the read below matches).
+                if (!$back && !empty($t['asked']['master'])) {
+                    $found[$i] = $t['asked'];
+                } elseif ($before !== null) {
                     $found[$i] = self::stateOf($before, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]));
                 }
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
@@ -888,7 +903,8 @@ final class GoogleSeries
                     // applies them): a day changed at Google since the read
                     // keeps that change where the change doesn't touch the
                     // field, and is named where it does; never overwritten.
-                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent');
+                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent',
+                        isset($reads[$i]) ? self::held($reads[$i], (string) $t['googleId']) : null);
                     $targets[$i] = $t;
                     $differences = array_merge($differences, $words);
                 }
@@ -1709,7 +1725,7 @@ final class GoogleSeries
      *
      * @return array{0:array,1:list<string>} the target over what Google holds now, and words for what was left as Google has it
      */
-    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped'): array
+    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', ?array $pre = null): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
             return [$target, []];
@@ -1799,8 +1815,25 @@ final class GoogleSeries
             } else {
                 $result = $want;
                 $left = [];
+                $r = $pre !== null && $pre['master'] !== null ? self::dayIn($pre, $key) : null;
+                $preRow = is_array($r) ? ($pre['records'][$key] ?? self::plainAt($pre['master'], $key, self::lengthOf($pre['master']))) : null;
                 foreach (self::GROUPS as $g => $cols) {
-                    $how = self::threeWay($c[$g], [$bOwn[$g], $bHere[$g], is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
+                    // Changed at Google before the change's write ($pre, the
+                    // read before it), as neither side of the change had it:
+                    // Google's value there stands, though the change's own
+                    // master write has since overwritten it at Google.
+                    if (is_array($r) && !in_array($r[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, $t[$g]], true)) {
+                        foreach ($cols as $col) {
+                            $result[$col] = $preRow[$col] ?? null;
+                        }
+                        $fromNow[] = $g;
+                        if ($bOwn[$g] !== $t[$g]) {
+                            $left[] = self::GROUP_WORDS[$g];
+                        }
+                        continue;
+                    }
+                    // A skip at the destination (the day the edited day moves onto) is that day's value, explaining no field.
+                    $how = self::threeWay($c[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
                     if ($how === 'change') {
                         continue;
                     }
@@ -1882,6 +1915,14 @@ final class GoogleSeries
         }
         $rows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [(int) $calendar['id']]);
         $others = array_values(array_filter($rows, static fn(array $r): bool => !isset($uids[(string) $r['uid']])));
+        // What each day of these series holds here alone, as the rows stand
+        // before the store: its local part of the own list, kept through it.
+        $local = [];
+        foreach ($rows as $r) {
+            if (isset($uids[(string) $r['uid']]) && $r['recurrence_instance_utc'] !== null) {
+                $local[(string) $r['uid'] . '|' . (string) $r['recurrence_instance_utc']] = Feeds::heldHere(OwnFields::decode($r['override_fields'] ?? null) ?? [], $r);
+            }
+        }
         $had = [];
         foreach ($rows as $r) {
             $had[(int) $r['id']] = true;
@@ -1906,9 +1947,19 @@ final class GoogleSeries
                 continue;
             }
             foreach ($t['exceptions'] as $key => $x) {
+                // The day's own list: the target's (the change's, and what
+                // Google changed since), with what it held here alone kept,
+                // a place by its coordinates only while it shows the text
+                // they were picked for (Feeds::heldHere, on the row as stored).
+                $own = (array) ($x['own'] ?? []);
+                $held = $local[(string) $t['uid'] . '|' . (string) $key] ?? [];
+                if ($held !== []) {
+                    $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid'], (string) $key]);
+                    $own = array_merge($own, $now === null ? [] : Feeds::heldHere($held, $now));
+                }
                 $this->db->run(
                     'UPDATE events SET override_fields = ? WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
-                    [OwnFields::encode($x['own'] ?? []), (int) $calendar['id'], (string) $t['uid'], (string) $key]
+                    [OwnFields::encode(OwnFields::normalize($own)), (int) $calendar['id'], (string) $t['uid'], (string) $key]
                 );
             }
         }
@@ -2881,8 +2932,9 @@ final class GoogleSeries
     }
 
     /**
-     * After a recovery stored what Google holds: each row of the snapshot
-     * the pending row kept (localOf) for a series the targets name, and
+     * After a recovery or an undo stored what Google holds: each row of the
+     * snapshot it kept (the pending row's localOf, or the rows as the undone
+     * change left them) for a series the targets name, and
      * each event of its own they name, that the store brought back under
      * another id (an edited day Google dropped and was sent again, an event
      * of its own made again) takes back its id, its own columns (reminders,
@@ -2898,7 +2950,7 @@ final class GoogleSeries
      * @param list<array> $targets
      * @return list<array> the snapshot's rows with nothing in their place
      */
-    private function reattach(array $calendar, array $local, array $targets): array
+    public function reattach(array $calendar, array $local, array $targets): array
     {
         $snap = [];
         foreach ($local['events'] ?? [] as $r) {

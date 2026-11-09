@@ -1527,6 +1527,10 @@ final class Interleave
                 continue;
             }
             $own = $kind === 'this' && ($a === null || $b === null || (int) $id === (int) $target || (string) ($a['key'] ?? $b['key']) === (string) $key);
+            // A row the edit took, brought back under its id (a day an edit for all events made ordinary), or one the
+            // edit made, gone again: the undo or redo putting the rows back as they were before the edit.
+            $own = $own || ($a === null && isset($rowsBefore[$id]) && (string) ($rowsBefore[$id]['recurrence_instance_utc'] ?? '') === (string) ($b['key'] ?? ''))
+                || ($b === null && !isset($rowsBefore[$id]));
             if ($a === null || $b === null) {
                 $this->expect('x-undo-fields', $own, "step {$this->step} ($do): " . ($redo ? 'a redo' : 'an undo') . " of step $of made or removed a row other than the edit's own day", $context + ['row' => $id, 'was' => $a, 'now' => $b]);
                 continue;

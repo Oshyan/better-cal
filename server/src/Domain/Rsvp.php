@@ -417,10 +417,10 @@ final class Rsvp
         }
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
         // answer to the organizer by itself; nobody else gets mail.
-        // Conditional on the version just read, not the one stored here, so
-        // a change at Google between the read and the write answers 412.
-        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false),
-            isset($current['etag']) && is_string($current['etag']) ? $current['etag'] : null);
+        // Conditional on the version just read, once it is the event as
+        // stored here (GoogleWriter's one condition), so a change at Google
+        // since the last poll or between the read and the write is refused.
+        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false), $current);
         $etag = static fn(array $r): ?string => isset($r['etag']) && is_string($r['etag']) ? $r['etag'] : null;
         $google = GoogleUndo::details(GoogleUndo::ANSWER, $calendar, $googleId, null, $etag($current), $etag($resp),
             ['responseStatus' => $was, 'attendance' => (string) ($row['attendance'] ?? 'none')]);

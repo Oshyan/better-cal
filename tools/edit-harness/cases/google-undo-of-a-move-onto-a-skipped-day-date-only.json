@@ -1,0 +1,57 @@
+{
+    "n": 9822,
+    "seed": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "none",
+        "boundAt": 12,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-01 09:00",
+        "length": 60,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": 0,
+            "mins": 0,
+            "zone": "UTC",
+            "len": 0
+        },
+        {
+            "at": 1,
+            "kind": "skip"
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {},
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=MONTHLY;BYDAY=2WE",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false
+}

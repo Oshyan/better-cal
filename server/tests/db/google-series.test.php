@@ -89,6 +89,8 @@ return static function (Db $db): void {
             public bool $loseFirstPost = false;
             /** A PATCH on this id is answered as sent without reaching the stand-in (Google keeping something else). */
             public ?string $swallowPatchOf = null;
+            /** Run once, right after the first PATCH reaches the stand-in (another client writing between a master write and its read-back). */
+            public ?\Closure $afterPatch = null;
             public int $writes = 0;
         };
         $inner = $fake->writerTransport();
@@ -112,6 +114,11 @@ return static function (Db $db): void {
                 }
             }
             $answer = $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
+            if ($method === 'PATCH' && $t->afterPatch !== null) {
+                $after = $t->afterPatch;
+                $t->afterPatch = null;
+                $after();
+            }
             if ($method === 'POST' && $t->loseFirstPost) {
                 $t->loseFirstPost = false;
                 throw new RuntimeException('the answer was lost');
@@ -421,5 +428,39 @@ return static function (Db $db): void {
             [str_contains((string) ($entry['summary'] ?? ''), 'Google kept something else'), $notice['title'] ?? null, $lines]);
         // Google holds the day at the series' own values, so here it is an ordinary occurrence again: no row, not the plan's.
         checkEq('the rows here show what Google stores, not the plan: the day has no row of its own', null, $db->scalar('SELECT title FROM events WHERE calendar_id = ? AND google_event_id = ?', [$s->calendarId, 'smpl1weekly_20270329T170000Z']));
+    });
+
+    scenario('google series: a day holding only a tag, renamed at Google during a series rename, keeps the tag as its own, and a later clock change at Google keeps the day and its tag', function () use ($setup, $masterId, $db, $iso, $calendar): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['sample-tag']]);
+        $s->events->throwDeferred();
+        $dayId = 'smpl1weekly_20270308T180000Z';
+        $row = static fn(): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, $dayId]);
+        $tags = static fn(int $eventId): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$eventId]), 'name');
+        $own = static function (?array $r): ?array {
+            $list = $r === null ? null : json_decode((string) $r['override_fields'], true);
+            if (is_array($list)) {
+                sort($list);
+            }
+            return $list;
+        };
+        $other = $s->fake->writerTransport();
+        $url = static fn(string $gid): string => 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode('team@group.calendar.google.com') . '/events/' . rawurlencode($gid);
+        checkEq('the day has a row of its own holding only its tag', [['tags'], ['sample-tag']], [$own($row()), $tags((int) $row()['id'])]);
+        // Another client renames that day between the series' master write and its read-back.
+        $s->t->afterPatch = static fn() => $other('PATCH', $url($dayId), ['summary' => 'Sample remote day'], ['Authorization: Bearer sample-access']);
+        planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample weekly, renamed']);
+        $r = $row();
+        checkEq('right after the read-back: the remote title is the day\'s own, and its tag is still its own, with the tag on it', [['tags', 'title'], 'Sample remote day', ['sample-tag']],
+            [$own($r), $r['title'] ?? null, $r !== null ? $tags((int) $r['id']) : null]);
+        // A clock change at Google drops the day's record; a delta poll reads it.
+        $m = $s->fake->events['smpl1weekly'];
+        $shift = static fn(array $w): array => ['dateTime' => (new DateTimeImmutable($w['dateTime']))->modify('+1 hour')->format('Y-m-d\\TH:i:sP'), 'timeZone' => $w['timeZone']];
+        $other('PATCH', $url('smpl1weekly'), ['start' => $shift($m['start']), 'end' => $shift($m['end'])], ['Authorization: Bearer sample-access']);
+        $s->sync->poll($calendar($s));
+        $kept = $db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
+        $tagged = array_values(array_filter($kept, static fn(array $k): bool => $tags((int) $k['id']) === ['sample-tag']));
+        checkEq('after the delta poll the day keeps its row and its tag, now at the new clock', [1, ['tags']], [count($tagged), $own($tagged[0] ?? null)]);
     });
 };

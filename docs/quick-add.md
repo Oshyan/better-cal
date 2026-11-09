@@ -53,7 +53,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Repeat start and end:** starting Nov 3, until Dec 15, for 6 weeks, 10 times.
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
 - **Same clock time in any zone:** "local time" or "floating" right after the time ("6:30am local time", "7am floating", the word iCalendar and Apple's Calendar use) keeps the event at that clock time wherever you are: a routine at 7 is at 7 at home and at 7 on a trip, and so are its reminders. A calendar can give this to all its new timed events (its settings, "New timed events keep their clock time in any zone"). Never all-day events or invitations.
-- **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place.
+- **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place. A date or time word is never read as a person or place, and a weekday next to a date ("November 16, Monday") goes with the date when it matches.
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
 - **Links:** an event page's link, pasted or shared from a phone, becomes that event. See [Event Links](#event-links).
 

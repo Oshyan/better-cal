@@ -1,0 +1,31 @@
+{
+    "about": "A day given a title of its own, then the series renamed with a day renamed at Google between its master write and its read-back (the plan makes the titled day ordinary again; the remote rename is kept), then the rename undone: the titled day comes back under its id and the remote rename stands (x-undo-fields, exact; seed 7 case 418).",
+    "series": {
+        "family": "weekly_list_i2",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 11,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-04-30",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.293,
+            "what": "title"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.484,
+            "what": "title"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.924
+        }
+    ]
+}

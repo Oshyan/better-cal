@@ -124,9 +124,9 @@ return static function (Db $db): void {
         $s->undo->undoById($s->u, (int) $entry['id']);
         $back = $byGoogleId($s, $dayGoogleId);
         $master = $byGoogleId($s, 'smpl3weekly');
-        checkEq('undone: read, then one PATCH; the day is back under the same id, in the trip, with its tag, reminder and title, and no longer skipped', [
-            ['GET', 'PATCH'], $id, 1, ['sample-tag'], '[{"minutes":30}]', 'Sample weekly, special', 'confirmed', [],
-        ], [array_slice($methods($s), 0, 2), (int) ($back['id'] ?? 0), $links($id), $tags($id), $back['reminders_json'] ?? null, $back['title'] ?? null,
+        checkEq('undone: the day read, then the series for the write\'s condition, then one PATCH; the day is back under the same id, in the trip, with its tag, reminder and title, and no longer skipped', [
+            ['GET', 'GET', 'PATCH'], $id, 1, ['sample-tag'], '[{"minutes":30}]', 'Sample weekly, special', 'confirmed', [],
+        ], [array_slice($methods($s), 0, 3), (int) ($back['id'] ?? 0), $links($id), $tags($id), $back['reminders_json'] ?? null, $back['title'] ?? null,
             $s->fake->events[$dayGoogleId]['status'] ?? null, Recurrence::decodeExdates($master['exdates_json'] ?? null)]);
 
         // The undo undoes back: deleted again, its parts kept again, and undone once more.

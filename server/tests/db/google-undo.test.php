@@ -75,10 +75,10 @@ return static function (Db $db): void {
             }
 
             /** @return list<array> */
-            public function listed(?string $uid = null): array
+            public function listed(?string $uid = null, bool $deleted = false): array
             {
                 return array_values(array_map(fn(array $r) => $this->out($r), array_filter($this->res,
-                    static fn(array $r): bool => empty($r['virtual']) && ($uid === null || ($r['iCalUID'] === $uid && $r['status'] !== 'cancelled')))));
+                    static fn(array $r): bool => empty($r['virtual']) && ($uid === null || ($r['iCalUID'] === $uid && ($deleted || $r['status'] !== 'cancelled'))))));
             }
         };
         foreach ($resources() as $id => $r) {
@@ -99,7 +99,7 @@ return static function (Db $db): void {
             parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
             $google->calls[] = [$method, $id !== '' ? $id : (string) ($query['iCalUID'] ?? ''), $payload, $ifMatch];
             if ($id === '') {
-                return ['status' => 200, 'body' => json_encode(['items' => $google->listed((string) ($query['iCalUID'] ?? ''))])];
+                return ['status' => 200, 'body' => json_encode(['items' => $google->listed((string) ($query['iCalUID'] ?? ''), ($query['showDeleted'] ?? '') === 'true')])];
             }
             $r = $google->res[$id] ?? null;
             if ($r === null) {
@@ -215,9 +215,9 @@ return static function (Db $db): void {
 
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
-        $sent = $t->google->calls[2][2]['attendees'] ?? [];
-        checkEq('read (the guest list, then the condition), then one PATCH with If-Match "g2" putting back needsAction for the account alone; the invitation reads unanswered', [
-            [['GET', 'probe5k6m7n', null], ['GET', 'probe5k6m7n', null], ['PATCH', 'probe5k6m7n', '"g2"']], ['accepted', 'needsAction'], 'NEEDS-ACTION', 1, 'accepted',
+        $sent = $t->google->calls[1][2]['attendees'] ?? [];
+        checkEq('read once (the guest list, which is also the write\'s condition), then one PATCH with If-Match "g2" putting back needsAction for the account alone; the invitation reads unanswered', [
+            [['GET', 'probe5k6m7n', null], ['PATCH', 'probe5k6m7n', '"g2"']], ['accepted', 'needsAction'], 'NEEDS-ACTION', 1, 'accepted',
         ], [$calls($t), array_column($sent, 'responseStatus'), $partstat(), $undone((int) $entry['id']), $google($last($t))['responseStatus'] ?? null]);
     });
 
@@ -270,9 +270,9 @@ return static function (Db $db): void {
         $gone = [$row($t, 'probe1a2b3c_20270308T180000Z'), $exdates()];
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $deleted['id']);
-        checkEq('the delete is a skip; its undo reads the instance, sends {status: confirmed} to it, and the day is back as an ordinary occurrence', [
-            [null, ['2027-03-08 18:00:00']], ['GET', 'PATCH'], ['status' => 'confirmed'], [], null,
-        ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 2), $t->google->calls[1][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
+        checkEq('the delete is a skip; its undo reads the instance, then the series for the write\'s condition, sends {status: confirmed} to it, and the day is back as an ordinary occurrence', [
+            [null, ['2027-03-08 18:00:00']], ['GET', 'GET', 'PATCH'], ['status' => 'confirmed'], [], null,
+        ], [$gone, array_slice(array_column($t->google->calls, 0), 0, 3), $t->google->calls[2][2] ?? null, $exdates(), $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
 
         // The undo undoes back: the day, an ordinary occurrence with no row here, is skipped again.
         $back = $last($t);
@@ -282,5 +282,47 @@ return static function (Db $db): void {
             [['GET', 'probe1a2b3c@google.com'], ['DELETE', 'probe1a2b3c_20270308T180000Z']], ['2027-03-08 18:00:00'], 'cancelled', 1, (int) $back['id'],
         ], [array_map(static fn(array $c): array => [$c[0], $c[1]], array_slice($t->google->calls, 0, 2)), $exdates(), $t->google->res['probe1a2b3c_20270308T180000Z']['status'] ?? null,
             $undone((int) $back['id']), $google($last($t))['undoes'] ?? null]);
+    });
+
+    // A Redo of a "this event" edit whose undo made the day ordinary again
+    // (no row here): it reads the day at Google, and that read passes the
+    // same comparison with the rows here as every write, so a change made
+    // there since the last poll refuses it; a change only to a field Google
+    // alone holds does not.
+    $redoAfterRemote = static function (array $remote) use ($db, $setup, $row, $last): array {
+        $t = $setup();
+        $dayId = 'probe1a2b3c_20270308T180000Z';
+        $masterId = (int) $row($t, 'probe1a2b3c')['id'];
+        $t->events->patch($t->u, $masterId, ['location' => 'Sample room A', 'scope' => 'this', 'instanceStart' => '2027-03-08T18:00:00+00:00']);
+        $t->undo->undoById($t->u, (int) $last($t)['id']);
+        $redo = $last($t);
+        $gone = $row($t, $dayId);
+        // Another client changes the day; no poll.
+        $t->google->res[$dayId] = array_merge($t->google->res[$dayId], $remote);
+        unset($t->google->res[$dayId]['virtual']);
+        $t->google->bump('probe1a2b3c@google.com');
+        $state = static fn(): array => [$db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$t->calendarId]),
+            $db->all('SELECT id, undone, summary FROM mutations WHERE user_id = ? ORDER BY id', [$t->u])];
+        $before = $state();
+        $t->google->calls = [];
+        $caught = null;
+        try {
+            $t->undo->undoById($t->u, (int) $redo['id']);
+        } catch (HttpError $e) {
+            $caught = $e->errorCode;
+        }
+        return ['gone' => $gone, 'caught' => $caught, 'writes' => array_values(array_filter(array_column($t->google->calls, 0), static fn(string $m): bool => $m !== 'GET')),
+            'same' => $state() === $before, 'location' => $t->google->res[$dayId]['location'] ?? null];
+    };
+
+    scenario('google undo: a Redo of a day with no row here, after the same field changed at Google unpolled, is refused and changes nothing on either side', function () use ($redoAfterRemote): void {
+        $r = $redoAfterRemote(['location' => 'Sample remote room']);
+        checkEq('the undo left no row for the day; the Redo is refused with google_conflict, sends no write, and Google, the rows and Activity are as they were', [null, 'google_conflict', [], true, 'Sample remote room'],
+            [$r['gone'], $r['caught'], $r['writes'], $r['same'], $r['location']]);
+    });
+
+    scenario('google undo: a Redo after a change at Google to a field only Google holds goes through', function () use ($redoAfterRemote): void {
+        $r = $redoAfterRemote(['colorId' => '4']);
+        checkEq('no refusal, one PATCH, the day takes the Redo\'s place', [null, ['PATCH'], 'Sample room A'], [$r['caught'], $r['writes'], $r['location']]);
     });
 };

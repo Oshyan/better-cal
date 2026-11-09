@@ -1,0 +1,35 @@
+{
+    "about": "A day holding only coordinates, renamed at Google during a series rename (its own list keeps its local part with the remote title), then the series' clock moved at Google and a 410: the day keeps its coordinates (x-dropped).",
+    "series": {
+        "family": "monthly_nth_setpos",
+        "rrule": "FREQ=MONTHLY;BYDAY=WE;BYSETPOS=1",
+        "import": false,
+        "bound": "until",
+        "boundAt": 12,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-01 13:00",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.73,
+            "what": "coords"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.006,
+            "what": "title"
+        },
+        {
+            "do": "r-time",
+            "pick": 0.696
+        },
+        {
+            "do": "p-410",
+            "pick": 0.619
+        }
+    ]
+}

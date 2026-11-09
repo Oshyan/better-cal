@@ -349,7 +349,6 @@ final class GoogleUndo
                     throw self::conflict();
                 }
                 $now = $row !== null ? self::bodyOf($row) : ($parsed !== null ? self::bodyOf($parsed) : []);
-                $etag = $current !== null ? (self::etagOf($current) ?? '') : null;
                 $rowId = $row !== null ? (int) $row['id'] : (int) $wasRow['id'];
                 // What the edit changed here (tags, reminders, the trip flag,
                 // the row itself when the edit made it) is put back from the
@@ -358,7 +357,7 @@ final class GoogleUndo
                 if ($local) {
                     $this->undo->checkRestore($mutation, true);
                 }
-                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $etag));
+                $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
                     $was = $this->rowTables($rowId);
                     // The row put back first (made again under its id, or
@@ -397,7 +396,7 @@ final class GoogleUndo
                 if ($removed) {
                     $this->undo->checkRestore($mutation);
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['status' => $status], $beforeSend, self::etagOf($current) ?? ''));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['status' => $status], $beforeSend, $current));
                 $legacy = is_array($g['local'] ?? null) ? $g['local'] : [];
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $removed, $legacy): void {
                     if ($removed) {
@@ -466,7 +465,7 @@ final class GoogleUndo
                 if ($was === null) {
                     throw HttpError::badRequest('Google no longer lists this account as a guest of the event', 'not_undoable');
                 }
-                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend));
+                $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
                     $writer->apply($calendar, [$resp]);
@@ -538,6 +537,9 @@ final class GoogleUndo
             $was = $this->seriesTables((int) $locked['id'], $uids, $ids);
             $this->undo->restoreSnapshots($fresh);
             $series->store($locked, $out['readbacks'], $out['targets']);
+            // A day the undo keeps from Google (changed there while the
+            // change ran) stands as the row it was, not one made again.
+            $series->reattach($locked, $was, $out['targets']);
             $series->settle($out['pending']);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
             $uids = array_merge($uids, array_keys($out['readbacks']));

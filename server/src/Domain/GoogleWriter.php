@@ -268,25 +268,26 @@ final class GoogleWriter
     }
 
     /**
-     * $etag: the If-Match to send, when the caller has just read the
-     * resource and built the body from that read (Rsvp, an undo); null reads
-     * it now (condition). $refresh: re-read the series' etags after a write
-     * to one of its rows.
+     * $read: the resource as the caller has just read it and built the body
+     * from (Rsvp, an undo), whose etag is the If-Match once the same
+     * comparison every write makes has passed (condition); null reads it
+     * there. $refresh: re-read the series' etags after a write to one of
+     * its rows.
      */
-    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null, ?string $etag = null, bool $refresh = true): array
+    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true): array
     {
         $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
-        $resp = $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend, ifMatch: $etag ?? $this->condition($calendar, $googleId, $beforeSend));
+        $resp = $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read));
         if ($refresh && ($series !== null || !empty($resp['recurringEventId']) || !empty($resp['recurrence']))) {
             $this->refreshAfterWrite($calendar, (string) ($resp['iCalUID'] ?? $series ?? ''));
         }
         return $resp;
     }
 
-    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?string $etag = null, bool $refresh = true): void
+    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null, ?array $read = null, bool $refresh = true): void
     {
         $series = $refresh ? $this->seriesOf($calendar, $googleId) : null;
-        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend, ifMatch: $etag ?? $this->condition($calendar, $googleId, $beforeSend));
+        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend, ifMatch: $this->condition($calendar, $googleId, $beforeSend, $read));
         $this->refreshAfterWrite($calendar, $series);
     }
 
@@ -302,13 +303,14 @@ final class GoogleWriter
     }
 
     /**
-     * The If-Match for a write to $googleId: the etag of a read made now,
-     * once what was read is the series (or event) as stored here
-     * (GoogleSeries::condition, the one rule every write follows).
+     * The If-Match for a write to $googleId: the etag of a read (made now,
+     * or the caller's $read), once what was read is the series (or event)
+     * as stored here (GoogleSeries::condition, the one rule every write
+     * follows; no caller is exempt).
      */
-    private function condition(array $calendar, string $googleId, ?\Closure $beforeSend): string
+    private function condition(array $calendar, string $googleId, ?\Closure $beforeSend, ?array $read = null): string
     {
-        return (new GoogleSeries($this->db, $this, $this->feeds))->condition($calendar, $googleId, $beforeSend)['etag'];
+        return (new GoogleSeries($this->db, $this, $this->feeds))->condition($calendar, $googleId, $beforeSend, null, $read)['etag'];
     }
 
     /**

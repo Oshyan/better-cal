@@ -2031,8 +2031,10 @@ final class Undo
             if (!$force && ($why = $this->staleFor($mutation)) !== null) {
                 throw HttpError::badRequest($why, 'stale_undo');
             }
-            // A day's row it brings back is composed over the day as it stands (overCurrent), as on a Google calendar.
-            $removed = $this->putBack($mutation, $this->overCurrent($before, $after, $mutationId), $after, $pieces, $eventIds);
+            // What a day's row it brings back is, decided by provider here alone: on a calendar here the
+            // snapshot as it was (snapshotOnto); on a Google calendar composed over the day as it stands (overCurrent).
+            $restore = $google === [] ? $this->snapshotOnto($before, $after) : $this->overCurrent($before, $after, $mutationId);
+            $removed = $this->putBack($mutation, $restore, $after, $pieces, $eventIds);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
             // The rows the undo removed, named by row and date in a line of its own (it touches nothing).
             if ($removed !== []) {
@@ -2364,6 +2366,51 @@ final class Undo
     }
 
     /**
+     * A snapshot undo's rows on a calendar here: the snapshot, exactly as
+     * it was, the local-only data with it. Its composition is the snapshot,
+     * never the day as it stands (overCurrent is a Google calendar's). The
+     * one thing it takes from now: where a row brings back a day (one its
+     * entry removed, deleted, took out of the series or moved off that
+     * day) and another row holds that day now (a later change made one
+     * since), the snapshot row is that row: it takes that row's id, so
+     * what refers to either names the one row and nothing meets on the
+     * day's key, and every other column is the snapshot's.
+     */
+    private function snapshotOnto(array $before, array $after): array
+    {
+        $kept = [];
+        foreach ($after['events'] ?? [] as $row) {
+            $kept[self::keyOf('events', $row)] = $row;
+        }
+        // Where this restore puts each row it puts back: one it moves off a day leaves that day.
+        $restored = [];
+        foreach ($before['events'] ?? [] as $row) {
+            $restored[(int) ($row['id'] ?? 0)] = ($row['recurrence_instance_utc'] ?? null) === null ? null : (string) $row['recurrence_instance_utc'];
+        }
+        foreach ($before['events'] ?? [] as $row) {
+            if (($row['recurrence_instance_utc'] ?? null) === null || !isset($row['id'])) {
+                continue;
+            }
+            $was = $kept[self::keyOf('events', $row)] ?? null;
+            $onto = $was === null
+                || (($was['deleted_at'] ?? null) !== null && ($row['deleted_at'] ?? null) === null)
+                || !self::same($was['calendar_id'] ?? null, $row['calendar_id'] ?? null) || !self::same($was['uid'] ?? null, $row['uid'] ?? null)
+                || !self::same($was['recurrence_instance_utc'] ?? null, $row['recurrence_instance_utc'] ?? null)
+                || $this->db->scalar('SELECT 1 FROM events WHERE id = ?', [(int) $row['id']]) === null;
+            if (!$onto) {
+                continue;
+            }
+            $now = $this->db->one('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
+                [(int) $row['calendar_id'], (string) $row['uid'], (string) $row['recurrence_instance_utc'], (int) $row['id']]);
+            if ($now === null || (array_key_exists((int) $now['id'], $restored) && $restored[(int) $now['id']] !== (string) $row['recurrence_instance_utc'])) {
+                continue; // nothing holds its day now, or a row this restore moves off the day leaves it (Events::parkInstanceKeys)
+            }
+            $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
+        }
+        return $before;
+    }
+
+    /**
      * A day's row an undo or redo brings back (in $before, and in $after
      * not at all, deleted, or gone since), composed over the day as it
      * stands now. Where a row holds that day now (a poll or a later change
@@ -2378,8 +2425,9 @@ final class Undo
      * the undo is stored on top. The day is its series and its occurrence:
      * one a later change carried to another occurrence (dayNow) comes back
      * there, and one a planned undo places (a Google series undo, $placed)
-     * comes back where the undo's series has it. The same composition for
-     * a calendar here and a Google calendar, in the check and the restore.
+     * comes back where the undo's series has it. A Google calendar's
+     * composition alone, in the check and the restore; a calendar here
+     * puts its snapshot back (snapshotOnto).
      */
     private function overCurrent(array $before, array $after, int $entryId, array $placed = []): array
     {

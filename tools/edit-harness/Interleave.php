@@ -1653,11 +1653,6 @@ final class Interleave
         foreach ((array) ($row['own'] ?? []) as $o) {
             $out = array_merge($out, $map[$o] ?? [$o]);
         }
-        // People are held here alone, so a day's row holding some owns them (tags owned are in its own list; tags it shows
-        // from its series are inherited).
-        if (!empty($row['people'])) {
-            $out[] = 'people';
-        }
         return array_values(array_unique($out));
     }
 
@@ -1831,8 +1826,12 @@ final class Interleave
                     continue;
                 }
                 $this->expect('x-undo-fields', array_intersect(self::ground($r), $gave) === [], "step {$this->step} ($do): an undo left the row its entry made owning what the entry gave it", $where + ['gave' => $gave, 'now' => $r]);
+                $b0 = $state['after'][$ident] ?? [];
                 foreach ($later as $f) {
-                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($c[$f] ?? null), "step {$this->step} ($do): an undo took from the row its entry made what a later change gave it", $where + ['field' => $f, 'was' => $c[$f] ?? null, 'now' => $r[$f] ?? null]);
+                    // What the later change gave: a list's additions since the entry stay; a value stays as it was.
+                    $kept = is_array($c[$f] ?? null) ? array_diff((array) $c[$f], (array) ($b0[$f] ?? [])) === array_intersect(array_diff((array) $c[$f], (array) ($b0[$f] ?? [])), (array) ($r[$f] ?? []))
+                        : ($r[$f] ?? null) == ($c[$f] ?? null);
+                    $this->expect('x-undo-fields', $kept, "step {$this->step} ($do): an undo took from the row its entry made what a later change gave it", $where + ['field' => $f, 'was' => $c[$f] ?? null, 'now' => $r[$f] ?? null]);
                 }
                 continue;
             }
@@ -1868,6 +1867,19 @@ final class Interleave
             }
             foreach ($fields as $f) {
                 if ($f === 'own') {
+                    continue;
+                }
+                if ($f === 'skips' && $c !== null) {
+                    // Skips go back by their delta over the list as it stands: each date the entry skipped or brought back
+                    // toggled back, every other date as before the undo (decisions.md, F1: "a skip is its own date's").
+                    $after = (array) ($state['after'][$ident]['skips'] ?? []);
+                    $added = array_diff($after, (array) ($was['skips'] ?? []));
+                    $removed = array_diff((array) ($was['skips'] ?? []), $after);
+                    $want = array_values(array_unique(array_merge(array_diff((array) ($c['skips'] ?? []), $added), $removed)));
+                    sort($want);
+                    $got = (array) ($r['skips'] ?? []);
+                    sort($got);
+                    $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): an undo puts back the skips its entry changed by their delta", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
                     continue;
                 }
                 $this->expect('x-undo-fields', ($r[$f] ?? null) == ($was[$f] ?? null), "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $was[$f] ?? null, 'now' => $r[$f] ?? null]);

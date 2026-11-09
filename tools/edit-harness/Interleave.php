@@ -1757,6 +1757,30 @@ final class Interleave
                 $out[$d] = ['no longer an occurrence of its series'];
             }
         }
+        // The days a change of a series' rule, bound or start added are its ground: a later change on one (a row made or
+        // changed at an added date) stands on it (decisions.md, "An undo of a Google series change is planned as a forward
+        // change is": the days a change added are its ground, so a later edit on one makes the undo stale).
+        foreach ($change as $ident => $fields) {
+            if (!str_starts_with($ident, 'series:') || array_intersect($fields, ['rrule', 'start']) === [] || !isset($state['before'][$ident])) {
+                continue;
+            }
+            $was = $state['before'][$ident];
+            $left = $state['after'][$ident];
+            if ($was['rrule'] === null || $left['rrule'] === null) {
+                continue;
+            }
+            $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
+            $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
+            foreach ($now as $d => $row) {
+                if (!str_starts_with($d, $prefix) || $plain($state['after'][$d] ?? null) == $plain($row)) {
+                    continue;
+                }
+                $k = substr($d, strlen($prefix));
+                if (Truth::isOccurrence($raw($left), self::shiftKey($k, $was, $left)) && !Truth::isOccurrence($raw($was), $k)) {
+                    $out[$d] = ['a day the entry added, changed since'];
+                }
+            }
+        }
         if ($out !== []) {
             return $out;
         }

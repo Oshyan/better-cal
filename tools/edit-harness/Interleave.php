@@ -1394,6 +1394,11 @@ final class Interleave
                 }
                 $row = $s0['rows'][$rowId] ?? null;
                 $master = $row !== null && $row['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $row['recurrence_parent_id']] ?? null) : null;
+                if (str_starts_with($item, 'coords:') && $row !== null && self::shownPlace($s1['rows'], $row, $master, $day) !== (string) $row['location']) {
+                    // A1: coordinates are kept while the day's shown place text is unchanged; the text changed in this
+                    // step (whoever changed it, a record Google dropped among them), so they go with the old text.
+                    continue;
+                }
                 $stillHasDay = false;
                 if ($master !== null) {
                     $days = self::days($master, 200);
@@ -1414,6 +1419,17 @@ final class Interleave
     }
 
     /** Whether a step's own request reaches this day and item (interleaving-invariants.md, x-alone). */
+    /** The place text a day shows after a step: its row's on that day of the same series, else the series'. */
+    private static function shownPlace(array $rows, array $before, ?array $master, string $day): string
+    {
+        foreach ($rows as $r) {
+            if ((string) $r['uid'] === (string) $before['uid'] && $r['recurrence_parent_id'] !== null && self::dayOf($r, $master) === $day) {
+                return (string) $r['location'];
+            }
+        }
+        return (string) ($master['location'] ?? '');
+    }
+
     private static function allowed(?array $asked, string $day, string $item): bool
     {
         if ($asked === null) {

@@ -98,6 +98,31 @@ final class OwnFields
      */
     public const HELD_HERE = ['reminders', 'attendance', 'tags', 'people', 'icon'];
 
+    /**
+     * The fields Google holds of an event: every field but those held here
+     * alone (HELD_HERE). The one allowed list a Google request body is
+     * built from (GoogleWriter::allowedKeys, GoogleSeries' days), so a field
+     * held here can't reach Google by construction.
+     *
+     * @return list<string>
+     */
+    public static function googleFields(): array
+    {
+        return array_values(array_diff(self::FIELDS, self::HELD_HERE));
+    }
+
+    /**
+     * The fields of an own list Google holds (googleFields): none for a day
+     * with only local data, an ordinary day to every Google write and undo.
+     *
+     * @param list<string> $own
+     * @return list<string>
+     */
+    public static function googleHeld(array $own): array
+    {
+        return array_values(array_intersect($own, self::googleFields()));
+    }
+
     /** The place's columns no feed carries: its coordinates and where they came from. */
     public const COORDINATE_COLUMNS = ['location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at', 'geocoded_at'];
 

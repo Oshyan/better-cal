@@ -153,6 +153,48 @@ final class GoogleWriter
     }
 
     /**
+     * The body keys each field Google holds is sent as (a day's date, time,
+     * length and all-day setting are its start and end together).
+     */
+    private const BODY_KEYS = [
+        'date' => ['start', 'end'], 'time' => ['start', 'end'], 'length' => ['start', 'end'], 'allDay' => ['start', 'end'],
+        'title' => ['summary'], 'location' => ['location'], 'description' => ['description'], 'url' => ['source'], 'status' => ['status'],
+    ];
+
+    /**
+     * The one allowed list of a Google request body: the keys of the fields
+     * Google holds (OwnFields::googleFields, the complement of what is held
+     * here alone) and the series' rule. Pure.
+     *
+     * @return list<string>
+     */
+    public static function allowedKeys(): array
+    {
+        $keys = ['recurrence'];
+        foreach (Series\OwnFields::googleFields() as $field) {
+            $keys = array_merge($keys, self::BODY_KEYS[$field] ?? throw new \LogicException("no body key for the field Google holds $field"));
+        }
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * The PATCH that takes an event from $before to $after (bodies in
+     * body()'s shape): each allowed key whose value differs, the start and
+     * end together, and one $after lacks (a link removed) as null, which
+     * clears it at Google. Every writer builds its body here: empty when
+     * nothing Google holds changes, and such a change is held here alone,
+     * sends nothing and journals as a local change. Pure.
+     */
+    public static function patchOf(array $before, array $after): array
+    {
+        $body = [];
+        foreach (array_intersect(GoogleUndo::changedKeys($before, $after), self::allowedKeys()) as $key) {
+            $body[$key] = $after[$key] ?? null;
+        }
+        return $body;
+    }
+
+    /**
      * The body for importing an event that already exists here (moving a
      * calendar to Google, 0.9.4): import keeps our iCalendar UID, so the
      * first poll after the move matches every row, and it sends no mail.

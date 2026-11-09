@@ -408,9 +408,13 @@ return static function (Db $db): void {
             $calls[] = 'token';
             return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
         });
-        $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
+        // Google answers a PATCH with the whole event as it now is (a body carries only what changes).
+        $resource = ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'summary' => 'Sample meeting',
+            'start' => ['dateTime' => '2027-01-11T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00+00:00', 'timeZone' => 'UTC']];
+        $transport = static function (string $method, string $url, ?array $payload) use (&$calls, &$resource): array {
             $calls[] = $method;
-            return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed'])];
+            $resource = array_merge($resource, $payload ?? []);
+            return ['status' => 200, 'body' => json_encode($resource)];
         };
         $events = new BetterCal\Domain\Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
             new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new Trips($db, $d->undo), null,

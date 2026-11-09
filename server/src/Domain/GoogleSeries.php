@@ -141,19 +141,45 @@ final class GoogleSeries
         ];
     }
 
+    /** The columns of a day (cols) each field Google holds sets. */
+    private const DAY_COLUMNS = [
+        'date' => ['start_utc', 'end_utc', 'all_day', 'tzid'], 'time' => ['start_utc', 'end_utc', 'all_day', 'tzid'],
+        'length' => ['start_utc', 'end_utc', 'all_day', 'tzid'], 'allDay' => ['start_utc', 'end_utc', 'all_day', 'tzid'],
+        'title' => ['title'], 'location' => ['location'], 'description' => ['description'], 'url' => ['url'], 'status' => ['status'],
+    ];
+
     /**
-     * Whether a row is an edited day to Google: it owns a field Google
-     * holds, any but what is held here alone (OwnFields::HELD_HERE, the one
-     * list the sync and the rewind read). A day with only local data (tags,
-     * people, reminders, an answer, an icon, or only something that refers
-     * to it) is an ordinary day to every Google write and every undo: no
-     * PATCH, no own values (rule D). A day owning its place by coordinates
-     * alone is one too in effect: its Google fields are the series', and a
-     * day at the series' values is never sent (isPlain).
+     * A day as Google is to hold it, built from the one allowed list: the
+     * fields it owns that Google holds (OwnFields::googleHeld) at its row's
+     * values, every other at the series' value at its key ($master: a row,
+     * or the master a plan leaves), so a field it doesn't own goes as the
+     * series has it, whatever its row still shows of an older series. A
+     * place showing the series' text is owned by its coordinates alone,
+     * which are held here (decisions.md, a feed's change to a day). Null
+     * when no such field is left (tags, people, reminders, an answer, an
+     * icon, coordinates, or only something that refers to it): an ordinary
+     * day to every Google write and every undo (rule D), never sent and
+     * never a target's exception.
      */
-    private static function editedAtGoogle(array $own): bool
+    private static function exceptionOf(array $row, array $own, array $master): ?array
     {
-        return array_diff($own, OwnFields::HELD_HERE) !== [];
+        $fields = OwnFields::googleHeld($own);
+        if (in_array('location', $fields, true) && trim((string) ($row['location'] ?? '')) === trim((string) ($master['location'] ?? ''))) {
+            $fields = array_values(array_diff($fields, ['location']));
+        }
+        if ($fields === []) {
+            return null;
+        }
+        $m = self::cols($master) + ['rrule' => (string) ($master['rrule'] ?? '')];
+        $key = (string) $row['recurrence_instance_utc'];
+        $x = self::cols(self::plainAt($m, $key, self::lengthOf($m)));
+        $r = self::cols($row);
+        foreach ($fields as $field) {
+            foreach (self::DAY_COLUMNS[$field] as $col) {
+                $x[$col] = $r[$col];
+            }
+        }
+        return $x;
     }
 
     /** The series as stored: a target (the before side of a plan, or the undo stage's target); a day with only local data is an ordinary day. */
@@ -162,10 +188,11 @@ final class GoogleSeries
         $exceptions = [];
         foreach ($rows as $row) {
             $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
-            if (!self::editedAtGoogle($own)) {
+            $x = self::exceptionOf($row, $own, $master);
+            if ($x === null) {
                 continue;
             }
-            $exceptions[(string) $row['recurrence_instance_utc']] = self::cols($row) + ['own' => $own, 'rowId' => (int) $row['id']];
+            $exceptions[(string) $row['recurrence_instance_utc']] = $x + ['own' => $own, 'rowId' => (int) $row['id']];
         }
         ksort($exceptions);
         $skips = Recurrence::decodeExdates($master['exdates_json'] ?? null);
@@ -181,6 +208,21 @@ final class GoogleSeries
             'skips' => $skips,
             'singles' => [],
         ];
+    }
+
+    /**
+     * Whether a change from $before (stateOf, the series as stored here) to
+     * $target sends Google nothing: the same series in everything Google
+     * holds (state: the master's fields and rule, each day as exceptionOf
+     * builds it, the skips), nothing inserted, removed or kept as an event
+     * of its own. Such a change (tags, people, reminders or an icon for all
+     * events) is held here alone: written and journaled as a local change,
+     * and undone as one. Pure.
+     */
+    public static function sendsNothing(array $before, array $target): bool
+    {
+        return empty($target['insert']) && empty($target['remove']) && ($target['singles'] ?? []) === []
+            && self::digest(self::state(self::heldOf($before))) === self::digest(self::state(self::heldOf($target)));
     }
 
     /**
@@ -204,16 +246,18 @@ final class GoogleSeries
             }
             $r = array_merge($row, $w['overrides'][$id] ?? []);
             $own = OwnFields::decode($r['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
-            if (!self::editedAtGoogle($own)) {
-                continue; // only local data: an ordinary day to Google
+            $x = self::exceptionOf($r, $own, $after);
+            if ($x === null) {
+                continue; // the series' own day to Google
             }
-            $t['exceptions'][(string) $r['recurrence_instance_utc']] = self::cols($r) + ['own' => $own, 'rowId' => $id];
+            $t['exceptions'][(string) $r['recurrence_instance_utc']] = $x + ['own' => $own, 'rowId' => $id];
         }
         foreach ($w['createEdited'] ?? [] as $cols) {
             $r = array_merge($after, $cols);
             $own = OwnFields::decode($cols['override_fields'] ?? null) ?? [];
-            if (self::editedAtGoogle($own)) {
-                $t['exceptions'][(string) $cols['recurrence_instance_utc']] = self::cols($r) + ['own' => $own, 'rowId' => null];
+            $x = self::exceptionOf($r, $own, $after);
+            if ($x !== null) {
+                $t['exceptions'][(string) $cols['recurrence_instance_utc']] = $x + ['own' => $own, 'rowId' => null];
             }
         }
         ksort($t['exceptions']);
@@ -909,7 +953,7 @@ final class GoogleSeries
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
             $body['recurrence'] = $after['rrule'] !== '' ? ['RRULE:' . $after['rrule']] : [];
         }
-        return $body;
+        return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
     }
 
     /**
@@ -924,7 +968,7 @@ final class GoogleSeries
         if (!isset($body['source'])) {
             $body['source'] = null;
         }
-        return $body;
+        return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
     }
 
     /** The instance id of an occurrence key under a master. */

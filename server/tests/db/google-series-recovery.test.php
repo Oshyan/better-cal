@@ -145,6 +145,18 @@ return static function (Db $db): void {
         return array_map(static fn(array $r): array => [$r['status'], array_map(static fn(array $st): string => $st['kind'] . ':' . $st['state'], json_decode((string) $r['steps_json'], true) ?: [])], $q->fetchAll());
     };
     $listed = static fn(object $s): array => (new ReviewQueue($db, $s->events))->googleHalfDone($s->u);
+    // A write to a series with changes not yet at Google is refused (A6, checked first here). Recovery still meets
+    // rows changed here since (a pending row from before the gate, or data reaching a row by a path that is not a
+    // write to the series), so these cases then make the change with the pending row out of the gate's sight.
+    $unguarded = static function (object $s, callable $write) use ($db): void {
+        checkEq('the write while the change is not yet at Google is refused with google_pending', 'google_pending', refusal($write));
+        $db->run("UPDATE google_pending SET status = 'unseen' WHERE user_id = ? AND status = 'half'", [$s->u]);
+        try {
+            $write();
+        } finally {
+            $db->run("UPDATE google_pending SET status = 'half' WHERE user_id = ? AND status = 'unseen'", [$s->u]);
+        }
+    };
     $held = static function (object $s, string $googleId): array {
         $m = $s->fake->events[$googleId];
         $out = ['rule' => $m['recurrence'][0] ?? null, 'start' => $m['start']['dateTime'] ?? $m['start']['date'], 'title' => $m['summary'], 'status' => $m['status'] ?? 'confirmed', 'records' => [], 'cancelled' => []];
@@ -567,7 +579,7 @@ return static function (Db $db): void {
                 $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), (int) $db->scalar('SELECT COUNT(*) FROM event_tags WHERE event_id = ?', [$masterId($s)])]);
     });
 
-    scenario('google recovery: a shortened series half done, then a day past the new end tagged here: Finish\'s part here fails, its transaction rolls back whole (no savepoint), and what Google holds is stored after it', function () use ($setup, $masterId, $rowAt, $listed, $held, $stored, $iso, $db): void {
+    scenario('google recovery: a shortened series half done, then a day past the new end tagged here: Finish\'s part here fails, its transaction rolls back whole (no savepoint), and what Google holds is stored after it', function () use ($unguarded, $setup, $masterId, $rowAt, $listed, $held, $stored, $iso, $db): void {
         $s = $setup();
         $id = $masterId($s);
         $s->t->loseAt = 1;
@@ -576,7 +588,7 @@ return static function (Db $db): void {
         } catch (HttpError) {
         }
         // A day the shortened series no longer has, tagged and given a person here while the change is half done.
-        $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-04-19 10:00'), 'tagNames' => ['Sample later tag'], 'personNames' => ['Alex Example']]);
+        $unguarded($s, fn() => $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-04-19 10:00'), 'tagNames' => ['Sample later tag'], 'personNames' => ['Alex Example']]));
         $s->events->throwDeferred();
         $day = $rowAt($s, '2027-04-19 17:00:00');
         $out = $s->events->googleFinish($s->u, (int) $listed($s)[0]['id']);
@@ -596,7 +608,7 @@ return static function (Db $db): void {
 
     // ---- N1: recovery removes only the rows it made -----------------------------------
 
-    scenario('google recovery: a rename half done, then a tag, a person or a reminder on an ordinary day here: Finish keeps that day\'s row and what it has, and the rename lands', function () use ($setup, $masterId, $rowAt, $pending, $recover, $iso, $db): void {
+    scenario('google recovery: a rename half done, then a tag, a person or a reminder on an ordinary day here: Finish keeps that day\'s row and what it has, and the rename lands', function () use ($unguarded, $setup, $masterId, $rowAt, $pending, $recover, $iso, $db): void {
         $parts = [
             'a tag' => [['tagNames' => ['Sample later tag']], static fn(int $id): mixed => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name'), ['Sample later tag']],
             'a person' => [['personNames' => ['Sam Sample']], static fn(int $id): mixed => array_column($db->all('SELECT p.name FROM event_people ep JOIN people p ON p.id = ep.person_id WHERE ep.event_id = ?', [$id]), 'name'), ['Sam Sample']],
@@ -610,7 +622,7 @@ return static function (Db $db): void {
                 planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample pending rename']);
             } catch (HttpError) {
             }
-            $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00')] + $in);
+            $unguarded($s, fn() => $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00')] + $in));
             $s->events->throwDeferred();
             $day = (int) ($rowAt($s, '2027-03-08 18:00:00')['id'] ?? 0);
             $out = $recover($s, 'finish');
@@ -651,7 +663,7 @@ return static function (Db $db): void {
         checkEq('some failure point leaves a row a store made (the case is exercised)', true, $madeAny);
     });
 
-    scenario('google recovery: a row a store of the half-done change made, then tagged here, keeps its tag on the day through Finish and Put back', function () use ($setup, $move, $rowAt, $held, $stored, $pending, $recover, $db): void {
+    scenario('google recovery: a row a store of the half-done change made, then tagged here, keeps its tag on the day through Finish and Put back', function () use ($unguarded, $setup, $move, $rowAt, $held, $stored, $pending, $recover, $db): void {
         $dry = $setup();
         $move($dry);
         $writes = $dry->t->writes;
@@ -676,7 +688,7 @@ return static function (Db $db): void {
                 $ran++;
                 $key = (string) $day['recurrence_instance_utc'];
                 // A "this event" tag on that day, as the editor sends it.
-                $s->events->patch($s->u, (int) $day['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => Time::fromDb($key)->format('Y-m-d\TH:i:s\Z'), 'tagNames' => ['Sample later tag']]);
+                $unguarded($s, fn() => $s->events->patch($s->u, (int) $day['recurrence_parent_id'], ['scope' => 'this', 'instanceStart' => Time::fromDb($key)->format('Y-m-d\TH:i:s\Z'), 'tagNames' => ['Sample later tag']]));
                 checkEq("$how, failure at write $n: the tag is the day's own on the row the store made", true, in_array('tags', json_decode((string) $db->scalar('SELECT override_fields FROM events WHERE id = ?', [(int) $day['id']]), true) ?: [], true));
                 $s->events->throwDeferred();
                 // The day the change's target names at that key: its row in the snapshot.
@@ -753,10 +765,10 @@ return static function (Db $db): void {
             [$out['ok'], $out['differences'], $day($s, '20270329T170000Z')[0] ?? null, $day($s, '20270329T170000Z')[3] ?? null, $s->fake->events['smpl3weekly']['summary']]);
     });
 
-    scenario('google recovery sweep F3: a day deleted here while a rename was half done stays deleted through Finish', function () use ($setup, $lostRename, $recover, $day, $masterId, $iso, $db): void {
+    scenario('google recovery sweep F3: a day deleted here while a rename was half done stays deleted through Finish', function () use ($unguarded, $setup, $lostRename, $recover, $day, $masterId, $iso, $db): void {
         $s = $setup();
         $lostRename($s);
-        $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
+        $unguarded($s, fn() => $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00')));
         $s->events->throwDeferred();
         $out = $recover($s, 'finish');
         checkEq('Finish ok; 8 March cancelled at Google and skipped here; the rename landed', [true, 'cancelled', true, 'Sample pending rename'],
@@ -782,10 +794,10 @@ return static function (Db $db): void {
         }
     });
 
-    scenario('google recovery sweep F5: tags set here while a rename with a tag was half done are kept by Finish and named', function () use ($setup, $lostRename, $recover, $masterId, $db): void {
+    scenario('google recovery sweep F5: tags set here while a rename with a tag was half done are kept by Finish and named', function () use ($unguarded, $setup, $lostRename, $recover, $masterId, $db): void {
         $s = $setup();
         $lostRename($s, ['tagNames' => ['Sample tag A']]);
-        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => ['Sample tag B']]);
+        $unguarded($s, fn() => planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => ['Sample tag B']]));
         $s->events->throwDeferred();
         $out = $recover($s, 'finish');
         $tags = array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$masterId($s)]), 'name');
@@ -793,12 +805,12 @@ return static function (Db $db): void {
             [$out['ok'], $tags, str_contains(implode(' ', $out['differences']), 'tags'), $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)])]);
     });
 
-    scenario('google recovery sweep F6: the trip flag set on the series while a rename was half done reaches every day Finish or Put back brings back', function () use ($setup, $lostRename, $recover, $masterId, $db, $writesOf): void {
+    scenario('google recovery sweep F6: the trip flag set on the series while a rename was half done reaches every day Finish or Put back brings back', function () use ($unguarded, $setup, $lostRename, $recover, $masterId, $db, $writesOf): void {
         foreach (['finish', 'putBack'] as $how) {
             $s = $setup();
             $lostRename($s);
             $s->t->calls = [];
-            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'isContainer' => true]);
+            $unguarded($s, fn() => planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'isContainer' => true]));
             $s->events->throwDeferred();
             $flagWrites = $writesOf($s);
             $out = $recover($s, $how);
@@ -859,6 +871,61 @@ return static function (Db $db): void {
         checkEq('refused with the real reason: the change half done at Google, and Review', 'google_pending', refusal(fn() => $s->undo->undoById($s->u, $entry)));
     });
 
+    scenario('google A6: every write, undo and redo touching a series with changes not yet at Google is refused with google_pending naming the change, before anything is sent; a poll leaves the series\' rows for Finish', function () use ($setup, $masterId, $lostRename, $rowAt, $listed, $recover, $iso, $when, $day, $db): void {
+        $rows = static fn(object $s): array => $db->all('SELECT id, title, description, location, start_utc, end_utc, exdates_json, google_etag, override_fields, attendance, deleted_at FROM events WHERE calendar_id = ? ORDER BY id', [$s->calendarId]);
+        $s = $setup();
+        // The undo of a change, and an earlier change, to redo and undo below.
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'location' => 'Sample room 3']);
+        $s->undo->undoById($s->u, lastEntry($db, $s->u));
+        $undid = lastEntry($db, $s->u);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'description' => 'Sample new notes']);
+        $earlier = lastEntry($db, $s->u);
+        $lostRename($s);
+        $pendingId = (int) ($listed($s)[0]['id'] ?? 0);
+        $before = $rows($s);
+        $writes = $s->t->writes;
+        $id = $masterId($s);
+        $dayRow = (int) ($rowAt($s, '2027-03-22 17:00:00')['id'] ?? 0);
+        $writesAsked = [
+            'a field of one day' => fn() => $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample one day']),
+            'a tag on one day (held here alone)' => fn() => $s->events->patch($s->u, $id, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample tag']]),
+            'a tag on an edited day\'s row' => fn() => $s->events->patch($s->u, $dayRow, ['tagNames' => ['Sample tag']]),
+            'use series value' => fn() => $s->events->patch($s->u, $dayRow, ['useSeries' => ['title']]),
+            'the whole series' => fn() => planned($s->events, $s->u, $id, ['scope' => 'all', 'location' => 'Sample room 2']),
+            'this and following' => fn() => planned($s->events, $s->u, $id, ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample later']),
+            'delete one day' => fn() => $s->events->deleteEvent($s->u, $id, 'this', $iso('2027-03-08 10:00')),
+            'delete the series' => fn() => $s->events->deleteEvent($s->u, $id, 'all', null),
+            'an answer to one day' => fn() => $s->events->setAttendance($s->u, $id, 'going', 'this', $iso('2027-03-08 10:00')),
+            'undo of an earlier change' => fn() => $s->undo->undoById($s->u, $earlier),
+            'redo (the undo of an undo)' => fn() => $s->undo->undoById($s->u, $undid),
+        ];
+        foreach ($writesAsked as $what => $write) {
+            $error = null;
+            try {
+                $write();
+            } catch (HttpError $e) {
+                $error = $e;
+            }
+            checkEq("$what: 409 google_pending naming the change and Review; nothing sent; no row here changed", [409, 'google_pending', $pendingId, true, $writes, $before],
+                [$error?->status, $error?->errorCode, (int) ($error?->extra['pending'] ?? 0), str_contains((string) $error?->getMessage(), 'Review'), $s->t->writes, $rows($s)]);
+        }
+
+        // A poll while the change is not yet at Google: the series changed at Google elsewhere, and another event added there.
+        ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/sample-crew%40group.calendar.google.com/events/smpl3weekly_20270308T180000Z',
+            ['description' => 'Sample remote note'], ['Authorization: Bearer sample-access']);
+        $s->fake->seed(['id' => 'smplpizza', 'iCalUID' => 'smplpizza@google.com', 'summary' => 'Pizza night', 'start' => $when('2027-03-10 18:00'), 'end' => $when('2027-03-10 20:00')]);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $series = static fn(array $all): array => array_values(array_filter($all, static fn(array $r): bool => $r['title'] !== 'Pizza night'));
+        checkEq('the poll stores the other event and leaves every row of the series as it was; still in Review',
+            [1, $before, 1], [(int) $db->scalar('SELECT COUNT(*) FROM events WHERE calendar_id = ? AND title = ? AND deleted_at IS NULL', [$s->calendarId, 'Pizza night']), $series($rows($s)), count($listed($s))]);
+        $out = $recover($s, 'finish');
+        $here = $rowAt($s, '2027-03-08 18:00:00');
+        checkEq('Finish rebases over what Google holds: ok; the note made elsewhere kept at Google and here with the new title; the series renamed here',
+            [true, ['Sample pending rename', 'confirmed', 'Sample remote note'], ['Sample pending rename', 'Sample remote note'], 'Sample pending rename', []],
+            [$out['ok'], array_slice($day($s, '20270308T180000Z') ?? [], 0, 3), [$here['title'] ?? null, $here['description'] ?? null], $db->scalar('SELECT title FROM events WHERE id = ?', [$masterId($s)]), $listed($s)]);
+        checkEq('once finished, a write to the series goes through', null, refusal(fn() => $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample tag']])));
+    });
+
     scenario('google: "use series value" on a day of a writable Google calendar goes to Google first, by its row or by the master and the day\'s key', function () use ($setup, $masterId, $rowAt, $day, $iso, $db): void {
         $s = $setup();
         $row = $rowAt($s, '2027-03-29 17:00:00');
@@ -886,7 +953,7 @@ return static function (Db $db): void {
         unset($tag);
     });
 
-    scenario('google recovery sweep F5, a split: the part here goes over what is there now; a later tag list is kept and named, one equal to the plan\'s is not named', function () use ($setup, $masterId, $recover, $iso, $db): void {
+    scenario('google recovery sweep F5, a split: the part here goes over what is there now; a later tag list is kept and named, one equal to the plan\'s is not named', function () use ($unguarded, $setup, $masterId, $recover, $iso, $db): void {
         $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
         $newSeries = static fn(object $s): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND google_event_id <> ? AND deleted_at IS NULL', [$s->calendarId, 'smpl3weekly']);
         foreach (['Sample tag B' => true, 'Sample split tag' => false] as $later => $named) {
@@ -896,7 +963,7 @@ return static function (Db $db): void {
                 planned($s->events, $s->u, $masterId($s), ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample split', 'tagNames' => ['Sample split tag']]);
             } catch (HttpError) {
             }
-            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => [$later]]);
+            $unguarded($s, fn() => planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'tagNames' => [$later]]));
             $s->events->throwDeferred();
             $out = $recover($s, 'finish');
             $new = $newSeries($s);

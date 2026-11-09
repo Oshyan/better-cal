@@ -187,12 +187,52 @@ final class GoogleSync
             // Re-query under the account lock immediately before that load.
             $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
             self::assertWithinDeadline($deadline);
+            $snapshot = $this->pendingHeld($current, $snapshot, $deadline);
             $count = $this->feeds->sync($current, $snapshot, true, $deadline);
             self::assertWithinDeadline($deadline);
             $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
             $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+    }
+
+    /**
+     * The poll's rule for a series with changes not yet at Google
+     * (GoogleSeries::pendingNames: today a change a failure left half done,
+     * later one queued while offline): the poll neither removes, rewrites
+     * nor adds that series' rows here; it stores everything else. What
+     * Google holds of the series is what Finish rebases over and Put back
+     * checks against, and each reads it from Google when it runs and
+     * stores it then (GoogleSeries::finish, putBack), so the poll leaves
+     * it to them: storing it here would take rows from under the change
+     * (an edited day its part here still names, a day holding data here
+     * alone) and give recovery a series that is neither the change's
+     * before nor its after. The series' entries in the snapshot (by uid,
+     * or by a Google id the change chose) are replaced by its rows as they
+     * stand here, which Feeds::sync then finds unchanged.
+     *
+     * @param list<array> $snapshot
+     * @return list<array>
+     */
+    private function pendingHeld(array $calendar, array $snapshot, ?float $deadline): array
+    {
+        $pending = GoogleSeries::pendingNames($this->db, (int) $calendar['user_id'], (int) $calendar['id']);
+        if ($pending === []) {
+            return $snapshot;
+        }
+        $uids = [];
+        foreach (array_keys($pending) as $name) {
+            $uids[(string) $name] = true;
+        }
+        foreach ($snapshot as $ev) {
+            if (isset($pending[(string) ($ev['google_event_id'] ?? '')])) {
+                $uids[(string) $ev['uid']] = true;
+            }
+        }
+        $kept = array_values(array_filter($snapshot, static fn(array $ev): bool => !isset($uids[(string) $ev['uid']])));
+        [$in, $params] = Db::in(array_map('strval', array_keys($uids)));
+        $rows = $this->db->all("SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND uid IN $in", array_merge([(int) $calendar['id']], $params));
+        return array_merge($kept, self::rowsToParsed($rows, null, $deadline));
     }
 
     /**

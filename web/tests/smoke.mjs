@@ -3582,6 +3582,36 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('floating toggle: none for an invitation', floatBox(), null);
   globalThis.fetch = editorFetch;
 
+  // Activity: an entry the server says is not undoable, with a reason,
+  // shows that reason instead of an Undo; an undoable one shows Undo, no reason.
+  {
+    const { ActivityPage } = await import('../src/app/ActivityPage.js');
+    const heldReason = 'Undo of this sample change comes later; a single day still works.';
+    globalThis.fetch = async (url) => {
+      const u = new URL(String(url), 'http://app.test');
+      if (u.pathname.endsWith('/activity')) {
+        return json({ nextBefore: null, entries: [
+          { id: 91, at: '2027-03-10T07:00:00-08:00', source: 'web', entity: 'calendar', entityId: 3, op: 'update', summary: 'Changed every Sample lesson', details: null, undone: false, undoable: false, notUndoable: heldReason },
+          { id: 92, at: '2027-03-10T06:00:00-08:00', source: 'web', entity: 'calendar', entityId: 3, op: 'update', summary: 'Renamed Sample league', details: null, undone: false, undoable: true },
+        ] });
+      }
+      return json({});
+    };
+    const box = dom.doc.createElement('div');
+    dom.doc.body.appendChild(box);
+    render(html`<${ActivityPage} />`, box);
+    for (let i = 0; i < 50 && box.querySelectorAll('.bc-activity-row').length === 0; i++) { await new Promise((r) => setTimeout(r, 2)); await settle(); }
+    const rows = box.querySelectorAll('.bc-activity-row');
+    const row = (summary) => rows.find((r) => r.querySelector('.bc-activity-summary').textContent.includes(summary));
+    const read = (r) => [r.querySelectorAll('.bc-activity-detail').map((d) => d.textContent), r.querySelectorAll('.bc-btn').map((b) => b.textContent)];
+    eq('activity: an entry held back shows the reason where its Undo would be, and no Undo', read(row('Changed every Sample lesson')), [[heldReason], []]);
+    eq('activity: an undoable entry shows Undo and no reason', read(row('Renamed Sample league')), [[], ['Undo']]);
+    render(null, box);
+    box.remove();
+    await settle();
+    globalThis.fetch = editorFetch;
+  }
+
   render(null, ed);
   put({ editor: null });
   await settle();

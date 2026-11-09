@@ -1640,37 +1640,49 @@ final class Interleave
         return $out;
     }
 
-    /**
-     * The rows of $rows with each day of a series whose times or zone changed since the entry renamed to the occurrence it
-     * had when the entry was recorded: a day keeps its identity through a times or zone change that carried it
-     * (decisions.md, "Staleness has one definition: grounds are fields": "a day a change carried to another occurrence as
-     * a move, which a later judgement follows"). The shift is the series' local start clock's, read in each zone.
-     */
-    private function followMoves(array $state, array $rows): array
+    /** A series row's start clock: its zone and its local seconds into the day. */
+    private static function clockOf(array $r): array
     {
-        foreach ($state['after'] as $ident => $was) {
-            if (!str_starts_with($ident, 'series:') || !isset($rows[$ident]) || ($was['rrule'] ?? null) === null) {
+        $tz = (int) $r['allDay'] === 1 ? 'UTC' : (string) $r['tz'];
+        $t = Clock::parse((string) $r['start'])->setTimezone(Clock::zone($tz));
+        return [$tz, (int) $t->format('H') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s')];
+    }
+
+    /** An occurrence key of series $from carried to series $to's clock: the same local date at $to's start clock and zone. */
+    private static function shiftKey(string $key, array $from, array $to): string
+    {
+        [$tzFrom] = self::clockOf($from);
+        [$tzTo, $secTo] = self::clockOf($to);
+        $local = Clock::parse($key)->setTimezone(Clock::zone($tzFrom))->setTime(0, 0)->modify('+' . $secTo . ' seconds');
+        return (new \DateTimeImmutable($local->format('Y-m-d H:i:s'), Clock::zone($tzTo)))->setTimezone(Clock::utc())->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * $rows with every day of a series whose times or zone differ from $frame's renamed to its occurrence in $frame: a day
+     * keeps its identity through a times or zone change that carried it (decisions.md, "Staleness has one definition:
+     * grounds are fields": "a day a change carried to another occurrence as a move, which a later judgement follows").
+     * Every judgement of an entry reads its states, the rows before an undo and after it in the frame of the rows before
+     * the entry, so the entry's own times change is a change of the days' fields, not rows made and removed.
+     */
+    private static function inFrame(array $frame, array $rows): array
+    {
+        foreach ($frame as $ident => $ref) {
+            if (!str_starts_with($ident, 'series:') || !isset($rows[$ident]) || ($ref['rrule'] ?? null) === null || ($rows[$ident]['rrule'] ?? null) === null) {
                 continue;
             }
             $is = $rows[$ident];
-            $clock = static function (array $r): array {
-                $tz = (int) $r['allDay'] === 1 ? 'UTC' : (string) $r['tz'];
-                $t = Clock::parse((string) $r['start'])->setTimezone(Clock::zone($tz));
-                return [$tz, (int) $t->format('H') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s')];
-            };
-            [$tzWas, $secWas] = $clock($was);
-            [$tzIs, $secIs] = $clock($is);
-            if ($tzWas === $tzIs && $secWas === $secIs) {
+            if (self::clockOf($ref) === self::clockOf($is)) {
                 continue;
             }
-            $g = substr($ident, strlen('series:'));
+            $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
+            // Its skips are dates too, carried with the days.
+            $skips = array_map(static fn(string $k): string => self::shiftKey($k, $is, $ref), (array) ($is['skips'] ?? []));
+            sort($skips);
+            $rows[$ident]['skips'] = $skips;
             $out = [];
             foreach ($rows as $k => $r) {
-                if (preg_match('/^day:' . preg_quote($g, '/') . ':(.+)$/', $k, $m) === 1 && !isset($state['after'][$k])) {
-                    $local = Clock::parse($m[1])->setTimezone(Clock::zone($tzIs));
-                    $day = $local->setTime(0, 0)->modify('+' . $secWas . ' seconds');
-                    $back = (new \DateTimeImmutable($day->format('Y-m-d H:i:s'), Clock::zone($tzWas)))->setTimezone(Clock::utc())->format('Y-m-d H:i:s');
-                    $k = 'day:' . $g . ':' . $back;
+                if (str_starts_with($k, $prefix)) {
+                    $k = $prefix . self::shiftKey(substr($k, strlen($prefix)), $is, $ref);
                 }
                 $out[$k] = $r;
             }
@@ -1709,7 +1721,8 @@ final class Interleave
      */
     private function changedSince(array $state, array $now): array
     {
-        $now = $this->followMoves($state, $now);
+        $state['after'] = self::inFrame($state['before'], $state['after']);
+        $now = self::inFrame($state['before'], $now);
         $out = [];
         $change = self::entryChange($state);
         // The days the entry is about: the rows it changed, made or removed, and the dates it skipped or brought back.
@@ -1737,9 +1750,10 @@ final class Interleave
             }
             $was = $state['after']['series:' . $m[1]];
             $is = $now['series:' . $m[1]] ?? null;
+            $ref = $state['before']['series:' . $m[1]] ?? $was;
             if ($is === null) {
                 $out[$d] = ['series gone'];
-            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), $m[2]) && !Truth::isOccurrence($raw($is), $m[2])) {
+            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), self::shiftKey($m[2], $ref, $was)) && !Truth::isOccurrence($raw($is), self::shiftKey($m[2], $ref, $is))) {
                 $out[$d] = ['no longer an occurrence of its series'];
             }
         }
@@ -1825,8 +1839,9 @@ final class Interleave
      */
     private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
     {
-        $now = $this->followMoves($state, $now);
-        $result = $this->followMoves($state, $result);
+        $state['after'] = self::inFrame($state['before'], $state['after']);
+        $now = self::inFrame($state['before'], $now);
+        $result = self::inFrame($state['before'], $result);
         // A day renamed at Google while this undo or redo ran ("race": "day", fixed cases) is someone else's change, judged
         // by x-readback: kept out of the comparison here as a w-race's day is kept out of its entry.
         if (($this->racedNow[1] ?? null) !== null) {
@@ -1935,6 +1950,10 @@ final class Interleave
                     sort($got);
                     $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): an undo puts back the skips its entry changed by their delta", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
                     continue;
+                }
+                if (in_array($f, ['key', 'start', 'end'], true) && preg_match('/^day:([^:]+):/', $ident, $mm) === 1 && isset($state['after']['series:' . $mm[1]], $now['series:' . $mm[1]])
+                    && self::clockOf($state['after']['series:' . $mm[1]]) !== self::clockOf($now['series:' . $mm[1]])) {
+                    continue; // carried to its occurrence now by a times change since (the same entry: "a day's edit undone after one goes back at the day's occurrence now")
                 }
                 $this->expect('x-undo-fields', ($r[$f] ?? null) == ($was[$f] ?? null), "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $was[$f] ?? null, 'now' => $r[$f] ?? null]);
             }

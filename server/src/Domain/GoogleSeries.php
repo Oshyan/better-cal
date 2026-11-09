@@ -1776,11 +1776,21 @@ final class GoogleSeries
                 }
             }
             $nowRow = $C['records'][$key] ?? self::plainAt($C['master'], $key, self::lengthOf($C['master']));
+            $fromNow = []; // the groups of the day taken from what Google holds now, not from the change
             if ($c === 'skip' || $t === 'skip' || $bOwn === 'skip') {
                 // A day skipped on one side: the day as a whole.
                 $wantsChange = self::ownPart($bOwn, $before['exceptions'][$wasKey] ?? null) !== self::ownPart($t, $x);
                 $how = self::threeWay($c, [$bOwn, $bHere, $p, $t], $wantsChange, false);
+                if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $c !== 'skip') {
+                    // A skipped day the change's own master write brought
+                    // back (a status sent): its record returns with fields
+                    // no read shows, so a live day there is that write's.
+                    $how = 'change';
+                }
                 $result = $how === 'change' ? ($t === 'skip' ? 'skip' : $want) : ($c === 'skip' ? 'skip' : $nowRow);
+                if ($how !== 'change') {
+                    $fromNow = array_keys(self::GROUPS);
+                }
                 if ($how === 'conflict') {
                     $words[] = $c === 'skip'
                         ? $dayWords($key) . " was deleted at Google $since; it stays deleted."
@@ -1797,6 +1807,7 @@ final class GoogleSeries
                     foreach ($cols as $col) {
                         $result[$col] = $nowRow[$col] ?? null;
                     }
+                    $fromNow[] = $g;
                     if ($how === 'conflict') {
                         $left[] = self::GROUP_WORDS[$g];
                     }
@@ -1813,7 +1824,15 @@ final class GoogleSeries
             if ($x === null && self::isPlain($row, $master, $key)) {
                 continue; // an ordinary day; a target's edited day stays one (its row stands on its record)
             }
-            $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), OwnFields::infer($row + ['recurrence_instance_utc' => $key], $master)));
+            // Its own list: the change's for a day the change has, with a
+            // field of its own added only where Google changed that group
+            // since (taken from now above); a day the change has no row for
+            // holds what Google holds of its own.
+            $inferred = OwnFields::infer($row + ['recurrence_instance_utc' => $key], $master);
+            if ($x !== null) {
+                $inferred = array_values(array_filter($inferred, static fn(string $f): bool => in_array(self::OWN_GROUP[$f] ?? null, $fromNow, true)));
+            }
+            $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), $inferred));
             $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
         }
         sort($skips);

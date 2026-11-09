@@ -1,0 +1,47 @@
+{
+    "n": 9820,
+    "seed": 0,
+    "series": {
+        "family": "monthly_nth_setpos",
+        "rrule": "FREQ=MONTHLY;BYDAY=SU;BYSETPOS=2",
+        "import": false,
+        "bound": "until",
+        "boundAt": 5,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2026-12-29 23:30",
+        "length": 60,
+        "floating": false
+    },
+    "exceptions": [
+        {"at": 0, "kind": "edit", "own": ["time"], "days": -3, "mins": 180, "zone": "America/New_York", "len": 60},
+        {"at": 3, "kind": "edit", "own": ["title"], "days": 3, "mins": 120, "zone": "Asia/Tokyo", "len": 60},
+        {"at": 1, "kind": "skip"}
+    ],
+    "acted": 5,
+    "from": "last",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 9000,
+        "trip": false,
+        "fields": {"url": "https://example.test/series", "status": "tentative"},
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=WEEKLY;BYDAY=TU,TH",
+        "bound": null,
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {"edit": []},
+    "preselected": {"edit": true}
+}

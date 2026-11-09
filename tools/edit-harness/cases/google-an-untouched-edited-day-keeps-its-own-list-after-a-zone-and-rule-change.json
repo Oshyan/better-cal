@@ -1,0 +1,45 @@
+{
+    "n": 9819,
+    "seed": 0,
+    "series": {
+        "family": "daily_byday",
+        "rrule": "FREQ=DAILY;BYDAY=WE,TH,FR,SA",
+        "import": false,
+        "bound": "until",
+        "boundAt": 4,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 13:00",
+        "length": 90,
+        "floating": true
+    },
+    "exceptions": [
+        {"at": 3, "kind": "edit", "own": ["time"], "days": -1, "mins": -30, "zone": "America/New_York", "len": 30}
+    ],
+    "acted": 4,
+    "from": "later",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": "Asia/Kolkata",
+        "length": 0,
+        "allDay": false,
+        "toZone": "Europe/Berlin",
+        "toClock": 66600,
+        "trip": false,
+        "fields": {"reminders": [45]},
+        "rule": "new",
+        "sameForm": "editor",
+        "newRule": "FREQ=WEEKLY;BYDAY=SA",
+        "bound": null,
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": {"kind": "deleteThis", "days": -1, "mins": 120},
+    "everyOption": false,
+    "typed": false,
+    "choices": {"edit": {"zone": "moment"}},
+    "preselected": {"edit": false}
+}

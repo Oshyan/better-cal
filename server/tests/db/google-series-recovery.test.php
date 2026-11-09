@@ -81,6 +81,8 @@ return static function (Db $db): void {
             public int $writes = 0;
             /** The write (1-based, PATCH, POST and DELETE counted) answered 412 without reaching the stand-in. */
             public ?int $staleAt = null;
+            /** The write (1-based) answered 403 without reaching the stand-in. */
+            public ?int $forbidAt = null;
             /** The write the stand-in takes, then a fatal error instead of its answer (an Error, not an exception). */
             public ?int $fatalAt = null;
             /** The write the stand-in takes, then its answer lost (a runtime exception). */
@@ -96,6 +98,9 @@ return static function (Db $db): void {
                 $n = ++$t->writes;
                 if ($t->staleAt === $n) {
                     return ['status' => 412, 'body' => json_encode(['error' => ['code' => 412, 'message' => 'Precondition Failed']])];
+                }
+                if ($t->forbidAt === $n) {
+                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'Forbidden']])];
                 }
             }
             $answer = $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
@@ -267,6 +272,29 @@ return static function (Db $db): void {
         checkEq('the conflict is the undo\'s, nothing was sent, and no pending row is left', [[], 0], [$pending($s), (int) $db->scalar('SELECT undone FROM mutations WHERE id = ?', [(int) $entry['id']])]);
     });
 
+    scenario('google recovery: a change refused at its first write (a 412 or a 403) records nothing: no pending row, the rows and the trip flag as they were, words that say nothing reached Google', function () use ($setup, $masterId, $pending, $held, $db): void {
+        foreach (['staleAt' => 'google_conflict', 'forbidAt' => 'google_write_failed'] as $knob => $code) {
+            $s = $setup();
+            $id = $masterId($s);
+            $rows = static fn(): array => $db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$s->calendarId]);
+            $was = [$rows(), $held($s, 'smpl3weekly'), (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$s->u])];
+            $s->t->writes = 0;
+            $s->t->$knob = 1;
+            $caught = null;
+            try {
+                planned($s->events, $s->u, $id, ['scope' => 'all', 'title' => 'Sample weekly, renamed', 'isContainer' => true]);
+                $s->events->throwDeferred();
+            } catch (HttpError $e) {
+                $caught = $e;
+            }
+            $s->t->$knob = null;
+            checkEq("$knob at write 1: refused with $code, words without the half-done sentence, no pending named; no pending row; rows, entries and Google as they were",
+                [$code, false, false, [], $was],
+                [$caught?->errorCode, str_contains((string) $caught?->getMessage(), 'half done'), isset($caught?->extra['pending']), $pending($s),
+                    [$rows(), $held($s, 'smpl3weekly'), (int) $db->scalar('SELECT COUNT(*) FROM mutations WHERE user_id = ?', [$s->u])]]);
+        }
+    });
+
     // ---- F2: Put back reconciles what may have landed ----------------------------
 
     scenario('google recovery: a split whose new series was inserted with its answer lost is put back whole: the new series cancelled, the old one as it was', function () use ($setup, $masterId, $held, $stored, $pending, $recover, $iso): void {
@@ -332,6 +360,12 @@ return static function (Db $db): void {
                 } catch (HttpError) {
                 }
                 $s->t->staleAt = null;
+                if ($n === 1) {
+                    // Refused at the first write: nothing reached Google, so nothing is recorded, and there is nothing to recover.
+                    checkEq("$how, refused at write 1: no pending row; the day's row and what hangs off it as they were; Google as it was",
+                        [[], $day, $before, $was], [$pending($s), (int) ($rowAt($s, '2027-03-29 17:00:00')['id'] ?? 0), $parts($day), $held($s, 'smpl3weekly')]);
+                    continue;
+                }
                 $out = $recover($s, $how);
                 $after = $rowAt($s, $key);
                 checkEq("$how, failure at write $n: the day is its own row again with its id, tag, person, reminders and trip link; Google and the rows agree; no pending row",

@@ -1,0 +1,28 @@
+{
+    "about": "A whole-series change Google refuses at its first write (a 403): nothing reached Google, so nothing is recorded here, no row, no entry and no half-done change in Review (x-pending, a refusal records nothing here).",
+    "series": {
+        "family": "weekly_days",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,FR,SU",
+        "import": false,
+        "bound": "until",
+        "boundAt": 4,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2026-09-02",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "f-before",
+            "pick": 0.63,
+            "k": 1,
+            "write": "w-all",
+            "what": "description"
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

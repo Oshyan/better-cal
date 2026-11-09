@@ -943,6 +943,9 @@ trait SeriesPlans
                 // (the trip rules write the flag first), for Finish's "changed here since".
                 ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
+            if (!GoogleSeries::reachedGoogle($e)) {
+                throw $e; // nothing at Google: nothing here either, the transaction rolls back whole
+            }
             $this->googleDeferred = $e;
             return;
         }
@@ -990,6 +993,9 @@ trait SeriesPlans
             $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
                 ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
         } catch (HttpError $e) {
+            if (!GoogleSeries::reachedGoogle($e)) {
+                throw $e; // nothing at Google: nothing here either, the transaction rolls back whole
+            }
             $this->googleDeferred = $e;
             return null;
         }

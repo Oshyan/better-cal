@@ -50,7 +50,10 @@ use BetterCal\Support\Time;
  * request whatever the account's transaction does after: a failure of any
  * kind, a lost connection or a stopped process leaves it. It goes only once
  * the edit here has committed (settle); a transaction that rolls back
- * leaves it for Review, unless nothing was sent. Every step is safe to
+ * leaves it for Review, unless nothing was sent. A change Google took
+ * nothing of (every step refused, or none sent) records nothing: the row
+ * goes at once, nothing is stored, and its error names no pending row, so
+ * the caller rolls back whole (reachedGoogle). Every step is safe to
  * retry: an insert carries an id the app chose (a 409 on retry means it
  * landed), and every other step follows from a fresh read-back. A failure
  * mid-way stops, stores what Google has, and leaves the row for Review
@@ -291,7 +294,7 @@ final class GoogleSeries
             'updated_at' => Time::nowDb(),
         ]));
         $this->open($pendingId, true);
-        return $this->run($calendar, $pendingId, $targets, [], $beforeSend) + ['befores' => array_values($befores)];
+        return $this->run($calendar, $pendingId, $targets, [], $beforeSend, false, true) + ['befores' => array_values($befores)];
     }
 
     /**
@@ -412,6 +415,29 @@ final class GoogleSeries
                 $this->db->journal()->scalar('SELECT RELEASE_LOCK(?)', [self::lockName($this->db, $pendingId)]);
             }
         }
+    }
+
+    /**
+     * A pending row made for a run that sent Google nothing it took: gone,
+     * as the change never happened (no half-done item in Review). Its lock
+     * goes as any run's does (ended, now or at the transaction's end).
+     */
+    private function unmade(int $pendingId): void
+    {
+        $this->journaled(fn(Db $j) => $j->run('DELETE FROM google_pending WHERE id = ?', [$pendingId]));
+        $this->endUnlessTx($pendingId, false, true);
+    }
+
+    /**
+     * Whether a failed Google change left something there: its error names
+     * the pending row Review lists (run). One that does not reached Google
+     * with nothing, so its caller writes nothing here either: it rolls its
+     * transaction back by letting the error through, where one that did
+     * commits first, so the pending row and what Google holds survive.
+     */
+    public static function reachedGoogle(HttpError $e): bool
+    {
+        return isset($e->extra['pending']);
     }
 
     /** A run made outside any transaction, over: what a transaction's end does, now (inside one, its end does it). */
@@ -550,8 +576,9 @@ final class GoogleSeries
      * @param list<array> $targets
      * @param list<array> $steps the pending row's steps so far (a retry, or a Put back after the change's)
      * @param bool $back the steps are a Put back's (the befores), told apart from the change's own
+     * @param bool $made the pending row was made for this run (apply): a failure with nothing at Google takes it away
      */
-    private function run(array $calendar, int $pendingId, array $targets, array $steps, ?\Closure $beforeSend, bool $back = false): array
+    private function run(array $calendar, int $pendingId, array $targets, array $steps, ?\Closure $beforeSend, bool $back = false, bool $made = false): array
     {
         $readbacks = [];
         $differences = [];
@@ -684,6 +711,15 @@ final class GoogleSeries
                 $differences = array_merge($differences, self::differences($t, $items, $thisYear));
             }
         } catch (\Throwable $e) {
+            // Nothing reached Google (no step journaled, or each one
+            // refused): the change did not happen, so it records nothing,
+            // here or in the journal. The pending row goes, nothing is read
+            // back or stored, and the error is the request's own, naming no
+            // pending row: its caller rolls its transaction back whole.
+            if ($made && $this->stepsDone($pendingId) === 0) {
+                $this->unmade($pendingId);
+                throw $e instanceof HttpError || !$e instanceof \RuntimeException ? $e : new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+            }
             // Half done, in the journal before anything else is tried: a
             // failure of any kind, whatever the transaction here does next.
             $snapshot = $targets;

@@ -724,6 +724,9 @@ final class Events
             try {
                 $out = $this->googleSeries()->apply($userId, $calendar, [GoogleSeries::removalOf($before)], (string) $event['title'], $summary, (int) $event['id'], $this->googleBeforeSend($authority));
             } catch (HttpError $e) {
+                if (!GoogleSeries::reachedGoogle($e)) {
+                    throw $e; // nothing at Google: nothing here either, the transaction rolls back whole
+                }
                 $this->googleDeferred = $e;
                 return;
             }

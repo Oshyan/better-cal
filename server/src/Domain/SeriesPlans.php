@@ -1210,14 +1210,10 @@ trait SeriesPlans
      */
     private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null): void
     {
-        $words = $summary;
-        if ($differences !== []) {
-            $words .= ' Google kept something else: ' . implode(' ', $differences);
-        }
         if ($undo !== null && $id !== null) {
-            $this->googleSeriesJournal($userId, mb_substr($words, 0, 900), $calendar, $id, $undo[0], $undo[1], $undo[2]);
+            $this->googleSeriesJournal($userId, $summary, $calendar, $id, $undo[0], $undo[1], $undo[2], $differences);
         } else {
-            $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id, details: $details);
+            $this->googleJournal($userId, $summary, $calendar, $id, details: $details, kept: $differences);
         }
         if ($differences !== []) {
             (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
@@ -1274,12 +1270,24 @@ trait SeriesPlans
             // the entry it undoes): recovered, its journal is what the undo
             // would have written had it completed (recoveredUndo).
             $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
-            $undone = is_array($plan) && isset($plan['undo']) ? $this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId]) : null;
+            $isUndo = is_array($plan) && isset($plan['undo']);
+            // The entry it undoes as its pending row kept it (its snapshots), the live row's when still there.
+            $undone = $isUndo ? ($this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId])
+                ?? (is_array($plan['entry'] ?? null) ? $plan['entry'] + ['user_id' => $userId] : null)) : null;
             try {
                 $out = $how === 'finish'
                     ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority),
-                        $undone !== null ? function () use ($undone): array {
-                            $this->undo->restoreSnapshots($undone); // the undo's part here: the rows as the change found them
+                        $isUndo ? function () use ($undone): array {
+                            // The undo's part here: the rows as the change found them.
+                            // What can't be put back is said, and Google's side completes.
+                            if ($undone === null || ($undone['before_json'] ?? null) === null) {
+                                return ["The rows here could not be put back as they were before the change: what it kept of them is gone."];
+                            }
+                            try {
+                                $this->undo->restoreSnapshots($undone);
+                            } catch (HttpError $e) {
+                                return ['The rows here could not all be put back as they were before the change: ' . rtrim($e->getMessage(), '.') . '.'];
+                            }
                             return [];
                         } : $this->googleLocalPlan($userId))
                     : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
@@ -1287,8 +1295,8 @@ trait SeriesPlans
                 $stopped = $e;
                 throw $e;
             }
-            if ($undone !== null) {
-                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone, $how, $out);
+            if ($isUndo) {
+                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone ?? ['id' => (int) $plan['undo'], 'user_id' => $userId, 'entity_id' => (int) ($row['event_id'] ?? 0), 'summary' => (string) ($plan['summary'] ?? '')], $how, $out);
             }
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
@@ -1307,8 +1315,9 @@ trait SeriesPlans
      * Undo find it as after any undo), its words saying it was finished from
      * Review and what Google kept. Put back takes the undo back whole: the
      * entry stands as it was, not undone and undoable, and the Activity line
-     * that says so is the system's, naming no row, so it neither makes that
-     * entry stale nor stands in front of it for the bare Undo.
+     * that says so is the person's and touches no row, so it neither makes
+     * that entry stale nor stands in front of it for the bare Undo (both
+     * judge an entry by what it changed).
      */
     private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, array $undone, string $how, array $out): array
     {
@@ -1324,8 +1333,8 @@ trait SeriesPlans
                 (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], (string) $calendar['name'], $differences);
             }
         } else {
-            ActivityContext::with('system', fn() => $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
-                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900)));
+            $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
+                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900));
         }
         return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }
@@ -1396,6 +1405,30 @@ trait SeriesPlans
             $known = OwnFields::infer($row, $master);
         }
         return OwnFields::encode(array_merge($known ?? [], $fields));
+    }
+
+    /**
+     * An edited day's own list after an edit made on its own row (its id,
+     * not the series' with its key): what it owned and each field the edit
+     * changed (changedOwnFields: tags and people when sent), as a "this
+     * event" edit gives them, so retention (Feeds::heldHere) reads every
+     * field held here alone from the one list. Inside the edit's write; a
+     * row of no series is left alone.
+     */
+    private function ownAfterRowEdit(array $before, array $in): void
+    {
+        if (empty($before['recurrence_parent_id']) || !$this->ownFieldsColumn()) {
+            return;
+        }
+        $after = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $before['id']]);
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $before['recurrence_parent_id']]);
+        if ($after === null || $master === null) {
+            return;
+        }
+        $own = $this->ownAfterThis($after, $master, self::changedOwnFields($before, $after, $in));
+        if ($own !== null && $own !== (string) ($after['override_fields'] ?? '')) {
+            $this->db->update('events', ['override_fields' => $own], 'id = ?', [(int) $after['id']]);
+        }
     }
 
     /**

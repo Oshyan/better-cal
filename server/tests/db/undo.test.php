@@ -332,7 +332,8 @@ return static function (Db $db): void {
         // Your own last change that can't be undone (one sent to Google): said
         // so, and nothing older is undone instead.
         $dw->events->patch($w, $edited, ['title' => 'Renamed again']);
-        $dw->undo->record($w, 'event', $edited, 'update', null, null, 'Updated at Google');
+        // (Journaled as a change sent to Google is: log-only, naming the event it changed.)
+        $dw->undo->write($w, fn() => $dw->undo->record($w, 'event', $edited, 'update', null, null, 'Updated at Google', touches: [[BetterCal\Domain\Undo::keyOf('events', ['id' => $edited]), '*']]));
         checkEq("undo latest: your own last change that can't be undone is refused, and nothing older is undone", ['not_undoable', 'Renamed again'],
             [refusal(fn() => $dw->undo->undoLatest($w)), $db->scalar('SELECT title FROM events WHERE id = ?', [$edited])]);
     });

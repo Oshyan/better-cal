@@ -1,5 +1,5 @@
 {
-    "about": "A day given a title of its own, then tags for all events, which reach that day's row, then the title's entry undone: it goes through, since the entry's row owns its title and the newer change changed its tags (x-undo-fields; decisions.md, the same entry, each side's ground).",
+    "about": "A day given a title of its own (its row made), then tags for all events, which change that row's tags, then the title's entry undone: stale, since the making of a day's row stands on the fields it owns, its tags among them (x-undo-fields; decisions.md, \"Staleness has one definition: grounds are fields\"; api-contract.md, `stale_undo`).",
     "series": {
         "family": "monthly_day",
         "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",

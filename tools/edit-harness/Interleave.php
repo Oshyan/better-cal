@@ -1641,6 +1641,45 @@ final class Interleave
     }
 
     /**
+     * The rows of $rows with each day of a series whose times or zone changed since the entry renamed to the occurrence it
+     * had when the entry was recorded: a day keeps its identity through a times or zone change that carried it
+     * (decisions.md, "Staleness has one definition: grounds are fields": "a day a change carried to another occurrence as
+     * a move, which a later judgement follows"). The shift is the series' local start clock's, read in each zone.
+     */
+    private function followMoves(array $state, array $rows): array
+    {
+        foreach ($state['after'] as $ident => $was) {
+            if (!str_starts_with($ident, 'series:') || !isset($rows[$ident]) || ($was['rrule'] ?? null) === null) {
+                continue;
+            }
+            $is = $rows[$ident];
+            $clock = static function (array $r): array {
+                $tz = (int) $r['allDay'] === 1 ? 'UTC' : (string) $r['tz'];
+                $t = Clock::parse((string) $r['start'])->setTimezone(Clock::zone($tz));
+                return [$tz, (int) $t->format('H') * 3600 + (int) $t->format('i') * 60 + (int) $t->format('s')];
+            };
+            [$tzWas, $secWas] = $clock($was);
+            [$tzIs, $secIs] = $clock($is);
+            if ($tzWas === $tzIs && $secWas === $secIs) {
+                continue;
+            }
+            $g = substr($ident, strlen('series:'));
+            $out = [];
+            foreach ($rows as $k => $r) {
+                if (preg_match('/^day:' . preg_quote($g, '/') . ':(.+)$/', $k, $m) === 1 && !isset($state['after'][$k])) {
+                    $local = Clock::parse($m[1])->setTimezone(Clock::zone($tzIs));
+                    $day = $local->setTime(0, 0)->modify('+' . $secWas . ' seconds');
+                    $back = (new \DateTimeImmutable($day->format('Y-m-d H:i:s'), Clock::zone($tzWas)))->setTimezone(Clock::utc())->format('Y-m-d H:i:s');
+                    $k = 'day:' . $g . ':' . $back;
+                }
+                $out[$k] = $r;
+            }
+            $rows = $out;
+        }
+        return $rows;
+    }
+
+    /**
      * A day row's ground: the fields it owns, by its own list (decisions.md, "An undo is stale when a poll has since brought
      * a remote change of the same field": "each side's ground the fields that row owns where it was made or removed whole").
      */
@@ -1653,6 +1692,13 @@ final class Interleave
         foreach ((array) ($row['own'] ?? []) as $o) {
             $out = array_merge($out, $map[$o] ?? [$o]);
         }
+        // Its tags and people among them: a day's row holds them in its own links (api-contract.md, `stale_undo`: "the
+        // fields that row owns, its tags and people among them").
+        foreach (['tags', 'people'] as $f) {
+            if (!empty($row[$f])) {
+                $out[] = $f;
+            }
+        }
         return array_values(array_unique($out));
     }
 
@@ -1663,6 +1709,7 @@ final class Interleave
      */
     private function changedSince(array $state, array $now): array
     {
+        $now = $this->followMoves($state, $now);
         $out = [];
         $change = self::entryChange($state);
         // The days the entry is about: the rows it changed, made or removed, and the dates it skipped or brought back.
@@ -1738,21 +1785,26 @@ final class Interleave
                 if ($f === 'skips' && str_starts_with($ident, 'series:') && $c !== null) {
                     // An ordinary day deleted or brought back stands on its series' skips alone: stale only when one of its
                     // own dates has been skipped or brought back since (seed 307 case 463: another day edited stales nothing).
+                    // A skip is its own date's ground, never the list whole (decisions.md, "Staleness has one definition:
+                    // grounds are fields": "a skip per date").
                     $a = $state['before'][$ident]['skips'] ?? [];
                     $mineDates = array_merge(array_diff($a, $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a));
-                    $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
                     $g = substr($ident, strlen('series:'));
                     foreach ($mineDates as $k) {
-                        // Its date skipped or brought back since, or the day at that date made, removed or changed since
-                        // (the same day).
-                        $day = 'day:' . $g . ':' . $k;
-                        if (in_array($k, $b['skips'] ?? [], true) !== in_array($k, $c['skips'] ?? [], true)
-                            || $plain($state['after'][$day] ?? null) != $plain($now[$day] ?? null)) {
+                        // A day's row made at that date since, which skipping the date again would remove whole: the removal's
+                        // ground is the fields that row owns, which meet the change that gave them (api-contract.md,
+                        // `stale_undo`: "where it made or removed a day's row whole, the fields that row owns").
+                        $made = $now['day:' . $g . ':' . $k] ?? null;
+                        $grew = $made !== null && !isset($state['after']['day:' . $g . ':' . $k]) && self::ground($made) !== [];
+                        if ($grew || in_array($k, $b['skips'] ?? [], true) !== in_array($k, $c['skips'] ?? [], true)) {
                             $out[$ident][] = 'skips';
                             break;
                         }
                     }
                     continue;
+                }
+                if ($f === 'own') {
+                    continue; // the own list is never a ground itself, its contents are (the same entry)
                 }
                 if ($c === null || ($b[$f] ?? null) != ($c[$f] ?? null)) {
                     $out[$ident][] = $f;
@@ -1773,6 +1825,8 @@ final class Interleave
      */
     private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
     {
+        $now = $this->followMoves($state, $now);
+        $result = $this->followMoves($state, $result);
         // A day renamed at Google while this undo or redo ran ("race": "day", fixed cases) is someone else's change, judged
         // by x-readback: kept out of the comparison here as a w-race's day is kept out of its entry.
         if (($this->racedNow[1] ?? null) !== null) {

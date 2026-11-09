@@ -1191,7 +1191,7 @@ trait SeriesPlans
      * after tables]) makes the entry undoable (googleSeriesJournal); Review's
      * Finish and Put back pass none, being the way back themselves.
      */
-    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null): void
+    private function googleAfter(int $userId, array $calendar, ?int $id, string $title, string $summary, array $differences, ?array $undo = null, ?array $details = null): void
     {
         $words = $summary;
         if ($differences !== []) {
@@ -1200,7 +1200,7 @@ trait SeriesPlans
         if ($undo !== null && $id !== null) {
             $this->googleSeriesJournal($userId, mb_substr($words, 0, 900), $calendar, $id, $undo[0], $undo[1], $undo[2]);
         } else {
-            $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id);
+            $this->googleJournal($userId, mb_substr($words, 0, 900), $calendar, $id, details: $details);
         }
         if ($differences !== []) {
             (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $id, $title, (string) $calendar['name'], $differences);
@@ -1264,7 +1264,8 @@ trait SeriesPlans
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
                 . ($left !== [] ? ' ' . implode(' ', $left) : '');
-            $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences']);
+            $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences'],
+                details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null);
             return ['ok' => true, 'differences' => $out['differences'], 'left' => $left];
         });
     }

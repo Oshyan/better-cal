@@ -1815,6 +1815,7 @@ final class GoogleSeries
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $this->feeds->takeDropped(); // what this recovery's stores remove is named (removedDays)
         $now = $this->refresh($calendar, $targets, $beforeSend, $pendingId);
         $targets = $this->withStoredEtags($calendar, $targets);
         $year = (int) Time::nowUtc()->format('Y');
@@ -1853,7 +1854,26 @@ final class GoogleSeries
         $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
         $this->reattach($calendar, $local, $out['targets']);
         $out['differences'] = array_merge($kept, $out['differences'], $this->carryHeld($calendar, $held, $out['targets']));
+        $out = self::withRemoved($out, $this->feeds->takeDropped());
         $this->settle($pendingId);
+        return $out;
+    }
+
+    /**
+     * A recovery's answer with the rows its stores removed while they held
+     * something here alone (Feeds::droppedDay, decision A5): named in its
+     * differences in words, and by row id and date in `removedDays`, which
+     * its Activity entry carries.
+     *
+     * @param list<array> $removed
+     */
+    private static function withRemoved(array $out, array $removed): array
+    {
+        if ($removed === []) {
+            return $out;
+        }
+        $out['differences'][] = 'Removed here: ' . Feeds::droppedWords($removed) . '.';
+        $out['removedDays'] = $removed;
         return $out;
     }
 
@@ -2281,6 +2301,7 @@ final class GoogleSeries
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
+        $this->feeds->takeDropped(); // what this recovery's stores remove is named (removedDays)
         // Every series checked before anything is sent or stored: Put back
         // is the whole change's, or none of it (half of a split put back
         // would leave two series overlapping).
@@ -2293,6 +2314,7 @@ final class GoogleSeries
             }
             $last = null;
             $lastStep = null;
+            $lastDone = null;
             $made = [];
             foreach ($mine as $s) {
                 if ($s['kind'] === 'single') {
@@ -2303,23 +2325,38 @@ final class GoogleSeries
                     continue;
                 }
                 $lastStep = $s;
-                if (($s['state'] ?? self::DONE) === self::DONE && ($s['etag'] ?? null) !== null) {
-                    $last = (string) $s['etag'];
+                if (($s['state'] ?? self::DONE) === self::DONE) {
+                    $lastDone = $s;
+                    if (($s['etag'] ?? null) !== null) {
+                        $last = (string) $s['etag'];
+                    }
                 }
             }
             $base = $last ?? ($targets[$i]['etag'] ?? null);
             $current = self::masterEtag($this->readBack($calendar, $send, null, (string) $b['googleId'], null, $beforeSend), (string) $b['googleId']);
-            // Nothing changed since: the etag the last answered step left
-            // (or the change started from) is the one Google has; or, the
-            // last step's answer lost, Google holds what it sent and no more
-            // (an insert's series exactly as sent, the series as the step
-            // left it, compared field by field, etag aside).
+            // Nothing changed since, judged by content (the digest, rule B,
+            // decided 2026-11-09): Google holds what the last answered step
+            // left, or, the last step's answer lost, what it would leave or
+            // what the answered step before it left. One reading for an
+            // answered step and a lost one: an etag moves without the
+            // content moving (an instance's etag whenever its master is
+            // written), and the same content is no conflict. A step
+            // journaled without a digest (a removal: whether it is still
+            // gone; one from before rule B: its etag) is read as before.
+            $answered = function (?array $step) use ($calendar, $send, $targets, $b, $i, $base, $current, $beforeSend): bool {
+                if ($step === null || (!isset($step['expect']) && !in_array($step['kind'], ['remove', 'record-remove'], true))) {
+                    return $base === null || $current === null || $current === $base;
+                }
+                $sent = empty($step['back']) ? ($targets[$i] ?? null) : $b;
+                return $sent !== null && $this->unchangedSince($calendar, $send, $sent, $step, $beforeSend);
+            };
             $uncertain = $lastStep !== null && ($lastStep['state'] ?? self::DONE) === self::SENT;
             if ($uncertain) {
                 $sent = empty($lastStep['back']) ? ($targets[$i] ?? null) : $b;
-                $safe = ($base !== null && $current === $base) || ($sent !== null && $this->unchangedSince($calendar, $send, $sent, $lastStep, $beforeSend));
+                $safe = ($lastDone !== null ? $answered($lastDone) : ($base !== null && $current === $base))
+                    || ($sent !== null && $this->unchangedSince($calendar, $send, $sent, $lastStep, $beforeSend));
             } else {
-                $safe = $base === null || $current === null || $current === $base;
+                $safe = $answered($lastDone);
             }
             if (!$safe) {
                 $left[] = "'" . (string) ($b['master']['title'] ?? $row['title']) . "' changed at Google since.";
@@ -2386,6 +2423,7 @@ final class GoogleSeries
             $this->reattach($calendar, json_decode((string) ($row['local_json'] ?? ''), true) ?: [], $out['targets']);
             $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $targets));
         }
+        $out = self::withRemoved($out, $this->feeds->takeDropped());
         $this->settle($pendingId);
         $out['targets'] = array_values($out['targets']);
         return $out + ['left' => $left];

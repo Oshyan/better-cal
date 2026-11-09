@@ -50,6 +50,24 @@ final class Feeds
     }
 
     /**
+     * The rows every sync on this object removed while they held something
+     * here alone (droppedDay's shape), its Activity entry's or not: a
+     * recovery's store syncs without an entry of its own and names them in
+     * its answer and its entry (takeDropped).
+     *
+     * @var list<array>
+     */
+    private array $dropped = [];
+
+    /** What the syncs since the last call removed that held something here alone (droppedDay's shape), and forget it. */
+    public function takeDropped(): array
+    {
+        $out = $this->dropped;
+        $this->dropped = [];
+        return $out;
+    }
+
+    /**
      * Force-poll a subscribed calendar now. Returns imported (upserted) count.
      * An ICS subscription is fetched and parsed here; a Google calendar goes
      * through GoogleSync, which produces the same parsed shape. Both share
@@ -667,16 +685,20 @@ final class Feeds
     }
 
     /**
-     * A row of its series a poll removes, for its Activity entry: its
-     * title, its day, what it held here ($held, and what referred to it,
-     * $refs) and why it went: 'gone' (its series no longer has the day) or
-     * 'merged' (another row holds the day, and took what it held).
+     * A row a poll or a recovery removes while it held something here
+     * alone, named for its Activity entry (decision A5, the one naming of
+     * a removal for the sync and recovery): its row id, the date it showed
+     * (an edited day's key, an event's or series' start, in its own zone),
+     * its title, what it held here ($held, and what referred to it, $refs)
+     * and why it went: 'gone' (its series no longer has the day), 'merged'
+     * (another row holds the day, and took what it held) or 'deleted' (the
+     * event or its whole series is no longer in the calendar). Pure.
      *
      * @param list<string> $held
      * @param list<string> $refs
-     * @return array{title:string,day:string,held:list<string>,why:string}
+     * @return array{id:int,title:string,day:string,held:list<string>,why:string}
      */
-    private function droppedDay(array $row, array $held, array $refs, string $why): array
+    public static function droppedDay(array $row, array $held, array $refs, string $why): array
     {
         $words = ['location' => 'its coordinates', 'reminders' => 'its reminders', 'attendance' => 'its answer', 'tags' => 'its tags', 'people' => 'its people', 'icon' => 'its icon'];
         $named = array_values(array_intersect_key($words, array_flip($held)));
@@ -684,15 +706,22 @@ final class Feeds
             $named[] = 'what refers to it';
         }
         $zone = (int) ($row['all_day'] ?? 0) === 1 ? 'UTC' : (string) ($row['tzid'] ?: 'UTC');
-        return ['title' => (string) $row['title'], 'day' => Time::fromDb((string) $row['recurrence_instance_utc'])->setTimezone(Time::zone($zone))->format('Y-m-d'), 'held' => $named, 'why' => $why];
+        $at = (string) ($row['recurrence_instance_utc'] ?? $row['start_utc']);
+        return ['id' => (int) $row['id'], 'title' => (string) $row['title'], 'day' => Time::fromDb($at)->setTimezone(Time::zone($zone))->format('Y-m-d'), 'held' => $named, 'why' => $why];
     }
 
-    /** The removed days a poll names in its Activity entry, after its count: the days gone, then the days kept on another row. */
-    private static function droppedWords(array $days): string
+    /**
+     * The removed rows named in words (droppedDay's shape), grouped by why
+     * they went: the days gone, the days kept on another row, the events
+     * deleted. A poll's Activity entry puts them after its count; a
+     * recovery's answer gives them as a difference.
+     */
+    public static function droppedWords(array $days): string
     {
         $groups = [];
         foreach (['gone' => ['its series no longer has that day', 'their series no longer has those days'],
-            'merged' => ['kept on the row its day already has', 'kept on the rows their days already have']] as $why => [$one, $many]) {
+            'merged' => ['kept on the row its day already has', 'kept on the rows their days already have'],
+            'deleted' => ['it is no longer in the calendar', 'they are no longer in the calendar']] as $why => [$one, $many]) {
             $these = array_values(array_filter($days, static fn(array $d): bool => $d['why'] === $why));
             if ($these === []) {
                 continue;
@@ -706,7 +735,39 @@ final class Feeds
             $more = count($these) - count($named);
             $groups[] = implode('; ', $named) . ($more > 0 ? '; ' . $more . ' more' : '') . ': ' . (count($these) === 1 ? $one : $many);
         }
-        return $groups === [] ? '' : ' (' . implode('; ', $groups) . ')';
+        return implode('; ', $groups);
+    }
+
+    /**
+     * What a whole event (a series' master, or an event of its own) holds
+     * here alone, as it stands: the HELD_HERE_FIELDS with a value, and its
+     * coordinates. What refers to it is read apart.
+     *
+     * @return list<string>
+     */
+    private function heldByEvent(array $row): array
+    {
+        $id = (int) $row['id'];
+        $held = [];
+        if (($row['reminders_json'] ?? null) !== null) {
+            $held[] = 'reminders';
+        }
+        if ((string) ($row['attendance'] ?? 'none') !== 'none') {
+            $held[] = 'attendance';
+        }
+        if ((string) ($row['icon'] ?? '') !== '') {
+            $held[] = 'icon';
+        }
+        if ($this->db->scalar('SELECT 1 FROM event_tags WHERE event_id = ? LIMIT 1', [$id]) !== null) {
+            $held[] = 'tags';
+        }
+        if ($this->db->scalar('SELECT 1 FROM event_people WHERE event_id = ? LIMIT 1', [$id]) !== null) {
+            $held[] = 'people';
+        }
+        if (($row['location_lat'] ?? null) !== null && ($row['location_lng'] ?? null) !== null) {
+            $held[] = 'location';
+        }
+        return \BetterCal\Domain\Series\OwnFields::normalize(array_values(array_intersect($held, array_merge(self::HELD_HERE_FIELDS, ['location']))));
     }
 
     /**
@@ -959,7 +1020,8 @@ final class Feeds
             $removeIndex = 0;
             $newMasters = [];
             $droppedDays = [];
-            $drop = [];   // id => the row, gone with nothing named
+            $drop = [];   // id => the row, gone with nothing named unless $deleted names it
+            $deleted = []; // id => [what it held, what refers to it]: an event or series no longer in the calendar
             $gone = [];   // id => [the row, what it held]: its day is gone
             $follow = []; // id => [the row, the row as it follows, what it holds, what refers to it]
             $updated = array_flip($updatedEventIds);
@@ -977,6 +1039,16 @@ final class Feeds
                 if (!$seriesSeen || $row['deleted_at'] !== null) {
                     if (!$carried) {
                         $drop[$id] = $row;
+                        // An event or a series no longer in the calendar:
+                        // what it held here alone is named (A5).
+                        if ($row['deleted_at'] === null) {
+                            $master = $row['recurrence_parent_id'] !== null ? ($existingByKey[$uid . '|'] ?? null) : null;
+                            $held = $master !== null ? self::heldHere($this->ownOf($row, $master), $row) : ($row['recurrence_parent_id'] === null ? $this->heldByEvent($row) : []);
+                            $refs = \BetterCal\Domain\Series\OwnFields::references($this->db, [$id])[$id] ?? [];
+                            if ($held !== [] || $refs !== []) {
+                                $deleted[$id] = [$held, $refs];
+                            }
+                        }
                     }
                     continue;
                 }
@@ -1046,7 +1118,9 @@ final class Feeds
             }
             foreach ($drop + array_map(static fn(array $g): array => $g[0], $gone) as $id => $row) {
                 if (isset($gone[$id]) && ($gone[$id][1] !== [] || $gone[$id][2] !== [])) {
-                    $droppedDays[] = $this->droppedDay($row, $gone[$id][1], $gone[$id][2], 'gone');
+                    $droppedDays[] = self::droppedDay($row, $gone[$id][1], $gone[$id][2], 'gone');
+                } elseif (isset($deleted[$id])) {
+                    $droppedDays[] = self::droppedDay($row, $deleted[$id][0], $deleted[$id][1], 'deleted');
                 }
                 $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
@@ -1092,7 +1166,7 @@ final class Feeds
                 $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
                 $this->mergeInto($after + ['id' => $id], $holderId, $held, $newMasters[(string) $now['uid']] ?? null, $ownColumn);
                 $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
-                $droppedDays[] = $this->droppedDay($now, $held, $refs, 'merged');
+                $droppedDays[] = self::droppedDay($now, $held, $refs, 'merged');
                 $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
                 if (!in_array($holderId, $updatedEventIds, true)) {
@@ -1110,6 +1184,7 @@ final class Feeds
                 [$in, $inParams] = Db::in($updatedEventIds);
                 $this->db->run("DELETE FROM filter_evals WHERE event_id IN $in", $inParams);
             }
+            $this->dropped = array_merge($this->dropped, $droppedDays);
             // Activity: one roll-up entry per poll that changed anything
             // (log only; the next poll would redo an undo, so none is
             // offered). A write's own copy of Google's answer (journal
@@ -1117,7 +1192,7 @@ final class Feeds
             $parts = array_filter([
                 $addedTitles !== [] ? count($addedTitles) . ' added' : null,
                 $updatedEventIds !== [] ? count($updatedEventIds) . ' updated' : null,
-                $removedCount > 0 ? $removedCount . ' removed' . self::droppedWords($droppedDays) : null,
+                $removedCount > 0 ? $removedCount . ' removed' . ($droppedDays !== [] ? ' (' . self::droppedWords($droppedDays) . ')' : '') : null,
             ]);
             // A Google calendar's poll is Google's change, and says so.
             $fromGoogle = ($calendar['provider'] ?? 'ics') === 'google';
@@ -1125,7 +1200,7 @@ final class Feeds
                 ActivityContext::with($fromGoogle ? 'google' : 'feed', fn() => $undo->record(
                     $userId, 'calendar', $calendarId, 'update', null, null,
                     ($fromGoogle ? "From Google calendar '" : "Feed '") . (string) $calendar['name'] . "': " . implode(', ', $parts),
-                    ['addedTitles' => array_slice($addedTitles, 0, 20)] + ($droppedDays !== [] ? ['removedDays' => array_slice($droppedDays, 0, 20)] : []),
+                    ['addedTitles' => array_slice($addedTitles, 0, 20)] + ($droppedDays !== [] ? ['removedDays' => $droppedDays] : []),
                     touches: $touches
                 ));
             }

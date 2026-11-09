@@ -42,6 +42,8 @@ final class ReviewQueue
     public const KIND_MAIL_ERROR = 'mail_error';
     /** Google kept something else than a series plan said (GoogleSeries): a notice, dismissed when read. */
     public const KIND_GOOGLE_DIFFERS = 'google_differs';
+    /** A whole read of a Google calendar that listed nothing while the calendar holds rows (GoogleSync): not applied, a notice. */
+    public const KIND_GOOGLE_EMPTY = 'google_empty';
     /** A series change that stopped half way at Google (google_pending): Finish or Put back. */
     public const KIND_GOOGLE_HALF = 'google_half';
 
@@ -1364,10 +1366,37 @@ final class ReviewQueue
         });
     }
 
+    /**
+     * A Google calendar whose whole read listed nothing while it holds rows
+     * here (GoogleSync, "an empty listing never deletes"): one open notice
+     * per calendar, closed when a whole read lists its events again.
+     */
+    public static function holdGoogleEmpty(Db $db, int $userId, array $calendar): void
+    {
+        $key = 'google-empty:' . (int) $calendar['id'];
+        if ($db->scalar("SELECT id FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'", [$userId, self::KIND_GOOGLE_EMPTY, $key]) !== null) {
+            return;
+        }
+        $db->insert('review_items', [
+            'user_id' => $userId, 'kind' => self::KIND_GOOGLE_EMPTY, 'source_key' => $key, 'event_id' => null,
+            'title' => mb_substr((string) $calendar['name'], 0, 300),
+            'summary' => mb_substr("Google listed no events for '" . (string) $calendar['name'] . "', so nothing was removed here and each poll asks again."
+                . ' If the account lost access to it, check the calendar is still shared with it at Google; if you emptied it at Google on purpose, remove it here and add it again.', 0, 1000),
+            'payload_json' => json_encode(['calendarId' => (int) $calendar['id'], 'calendarName' => (string) $calendar['name']], JSON_INVALID_UTF8_SUBSTITUTE),
+        ]);
+    }
+
+    /** A whole read listed the calendar's events again: its empty-listing notice is no longer true. */
+    public static function closeGoogleEmpty(Db $db, int $userId, int $calendarId): void
+    {
+        $db->run("UPDATE review_items SET status = 'gone', decided_at = ? WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open'",
+            [Time::nowDb(), $userId, self::KIND_GOOGLE_EMPTY, 'google-empty:' . $calendarId]);
+    }
+
     public function dismissGoogleDifferences(int $userId, int $id): array
     {
         $row = $this->requireOpen($userId, $id);
-        if ($row['kind'] !== self::KIND_GOOGLE_DIFFERS) throw HttpError::notFound('No such Google notice');
+        if (!in_array($row['kind'], [self::KIND_GOOGLE_DIFFERS, self::KIND_GOOGLE_EMPTY], true)) throw HttpError::notFound('No such Google notice');
         $this->close($id, 'dismissed');
         return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
     }

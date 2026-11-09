@@ -35,6 +35,18 @@ final class GoogleWriter
     /** Pages refreshEtags reads for one series at most (2,500 rows each). */
     private const ETAG_PAGES = 4;
     public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
+    public const BUSY_MESSAGE = 'Google is busy and refused the change for now; nothing was changed. Try again in a minute.';
+    public const DELETED_MESSAGE = 'This event was deleted at Google; nothing was changed. Refresh to see the calendar as Google has it.';
+    /**
+     * Google's reasons for a refusal that says "too many requests, wait"
+     * (a 403 or 429 of the usageLimits domain): the write changed nothing
+     * and is sent again after a pause, then reported as busy.
+     */
+    private const BUSY_REASONS = ['rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded', 'dailyLimitExceeded', 'variableTermLimitExceeded'];
+    /** The pauses before each new try of a request Google refused as busy, in seconds (exponential, as Google's guide asks). */
+    private const BUSY_BACKOFF = [1.0, 2.0];
+    /** Waits between busy retries; tests set it to record instead of sleep. */
+    public ?\Closure $sleep = null;
     /** Event columns Google owns; everything else on a row is local metadata. */
     public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'url', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
 
@@ -422,6 +434,18 @@ final class GoogleWriter
                 throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
             }
         }
+        // Google refused it as busy (a rate or quota limit): it changed
+        // nothing, so the same request goes again after a pause, a bounded
+        // number of times.
+        for ($try = 0; self::refusal((int) $r['status'], (string) $r['body']) === 'busy' && $try < count(self::BUSY_BACKOFF); $try++) {
+            ($this->sleep ?? static fn(float $s) => usleep((int) ($s * 1e6)))(self::BUSY_BACKOFF[$try]);
+            if ($beforeSend !== null) $beforeSend();
+            try {
+                $r = $send($access);
+            } catch (\RuntimeException $e) {
+                throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
+            }
+        }
         if ($r['status'] === 412) {
             throw new HttpError('google_conflict', self::CONFLICT_MESSAGE, 409);
         }
@@ -430,16 +454,66 @@ final class GoogleWriter
         }
         $data = json_decode($r['body'], true);
         if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
-            $why = is_array($data) ? (string) ($data['error']['message'] ?? '') : '';
-            $status = $r['status'] === 403 ? 403 : 502;
-            $message = $r['status'] === 403
-                ? 'Google says this account may not edit that calendar' . ($why !== '' ? " ($why)" : '')
-                : 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : '');
+            $why = is_array($data) && is_array($data['error'] ?? null) ? (string) ($data['error']['message'] ?? '') : '';
             // Google's own status rides along (a caller retrying an insert
-            // with a chosen id reads a 409 as "it landed the first time").
-            throw new HttpError('google_write_failed', $message, $status, ['googleStatus' => $r['status']]);
+            // with a chosen id reads a 409 as "it landed the first time";
+            // one reading a day past the expansion cap reads a 404).
+            $extra = ['googleStatus' => $r['status']];
+            // Classified by Google's reason, not its status alone: busy
+            // (a rate or quota limit, still so after the retries above),
+            // the target deleted at Google, a permission refusal, the rest.
+            throw match (self::refusal((int) $r['status'], (string) $r['body'])) {
+                'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra),
+                'deleted' => new HttpError('google_deleted', self::DELETED_MESSAGE, 409, $extra),
+                'permission' => new HttpError('google_write_failed', 'Google says this account may not edit that calendar' . ($why !== '' ? " ($why)" : ''), 403, $extra),
+                default => new HttpError('google_write_failed', 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
+            };
         }
         return $data;
+    }
+
+    /**
+     * What a Google answer that is not a success says, by Google's reason
+     * (error.errors[].reason, error.status) as well as its status: 'busy'
+     * (429, or a 403 whose reason is a rate or quota limit), 'deleted' (404
+     * or 410: the event the request names is gone at Google), 'permission'
+     * (any other 403), 'other', or null for a success. Pure.
+     */
+    public static function refusal(int $status, string $body): ?string
+    {
+        if ($status >= 200 && $status < 300) {
+            return null;
+        }
+        if ($status === 429) {
+            return 'busy';
+        }
+        if ($status === 404 || $status === 410) {
+            return 'deleted';
+        }
+        if ($status !== 403) {
+            return 'other';
+        }
+        $data = json_decode($body, true);
+        $error = is_array($data) && is_array($data['error'] ?? null) ? $data['error'] : [];
+        $reasons = [];
+        foreach ((array) ($error['errors'] ?? []) as $e) {
+            if (is_array($e)) {
+                $reasons[] = (string) ($e['reason'] ?? '');
+                if ((string) ($e['domain'] ?? '') === 'usageLimits') {
+                    return 'busy';
+                }
+            }
+        }
+        foreach ((array) ($error['details'] ?? []) as $d) {
+            if (is_array($d)) {
+                $reasons[] = (string) ($d['reason'] ?? '');
+            }
+        }
+        if (array_intersect($reasons, self::BUSY_REASONS) !== [] || (string) ($error['status'] ?? '') === 'RESOURCE_EXHAUSTED'
+            || array_intersect(array_map('strtoupper', $reasons), ['RATE_LIMIT_EXCEEDED', 'RESOURCE_EXHAUSTED']) !== []) {
+            return 'busy';
+        }
+        return 'permission';
     }
 
     /** An access token for a write: a refusal of our own (reconnect needed, quarantined) as is, anything else the sign-in's failure. */

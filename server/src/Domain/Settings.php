@@ -107,6 +107,14 @@ final class Settings
         return is_numeric($chosen) && (int) $chosen > 0 ? (int) $chosen : null;
     }
 
+    /** Whether undo of a change to a whole series on a Google calendar is on for this account (DEFAULTS google_series_undo). */
+    public static function googleSeriesUndo(Db $db, int $userId): bool
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        return is_array($settings) && ($settings['google_series_undo'] ?? false) === true;
+    }
+
     /** Store the default calendar (setup, a calendar made or deleted, migration 058). */
     public static function setDefaultCalendar(Db $db, int $userId, ?int $calendarId): void
     {
@@ -250,6 +258,11 @@ final class Settings
         // time; null when it never was. It counts until the worker runs
         // again after it (Domain\WorkerWatch::state).
         'workerOffAt' => null,
+        // Undo and redo of a change to a whole series on a Google calendar
+        // (GoogleUndo::seriesUndoOff). An operator or test switch, never
+        // client-writable and not in the Settings page: off in 1.5.5, on in
+        // the test suites and the edit harness (tests/db/lib.php freshUser).
+        'google_series_undo' => false,
     ];
     public const WELCOME_STEPS = ['subscribe', 'import', 'google', 'install', 'reminders', 'plugins'];
     // Every view the app has (web/src/app/actions.js VIEWS). It listed a

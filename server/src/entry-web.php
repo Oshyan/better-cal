@@ -418,10 +418,11 @@ function bc_handle_api(Request $request, array $cfg): void
         $entries = Domain\ActivityContext::takeEntries();
         if ($entries !== [] && $response->status < 400) {
             [$in, $params] = \BetterCal\Infra\Db::in($entries);
-            $undoable = array_map('intval', array_column($db->all(
-                "SELECT id FROM mutations WHERE id IN $in AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id",
+            // Less one whose undo is held back (GoogleUndo::seriesUndoOff).
+            $undoable = array_map('intval', array_column(array_filter($db->all(
+                "SELECT id, user_id, details_json FROM mutations WHERE id IN $in AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id",
                 $params
-            ), 'id'));
+            ), static fn(array $m): bool => !Domain\GoogleUndo::seriesUndoOff($db, $m)), 'id'));
             if ($undoable !== []) {
                 $response = $response->withHeader('X-Undo-Entries', implode(',', $undoable));
             }

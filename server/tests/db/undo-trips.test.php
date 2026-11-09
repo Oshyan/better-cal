@@ -409,7 +409,7 @@ return static function (Db $db): void {
             return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])];
         });
         // Google answers a PATCH with the whole event as it now is (a body carries only what changes).
-        $resource = ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'summary' => 'Sample meeting',
+        $resource = ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'etag' => '"m1"', 'status' => 'confirmed', 'summary' => 'Sample meeting',
             'start' => ['dateTime' => '2027-01-11T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00+00:00', 'timeZone' => 'UTC']];
         $transport = static function (string $method, string $url, ?array $payload) use (&$calls, &$resource): array {
             $calls[] = $method;
@@ -439,7 +439,7 @@ return static function (Db $db): void {
         // Out of its trip, the same edit is sent and written.
         $trips($d)->detach($u, $t, $meeting);
         $events->patch($u, $meeting, $edit);
-        checkEq('out of its trip, the same edit: sent to Google once, renamed and a trip', [['token', 'PATCH'], 'Sample meeting, renamed', 1],
+        checkEq('out of its trip, the same edit: read, then sent to Google once conditional on that read, renamed and a trip', [['token', 'GET', 'PATCH'], 'Sample meeting, renamed', 1],
             [$calls, (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$meeting]), $flag($meeting)]);
     });
 };

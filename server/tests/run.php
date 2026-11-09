@@ -9013,8 +9013,9 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
 
     // Google stand-in: the probe's fake Google (tools/google-probe), holding
     // the calendar's three events; every call is recorded, and a hook can
-    // run while one is "in flight", in which case the call is answered as
-    // sent without reaching the fake (what is checked is the save here).
+    // run while a write is "in flight", in which case the write is answered
+    // as sent without reaching the fake (what is checked is the save here);
+    // the read each write is conditional on reaches the fake.
     require_once dirname(__DIR__, 2) . '/tools/google-probe/lib/FakeGoogle.php';
     $fakeGoogle = new BetterCal\GoogleProbe\FakeGoogle('team@example.test');
     $fakeGoogle->token = null;
@@ -9029,7 +9030,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $fakeTransport = $fakeGoogle->writerTransport();
     $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use (&$googleCalls, &$googleDuring, $googleUids, $fakeTransport): array {
         $googleCalls[] = $method;
-        if ($googleDuring === null) {
+        if ($googleDuring === null || $method === 'GET') {
             return $fakeTransport($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
         }
         ($googleDuring)();
@@ -9090,10 +9091,10 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $live();
     $googleCalls = [];
     $gev->patch(1, 10, ['title' => 'Renamed sample'], $kinds['session'][0]);
-    checkEq('google authority: with the credential still valid, the edit reaches Google and is saved', [['PATCH'], 'Renamed sample'], [$googleCalls, $gw->scalar('SELECT title FROM events WHERE id = 10')]);
+    checkEq('google authority: with the credential still valid, the edit reaches Google (read first, then written conditional on that read) and is saved', [['GET', 'PATCH'], 'Renamed sample'], [$googleCalls, $gw->scalar('SELECT title FROM events WHERE id = 10')]);
     $googleCalls = [];
     $gev->deleteEvent(1, 10, null, null, $kinds['API key'][0]);
-    checkEq('google authority: and a delete with a live API key goes through', [['DELETE'], 0], [$googleCalls, (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE id = 10 AND deleted_at IS NULL')]);
+    checkEq('google authority: and a delete with a live API key goes through', [['GET', 'DELETE'], 0], [$googleCalls, (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE id = 10 AND deleted_at IS NULL')]);
 
     // "This and following" from a Google series' first day is the whole
     // series, as locally: one edit of the series, nothing inserted, and the

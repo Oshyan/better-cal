@@ -87,7 +87,9 @@ final class GoogleUndo
     /** Where an entry's words for what Google kept start (SeriesPlans::googleAfter's words, an undo's the same). */
     public const KEPT = ' Google kept something else: ';
     /** What an undo's entry says when Review's Finish completed it. */
-    public const FINISHED = ' Finished at Google from Review.';
+    public const FINISHED = 'Finished at Google from Review.';
+    /** The heading of what a forced undo put back over. */
+    public const FORCED = ' Put back over a change made at Google since, as forced: ';
 
     public function __construct(
         private readonly Db $db,
@@ -245,14 +247,19 @@ final class GoogleUndo
             return;
         }
         if ($master !== null) {
-            $skips = array_values(array_diff(Recurrence::decodeExdates($master['exdates_json'] ?? null), [(string) $key]));
-            $master['exdates_json'] = $skips === [] ? null : json_encode($skips);
+            // The series' days as its rule gives them, its skips aside (a skip is a day of it still).
+            $master['exdates_json'] = null;
             $day = ['recurrence_instance_utc' => (string) $key, 'recurrence_parent_id' => (int) $master['id']] + $master;
-            if (Feeds::ofSeries($day, null, $master) !== null) {
+            $at = Feeds::ofSeries($day, null, $master);
+            if ($at !== null && (string) ($at['recurrence_instance_utc'] ?? $key) === (string) $key) {
                 return;
             }
+            if ($at !== null) {
+                // The day is the series' still, at another time: its times changed since.
+                throw HttpError::badRequest("The series' times changed since this change, so that day is at another time now; this can't be undone as it was.", 'stale_undo');
+            }
         }
-        throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved or ended it there), so this can't be undone.", 'stale_undo');
+        throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');
     }
 
     /**
@@ -377,9 +384,9 @@ final class GoogleUndo
      *
      * @param list<array> $befores
      */
-    public function recordSeries(int $userId, int $eventId, string $action, array $calendar, array $befores, array $beforeTables, array $afterTables, ?int $undoes = null, array $kept = []): int
+    public function recordSeries(int $userId, int $eventId, string $action, array $calendar, array $befores, array $beforeTables, array $afterTables, ?int $undoes = null, array $kept = [], array $forced = [], ?string $note = null): int
     {
-        $summary = self::line($action, (string) ($calendar['name'] ?? ''), $kept);
+        $summary = self::line($action, (string) ($calendar['name'] ?? ''), $kept, $forced, $note);
         $etag = static function (array $tables, ?string $googleId): ?string {
             foreach ($tables['events'] ?? [] as $r) {
                 if ($googleId !== null && (string) ($r['google_event_id'] ?? '') === $googleId && !empty($r['google_etag'])) {
@@ -391,7 +398,7 @@ final class GoogleUndo
         $googleId = (string) ($befores[0]['googleId'] ?? '');
         return $this->record($userId, $eventId, $summary,
             self::details(self::SERIES, $calendar, $googleId, array_values($befores), $etag($beforeTables, $googleId), $etag($afterTables, $googleId),
-                ['action' => $action, 'kept' => array_values($kept)] + ($undoes === null ? [] : ['undoes' => $undoes])),
+                ['action' => $action, 'kept' => array_values($kept)] + ($forced === [] ? [] : ['forced' => array_values($forced)]) + ($undoes === null ? [] : ['undoes' => $undoes])),
             null, 'update', [$beforeTables, $afterTables]);
     }
 
@@ -420,9 +427,9 @@ final class GoogleUndo
         }
         $googleId = (string) $g['googleId'];
         $writer = $this->writer();
+        $summary = self::line(self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? '')), (string) $calendar['name']);
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $row = $writer->rowByGoogleId((int) $calendar['id'], $googleId);
-        $summary = self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? ''));
 
         switch ((string) $g['kind']) {
             case self::EDIT:
@@ -525,10 +532,10 @@ final class GoogleUndo
                     $occurrence = is_array($parsed) && !empty($parsed['recurrence_instance_utc'])
                         ? ['uid' => (string) $parsed['uid'], 'key' => (string) $parsed['recurrence_instance_utc'], 'status' => (string) ($resp['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed']
                         : null;
-                    // An ordinary day brought back changed its series' skips, nothing else: that is its ground.
+                    // An ordinary day brought back changed its own skip, nothing else: that is its ground.
                     $this->record($userId, $back !== null ? (int) $back['id'] : (int) $mutation['entity_id'], $summary,
                         self::details(self::CREATE, $calendar, $googleId, null, null, self::etagOf($resp), ['undoes' => (int) $mutation['id']] + ($occurrence === null ? [] : ['occurrence' => $occurrence])),
-                        $back === null && $occurrence !== null && (int) $mutation['entity_id'] > 0 ? [[Undo::keyOf('events', ['id' => (int) $mutation['entity_id']]), 'exdates_json']] : null);
+                        $back === null && $occurrence !== null && (int) $mutation['entity_id'] > 0 ? [[Undo::keyOf('events', ['id' => (int) $mutation['entity_id']]), Undo::SKIP . $occurrence['key']]] : null);
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -546,7 +553,7 @@ final class GoogleUndo
                             [(int) $calendar['id'], $occurrence['uid']]);
                         $this->record($userId, $master !== null ? (int) $master : (int) $mutation['entity_id'], $summary,
                             self::details(self::DELETE, $calendar, $googleId, ['status' => (string) ($occurrence['status'] ?? 'confirmed')], $g['etagAfter'] ?? null, null, ['local' => [], 'undoes' => (int) $mutation['id']]),
-                            $master !== null ? [[Undo::keyOf('events', ['id' => (int) $master]), 'exdates_json']] : null);
+                            $master !== null ? [[Undo::keyOf('events', ['id' => (int) $master]), Undo::SKIP . $occurrence['key']]] : null);
                     });
                     return ['entity' => 'event', 'op' => 'update'];
                 }
@@ -636,7 +643,7 @@ final class GoogleUndo
             if ($fresh === null || (int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
-            [$inverse, $kept] = $this->inverseOf($fresh, $locked, (array) $g['before'], $force);
+            [$inverse, $kept, $overwrote] = $this->inverseOf($fresh, $locked, (array) $g['before'], $force);
             $targets = $series->withStoredIds($locked, $inverse);
             $title = (string) ($targets[0]['master']['title'] ?? '');
             try {
@@ -646,7 +653,7 @@ final class GoogleUndo
                 // depends on the entry still being there), and its words.
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend,
                     ['undo' => (int) $mutation['id'], 'entry' => array_intersect_key($fresh, array_flip(['id', 'user_id', 'entity_id', 'summary', 'details_json', 'before_json', 'after_json'])),
-                        'summary' => $summary, 'kept' => $kept]);
+                        'summary' => $summary, 'kept' => $kept, 'forced' => $overwrote]);
             } catch (HttpError $e) {
                 if (!GoogleSeries::reachedGoogle($e)) {
                     throw $e->errorCode === 'google_conflict' ? self::conflict() : $e; // nothing reached Google: all of it rolls back
@@ -664,7 +671,7 @@ final class GoogleUndo
             // change ran) stands as the row it was, not one made again.
             $series->reattach($locked, $was, $out['targets']);
             $series->settle($out['pending']);
-            $this->finishUndo($fresh, $locked, $summary, array_merge($kept, $out['differences']), $out['befores'], $was, $uids, array_keys($out['readbacks']));
+            $this->finishUndo($fresh, $locked, $summary, array_merge($kept, $out['differences']), $out['befores'], $was, $uids, array_keys($out['readbacks']), $overwrote);
         });
         if ($deferred !== null) {
             throw $deferred;
@@ -684,13 +691,13 @@ final class GoogleUndo
      * @param list<string> $uids
      * @param list<string> $readUids
      */
-    public function finishUndo(array $mutation, array $calendar, string $summary, array $kept, array $befores, array $was, array $uids, array $readUids): int
+    public function finishUndo(array $mutation, array $calendar, string $summary, array $kept, array $befores, array $was, array $uids, array $readUids, array $forced = [], ?string $note = null): int
     {
         $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
         $ids = $this->undo->snapshotEventIds($mutation);
         return $this->recordSeries((int) $mutation['user_id'], (int) $mutation['entity_id'], $summary, $calendar, $befores, $was,
             $this->seriesTables((int) $calendar['id'], array_merge($uids, $readUids), array_merge($ids, array_map('intval', array_column($was['events'] ?? [], 'id')))), (int) $mutation['id'],
-            array_values(array_unique($kept)));
+            array_values(array_unique($kept)), array_values(array_unique($forced)), $note);
     }
 
     /**
@@ -702,11 +709,26 @@ final class GoogleUndo
     public static function undoSummary(string $summary, ?string $detailsJson = null): string
     {
         $action = json_decode((string) $detailsJson, true)['google']['action'] ?? null;
-        $summary = is_string($action) ? $action : $summary;
-        if (str_ends_with($summary, self::FINISHED)) {
-            $summary = substr($summary, 0, -strlen(self::FINISHED));
-        }
+        $summary = is_string($action) ? $action : self::actionOf($summary);
+        $summary = rtrim(trim($summary), ' .');
         return str_starts_with($summary, self::UNDID) ? substr($summary, strlen(self::UNDID)) : self::UNDID . $summary;
+    }
+
+    /**
+     * The action of a line written before entries kept it (details
+     * `action`): the line less what the composer (line) adds, the calendar,
+     * a Finish's note and the words for what Google kept or what was put
+     * back over, so a line composed from it never repeats them. Pure.
+     */
+    public static function actionOf(string $line): string
+    {
+        foreach ([self::KEPT, trim(self::FORCED), self::FINISHED, " on Google calendar '"] as $part) {
+            $at = strpos($line, $part);
+            if ($at !== false) {
+                $line = substr($line, 0, $at);
+            }
+        }
+        return rtrim(trim($line), ' .');
     }
 
     /**
@@ -717,23 +739,27 @@ final class GoogleUndo
      *
      * @param list<string> $kept
      */
-    public static function line(string $action, string $calendarName, array $kept = []): string
+    public static function line(string $action, string $calendarName, array $kept = [], array $forced = [], ?string $note = null): string
     {
         $max = 300;
-        $on = " on Google calendar '" . $calendarName . "'";
-        if (mb_strlen($action) + mb_strlen($on) > $max) {
-            $action = mb_substr($action, 0, max(0, $max - mb_strlen($on) - 1)) . '…';
+        // The parts carry no punctuation of their own at their ends; the composer puts it.
+        $action = rtrim(trim($action), " .");
+        $on = " on Google calendar '" . $calendarName . "'.";
+        $tail = $note === null || trim($note) === '' ? '' : ' ' . rtrim(trim($note), '.') . '.';
+        $fixed = mb_strlen($on) + mb_strlen($tail);
+        if (mb_strlen($action) + $fixed > $max) {
+            $action = mb_substr($action, 0, max(0, $max - $fixed - 1)) . '…';
         }
-        $line = $action . $on;
-        $words = trim(implode(' ', array_values(array_unique($kept))));
-        if ($words === '') {
-            return $line;
+        $line = $action . $on . $tail;
+        foreach ([[self::FORCED, $forced], [self::KEPT, $kept]] as [$heading, $list]) {
+            $words = trim(implode(' ', array_values(array_unique($list))));
+            $room = $max - mb_strlen($line) - mb_strlen($heading);
+            if ($words === '' || $room < 2) {
+                continue;
+            }
+            $line .= $heading . (mb_strlen($words) > $room ? mb_substr($words, 0, $room - 1) . '…' : $words);
         }
-        $room = $max - mb_strlen($line) - mb_strlen(self::KEPT);
-        if ($room < 2) {
-            return $line;
-        }
-        return $line . self::KEPT . (mb_strlen($words) > $room ? mb_substr($words, 0, $room - 1) . '…' : $words);
+        return $line;
     }
 
     /**
@@ -762,6 +788,7 @@ final class GoogleUndo
         $left = json_decode((string) ($mutation['after_json'] ?? ''), true)['tables']['events'] ?? [];
         $out = [];
         $words = [];
+        $overwrote = [];
         foreach ($befores as $i => $t) {
             $asked = $t['asked'] ?? null;
             unset($t['asked']);
@@ -780,7 +807,8 @@ final class GoogleUndo
                 continue;
             }
             $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
-            [$out[$i], $kept, $conflicts] = GoogleSeries::deltasOver($asked, $t, $now, $year, $force);
+            [$out[$i], $kept, $conflicts, $over] = GoogleSeries::deltasOver($asked, $t, $now, $year, $force);
+            $overwrote = array_merge($overwrote, $over);
             // What the change left of this series: the rows its entry kept after it.
             $leftState = null;
             foreach ($left as $r) {
@@ -795,7 +823,7 @@ final class GoogleUndo
             }
             $words = array_merge($words, $kept);
         }
-        return [array_values($out), $words];
+        return [array_values($out), $words, $overwrote];
     }
 
     /**

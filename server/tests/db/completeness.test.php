@@ -129,7 +129,8 @@ return static function (Db $db): void {
     $unjournaled = static function (int $since, array $before, array $after, bool $vocabulary) use ($db, $changes): array {
         $said = [];
         foreach ($db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id > ?', [$since]) as $t) {
-            $said[$t['row_key']][$t['col']] = true;
+            // A skipped date's own ground (Undo::SKIP) says its series' skips.
+            $said[$t['row_key']][str_starts_with((string) $t['col'], BetterCal\Domain\Undo::SKIP) ? 'exdates_json' : $t['col']] = true;
         }
         $missing = [];
         foreach ($changes($before, $after, $vocabulary) as $key => $cols) {

@@ -1735,7 +1735,7 @@ final class GoogleSeries
     public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
-            return [$target, [], []];
+            return [$target, [], [], []];
         }
         $B = self::heldOf($before);
         $T = self::heldOf($target);
@@ -1743,6 +1743,7 @@ final class GoogleSeries
         $C = $now;
         $words = [];
         $conflicts = [];
+        $overWords = []; // what a forced rebase put back over, apart from what it kept
         // The master, a group at a time (its own write's effect is the target's values).
         $mb = self::groupsOf($before['master'], true);
         $mt = self::groupsOf($target['master'], true);
@@ -1773,7 +1774,7 @@ final class GoogleSeries
             $words[] = "The series' " . implode(', ', $left) . " changed at Google $since; left as Google has it.";
         }
         if ($overwrote !== []) {
-            $words[] = "The series' " . implode(', ', $overwrote) . " changed at Google $since; put back over it, as forced.";
+            $overWords[] = "The series' " . implode(', ', $overwrote) . " (changed at Google $since).";
         }
         $len = self::lengthOf($master);
         $allDay = (int) $master['all_day'] === 1;
@@ -1828,7 +1829,7 @@ final class GoogleSeries
                 $how = self::threeWay($c, [$bOwn, $bHere, $p, $t], $wantsChange, false);
                 if ($how === 'conflict' && $force) {
                     $conflicts[] = [$key, 'day'];
-                    $words[] = $dayWords($key) . " was changed at Google $since; put back over it, as forced.";
+                    $overWords[] = $dayWords($key) . " (changed at Google $since).";
                     $how = 'change';
                 }
                 if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $c !== 'skip') {
@@ -1877,7 +1878,7 @@ final class GoogleSeries
                     $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " changed at Google $since (its " . implode(', ', $left) . '); left as Google has it.';
                 }
                 if ($forced !== []) {
-                    $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " changed at Google $since (its " . implode(', ', $forced) . '); put back over it, as forced.';
+                    $overWords[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " (its " . implode(', ', $forced) . ", changed at Google $since).";
                 }
             }
             if ($result === 'skip') {
@@ -1897,10 +1898,20 @@ final class GoogleSeries
                 $inferred = array_values(array_filter($inferred, static fn(string $f): bool => in_array(self::OWN_GROUP[$f] ?? null, $fromNow, true)));
             }
             $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), $inferred));
+            // What it holds here alone, where what Google holds is the rows
+            // here (deltasOver): the change's delta over the list as it
+            // stands, never the change's list whole.
+            if (is_array($C['records'][$key]['own'] ?? null)) {
+                $held = static fn(?array $r): array => array_values(array_intersect((array) ($r['own'] ?? []), OwnFields::HELD_HERE));
+                $b = $held($before['exceptions'][$wasKey] ?? null);
+                $t2 = $held($x);
+                $own = OwnFields::normalize(array_merge(array_diff($own, OwnFields::HELD_HERE),
+                    array_diff($held($C['records'][$key]), array_diff($b, $t2)), array_diff($t2, $b)));
+            }
             $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
         }
         sort($skips);
-        return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words, $conflicts];
+        return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words, $conflicts, $overWords];
     }
 
     /**

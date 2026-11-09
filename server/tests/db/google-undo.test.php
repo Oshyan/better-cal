@@ -166,12 +166,12 @@ return static function (Db $db): void {
         $back = $last($t);
         $bg = $google($back);
         checkEq('the undo is an entry of its own, undoable, whose before is the renamed event', [
-            "Undid: Updated 'Sample review' on Google calendar 'Sample team'", 'edit', 'Sample review, renamed', '"g2"', '"g3"',
+            "Undid: Updated 'Sample review' on Google calendar 'Sample team'.", 'edit', 'Sample review, renamed', '"g2"', '"g3"',
         ], [$back['summary'], $bg['kind'] ?? null, $bg['before']['summary'] ?? null, $bg['etagBefore'] ?? null, $bg['etagAfter'] ?? null]);
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $back['id']);
         checkEq('undoing the undo puts the change back, conditional on "g3" read just before, worded as the change itself', [
-            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g3"']], 'Sample review, renamed', 'Sample room 2', "Updated 'Sample review' on Google calendar 'Sample team'",
+            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g3"']], 'Sample review, renamed', 'Sample room 2', "Updated 'Sample review' on Google calendar 'Sample team'.",
         ], [$calls($t), $row($t, 'probe9z8y7x')['title'], $row($t, 'probe9z8y7x')['location'], $last($t)['summary']]);
     });
 

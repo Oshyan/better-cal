@@ -1,0 +1,30 @@
+{
+    "about": "A day deleted, the series cut short at Google and not read here, then a change of only tags for all events: it sends Google nothing (x-local-silent).",
+    "series": {
+        "family": "weekly_list",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=WEEKLY;BYDAY=TU,FR,SU",
+        "bound": "count",
+        "boundAt": 15,
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-30 06:00"
+    },
+    "steps": [
+        {
+            "do": "w-del1",
+            "pick": 0.827
+        },
+        {
+            "do": "r-bound",
+            "pick": 0.024
+        },
+        {
+            "do": "w-all",
+            "pick": 0.703,
+            "what": "tags"
+        }
+    ]
+}

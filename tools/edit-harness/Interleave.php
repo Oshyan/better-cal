@@ -604,8 +604,11 @@ final class Interleave
             return ['asked' => $this->lastAsked];
         }
         if ($do === 'w-answer') {
-            $this->lastAsked = ['kind' => 'answer', 'gid' => $gid, 'fields' => ['attendance' => 'going'], 'days' => $days, 'local' => true];
+            $this->lastAsked = ['kind' => 'answer', 'gid' => $gid, 'fields' => ['attendance' => 'going'], 'days' => $days, 'local' => false];
             $plan = $this->events->previewAttendance($this->userId, $mid, 'going', 'following', $inst);
+            // An answer from a later day is a split at Google (the old series' end changes there); from the first day it is
+            // the whole series' answer, held here alone.
+            $this->lastAsked['local'] = !empty($plan['whole']);
             $this->events->setAttendance($this->userId, $mid, 'going', 'following', $inst, !empty($plan['whole']) ? null : ['hash' => $plan['hash'], 'choices' => self::selected($plan)]);
             $this->events->throwDeferred();
             return ['asked' => $this->lastAsked];
@@ -631,8 +634,11 @@ final class Interleave
             [$more, $fields] = $this->values($what, $master);
             $in += $more;
         }
-        $this->lastAsked = ['kind' => $scope, 'gid' => $gid, 'fields' => $fields, 'days' => $days, 'from' => $at[1], 'local' => array_diff(array_keys($fields), self::LOCAL) === []];
+        $this->lastAsked = ['kind' => $scope, 'gid' => $gid, 'fields' => $fields, 'days' => $days, 'from' => $at[1], 'local' => false];
         $plan = $this->events->previewPatch($this->userId, $mid, $in + ['plan' => ['choices' => []]]);
+        // Local only when every Google-held field of every series stays as it is: a change for all events of fields held
+        // here alone. "This and following" from a later day is a split at Google whatever its fields.
+        $this->lastAsked['local'] = ($plan['scope'] ?? $scope) === 'all' && array_diff(array_keys($fields), self::LOCAL) === [];
         $this->events->patch($this->userId, $mid, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => self::selected($plan)]]);
         $this->events->throwDeferred();
         return ['asked' => $this->lastAsked];

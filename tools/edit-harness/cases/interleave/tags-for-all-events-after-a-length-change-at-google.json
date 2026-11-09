@@ -1,0 +1,33 @@
+{
+    "about": "A day's place changed, the length changed at Google and not read here, then a change of only tags for all events: it sends Google nothing (x-local-silent; the failure point it names is never reached).",
+    "series": {
+        "family": "daily",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=DAILY",
+        "bound": "count",
+        "boundAt": 12,
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2027-03-31 13:00"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.151,
+            "what": "location"
+        },
+        {
+            "do": "r-length",
+            "pick": 0.573
+        },
+        {
+            "do": "f-before",
+            "pick": 0.612,
+            "k": 3,
+            "write": "w-all",
+            "what": "tags"
+        }
+    ]
+}

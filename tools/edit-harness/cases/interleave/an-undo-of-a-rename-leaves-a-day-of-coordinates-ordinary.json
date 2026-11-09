@@ -1,0 +1,42 @@
+{
+    "about": "A rename for all events, then a day given coordinates alone, then the rename undone by its entry: the undo never sends that day to Google as an edited day, so Google and the rows agree (x-agree, E10).",
+    "series": {
+        "family": "monthly_clamped",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=28,29;BYSETPOS=-1",
+        "bound": "until",
+        "boundAt": 5,
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-08-31 00:30"
+    },
+    "steps": [
+        {
+            "do": "w-del1",
+            "pick": 0.933
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.639,
+            "what": "location"
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.616,
+            "k": 3,
+            "write": "w-all",
+            "what": "title"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.087,
+            "what": "coords"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.247
+        }
+    ]
+}

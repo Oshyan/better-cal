@@ -1,0 +1,29 @@
+{
+    "about": "A day given coordinates alone, then a change of only tags for all events: it sends Google nothing, and the day stays ordinary at Google (x-local-silent; the failure point it names is never reached).",
+    "series": {
+        "family": "monthly_day_list",
+        "import": false,
+        "untilForm": "dayend",
+        "length": 60,
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=1,15",
+        "bound": "count",
+        "boundAt": 14,
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-03-31 00:30"
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.779,
+            "what": "coords"
+        },
+        {
+            "do": "f-fatal",
+            "pick": 0.298,
+            "k": 3,
+            "write": "w-all",
+            "what": "tags"
+        }
+    ]
+}

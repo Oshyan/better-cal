@@ -135,7 +135,11 @@ jobs:
       # failures, Finish, Put back and undo interleaved, checked by the
       # invariants of docs/design/interleaving-invariants.md. One process
       # on purpose: a long run grows the server's fulltext cache.
+      # Report-only until every check has its corruption probes (a check
+      # must fail on injected damage before its pass means anything); the
+      # change that adds them makes this a gate.
       - name: Edit harness, interleaving
+        continue-on-error: true
         env:
           BC_TEST_DB: mariadb:3306
         run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink

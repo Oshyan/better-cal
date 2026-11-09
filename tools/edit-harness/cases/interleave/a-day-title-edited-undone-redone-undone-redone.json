@@ -1,0 +1,38 @@
+{
+    "about": "A day's title edited, undone, redone, undone by the bare Undo (which takes the redo back) and redone again: each undo and redo judged against its entry's own recorded states (x-undo-fields, x-undo-bare; review T1).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-04 09:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.2,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.0
+        },
+        {
+            "do": "redo",
+            "pick": 0.0
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0
+        },
+        {
+            "do": "redo",
+            "pick": 0.0
+        }
+    ]
+}

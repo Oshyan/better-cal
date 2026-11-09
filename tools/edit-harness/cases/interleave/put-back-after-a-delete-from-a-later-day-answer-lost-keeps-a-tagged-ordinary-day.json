@@ -1,0 +1,32 @@
+{
+    "about": "A tag on an ordinary day (held here alone, an ordinary day to Google); a delete from an earlier day on, whose first answer was lost, drops that day with the days past the cut; Put back brings the day back as it was, its row, id and tag (x-putback, x-alone).",
+    "series": {
+        "family": "yearly_nth",
+        "rrule": "FREQ=YEARLY;BYMONTH=1;BYDAY=-1SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 2,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-03-31",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.772,
+            "what": "tags"
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.234,
+            "k": 1,
+            "write": "w-delfollow"
+        },
+        {
+            "do": "putback",
+            "pick": 0.746
+        }
+    ]
+}

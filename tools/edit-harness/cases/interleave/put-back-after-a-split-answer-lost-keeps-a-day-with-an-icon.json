@@ -1,0 +1,33 @@
+{
+    "about": "An icon on an ordinary day (held here alone, an ordinary day to Google); a description change from an earlier day on, whose first answer was lost, drops that day with the days past the cut; Put back brings the day back as it was, its row, id and icon (x-putback, x-alone).",
+    "series": {
+        "family": "yearly_bare",
+        "rrule": "FREQ=YEARLY",
+        "import": false,
+        "bound": "none",
+        "boundAt": 5,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2026-09-12 00:30",
+        "length": 90
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.485,
+            "what": "icon"
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.061,
+            "k": 1,
+            "write": "w-follow",
+            "what": "description"
+        },
+        {
+            "do": "putback",
+            "pick": 0.108
+        }
+    ]
+}

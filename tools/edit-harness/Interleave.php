@@ -621,9 +621,9 @@ final class Interleave
             if ((int) $master['all_day'] === 1 || $scope !== 'all') {
                 return ['skip' => true];
             }
-            $start = Clock::parse((string) $master['start_utc']);
-            $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - $start->getTimestamp();
-            $shift = $what === 'length' ? 0 : ((int) Clock::local((string) $master['start_utc'], (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600);
+            $start = Clock::parse((string) $at[0]);
+            $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - Clock::parse((string) $master['start_utc'])->getTimestamp();
+            $shift = $what === 'length' ? 0 : ((int) Clock::local((string) $at[0], (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600);
             $len += $what === 'length' ? 1800 : 0;
             $z = Clock::zone((string) $master['tzid']);
             $in += ['start' => Clock::iso(Clock::plus($start, $shift)->setTimezone($z)), 'end' => Clock::iso(Clock::plus($start, $shift + $len)->setTimezone($z)), 'tzid' => $master['tzid'], 'allDay' => false];
@@ -760,7 +760,7 @@ final class Interleave
                     'visibility' => ['visibility' => 'private'],
                     default => ['colorId' => (string) (1 + $n % 11)],
                 };
-                $touched = [];
+                $touched = [$touch('gonly')]; // no field the rows here hold, for x-conflict's r-gonly count
                 break;
             case 'r-etag':
                 $this->stand->fake->seed($g);
@@ -781,7 +781,14 @@ final class Interleave
             $this->na["$do refused by the stand-in: HTTP {$answer['status']}"] = 1;
             return ['skip' => true];
         }
-        $this->dirty[$gid] = true;
+        if ($do === 'r-gonly') {
+            // A change at Google only in fields the rows here don't hold: no conflict for a write, whose body never carries
+            // them (decisions.md, "A write is conditional on what is shown here; Put back on everything"); Put back still
+            // counts it (unseen, and the pending change's since).
+            $this->etagOnly[$gid] = true;
+        } else {
+            $this->dirty[$gid] = true;
+        }
         $this->unseen[$gid] = true;
         foreach ($touched as $t) {
             $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false] + $t;
@@ -822,7 +829,7 @@ final class Interleave
             $inst = self::instanceArg($master, $occ[0]);
             $mid = (int) $master['id'];
             $note = (object) ['refused' => null];
-            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note];
+            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note, $occ[1]];
             $this->stand->knobs->duringFetch = static function () use ($events, $user, $mid, $inst, $tag, $note): void {
                 try {
                     $events->patch($user, $mid, ['scope' => 'this', 'instanceStart' => $inst, 'tagNames' => ['sample', $tag]]);
@@ -836,7 +843,8 @@ final class Interleave
             } finally {
                 $this->stand->knobs->duringFetch = null;
             }
-            return ['asked' => ['kind' => 'poll', 'gid' => null, 'fields' => [], 'days' => []]];
+            // The tag given during the fetch is this step's own request (and its Activity entry is this step's).
+            return ['asked' => ['kind' => 'this', 'gid' => (string) $master['google_event_id'], 'key' => $occ[0], 'fields' => ['tags' => ['sample', $tag]], 'days' => [$occ[1]], 'local' => true]];
         }
         if ($do === 'p-410-pending') {
             if ($this->pendings === []) {
@@ -999,14 +1007,30 @@ final class Interleave
         }
         // x-overlap: a write here while a poll fetches survives the poll.
         if ($do === 'p-overlap' && $this->overlap !== null) {
-            [$key, $tag, $uid, $note] = $this->overlap;
+            [$key, $tag, $uid, $note, $date] = $this->overlap;
             $this->overlap = null;
             if ($note->refused !== null) {
                 // The write itself refused (a series with changes not yet at Google refuses writes, A6): nothing to keep.
                 $this->ran('x-overlap', 'write during fetch refused: ' . $note->refused);
             } else {
-                $kept = (int) $this->db->scalar('SELECT COUNT(*) FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id WHERE e.calendar_id = ? AND e.uid = ? AND e.recurrence_instance_utc = ? AND e.deleted_at IS NULL AND t.name = ?',
-                    [$this->stand->calendarId, $uid, $key, $tag]) > 0;
+                $kept = false;
+                $seriesNow = null;
+                foreach (self::masters($s1['rows']) as $mr) {
+                    if ((string) $mr['uid'] === $uid) {
+                        $seriesNow = $mr;
+                    }
+                }
+                $dayNow = $seriesNow !== null ? (self::days($seriesNow, 200)[$date] ?? null) : null;
+                if ($dayNow === null || in_array($dayNow, Recurrence::decodeExdates($seriesNow['exdates_json'] ?? null), true)) {
+                    $kept = true; // the series no longer has the day: x-alone judges its removal
+                    $this->ran('x-overlap', 'day gone from the series');
+                }
+                foreach ($s1['rows'] as $r) {
+                    $m = $r['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $r['recurrence_parent_id']] ?? null) : null;
+                    if ((string) $r['uid'] === $uid && in_array($tag, $r['tags'], true) && self::dayOf($r, $m) === $date) {
+                        $kept = true;
+                    }
+                }
                 $this->ran('x-overlap', 'write during fetch');
                 $this->expect('x-overlap', $kept, "step {$this->step} ($do): a tag given while the poll fetched Google's list is on its day after the poll", $context + ['key' => $key]);
             }
@@ -1088,20 +1112,30 @@ final class Interleave
 
         // x-conflict: a Google write or undo sent while the series changed at Google unpolled is refused whole.
         $undoOfDelete = in_array($asked['kind'], ['undo', 'redo'], true) && ($this->done[$asked['of'] ?? 0]['asked']['kind'] ?? '') === 'del1';
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        // Changed since by what is shown: the series' digest at Google differs from the rows here (remote steps that cancel
+        // out, a skip added and removed, leave none).
+        $shownDiffers = $gid !== null && ($this->ldigest($s0['rows'])[$gid] ?? null) != ($s0['g']['digest'][$gid] ?? null);
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$shownDiffers) {
+            $this->etagOnly[$gid] = true;
+        }
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
-            $deletedThere = in_array('series', array_column(array_filter($this->touches, static fn(array $t): bool => !empty($t['remote']) && !$t['polled'] && $t['gid'] === $gid), 'field'), true);
-            // A series deleted at Google answers google_deleted (a 404 or 410 on the target, rule 8); any other change since, google_conflict.
-            $this->expect('x-conflict', !$out['ok'] && ($error === 'google_conflict' || ($deletedThere && $error === 'google_deleted')), "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused with google_conflict (google_deleted when deleted there)", $context);
+            // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
+            // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
+            // Its code goes in the tally.
+            $this->ran('x-conflict', 'refused: ' . ($error ?? 'went through'));
+            $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused", $context);
             if (!$out['ok']) {
                 $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
             }
         }
 
-        // x-conflict, the digest's rule: a series whose etag alone moved at Google is not refused.
-        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && !isset($this->dirty[$gid]) && !$onPending && $failure === null && empty($asked['local'])) {
-            $this->ran('x-conflict', 'etag only');
-            $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose etag alone moved at Google (its content as here) is no conflict", $context);
+        // x-conflict, the shown-fields rule: a series whose etag alone moved at Google, or that changed there only in fields
+        // the rows here don't hold, is no conflict for a write (x-write-asked checks those fields keep Google's values).
+        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && (!isset($this->dirty[$gid]) || !$shownDiffers) && !$onPending && $failure === null && empty($asked['local'])
+            && !in_array($asked['kind'], ['finish', 'putback', 'create'], true)) {
+            $this->ran('x-conflict', 'etag or Google-only fields');
+            $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose shown fields at Google are as here (its etag or a Google-only field moved) is no conflict", $context);
         }
 
         // x-pending: what a failure leaves.
@@ -1148,13 +1182,29 @@ final class Interleave
         }
         // A write that went through left the series' etag here current, so the next one is no conflict; so did a refusal
         // after which the rows hold what Google holds (the product read it back).
-        if ($gid !== null && $isWrite && empty($asked['local']) && in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true) && ($out['ok'] || ($error === 'google_conflict' && ($this->ldigest($s1['rows'])[$gid] ?? 1) == ($s1['g']['digest'][$gid] ?? 2)))) {
+        // A series commit or a Finish that went through to Google stores what Google holds after its read-back, as a poll
+        // does: for its series the harness's "changed at Google since the last poll" is reset the way a poll resets it
+        // (series-model.md, Google as a Contract: "the rows stored are what Google holds after the last read-back").
+        $readBack = $out['ok'] && $writes !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
+        if ($readBack) {
+            $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
+            foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
+                unset($this->dirty[$g], $this->unseen[$g], $this->etagOnly[$g]);
+                foreach ($this->touches as $i => $t) {
+                    if ($t['gid'] === $g) {
+                        $this->touches[$i]['polled'] = true;
+                    }
+                }
+            }
+        } elseif ($gid !== null && $isWrite && empty($asked['local']) && in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true)
+            && $error === 'google_conflict' && ($this->ldigest($s1['rows'])[$gid] ?? 1) == ($s1['g']['digest'][$gid] ?? 2)) {
             unset($this->dirty[$gid]);
         }
         $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok']];
         if ($out['ok'] && ($kind === 'w-' || $kind === 'f-')) {
             foreach (array_keys($asked['fields']) as $f) {
-                $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true];
+                $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true,
+                    'from' => ($asked['kind'] ?? '') === 'following' ? ($asked['from'] ?? null) : null];
             }
         }
 
@@ -1332,7 +1382,8 @@ final class Interleave
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             if ($error === 'stale_undo' && $fieldEdit) {
-                $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid']);
+                $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'])
+                    + array_filter($this->done, static fn(array $d, int $i): bool => $i > $of && $d['ok'] && in_array($d['do'], ['u-entry', 'u-bare', 'redo'], true), ARRAY_FILTER_USE_BOTH);
                 $this->expect('x-undo-fields', $any !== [], "step {$this->step} ($do): an undo of step $of was refused as stale though nothing changed that series since", $context);
             }
             return;
@@ -1342,7 +1393,8 @@ final class Interleave
         }
         // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included.
         $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
-            && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null)));
+            && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null))
+            && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
         if ($later !== []) {
             $this->ran('x-undo-fields', 'stale');
             $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of step $of went through though a later change (step " . implode(', ', array_unique(array_column($later, 'step'))) . ') changed the same field: stale_undo by the rule (A3)', $context);

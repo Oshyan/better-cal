@@ -1270,13 +1270,25 @@ trait SeriesPlans
             if ($calendar === null || !GoogleWriter::writable($calendar)) {
                 throw HttpError::conflict('google_calendar_gone', 'The Google calendar this change was for is no longer one this account can edit.');
             }
+            // An undo of a series change stopped part way (its part here names
+            // the entry it undoes): recovered, its journal is what the undo
+            // would have written had it completed (recoveredUndo).
+            $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+            $undone = is_array($plan) && isset($plan['undo']) ? $this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId]) : null;
             try {
                 $out = $how === 'finish'
-                    ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority), $this->googleLocalPlan($userId))
+                    ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority),
+                        $undone !== null ? function () use ($undone): array {
+                            $this->undo->restoreSnapshots($undone); // the undo's part here: the rows as the change found them
+                            return [];
+                        } : $this->googleLocalPlan($userId))
                     : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
             } catch (HttpError $e) {
                 $stopped = $e;
                 throw $e;
+            }
+            if ($undone !== null) {
+                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone, $how, $out);
             }
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
@@ -1285,6 +1297,37 @@ trait SeriesPlans
                 details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null);
             return ['ok' => true, 'differences' => $out['differences'], 'left' => $left];
         });
+    }
+
+    /**
+     * The journal of an undo of a series change that Finish or Put back
+     * recovered: what the undo would have written had it completed. Finish
+     * completes the undo: the entry it undoes is marked undone and the undo's
+     * own entry recorded (GoogleUndo::finishUndo, so a redo and the bare
+     * Undo find it as after any undo), its words saying it was finished from
+     * Review and what Google kept. Put back takes the undo back whole: the
+     * entry stands as it was, not undone and undoable, and the Activity line
+     * that says so is the system's, naming no row, so it neither makes that
+     * entry stale nor stands in front of it for the bare Undo.
+     */
+    private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, array $undone, string $how, array $out): array
+    {
+        $differences = array_values(array_merge((array) ($plan['kept'] ?? []), $out['differences']));
+        $summary = (string) ($plan['summary'] ?? $row['summary']);
+        if ($how === 'finish') {
+            $targets = json_decode((string) $row['targets_json'], true) ?: [];
+            $uids = array_values(array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets)));
+            $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
+            (new GoogleUndo($this->db, $this->undo))->finishUndo($undone, $calendar, $summary . GoogleUndo::FINISHED, $differences,
+                json_decode((string) $row['befores_json'], true) ?: [], $local, $uids, array_keys($out['readbacks']));
+            if ($differences !== []) {
+                (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], (string) $calendar['name'], $differences);
+            }
+        } else {
+            ActivityContext::with('system', fn() => $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
+                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900)));
+        }
+        return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }
 
     // ---- own fields for "this event" edits -----------------------------------

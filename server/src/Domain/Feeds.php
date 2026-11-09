@@ -548,6 +548,55 @@ final class Feeds
     }
 
     /**
+     * A day's row made to follow its series ($master) in every field it
+     * does not own ($own), as Own Fields says a day does: each content
+     * field at the series' value, a place's text and coordinates as one
+     * value (followed), and its tags and people as the series' links. The
+     * one composition of a row following its series that a restore or a
+     * recovery applies (Undo's undo of a series change, Finish's rows kept
+     * since); what places the day is its caller's. $fields limits it to
+     * those fields (a restore's: the ones it put back on the series; null
+     * for every field). Returns whether it changed anything.
+     *
+     * @param list<string> $own
+     * @param ?list<string> $fields
+     */
+    public static function followSeries(Db $db, array $row, array $master, array $own, ?array $fields = null): bool
+    {
+        $id = (int) $row['id'];
+        $set = [];
+        foreach (\BetterCal\Domain\Series\OwnFields::COLUMNS as $field => $cols) {
+            if (in_array($field, $own, true) || ($fields !== null && !in_array($field, $fields, true))) {
+                continue;
+            }
+            foreach ($cols as $col) {
+                if (array_key_exists($col, $master)) {
+                    $set[$col] = $master[$col];
+                }
+            }
+        }
+        $after = self::followed($row, $set);
+        $changed = array_values(array_filter(array_keys($after), static fn(string $c): bool => array_key_exists($c, $row) && !Undo::same($row[$c], $after[$c])));
+        if ($changed !== []) {
+            $db->update('events', array_intersect_key($after, array_flip($changed)), 'id = ?', [$id]);
+        }
+        $linked = false;
+        foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
+            if (in_array($field, $own, true) || ($fields !== null && !in_array($field, $fields, true))) {
+                continue;
+            }
+            $of = static fn(int $event): array => array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$event]), $col));
+            if ($of($id) === $of((int) $master['id'])) {
+                continue;
+            }
+            $db->run("DELETE FROM `$table` WHERE event_id = ?", [$id]);
+            $db->run($db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$id, (int) $master['id']]);
+            $linked = true;
+        }
+        return $changed !== [] || $linked;
+    }
+
+    /**
      * An edited row's own fields: its list, or for a row stored before the
      * list (null) the fields that differ from its series, tags and people
      * included (OwnFields::infer), so a tag given before migration 063 is

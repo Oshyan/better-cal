@@ -1,0 +1,29 @@
+{
+    "about": "A rename at Google, then a poll during whose fetch a day is tagged here: the tag stays and the poll keeps its sync position (x-overlap); the next poll brings the rename (x-agree).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "r-rename",
+            "pick": 0.1
+        },
+        {
+            "do": "p-overlap",
+            "pick": 0.3
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

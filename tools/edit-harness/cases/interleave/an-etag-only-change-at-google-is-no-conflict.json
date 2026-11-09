@@ -1,0 +1,26 @@
+{
+    "about": "The series' etag moved at Google with its content unchanged, then a rename here: no conflict, the digest is what counts (x-conflict, etag only).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "r-etag",
+            "pick": 0.1
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "title"
+        }
+    ]
+}

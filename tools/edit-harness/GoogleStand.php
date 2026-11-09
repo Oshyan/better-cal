@@ -89,7 +89,12 @@ final class GoogleStand
         // is refused before Google takes it (a 403), loseAt is taken and its answer lost, fatalAt is taken and an Error unwinds the
         // process's transaction (as the recovery tests' knobs do). Writes counts the app's writes, taken those the
         // stand-in took. All null by default, so every other mode sends as before.
-        $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'fired' => null];
+        // The interleaving mode's other knobs: race runs once right after the app's first accepted write (a change made at
+        // Google between a master write and its read-back); duringFetch runs once as a poll's first listing request goes out
+        // (a write here while Google's list is being fetched); emptyNext makes the next whole listing answer with no items
+        // (an empty read); pageSize lists that many items a page (a whole read stopped by the page budget).
+        $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'fired' => null,
+            'race' => null, 'duringFetch' => null, 'emptyNext' => false, 'pageSize' => null];
         $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace, $knobs): array {
             $n = null;
             if ($method !== 'GET') {
@@ -119,13 +124,33 @@ final class GoogleStand
                     throw new \RuntimeException('HTTP error for the stand-in: the answer was lost');
                 }
             }
+            if ($n !== null && $knobs->race !== null && (int) ($answer['status'] ?? 500) < 400) {
+                $race = $knobs->race;
+                $knobs->race = null;
+                $race();
+            }
             if ($trace) {
                 fwrite(STDERR, "google: $method " . rawurldecode(basename((string) parse_url($url, PHP_URL_PATH))) . ' ' . json_encode($payload, JSON_UNESCAPED_SLASHES) . ' -> ' . $answer['status'] . ' ' . mb_substr((string) $answer['body'], 0, 300) . "\n");
             }
             return $answer;
         });
         $list = $fake->syncTransport();
-        $sync = new GoogleSync($db, $auth, $feeds, static fn(string $url, array $headers): array => $list($url, $headers));
+        $sync = new GoogleSync($db, $auth, $feeds, static function (string $url, array $headers) use ($list, $knobs): array {
+            if ($knobs->duringFetch !== null) {
+                $during = $knobs->duringFetch;
+                $knobs->duringFetch = null;
+                $during();
+            }
+            if ($knobs->pageSize !== null) {
+                $url = (string) preg_replace('/maxResults=\d+/', 'maxResults=' . $knobs->pageSize, $url);
+            }
+            $whole = str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events') && !str_contains($url, 'syncToken=');
+            if ($knobs->emptyNext && $whole) {
+                $knobs->emptyNext = false;
+                return ['status' => 200, 'body' => json_encode(['kind' => 'calendar#events', 'items' => [], 'nextSyncToken' => 'fake-sync-0'])];
+            }
+            return $list($url, $headers);
+        });
         $events = new Events($db, new Recurrence(), $undo, new \BetterCal\Domain\Labels($db),
             new \BetterCal\Domain\Filters($db, $undo, new \BetterCal\Infra\JobQueue($db)), new \BetterCal\Domain\Trips($db, $undo), null, $writer);
         $account = $db->insert('google_accounts', ['user_id' => $userId, 'email' => 'owner@example.test',

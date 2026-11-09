@@ -151,6 +151,37 @@ From: api-contract.md, Series Plans, Google calendars ("a difference goes into t
 
 The harness's existing checks for a single edit (a to i, c-untouched, 8-google, f-undo) still run on every `w-all` and `w-follow` step whose series nothing else touched since the last poll, as in `--google`.
 
+## Added for the 2026-11-09 Fix Round
+
+The first two 500-case runs found where the rules are thin; these steps and checks measure the round's rules directly. Each has a fixed case under `cases/interleave/`, named after what it shows.
+
+**New steps.**
+
+- `r-etag`: the series stored again at Google as it is, so its etag moves and nothing else does.
+- `w-race`: a rename for all events, with a day renamed at Google between the app's master write and its read-back (the stand-in's `race` knob).
+- `p-empty`: a whole read, or a 410 reset and its whole read, that lists nothing for a calendar holding rows (`emptyNext`).
+- `p-overlap`: a delta poll during whose fetch a day is tagged here (`duringFetch`).
+- `p-410-pending`: a poll after a 410 while a series has changes not yet at Google (skipped when none has).
+- `p-budget`: a whole read stopped after one page of two items (`pageSize` and `GOOGLE_SYNC_PAGES` set to 1), then the read that completes it. A calendar whose listing fits one page completes the first read and the step judges nothing.
+
+**x-conditional: every request that changes something at Google is conditional.** After any step, every PATCH and DELETE the app sent carries `If-Match`. A day with no row here is no exception: its instance is read first and that read's etag sent. From: api-contract.md, Google Calendar ("every edit and delete is sent with the event's stored Google etag as `If-Match`"); series-model.md, Google as a Contract ("the first write is conditional on the stored etag"); decisions.md, the round's rule that every Google request the app sends is conditional. Fixed case: `an-ordinary-day-edited-after-a-rename-at-google-is-conditional`.
+
+**x-conflict and x-pending, extended: a refusal leaves everything here.** "Nothing written here" now includes every row's `google_etag` and the calendar's `google_sync_token`, beside the rows as compared, wherever a check says a refusal or a failure before anything was sent changed nothing (x-conflict, x-pending, x-honest, x-undo-fields, x-putback). From: api-contract.md, Google Calendar ("nothing was changed here or there"); decisions.md, the round's rule that a refusal records nothing here.
+
+**x-conflict, the digest's rule: an etag-only change is no conflict.** After `r-etag` and before the next poll, a change to that series is not refused with `google_conflict`, since its content at Google is the content here. From: decisions.md, "A Google series' state is one digest of every field" and the 2026-11-09 decision that nothing-changed-since is the digest for acknowledged steps too. Fixed case: `an-etag-only-change-at-google-is-no-conflict`.
+
+**x-write-asked, extended: no key outside the writer's list.** Every request body carries only `summary`, `description`, `location`, `source`, `start`, `end`, `status`, `recurrence` and a resource's identity (`id`, `iCalUID`, `recurringEventId`, `originalStartTime`): the fields Google holds of an edited day (OwnFields' list less `HELD_HERE`) and the series' rule. From: google-calendar.md, What Writes Send; series-model.md, Own Fields; decisions.md, the round's rule that a request body is built from the writer's allowed-field list. When the product names its list, the harness keeps its own and the two are compared, never one read from the other. Fixed case: `series-and-day-writes-send-only-the-writers-keys`.
+
+**x-pending, extended to undo and redo, and the poll rule.** An undo or redo of an entry of a series with changes not yet at Google is refused with the pending reason, writing nothing, as any write is (the entry's series read from its own Google id when the harness made no record of its step). After any poll while a series has changes not yet at Google, that series' rows are as they were: the poll records what Google holds for Finish to rebase over and neither removes nor rewrites them. From: decisions.md, "A write to a series whose change is half done is refused" ("undo and redo included"), and the round's poll rule for a series with changes not yet at Google. Fixed cases: `an-undo-while-a-change-is-half-done-is-refused`, `a-410-while-a-change-is-half-done-leaves-its-rows`.
+
+**x-empty: an empty listing never deletes.** After `p-empty`, no row changed and the sync position did not move to the empty listing's token, so the next poll reads again. From: decisions.md, the round's rule that an empty listing never deletes (vdirsyncer's empty-storage guard; Google names permission changes among a 410's causes). Fixed cases: `an-empty-whole-read-deletes-nothing`, `an-empty-listing-after-a-410-deletes-nothing`.
+
+**x-overlap: a write during a poll's fetch survives the poll.** After `p-overlap` that went through (a refused write is tallied apart), the tag given during the fetch is on its day. Whether the poll drops its result or applies it over the write is the product's; that the write survives is the rule. From: google-calendar.md, What Writes Send ("Tags, people, reminders and the trip flag stay local and survive polls"). Fixed case: `a-tag-given-while-a-poll-fetches-survives-it`.
+
+**x-budget: a stopped read applies nothing.** After a `p-budget` whose first read was stopped, the rows are as before it; the read that completes it is judged by x-agree. From: google-calendar.md, How Syncing Works ("If a response is too large or stops making progress, Better-Cal keeps the last successful events and sync token"). Fixed case: `a-whole-read-stopped-by-its-page-budget-applies-nothing`.
+
+**x-readback: a change at Google during a write is kept or named.** After `w-race`, the day renamed at Google keeps that title there, or the step was refused, or a `google_differs` notice names it. From: series-model.md, Google as a Contract ("a 412 at any step is a change made elsewhere since, shown as a conflict and never overwritten"); decisions.md, "Finish applies the change's deltas over what holds now" ("leaves every field and day the change did not change exactly as it finds them"). The commit's own carrying step reads otherwise today ("each record the plan has no exception for put back to the series' values at its occurrence"), so this check asks whether a commit follows Finish's rule; the owner decides which reading stands. Fixed case: `a-day-renamed-at-google-during-a-series-write-is-kept`.
+
 ## Settled Readings
 
 The first draft listed seven readings the docs left open; the owner settled each on 2026-11-08, and the product-facing ones are in decisions.md under Sync and Storage. The oracle checks them as rules.

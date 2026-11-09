@@ -1,0 +1,37 @@
+{
+    "about": "A rename whose answer was lost, a rename at Google, then a poll after a 410: the series with changes not yet at Google keeps its rows as they were (x-pending, the poll rule).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.4,
+            "what": "tags"
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.1,
+            "k": 1,
+            "write": "w-all",
+            "what": "title"
+        },
+        {
+            "do": "r-rename",
+            "pick": 0.1
+        },
+        {
+            "do": "p-410-pending",
+            "pick": 0.1
+        }
+    ]
+}

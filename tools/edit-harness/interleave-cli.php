@@ -100,19 +100,40 @@ use BetterCal\Infra\Migrator;
 [$host, $port] = array_pad(explode(':', getenv('BC_TEST_DB') ?: '127.0.0.1:3306', 2), 2, '3306');
 $user = getenv('BC_TEST_DB_USER') ?: 'root';
 $password = getenv('BC_TEST_DB_PASS') ?: '';
-$name = 'bc_interleave_' . bin2hex(random_bytes(4));
+// A fresh database every this many cases: a case's events stay until its database is dropped, and MariaDB 10.11's
+// InnoDB fulltext cache, grown past innodb_ft_cache_size by thousands of event rows, has crashed the server on a DELETE;
+// DROP DATABASE never takes the fulltext delete path.
+const CASES_PER_DATABASE = 50;
 $server = new PDO("mysql:host=$host;port=$port;charset=utf8mb4", $user, $password, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-$server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+$name = null;
 $started = microtime(true);
 try {
-    $db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
-    (new Migrator($db, $root . '/server/migrations'))->run(static function (string $line): void {
-    });
-    $domains = domains($db);
-    /** One case on an account and a stand-in of its own. */
-    $runCase = static function (array $spec) use ($db, $domains): array {
+    $box = (object) ['db' => null, 'domains' => null, 'used' => 0];
+    /** Drops the database in use, if any, and makes and migrates a new one. */
+    $fresh = static function () use ($box, $server, $host, $port, $user, $password, $root, &$name): void {
+        if ($name !== null) {
+            $box->db = $box->domains = null;
+            gc_collect_cycles();
+            $server->exec("DROP DATABASE IF EXISTS `$name`");
+        }
+        $name = 'bc_interleave_' . bin2hex(random_bytes(4));
+        $server->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $box->db = new Db(['dsn' => "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", 'user' => $user, 'pass' => $password]);
+        (new Migrator($box->db, $root . '/server/migrations'))->run(static function (string $line): void {
+        });
+        $box->domains = domains($box->db);
+        $box->used = 0;
+    };
+    $fresh();
+    /** One case on an account and a stand-in of its own, on a database that is fresh every CASES_PER_DATABASE cases. */
+    $runCase = static function (array $spec) use ($box, $fresh): array {
+        if ($box->used >= CASES_PER_DATABASE) {
+            $fresh();
+        }
+        $box->used++;
+        $db = $box->db;
         $u = freshUser($db);
-        $stand = GoogleStand::make($db, $domains->undo, $u);
+        $stand = GoogleStand::make($db, $box->domains->undo, $u);
         $case = new Interleave($db, $stand->events, new BetterCal\Domain\Undo($db, null, $stand->writer), $stand, $u);
         try {
             return Warnings::during(static fn(): array => $case->run($spec));
@@ -213,7 +234,9 @@ try {
     }
     $out['seconds'] = round(microtime(true) - $started, 1);
 } finally {
-    $server->exec("DROP DATABASE IF EXISTS `$name`");
+    if ($name !== null) {
+        $server->exec("DROP DATABASE IF EXISTS `$name`");
+    }
 }
 if ($child) {
     file_put_contents((string) $opts['partial'], json_encode($out, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));

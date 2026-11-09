@@ -760,7 +760,7 @@ final class Interleave
                     'visibility' => ['visibility' => 'private'],
                     default => ['colorId' => (string) (1 + $n % 11)],
                 };
-                $touched = [];
+                $touched = [$touch('gonly')]; // no field the rows here hold, for x-conflict's r-gonly count
                 break;
             case 'r-etag':
                 $this->stand->fake->seed($g);
@@ -1090,9 +1090,16 @@ final class Interleave
         $undoOfDelete = in_array($asked['kind'], ['undo', 'redo'], true) && ($this->done[$asked['of'] ?? 0]['asked']['kind'] ?? '') === 'del1';
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
-            $deletedThere = in_array('series', array_column(array_filter($this->touches, static fn(array $t): bool => !empty($t['remote']) && !$t['polled'] && $t['gid'] === $gid), 'field'), true);
-            // A series deleted at Google answers google_deleted (a 404 or 410 on the target, rule 8); any other change since, google_conflict.
-            $this->expect('x-conflict', !$out['ok'] && ($error === 'google_conflict' || ($deletedThere && $error === 'google_deleted')), "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused with google_conflict (google_deleted when deleted there)", $context);
+            // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
+            // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
+            // Its code goes in the tally.
+            $this->ran('x-conflict', 'refused: ' . ($error ?? 'went through'));
+            $since = array_filter($this->touches, static fn(array $t): bool => !empty($t['remote']) && !$t['polled'] && $t['gid'] === $gid);
+            // A change at Google only to fields the rows here don't hold (r-gonly) is an open question with the owner: counted
+            // under its own signature, the expectation unchanged.
+            $onlyGoogleFields = $since !== [] && array_diff(array_column($since, 'field'), ['gonly']) === [];
+            $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused",
+                ($onlyGoogleFields ? ['do' => 'r-gonly', 'stepDo' => $do] : []) + $context);
             if (!$out['ok']) {
                 $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
             }
@@ -1148,7 +1155,22 @@ final class Interleave
         }
         // A write that went through left the series' etag here current, so the next one is no conflict; so did a refusal
         // after which the rows hold what Google holds (the product read it back).
-        if ($gid !== null && $isWrite && empty($asked['local']) && in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true) && ($out['ok'] || ($error === 'google_conflict' && ($this->ldigest($s1['rows'])[$gid] ?? 1) == ($s1['g']['digest'][$gid] ?? 2)))) {
+        // A series commit or a Finish that went through to Google stores what Google holds after its read-back, as a poll
+        // does: for its series the harness's "changed at Google since the last poll" is reset the way a poll resets it
+        // (series-model.md, Google as a Contract: "the rows stored are what Google holds after the last read-back").
+        $readBack = $out['ok'] && $writes !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
+        if ($readBack) {
+            $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
+            foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
+                unset($this->dirty[$g], $this->unseen[$g], $this->etagOnly[$g]);
+                foreach ($this->touches as $i => $t) {
+                    if ($t['gid'] === $g) {
+                        $this->touches[$i]['polled'] = true;
+                    }
+                }
+            }
+        } elseif ($gid !== null && $isWrite && empty($asked['local']) && in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true)
+            && $error === 'google_conflict' && ($this->ldigest($s1['rows'])[$gid] ?? 1) == ($s1['g']['digest'][$gid] ?? 2)) {
             unset($this->dirty[$gid]);
         }
         $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok']];

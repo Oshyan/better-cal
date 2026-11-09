@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Domain\Series\Cal;
+use BetterCal\Domain\Series\Calc;
 use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Domain\Series\Words;
 use BetterCal\Http\HttpError;
@@ -71,9 +72,10 @@ use BetterCal\Support\Time;
  * applies the plan over any other row the snapshot lacks (rewind, follow).
  *
  * Undo (GoogleUndo, kind series) is an ordinary series write: its target is
- * the inverse of the undone change's own deltas (what it asked, back to its
- * before) applied over the series as stored at undo time (deltasOver), bound
- * to it (withStoredIds), and sent through apply like any change: the same
+ * the inverse of what the undone change asked (back to its before), planned
+ * by the series model over the series as stored at undo time as a forward
+ * change is (inverseEdit, withDayDeltas), bound to it (withStoredIds), and
+ * sent through apply like any change: the same
  * condition, writes, read-back and one rebase whose base is the series as
  * stored before this write. Applying a target state is the whole public
  * surface.
@@ -344,8 +346,8 @@ final class GoogleSeries
             // With what this change asks of the series (`asked`): its own
             // deltas are the difference between the before and what it
             // asks, nothing it learns from Google on the way, and its undo
-            // asks their inverse over the series as it stands then
-            // (GoogleUndo, deltasOver).
+            // asks their inverse, planned over the series as it stands then
+            // (GoogleUndo::inverseOf).
             $befores[$i] = $this->beforeOf($calendar, $t) + ['asked' => ['master' => $t['master'], 'exceptions' => $t['exceptions'] ?? [], 'skips' => $t['skips'] ?? []]];
         }
         $pendingId = $this->journaled(fn(Db $j): int => $j->insert('google_pending', [
@@ -1898,16 +1900,6 @@ final class GoogleSeries
                 $inferred = array_values(array_filter($inferred, static fn(string $f): bool => in_array(self::OWN_GROUP[$f] ?? null, $fromNow, true)));
             }
             $own = OwnFields::normalize(array_merge((array) ($x['own'] ?? []), $inferred));
-            // What it holds here alone, where what Google holds is the rows
-            // here (deltasOver): the change's delta over the list as it
-            // stands, never the change's list whole.
-            if (is_array($C['records'][$key]['own'] ?? null)) {
-                $held = static fn(?array $r): array => array_values(array_intersect((array) ($r['own'] ?? []), OwnFields::HELD_HERE));
-                $b = $held($before['exceptions'][$wasKey] ?? null);
-                $t2 = $held($x);
-                $own = OwnFields::normalize(array_merge(array_diff($own, OwnFields::HELD_HERE),
-                    array_diff($held($C['records'][$key]), array_diff($b, $t2)), array_diff($t2, $b)));
-            }
             $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
         }
         sort($skips);
@@ -1915,37 +1907,175 @@ final class GoogleSeries
     }
 
     /**
-     * A change's deltas, from $from to $to (stateOf's shape), applied over a
-     * series as it stands ($current, stateOf's shape: the rows here): rule A
-     * (rebase) with the stored series in the place of what Google holds, so
-     * each field group of the master and each day's own part the deltas
-     * change takes $to's value, and everything else stays as $current has
-     * it. What an undo or redo of a series change asks (GoogleUndo): the
-     * inverse of what the change asked, never a snapshot of what it learned
-     * from Google on the way. A value the deltas change that $current holds
-     * otherwise is kept and named, as rebase keeps one; forced ($force,
-     * decisions.md, stale undo), it is put back over and named. Pure.
+     * The inverse of what a series change asked, as the planner's input
+     * (Series\Model::setPlan): each group of the series' own fields the
+     * change changed (its times, its rule, its title and the others), from
+     * what it asked ($asked) back to what it found ($before), read against
+     * the series as stored now ($now, stateOf's shape), set back to the
+     * value it had; the planner carries every edited day and skip to its
+     * place, as a forward times, zone or count change carries them. A
+     * group that holds otherwise now than the change asked was changed
+     * while the change ran (a later change of it made the entry stale,
+     * Undo::staleFor): kept as it stands and named, or, forced, put back
+     * over and named. Pure.
      *
-     * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} as rebase
+     * @return array{0:array,1:list<string>,2:list<string>} the master's columns to set, words for what was kept, words for what was put back over
      */
-    public static function deltasOver(array $from, array $to, array $current, int $thisYear, bool $force = false): array
+    public static function inverseEdit(array $before, array $asked, array $now, bool $force = false): array
     {
-        return self::rebase($from, $to, self::heldOf($current), $thisYear, 'since this change', $force);
+        $b = self::groupsOf($before['master'], true);
+        $a = self::groupsOf($asked['master'], true);
+        $c = self::groupsOf($now['master'], true);
+        $set = [];
+        $kept = [];
+        $over = [];
+        foreach ($b as $g => $value) {
+            if ($value === ($a[$g] ?? null)) {
+                continue;
+            }
+            if (($c[$g] ?? null) !== ($a[$g] ?? null)) {
+                if (!$force) {
+                    $kept[] = self::GROUP_WORDS[$g];
+                    continue;
+                }
+                $over[] = self::GROUP_WORDS[$g];
+            }
+            foreach ($g === 'rule' ? ['rrule'] : self::GROUPS[$g] as $col) {
+                $set[$col] = $col === 'rrule' && (string) ($before['master']['rrule'] ?? '') === '' ? null : ($before['master'][$col] ?? null);
+            }
+        }
+        return [$set,
+            $kept === [] ? [] : ["The series' " . implode(', ', $kept) . " changed at Google since this change; left as Google has it."],
+            $over === [] ? [] : ["The series' " . implode(', ', $over) . " (changed at Google since this change)."]];
     }
 
     /**
-     * Whether two states of a series (stateOf's shape) hold the same value
-     * at one of rebase's conflicts: the master's field group ($key null), a
-     * day's group, or a day as a whole ($group 'day'). Pure.
+     * The days a series change changed beyond carrying them, put back as
+     * the rest of its inverse (inverseEdit is the series' part): a day it
+     * skipped or brought back, or a field of its own it gave, took or
+     * changed (on a day it kept, or one it dropped with a shorter count or
+     * a split), found by its place in the series (the nth occurrence of
+     * the series as the change found it and as it left it, so a day carried
+     * to another time, by the change or since, is the same day). Each such
+     * part goes back to what it was, over the day as the planner leaves it
+     * in $target (the planned undo of the series as stored now); every
+     * other part of every day is the planner's, carried as any change
+     * carries it. A part that holds otherwise now than the change left it
+     * is kept and named, or, forced, put back over and named. Pure.
+     *
+     * @return array{0:array,1:list<string>,2:list<string>} the target, words for what was kept, words for what was put back over
      */
-    public static function sameAt(array $a, array $b, ?string $key, string $group): bool
+    public static function withDayDeltas(array $target, array $before, array $asked, array $now, int $thisYear, bool $force = false): array
     {
-        if ($key === null) {
-            return (self::groupsOf($a['master'], true)[$group] ?? null) === (self::groupsOf($b['master'], true)[$group] ?? null);
+        $states = ['b' => $before, 'a' => $asked, 'c' => $now, 't' => $target];
+        $daysOf = static fn(array $s): array => array_map('strval', array_merge(array_keys($s['exceptions']), $s['skips']));
+        $keys = [];
+        $places = [];
+        try {
+            foreach (['b', 'a'] as $s) {
+                $days = $daysOf($states[$s]);
+                $placeOf = $days === [] ? [] : array_flip(\BetterCal\Domain\Series\Model::placesThrough($states[$s]['master'], max($days)));
+                foreach ($days as $k) {
+                    if (isset($placeOf[$k])) {
+                        $places[$placeOf[$k]] = true;
+                    }
+                }
+            }
+            if ($places === []) {
+                return [$target, [], []];
+            }
+            ksort($places);
+            foreach (['b', 'a', 'c', 't'] as $s) {
+                $keys[$s] = \BetterCal\Domain\Series\Model::placesThrough($states[$s]['master'], null, max(array_keys($places)) + 1);
+            }
+        } catch (\InvalidArgumentException | \BetterCal\Domain\Series\WalkIncomplete | \BetterCal\Domain\Series\RuleNotReadable) {
+            return [$target, [], []];
         }
-        $da = self::dayIn(self::heldOf($a), $key);
-        $db = self::dayIn(self::heldOf($b), $key);
-        return $group === 'day' || !is_array($da) || !is_array($db) ? $da === $db : ($da[$group] ?? null) === ($db[$group] ?? null);
+        // A day of a state: whether it is there, skipped, and its own groups' values (the fields Google holds).
+        $dayOf = static function (array $s, ?string $key): array {
+            if ($key === null) {
+                return ['there' => false, 'skip' => false, 'groups' => []];
+            }
+            $x = $s['exceptions'][$key] ?? null;
+            $groups = [];
+            foreach ($x === null ? [] : OwnFields::googleHeld((array) ($x['own'] ?? [])) as $field) {
+                $g = self::OWN_GROUP[$field] ?? null;
+                if ($g !== null) {
+                    $groups[$g] = array_map(static fn(string $col): mixed => $x[$col] ?? null, self::GROUPS[$g]);
+                }
+            }
+            return ['there' => true, 'skip' => in_array($key, $s['skips'], true), 'groups' => $groups];
+        };
+        $kept = [];
+        $over = [];
+        $len = self::lengthOf($target['master']);
+        foreach (array_keys($places) as $i) {
+            $kt = $keys['t'][$i] ?? null;
+            [$b, $a, $c] = [$dayOf($before, $keys['b'][$i] ?? null), $dayOf($asked, $keys['a'][$i] ?? null), $dayOf($now, $keys['c'][$i] ?? null)];
+            if ($kt === null || !$b['there']) {
+                continue;
+            }
+            $at = Words::date(Cal::dnOf(Time::fromDb($kt)->setTimezone(Time::zone((int) $target['master']['all_day'] === 1 ? 'UTC' : (string) $target['master']['tzid']))), $thisYear);
+            // Changed since the change left it: kept and named, or forced over and named.
+            $since = static function (bool $changed, string $what) use (&$kept, &$over, $force, $at): bool {
+                if (!$changed) {
+                    return true;
+                }
+                if ($force) {
+                    $over[] = "$at's $what (changed at Google since this change).";
+                    return true;
+                }
+                $kept[] = "$at's $what changed at Google since this change; left as Google has it.";
+                return false;
+            };
+            $x = $target['exceptions'][$kt] ?? null;
+            $own = (array) ($x['own'] ?? []);
+            $day = $x === null ? self::cols(self::plainAt($target['master'], $kt, $len)) : array_diff_key($x, ['own' => 1, 'rowId' => 1]);
+            $plain = self::cols(self::plainAt($target['master'], $kt, $len));
+            $touched = false;
+            foreach (array_unique(array_merge(array_keys($b['groups']), array_keys($a['groups']))) as $g) {
+                if (($b['groups'][$g] ?? null) === ($a['groups'][$g] ?? null)
+                    || !$since($c['there'] && ($c['groups'][$g] ?? null) !== ($a['groups'][$g] ?? null), self::GROUP_WORDS[$g])) {
+                    continue;
+                }
+                $fields = array_keys(array_filter(self::OWN_GROUP, static fn(string $og): bool => $og === $g));
+                $own = array_values(array_diff($own, $fields));
+                foreach (self::GROUPS[$g] as $j => $col) {
+                    $day[$col] = isset($b['groups'][$g]) ? $b['groups'][$g][$j] : $plain[$col];
+                }
+                if (isset($b['groups'][$g])) {
+                    $own = array_merge($own, array_intersect((array) ($before['exceptions'][$keys['b'][$i]]['own'] ?? []), $fields));
+                }
+                $touched = true;
+            }
+            // What the day held here alone that the change gave or took (tags for all events, say): that delta back too.
+            $held = static fn(array $s, ?string $k): array => OwnFields::normalize(array_intersect((array) ($s['exceptions'][$k ?? '']['own'] ?? []), OwnFields::HELD_HERE));
+            [$hb, $ha] = [$held($before, $keys['b'][$i] ?? null), $held($asked, $keys['a'][$i] ?? null)];
+            if ($x !== null && $hb !== $ha) {
+                $own = array_values(array_merge(array_diff($own, array_diff($ha, $hb)), array_diff($hb, $ha)));
+                $touched = true;
+            }
+            if ($b['skip'] !== $a['skip'] && $since($c['there'] && $c['skip'] !== $a['skip'], 'skip')) {
+                $target['skips'] = array_values(array_diff($target['skips'], [$kt]));
+                if ($b['skip']) {
+                    $target['skips'][] = $kt;
+                    unset($target['exceptions'][$kt]);
+                    continue;
+                }
+            }
+            if (!$touched) {
+                continue;
+            }
+            $own = OwnFields::normalize($own);
+            if (OwnFields::googleHeld($own) === []) {
+                unset($target['exceptions'][$kt]);
+                continue;
+            }
+            $target['exceptions'][$kt] = self::cols($day) + ['own' => $own, 'rowId' => $x['rowId'] ?? ($before['exceptions'][$keys['b'][$i]]['rowId'] ?? null)];
+        }
+        sort($target['skips']);
+        ksort($target['exceptions']);
+        return [$target, $kept, $over];
     }
 
     /** A day's own part, for "does the change change this day": skipped, or its own fields' values (none for an ordinary day). */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Domain\Series\Model;
 use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
@@ -216,13 +217,17 @@ final class GoogleUndo
     }
 
     /**
-     * A day is its series' uid and its occurrence: an entry about a day
-     * that is no longer an occurrence of the series it names (a later
-     * "this and following" took it into a series of its own, a rule or
-     * bound change dropped it) is refused as stale, plainly, with nothing
-     * sent. An id that names no day of a series passes.
+     * A day is its series' uid and its occurrence: the day an entry names,
+     * where it is now. A later change that carried it to another occurrence
+     * (a times or zone change for the whole series, Undo::dayNow) carried
+     * it as any change carries a day, so the entry's undo acts on it there,
+     * the day taking its series' values at that occurrence (rule A). An
+     * entry about a day that is no longer an occurrence of the series it
+     * names (a later "this and following" took it into a series of its own,
+     * a rule or bound change dropped it) is refused as stale, plainly, with
+     * nothing sent. An id that names no day of a series is itself.
      */
-    /** refuseLeftSeries for an entry, before any other check (Undo::undoById): its day, by the Google id it names. */
+    /** dayAt for an entry, before any other check (Undo::undoById): its day, by the Google id it names. */
     public static function refuseLeftSeriesOf(Db $db, Undo $undo, array $mutation): void
     {
         $g = json_decode((string) ($mutation['details_json'] ?? ''), true)['google'] ?? null;
@@ -231,32 +236,26 @@ final class GoogleUndo
         }
         $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [(int) $g['calendarId']]);
         if ($calendar !== null) {
-            (new self($db, $undo))->refuseLeftSeries($calendar, (string) $g['googleId']);
+            (new self($db, $undo))->dayAt($mutation, $calendar, (string) $g['googleId']);
         }
     }
 
-    private function refuseLeftSeries(array $calendar, string $googleId): void
+    private function dayAt(array $mutation, array $calendar, string $googleId): string
     {
         $key = GoogleSync::droppedInstance($googleId);
         $cut = strrpos($googleId, '_');
         if ($key === null || $cut === false) {
-            return;
+            return $googleId;
         }
         $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [(int) $calendar['id'], substr($googleId, 0, $cut)]);
         if ($master !== null && empty($master['rrule'])) {
-            return;
+            return $googleId;
         }
         if ($master !== null) {
-            // The series' days as its rule gives them, its skips aside (a skip is a day of it still).
-            $master['exdates_json'] = null;
-            $day = ['recurrence_instance_utc' => (string) $key, 'recurrence_parent_id' => (int) $master['id']] + $master;
-            $at = Feeds::ofSeries($day, null, $master);
-            if ($at !== null && (string) ($at['recurrence_instance_utc'] ?? $key) === (string) $key) {
-                return;
-            }
+            $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
             if ($at !== null) {
-                // The day is the series' still, at another time: its times changed since.
-                throw HttpError::badRequest("The series' times changed since this change, so that day is at another time now; this can't be undone as it was.", 'stale_undo');
+                return $at === (string) $key ? $googleId
+                    : GoogleWriter::instanceId(substr($googleId, 0, $cut), $at, (int) $master['all_day'] === 1, (string) $master['tzid']);
             }
         }
         throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');
@@ -425,7 +424,8 @@ final class GoogleUndo
         if ($calendar === null || !GoogleWriter::writable($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
-        $googleId = (string) $g['googleId'];
+        // A day is where its series has it now (dayAt): a later change may have carried it.
+        $googleId = $this->dayAt($mutation, $calendar, (string) $g['googleId']);
         $writer = $this->writer();
         $summary = self::line(self::undoSummary((string) $mutation['summary'], (string) ($mutation['details_json'] ?? '')), (string) $calendar['name']);
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
@@ -450,7 +450,9 @@ final class GoogleUndo
                 // it did not own before goes back to following its series:
                 // the series' value there now, not the one it showed then.
                 $changed = self::changedOf($g, $leftRow);
-                $send = self::inverse($this->beforeOver($g['before'], $wasRow, $row ?? $leftRow), $changed);
+                $dayKey = GoogleSync::droppedInstance($googleId);
+                $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
+                $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and
@@ -499,7 +501,6 @@ final class GoogleUndo
                     throw self::conflict();
                 }
                 $status = (string) ($g['before']['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed';
-                $this->refuseLeftSeries($calendar, $googleId);
                 // The row it removed, kept as the entry's snapshot (record),
                 // goes back first under its id with all it had, and Google's
                 // answer is stored on top, as a poll would store it; what
@@ -545,8 +546,7 @@ final class GoogleUndo
                 if ($row === null && $occurrence !== null) {
                     // A day of a series brought back with no row of its own: skipped again, as deleting
                     // that one occurrence skips it (Events: the instance deleted at Google, a skip here).
-                    $this->refuseLeftSeries($calendar, $googleId);
-                    self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
+                        self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
                     $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $googleId, $userId, $summary, $mutation, $occurrence, $g): void {
                         $writer->apply($calendar, [], [GoogleWriter::tombstone($occurrence['uid'], $occurrence['key'])]);
                         $master = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
@@ -653,7 +653,7 @@ final class GoogleUndo
                 // depends on the entry still being there), and its words.
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend,
                     ['undo' => (int) $mutation['id'], 'entry' => array_intersect_key($fresh, array_flip(['id', 'user_id', 'entity_id', 'summary', 'details_json', 'before_json', 'after_json'])),
-                        'summary' => $summary, 'kept' => $kept, 'forced' => $overwrote]);
+                        'summary' => $summary, 'action' => $summary, 'kept' => $kept, 'forced' => $overwrote]);
             } catch (HttpError $e) {
                 if (!GoogleSeries::reachedGoogle($e)) {
                     throw $e->errorCode === 'google_conflict' ? self::conflict() : $e; // nothing reached Google: all of it rolls back
@@ -763,29 +763,31 @@ final class GoogleUndo
     }
 
     /**
-     * What an undo of a series entry asks of each series: the inverse of the
-     * undone change's own deltas (what it asked, `asked`, back to its
-     * before) applied over the series as stored now
-     * (GoogleSeries::deltasOver). A field or day the change did not change
-     * stays as it stands, whatever Google changed while the change ran; one
-     * it changed goes back to its before (a day it gave a field of its own
-     * inherits it again). A redo is the same: its entry's befores carry what
-     * the undo asked. A value the change changed that holds otherwise now is
-     * kept and named; it is a later change, refused as stale unless forced
-     * (decisions.md, stale undo), when it differs from what the change left
-     * (its after snapshot, which holds what Google changed while the change
-     * ran: that one is kept and named, never refused). An entry recorded
-     * before changes kept what they asked is refused: what it asked can't be
-     * told from what it learned from Google. A series the undo removes, one
-     * not here, and the events of their own go as recorded.
+     * What an undo of a series entry asks of each series: the inverse of
+     * what the undone change asked (its `asked`, back to its before),
+     * planned as any change is planned (rule A, decisions.md): the series'
+     * own fields it changed, set back to what they were
+     * (GoogleSeries::inverseEdit), are the planner's input
+     * (Series\Model::setPlan) over the series as stored now, so its edited
+     * days and skips are carried to their places exactly as a forward
+     * times, zone or count change carries them; the days the change itself changed beyond carrying them (a day
+     * it skipped, dropped, or gave or took fields of its own) go back at
+     * their places in what the planner makes (GoogleSeries::withDayDeltas).
+     * A redo is the same: its entry's befores carry what the undo asked. A
+     * value the change changed that holds otherwise now was changed at
+     * Google while the change ran (a later change of it, here or polled,
+     * made the entry stale: Undo::staleFor): kept and named, or, forced,
+     * put back over and named. An entry recorded before changes kept what
+     * they asked is refused: what it asked can't be told from what it
+     * learned from Google. A series the undo removes, one not here, and the
+     * events of their own go as recorded.
      *
      * @param list<array> $befores
-     * @return array{0:list<array>,1:list<string>} the targets, and words for what was kept
+     * @return array{0:list<array>,1:list<string>,2:list<string>} the targets, words for what was kept, words for what was put back over
      */
     private function inverseOf(array $mutation, array $calendar, array $befores, bool $force = false): array
     {
         $year = (int) \BetterCal\Support\Time::nowUtc()->format('Y');
-        $left = json_decode((string) ($mutation['after_json'] ?? ''), true)['tables']['events'] ?? [];
         $out = [];
         $words = [];
         $overwrote = [];
@@ -806,22 +808,22 @@ final class GoogleUndo
             if ($master === null || empty($master['rrule'])) {
                 continue;
             }
-            $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
-            [$out[$i], $kept, $conflicts, $over] = GoogleSeries::deltasOver($asked, $t, $now, $year, $force);
-            $overwrote = array_merge($overwrote, $over);
-            // What the change left of this series: the rows its entry kept after it.
-            $leftState = null;
-            foreach ($left as $r) {
-                if ((string) ($r['uid'] ?? '') === (string) $master['uid'] && ($r['recurrence_instance_utc'] ?? null) === null && !empty($r['rrule'])) {
-                    $leftState = GoogleSeries::stateOf($r, array_values(array_filter($left, static fn(array $d): bool => (int) ($d['recurrence_parent_id'] ?? 0) === (int) $r['id'])));
+            $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]);
+            $now = GoogleSeries::stateOf($master, $rows);
+            [$set, $kept, $over] = GoogleSeries::inverseEdit($t, $asked, $now, $force);
+            $target = $now;
+            if ($set !== []) {
+                $planned = Model::setPlan($master, $rows, $set);
+                if ($planned['writes'] === null) {
+                    throw HttpError::badRequest("This series repeats in a way Better-Cal can't walk, so this change can't be undone here. Change it back by hand.", 'not_undoable');
                 }
+                $target = GoogleSeries::targetOf($master, $rows, $planned['writes']);
             }
-            foreach ($conflicts as [$key, $group]) {
-                if (!$force && $leftState !== null && !GoogleSeries::sameAt($now, $leftState, $key, $group)) {
-                    throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
-                }
-            }
-            $words = array_merge($words, $kept);
+            [$target, $dayKept, $dayOver] = GoogleSeries::withDayDeltas($target, $t, $asked, $now, $year, $force);
+            // The events of their own the change made or removed go as recorded (their removal, or back).
+            $out[$i] = array_replace($target, ['singles' => array_merge((array) ($t['singles'] ?? []), $target['singles'] ?? [])]);
+            $words = array_merge($words, $kept, $dayKept);
+            $overwrote = array_merge($overwrote, $over, $dayOver);
         }
         return [array_values($out), $words, $overwrote];
     }

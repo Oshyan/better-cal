@@ -1335,7 +1335,8 @@ trait SeriesPlans
         } else {
             // Named for what it was: an undo of a change, or a redo (an undo of an undo's entry).
             $redo = (json_decode((string) ($undone['details_json'] ?? ''), true)['google']['undoes'] ?? null) !== null;
-            $what = GoogleUndo::actionOf((string) ($plan['summary'] ?? ''));
+            // The action the undo kept with its pending row, never one cut from a line.
+            $what = rtrim(trim((string) ($plan['action'] ?? $plan['summary'] ?? '')), ' .');
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
                 GoogleUndo::line(($redo ? 'Put back at Google: a redo that stopped part way is taken back, so this stays undone: ' . $what
                     : 'Put back at Google: an undo that stopped part way is taken back, so this stands: ' . GoogleUndo::undoSummary($what)), (string) $calendar['name']));

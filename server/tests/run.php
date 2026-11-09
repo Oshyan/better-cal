@@ -487,6 +487,27 @@ $d = $p('Coffee with'); // dangling with-clause: no names, words stay in title
 checkEq('fp47 dangling with has no people', [], $d['personNames']);
 checkEq('fp47 dangling with title', 'Coffee with', $d['title']);
 
+// A word the date and time readers take is never a person or a place, and a
+// weekday beside a calendar date that falls on it (Nov 16 2026 is a Monday)
+// goes with the date.
+$d = $p('Pizza night with Sam Sample November 16, Monday, at 6:30 PM');
+checkEq('fp48 weekday after the date is not a person', ['Sam Sample'], $d['personNames']);
+checkEq('fp48 weekday after the date confirms it', ['Pizza night with Sam Sample', '2026-11-16T18:30:00-08:00'], [$d['title'], $d['start']]);
+$d = $p('Monday November 16 at 6:30 PM with Sam Sample');
+checkEq('fp49 weekday before the date', [['Sam Sample'], '2026-11-16T18:30:00-08:00'], [$d['personNames'], $d['start']]);
+checkEq('fp49 weekday before the date leaves the title', false, str_contains($d['title'], 'Monday'));
+$d = $p('Pizza night with Sam Sample Mon, Nov 16 at 6:30 PM');
+checkEq('fp50 weekday abbreviation', [['Sam Sample'], 'Pizza night with Sam Sample', '2026-11-16T18:30:00-08:00'], [$d['personNames'], $d['title'], $d['start']]);
+$d = $p('Pizza night with Sam Sample November 16, Tuesday, at 6:30 PM');
+checkEq('fp51 a weekday that disagrees: the date wins, the weekday stays in the title, never a person',
+    [['Sam Sample'], '2026-11-16T18:30:00-08:00', 'Pizza night with Sam Sample , Tuesday'], [$d['personNames'], $d['start'], $d['title']]);
+$d = $p('Pizza night with Sam Sample and Alex Example November 16, Monday, at 6:30 PM');
+checkEq('fp52 two people before a dated weekday', ['Sam Sample', 'Alex Example'], $d['personNames']);
+$d = $p('Coffee with Alex Example Friday 10am');
+checkEq('fp53 a name that is no date word still works', [['Alex Example'], '2026-07-31T10:00:00-07:00'], [$d['personNames'], $d['start']]);
+$d = $p('Pizza night at Luna Nov 16 7pm Tuesday');
+checkEq('fp54 a weekday after a place is not the place', 'Luna', $d['location']);
+
 // Completeness + confidence gates feeding the QuickAdd LLM-skip decision.
 checkEq('fp complete date+time', true, $p('Meeting tomorrow 9am')['complete']);
 checkEq('fp complete date-only allDay', true, $p('Trip 2026-08-15')['complete']);

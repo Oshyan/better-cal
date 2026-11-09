@@ -158,20 +158,14 @@ final class FallbackParser
         // Several days the text named: QuickAdd keeps them over a model
         // answer with fewer (#198).
         $rangeFound = $rangeEnd !== null || $stretch !== null;
-        // "Party on Saturday": the "on" goes with the date, but only when it
-        // stood right before it, one space apart, in the text as written
-        // ("Log on for 30 min tomorrow" keeps its "on": the gap there is the
-        // duration taken out). The first difference between the text before
-        // and after the date's cut is where the date was.
+        // "November 16, Monday" or "Mon, Nov 16": a weekday right beside a
+        // calendar date that falls on it confirms the date and goes with it.
+        // One that disagrees stays in the text: the calendar date wins.
+        if ($dateFound && $beforeDate !== $work && $startOn === null && !$typedStretch && $rangeEnd === null) {
+            $work = self::confirmingWeekday($work, self::cutAt($beforeDate, $work), $date);
+        }
         if ($dateFound && $beforeDate !== $work) {
-            $i = 0;
-            $n = min(strlen($beforeDate), strlen($work));
-            while ($i < $n && $beforeDate[$i] === $work[$i]) {
-                $i++;
-            }
-            if (preg_match('/(?<![\p{L}\p{N}])on $/iu', substr($beforeDate, 0, $i)) === 1) {
-                $work = substr($work, 0, $i - 3) . substr($work, $i);
-            }
+            $work = self::dateOn($beforeDate, $work);
         }
         // With several days and no clock time, a time-of-day word is part of
         // the title ("Movie night Aug 3-7"): the range is all day anyway.
@@ -247,8 +241,11 @@ final class FallbackParser
         // date and time phrases leave it. "@" reads as "at" there.
         $location = null;
         $locPattern = '/\s(?:at|@)\s+([^,]+?)\s*(?=$|\bwith\s|\bw\/)/i';
-        if (preg_match($locPattern, $work, $m) && !preg_match('/^\d/', trim($m[1]))) {
-            $location = trim($m[1]);
+        // A date or time word in it is never the place's ("at Luna,
+        // Tuesday" when the date says otherwise): withoutWhen.
+        if (preg_match($locPattern, $work, $m) && !preg_match('/^\d/', trim($m[1]))
+            && ($place = self::withoutWhen('at', $m[1], $now)) !== '') {
+            $location = $place;
             $work = preg_replace('/\s@\s+/', ' at ', $work, 1) ?? $work;
             $confidence += 0.05;
         }
@@ -257,10 +254,11 @@ final class FallbackParser
         // title (the title is the input minus date/time phrases only), while
         // personNames parses the clause: split on commas/and/&,
         // title-cased; a leading article stays part of a group name
-        // ("the Examples" -> "The Examples"), a bare article is never a name.
+        // ("the Examples" -> "The Examples"), a bare article is never a name,
+        // and neither is a word the date and time readers take (withoutWhen).
         $personNames = [];
         if (preg_match('/\b(?:with|w\/)\s*(.+?)(?=\s(?:at|@)\s|$)/iu', $work, $m)) {
-            $personNames = self::parsePeople($m[1]);
+            $personNames = self::parsePeople(self::withoutWhen('with', $m[1], $now));
             if ($personNames !== []) {
                 $confidence += 0.05;
             }
@@ -995,6 +993,82 @@ final class FallbackParser
         $forward = ($weekday - (int) $first->format('w') + 7) % 7 + $n * 7;
         $day = 1 + $forward;
         return $day <= (int) $first->format('t') ? $first->setDate($y, $m, $day) : null;
+    }
+
+    /**
+     * Where a date reading was cut: the first difference between the text
+     * before the cut and after it.
+     */
+    private static function cutAt(string $before, string $after): int
+    {
+        $i = 0;
+        $n = min(strlen($before), strlen($after));
+        while ($i < $n && $before[$i] === $after[$i]) {
+            $i++;
+        }
+        return $i;
+    }
+
+    /**
+     * "Party on Saturday": the "on" goes with the date, but only when it
+     * stood right before it, one space apart, in the text as written ("Log
+     * on for 30 min tomorrow" keeps its "on": the gap there is the duration
+     * taken out).
+     */
+    private static function dateOn(string $before, string $after): string
+    {
+        $i = self::cutAt($before, $after);
+        if (preg_match('/(?<![\p{L}\p{N}])on $/iu', substr($before, 0, $i)) === 1) {
+            return substr($after, 0, $i - 3) . substr($after, $i);
+        }
+        return $after;
+    }
+
+    /**
+     * The weekday written right before or after a calendar date ("Mon, Nov
+     * 16", "November 16, Monday"), cut with its commas when it names the
+     * date's own day. $at is where the date was cut from $work.
+     */
+    private static function confirmingWeekday(string $work, int $at, \DateTimeImmutable $date): string
+    {
+        $names = implode('|', array_merge(array_keys(self::WEEKDAYS), array_keys(self::WEEKDAY_ABBR)));
+        $day = static fn(string $w): ?int => self::WEEKDAYS[$w = strtolower(rtrim($w, '.'))] ?? self::WEEKDAY_ABBR[$w] ?? null;
+        $own = (int) $date->format('w');
+        [$head, $tail] = [substr($work, 0, $at), substr($work, $at)];
+        if (preg_match('/^\s*,?\s*(' . $names . ')\.?(?![\p{L}\p{N}])\s*,?/iu', $tail, $m) === 1 && $day($m[1]) === $own) {
+            return $head . ' ' . substr($tail, strlen($m[0]));
+        }
+        if (preg_match('/(?<![\p{L}\p{N}])(' . $names . ')\.?\s*,?\s*$/iu', $head, $m, PREG_OFFSET_CAPTURE) === 1 && $day($m[1][0]) === $own) {
+            return substr($head, 0, $m[0][1]) . ' ' . $tail;
+        }
+        return $work;
+    }
+
+    /**
+     * $text with every date and time the grammar reads in it taken out (an
+     * "on" before a date with it), so a with-clause or a place is never
+     * offered a weekday, a date or a time as a name: what the date and time
+     * readers take is the one list of such words. $lead is the word the text
+     * followed ("at", "with"), which the readers weigh ("at Sunday Social"
+     * names a place).
+     */
+    private static function withoutWhen(string $lead, string $text, \DateTimeImmutable $now): string
+    {
+        $work = ' ' . $lead . ' ' . $text . ' ';
+        for ($n = 0; $n < 8; $n++) {
+            [$read, , $found] = self::extractDate($work, $now);
+            if ($found && $read !== $work) {
+                $work = self::dateOn($work, $read);
+                continue;
+            }
+            [$read, , , $found] = self::extractTime($work);
+            if (!$found || $read === $work) {
+                break;
+            }
+            $work = $read;
+        }
+        $work = preg_replace('/^\s*' . preg_quote($lead, '/') . '(?![\p{L}\p{N}])/iu', '', $work) ?? $work;
+        return trim(preg_replace('/\s+/', ' ', $work) ?? $work, " \t\n\r,.-@");
     }
 
     private static function mkDate(\DateTimeImmutable $now, int $y, int $m, int $d): ?\DateTimeImmutable

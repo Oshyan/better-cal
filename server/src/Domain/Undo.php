@@ -1722,7 +1722,7 @@ final class Undo
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
         if ($hereAlone) {
-            $before = self::googleHeldAsAfter($before, $after);
+            $before = $this->overCurrent(self::googleHeldAsAfter($before, $after), $after);
         }
         $mutationId = (int) $mutation['id'];
         $this->lockRows($before, $after);
@@ -1759,6 +1759,49 @@ final class Undo
                     }
                 }
             }
+        }
+        return $before;
+    }
+
+    /**
+     * A day's row an edit's undo or redo brings back whole (in $before, not
+     * in $after), composed as the sync composes any row: what it held here
+     * alone over the day as it stands now. What Google holds of the day
+     * (its columns, and the fields of its own Google holds) comes from the
+     * row at that day now, else, the day an ordinary occurrence, from its
+     * series there (Feeds::ofSeries, as the sync follows a row holding only
+     * local data); never from the snapshot, which shows the series as it
+     * was. A row that owns a field Google holds and has no row at its day
+     * now takes those from Google's answer to the undo, stored on top.
+     */
+    private function overCurrent(array $before, array $after): array
+    {
+        $kept = [];
+        foreach ($after['events'] ?? [] as $row) {
+            $kept[self::keyOf('events', $row)] = true;
+        }
+        foreach ($before['events'] ?? [] as $i => $row) {
+            $own = OwnFields::decode($row['override_fields'] ?? null);
+            if (isset($kept[self::keyOf('events', $row)]) || ($row['recurrence_instance_utc'] ?? null) === null || $own === null) {
+                continue;
+            }
+            $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
+                [(int) $row['calendar_id'], (string) $row['uid'], (string) $row['recurrence_instance_utc'], (int) $row['id']]);
+            $google = OwnFields::googleHeld($own);
+            if ($now !== null) {
+                $over = $now;
+                $google = OwnFields::googleHeld(OwnFields::decode($now['override_fields'] ?? null) ?? []);
+            } else {
+                $master = $google !== [] ? null : $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
+                    [(int) $row['calendar_id'], (string) $row['uid']]);
+                $over = $master === null ? null : Feeds::ofSeries($row, null, $master);
+            }
+            if ($over === null) {
+                continue;
+            }
+            $composed = Feeds::followed($row, array_intersect_key($over, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
+            $composed['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(Feeds::heldHere($own, $composed), $google)));
+            $before['events'][$i] = $composed;
         }
         return $before;
     }

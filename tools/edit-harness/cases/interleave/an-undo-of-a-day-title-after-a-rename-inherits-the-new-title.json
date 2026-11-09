@@ -1,0 +1,40 @@
+{
+    "about": "A title given to an ordinary day, a place given to a day, then a rename for all events with a day renamed at Google during it, then the day's title undone by its entry: the day did not own its title before, so it inherits the series' title as it is now, not the old series title as one of its own (seed 17 case 283; x-undo-fields, x-follow, x-agree)",
+    "series": {
+        "family": "monthly_clamped",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=28,29;BYSETPOS=-1",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-17 23:30",
+        "length": 30
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.925,
+            "what": "title"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.573,
+            "what": "location"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.662,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.715
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.5
+        }
+    ]
+}

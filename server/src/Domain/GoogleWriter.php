@@ -185,8 +185,20 @@ final class GoogleWriter
      */
     public static function allowedKeys(): array
     {
-        $keys = ['recurrence'];
-        foreach (Series\OwnFields::googleFields() as $field) {
+        return array_values(array_unique(array_merge(['recurrence'], self::keysOf(Series\OwnFields::googleFields()))));
+    }
+
+    /**
+     * The body keys the fields $fields are sent as (each a field Google
+     * holds). Pure.
+     *
+     * @param list<string> $fields
+     * @return list<string>
+     */
+    public static function keysOf(array $fields): array
+    {
+        $keys = [];
+        foreach ($fields as $field) {
             $keys = array_merge($keys, self::BODY_KEYS[$field] ?? throw new \LogicException("no body key for the field Google holds $field"));
         }
         return array_values(array_unique($keys));

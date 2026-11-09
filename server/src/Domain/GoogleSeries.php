@@ -70,9 +70,13 @@ use BetterCal\Support\Time;
  * the rows it made (made_json); Finish removes those and only those, and
  * applies the plan over any other row the snapshot lacks (rewind, follow).
  *
- * Undo (GoogleUndo, kind series) calls the same function with the befores
- * apply() returned as the targets, bound to the series as stored at undo
- * time (withStoredIds): applying a target state is the whole public surface.
+ * Undo (GoogleUndo, kind series) is an ordinary series write: its target is
+ * the inverse of the undone change's own deltas (what it asked, back to its
+ * before) applied over the series as stored at undo time (deltasOver), bound
+ * to it (withStoredIds), and sent through apply like any change: the same
+ * condition, writes, read-back and one rebase whose base is the series as
+ * stored before this write. Applying a target state is the whole public
+ * surface.
  *
  * Every PATCH and DELETE, here and through GoogleWriter, is conditional on a
  * read made just before the change's first step (condition): each series and
@@ -337,9 +341,11 @@ final class GoogleSeries
         self::refusePending($this->db, $userId, (int) $calendar['id'], array_filter($names));
         $befores = [];
         foreach ($targets as $i => $t) {
-            // With what this change asks of the series (`asked`): an undo of
-            // it applies its deltas from there, so what Google changed in
-            // the meantime, the change's own write included, stands.
+            // With what this change asks of the series (`asked`): its own
+            // deltas are the difference between the before and what it
+            // asks, nothing it learns from Google on the way, and its undo
+            // asks their inverse over the series as it stands then
+            // (GoogleUndo, deltasOver).
             $befores[$i] = $this->beforeOf($calendar, $t) + ['asked' => ['master' => $t['master'], 'exceptions' => $t['exceptions'] ?? [], 'skips' => $t['skips'] ?? []]];
         }
         $pendingId = $this->journaled(fn(Db $j): int => $j->insert('google_pending', [
@@ -777,13 +783,10 @@ final class GoogleSeries
                 }
                 $before = $this->masterRow($calendar, $t);
                 $old = $before === null ? null : self::stateOf($before, [])['master'];
-                // The series as the change finds it, for its deltas: as an
-                // undone change asked it (an undo's target carries it; a Put
-                // back's never reads it, its change having stopped part way),
-                // else as stored here (which the read below matches).
-                if (!$back && !empty($t['asked']['master'])) {
-                    $found[$i] = $t['asked'];
-                } elseif ($before !== null) {
+                // The series as the change finds it, for its deltas: as
+                // stored here (which the read below matches), for every
+                // change, an undo's or redo's included.
+                if ($before !== null) {
                     $found[$i] = self::stateOf($before, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $before['id']]));
                 }
                 $reads[$i] = $this->readBack($calendar, $send, !empty($t['uid']) ? (string) $t['uid'] : null, (string) $t['googleId'], null, $beforeSend);
@@ -903,8 +906,7 @@ final class GoogleSeries
                     // applies them): a day changed at Google since the read
                     // keeps that change where the change doesn't touch the
                     // field, and is named where it does; never overwritten.
-                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent',
-                        isset($reads[$i]) ? self::held($reads[$i], (string) $t['googleId']) : null);
+                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent');
                     $targets[$i] = $t;
                     $differences = array_merge($differences, $words);
                 }
@@ -1725,7 +1727,7 @@ final class GoogleSeries
      *
      * @return array{0:array,1:list<string>} the target over what Google holds now, and words for what was left as Google has it
      */
-    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', ?array $pre = null): array
+    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped'): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
             return [$target, []];
@@ -1815,23 +1817,7 @@ final class GoogleSeries
             } else {
                 $result = $want;
                 $left = [];
-                $r = $pre !== null && $pre['master'] !== null ? self::dayIn($pre, $key) : null;
-                $preRow = is_array($r) ? ($pre['records'][$key] ?? self::plainAt($pre['master'], $key, self::lengthOf($pre['master']))) : null;
                 foreach (self::GROUPS as $g => $cols) {
-                    // Changed at Google before the change's write ($pre, the
-                    // read before it), as neither side of the change had it:
-                    // Google's value there stands, though the change's own
-                    // master write has since overwritten it at Google.
-                    if (is_array($r) && !in_array($r[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, $t[$g]], true)) {
-                        foreach ($cols as $col) {
-                            $result[$col] = $preRow[$col] ?? null;
-                        }
-                        $fromNow[] = $g;
-                        if ($bOwn[$g] !== $t[$g]) {
-                            $left[] = self::GROUP_WORDS[$g];
-                        }
-                        continue;
-                    }
                     // A skip at the destination (the day the edited day moves onto) is that day's value, explaining no field.
                     $how = self::threeWay($c[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
                     if ($how === 'change') {
@@ -1870,6 +1856,21 @@ final class GoogleSeries
         }
         sort($skips);
         return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words];
+    }
+
+    /**
+     * A change's deltas, from $from to $to (stateOf's shape), applied over a
+     * series as it stands ($current, stateOf's shape: the rows here): rule A
+     * (rebase) with the stored series in the place of what Google holds, so
+     * each field group of the master and each day's own part the deltas
+     * change takes $to's value, and everything else stays as $current has
+     * it. What an undo or redo of a series change asks (GoogleUndo): the
+     * inverse of what the change asked, never a snapshot of what it learned
+     * from Google on the way. Pure.
+     */
+    public static function deltasOver(array $from, array $to, array $current, int $thisYear): array
+    {
+        return self::rebase($from, $to, self::heldOf($current), $thisYear)[0];
     }
 
     /** A day's own part, for "does the change change this day": skipped, or its own fields' values (none for an ordinary day). */

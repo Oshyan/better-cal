@@ -1,0 +1,39 @@
+{
+    "about": "An icon on an ordinary day (local data alone), undone so its row goes, then a rename for all events during which that day is renamed at Google (kept as its own title), then the icon redone: the row takes its icon over the day as it stands, keeping the title from Google as its own, so the rows and Google agree (seed 11 case 122; x-follow, x-agree)",
+    "series": {
+        "family": "monthly_day_list",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=10,20",
+        "import": false,
+        "bound": "until",
+        "boundAt": 10,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-04-28",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.551,
+            "what": "icon"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.696
+        },
+        {
+            "do": "w-race",
+            "pick": 0.073,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.405
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.5
+        }
+    ]
+}

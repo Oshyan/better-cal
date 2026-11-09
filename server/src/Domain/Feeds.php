@@ -459,6 +459,34 @@ final class Feeds
     }
 
     /**
+     * What a row of a series keeps when the feed's record of its day stops
+     * holding anything of its own (it changes to hold nothing, goes, or
+     * never existed): the fields it owns that are held here alone, its
+     * picked coordinates while it shows the place text they were picked for
+     * (heldHere, as $row stands, so a row already following its series
+     * reads with the series' text), and what refers to it
+     * (OwnFields::references). Null when it keeps nothing: an ordinary
+     * occurrence again, no row. The one retention function: the sync's
+     * removal loop (a delta, a whole read and the 410 reset alike, each
+     * through sync) and recovery (rewind, Finish and Put back, whose stores
+     * go through sync too, and whose rows a store made are judged here)
+     * call it; nothing else decides what an edited day keeps.
+     *
+     * @param ?list<string> $own the row's own list (default: as stored on it)
+     * @return array{fields:list<string>, refs:list<string>}|null
+     */
+    public static function retained(Db $db, array $row, ?array $own = null): ?array
+    {
+        if (($row['recurrence_instance_utc'] ?? null) === null) {
+            return null;
+        }
+        $id = (int) ($row['id'] ?? 0);
+        $fields = self::heldHere($own ?? \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
+        $refs = $id > 0 ? (\BetterCal\Domain\Series\OwnFields::references($db, [$id])[$id] ?? []) : [];
+        return $fields === [] && $refs === [] ? null : ['fields' => $fields, 'refs' => $refs];
+    }
+
+    /**
      * Whether the feed's record of an edited day holds something of its
      * own: a field it owns that a feed carries, or a guest list other than
      * its series'. A place is the record's by its text alone: one showing
@@ -994,18 +1022,17 @@ final class Feeds
                     continue;
                 }
                 $target = self::ofSeries($now, $was, $series);
-                $refs = \BetterCal\Domain\Series\OwnFields::references($this->db, [$id])[$id] ?? [];
+                $after = $target === null ? $now : self::followed($now, $target);
+                $kept = self::retained($this->db, $after, $own);
                 if ($target === null) {
-                    $gone[$id] = [$now, self::heldHere($own, $now), $refs];
+                    $gone[$id] = [$now, $kept['fields'] ?? [], $kept['refs'] ?? []];
                     continue;
                 }
-                $after = self::followed($now, $target);
-                $held = self::heldHere($own, $after);
-                if ($held === [] && $refs === []) {
+                if ($kept === null) {
                     $drop[$id] = $now;
                     continue;
                 }
-                $follow[$id] = [$now, $after, $held, $refs];
+                $follow[$id] = [$now, $after, $kept['fields'], $kept['refs']];
             }
             self::assertSyncDeadline($deadline);
 

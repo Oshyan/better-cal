@@ -513,6 +513,15 @@ final class GoogleSync
      * master was just sent with every skip as an EXDATE line, so its lines
      * are the whole list, and a skip it left out was put back.
      *
+     * A skip is Google's like a record: a master change that drops the
+     * series' exceptions (a clock, zone, rule or COUNT change; probe 3.1,
+     * 3.7) drops its cancelled records too, and the delta lists each as a
+     * dropped item (a cancelled item under the day's instance id with no
+     * originalStartTime). A dropped item says Google holds nothing of its
+     * own on that day, neither a record nor a skip: the row there goes and
+     * the stored skip goes with it, unless the master's own EXDATE lines in
+     * the same list name the day (a record dropped for an EXDATE, 3.16).
+     *
      * @param list<array> $snapshot
      * @param list<array> $changes
      * @return list<array>
@@ -550,6 +559,7 @@ final class GoogleSync
         $skipped = [];
         $live = [];
         $droppedKeys = [];
+        $unskipped = [];
         $changedMasters = [];
         // Series the changes cancel whole: a record of one listed live in
         // the same list (Google lists a removed series' records with it, and
@@ -566,15 +576,17 @@ final class GoogleSync
                     foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
                         unset($byKey[$key]);
                     }
-                    unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid]);
+                    unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid], $unskipped[$uid]);
                     $removed[$uid] = true;
                 } elseif (!empty($ev['dropped'])) {
                     // A dropped exception record: its row goes unless a live
                     // row in this list takes the key; the day is no skip.
                     $droppedKeys[$uid][self::key($ev)] = $instance;
+                    unset($skipped[$uid][$instance]);
+                    $unskipped[$uid][$instance] = true;
                 } else {
                     $key = self::key($ev);
-                    unset($byKey[$key], $keysByUid[$uid][$key], $live[$uid][$instance]);
+                    unset($byKey[$key], $keysByUid[$uid][$key], $live[$uid][$instance], $unskipped[$uid][$instance]);
                     $skipped[$uid][$instance] = true;
                 }
                 continue;
@@ -597,7 +609,7 @@ final class GoogleSync
             foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
                 unset($byKey[$key]);
             }
-            unset($keysByUid[$uid], $skipped[$uid], $live[$uid]);
+            unset($keysByUid[$uid], $skipped[$uid], $live[$uid], $unskipped[$uid]);
         }
         foreach ($droppedKeys as $uid => $keys) {
             foreach ($keys as $key => $instance) {
@@ -606,18 +618,21 @@ final class GoogleSync
                 }
             }
         }
-        foreach (array_keys($changedMasters + $skipped + $live) as $uid) {
+        foreach (array_keys($changedMasters + $skipped + $live + $unskipped) as $uid) {
             $uid = (string) $uid;
             $masterKey = $uid . '|';
             if (!isset($byKey[$masterKey])) {
                 continue;
             }
             $dates = $byKey[$masterKey]['exdates'] ?? [];
+            // The master's own EXDATE lines, when this list carries it.
+            $lines = isset($changedMasters[$uid]) ? array_flip($dates) : [];
             if ($delta && isset($changedMasters[$uid])) {
                 $dates = array_merge($dates, $storedSkips[$uid] ?? []);
             }
             $dates = array_merge($dates, array_keys($skipped[$uid] ?? []));
-            $dates = array_values(array_filter($dates, static fn(string $d): bool => !isset($live[$uid][$d])));
+            $dates = array_values(array_filter($dates, static fn(string $d): bool => !isset($live[$uid][$d])
+                && (!isset($unskipped[$uid][$d]) || isset($lines[$d]) || isset($skipped[$uid][$d]))));
             $byKey[$masterKey]['exdates'] = Recurrence::validateExdates($dates);
         }
         $result = array_values($byKey);

@@ -1866,7 +1866,7 @@ final class GoogleSeries
      * journal), and what Google holds is stored once that transaction is
      * over, in one of its own (keepAfterTx).
      * Returns what rewind took off the rows it made that hold something
-     * here alone (heldHere), for carryHeld once Google's state is stored,
+     * here alone (Feeds::retained), for carryHeld once Google's state is stored,
      * and the writer's words for what it left as it is.
      *
      * @return array{0:list<array>, 1:list<string>}
@@ -1909,7 +1909,7 @@ final class GoogleSeries
      * here since (a tag on an ordinary day, which makes its row), kept as
      * it stands and returned, for the plan to be applied over it (follow).
      * A row a store made that has since been given something held here
-     * alone (heldHere: a tag, a person, a reminder, an answer, an icon, a
+     * alone (Feeds::retained: a tag, a person, a reminder, an answer, an icon, a
      * trip link) is no longer recovery's alone: where a target names a day
      * at its key, what it holds is taken (returned, for carryHeld to put on
      * the row the change leaves there) and the row goes; otherwise it is
@@ -1961,13 +1961,13 @@ final class GoogleSeries
                 $kept[] = $id;
                 continue;
             }
-            $held = $this->heldHere($r);
+            $held = Feeds::retained($this->db, $r);
             if ($held !== null && !self::namesDay($targets, $r)) {
                 $kept[] = $id;
                 continue;
             }
             if ($held !== null) {
-                $taken[] = $held;
+                $taken[] = $this->taken($r, $held);
             }
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
         }
@@ -2038,28 +2038,20 @@ final class GoogleSeries
     }
 
     /**
-     * What an edited day holds here alone: its own fields no feed carries,
-     * its place's coordinates, read as the sync reads them (Feeds::heldHere,
-     * from the one list OwnFields::HELD_HERE), and whatever refers to it
-     * (OwnFields::references), with the row and its links as they are now;
-     * null when it holds none of it (a row a store made and nobody touched since).
+     * What recovery takes off a row a store made that keeps something
+     * (Feeds::retained, the one retention function the sync uses too): the
+     * row and its links as they are now, with the fields it keeps, for
+     * carryHeld to put on the row left for that day.
+     *
+     * @param array{fields:list<string>, refs:list<string>} $kept
      */
-    private function heldHere(array $row): ?array
+    private function taken(array $row, array $kept): array
     {
-        if ($row['recurrence_instance_utc'] === null) {
-            return null;
-        }
-        $id = (int) $row['id'];
-        $fields = Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
-        $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
-        if ($fields === [] && $refs === []) {
-            return null;
-        }
-        return ['row' => $row, 'fields' => $fields, 'links' => Undo::linksOf($this->db, [$id])];
+        return ['row' => $row, 'fields' => $kept['fields'], 'links' => Undo::linksOf($this->db, [(int) $row['id']])];
     }
 
     /**
-     * What rows a store made held here alone (heldHere), put on the row the
+     * What rows a store made held here alone (Feeds::retained), put on the row the
      * recovery leaves for that day: the row a target names at its key
      * (the snapshot's row, by id, or the row at that key now). Its own
      * fields there are its own on that row (a tag list replaces the row's,
@@ -2376,9 +2368,9 @@ final class GoogleSeries
             if ($made !== []) {
                 [$in, $params] = Db::in(array_keys($made));
                 foreach ($this->db->all("SELECT * FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
-                    $h = $this->heldHere($r);
+                    $h = Feeds::retained($this->db, $r);
                     if ($h !== null) {
-                        $held[] = $h;
+                        $held[] = $this->taken($r, $h);
                     }
                 }
             }

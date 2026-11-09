@@ -1,0 +1,44 @@
+{
+    "about": "A day with its own title at Google, a tag and coordinates picked for the series' place text here; the series' clock moved at Google drops the record; a whole read keeps the tag and the coordinates on the day at the new clock, as a delta does (x-dropped).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.4,
+            "what": "title"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.4,
+            "what": "tags"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.4,
+            "what": "coords"
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        },
+        {
+            "do": "r-time",
+            "pick": 0.1
+        },
+        {
+            "do": "p-whole",
+            "pick": 0.1
+        }
+    ]
+}

@@ -12269,6 +12269,16 @@ use BetterCal\Infra\Secrets;
     $deltaContradicted = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$renamed, $resent, $backAtGoogle], delta: true));
     checkEq('merge delta: a cancelled instance re-sent stays skipped; a day the delta brings back live is no longer skipped', ['2027-03-15 17:00:00'],
         $deltaContradicted['probe1a2b3c@google.com|']['exdates']);
+    // A skip is Google's: a master change that drops it (a new clock, zone,
+    // rule or COUNT) lists it as a dropped item, and the delta drops it here.
+    $droppedSkip = GoogleSync::toParsed(['id' => 'probe1a2b3c_20270315T170000Z', 'iCalUID' => 'probe1a2b3c@google.com', 'status' => 'cancelled']);
+    $retimed = array_merge($renamed, ['start_utc' => '2027-03-01 19:00:00', 'end_utc' => '2027-03-01 19:30:00']);
+    checkEq('merge delta: a skip Google dropped with a master change goes; one it did not drop stays', ['2027-03-22 17:00:00'],
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$retimed, $droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
+    checkEq('merge delta: a dropped skip goes on a delta that does not carry its master', ['2027-03-22 17:00:00'],
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
+    checkEq('merge delta: a record dropped for an EXDATE line the master carries stays skipped', ['2027-03-15 17:00:00', '2027-03-22 17:00:00'],
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($retimed, ['exdates' => ['2027-03-15 17:00:00']]), $droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
     $answer = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($renamed, ['exdates' => ['2027-03-15 17:00:00']])]));
     checkEq('merge answer: a write\'s answer is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
 }

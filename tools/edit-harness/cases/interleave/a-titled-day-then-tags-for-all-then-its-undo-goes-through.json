@@ -1,5 +1,5 @@
 {
-    "about": "A day given a title of its own, then tags for all events, which reach that day's row, then the title's entry undone: stale, the newer change stands on the row the entry made (x-undo-fields).",
+    "about": "A day given a title of its own, then tags for all events, which reach that day's row, then the title's entry undone: it goes through, since the entry's row owns its title and the newer change changed its tags (x-undo-fields; decisions.md, the same entry, each side's ground).",
     "series": {
         "family": "monthly_day",
         "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",

@@ -1,5 +1,5 @@
 {
-    "about": "A day given a tag (its row made by that entry), then a place for all events, which rewrites that row, then the tag's entry undone: stale, since a newer change stands on the row the entry made (x-undo-fields; api-contract.md, stale_undo, \"added something to an item this one made\").",
+    "about": "A day given a tag (its row made by that entry, owning its tags), then a place for all events, which rewrites the row's place, then the tag's entry undone: it goes through, since the grounds don't meet: the entry's row owns its tags, the newer change changed its place (x-undo-fields; decisions.md, \"An undo is stale when a poll has since brought a remote change of the same field\", each side's ground).",
     "series": {
         "family": "yearly_day",
         "rrule": "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=16",

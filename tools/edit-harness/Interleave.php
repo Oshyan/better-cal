@@ -1298,8 +1298,10 @@ final class Interleave
         }
         $removal = in_array($asked['kind'] ?? '', ['delfollow', 'del1'], true);
         if ($removal && $gid !== null && isset($this->dirty[$gid]) && ($s0['g']['digest'][$gid] ?? null) === null) {
-            // The series is already gone at Google: removing it here sends nothing that could overwrite a change there.
+            // The series is already gone at Google: the removal completes here (decisions.md, "Removing a series already gone
+            // at Google succeeds", case 303).
             $this->ran('x-conflict', 'removal of a series deleted at Google');
+            $this->expect('x-conflict', $out['ok'], "step {$this->step} ($do): removing a series already gone at Google succeeds", $context);
         }
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
@@ -1588,6 +1590,7 @@ final class Interleave
                     $this->db->all('SELECT id, source, undone, summary, details_json FROM mutations WHERE user_id = ? ORDER BY id', [$this->userId]))]);
         }
         $state = $this->entryStates[$entry] ?? null;
+        $this->rawNow = $s0['rows'];
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
@@ -1635,11 +1638,70 @@ final class Interleave
         return $out;
     }
 
-    /** The judged fields an entry changed that have changed again since it was made (a stale undo's reason). */
+    /** The raw rows before the undo or redo being judged, for the occurrence test of the entry's day. */
+    private array $rawNow = [];
+
+    /**
+     * A day row's ground: the fields it owns, by its own list (decisions.md, "An undo is stale when a poll has since brought
+     * a remote change of the same field": "each side's ground the fields that row owns where it was made or removed whole").
+     */
+    private static function ground(?array $row): array
+    {
+        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location', 'lat', 'lng'], 'url' => ['url'], 'status' => ['status'],
+            'date' => ['start', 'end'], 'time' => ['start', 'end', 'tz'], 'length' => ['end'], 'allDay' => ['allDay'], 'tags' => ['tags'], 'people' => ['people'],
+            'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'], 'coords' => ['lat', 'lng'], 'lat' => ['lat', 'lng']];
+        $out = [];
+        foreach ((array) ($row['own'] ?? []) as $o) {
+            $out = array_merge($out, $map[$o] ?? [$o]);
+        }
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * What stands on an entry now: the reasons its undo or redo is stale (decisions.md, "An undo is stale when a poll has since
+     * brought a remote change of the same field", as settled 2026-11-09 after the second read; api-contract.md, `stale_undo`).
+     * Staleness is the same field or the same day, never a dates change against a times change.
+     */
     private function changedSince(array $state, array $now): array
     {
         $out = [];
-        foreach (self::entryChange($state) as $ident => $fields) {
+        $change = self::entryChange($state);
+        // The days the entry is about: the rows it changed, made or removed, and the dates it skipped or brought back.
+        $days = [];
+        foreach ($change as $ident => $fields) {
+            if (str_starts_with($ident, 'day:')) {
+                $days[$ident] = true;
+            } elseif (in_array('skips', $fields, true)) {
+                $a = $state['before'][$ident]['skips'] ?? [];
+                $b = $state['after'][$ident]['skips'] ?? [];
+                foreach (array_merge(array_diff($a, $b), array_diff($b, $a)) as $k) {
+                    $days['day:' . substr($ident, strlen('series:')) . ':' . $k] = true;
+                }
+            }
+        }
+        // An entry about a day no longer an occurrence of the series it names (a later "this and following" took it into a
+        // series of its own, a rule or bound change dropped it) is stale before anything else (seed 419 case 852), and one
+        // whose series has gone since likewise.
+        foreach (array_keys($days) as $d) {
+            if (preg_match('/^day:([^:]+):(.+)$/', $d, $m) !== 1 || !isset($state['after']['series:' . $m[1]])) {
+                continue;
+            }
+            $master = null;
+            foreach ($this->rawNow as $r) {
+                if ($r['recurrence_parent_id'] === null && (string) ($r['google_event_id'] ?? '') === $m[1]) {
+                    $master = $r;
+                }
+            }
+            if ($master === null) {
+                $out[$d] = ['series gone'];
+            } elseif ($master['rrule'] !== null && !Truth::isOccurrence($master, $m[2])) {
+                $out[$d] = ['no longer an occurrence of its series'];
+            }
+        }
+        if ($out !== []) {
+            return $out;
+        }
+        foreach ($change as $ident => $fields) {
             $b = $state['after'][$ident] ?? null;
             $c = $now[$ident] ?? null;
             // A series the entry made that a newer change has added a day to, removed one of or changed one of: the newer
@@ -1652,66 +1714,42 @@ final class Interleave
                         $out[$d] = ['added to a series the entry made'];
                     }
                 }
-            }
-            // A day the entry edited, made or removed whose series' times have changed since: the newer change moved the
-            // times where this one edited a date (api-contract.md, stale_undo: "for a repeating event, changed its times
-            // where this deleted, edited or split off a date, or the other way round").
-            if (preg_match('/^day:([^:]+):/', $ident, $m) === 1) {
-                $sa = $state['after']['series:' . $m[1]] ?? null;
-                $sn = $now['series:' . $m[1]] ?? null;
-                // The times of a date: its clock, length, zone and all-day flag. The rule is not one: a rule change that keeps
-                // the date leaves its times, and one that drops it leaves a row or series gone, judged above.
-                $times = static fn(?array $r): ?array => $r === null ? null : array_intersect_key($r, array_flip(['tz', 'allDay'])) + ['clock' => substr((string) ($r['start'] ?? ''), 11), 'length' => strtotime((string) ($r['end'] ?? '')) - strtotime((string) ($r['start'] ?? ''))];
-                if ($sa !== null && $sn !== null && $times($sa) != $times($sn)) {
-                    $out[$ident] = ['series times changed'];
-                    continue;
-                }
-            }
-            // A day whose series has gone since (deleted, here or at Google) has a newer change standing on it.
-            if (preg_match('/^day:([^:]+):/', $ident, $m) === 1 && isset($state['after']['series:' . $m[1]]) && !isset($now['series:' . $m[1]])) {
-                $out[$ident] = ['series gone'];
                 continue;
             }
             if ($fields === ['+'] || $fields === ['-']) {
-                if ($b === null && $c !== null) {
-                    // A row the entry removed that is back: stale when a newer change gave it something held here (its own
-                    // list names one), which bringing the row back would overwrite; a row Google made there (a title of its
-                    // own) is composed over (decisions.md, "The undo of a Google edit sends back only the fields that edit
-                    // changed": a row brought back whole takes what it held here alone "over the day as it stands now").
-                    if (array_intersect($c['own'] ?? [], self::LOCAL) !== []) {
-                        $out[$ident] = $fields;
+                // A row the entry made or removed whole: a newer change on the row at that day now stales it where the two
+                // grounds meet, the fields the entry's row owns and those the newer change changed (a poll changing the
+                // day's notes doesn't stale an entry about its place).
+                $mine = self::ground($fields === ['+'] ? $b : ($state['before'][$ident] ?? null));
+                if ($fields === ['+'] && $c === null) {
+                    $out[$ident] = ['row gone'];
+                } elseif ($fields === ['+']) {
+                    $f = array_values(array_filter($mine, static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                    if ($f !== []) {
+                        $out[$ident] = $f;
                     }
-                } elseif ($b !== null && $c === null) {
-                    $out[$ident] = $fields;
-                } elseif ($b !== null && $c !== null) {
-                    // A row the entry made that a newer change has changed since, in any field or its own list: the newer
-                    // change stands on the item this one made (api-contract.md, stale_undo: "added something to an item
-                    // this one made", "changed the same field"), and undoing would take it away with the row.
-                    $f = array_values(array_filter(array_merge(self::judged('series:', $b, $c), ['own']), static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                } elseif ($c !== null) {
+                    $f = array_values(array_intersect($mine, self::ground($c)));
                     if ($f !== []) {
                         $out[$ident] = $f;
                     }
                 }
                 continue;
             }
-            if (str_starts_with($ident, 'series:') && in_array('skips', $fields, true)) {
-                // A day the entry skipped or brought back that a newer change has made, removed or changed since: the
-                // newer change stands on that date (api-contract.md, stale_undo: "changed its times where this deleted,
-                // edited or split off a date, or the other way round"; "removed or made the same item").
-                $g = substr($ident, strlen('series:'));
-                $a = $state['before'][$ident] ?? null;
-                $keys = array_merge(array_diff($a['skips'] ?? [], $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a['skips'] ?? []));
-                foreach ($keys as $k) {
-                    $day = 'day:' . $g . ':' . $k;
-                    $x = $state['after'][$day] ?? null;
-                    $y = $now[$day] ?? null;
-                    $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
-                    if ($plain($x) != $plain($y)) {
-                        $out[$day] = ['date skipped or brought back'];
-                    }
-                }
-            }
             foreach ($fields as $f) {
+                if ($f === 'skips' && str_starts_with($ident, 'series:') && $c !== null) {
+                    // An ordinary day deleted or brought back stands on its series' skips alone: stale only when one of its
+                    // own dates has been skipped or brought back since (seed 307 case 463: another day edited stales nothing).
+                    $a = $state['before'][$ident]['skips'] ?? [];
+                    $mineDates = array_merge(array_diff($a, $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a));
+                    foreach ($mineDates as $k) {
+                        if (in_array($k, $b['skips'] ?? [], true) !== in_array($k, $c['skips'] ?? [], true)) {
+                            $out[$ident][] = 'skips';
+                            break;
+                        }
+                    }
+                    continue;
+                }
                 if ($c === null || ($b[$f] ?? null) != ($c[$f] ?? null)) {
                     $out[$ident][] = $f;
                 }

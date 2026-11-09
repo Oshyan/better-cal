@@ -1,5 +1,5 @@
 {
-    "about": "A day given a tag, the tag undone (its row goes), then a new length for all events, then the tag redone: stale, since the newer change moved the times where the entry edited a date (x-undo-fields; api-contract.md, stale_undo, \"changed its times where this deleted, edited or split off a date\").",
+    "about": "A day given a tag, the tag undone (its row goes), then a new length for all events, then the tag redone: it goes through, since staleness is the same field or the same day and never a times change against a day's edit (x-undo-fields; decided 2026-11-09, the cross-staling of dates and times removed).",
     "series": {
         "family": "monthly_setpos_set",
         "rrule": "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=2",

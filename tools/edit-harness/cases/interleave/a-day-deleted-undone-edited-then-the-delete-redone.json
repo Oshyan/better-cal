@@ -1,5 +1,5 @@
 {
-    "about": "A day deleted, the delete undone, the series' days edited, then the delete redone: judged against the undo entry's recorded states, stale when a newer change stands on the date it brought back (x-undo-fields; api-contract.md, stale_undo, \"changed its times where this deleted ... or the other way round\").",
+    "about": "A day deleted, the delete undone, then that day given a title and a tag, then the delete redone: it goes through, since an ordinary day deleted or brought back stands on its series' skips alone (x-undo-fields; decisions.md, \"An undo is stale when a poll has since brought a remote change of the same field\").",
     "series": {
         "family": "yearly_bare",
         "rrule": "FREQ=YEARLY",

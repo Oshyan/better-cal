@@ -129,7 +129,7 @@ final class OracleProbes
                     $s1['rows'][$row($s1, $master)]['title'] = $s0['rows'][$row($s0, $master)]['title'];
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            ['check' => 'x-undo-fields', 'what' => 'an undo goes through though a newer change stands on the row its entry made', 'case' => 'a-titled-day-then-tags-for-all-then-its-undo-is-stale', 'step' => 3,
+            ['check' => 'x-undo-fields', 'what' => 'an undo goes through though a poll brought a newer change of its field', 'case' => 'rename-then-a-rename-at-google-polled-then-undo', 'step' => 4,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];
                 }],

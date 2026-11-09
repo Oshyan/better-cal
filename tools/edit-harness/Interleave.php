@@ -829,7 +829,7 @@ final class Interleave
             $inst = self::instanceArg($master, $occ[0]);
             $mid = (int) $master['id'];
             $note = (object) ['refused' => null];
-            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note];
+            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note, $occ[1]];
             $this->stand->knobs->duringFetch = static function () use ($events, $user, $mid, $inst, $tag, $note): void {
                 try {
                     $events->patch($user, $mid, ['scope' => 'this', 'instanceStart' => $inst, 'tagNames' => ['sample', $tag]]);
@@ -843,7 +843,8 @@ final class Interleave
             } finally {
                 $this->stand->knobs->duringFetch = null;
             }
-            return ['asked' => ['kind' => 'poll', 'gid' => null, 'fields' => [], 'days' => []]];
+            // The tag given during the fetch is this step's own request (and its Activity entry is this step's).
+            return ['asked' => ['kind' => 'this', 'gid' => (string) $master['google_event_id'], 'key' => $occ[0], 'fields' => ['tags' => ['sample', $tag]], 'days' => [$occ[1]], 'local' => true]];
         }
         if ($do === 'p-410-pending') {
             if ($this->pendings === []) {
@@ -1006,14 +1007,19 @@ final class Interleave
         }
         // x-overlap: a write here while a poll fetches survives the poll.
         if ($do === 'p-overlap' && $this->overlap !== null) {
-            [$key, $tag, $uid, $note] = $this->overlap;
+            [$key, $tag, $uid, $note, $date] = $this->overlap;
             $this->overlap = null;
             if ($note->refused !== null) {
                 // The write itself refused (a series with changes not yet at Google refuses writes, A6): nothing to keep.
                 $this->ran('x-overlap', 'write during fetch refused: ' . $note->refused);
             } else {
-                $kept = (int) $this->db->scalar('SELECT COUNT(*) FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id WHERE e.calendar_id = ? AND e.uid = ? AND e.recurrence_instance_utc = ? AND e.deleted_at IS NULL AND t.name = ?',
-                    [$this->stand->calendarId, $uid, $key, $tag]) > 0;
+                $kept = false;
+                foreach ($s1['rows'] as $r) {
+                    $m = $r['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $r['recurrence_parent_id']] ?? null) : null;
+                    if ((string) $r['uid'] === $uid && in_array($tag, $r['tags'], true) && self::dayOf($r, $m) === $date) {
+                        $kept = true;
+                    }
+                }
                 $this->ran('x-overlap', 'write during fetch');
                 $this->expect('x-overlap', $kept, "step {$this->step} ($do): a tag given while the poll fetched Google's list is on its day after the poll", $context + ['key' => $key]);
             }
@@ -1095,7 +1101,13 @@ final class Interleave
 
         // x-conflict: a Google write or undo sent while the series changed at Google unpolled is refused whole.
         $undoOfDelete = in_array($asked['kind'], ['undo', 'redo'], true) && ($this->done[$asked['of'] ?? 0]['asked']['kind'] ?? '') === 'del1';
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        // Changed since by what is shown: the series' digest at Google differs from the rows here (remote steps that cancel
+        // out, a skip added and removed, leave none).
+        $shownDiffers = $gid !== null && ($this->ldigest($s0['rows'])[$gid] ?? null) != ($s0['g']['digest'][$gid] ?? null);
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$shownDiffers) {
+            $this->etagOnly[$gid] = true;
+        }
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -1109,7 +1121,7 @@ final class Interleave
 
         // x-conflict, the shown-fields rule: a series whose etag alone moved at Google, or that changed there only in fields
         // the rows here don't hold, is no conflict for a write (x-write-asked checks those fields keep Google's values).
-        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && !isset($this->dirty[$gid]) && !$onPending && $failure === null && empty($asked['local'])
+        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && (!isset($this->dirty[$gid]) || !$shownDiffers) && !$onPending && $failure === null && empty($asked['local'])
             && !in_array($asked['kind'], ['finish', 'putback', 'create'], true)) {
             $this->ran('x-conflict', 'etag or Google-only fields');
             $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose shown fields at Google are as here (its etag or a Google-only field moved) is no conflict", $context);
@@ -1358,7 +1370,8 @@ final class Interleave
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             if ($error === 'stale_undo' && $fieldEdit) {
-                $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid']);
+                $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'])
+                    + array_filter($this->done, static fn(array $d, int $i): bool => $i > $of && $d['ok'] && in_array($d['do'], ['u-entry', 'u-bare', 'redo'], true), ARRAY_FILTER_USE_BOTH);
                 $this->expect('x-undo-fields', $any !== [], "step {$this->step} ($do): an undo of step $of was refused as stale though nothing changed that series since", $context);
             }
             return;

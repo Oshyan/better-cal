@@ -155,7 +155,8 @@ final class GoogleStand
             // What the whole read's first page listed: 'empty' (no items and no further page) or 'events', for x-empty.
             if ($whole && !str_contains($url, 'pageToken=') && (int) ($answer['status'] ?? 0) === 200) {
                 $page = json_decode((string) $answer['body'], true);
-                $knobs->listed = ($page['items'] ?? []) === [] && !isset($page['nextPageToken']) ? 'empty' : 'events';
+                $live = array_filter($page['items'] ?? [], static fn(array $i): bool => ($i['status'] ?? '') !== 'cancelled');
+                $knobs->listed = $live === [] && !isset($page['nextPageToken']) ? 'empty' : 'events';
             }
             return $answer;
         });

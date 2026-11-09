@@ -509,4 +509,24 @@ return static function (Db $db): void {
         [$before, $after] = $secondSync($s);
         checkEq('a second sync changes nothing', $before, $after);
     });
+
+    // A day's row the sync makes starts with its series' tags and people, as a writer's does (2026-11-09).
+    scenario('google series: a tagged series, a poll bringing a record of its own for one day: the day\'s row starts with the series\' tag, not its own; the record set back to the series\' values, the row goes', function () use ($setup, $masterId, $db): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->events->patch($s->u, $id, ['scope' => 'all', 'tagNames' => ['Sample series tag']]);
+        $s->events->throwDeferred();
+        $atGoogle = static fn(array $body) => ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/team%40group.calendar.google.com/events/smpl1weekly_20270308T180000Z',
+            $body, ['Authorization: Bearer sample-access']);
+        $poll = static fn() => $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $dayRow = static fn(): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$s->calendarId, '2027-03-08 18:00:00']);
+        $atGoogle(['summary' => 'Sample weekly, renamed at Google']);
+        $poll();
+        $row = $dayRow();
+        checkEq('the day\'s row: Google\'s title, its own list the title alone, the series\' tag as a copy', ['Sample weekly, renamed at Google', '["title"]', ['Sample series tag']],
+            [$row['title'] ?? null, $row['override_fields'] ?? null, array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) ($row['id'] ?? 0)]), 'name')]);
+        $atGoogle(['summary' => 'Sample weekly']);
+        $poll();
+        checkEq('the record back at the series\' values: the copy holds nothing here alone, so the day is an ordinary occurrence again (no row)', null, $dayRow());
+    });
 };

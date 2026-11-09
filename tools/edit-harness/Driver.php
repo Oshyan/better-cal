@@ -390,7 +390,7 @@ final class Driver
                 $row['start_utc'] = Clock::db($at);
                 $row['end_utc'] = Clock::db($at->modify('+' . $len . ' seconds'));
             }
-            $rrule = $s['rrule'] . $this->boundText($s, $row);
+            $rrule = $s['rrule'] . self::boundText($s, $row);
             $this->db->run('UPDATE events SET rrule = ?, start_utc = ?, end_utc = ? WHERE id = ?', [$rrule, $row['start_utc'], $row['end_utc'], $id]);
             $this->spec['create'] = $in + ['rrule' => $rrule, 'stored' => $row['start_utc']];
             return $id;
@@ -406,7 +406,7 @@ final class Driver
         if ($s['bound'] !== 'none') {
             // The bound is written as the editor writes it, read from the rule as stored (its aligned start).
             $row = $this->row($id);
-            $rrule = $s['rrule'] . $this->boundText($s, $row);
+            $rrule = $s['rrule'] . self::boundText($s, $row);
             $this->db->run('UPDATE events SET rrule = ? WHERE id = ?', [$rrule, $id]);
             $this->spec['create'] = $in + ['rrule' => $rrule];
             return $id;
@@ -416,7 +416,7 @@ final class Driver
     }
 
     /** ;COUNT=n, ;UNTIL= (the editor's 23:59:59 of the last day, its last start, or a date for an all-day series), or ''. */
-    private function boundText(array $s, array $row): string
+    public static function boundText(array $s, array $row): string
     {
         if ($s['bound'] === 'count' || ($s['bound'] === 'until' && Shape::parse($s['rrule'], 0)->cap === 'unreadable')) {
             return ';COUNT=' . $s['boundAt'];

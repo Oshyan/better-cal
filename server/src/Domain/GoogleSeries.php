@@ -422,6 +422,40 @@ final class GoogleSeries
         }
     }
 
+    /**
+     * What a failed run must still store here (what Google holds), written
+     * once the transaction it failed in is over, in a transaction of its
+     * own (Undo::write: the account's lock, the request's check), whether
+     * that transaction rolled back or committed; outside one, now. A failed
+     * part of a write is undone by rolling back its whole transaction,
+     * never to a savepoint (MariaDB's fulltext index asserts on a row
+     * deleted under a savepoint rolled back and deleted again), so nothing
+     * that must outlive the failure is written inside it. Skipped when
+     * nothing reached Google (stepsDone), and when another run of the
+     * pending row holds it by then: that run stores what Google holds
+     * itself. A failure here is logged (Db::whenTxEnds); the pending row
+     * says what happened either way.
+     */
+    private function keepAfterTx(array $calendar, int $pendingId, \Closure $keep): void
+    {
+        $this->db->whenTxEnds(function () use ($calendar, $pendingId, $keep): void {
+            if ($this->stepsDone($pendingId) === 0) {
+                return; // nothing reached Google: the rollback was all of it
+            }
+            $lock = self::lockName($this->db, $pendingId);
+            if (self::mysql($this->db) && (int) $this->db->journal()->scalar('SELECT GET_LOCK(?, 0)', [$lock]) !== 1) {
+                return;
+            }
+            try {
+                (new Undo($this->db))->write((int) $calendar['user_id'], $keep);
+            } finally {
+                if (self::mysql($this->db)) {
+                    $this->db->journal()->scalar('SELECT RELEASE_LOCK(?)', [$lock]);
+                }
+            }
+        });
+    }
+
     /** A Google answer that refused the write: it changed nothing there (any 4xx, the 412 of a conflict among them). */
     private static function refused(HttpError $e): bool
     {
@@ -659,8 +693,9 @@ final class GoogleSeries
                 $this->endUnlessTx($pendingId, false);
                 throw $e;
             }
-            // What Google has now is what the calendar shows: best effort,
-            // the pending row says what happened either way.
+            // What Google has now is what the calendar shows: read now,
+            // stored once the transaction is over (keepAfterTx); best
+            // effort, the pending row says what happened either way.
             try {
                 $got = $readbacks;
                 foreach ($targets as $t) {
@@ -669,7 +704,7 @@ final class GoogleSeries
                     }
                 }
                 if ($got !== []) {
-                    $this->store($calendar, $got, [], $pendingId);
+                    $this->keepAfterTx($calendar, $pendingId, fn() => $this->store($calendar, $got, [], $pendingId));
                 }
             } catch (\Throwable) {
             }
@@ -1825,8 +1860,11 @@ final class GoogleSeries
     /**
      * The change's part here, once Google holds its targets: the rows put
      * back where they were (rewind), then the change's writer, all or
-     * nothing. A failure leaves the rows as Google holds them, keeps the
-     * pending row half done with words for what stopped, and is thrown.
+     * nothing: a failure rolls back the whole transaction it runs in (the
+     * account's, inside one), never to a savepoint, and is thrown. The
+     * pending row is marked half done with words for what stopped (the
+     * journal), and what Google holds is stored once that transaction is
+     * over, in one of its own (keepAfterTx).
      * Returns what rewind took off the rows it made that hold something
      * here alone (heldHere), for carryHeld once Google's state is stored,
      * and the writer's words for what it left as it is.
@@ -1844,23 +1882,14 @@ final class GoogleSeries
             $this->follow($local, $kept);
         };
         try {
-            if ($this->db->pdo()->inTransaction()) {
-                $this->db->run('SAVEPOINT bc_google_finish');
-                try {
-                    $write();
-                } catch (\Throwable $e) {
-                    $this->db->run('ROLLBACK TO SAVEPOINT bc_google_finish');
-                    throw $e;
-                }
-                $this->db->run('RELEASE SAVEPOINT bc_google_finish');
-            } else {
-                $this->db->tx($write);
-            }
+            $this->db->tx($write);
         } catch (\Throwable $e) {
-            $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
-            $this->reattach($calendar, $local, $out['targets']);
             $words = 'Google has the change, but its part here (tags, people, reminders, flags) could not be saved: ' . rtrim($e->getMessage(), '.') . '.';
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
+            $this->keepAfterTx($calendar, $pendingId, function () use ($calendar, $local, $out, $pendingId): void {
+                $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
+                $this->reattach($calendar, $local, $out['targets']);
+            });
             $this->endUnlessTx($pendingId, true);
             throw new HttpError('google_finish_local', $words, 409, ['pending' => $pendingId]);
         }

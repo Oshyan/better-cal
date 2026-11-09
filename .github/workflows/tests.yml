@@ -125,6 +125,16 @@ jobs:
         env:
           BC_TEST_DB: mariadb:3306
         run: ./tools/edit-harness/run.sh --google --seed 7 --cases 1000 --quiet --shards 4
+      # The interleaving mode: Google-backed series through runs of writes here,
+      # changes at Google, polls, failures injected into a write, Finish, Put
+      # back, undo and redo (docs/design/interleaving-invariants.md), a seed of
+      # 300 cases on one process with the fixed cases, about two and a half
+      # minutes (one process, a fresh database every 50 cases: the load known
+      # not to crash MariaDB's fulltext cache).
+      - name: Edit harness, interleaving
+        env:
+          BC_TEST_DB: mariadb:3306
+        run: ./tools/edit-harness/run.sh --interleave --seed 7 --cases 300 --fixed --quiet --no-shrink
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

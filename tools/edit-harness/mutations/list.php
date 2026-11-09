@@ -443,4 +443,17 @@ return [
             ],
         ),
     ],
+    // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
+    [
+        'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,
+        'what' => 'every body sent to Google carries a colorId, a field only Google holds that the app never sends',
+        'patch' => [["'status' => (string) (\$row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',\n        ];", "'status' => (string) (\$row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',\n            'colorId' => '1',\n        ];"]],
+        'cases' => ['a-color-at-google-survives-writes-here'],
+    ],
+    [
+        'id' => 'bare-undo-takes-an-undo', 'file' => 'server/src/Domain/Undo.php', 'checks' => ['x-undo-bare', 'x-undo-fields'], 'interleave' => true,
+        'what' => 'the bare Undo takes the newest entry not undone, an undo\'s own included, so it redoes on a Google calendar',
+        'patch' => [['} while ($this->takesBack($below));', '} while (false);']],
+        'cases' => ['two-changes-then-the-bare-undo-twice'],
+    ],
 ];

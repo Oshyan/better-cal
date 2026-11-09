@@ -1,0 +1,30 @@
+{
+    "about": "A tag on the sixth day, then the series cut to two events at Google and polled: the day goes, and the poll's entry names it by its row id and date (A5).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.75,
+            "what": "tags"
+        },
+        {
+            "do": "r-bound",
+            "pick": 0.1
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

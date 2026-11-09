@@ -1,0 +1,39 @@
+{
+    "about": "Two whole-series changes, then the bare Undo twice: each steps one change further back, passing over the first undo's own entry (x-undo-bare).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "title"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "description"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.1
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.1
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.1
+        }
+    ]
+}

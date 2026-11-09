@@ -1007,8 +1007,10 @@ final class Interleave
             }
         }
         $of = self::undoes((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]));
-        if ($of !== null && $depth < 4) {
-            return ['kind' => 'redo'] + $this->askedOfEntry($of, $depth + 1);
+        if ($of !== null && $depth < 6) {
+            $inner = $this->askedOfEntry($of, $depth + 1);
+            $inner['kind'] = ($inner['kind'] ?? 'undo') === 'undo' ? 'redo' : 'undo';
+            return $inner;
         }
         $d = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true);
         $gid = isset($d['google']['googleId']) ? explode('_', (string) $d['google']['googleId'], 2)[0] : null;
@@ -1462,7 +1464,8 @@ final class Interleave
         if (!$redo) {
             // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included.
             $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
-                && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null))
+                && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled'])
+                && ($orig['asked']['kind'] === 'all' || $t['key'] === ($orig['asked']['key'] ?? null) || ($t['key'] === null && !empty($t['remote'])))
                 && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
             if ($later !== []) {
                 $this->ran('x-undo-fields', 'stale');

@@ -26,8 +26,14 @@ final class Interleave
         'p-delta' => 8, 'p-whole' => 3, 'p-410' => 2, 'p-empty' => 2, 'p-overlap' => 2, 'p-410-pending' => 2, 'p-budget' => 1, 'w-race' => 3,
         'f-lost' => 5, 'f-before' => 3, 'f-fatal' => 3,
         'finish' => 5, 'putback' => 5,
-        'u-entry' => 4, 'u-bare' => 5, 'redo' => 2,
+        'u-entry' => 4, 'u-bare' => 5, 'redo' => 2, 'u-redo' => 3,
     ];
+    /** Drawn as more than one step: 'u-redo' is an undo of a chosen entry, then a redo of the newest undo entry (the one it just made). */
+    public const COMPOSITE = ['u-redo'];
+    /** The undo and redo kinds, tagged in coverage by what the entry's target was when they ran. */
+    public const UNDO_KINDS = ['u-entry', 'u-bare', 'redo'];
+    /** The tags: the entry's day had a row here, had none, or the entry was the series'. */
+    public const UNDO_TAGS = ['row', 'no row', 'series'];
     /** The setup steps a case starts with (w-this-l twice: its weight). */
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
@@ -105,7 +111,14 @@ final class Interleave
             $steps[] = self::drawStep($r, $r->pick(self::SETUP));
         }
         foreach (range(1, $r->int(3, 8)) as $_) {
-            $steps[] = self::drawStep($r, $r->weighted(self::WEIGHTS));
+            $do = $r->weighted(self::WEIGHTS);
+            if ($do === 'u-redo') {
+                // Every redo it makes has an entry to redo: the undo just before it records one on a Google calendar.
+                $steps[] = self::drawStep($r, 'u-entry');
+                $steps[] = ['do' => 'redo', 'pick' => 0.0];
+                continue;
+            }
+            $steps[] = self::drawStep($r, $do);
         }
         return ['seed' => $seed, 'n' => $n, 'series' => $series, 'steps' => $steps];
     }
@@ -438,6 +451,10 @@ final class Interleave
         }
         $this->lastAsked = null;
         $this->spec['steps'][$this->step - 1]['ran'] = $out['skip'] ? 'skipped' : ($out['ok'] ? 'ok' : (string) $out['error']);
+        if (in_array($do, self::UNDO_KINDS, true) && !$out['skip']) {
+            // What the entry's target was as the undo or redo ran: its day's row here or none, or the whole series.
+            $this->spec['steps'][$this->step - 1]['target'] = $this->undoTarget(($out['asked'] ?? null) ?? [], $s0['rows']);
+        }
         if ($out['skip']) {
             $this->ran('skipped', $do);
             return;
@@ -448,6 +465,27 @@ final class Interleave
 
     /** What the step about to fail asked (set before the product is called, so a refusal still knows its series). */
     private ?array $lastAsked = null;
+
+    /** An undo or redo's target as it ran: 'row' (its day had a row here), 'no row', or 'series' (a whole-series entry or unknown). */
+    private function undoTarget(array $asked, array $rows): string
+    {
+        $key = $asked['key'] ?? null;
+        $gid = $asked['gid'] ?? null;
+        if ($key === null || $gid === null) {
+            return 'series';
+        }
+        foreach (self::masters($rows) as $m) {
+            if ((string) $m['google_event_id'] !== (string) $gid) {
+                continue;
+            }
+            foreach ($rows as $r) {
+                if ((int) ($r['recurrence_parent_id'] ?? 0) === (int) $m['id'] && $r['recurrence_instance_utc'] === $key) {
+                    return 'row';
+                }
+            }
+        }
+        return 'no row';
+    }
 
     /** The series a step acts on: one of the case's live masters, by its pick. */
     private function seriesOf(array $rows, float $pick): ?array
@@ -778,10 +816,27 @@ final class Interleave
             return ['skip' => true];
         }
         $url = 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($target);
+        // The series as Google holds it, less what Google rewrites on its own, before and after: a change that leaves it
+        // as it was (a day put back to what it already held) moved only the etag.
+        $resource = function () use ($gid): array {
+            $out = [];
+            foreach ($this->stand->fake->events as $id => $e) {
+                if ((string) $id === $gid || str_starts_with((string) $id, $gid . '_') || ($e['recurringEventId'] ?? '') === $gid) {
+                    $out[$id] = array_diff_key($e, array_flip(['etag', 'updated', 'sequence']));
+                }
+            }
+            ksort($out);
+            return $out;
+        };
+        $was = $resource();
         $answer = ($this->stand->fake->transport())($do === 'r-delete' ? 'DELETE' : 'PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], $body);
         if ($answer['status'] >= 300) {
             $this->na["$do refused by the stand-in: HTTP {$answer['status']}"] = 1;
             return ['skip' => true];
+        }
+        if ($resource() == $was) {
+            $this->etagOnly[$gid] = true;
+            return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
         }
         if ($do === 'r-gonly') {
             // A change at Google only in fields the rows here don't hold: no conflict for a write, whose body never carries
@@ -1375,7 +1430,9 @@ final class Interleave
         if ($do === 'u-bare') {
             $this->ran('x-undo-bare', 'newest own');
             // Which entry it took; what a refusal wrote is x-conflict's and x-undo-fields' to judge.
-            $this->expect('x-undo-bare', $out['ok'] ? $undone : !$undone, "step {$this->step}: the bare Undo takes the newest of the account's own changes not undone, passing over an undo's own entry", $context + ['undone' => $undone]);
+            $this->expect('x-undo-bare', $out['ok'] ? $undone : !$undone, "step {$this->step}: the bare Undo takes the newest of the account's own changes not undone, passing over an undo's own entry", $context + ['undone' => $undone,
+                'entries' => array_map(static fn(array $e): string => $e['id'] . ' ' . $e['source'] . ' undone=' . $e['undone'] . ' undoes=' . (self::undoes($e['details_json']) ?? '-') . ' ' . mb_substr((string) $e['summary'], 0, 60),
+                    $this->db->all('SELECT id, source, undone, summary, details_json FROM mutations WHERE user_id = ? ORDER BY id', [$this->userId]))]);
         }
         $of = $asked['of'] ?? null;
         $orig = $of === null ? null : ($this->done[$of] ?? null);
@@ -1500,6 +1557,12 @@ final class Interleave
         }
         // Finish and Put back are judged against the rows before the change they settle.
         $base = in_array($do, ['finish', 'putback'], true) && $this->recovered !== null ? $this->recovered['s0']['rows'] : $s0['rows'];
+        if ($base !== $s0['rows']) {
+            // Only the change's own series: anything else (an event of its own made or undone since) is the steps between's.
+            $series = array_keys($this->recovered['gids'] ?? []);
+            $masterIds = array_keys(array_filter($base, static fn(array $r): bool => $r['recurrence_parent_id'] === null && in_array((string) $r['google_event_id'], $series, true)));
+            $base = array_filter($base, static fn(array $r, int $id): bool => in_array($id, $masterIds, true) || in_array((int) ($r['recurrence_parent_id'] ?? 0), $masterIds, true), ARRAY_FILTER_USE_BOTH);
+        }
         $a0 = self::alone($base);
         $s0 = ['rows' => $base] + $s0;
         $a1 = self::alone($s1['rows']);

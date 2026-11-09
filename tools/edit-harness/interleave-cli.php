@@ -156,8 +156,10 @@ try {
             if (($st['ran'] ?? 'skipped') === 'skipped') {
                 continue;
             }
-            $out['pairs'][$prev][$st['do']] = ($out['pairs'][$prev][$st['do']] ?? 0) + 1;
-            $prev = $st['do'];
+            // An undo or redo counts with its target's tag ("redo[no row]"), so a redo of a day whose row went shows apart.
+            $kind = $st['do'] . (isset($st['target']) ? '[' . $st['target'] . ']' : '');
+            $out['pairs'][$prev][$kind] = ($out['pairs'][$prev][$kind] ?? 0) + 1;
+            $prev = $kind;
         }
         foreach ($result['runs'] as $c => $byRole) {
             foreach ($byRole as $role => $n) {
@@ -291,7 +293,19 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     // Coverage by pair of consecutive step kinds that ran: every kind can follow every kind, and a setup kind the start, so the pairs a
     // run never exercised are listed by their first step, with how often each first step ran at all.
     require_once __DIR__ . '/Interleave.php'; // the parent of --shards loads nothing else
-    $kinds = array_keys(Interleave::WEIGHTS);
+    $kinds = [];
+    foreach (array_keys(Interleave::WEIGHTS) as $k) {
+        if (in_array($k, Interleave::COMPOSITE, true)) {
+            continue; // drawn as the steps it is made of
+        }
+        if (in_array($k, Interleave::UNDO_KINDS, true)) {
+            foreach (Interleave::UNDO_TAGS as $tag) {
+                $kinds[] = "{$k}[{$tag}]";
+            }
+            continue;
+        }
+        $kinds[] = $k;
+    }
     $never = [];
     $ran = 0;
     foreach (array_merge(['start'], $kinds) as $a) {

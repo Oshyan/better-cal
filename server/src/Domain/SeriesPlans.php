@@ -786,6 +786,10 @@ trait SeriesPlans
             $moved = [];
             foreach ($partIds as $rid) {
                 $set = ['recurrence_parent_id' => $newId, 'uid' => $row['uid'], 'calendar_id' => (int) $row['calendar_id']];
+                // Its day is now an occurrence of the new series at Google (Feeds::googleIdAt).
+                if (($gid = Feeds::googleIdAt($byId[$rid], $row, (string) $byId[$rid]['recurrence_instance_utc'])) !== null) {
+                    $set['google_event_id'] = $gid;
+                }
                 $this->db->update('events', $set, 'id = ?', [$rid]);
                 $moved[$rid] = $set + $byId[$rid];
             }

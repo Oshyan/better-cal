@@ -721,9 +721,10 @@ final class Feeds
      * The id Google knows a day by: its series and its occurrence. A day's
      * row Google knows ($row has an id there) moved to occurrence $at of
      * $series is that occurrence's instance there, never the id it carried
-     * from the occurrence it left. The one derivation every place that
-     * moves a day's key uses (a poll, ofSeries; a change for all events,
-     * SeriesPlans; an undo placing a day, Undo::overCurrent). Null for a
+     * from the occurrence it left or the series it left. The one
+     * derivation every place that moves a day's key or series uses (a
+     * poll, ofSeries; a change for all events and a split, SeriesPlans; an
+     * undo placing a day, Undo::overCurrent). Null for a
      * row or series Google doesn't know. Pure.
      */
     public static function googleIdAt(array $row, array $series, string $at): ?string

@@ -176,6 +176,21 @@ final class OwnFields
         return self::$column[$db];
     }
 
+    /** The own fields that place a day: its date, clock, length and all-day setting, which are one value of it (its times). */
+    public const PLACEMENT = ['date', 'time', 'length', 'allDay'];
+
+    /** The columns an own field writes: its content columns, or, a field placing the day, its times. */
+    public static function columnsOf(string $field): array
+    {
+        return in_array($field, self::PLACEMENT, true) ? ['start_utc', 'end_utc', 'all_day', 'tzid'] : (self::COLUMNS[$field] ?? []);
+    }
+
+    /** An own field as a ground of its day (Undo::touchesOf): a field placing the day is its times, one ground ("when"); any other is itself. */
+    public static function groundOf(string $field): string
+    {
+        return in_array($field, self::PLACEMENT, true) ? 'when' : $field;
+    }
+
     /** The field a column belongs to, or null. */
     public static function fieldOf(string $column): ?string
     {

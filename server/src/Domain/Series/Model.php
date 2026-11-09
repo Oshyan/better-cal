@@ -496,6 +496,93 @@ final class Model
         }, $opts);
     }
 
+    /**
+     * The plan of a change expressed as the series' own fields set ($set:
+     * columns of the master, its times, zone and rule among them), the
+     * planner's input for an undo (GoogleUndo: the inverse of what a
+     * change asked, decisions.md "An undo of a Google series change is
+     * planned as a forward change is"): the master takes $set, and every
+     * edited day and skip is carried to its place in the series (the nth
+     * occurrence of the series as it is, skips counted, goes to the nth
+     * occurrence of the series as $set leaves it), as a times, zone or
+     * count change carries them: a day keeps what it owns, its placement
+     * among them, and one that places itself by the series takes its new
+     * occurrence's time. A day or skip with no place in the new series
+     * goes with its occurrence. Returns the writes (the shape plan()'s
+     * writer and GoogleSeries::targetOf read), or null when the series
+     * can't be walked (a rule the expander can't read). Pure.
+     *
+     * @return array{writes:?array}
+     */
+    public static function setPlan(array $master, array $rows, array $set): array
+    {
+        $after = array_merge($master, $set);
+        try {
+            $skips = \BetterCal\Domain\Recurrence::decodeExdates($master['exdates_json'] ?? null);
+            $keys = array_merge(array_map(static fn(array $r): string => (string) $r['recurrence_instance_utc'], $rows), $skips);
+            $from = $keys === [] ? [] : self::placesThrough($master, max($keys));
+            $place = array_flip($from);
+            $to = $from === [] ? [] : self::placesThrough($after, null, count($from));
+        } catch (\InvalidArgumentException | WalkIncomplete | RuleNotReadable) {
+            return ['writes' => null];
+        }
+        $allDay = (int) ($after['all_day'] ?? 0) === 1;
+        $length = max(0, Time::fromDb((string) $after['end_utc'])->getTimestamp() - Time::fromDb((string) $after['start_utc'])->getTimestamp());
+        $overrides = [];
+        $delete = [];
+        foreach ($rows as $r) {
+            $id = (int) $r['id'];
+            $new = $to[$place[(string) $r['recurrence_instance_utc']] ?? -1] ?? null;
+            if ($new === null) {
+                $delete[] = $id;
+                continue;
+            }
+            $cols = ['recurrence_instance_utc' => $new];
+            $own = OwnFields::decode($r['override_fields'] ?? null) ?? [];
+            if (array_intersect($own, OwnFields::PLACEMENT) === []) {
+                $start = Time::fromDb($new);
+                $cols += [
+                    'start_utc' => $new,
+                    'end_utc' => Time::toDb($allDay ? $start->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $start->modify('+' . $length . ' seconds')),
+                    'all_day' => $allDay ? 1 : 0,
+                    'tzid' => (string) $after['tzid'],
+                ];
+            }
+            $overrides[$id] = $cols;
+        }
+        $exdates = [];
+        foreach ($skips as $k) {
+            if (isset($to[$place[$k] ?? -1])) {
+                $exdates[] = $to[$place[$k]];
+            }
+        }
+        sort($exdates);
+        return ['writes' => [
+            'master' => $set + ['exdates_json' => $exdates === [] ? null : json_encode($exdates)],
+            'overrides' => $overrides, 'detach' => [], 'delete' => $delete, 'create' => [], 'createEdited' => [],
+            'tags' => [], 'people' => [], 'exdates' => $exdates,
+        ]];
+    }
+
+    /**
+     * A series' occurrence keys in order, its skips counted as the days
+     * they are: those up to the key $through, or the first $count. Pure.
+     *
+     * @return list<string>
+     */
+    public static function placesThrough(array $master, ?string $through, int $count = PHP_INT_MAX): array
+    {
+        $calc = Calc::fromRow(['exdates_json' => null] + $master);
+        $out = [];
+        foreach ($calc->keysFrom(Cal::dnOf(Time::fromDb((string) $master['start_utc'])->setTimezone($calc->zone()))) as [, $key]) {
+            if (($through !== null && strcmp((string) $key, $through) > 0) || count($out) >= $count) {
+                break;
+            }
+            $out[] = (string) $key;
+        }
+        return $out;
+    }
+
     public static function plan(array $master, array $overrides, array $edit, array $choices = [], array $opts = []): array
     {
         return self::read(fn(array $o): array => (new self($master, $overrides, $edit, $o))->run($choices), $opts);

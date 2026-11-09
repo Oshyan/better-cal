@@ -967,8 +967,9 @@ final class Feeds
                         'created_via' => 'feed',
                     ]);
                     // The row, not its calendar: undoing the subscription
-                    // still takes what its polls brought.
-                    $touches[] = [Undo::keyOf('events', ['id' => $id]), '*'];
+                    // still takes what its polls brought (a day's row: the
+                    // fields it owns of that day, Undo::touchesOf).
+                    $touches = array_merge($touches, Undo::touchesOf(null, ['events' => [$columns + ['id' => $id]]]));
                     if ($ev['recurrence_instance_utc'] === null) {
                         $masterIdByUid[(string) $ev['uid']] = $id;
                         $newMasterUids[(string) $ev['uid']] = true;
@@ -1004,17 +1005,8 @@ final class Feeds
                         $changed['location_provider'] = null;
                         $changed['location_placed_at'] = null;
                     }
-                    // What a person would undo, by the one reading (Undo::touchesOf: a skip is its own date's).
-                    foreach (Undo::touchesOf(['events' => [$current]], ['events' => [array_merge($current, $changed)]]) as [$key, $col]) {
-                        if (array_key_exists((string) $col, $changed) || str_starts_with((string) $col, Undo::SKIP)) {
-                            $touches[] = [$key, (string) $col];
-                        }
-                    }
-                    foreach (array_keys($changed) as $col) {
-                        if ((string) $col !== 'exdates_json') {
-                            $touches[] = [Undo::keyOf('events', ['id' => (int) $current['id']]), (string) $col];
-                        }
-                    }
+                    // What a person would undo stands on, by the one reading (Undo::touchesOf).
+                    $touches = array_merge($touches, Undo::touchesOf(['events' => [$current]], ['events' => [array_merge($current, $changed)]]));
                     $changed['updated_at'] = Time::nowDb();
                     if ($etag !== null && $etag !== ($current['google_etag'] ?? null)) {
                         $changed['google_etag'] = $etag;
@@ -1185,9 +1177,7 @@ final class Feeds
                 if ($moved) {
                     $changed['recurrence_instance_utc'] = $after['recurrence_instance_utc'];
                 }
-                foreach (array_keys($changed) as $col) {
-                    $touches[] = [Undo::keyOf('events', ['id' => $id]), (string) $col];
-                }
+                $touches = array_merge($touches, Undo::touchesOf(['events' => [$now]], ['events' => [array_merge($now, $changed)]]));
                 $changed['updated_at'] = Time::nowDb();
                 $this->db->update('events', $changed, 'id = ?', [$id]);
                 $changedUids[(string) $now['uid']] = true;

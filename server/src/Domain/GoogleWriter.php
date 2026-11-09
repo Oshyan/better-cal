@@ -515,12 +515,22 @@ final class GoogleWriter
             // the target deleted at Google, a permission refusal, the rest.
             throw match (self::refusal((int) $r['status'], (string) $r['body'])) {
                 'busy' => new HttpError('google_busy', self::BUSY_MESSAGE, 503, $extra),
-                'deleted' => new HttpError('google_deleted', self::DELETED_MESSAGE, 409, $extra),
+                'deleted' => self::deleted((int) $r['status']),
                 'permission' => new HttpError('google_write_failed', 'Google says this account may not edit that calendar' . ($why !== '' ? " ($why)" : ''), 403, $extra),
                 default => new HttpError('google_write_failed', 'Google rejected the change: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''), 502, $extra),
             };
         }
         return $data;
+    }
+
+    /**
+     * The refusal for a target Google no longer has (a 404 or 410 on the
+     * write or on the read before it): nothing changed here. Google's
+     * status rides along, so a caller removing it reads it as gone.
+     */
+    public static function deleted(int $googleStatus = 404): HttpError
+    {
+        return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus]);
     }
 
     /**

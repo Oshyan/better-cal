@@ -50,8 +50,11 @@ return static function (Db $db): void {
 
     // Mondays 10:00 Los Angeles from 1 March 2027, ten of them, the series
     // tagged here and 8 March given a tag of its own; a single event, "Pizza
-    // night", tagged here too. $writer answers come from $t->script while
-    // it holds any (status, body), else from the stand-in.
+    // night", tagged here too. A request whose method is the first of
+    // $t->script's entries (method, status, body) takes that entry's answer;
+    // every other request is the stand-in's, so a scripted refusal lands on
+    // the request a scenario means: the read before a write (GET) or the
+    // write itself (PATCH).
     $setup = static function () use ($db, $cfg, $expand, $when): object {
         $u = freshUser($db);
         $d = domains($db);
@@ -63,7 +66,7 @@ return static function (Db $db): void {
             'start' => $when('2027-03-01 10:00'), 'end' => $when('2027-03-01 11:00'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=10']]);
         $fake->seed(['id' => 'smpl7pizza', 'iCalUID' => 'smpl7pizza@google.com', 'summary' => 'Pizza night', 'start' => $when('2027-03-05 19:00'), 'end' => $when('2027-03-05 21:00')]);
         $t = new class {
-            /** @var list<array{0:int,1:string}> */
+            /** @var list<array{0:string,1:int,2:string}> */
             public array $script = [];
             public array $sent = [];
             public array $slept = [];
@@ -71,8 +74,8 @@ return static function (Db $db): void {
         $inner = $fake->writerTransport();
         $transport = static function (string $method, string $url, ?array $payload, array $headers = []) use ($t, $inner): array {
             $t->sent[] = $method;
-            if ($t->script !== []) {
-                [$status, $body] = array_shift($t->script);
+            if ($t->script !== [] && $t->script[0][0] === $method) {
+                [, $status, $body] = array_shift($t->script);
                 return ['status' => $status, 'body' => $body];
             }
             return $inner($method, $url, $payload, array_merge(['Authorization: Bearer sample-access'], $headers));
@@ -177,11 +180,11 @@ return static function (Db $db): void {
 
     // ---- Google's refusals, by Google's reason ------------------------------
 
-    $busy = static fn(string $reason, int $status = 403): array => [$status, json_encode(['error' => ['code' => $status, 'message' => 'Sample limit',
+    $busy = static fn(string $reason, int $status = 403, string $on = 'PATCH'): array => [$on, $status, json_encode(['error' => ['code' => $status, 'message' => 'Sample limit',
         'errors' => [['domain' => 'usageLimits', 'reason' => $reason, 'message' => 'Sample limit']]]])];
 
     scenario('google refusals: a rate limit (403) or a 429 is retried after a pause and lands', function () use ($setup, $busy, $db): void {
-        foreach (['a 403 rateLimitExceeded' => $busy('rateLimitExceeded'), 'a 429' => [429, json_encode(['error' => ['code' => 429, 'message' => 'Too many requests', 'status' => 'RESOURCE_EXHAUSTED']])]] as $what => $answer) {
+        foreach (['a 403 rateLimitExceeded' => $busy('rateLimitExceeded'), 'a 429' => ['PATCH', 429, json_encode(['error' => ['code' => 429, 'message' => 'Too many requests', 'status' => 'RESOURCE_EXHAUSTED']])]] as $what => $answer) {
             $s = $setup();
             $s->t->script = [$answer];
             $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']);
@@ -205,10 +208,10 @@ return static function (Db $db): void {
 
     scenario('google refusals: a 404 on the event is "deleted at Google"; a permission 403 keeps its words; neither is retried', function () use ($setup): void {
         $s = $setup();
-        $s->t->script = [[404, json_encode(['error' => ['code' => 404, 'message' => 'Not Found', 'errors' => [['domain' => 'global', 'reason' => 'notFound']]]])]];
+        $s->t->script = [['PATCH', 404, json_encode(['error' => ['code' => 404, 'message' => 'Not Found', 'errors' => [['domain' => 'global', 'reason' => 'notFound']]]])]];
         $code = refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']));
-        checkEq('a 404: google_deleted, no pause', ['google_deleted', []], [$code, $s->t->slept]);
-        $s->t->script = [[403, json_encode(['error' => ['code' => 403, 'message' => 'Forbidden', 'errors' => [['domain' => 'global', 'reason' => 'forbidden']]]])]];
+        checkEq('a 404 on the PATCH: google_deleted, no pause', ['google_deleted', []], [$code, $s->t->slept]);
+        $s->t->script = [['PATCH', 403, json_encode(['error' => ['code' => 403, 'message' => 'Forbidden', 'errors' => [['domain' => 'global', 'reason' => 'forbidden']]]])]];
         $error = null;
         try {
             $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']);
@@ -217,6 +220,38 @@ return static function (Db $db): void {
         }
         checkEq('a permission 403: today\'s words, 403, no pause', ['google_write_failed', 403, true, []],
             [$error?->errorCode, $error?->status, str_starts_with((string) $error?->getMessage(), 'Google says this account may not edit that calendar'), $s->t->slept]);
+    });
+
+    scenario('google refusals: the read before a write is read the same way: a 404 or 410 is "deleted at Google" and nothing is sent; a busy read is retried and the write lands', function () use ($setup, $busy, $db): void {
+        foreach ([404, 410] as $status) {
+            $s = $setup();
+            $s->t->script = [['GET', $status, json_encode(['error' => ['code' => $status, 'message' => 'Gone', 'errors' => [['domain' => 'global', 'reason' => 'deleted']]]])]];
+            $code = refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']));
+            checkEq("a $status on the read: google_deleted, no PATCH sent, no pause, the title as it was", ['google_deleted', [], [], 'Pizza night'],
+                [$code, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')), $s->t->slept, $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
+        }
+        $s = $setup();
+        $atGoogleGone = ($s->fake->writerTransport())('DELETE', 'https://www.googleapis.com/calendar/v3/calendars/guards%40group.calendar.google.com/events/smpl7pizza', null, ['Authorization: Bearer sample-access']);
+        check('the stand-in deleted the event', (int) $atGoogleGone['status'] < 300);
+        checkEq('an event deleted at Google, its read listing it cancelled: google_deleted, not a conflict', 'google_deleted',
+            refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later'])));
+        foreach (['a 403 rateLimitExceeded' => $busy('rateLimitExceeded', 403, 'GET'), 'a 429' => ['GET', 429, json_encode(['error' => ['code' => 429, 'message' => 'Too many requests']])]] as $what => $answer) {
+            $s = $setup();
+            $s->t->script = [$answer];
+            $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']);
+            checkEq("$what on the read: one pause, the read again, then the PATCH, and the change landed", [[1.0], ['GET', 'GET', 'PATCH'], 'Pizza night, later'],
+                [$s->t->slept, array_slice($s->t->sent, 0, 3), $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
+        }
+        $s = $setup();
+        $s->t->script = [$busy('quotaExceeded', 403, 'GET'), $busy('quotaExceeded', 403, 'GET'), $busy('quotaExceeded', 403, 'GET')];
+        $error = null;
+        try {
+            $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later']);
+        } catch (HttpError $e) {
+            $error = $e;
+        }
+        checkEq('a read still busy after the retries: google_busy 503, no PATCH sent, the title as it was', ['google_busy', 503, [], 'Pizza night'],
+            [$error?->errorCode, $error?->status, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')), $db->scalar('SELECT title FROM events WHERE id = ?', [$s->pizzaId])]);
     });
 
     scenario('google refusals: the reading of an answer, by status and reason', function (): void {

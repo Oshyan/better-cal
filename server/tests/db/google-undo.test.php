@@ -156,9 +156,9 @@ return static function (Db $db): void {
 
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
-        $sent = $t->google->calls[0][2] ?? [];
-        checkEq('one PATCH with If-Match "g2", sending back the fields the change made, at their before values, and nothing else; the answer is stored', [
-            [['PATCH', 'probe9z8y7x', '"g2"']], ['location', 'summary'], ['Sample review', 'Sample room 1'],
+        $sent = $t->google->calls[1][2] ?? [];
+        checkEq('a read, then one PATCH with If-Match "g2" from it, sending back the fields the change made, at their before values, and nothing else; the answer is stored', [
+            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g2"']], ['location', 'summary'], ['Sample review', 'Sample room 1'],
             ['Sample review', 'Sample room 1', '"g3"'], 1,
         ], [$calls($t), (static function (array $k): array { sort($k); return $k; })(array_keys($sent)), [$sent['summary'] ?? null, $sent['location'] ?? null],
             [$row($t, 'probe9z8y7x')['title'], $row($t, 'probe9z8y7x')['location'], $row($t, 'probe9z8y7x')['google_etag']], $undone((int) $entry['id'])]);
@@ -170,8 +170,8 @@ return static function (Db $db): void {
         ], [$back['summary'], $bg['kind'] ?? null, $bg['before']['summary'] ?? null, $bg['etagBefore'] ?? null, $bg['etagAfter'] ?? null]);
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $back['id']);
-        checkEq('undoing the undo puts the change back, conditional on "g3", worded as the change itself', [
-            [['PATCH', 'probe9z8y7x', '"g3"']], 'Sample review, renamed', 'Sample room 2', "Updated 'Sample review' on Google calendar 'Sample team'",
+        checkEq('undoing the undo puts the change back, conditional on "g3" read just before, worded as the change itself', [
+            [['GET', 'probe9z8y7x', null], ['PATCH', 'probe9z8y7x', '"g3"']], 'Sample review, renamed', 'Sample room 2', "Updated 'Sample review' on Google calendar 'Sample team'",
         ], [$calls($t), $row($t, 'probe9z8y7x')['title'], $row($t, 'probe9z8y7x')['location'], $last($t)['summary']]);
     });
 
@@ -182,8 +182,8 @@ return static function (Db $db): void {
         $t->events->deleteEvent($t->u, $id, null, null);
         $entry = $last($t);
         $snapshot = json_decode((string) $entry['before_json'], true)['tables'] ?? [];
-        checkEq('the delete went with If-Match "g1"; the row is gone; the entry is a delete keeping the status, and the row and its tag as its snapshot', [
-            [['DELETE', 'probe9z8y7x', '"g1"']], null, 'delete', 'confirmed', [$id], 1, false,
+        checkEq('the delete went with If-Match "g1" from a read just before; the row is gone; the entry is a delete keeping the status, and the row and its tag as its snapshot', [
+            [['GET', 'probe9z8y7x', null], ['DELETE', 'probe9z8y7x', '"g1"']], null, 'delete', 'confirmed', [$id], 1, false,
         ], [$calls($t), $row($t, 'probe9z8y7x'), $google($entry)['kind'] ?? null, $google($entry)['before']['status'] ?? null,
             array_map('intval', array_column($snapshot['events'] ?? [], 'id')), count($snapshot['event_tags'] ?? []), array_key_exists('local', $google($entry) ?? [])]);
 
@@ -198,7 +198,7 @@ return static function (Db $db): void {
         // The undo undoes back: deleted again, conditional on what came back.
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $last($t)['id']);
-        checkEq('undoing the undo deletes it again with If-Match "g3"', [[['DELETE', 'probe9z8y7x', '"g3"']], null], [$calls($t), $row($t, 'probe9z8y7x')]);
+        checkEq('undoing the undo deletes it again with If-Match "g3", read just before', [[['GET', 'probe9z8y7x', null], ['DELETE', 'probe9z8y7x', '"g3"']], null], [$calls($t), $row($t, 'probe9z8y7x')]);
     });
 
     scenario('google undo: an attendance answer is undone by sending the earlier responseStatus', function () use ($db, $setup, $row, $last, $google, $calls, $undone): void {
@@ -215,9 +215,9 @@ return static function (Db $db): void {
 
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
-        $sent = $t->google->calls[1][2]['attendees'] ?? [];
-        checkEq('read, then one PATCH with If-Match "g2" putting back needsAction for the account alone; the invitation reads unanswered', [
-            [['GET', 'probe5k6m7n', null], ['PATCH', 'probe5k6m7n', '"g2"']], ['accepted', 'needsAction'], 'NEEDS-ACTION', 1, 'accepted',
+        $sent = $t->google->calls[2][2]['attendees'] ?? [];
+        checkEq('read (the guest list, then the condition), then one PATCH with If-Match "g2" putting back needsAction for the account alone; the invitation reads unanswered', [
+            [['GET', 'probe5k6m7n', null], ['GET', 'probe5k6m7n', null], ['PATCH', 'probe5k6m7n', '"g2"']], ['accepted', 'needsAction'], 'NEEDS-ACTION', 1, 'accepted',
         ], [$calls($t), array_column($sent, 'responseStatus'), $partstat(), $undone((int) $entry['id']), $google($last($t))['responseStatus'] ?? null]);
     });
 
@@ -239,9 +239,9 @@ return static function (Db $db): void {
         } catch (HttpError $e) {
             $caught = $e->status . ' ' . $e->errorCode . ': ' . $e->getMessage();
         }
-        checkEq('one PATCH answered 412, refused, rows and Activity as they were', [
+        checkEq('the read before the PATCH shows the change, so nothing is sent: refused, rows and Activity as they were', [
             '409 google_conflict: Newer changes exist for this item; undoing would overwrite them. This event changed at Google since you last saw it.',
-            [['PATCH', 'probe9z8y7x', '"g2"']], $before,
+            [['GET', 'probe9z8y7x', null]], $before,
         ], [$caught, $calls($t), $state()]);
     });
 
@@ -257,11 +257,11 @@ return static function (Db $db): void {
             $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null]);
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $entry['id']);
-        $patch = $t->google->calls[0] ?? [];
+        $patch = $t->google->calls[1] ?? [];
         // Back at the series' own values, the day is an ordinary occurrence again, as before the edit: Google's record for it makes no row.
-        checkEq('one PATCH of the instance with the recorded etag, then the series\' etags read back; the occurrence is an ordinary day again, no row', [
-            ['PATCH', 'probe1a2b3c_20270308T180000Z', $g['etagAfter']], 'GET', null, 1,
-        ], [[$patch[0] ?? null, $patch[1] ?? null, $patch[3] ?? null], $t->google->calls[1][0] ?? null, $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null, $undone((int) $entry['id'])]);
+        checkEq('the series read, one PATCH of the instance with the etag that read gave (the one the edit left), then the series\' etags read back; the occurrence is an ordinary day again, no row', [
+            ['PATCH', 'probe1a2b3c_20270308T180000Z', $g['etagAfter']], ['GET', 'GET'], null, 1,
+        ], [[$patch[0] ?? null, $patch[1] ?? null, $patch[3] ?? null], [$t->google->calls[0][0] ?? null, $t->google->calls[2][0] ?? null], $row($t, 'probe1a2b3c_20270308T180000Z')['title'] ?? null, $undone((int) $entry['id'])]);
 
         // This occurrence deleted, then undone: back live, no longer skipped.
         $exdates = static fn(): array => json_decode((string) ($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$masterId]) ?? '[]'), true) ?: [];
@@ -279,8 +279,8 @@ return static function (Db $db): void {
         $t->google->calls = [];
         $t->undo->undoById($t->u, (int) $back['id']);
         checkEq('undoing the undo deletes the instance at Google again and skips the day here; that undo names the entry it undid', [
-            ['DELETE', 'probe1a2b3c_20270308T180000Z'], ['2027-03-08 18:00:00'], 'cancelled', 1, (int) $back['id'],
-        ], [[$t->google->calls[0][0] ?? null, $t->google->calls[0][1] ?? null], $exdates(), $t->google->res['probe1a2b3c_20270308T180000Z']['status'] ?? null,
+            [['GET', 'probe1a2b3c@google.com'], ['DELETE', 'probe1a2b3c_20270308T180000Z']], ['2027-03-08 18:00:00'], 'cancelled', 1, (int) $back['id'],
+        ], [array_map(static fn(array $c): array => [$c[0], $c[1]], array_slice($t->google->calls, 0, 2)), $exdates(), $t->google->res['probe1a2b3c_20270308T180000Z']['status'] ?? null,
             $undone((int) $back['id']), $google($last($t))['undoes'] ?? null]);
     });
 };

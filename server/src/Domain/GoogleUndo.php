@@ -521,7 +521,7 @@ final class GoogleUndo
             if ($fresh === null || (int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
-            $targets = $series->withStoredEtags($locked, $befores);
+            $targets = $series->withStoredIds($locked, $befores);
             $title = (string) ($targets[0]['master']['title'] ?? '');
             try {
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);

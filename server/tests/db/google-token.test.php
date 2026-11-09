@@ -23,14 +23,18 @@ return static function (Db $db): void {
         $d = domains($db);
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
         $calls = [];
-        $request = static function () use ($db, $d, $cfg, &$calls): Events {
+        // Google holds the event and answers a read or a PATCH with it whole.
+        $resource = ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'etag' => '"t1"', 'summary' => 'Sample meeting',
+            'start' => ['dateTime' => '2027-01-11T18:00:00+00:00', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00+00:00', 'timeZone' => 'UTC']];
+        $request = static function () use ($db, $d, $cfg, &$calls, &$resource): Events {
             $auth = new GoogleAuth($db, $cfg, static function (string $url, array $fields, ?float $deadline) use (&$calls): array {
                 $calls[] = 'token';
                 return ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access-' . count($calls), 'expires_in' => 3600])];
             });
-            $transport = static function (string $method, string $url, ?array $payload) use (&$calls): array {
+            $transport = static function (string $method, string $url, ?array $payload) use (&$calls, &$resource): array {
                 $calls[] = $method;
-                return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed'])];
+                $resource = array_merge($resource, $payload ?? []);
+                return ['status' => 200, 'body' => json_encode($resource)];
             };
             return new Events($db, new BetterCal\Domain\Recurrence(), $d->undo, new BetterCal\Domain\Labels($db),
                 new BetterCal\Domain\Filters($db, $d->undo, new BetterCal\Infra\JobQueue($db)), new BetterCal\Domain\Trips($db, $d->undo), null,
@@ -49,7 +53,7 @@ return static function (Db $db): void {
         $request()->patch($u, $meeting, ['title' => 'Sample meeting, one']);
         $request()->patch($u, $meeting, ['title' => 'Sample meeting, two']);
         $row = $db->one('SELECT access_token_enc, access_token_expires_at FROM google_accounts WHERE id = ?', [$account]);
-        checkEq('two requests, each with its own GoogleAuth: one refresh, then two writes', ['token', 'PATCH', 'PATCH'], $calls);
+        checkEq('two requests, each with its own GoogleAuth: one refresh, then two writes, each after its read', ['token', 'GET', 'PATCH', 'GET', 'PATCH'], $calls);
         check('the token is stored sealed with its expiry, never in the clear',
             Secrets::isSealed((string) $row['access_token_enc']) && !str_contains((string) $row['access_token_enc'], 'sample-access')
             && Time::fromDb((string) $row['access_token_expires_at'])->getTimestamp() > time() + 3000);
@@ -60,7 +64,7 @@ return static function (Db $db): void {
             array_values($db->one('SELECT access_token_enc, access_token_expires_at FROM google_accounts WHERE id = ?', [$account])));
         $calls = [];
         $request()->patch($u, $meeting, ['title' => 'Sample meeting, three']);
-        checkEq('the next request refreshes once and stores again', [['token', 'PATCH'], true],
+        checkEq('the next request refreshes once and stores again', [['token', 'GET', 'PATCH'], true],
             [$calls, $db->scalar('SELECT access_token_enc FROM google_accounts WHERE id = ?', [$account]) !== null]);
 
         $db->run(
@@ -173,9 +177,9 @@ return static function (Db $db): void {
         $events($t)->patch($t->u, $t->meeting, ['title' => 'Sample meeting, one']);
         $before = $sealed($t);
         $t->calls = [];
-        $t->answers = [401, 200];
+        $t->answers = [200, 401, 200];
         $events($t)->patch($t->u, $t->meeting, ['title' => 'Sample meeting, two']);
-        checkEq('a write: 401, one refresh, the same write again with the fresh token', ['PATCH sample-access-1', 'token', 'PATCH sample-access-2'], $t->calls);
+        checkEq('a write: its read, a 401, one refresh, the same write again with the fresh token', ['GET sample-access-1', 'PATCH sample-access-1', 'token', 'PATCH sample-access-2'], $t->calls);
         checkEq('a write: the retried write landed', 'Sample meeting, two', $title($t));
         check('a write: the stored token row was replaced', $before !== null && $sealed($t) !== null && $sealed($t) !== $before);
         checkEq('a write: the next request is handed the new token from the row, with no refresh', 'sample-access-2', $heldToken($t));
@@ -183,21 +187,21 @@ return static function (Db $db): void {
 
     scenario('google token: a second 401 on the retried write is reported, not retried again', function () use ($stand, $events, $title): void {
         $t = $stand();
-        $t->answers = [401, 401];
+        $t->answers = [200, 401, 401];
         $code = refusal(fn() => $events($t)->patch($t->u, $t->meeting, ['title' => 'Sample meeting, refused']));
-        checkEq('a second 401: one refresh, one retry, then the refusal', ['token', 'PATCH sample-access-1', 'token', 'PATCH sample-access-2'], $t->calls);
+        checkEq('a second 401: its read, one refresh, one retry, then the refusal', ['token', 'GET sample-access-1', 'PATCH sample-access-1', 'token', 'PATCH sample-access-2'], $t->calls);
         checkEq('a second 401: the write fails as Google rejecting it', 'google_write_failed', $code);
         checkEq('a second 401: nothing changed here', 'Sample meeting', $title($t));
     });
 
     scenario('google token: a revoked grant on the refresh after a 401 marks the account for reconnecting and the write fails cleanly', function () use ($stand, $events, $title, $sealed, $reauth): void {
         $t = $stand();
-        $t->answers = [401];
+        $t->answers = [200, 401];
         $t->on401 = static function () use ($t): void {
             $t->revoked = true;
         };
         $code = refusal(fn() => $events($t)->patch($t->u, $t->meeting, ['title' => 'Sample meeting, revoked']));
-        checkEq('a revoked grant: the refresh is refused and nothing is sent again', ['token', 'PATCH sample-access-1', 'refused grant'], $t->calls);
+        checkEq('a revoked grant: the refresh is refused and nothing is sent again', ['token', 'GET sample-access-1', 'PATCH sample-access-1', 'refused grant'], $t->calls);
         checkEq('a revoked grant: the write fails with the reconnect refusal, not a network error', 'google_reconnect_needed', $code);
         checkEq('a revoked grant: the account is marked reauthRequired, its token cleared', [true, null], [$reauth($t), $sealed($t)]);
         checkEq('a revoked grant: nothing changed here', 'Sample meeting', $title($t));

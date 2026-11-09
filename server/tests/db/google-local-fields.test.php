@@ -115,9 +115,9 @@ return static function (Db $db): void {
         $s->events->deleteEvent($s->u, $id, null, null);
         $entry = $last($s);
         $snapshot = json_decode((string) $entry['before_json'], true)['tables'] ?? [];
-        checkEq('the delete went to Google; the row, its link and its tag are gone here and kept in the entry\'s snapshot', [
-            'DELETE', null, 0, [$id], 1, 1,
-        ], [$methods($s)[0] ?? null, $byGoogleId($s, $dayGoogleId), $links($id), array_map('intval', array_column($snapshot['events'] ?? [], 'id')),
+        checkEq('the delete went to Google after a read of the series; the row, its link and its tag are gone here and kept in the entry\'s snapshot', [
+            ['GET', 'DELETE'], null, 0, [$id], 1, 1,
+        ], [array_slice($methods($s), 0, 2), $byGoogleId($s, $dayGoogleId), $links($id), array_map('intval', array_column($snapshot['events'] ?? [], 'id')),
             count($snapshot['event_links'] ?? []), count($snapshot['event_tags'] ?? [])]);
 
         $s->t->calls = [];

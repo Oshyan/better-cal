@@ -235,8 +235,9 @@ final class GoogleStand
         if (!isset($this->fake->events[$googleId])) {
             return;
         }
+        // The row's rule and its skips (a generated skip before a start in a
+        // skipped hour among them), as a write would send them.
         $body = GoogleWriter::body($master);
-        $body['recurrence'] = !empty($master['rrule']) ? ['RRULE:' . $master['rrule']] : [];
         $this->fake->events[$googleId] = array_replace($this->fake->events[$googleId], $body);
         $this->fake->seed($this->fake->events[$googleId]);
         $this->db->run('UPDATE events SET google_etag = ? WHERE id = ?', [$this->fake->events[$googleId]['etag'], (int) $master['id']]);

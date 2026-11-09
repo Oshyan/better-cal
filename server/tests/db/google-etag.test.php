@@ -133,24 +133,28 @@ return static function (Db $db): void {
         ], [$first, $second, count($listed)]);
     });
 
-    scenario('google write: If-Match carries the stored etag, the answer\'s etag is stored and the series\' other etags are read back', function () use ($db, $setup, $firstPoll, $moved, $master, $etags, $row, $headerOf): void {
+    scenario('google write: a write is conditional on a read made just before it, the answer\'s etag is stored and the series\' other etags are read back', function () use ($db, $setup, $firstPoll, $moved, $master, $cancelled, $etags, $row, $headerOf): void {
         $t = $setup();
         $firstPoll($t);
         $t->google->calls = [];
-        $t->google->writes = static function (string $method, string $url, ?array $payload, array $headers) use ($moved, $master): array {
+        $etag = '"e1"';
+        $t->google->writes = static function (string $method, string $url, ?array $payload, array $headers) use ($moved, $master, $cancelled, &$etag): array {
             if ($method === 'PATCH') {
-                return ['status' => 200, 'body' => json_encode($moved('"e3"', (string) ($payload['summary'] ?? '')))];
+                $etag = '"e3"';
+                return ['status' => 200, 'body' => json_encode($moved($etag, (string) ($payload['summary'] ?? '')))];
             }
-            // The series' list, filtered to its UID: every live row's new etag.
-            return ['status' => 200, 'body' => json_encode(['items' => [$master('"e3"'), $moved('"e3"')]])];
+            // The series' list, filtered to its UID: every row with its etag now.
+            return ['status' => 200, 'body' => json_encode(['items' => [$master($etag), $moved($etag), $cancelled($etag)]])];
         };
         $masterId = (int) $row($t, 'probe1a2b3c')['id'];
         $t->events->patch($t->u, $masterId, ['title' => 'Sample standup, guest', 'scope' => 'this', 'instanceStart' => '2027-03-08T18:00:00+00:00']);
-        [$patch, $list] = $t->google->calls + [null, null];
+        [$read, $patch, $list] = $t->google->calls + [null, null, null];
+        parse_str((string) parse_url((string) ($read[1] ?? ''), PHP_URL_QUERY), $readQuery);
         parse_str((string) parse_url((string) ($list[1] ?? ''), PHP_URL_QUERY), $listQuery);
-        checkEq('one PATCH with If-Match "e1" on the occurrence, then one list of the series (singleEvents=false, by UID, no events.instances)', [
-            ['PATCH', '"e1"'], 2, ['GET', 'probe1a2b3c@google.com', 'false', false],
+        checkEq('the series read (singleEvents=false, by UID), one PATCH with If-Match "e1" from that read on the occurrence, then one list of the series; no events.instances', [
+            ['GET', 'probe1a2b3c@google.com', 'false'], ['PATCH', '"e1"'], 3, ['GET', 'probe1a2b3c@google.com', 'false', false],
         ], [
+            [$read[0] ?? null, $readQuery['iCalUID'] ?? null, $readQuery['singleEvents'] ?? null],
             [$patch[0] ?? null, $headerOf($patch[3] ?? [], 'If-Match')], count($t->google->calls),
             [$list[0] ?? null, $listQuery['iCalUID'] ?? null, $listQuery['singleEvents'] ?? null, str_contains((string) ($list[1] ?? ''), '/instances')],
         ]);
@@ -159,22 +163,40 @@ return static function (Db $db): void {
         ], [$row($t, 'probe1a2b3c_20270308T180000Z')['title'], $etags($t)]);
     });
 
-    scenario('google write: a row with no stored etag is sent without If-Match and keeps what comes back; a single event is not read back', function () use ($db, $setup, $firstPoll, $single, $etags, $row, $headerOf): void {
+    scenario('google write: a row with no stored etag is still sent conditional, on the etag of a read made just before; a single event is not read back', function () use ($db, $setup, $firstPoll, $single, $etags, $row, $headerOf): void {
         $t = $setup();
         $firstPoll($t);
         // As a row synced before this release: no etag yet.
         $db->run('UPDATE events SET google_etag = NULL WHERE calendar_id = ? AND google_event_id = ?', [$t->calendarId, 'probe9z8y7x']);
         $t->google->calls = [];
-        $t->google->writes = static fn(string $method, string $url, ?array $payload, array $headers): array
-            => ['status' => 200, 'body' => json_encode($single('"s2"', (string) ($payload['summary'] ?? '')))];
+        $now = $single('"s1"');
+        $t->google->writes = static function (string $method, string $url, ?array $payload, array $headers) use ($single, &$now): array {
+            if ($method === 'PATCH') {
+                $now = $single('"s2"', (string) ($payload['summary'] ?? ''));
+            }
+            return ['status' => 200, 'body' => json_encode($now)];
+        };
         $t->events->patch($t->u, (int) $row($t, 'probe9z8y7x')['id'], ['title' => 'Sample review, moved room']);
-        checkEq('one PATCH, no If-Match, the answer\'s etag stored', [['PATCH'], null, '"s2"', 'Sample review, moved room'], [
-            array_column($t->google->calls, 0), $headerOf($t->google->calls[0][3] ?? [], 'If-Match'), $etags($t)['probe9z8y7x'], $row($t, 'probe9z8y7x')['title'],
+        checkEq('a read, one PATCH with If-Match "s1" from it, the answer\'s etag stored', [['GET', 'PATCH'], '"s1"', '"s2"', 'Sample review, moved room'], [
+            array_column($t->google->calls, 0), $headerOf($t->google->calls[1][3] ?? [], 'If-Match'), $etags($t)['probe9z8y7x'], $row($t, 'probe9z8y7x')['title'],
         ]);
-        // The next write is conditional on that etag.
+        // The next write is conditional on its own read.
         $t->google->calls = [];
         $t->events->deleteEvent($t->u, (int) $row($t, 'probe9z8y7x')['id'], null, null);
-        checkEq('the delete that follows carries If-Match "s2"', ['DELETE', '"s2"'], [$t->google->calls[0][0] ?? null, $headerOf($t->google->calls[0][3] ?? [], 'If-Match')]);
+        checkEq('the delete that follows is read first and carries If-Match "s2"', [['GET', 'DELETE'], '"s2"'], [array_column($t->google->calls, 0), $headerOf($t->google->calls[1][3] ?? [], 'If-Match')]);
+    });
+
+    scenario('google write: a series changed at Google since the last poll refuses a write to an ordinary day before anything is sent', function () use ($db, $setup, $firstPoll, $moved, $master, $cancelled, $row): void {
+        $t = $setup();
+        $firstPoll($t);
+        $t->google->calls = [];
+        // Renamed at Google, not yet polled.
+        $t->google->writes = static fn(string $method, string $url, ?array $payload, array $headers): array
+            => ['status' => 200, 'body' => json_encode(['items' => [$master('"e2"', 'Sample standup renamed elsewhere'), $moved('"e2"'), $cancelled('"e2"')]])];
+        $before = $db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$t->calendarId]);
+        $code = refusal(fn() => $t->events->patch($t->u, (int) $row($t, 'probe1a2b3c')['id'], ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2027-03-22T17:00:00+00:00']));
+        checkEq('409 google_conflict after one read, no write sent, no row changed', ['google_conflict', ['GET'], $before],
+            [$code, array_column($t->google->calls, 0), $db->all('SELECT * FROM events WHERE calendar_id = ? ORDER BY id', [$t->calendarId])]);
     });
 
     scenario('google write: a 412 is 409 google_conflict with Google\'s words, and nothing is written here', function () use ($db, $setup, $firstPoll, $row): void {

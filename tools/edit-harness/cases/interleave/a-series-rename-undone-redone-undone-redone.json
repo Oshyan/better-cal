@@ -1,0 +1,38 @@
+{
+    "about": "A rename for all events, undone, redone, undone by the bare Undo and redone again, each judged against its entry's recorded states (x-undo-fields, x-undo-bare; review T1).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-04 09:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-all",
+            "pick": 0.1,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.0
+        },
+        {
+            "do": "redo",
+            "pick": 0.0
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0
+        },
+        {
+            "do": "redo",
+            "pick": 0.0
+        }
+    ]
+}

@@ -1,0 +1,44 @@
+{
+    "about": "An answer from a day on (a series split off), a tag on a day of the new series, then the answer undone: stale, since the newer change added something to the series the entry made (x-undo-fields; api-contract.md, stale_undo, \"added something to an item this one made\").",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY;INTERVAL=3",
+        "import": false,
+        "bound": "count",
+        "boundAt": 15,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Pacific/Auckland",
+        "start": "2027-01-31 09:30",
+        "length": 30
+    },
+    "steps": [
+        {
+            "do": "w-this-m",
+            "pick": 0.764,
+            "what": "location+coords"
+        },
+        {
+            "do": "p-whole",
+            "pick": 0.849
+        },
+        {
+            "do": "w-answer",
+            "pick": 0.091
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.59,
+            "what": "tags"
+        },
+        {
+            "do": "w-this-m",
+            "pick": 0.295,
+            "what": "title+tags"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.488
+        }
+    ]
+}

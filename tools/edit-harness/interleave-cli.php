@@ -3,13 +3,15 @@
 //
 //   BC_TEST_DB=127.0.0.1:3306 ./tools/edit-harness/run.sh --interleave [--seed S] [--cases N] [--case N] [--fixed[=NAME,...]]
 //       [--no-shrink] [--quiet] [--findings FILE] [--model FILE] [--save-spec DIR] [--shards N]
+//   BC_TEST_DB=127.0.0.1:3306 ./tools/edit-harness/run.sh --interleave --oracle-probes [--model FILE]
 //
 // Makes a database of its own, migrates it, runs each drawn case (a Google-backed series and a run of steps) on an
 // account of its own, then the fixed cases (cases/interleave/*.json; --cases 0 --fixed for them alone), shrinks one
-// failing sequence per signature to its shortest prefix and subset, and writes the findings file.
+// failing sequence per signature to its shortest prefix and subset, and writes the findings file. --oracle-probes runs
+// the oracle's own validation instead (OracleProbes.php): each probe's fixed case clean and with its damage injected.
 declare(strict_types=1);
 
-$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:']);
+$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes']);
 $cases = (int) ($opts['cases'] ?? 200);
 $seed = (int) ($opts['seed'] ?? 1);
 $onlyCase = isset($opts['case']) ? (int) $opts['case'] : null;
@@ -93,10 +95,12 @@ if (isset($opts['model'])) {
 require $root . '/server/tests/db/lib.php';
 require __DIR__ . '/lib.php';
 require_once __DIR__ . '/Interleave.php';
+require_once __DIR__ . '/OracleProbes.php';
 BetterCal\EditHarness\Product::use($root);
 
 use BetterCal\EditHarness\GoogleStand;
 use BetterCal\EditHarness\Interleave;
+use BetterCal\EditHarness\OracleProbes;
 use BetterCal\EditHarness\Revision;
 use BetterCal\EditHarness\Warnings;
 use BetterCal\Infra\Db;
@@ -131,7 +135,7 @@ try {
     };
     $fresh();
     /** One case on an account and a stand-in of its own, on a database that is fresh every CASES_PER_DATABASE cases. */
-    $runCase = static function (array $spec) use ($box, $fresh): array {
+    $runCase = static function (array $spec, ?array $probe = null) use ($box, $fresh): array {
         if ($box->used >= CASES_PER_DATABASE) {
             $fresh();
         }
@@ -140,12 +144,19 @@ try {
         $u = freshUser($db);
         $stand = GoogleStand::make($db, $box->domains->undo, $u);
         $case = new Interleave($db, $stand->events, new BetterCal\Domain\Undo($db, null, $stand->writer), $stand, $u);
+        if ($probe !== null) {
+            $case->probe = $probe['fn'];
+            $case->probeStep = $probe['step'];
+        }
         try {
             return Warnings::during(static fn(): array => $case->run($spec));
         } finally {
             GoogleStand::forget($db, $u);
         }
     };
+    if (isset($opts['oracle-probes'])) {
+        exit(oracleProbes($runCase));
+    }
     $out = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => []];
     $count = static function (array $result) use (&$out): void {
         $spec = $result['spec'];
@@ -263,6 +274,41 @@ if ($child) {
 }
 exit(interleaveReport($out, $findingsFile, $seed, $quiet));
 
+/**
+ * The oracle's own validation (README, Interleaving, Oracle probes): each probe's fixed case run clean and again with the
+ * probe's damage injected after its step. A probe passes when its check fails more often on the damaged run than on the
+ * clean one; a check with no passing probe is unvalidated. Exit 1 when a probe misses.
+ */
+function oracleProbes(callable $runCase): int
+{
+    $load = static function (string $name): array {
+        $spec = json_decode((string) file_get_contents(__DIR__ . "/cases/interleave/$name.json"), true, 512, JSON_THROW_ON_ERROR);
+        return $spec + ['seed' => 0, 'n' => 0, 'fixed' => $name];
+    };
+    $of = static fn(array $result, string $check): int => count(array_filter($result['records'], static fn(array $r): bool => $r['invariant'] === $check));
+    $clean = [];
+    $validated = [];
+    $failed = 0;
+    foreach (BetterCal\EditHarness\OracleProbes::all() as $probe) {
+        $clean[$probe['case']] ??= $runCase($load($probe['case']));
+        $base = $clean[$probe['case']];
+        $hit = $runCase($load($probe['case']), $probe);
+        $ran = array_sum($base['runs'][$probe['check']] ?? []) > 0;
+        $ok = $of($hit, $probe['check']) > $of($base, $probe['check']);
+        if ($ok) {
+            $validated[$probe['check']] = true;
+        } else {
+            $failed++;
+        }
+        echo ($ok ? 'caught' : 'MISSED') . "  {$probe['check']}: {$probe['what']} ({$probe['case']}, step {$probe['step']})" . ($ok || $ran ? '' : ' [no run of the check on the clean case]') . "\n";
+    }
+    $all = array_values(array_unique(array_merge(BetterCal\EditHarness\Interleave::CHECKS, BetterCal\EditHarness\OracleProbes::checks())));
+    $unvalidated = array_values(array_diff($all, array_keys($validated)));
+    echo "\nOracle probes: " . count(BetterCal\EditHarness\OracleProbes::all()) . " probes, $failed missed; checks validated: " . count($validated) . ' of ' . count($all) . "\n";
+    echo 'Unvalidated (no probe the check catches): ' . ($unvalidated === [] ? 'none' : implode(', ', $unvalidated)) . "\n";
+    return $failed === 0 ? 0 : 1;
+}
+
 /** A failure's signature, for one reproduction each: the invariant and the step kind it failed after. */
 function interleaveSignature(array $rec): string
 {
@@ -327,6 +373,9 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     }
     $out['coverage'] = ['pairsRun' => $ran, 'pairsDrawable' => $all, 'never' => $never];
     file_put_contents($findingsFile, json_encode(['mode' => 'interleave', 'seed' => $seed] + $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
+    require_once __DIR__ . '/OracleProbes.php';
+    $unprobed = array_values(array_diff(Interleave::CHECKS, OracleProbes::checks()));
+    echo '  unvalidated (no oracle probe; run --oracle-probes): ' . ($unprobed === [] ? 'none' : implode(', ', $unprobed)) . "\n";
     echo count($out['records']) . " failing checks, " . count($bySig) . " signatures\n";
     foreach ($bySig as $sig => $list) {
         $cases = array_unique(array_map(static fn(array $r): string => (string) ($r['spec']['fixed'] ?? $r['n']), $list));

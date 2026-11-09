@@ -1,0 +1,31 @@
+{
+    "about": "A day given a title of its own, then tags for all events, which reach that day's row, then the title's entry undone: stale, the newer change stands on the row the entry made (x-undo-fields).",
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",
+        "import": false,
+        "bound": "none",
+        "boundAt": 9,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Asia/Kolkata",
+        "start": "2027-03-26 02:30",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.349,
+            "what": "title"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.926,
+            "what": "tags"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.636
+        }
+    ]
+}

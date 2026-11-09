@@ -1,0 +1,31 @@
+{
+    "about": "Two days given titles of their own, then the second undone: the first day is untouched, its title and own list as they were (x-undo-fields, the rows an entry didn't change; review T2).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-01-04 09:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.2,
+            "what": "title"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.7,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.0
+        }
+    ]
+}

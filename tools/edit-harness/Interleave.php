@@ -37,6 +37,8 @@ final class Interleave
     /** The setup steps a case starts with (w-this-l twice: its weight). */
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
+    /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
+    public const CHECKS = ['x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
@@ -163,6 +165,7 @@ final class Interleave
         $this->records = $this->runs = $this->na = $this->done = $this->touches = $this->dirty = $this->gids = [];
         $this->pending = $this->recovered = null;
         $this->pendings = [];
+        $this->entryStates = [];
         $this->etagOnly = [];
         $this->unseen = [];
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
@@ -464,7 +467,29 @@ final class Interleave
             return;
         }
         $this->ran('step', $do . ($out['ok'] ? '' : ' refused'));
-        $this->check($do, $out, $s0, $this->snap());
+        $s1 = $this->snap();
+        if ($this->probe !== null && $this->probeStep === $this->step) {
+            // An oracle probe (OracleProbes.php): damage injected into what the step's checks read, which a check that
+            // keeps its contract must then fail on.
+            [$out, $s0, $s1] = $this->probe->call($this, $do, $out, $s0, $s1);
+        }
+        $this->check($do, $out, $s0, $s1);
+    }
+
+    /** @var array<int,array{before:array,after:array,step:int}> each Activity entry's rows by identity before and after the step that made it */
+    private array $entryStates = [];
+    /** The day a w-race step's remote change touched, kept out of that step's entry (someone else's change, not the request's). */
+    private ?string $racedIdent = null;
+    /** An oracle probe's damage, applied after the step numbered probeStep (OracleProbes.php); null in every ordinary run. */
+    public ?\Closure $probe = null;
+    public ?int $probeStep = null;
+
+    /** A snapshot's comparable states read again from its rows, after a probe changed them. */
+    private function reshape(array $s): array
+    {
+        $s['l'] = $this->lstate($s['rows']);
+        $s['here']['l'] = $s['l'];
+        return $s;
     }
 
     /** What the step about to fail asked (set before the product is called, so a refusal still knows its series). */
@@ -580,6 +605,7 @@ final class Interleave
             $title = $onMaster ? "Sample remote series {$this->step}" : "Sample remote day {$this->step}";
             $this->raced = [$gid, $onMaster ? null : $occ[0], $title];
             $this->lastRace = $onMaster ? null : [$gid, $occ[0], $instance];
+            $this->racedIdent = $onMaster ? 'series:' . $gid . '#title' : 'day:' . $gid . ':' . $occ[0];
             $this->armRace($instance, $title);
             try {
                 return $this->write('w-all', $step + ['what' => 'title'], $s0);
@@ -1000,11 +1026,7 @@ final class Interleave
             // Passed over: an undo's own entry. A redo's entry (one that undoes an undo's) is a change of its own, so the bare
             // Undo after an edit, its undo and a redo takes the redo back (decisions.md, "The bare Undo steps one change further
             // back on a Google calendar as it does locally", settled 2026-11-09).
-            $byId = array_column($entries, null, 'id');
-            $passedOver = static function (array $e) use ($byId): bool {
-                $of = self::undoes($e['details_json']);
-                return $of !== null && self::undoes($byId[$of]['details_json'] ?? null) === null;
-            };
+            $passedOver = fn(array $e): bool => $this->hops((int) $e['id']) % 2 === 1;
             foreach ($entries as $e) {
                 if ((int) $e['undone'] === 0 && in_array($e['source'], ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'], true) && !$passedOver($e)) {
                     $expect = (int) $e['id'];
@@ -1027,6 +1049,63 @@ final class Interleave
         $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
         $this->undo->undoById($this->userId, $id);
         return ['entry' => $id, 'asked' => $this->lastAsked];
+    }
+
+    /** How many undo hops an entry is from the change at the bottom of its chain: 0 a change, 1 its undo, 2 a redo, and so on. */
+    private function hops(int $entry): int
+    {
+        $n = 0;
+        $seen = [];
+        while (($of = self::undoes((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]))) !== null && !isset($seen[$of])) {
+            $seen[$of] = true;
+            $entry = $of;
+            $n++;
+        }
+        return $n;
+    }
+
+    /**
+     * Every row of the case by its identity, so rows compare across steps whatever ids a store gives them: a series by
+     * its Google id, a day of a series by that and its key, an event of its own by its Google id.
+     *
+     * @return array<string,array> identity => the row's comparable state, with its id
+     */
+    private function byIdentity(array $rows): array
+    {
+        $out = [];
+        $l = $this->lstate($rows);
+        foreach ($rows as $id => $r) {
+            $parent = $r['recurrence_parent_id'] !== null ? ($rows[(int) $r['recurrence_parent_id']] ?? null) : null;
+            $ident = match (true) {
+                $parent !== null => 'day:' . $parent['google_event_id'] . ':' . $r['recurrence_instance_utc'],
+                $r['rrule'] !== null => 'series:' . $r['google_event_id'],
+                default => 'event:' . ($r['google_event_id'] ?? $id),
+            };
+            $out[$ident] = array_diff_key($l[$id], ['parent' => 1]) + ['id' => $id];
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /** The fields of a row whose values an undo is judged on: a series' or event's every field; a day's own and held-here ones. */
+    private static function judged(string $ident, array ...$states): array
+    {
+        $all = ['title', 'description', 'location', 'url', 'status', 'start', 'end', 'allDay', 'tz', 'rrule', 'skips', 'tags', 'people', 'reminders', 'icon',
+            'attendance', 'lat', 'lng', 'trip', 'floating', 'links', 'key', 'uid'];
+        if (!str_starts_with($ident, 'day:')) {
+            return $all;
+        }
+        $f = ['tags', 'people', 'reminders', 'icon', 'attendance', 'lat', 'lng', 'links', 'key', 'uid'];
+        $own = [];
+        foreach ($states as $st) {
+            $own = array_merge($own, (array) ($st['own'] ?? []));
+        }
+        $map = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
+            'date' => ['start', 'end'], 'time' => ['start', 'end', 'tz'], 'length' => ['end'], 'allDay' => ['allDay']];
+        foreach (array_unique($own) as $o) {
+            $f = array_merge($f, $map[$o] ?? []);
+        }
+        return array_values(array_unique($f));
     }
 
     /** What the step that made an entry asked, from the harness's own record (an undo's entry: its original's, as redo). */
@@ -1217,7 +1296,12 @@ final class Interleave
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && !$shownDiffers) {
             $this->etagOnly[$gid] = true;
         }
-        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
+        $removal = in_array($asked['kind'] ?? '', ['delfollow', 'del1'], true);
+        if ($removal && $gid !== null && isset($this->dirty[$gid]) && ($s0['g']['digest'][$gid] ?? null) === null) {
+            // The series is already gone at Google: removing it here sends nothing that could overwrite a change there.
+            $this->ran('x-conflict', 'removal of a series deleted at Google');
+        }
+        if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
             // What protects the change made at Google is the refusal, whatever its reason: google_conflict, google_deleted for
             // a series deleted there (rule 8), or one decided here before Google is asked (stale_undo, invalid_recurrence_instance).
@@ -1300,6 +1384,16 @@ final class Interleave
             unset($this->dirty[$gid]);
         }
         $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok'], 'rows0' => $s0['rows'], 'rows1' => $s1['rows']];
+        // Each entry this step made, with the rows as the step found and left them: what an undo or redo of it is judged by.
+        if ($entries !== [] && $kind !== 'p-') {
+            $before = $this->byIdentity($s0['rows']);
+            $after = $this->byIdentity($s1['rows']);
+            $exclude = $do === 'w-race' && $this->racedIdent !== null ? [$this->racedIdent] : [];
+            foreach ($entries as $e) {
+                $this->entryStates[$e] = ['before' => $before, 'after' => $after, 'step' => $this->step, 'exclude' => $exclude];
+            }
+        }
+        $this->racedIdent = null;
         if ($out['ok'] && ($kind === 'w-' || $kind === 'f-')) {
             foreach (array_keys($asked['fields']) as $f) {
                 $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true,
@@ -1411,8 +1505,22 @@ final class Interleave
                     $now = $s1['g']['digest'][$g] ?? null;
                     $this->expect('x-putback', $was == $now, "step {$this->step}: after Put back Google holds the series as it was before the change (an inserted one cancelled)", $context + ['gid' => $g, 'was' => $was, 'now' => $now]);
                 }
-                $was = self::ofSeries($p['s0']['l'], $p['gids'], $p['s0']['rows']);
-                $now = self::ofSeries($s1['l'], $p['gids'], $s1['rows']);
+                // By identity, not row id: a master Put back recreates keeps its new id, with what hung off it reattached
+                // (GoogleSeries::reattach; series-model.md, Recovery: "a row the recovery brings back under a new id ... takes
+                // back its id, its own columns and what hung off it" names edited days, not the master).
+                $series = static function (array $idents, array $gids): array {
+                    $out = [];
+                    foreach ($idents as $ident => $row) {
+                        foreach (array_keys($gids) as $g) {
+                            if (str_starts_with($ident, 'series:' . $g) || str_starts_with($ident, 'day:' . $g . ':')) {
+                                $out[$ident] = array_diff_key($row, ['id' => 1]);
+                            }
+                        }
+                    }
+                    return $out;
+                };
+                $was = $series($this->byIdentity($p['s0']['rows']), $p['gids']);
+                $now = $series($this->byIdentity($s1['rows']), $p['gids']);
                 $this->expect('x-putback', self::same($was, $now), "step {$this->step}: after Put back the rows here are as before the change", $context + ['diff' => self::diff($was, $now)]);
                 $this->expect('x-putback', !in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: Put back clears the change from Review", $context);
                 $this->settled($p);
@@ -1479,112 +1587,245 @@ final class Interleave
                 'entries' => array_map(static fn(array $e): string => $e['id'] . ' ' . $e['source'] . ' undone=' . $e['undone'] . ' undoes=' . (self::undoes($e['details_json']) ?? '-') . ' ' . mb_substr((string) $e['summary'], 0, 60),
                     $this->db->all('SELECT id, source, undone, summary, details_json FROM mutations WHERE user_id = ? ORDER BY id', [$this->userId]))]);
         }
-        $of = $asked['of'] ?? null;
-        $orig = $of === null ? null : ($this->done[$of] ?? null);
-        $fieldEdit = $orig !== null && in_array($orig['asked']['kind'], ['all', 'this'], true) && $orig['asked']['fields'] !== [] && array_diff(array_keys($orig['asked']['fields']), ['title', 'description', 'location', 'url']) === [];
+        $state = $this->entryStates[$entry] ?? null;
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
-            if ($error === 'stale_undo' && $fieldEdit) {
-                $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'])
-                    + array_filter($this->done, static fn(array $d, int $i): bool => $i > $of && $d['ok'] && in_array($d['do'], ['u-entry', 'u-bare', 'redo'], true), ARRAY_FILTER_USE_BOTH);
-                $this->expect('x-undo-fields', $any !== [], "step {$this->step} ($do): an undo of step $of was refused as stale though nothing changed that series since", $context);
+            if ($error === 'stale_undo' && $state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
+                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since", $context);
             }
             return;
         }
-        if (!$fieldEdit) {
+        if ($state === null) {
+            $this->ran('x-undo-fields', 'entry not recorded'); // made by a step the harness didn't record (a poll's)
             return;
         }
-        $redo = ($asked['kind'] ?? '') === 'redo';
-        if (!$redo) {
-            // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included;
-            // for a "this event" edit, the same field of that day (a change for all events leaves a field the day owns as it was).
-            $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
-                && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled'])
-                && ($orig['asked']['kind'] === 'all' || $t['key'] === ($orig['asked']['key'] ?? null) || ($t['key'] === null && !empty($t['remote'])))
-                && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
-            if ($later !== []) {
-                $this->ran('x-undo-fields', 'stale');
-                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of step $of went through though a later change (step " . implode(', ', array_unique(array_column($later, 'step'))) . ') changed the same field: stale_undo by the rule (A3)', $context);
-                return;
+        $this->judgeUndo($do, $state, $this->byIdentity($s0['rows']), $this->byIdentity($s1['rows']), $context);
+    }
+
+    /**
+     * What an entry changed, read from its recorded states: identity => list of judged fields that differ, with '+' for a
+     * row it made and '-' for one it removed.
+     */
+    private static function entryChange(array $state): array
+    {
+        $out = [];
+        foreach (array_unique(array_merge(array_keys($state['before']), array_keys($state['after']))) as $ident) {
+            if (in_array($ident, $state['exclude'] ?? [], true)) {
+                continue;
             }
-        }
-        // Exact, against the rows before the edit (decisions.md, "The undo of a Google edit sends back only the fields that
-        // edit changed": "Each changed field goes back at its before value over the event as it stands ... redo carries
-        // the same fields"): an undo puts each field the edit set back at the value it had before the edit (a day the edit
-        // made its own goes back to the series' value as it stands now), a redo puts the edit's value back, and every other
-        // field of every row stays as it was before the undo or redo.
-        $this->ran('x-undo-fields', $redo ? 'redo fields exact' : 'fields back exact');
-        $gid = (string) $orig['asked']['gid'];
-        $key = $orig['asked']['key'] ?? null;
-        $kind = $orig['asked']['kind'];
-        $masterOf = static function (array $rows) use ($gid): ?array {
-            foreach (self::masters($rows) as $m) {
-                if ((string) $m['google_event_id'] === $gid) {
-                    return $m;
-                }
-            }
-            return null;
-        };
-        $dayOf = static function (array $rows, ?array $master) use ($key): ?array {
-            if ($master === null || $key === null) {
-                return null;
-            }
-            foreach ($rows as $r) {
-                if ((int) ($r['recurrence_parent_id'] ?? 0) === (int) $master['id'] && $r['recurrence_instance_utc'] === $key) {
-                    return $r;
-                }
-            }
-            return null;
-        };
-        $rowsBefore = $this->done[$of]['rows0'] ?? [];
-        $master0 = $masterOf($rowsBefore);
-        $master1 = $masterOf($s1['rows']);
-        $day0 = $dayOf($rowsBefore, $master0);
-        $day1 = $dayOf($s1['rows'], $master1);
-        $target = null;
-        foreach ($orig['asked']['fields'] as $f => $v) {
-            if ($kind === 'all') {
-                $now = $master1 === null ? null : (string) $master1[$f];
-                $want = $redo ? (string) $v : ($master0 === null ? null : (string) $master0[$f]);
-                $target = $master1['id'] ?? null;
+            $a = $state['before'][$ident] ?? null;
+            $b = $state['after'][$ident] ?? null;
+            if ($a === null) {
+                $out[$ident] = ['+'];
+            } elseif ($b === null) {
+                $out[$ident] = ['-'];
             } else {
-                $now = $day1 !== null ? (string) $day1[$f] : ($master1 === null ? null : (string) $master1[$f]);
-                $ownedBefore = $day0 !== null && in_array($f, $day0['own'], true);
-                $want = $redo ? (string) $v : ($ownedBefore ? (string) $day0[$f] : ($master1 === null ? null : (string) $master1[$f]));
-                $target = $day1['id'] ?? ($day0['id'] ?? null);
+                $skip = $state['exclude'] ?? [];
+                // "ident#field": a field a change at Google made during the step (a w-race on the master), no part of the entry.
+                $f = array_values(array_filter(self::judged($ident, $a, $b), static fn(string $k): bool => ($a[$k] ?? null) != ($b[$k] ?? null) && !in_array($ident . '#' . $k, $skip, true)));
+                if (($a['own'] ?? []) != ($b['own'] ?? [])) {
+                    $f[] = 'own';
+                }
+                if ($f !== []) {
+                    $out[$ident] = $f;
+                }
             }
-            $this->expect('x-undo-fields', $now === $want, "step {$this->step} ($do): " . ($redo ? 'redo puts back' : 'undo puts back') . " the exact $f " . ($redo ? 'step ' . $of . ' set' : 'it had before step ' . $of),
-                $context + ['field' => $f, 'want' => $want, 'now' => $now]);
         }
-        // Everything else as it was before this undo or redo: every row but the edit's own, every field of that row but the edit's.
-        $fields = array_keys($orig['asked']['fields']);
-        foreach (array_unique(array_merge(array_keys($s0['l']), array_keys($s1['l']))) as $id) {
-            $a = $s0['l'][$id] ?? null;
-            $b = $s1['l'][$id] ?? null;
-            if ($a == $b) {
+        return $out;
+    }
+
+    /** The judged fields an entry changed that have changed again since it was made (a stale undo's reason). */
+    private function changedSince(array $state, array $now): array
+    {
+        $out = [];
+        foreach (self::entryChange($state) as $ident => $fields) {
+            $b = $state['after'][$ident] ?? null;
+            $c = $now[$ident] ?? null;
+            // A series the entry made that a newer change has added a day to, removed one of or changed one of: the newer
+            // change stands on the item this one made (api-contract.md, stale_undo: "added something to an item this one made").
+            if ($fields === ['+'] && str_starts_with($ident, 'series:')) {
+                $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
+                $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
+                foreach (array_unique(array_merge(array_keys($state['after']), array_keys($now))) as $d) {
+                    if (str_starts_with($d, $prefix) && $plain($state['after'][$d] ?? null) != $plain($now[$d] ?? null)) {
+                        $out[$d] = ['added to a series the entry made'];
+                    }
+                }
+            }
+            // A day the entry edited, made or removed whose series' times have changed since: the newer change moved the
+            // times where this one edited a date (api-contract.md, stale_undo: "for a repeating event, changed its times
+            // where this deleted, edited or split off a date, or the other way round").
+            if (preg_match('/^day:([^:]+):/', $ident, $m) === 1) {
+                $sa = $state['after']['series:' . $m[1]] ?? null;
+                $sn = $now['series:' . $m[1]] ?? null;
+                // The times of a date: its clock, length, zone and all-day flag. The rule is not one: a rule change that keeps
+                // the date leaves its times, and one that drops it leaves a row or series gone, judged above.
+                $times = static fn(?array $r): ?array => $r === null ? null : array_intersect_key($r, array_flip(['tz', 'allDay'])) + ['clock' => substr((string) ($r['start'] ?? ''), 11), 'length' => strtotime((string) ($r['end'] ?? '')) - strtotime((string) ($r['start'] ?? ''))];
+                if ($sa !== null && $sn !== null && $times($sa) != $times($sn)) {
+                    $out[$ident] = ['series times changed'];
+                    continue;
+                }
+            }
+            // A day whose series has gone since (deleted, here or at Google) has a newer change standing on it.
+            if (preg_match('/^day:([^:]+):/', $ident, $m) === 1 && isset($state['after']['series:' . $m[1]]) && !isset($now['series:' . $m[1]])) {
+                $out[$ident] = ['series gone'];
                 continue;
             }
-            $own = $kind === 'this' && ($a === null || $b === null || (int) $id === (int) $target || (string) ($a['key'] ?? $b['key']) === (string) $key);
-            // The rows as the edit left them, put back: an undo brings back under its id a row the edit took (a day an edit
-            // for all events made ordinary, whose row a rejoin deletes "with its key in Undo") and removes one the edit made;
-            // a redo does the reverse, a row the edit made back at its key and one it took gone again (series-model.md, Own
-            // Fields: "Undo putting the row, its tags, people and links back as they were"; decisions.md, "The undo of a Google
-            // edit sends back only the fields that edit changed", "redo carries the same fields").
-            $rowsAfter = $this->done[$of]['rows1'] ?? [];
-            $keyIn = static fn(array $rows, string $k): bool => in_array($k, array_map(static fn(array $r): string => (string) ($r['recurrence_instance_utc'] ?? ''), $rows), true);
-            $own = $own || ($redo
-                ? (($a === null && $keyIn(array_diff_key($rowsAfter, $rowsBefore), (string) ($b['key'] ?? ''))) || ($b === null && isset($rowsBefore[$id]) && !isset($rowsAfter[$id])))
-                : (($a === null && isset($rowsBefore[$id]) && (string) ($rowsBefore[$id]['recurrence_instance_utc'] ?? '') === (string) ($b['key'] ?? ''))
-                    || ($b === null && !isset($rowsBefore[$id]))));
-            if ($a === null || $b === null) {
-                $this->expect('x-undo-fields', $own, "step {$this->step} ($do): " . ($redo ? 'a redo' : 'an undo') . " of step $of made or removed a row other than the edit's own day", $context + ['row' => $id, 'was' => $a, 'now' => $b]);
+            if ($fields === ['+'] || $fields === ['-']) {
+                if ($b === null && $c !== null) {
+                    // A row the entry removed that is back: stale when a newer change gave it something held here (its own
+                    // list names one), which bringing the row back would overwrite; a row Google made there (a title of its
+                    // own) is composed over (decisions.md, "The undo of a Google edit sends back only the fields that edit
+                    // changed": a row brought back whole takes what it held here alone "over the day as it stands now").
+                    if (array_intersect($c['own'] ?? [], self::LOCAL) !== []) {
+                        $out[$ident] = $fields;
+                    }
+                } elseif ($b !== null && $c === null) {
+                    $out[$ident] = $fields;
+                } elseif ($b !== null && $c !== null) {
+                    // A row the entry made that a newer change has changed since, in any field or its own list: the newer
+                    // change stands on the item this one made (api-contract.md, stale_undo: "added something to an item
+                    // this one made", "changed the same field"), and undoing would take it away with the row.
+                    $f = array_values(array_filter(array_merge(self::judged('series:', $b, $c), ['own']), static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                    if ($f !== []) {
+                        $out[$ident] = $f;
+                    }
+                }
                 continue;
             }
-            // A day renamed at Google while the undo or redo ran: its title (and whether it owns it) is the race's (x-readback).
-            $raced = ($this->racedNow[1] ?? null) !== null && (string) ($a['key'] ?? '') === $this->racedNow[1] ? ['title'] : [];
-            $strip = static fn(array $r): array => array_diff_key($r, array_flip(array_merge($fields, $raced, ['own'])));
-            $this->expect('x-undo-fields', $strip($a) == $strip($b), "step {$this->step} ($do): " . ($redo ? 'a redo' : 'an undo') . " of step $of changed something it did not change", $context + ['row' => $id, 'diff' => self::diff([$id => $strip($a)], [$id => $strip($b)])]);
+            if (str_starts_with($ident, 'series:') && in_array('skips', $fields, true)) {
+                // A day the entry skipped or brought back that a newer change has made, removed or changed since: the
+                // newer change stands on that date (api-contract.md, stale_undo: "changed its times where this deleted,
+                // edited or split off a date, or the other way round"; "removed or made the same item").
+                $g = substr($ident, strlen('series:'));
+                $a = $state['before'][$ident] ?? null;
+                $keys = array_merge(array_diff($a['skips'] ?? [], $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a['skips'] ?? []));
+                foreach ($keys as $k) {
+                    $day = 'day:' . $g . ':' . $k;
+                    $x = $state['after'][$day] ?? null;
+                    $y = $now[$day] ?? null;
+                    $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
+                    if ($plain($x) != $plain($y)) {
+                        $out[$day] = ['date skipped or brought back'];
+                    }
+                }
+            }
+            foreach ($fields as $f) {
+                if ($c === null || ($b[$f] ?? null) != ($c[$f] ?? null)) {
+                    $out[$ident][] = $f;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * An undo or redo of an entry, judged by the entry's own recorded states (decisions.md, "The undo of a Google edit
+     * sends back only the fields that edit changed": "Each changed field goes back at its before value over the event as it
+     * stands"; series-model.md, Own Fields: "Undo putting the row, its tags, people and links back as they were"). Undoing
+     * an entry puts back, on the rows it changed, the judged fields and own-list entries it changed at their values before
+     * it, a row it made gone and a row it removed back; every other row, and every other field of those rows, stays as it
+     * was before the undo. An undo of an undo is a redo by the same rule, against the undo's own recorded states, so no
+     * direction is worked out. When something the entry changed has changed again since, the undo is stale (A3).
+     */
+    private function judgeUndo(string $do, array $state, array $now, array $result, array $context): void
+    {
+        // A day renamed at Google while this undo or redo ran ("race": "day", fixed cases) is someone else's change, judged
+        // by x-readback: kept out of the comparison here as a w-race's day is kept out of its entry.
+        if (($this->racedNow[1] ?? null) !== null) {
+            $day = 'day:' . $this->racedNow[0] . ':' . $this->racedNow[1];
+            unset($now[$day], $result[$day]);
+            $state['exclude'] = array_merge($state['exclude'] ?? [], [$day]);
+        }
+        $change = self::entryChange($state);
+        $since = $this->changedSince($state, $now);
+        if ($since !== []) {
+            $this->ran('x-undo-fields', 'stale');
+            $this->fail('x-undo-fields', "step {$this->step} ($do): an undo went through though what its entry changed has changed since (step {$state['step']}): stale_undo by the rule (A3)", $context + ['since' => $since]);
+            return;
+        }
+        $this->ran('x-undo-fields', 'by recorded states');
+        foreach (array_unique(array_merge(array_keys($now), array_keys($result), array_keys($change))) as $ident) {
+            $c = $now[$ident] ?? null;
+            $r = $result[$ident] ?? null;
+            $fields = $change[$ident] ?? null;
+            $where = $context + ['identity' => $ident];
+            if ($fields === null && $c === null && $r !== null && preg_match('/^day:([^:]+):(.+)$/', $ident, $m) === 1
+                && in_array('skips', $change['series:' . $m[1]] ?? [], true)) {
+                // A day on a date the entry skipped or brought back, with no row before the undo and one after: brought
+                // back as the occurrence the series has there now, owning nothing (decisions.md, "The undo of a Google edit
+                // sends back only the fields that edit changed": a row brought back is "the series' occurrence there (the
+                // series' current notes)", never the series as a snapshot showed it).
+                $series = $result['series:' . $m[1]] ?? null;
+                $this->expect('x-undo-fields', ($r['own'] ?? []) === [], "step {$this->step} ($do): a day brought back on a date its entry skipped owns fields of its own", $where + ['now' => $r]);
+                foreach (['title', 'description', 'location', 'url', 'tags'] as $f) {
+                    if ($series !== null && !in_array($f === 'tags' ? 'tags' : $f, (array) ($r['own'] ?? []), true)) {
+                        $this->expect('x-undo-fields', ($r[$f] ?? null) == ($series[$f] ?? null), "step {$this->step} ($do): a day brought back on a date its entry skipped shows the series' $f as it stands", $where + ['field' => $f, 'series' => $series[$f] ?? null, 'now' => $r[$f] ?? null]);
+                    }
+                }
+                continue;
+            }
+            if ($fields === null) {
+                // A row the entry didn't change: exactly as it was before the undo, every field and its own list.
+                $keep = $c === null || $r === null ? [] : array_flip(array_merge(self::judged($ident, $c, $r), ['own']));
+                $plain = static fn(?array $x): ?array => $x === null ? null : array_intersect_key($x, $keep);
+                $this->expect('x-undo-fields', ($c === null) === ($r === null) && $plain($c) == $plain($r), "step {$this->step} ($do): an undo changed a row its entry did not change", $where + ['was' => $c, 'now' => $r]);
+                continue;
+            }
+            if ($fields === ['+']) {
+                $this->expect('x-undo-fields', $r === null, "step {$this->step} ($do): an undo left a row its entry made", $where + ['now' => $r]);
+                continue;
+            }
+            $was = $state['before'][$ident];
+            if ($fields === ['-']) {
+                $this->expect('x-undo-fields', $r !== null, "step {$this->step} ($do): an undo did not bring back a row its entry removed", $where + ['was' => $was]);
+                if ($r === null) {
+                    continue;
+                }
+                if ($c !== null) {
+                    // A row at that day now (Google made one since): the row brought back is composed over it, what it
+                    // held here alone at its values then, everything else as the day stands now, its own list the union
+                    // (decisions.md, "The undo of a Google edit sends back only the fields that edit changed": "over the
+                    // day as it stands now, the row at that day now (a title Google gave it stays its own)").
+                    $held = ['tags', 'people', 'reminders', 'icon', 'attendance', 'lat', 'lng', 'links'];
+                    foreach (self::judged($ident, $was, $c, $r) as $f) {
+                        $want = in_array($f, $held, true) ? ($was[$f] ?? null) : ($c[$f] ?? null);
+                        $this->expect('x-undo-fields', ($r[$f] ?? null) == $want, "step {$this->step} ($do): a row brought back over the day as it stands has the $f composed", $where + ['field' => $f, 'want' => $want, 'now' => $r[$f] ?? null]);
+                    }
+                    $wantOwn = array_values(array_unique(array_merge((array) ($c['own'] ?? []), array_values(array_intersect((array) ($was['own'] ?? []), self::LOCAL)))));
+                    sort($wantOwn);
+                    $gotOwn = (array) ($r['own'] ?? []);
+                    sort($gotOwn);
+                    $this->expect('x-undo-fields', $gotOwn == $wantOwn, "step {$this->step} ($do): a row brought back over the day as it stands owns what both held", $where + ['want' => $wantOwn, 'now' => $gotOwn]);
+                    continue;
+                }
+                $fields = self::judged($ident, $was, $r);
+                $fields[] = 'own';
+            }
+            if ($r === null) {
+                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo removed a row its entry only changed", $where + ['was' => $c]);
+                continue;
+            }
+            foreach ($fields as $f) {
+                if ($f === 'own') {
+                    continue;
+                }
+                $this->expect('x-undo-fields', ($r[$f] ?? null) == ($was[$f] ?? null), "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $was[$f] ?? null, 'now' => $r[$f] ?? null]);
+            }
+            // Ownership: for the own-list entries the entry changed, as before it; the rest as before the undo.
+            $flipped = array_merge(array_diff((array) ($was['own'] ?? []), (array) ($state['after'][$ident]['own'] ?? [])), array_diff((array) ($state['after'][$ident]['own'] ?? []), (array) ($was['own'] ?? [])));
+            $wantOwn = array_values(array_unique(array_merge(array_diff((array) ($c['own'] ?? $was['own'] ?? []), $flipped), array_intersect($flipped, (array) ($was['own'] ?? [])))));
+            sort($wantOwn);
+            $gotOwn = (array) ($r['own'] ?? []);
+            sort($gotOwn);
+            $this->expect('x-undo-fields', $gotOwn == $wantOwn, "step {$this->step} ($do): an undo leaves the row's own list as its entry found it", $where + ['want' => $wantOwn, 'now' => $gotOwn]);
+            // The judged fields the entry didn't change: as before the undo.
+            if ($c !== null) {
+                foreach (array_diff(self::judged($ident, $c, $r), $fields) as $f) {
+                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($c[$f] ?? null), "step {$this->step} ($do): an undo changed a field its entry did not change", $where + ['field' => $f, 'was' => $c[$f] ?? null, 'now' => $r[$f] ?? null]);
+                }
+            }
         }
     }
 

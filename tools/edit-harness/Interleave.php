@@ -1787,9 +1787,19 @@ final class Interleave
         foreach ($change as $ident => $fields) {
             $b = $state['after'][$ident] ?? null;
             $c = $now[$ident] ?? null;
-            // A series the entry made (a split from a day on) that a newer change has added a day to, removed one of or changed
-            // one of: every day of it is a day the entry made, so the newer change is on the same day.
+            // A series the entry made whole (a split from a day on, a redo making it again) stands on every later change to it:
+            // every field of what it made is its ground, the series' own fields and skips, and every day of it (decisions.md,
+            // "Staleness has one definition: grounds are fields": a row or series made whole has every field of what it made
+            // as its ground; seed 17 case 202, seed 13 case 173).
             if ($fields === ['+'] && str_starts_with($ident, 'series:')) {
+                if ($c === null) {
+                    $out[$ident] = ['series gone'];
+                    continue;
+                }
+                $f = array_values(array_filter(self::judged($ident, $b, $c), static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                if ($f !== []) {
+                    $out[$ident] = $f;
+                }
                 $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
                 $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
                 foreach (array_unique(array_merge(array_keys($state['after']), array_keys($now))) as $d) {

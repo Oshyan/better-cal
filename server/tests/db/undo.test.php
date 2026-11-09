@@ -375,6 +375,23 @@ return static function (Db $db): void {
             [$db->scalar('SELECT name FROM people WHERE id = ?', [$alex]), $owner($alexSpan), $owner($samSpan)]);
     });
 
+    // Every kind of time the code accepts is a kind the column holds: "here"
+    // arrived in the code long after the column was made for away and busy,
+    // and marking someone as here failed on every install until 076.
+    scenario('people: every kind of time the code accepts is stored', function () use ($db): void {
+        $m = freshUser($db);
+        $folk = new \BetterCal\Domain\People($db);
+        $alex = (int) $folk->create($m, ['name' => 'Alex Example'])['id'];
+        $stored = [];
+        foreach (\BetterCal\Domain\People::KINDS as $i => $kind) {
+            $day = sprintf('2026-12-%02dT00:00:00Z', 1 + 2 * $i);
+            $next = sprintf('2026-12-%02dT00:00:00Z', 2 + 2 * $i);
+            $span = (int) $folk->addSpan($m, $alex, ['start' => $day, 'end' => $next, 'kind' => $kind])['id'];
+            $stored[] = (string) $db->scalar('SELECT kind FROM availability WHERE id = ?', [$span]);
+        }
+        checkEq('people: each kind round-trips through the column', \BetterCal\Domain\People::KINDS, $stored);
+    });
+
     // --- The default calendar as calendars come and go ---------------------
 
     // Deleting the last calendar of the person's own: new events go to the

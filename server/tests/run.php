@@ -500,13 +500,28 @@ $d = $p('Pizza night with Sam Sample Mon, Nov 16 at 6:30 PM');
 checkEq('fp50 weekday abbreviation', [['Sam Sample'], 'Pizza night with Sam Sample', '2026-11-16T18:30:00-08:00'], [$d['personNames'], $d['title'], $d['start']]);
 $d = $p('Pizza night with Sam Sample November 16, Tuesday, at 6:30 PM');
 checkEq('fp51 a weekday that disagrees: the date wins, the weekday stays in the title, never a person',
-    [['Sam Sample'], '2026-11-16T18:30:00-08:00', 'Pizza night with Sam Sample , Tuesday'], [$d['personNames'], $d['start'], $d['title']]);
+    [['Sam Sample'], '2026-11-16T18:30:00-08:00', 'Pizza night with Sam Sample Tuesday'], [$d['personNames'], $d['start'], $d['title']]);
 $d = $p('Pizza night with Sam Sample and Alex Example November 16, Monday, at 6:30 PM');
 checkEq('fp52 two people before a dated weekday', ['Sam Sample', 'Alex Example'], $d['personNames']);
 $d = $p('Coffee with Alex Example Friday 10am');
 checkEq('fp53 a name that is no date word still works', [['Alex Example'], '2026-07-31T10:00:00-07:00'], [$d['personNames'], $d['start']]);
 $d = $p('Pizza night at Luna Nov 16 7pm Tuesday');
 checkEq('fp54 a weekday after a place is not the place', 'Luna', $d['location']);
+
+// A piece the parser reads takes the comma or semicolon it stood beside with
+// it (FallbackParser::cutSpan); commas between words it did not read stay.
+$d = $p('Pizza night Monday, November 16, 6:30 PM, at Luna');
+checkEq('fp55 pasted date line leaves no commas', ['Pizza night at Luna', 'Luna', '2026-11-16T18:30:00-08:00'], [$d['title'], $d['location'], $d['start']]);
+$d = $p('Pizza night, tomorrow at 7pm, at Luna');
+checkEq('fp56 commas around a relative day and time', ['Pizza night at Luna', 'Luna'], [$d['title'], $d['location']]);
+$d = $p('Book club; Thursday, Dec 3; 7pm');
+checkEq('fp57 semicolons go with the date and time', ['Book club', '2026-12-03T19:00:00-08:00'], [$d['title'], $d['start']]);
+$d = $p('Pizza night, Monday, November 16, 2026, 6:30 PM');
+checkEq('fp58 date with year and weekday between commas', ['Pizza night', '2026-11-16T18:30:00-08:00'], [$d['title'], $d['start']]);
+$d = $p('Salt, Fat, Acid, Heat reading, Friday, 7pm');
+checkEq('fp59 commas inside the name stay', ['Salt, Fat, Acid, Heat reading', '2026-07-31T19:00:00-07:00'], [$d['title'], $d['start']]);
+$d = $p('Standup, every weekday, 9am');
+checkEq('fp60 a repeat takes its commas', 'Standup', $d['title']);
 
 // Completeness + confidence gates feeding the QuickAdd LLM-skip decision.
 checkEq('fp complete date+time', true, $p('Meeting tomorrow 9am')['complete']);

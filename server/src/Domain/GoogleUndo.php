@@ -84,6 +84,10 @@ final class GoogleUndo
     public const SERIES = 'series';
 
     private const UNDID = 'Undid: ';
+    /** Where an entry's words for what Google kept start (SeriesPlans::googleAfter's words, an undo's the same). */
+    public const KEPT = ' Google kept something else: ';
+    /** What an undo's entry says when Review's Finish completed it. */
+    public const FINISHED = ' Finished at Google from Review.';
 
     public function __construct(
         private readonly Db $db,
@@ -330,7 +334,7 @@ final class GoogleUndo
      *
      * @return array{entity:string,op:string}
      */
-    public function undo(array $mutation, ?RequestAuthority $authority = null): array
+    public function undo(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
     {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (!self::carries(is_array($details) ? $details : null)) {
@@ -339,7 +343,7 @@ final class GoogleUndo
         $g = $details['google'];
         $userId = (int) $mutation['user_id'];
         if ((string) $g['kind'] === self::SERIES) {
-            return $this->undoSeries($mutation, $g, $authority);
+            return $this->undoSeries($mutation, $g, $authority, $force);
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
         if ($calendar === null || !GoogleWriter::writable($calendar)) {
@@ -349,9 +353,7 @@ final class GoogleUndo
         $writer = $this->writer();
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $row = $writer->rowByGoogleId((int) $calendar['id'], $googleId);
-        $summary = str_starts_with((string) $mutation['summary'], self::UNDID)
-            ? substr((string) $mutation['summary'], strlen(self::UNDID))
-            : self::UNDID . (string) $mutation['summary'];
+        $summary = self::undoSummary((string) $mutation['summary']);
 
         switch ((string) $g['kind']) {
             case self::EDIT:
@@ -533,21 +535,19 @@ final class GoogleUndo
      *
      * @return array{entity:string,op:string}
      */
-    private function undoSeries(array $mutation, array $g, ?RequestAuthority $authority): array
+    private function undoSeries(array $mutation, array $g, ?RequestAuthority $authority, bool $force = false): array
     {
         $userId = (int) $mutation['user_id'];
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [(int) $g['calendarId'], $userId]);
         if ($calendar === null || !GoogleWriter::writable($calendar)) {
             throw HttpError::badRequest("That calendar no longer writes to Google from here, so this change can't be undone", 'not_undoable');
         }
-        $summary = str_starts_with((string) $mutation['summary'], self::UNDID)
-            ? substr((string) $mutation['summary'], strlen(self::UNDID))
-            : self::UNDID . (string) $mutation['summary'];
+        $summary = self::undoSummary((string) $mutation['summary']);
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
         $this->undo->checkRestore($mutation);
         $deferred = null;
-        $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
+        $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, $force, &$deferred): void {
             $authority?->assertValid($this->db);
             $locked = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
             if ($locked === null || !GoogleSync::sameBinding($calendar, $locked)) {
@@ -557,10 +557,14 @@ final class GoogleUndo
             if ($fresh === null || (int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
-            $targets = $series->withStoredIds($locked, $this->inverseOf($fresh, $locked, (array) $g['before']));
+            [$inverse, $kept] = $this->inverseOf($fresh, $locked, (array) $g['before'], $force);
+            $targets = $series->withStoredIds($locked, $inverse);
             $title = (string) ($targets[0]['master']['title'] ?? '');
             try {
-                $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);
+                // Its part here, kept with a pending row for Finish and Put
+                // back: which entry it undoes, and the words it says so with.
+                $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend,
+                    ['undo' => (int) $mutation['id'], 'summary' => $summary, 'kept' => $kept]);
             } catch (HttpError $e) {
                 if (!GoogleSeries::reachedGoogle($e)) {
                     throw $e->errorCode === 'google_conflict' ? self::conflict() : $e; // nothing reached Google: all of it rolls back
@@ -578,15 +582,43 @@ final class GoogleUndo
             // change ran) stands as the row it was, not one made again.
             $series->reattach($locked, $was, $out['targets']);
             $series->settle($out['pending']);
-            $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
-            $uids = array_merge($uids, array_keys($out['readbacks']));
-            $this->recordSeries($userId, (int) $mutation['entity_id'], $summary, $locked, $out['befores'], $was,
-                $this->seriesTables((int) $locked['id'], $uids, array_merge($ids, array_map('intval', array_column($was['events'], 'id')))), (int) $mutation['id']);
+            $this->finishUndo($fresh, $locked, $summary, array_merge($kept, $out['differences']), $out['befores'], $was, $uids, array_keys($out['readbacks']));
         });
         if ($deferred !== null) {
             throw $deferred;
         }
         return ['entity' => 'event', 'op' => 'update'];
+    }
+
+    /**
+     * The journal of an undo of a series entry once Google holds it, the
+     * same whether the undo completed or a Finish of it did: the entry
+     * marked undone and the undo's own entry recorded (its befores for a
+     * redo, the rows as they were and are), its words naming what Google
+     * kept. Inside the account's write.
+     *
+     * @param list<string> $kept
+     * @param list<array> $befores
+     * @param list<string> $uids
+     * @param list<string> $readUids
+     */
+    public function finishUndo(array $mutation, array $calendar, string $summary, array $kept, array $befores, array $was, array $uids, array $readUids): int
+    {
+        $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
+        $ids = $this->undo->snapshotEventIds($mutation);
+        $words = $kept === [] ? $summary : $summary . self::KEPT . implode(' ', array_values(array_unique($kept)));
+        return $this->recordSeries((int) $mutation['user_id'], (int) $mutation['entity_id'], mb_substr($words, 0, 900), $calendar, $befores, $was,
+            $this->seriesTables((int) $calendar['id'], array_merge($uids, $readUids), array_merge($ids, array_map('intval', array_column($was['events'] ?? [], 'id')))), (int) $mutation['id']);
+    }
+
+    /** An undo's summary from its entry's: "Undid: " put on, or taken off for a redo; the entry's words for what Google kept left out. */
+    public static function undoSummary(string $summary): string
+    {
+        foreach ([self::FINISHED, self::KEPT] as $words) {
+            $at = strpos($summary, $words);
+            $summary = $at === false ? $summary : substr($summary, 0, $at);
+        }
+        return str_starts_with($summary, self::UNDID) ? substr($summary, strlen(self::UNDID)) : self::UNDID . $summary;
     }
 
     /**
@@ -597,25 +629,33 @@ final class GoogleUndo
      * stays as it stands, whatever Google changed while the change ran; one
      * it changed goes back to its before (a day it gave a field of its own
      * inherits it again). A redo is the same: its entry's befores carry what
-     * the undo asked. An entry recorded before changes kept what they asked
-     * takes it from the rows as the change left them (its after snapshot).
-     * A series the undo removes, one not here, and the events of their own
-     * go as recorded.
+     * the undo asked. A value the change changed that holds otherwise now is
+     * kept and named; it is a later change, refused as stale unless forced
+     * (decisions.md, stale undo), when it differs from what the change left
+     * (its after snapshot, which holds what Google changed while the change
+     * ran: that one is kept and named, never refused). An entry recorded
+     * before changes kept what they asked is refused: what it asked can't be
+     * told from what it learned from Google. A series the undo removes, one
+     * not here, and the events of their own go as recorded.
      *
      * @param list<array> $befores
-     * @return list<array>
+     * @return array{0:list<array>,1:list<string>} the targets, and words for what was kept
      */
-    private function inverseOf(array $mutation, array $calendar, array $befores): array
+    private function inverseOf(array $mutation, array $calendar, array $befores, bool $force = false): array
     {
         $year = (int) \BetterCal\Support\Time::nowUtc()->format('Y');
         $left = json_decode((string) ($mutation['after_json'] ?? ''), true)['tables']['events'] ?? [];
         $out = [];
+        $words = [];
         foreach ($befores as $i => $t) {
             $asked = $t['asked'] ?? null;
             unset($t['asked']);
             $out[$i] = $t;
             if (!empty($t['remove']) || empty($t['master'])) {
                 continue;
+            }
+            if (!is_array($asked) || empty($asked['master'])) {
+                throw HttpError::badRequest("This change was saved before Better-Cal kept what each change asks of Google, so its undo can't tell its own changes from Google's. Change it back by hand.", 'not_undoable');
             }
             $master = !empty($t['uid'])
                 ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']])
@@ -625,17 +665,22 @@ final class GoogleUndo
                 continue;
             }
             $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
-            if (!is_array($asked) || empty($asked['master'])) {
-                $asked = $now;
-                foreach ($left as $r) {
-                    if ((string) ($r['uid'] ?? '') === (string) $master['uid'] && ($r['recurrence_instance_utc'] ?? null) === null && !empty($r['rrule'])) {
-                        $asked = GoogleSeries::stateOf($r, array_values(array_filter($left, static fn(array $d): bool => (int) ($d['recurrence_parent_id'] ?? 0) === (int) $r['id'])));
-                    }
+            [$out[$i], $kept, $conflicts] = GoogleSeries::deltasOver($asked, $t, $now, $year);
+            // What the change left of this series: the rows its entry kept after it.
+            $leftState = null;
+            foreach ($left as $r) {
+                if ((string) ($r['uid'] ?? '') === (string) $master['uid'] && ($r['recurrence_instance_utc'] ?? null) === null && !empty($r['rrule'])) {
+                    $leftState = GoogleSeries::stateOf($r, array_values(array_filter($left, static fn(array $d): bool => (int) ($d['recurrence_parent_id'] ?? 0) === (int) $r['id'])));
                 }
             }
-            $out[$i] = GoogleSeries::deltasOver($asked, $t, $now, $year);
+            foreach ($conflicts as [$key, $group]) {
+                if (!$force && $leftState !== null && !GoogleSeries::sameAt($now, $leftState, $key, $group)) {
+                    throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
+                }
+            }
+            $words = array_merge($words, $kept);
         }
-        return array_values($out);
+        return [array_values($out), $words];
     }
 
     /**

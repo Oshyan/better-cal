@@ -448,4 +448,156 @@ return static function (Db $db): void {
         ], [array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET')), $here['description'] ?? null, $here['override_fields'] ?? null, $tags]);
         check('a poll after changes nothing', $sameAfterPoll($s));
     });
+
+    // A change made at Google by another client, through the stand-in's own API.
+    $remote = static function (object $s, string $googleId, array $body): void {
+        ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode('crew@group.calendar.google.com') . '/events/' . rawurlencode($googleId),
+            $body, ['Authorization: Bearer sample-access']);
+    };
+    $special = 'smpl2weekly_20270329T170000Z'; // 29 March, a day with its own title
+    $dayRow = static fn(object $s, string $key): ?array => $db->one('SELECT * FROM events WHERE calendar_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$s->calendarId, $key]);
+
+    scenario('google series undo: a day Google put back to the series after a rename follows the series through the rename\'s undo', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $remote, $special, $dayRow): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        $remote($s, $special, ['summary' => 'Sample renamed']);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        checkEq('the day follows the series here once polled', [null], [$dayRow($s, '2027-03-29 17:00:00')]);
+        $s->t->calls = [];
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $sentToDay = array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] === 'PATCH' && $c[1] === $special));
+        checkEq('the undo sends the day nothing; it follows the series back, at Google and here', [
+            [], 'Sample weekly', 'Sample weekly', null,
+        ], [$sentToDay, $s->fake->events['smpl2weekly']['summary'], $s->fake->events[$special]['summary'] ?? 'Sample weekly', $dayRow($s, '2027-03-29 17:00:00')]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google undo: a place and its coordinates go back as one, on undo and redo', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'location' => 'Sample room A', 'locationLat' => 37.25, 'locationLng' => -122.25]);
+        $s->events->throwDeferred();
+        $rowId = (int) $dayRow($s, '2027-03-08 18:00:00')['id'];
+        $s->events->patch($s->u, $rowId, ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'location' => 'Sample room B']);
+        $s->events->throwDeferred();
+        $entry = $last($s);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $here = $dayRow($s, '2027-03-08 18:00:00');
+        checkEq('the undo puts the place back with its coordinates', ['Sample room A', 37.25, -122.25], [$here['location'] ?? null, isset($here['location_lat']) ? (float) $here['location_lat'] : null, isset($here['location_lng']) ? (float) $here['location_lng'] : null]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        $here = $dayRow($s, '2027-03-08 18:00:00');
+        checkEq('the redo puts the new place back, which has no coordinates', ['Sample room B', null], [$here['location'] ?? null, $here['location_lat'] ?? null]);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        $here = $dayRow($s, '2027-03-08 18:00:00');
+        checkEq('undoing the redo brings the coordinates back again', ['Sample room A', 37.25], [$here['location'] ?? null, isset($here['location_lat']) ? (float) $here['location_lat'] : null]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google undo: a redo bringing a day back where a poll made a row since takes that row, its id and tag kept', function () use ($setup, $masterId, $last, $db, $sameAfterPoll, $iso, $remote, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        $undoEntry = $last($s);
+        checkEq('the undo leaves the day ordinary', [null], [$dayRow($s, '2027-03-08 18:00:00')]);
+        $remote($s, 'smpl2weekly_20270308T180000Z', ['location' => 'Sample remote room']);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $polled = $dayRow($s, '2027-03-08 18:00:00');
+        $s->events->patch($s->u, (int) $polled['id'], ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['sample-tag']]);
+        $s->events->throwDeferred();
+        $caught = null;
+        try {
+            $s->undo->undoById($s->u, (int) $undoEntry['id']);
+        } catch (Throwable $e) {
+            $caught = $e->getMessage();
+        }
+        $here = $dayRow($s, '2027-03-08 18:00:00');
+        $tags = $here === null ? [] : array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) $here['id']]), 'name');
+        checkEq('the redo goes through onto the polled row: its id, its tag, the place from Google and the title redone', [
+            null, (int) $polled['id'], ['sample-tag'], 'Sample day title', 'Sample remote room', 'Sample day title',
+        ], [$caught, (int) ($here['id'] ?? 0), $tags, $here['title'] ?? null, $here['location'] ?? null, $s->fake->events['smpl2weekly_20270308T180000Z']['summary'] ?? null]);
+        check('a poll after changes nothing', $sameAfterPoll($s));
+    });
+
+    scenario('google series undo: an undo Finish completes from Review is journaled as an undo; one Put back takes back leaves the change undoable', function () use ($setup, $masterId, $last, $undone, $pending, $iso, $db): void {
+        foreach (['finish', 'putBack'] as $how) {
+            $s = $setup();
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+            $entry = $last($s);
+            $s->t->writes = 0;
+            $s->t->staleAt = 2; // the undo's master write goes through, its next is refused: half done
+            try {
+                $s->undo->undoById($s->u, (int) $entry['id']);
+            } catch (HttpError) {
+            }
+            $s->t->staleAt = null;
+            $p = $db->one('SELECT id FROM google_pending WHERE user_id = ?', [$s->u]);
+            $how === 'finish' ? $s->events->googleFinish($s->u, (int) $p['id']) : $s->events->googlePutBack($s->u, (int) $p['id']);
+            $s->events->throwDeferred();
+            $after = $last($s);
+            $g = json_decode((string) $after['details_json'], true)['google'] ?? [];
+            if ($how === 'finish') {
+                checkEq('Finish: the change is undone and the undo\'s own entry recorded, saying so', [
+                    1, (int) $entry['id'], true, 'Sample weekly', [],
+                ], [$undone((int) $entry['id']), (int) ($g['undoes'] ?? 0), str_contains((string) $after['summary'], 'Undid: ') && str_contains((string) $after['summary'], 'Finished at Google from Review'),
+                    $s->fake->events['smpl2weekly']['summary'], $pending($s)]);
+                $s->undo->undoById($s->u, (int) $after['id']);
+                checkEq('Finish: the undo is redone like any', ['Sample renamed', 1], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $after['id'])]);
+            } else {
+                checkEq('Put back: the change stands, not undone, and the line saying so is not the account\'s own change', [
+                    0, 'Sample renamed', 'system', [],
+                ], [$undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary'], $after['source'], $pending($s)]);
+                $s->undo->undoLatest($s->u);
+                checkEq('Put back: the bare Undo then undoes the change', [1, 'Sample weekly'], [$undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary']]);
+            }
+        }
+    });
+
+    scenario('google series undo: a value Google changed while the change ran is kept and named; one changed since and polled refuses the undo as stale', function () use ($setup, $masterId, $last, $undone, $iso, $remote, $special, $db): void {
+        $s = $setup();
+        $s->t->race = ['smpl2weekly', ['summary' => 'Sample remote series']];
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']);
+        $entry = $last($s);
+        checkEq('the rename keeps the title Google gave the series during it', ['Sample remote series'], [$s->fake->events['smpl2weekly']['summary']]);
+        $s->undo->undoById($s->u, (int) $entry['id']);
+        $after = $last($s);
+        checkEq('the undo keeps it too, and its entry names it', [
+            'Sample remote series', 1, true,
+        ], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $entry['id']), substr_count((string) $after['summary'], 'Google kept something else') === 1 && str_contains((string) $after['summary'], "The series' title changed at Google since this change; left as Google has it.")]);
+
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed'], ['ownTitle' => 'give']);
+        $entry = $last($s);
+        $remote($s, $special, ['summary' => 'Sample remote day']);
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $caught = null;
+        try {
+            $s->undo->undoById($s->u, (int) $entry['id']);
+        } catch (HttpError $e) {
+            $caught = $e->errorCode;
+        }
+        checkEq('a day the change titled, renamed at Google since and polled: stale, nothing sent', ['stale_undo', 0, 'Sample renamed'],
+            [$caught, $undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary']]);
+    });
+
+    scenario('google series undo: an entry saved before changes kept what they asked is refused with a plain reason', function () use ($setup, $masterId, $last, $undone, $iso, $db): void {
+        $s = $setup();
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'location' => 'Sample room 2']);
+        $entry = $last($s);
+        $d = json_decode((string) $entry['details_json'], true);
+        foreach ($d['google']['before'] as &$b) {
+            unset($b['asked']);
+        }
+        unset($b);
+        $db->run('UPDATE mutations SET details_json = ? WHERE id = ?', [json_encode($d), (int) $entry['id']]);
+        $s->t->calls = [];
+        $caught = null;
+        try {
+            $s->undo->undoById($s->u, (int) $entry['id']);
+        } catch (HttpError $e) {
+            $caught = $e->errorCode;
+        }
+        checkEq('refused as not undoable; nothing sent; the place stays', ['not_undoable', [], 0, 'Sample room 2'],
+            [$caught, array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET')), $undone((int) $entry['id']), $s->fake->events['smpl2weekly']['location'] ?? null]);
+    });
 };

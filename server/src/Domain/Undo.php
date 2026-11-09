@@ -1329,7 +1329,7 @@ final class Undo
             if (!$force && $this->staleFor($mutation)) {
                 throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
             }
-            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority);
+            return (new GoogleUndo($this->db, $this, $this->google))->undo($mutation, $authority, $force);
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
             // Sends to the plugin's source first: not inside a transaction.
@@ -1722,8 +1722,9 @@ final class Undo
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
         if ($hereAlone) {
-            $before = $this->overCurrent(self::googleHeldAsAfter($before, $after), $after);
+            $before = self::googleHeldAsAfter($before, $after);
         }
+        $before = $this->overCurrent($before, $after);
         $mutationId = (int) $mutation['id'];
         $this->lockRows($before, $after);
         $eventIds = array_merge(self::eventIdsOf($before), self::eventIdsOf($after));
@@ -1742,7 +1743,11 @@ final class Undo
      * $before with what Google holds of each event row (GOOGLE_HELD) as it
      * is in $after, so putting it back leaves those columns to Google: an
      * edit's undo sends them to Google and puts back only the rest here
-     * (GoogleUndo). Pure.
+     * (GoogleUndo). A place's text and the coordinates picked for it are
+     * one value: where the entry changed the coordinates, the text goes
+     * back with them in the same write, so nothing after (Google's answer
+     * stored on top) ever sees the text change without its coordinates and
+     * drops them. Pure.
      */
     private static function googleHeldAsAfter(array $before, array $after): array
     {
@@ -1753,8 +1758,12 @@ final class Undo
         foreach ($before['events'] ?? [] as $i => $row) {
             $kept = $now[self::keyOf('events', $row)] ?? null;
             if ($kept !== null) {
+                $placed = false;
+                foreach (OwnFields::COORDINATE_COLUMNS as $col) {
+                    $placed = $placed || (string) ($row[$col] ?? '') !== (string) ($kept[$col] ?? '');
+                }
                 foreach (self::GOOGLE_HELD['events'] as $col) {
-                    if (array_key_exists($col, $kept)) {
+                    if (array_key_exists($col, $kept) && !($placed && $col === 'location')) {
                         $before['events'][$i][$col] = $kept[$col];
                     }
                 }
@@ -1764,9 +1773,12 @@ final class Undo
     }
 
     /**
-     * A day's row an edit's undo or redo brings back whole (in $before, not
-     * in $after), composed as the sync composes any row: what it held here
-     * alone over the day as it stands now. What Google holds of the day
+     * A day's row an undo or redo brings back whole (in $before, not in
+     * $after), composed as the sync composes any row: what it held here
+     * alone over the day as it stands now. Where a row holds that day now
+     * (a poll made one since), it is that row: the row brought back takes
+     * its id, so what refers to either names the one row, and nothing is
+     * ever written over another row's day. What Google holds of the day
      * (its columns, and the fields of its own Google holds) comes from the
      * row at that day now, else, the day an ordinary occurrence, from its
      * series there (Feeds::ofSeries, as the sync follows a row holding only
@@ -1781,16 +1793,23 @@ final class Undo
             $kept[self::keyOf('events', $row)] = true;
         }
         foreach ($before['events'] ?? [] as $i => $row) {
-            $own = OwnFields::decode($row['override_fields'] ?? null);
-            if (isset($kept[self::keyOf('events', $row)]) || ($row['recurrence_instance_utc'] ?? null) === null || $own === null) {
+            if (isset($kept[self::keyOf('events', $row)]) || ($row['recurrence_instance_utc'] ?? null) === null) {
                 continue;
             }
             $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
                 [(int) $row['calendar_id'], (string) $row['uid'], (string) $row['recurrence_instance_utc'], (int) $row['id']]);
+            if ($now !== null) {
+                $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
+                $row = $before['events'][$i];
+            }
+            $own = OwnFields::decode($row['override_fields'] ?? null);
+            if ($own === null) {
+                continue;
+            }
             $google = OwnFields::googleHeld($own);
             if ($now !== null) {
                 $over = $now;
-                $google = OwnFields::googleHeld(OwnFields::decode($now['override_fields'] ?? null) ?? []);
+                $google = OwnFields::decode($now['override_fields'] ?? null) ?? []; // the row it is: all it owns stays its own
             } else {
                 $master = $google !== [] ? null : $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
                     [(int) $row['calendar_id'], (string) $row['uid']]);
@@ -1804,6 +1823,29 @@ final class Undo
             $before['events'][$i] = $composed;
         }
         return $before;
+    }
+
+    /**
+     * $tables with event $from named $to: the row itself, and every row of
+     * what hangs off it or refers to it (tags, people, OwnFields::REFERENCES)
+     * that names it. Pure.
+     */
+    private static function renamed(array $tables, int $from, int $to): array
+    {
+        $cols = ['events' => ['id', 'recurrence_parent_id'], 'event_tags' => ['event_id'], 'event_people' => ['event_id']];
+        foreach (OwnFields::REFERENCES as [$table, , $eventCols]) {
+            $cols[$table] = array_merge($cols[$table] ?? [], $eventCols);
+        }
+        foreach ($cols as $table => $names) {
+            foreach ($tables[$table] ?? [] as $i => $r) {
+                foreach ($names as $col) {
+                    if (isset($r[$col]) && (int) $r[$col] === $from) {
+                        $tables[$table][$i][$col] = $to;
+                    }
+                }
+            }
+        }
+        return $tables;
     }
 
     /**

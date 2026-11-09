@@ -1723,20 +1723,26 @@ final class GoogleSeries
      * changed since): never overwritten. So every field and day the change
      * did not change stays exactly as Google holds it. A day is an edited
      * day of the result where it differs from the series there, with its
-     * own fields the target's and whatever else of its own it holds now.
+     * own fields the target's and whatever else of its own it holds now. A
+     * day the change leaves as it found it that holds no record now where
+     * the change's own write would have left one (put back to the series
+     * at Google since) follows the series, as a day the change has no row
+     * for: its own list is what it holds now (nothing Google holds), never
+     * the change's.
      *
-     * @return array{0:array,1:list<string>} the target over what Google holds now, and words for what was left as Google has it
+     * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it, and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
      */
     public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped'): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
-            return [$target, []];
+            return [$target, [], []];
         }
         $B = self::heldOf($before);
         $T = self::heldOf($target);
         $P = self::afterMaster($B, $before['master'], $target['master']);
         $C = $now;
         $words = [];
+        $conflicts = [];
         // The master, a group at a time (its own write's effect is the target's values).
         $mb = self::groupsOf($before['master'], true);
         $mt = self::groupsOf($target['master'], true);
@@ -1753,6 +1759,7 @@ final class GoogleSeries
             }
             if ($how === 'conflict') {
                 $left[] = self::GROUP_WORDS[$g];
+                $conflicts[] = [null, $g];
             }
         }
         if ($left !== []) {
@@ -1786,6 +1793,16 @@ final class GoogleSeries
             $p = self::dayIn($P, $key);
             $t = self::dayIn($T, $key);
             $c = self::dayIn($C, $key);
+            // A day the change leaves as it found it (its own part the same
+            // on both sides) that Google put back to the series since: no
+            // record now where the change's own write would have left one.
+            // It follows the series, as a day the change has no row for.
+            $follows = $x !== null && $wasKey === $key && is_array($bOwn) && is_array($t) && is_array($c)
+                && isset($B['records'][$key], $P['records'][$key]) && !isset($C['records'][$key])
+                && self::ownPart($bOwn, $before['exceptions'][$key] ?? null) === self::ownPart($t, $x);
+            if ($follows) {
+                $x = null;
+            }
             // What the change wants of the day over the series as it will be: its own fields, the rest the series'.
             $want = self::plainAt($master, $key, $len);
             foreach (OwnFields::normalize((array) ($x['own'] ?? [])) as $field) {
@@ -1810,10 +1827,13 @@ final class GoogleSeries
                     $fromNow = array_keys(self::GROUPS);
                 }
                 if ($how === 'conflict') {
+                    $conflicts[] = [$key, 'day'];
                     $words[] = $c === 'skip'
                         ? $dayWords($key) . " was deleted at Google $since; it stays deleted."
                         : $dayWords($key) . " was changed at Google $since; left as Google has it.";
                 }
+            } elseif ($follows) {
+                $result = $want;
             } else {
                 $result = $want;
                 $left = [];
@@ -1829,6 +1849,7 @@ final class GoogleSeries
                     $fromNow[] = $g;
                     if ($how === 'conflict') {
                         $left[] = self::GROUP_WORDS[$g];
+                        $conflicts[] = [$key, $g];
                     }
                 }
                 if ($left !== []) {
@@ -1855,7 +1876,7 @@ final class GoogleSeries
             $exceptions[$key] = $row + ['own' => $own, 'rowId' => $x['rowId'] ?? null];
         }
         sort($skips);
-        return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words];
+        return [array_replace($target, ['master' => $master, 'exceptions' => $exceptions, 'skips' => $skips]), $words, $conflicts];
     }
 
     /**
@@ -1866,11 +1887,29 @@ final class GoogleSeries
      * change takes $to's value, and everything else stays as $current has
      * it. What an undo or redo of a series change asks (GoogleUndo): the
      * inverse of what the change asked, never a snapshot of what it learned
-     * from Google on the way. Pure.
+     * from Google on the way. A value the deltas change that $current holds
+     * otherwise is kept and named, as rebase keeps one. Pure.
+     *
+     * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} as rebase
      */
     public static function deltasOver(array $from, array $to, array $current, int $thisYear): array
     {
-        return self::rebase($from, $to, self::heldOf($current), $thisYear)[0];
+        return self::rebase($from, $to, self::heldOf($current), $thisYear, 'since this change');
+    }
+
+    /**
+     * Whether two states of a series (stateOf's shape) hold the same value
+     * at one of rebase's conflicts: the master's field group ($key null), a
+     * day's group, or a day as a whole ($group 'day'). Pure.
+     */
+    public static function sameAt(array $a, array $b, ?string $key, string $group): bool
+    {
+        if ($key === null) {
+            return (self::groupsOf($a['master'], true)[$group] ?? null) === (self::groupsOf($b['master'], true)[$group] ?? null);
+        }
+        $da = self::dayIn(self::heldOf($a), $key);
+        $db = self::dayIn(self::heldOf($b), $key);
+        return $group === 'day' || !is_array($da) || !is_array($db) ? $da === $db : ($da[$group] ?? null) === ($db[$group] ?? null);
     }
 
     /** A day's own part, for "does the change change this day": skipped, or its own fields' values (none for an ordinary day). */

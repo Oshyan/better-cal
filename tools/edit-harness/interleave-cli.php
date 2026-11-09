@@ -162,6 +162,10 @@ try {
         if (($onlyCase !== null && $i !== $onlyCase) || $i % $ofShards !== $shard % $ofShards) {
             continue;
         }
+        if (!$quiet) {
+            // The case about to run, before it runs, so a run the database server stops mid-case names that case.
+            fwrite(STDERR, "case $i of $cases (seed $seed)\n");
+        }
         $result = $runCase(Interleave::draw($seed, $i));
         $count($result);
         if ($saveSpec !== null) {

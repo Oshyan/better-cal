@@ -178,6 +178,38 @@ final class GoogleUndo
     }
 
     /**
+     * An edit's before body over the event as it stands: each field a day
+     * owned before ($wasRow's own list; none for a day with no row) at its
+     * value then, each other field Google holds at its series' value there
+     * now (Feeds::ofSeries, as the sync follows a day), so the inverse of
+     * "gave the day a field of its own" is "the day inherits it again". An
+     * event in no series, or a day its series no longer has, keeps $before.
+     */
+    private function beforeOver(array $before, ?array $wasRow, ?array $day): array
+    {
+        $base = $wasRow ?? $day;
+        if ($base === null || ($base['recurrence_instance_utc'] ?? null) === null) {
+            return $before;
+        }
+        $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
+            [(int) $base['calendar_id'], (string) $base['uid']]);
+        $target = $master === null || empty($master['rrule']) ? null : Feeds::ofSeries($base, null, $master);
+        if ($target === null) {
+            return $before;
+        }
+        $owned = $wasRow === null ? [] : (OwnFields::decode($wasRow['override_fields'] ?? null) ?? OwnFields::googleFields());
+        $series = self::bodyOf(Feeds::followed($base, $target));
+        foreach (array_diff(GoogleWriter::allowedKeys(), GoogleWriter::keysOf(OwnFields::googleHeld($owned))) as $key) {
+            if (array_key_exists($key, $series)) {
+                $before[$key] = $series[$key];
+            } else {
+                unset($before[$key]);
+            }
+        }
+        return $before;
+    }
+
+    /**
      * The `google` details of an entry. Pure.
      *
      * @param array<string,mixed> $extra
@@ -336,9 +368,11 @@ final class GoogleUndo
                 // Only what the edit changed goes back, each field at its
                 // value before, over the event as it is now: a later change
                 // to another field stays, here and at Google (one to the same
-                // field made this entry stale: Undo::staleFor).
+                // field made this entry stale: Undo::staleFor). A day's field
+                // it did not own before goes back to following its series:
+                // the series' value there now, not the one it showed then.
                 $changed = self::changedOf($g, $leftRow);
-                $send = self::inverse($g['before'], $changed);
+                $send = self::inverse($this->beforeOver($g['before'], $wasRow, $row ?? $leftRow), $changed);
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and
@@ -483,11 +517,14 @@ final class GoogleUndo
     }
 
     /**
-     * Undo a whole-series change: the befores worked out from what putting
-     * the snapshots back leaves, refused first where the trip rules refuse
-     * that (rebased), then sent to Google
-     * (GoogleSeries::apply, each series conditional on its stored etag),
-     * the snapshots put back here, Google's read-back stored on top, the
+     * Undo a whole-series change: an ordinary series write. What it asks of
+     * each series is the inverse of the undone change's own deltas, applied
+     * over the series as stored now (inverseOf); it is refused first where
+     * the trip rules refuse putting the snapshots back (Undo::checkRestore),
+     * then sent to Google through GoogleSeries::apply like any change (the
+     * read and digest check before its first step, its writes, the read-back
+     * and the one rebase over it), the snapshots put back here for the rows'
+     * identities, tags and people, Google's read-back stored on top, the
      * pending row settled, the entry marked undone and the undo recorded,
      * all in the account's write. A failure before anything reached Google
      * rolls all of it back (a 412 is the conflict); one after a step did
@@ -508,9 +545,9 @@ final class GoogleUndo
             : self::UNDID . (string) $mutation['summary'];
         $beforeSend = $authority === null ? null : fn() => $authority->assertValid($this->db, false);
         $series = new GoogleSeries($this->db, $this->writer(), new Feeds($this->db));
-        $befores = $this->rebased($mutation, $calendar, (array) $g['before']);
+        $this->undo->checkRestore($mutation);
         $deferred = null;
-        $this->undo->write($userId, function () use ($mutation, $befores, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
+        $this->undo->write($userId, function () use ($mutation, $g, $calendar, $authority, $beforeSend, $series, $userId, $summary, &$deferred): void {
             $authority?->assertValid($this->db);
             $locked = CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
             if ($locked === null || !GoogleSync::sameBinding($calendar, $locked)) {
@@ -520,7 +557,7 @@ final class GoogleUndo
             if ($fresh === null || (int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
-            $targets = $series->withStoredIds($locked, $befores);
+            $targets = $series->withStoredIds($locked, $this->inverseOf($fresh, $locked, (array) $g['before']));
             $title = (string) ($targets[0]['master']['title'] ?? '');
             try {
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend);
@@ -553,52 +590,52 @@ final class GoogleUndo
     }
 
     /**
-     * The befores an undo sends: each series the entry changed as putting
-     * its snapshots back here leaves it, which gives back the columns and
-     * rows the entry changed and keeps what changed since in the rest (a
-     * rename after a new end, undone by its entry, keeps the rename), as a
-     * local undo does; a series the undo removes, and the events of their
-     * own, as recorded. Worked out in a write of its own that is rolled
-     * back, which also refuses first what putting the snapshots back would
-     * refuse (Undo::checkRestore), before Google is sent anything. Inside
-     * another transaction there is nothing to roll back to on its own, and
-     * the befores are sent as recorded.
+     * What an undo of a series entry asks of each series: the inverse of the
+     * undone change's own deltas (what it asked, `asked`, back to its
+     * before) applied over the series as stored now
+     * (GoogleSeries::deltasOver). A field or day the change did not change
+     * stays as it stands, whatever Google changed while the change ran; one
+     * it changed goes back to its before (a day it gave a field of its own
+     * inherits it again). A redo is the same: its entry's befores carry what
+     * the undo asked. An entry recorded before changes kept what they asked
+     * takes it from the rows as the change left them (its after snapshot).
+     * A series the undo removes, one not here, and the events of their own
+     * go as recorded.
      *
      * @param list<array> $befores
      * @return list<array>
      */
-    private function rebased(array $mutation, array $calendar, array $befores): array
+    private function inverseOf(array $mutation, array $calendar, array $befores): array
     {
-        if ($this->db->pdo()->inTransaction()) {
-            return $befores;
-        }
-        $done = new \RuntimeException('rebased');
-        $out = $befores;
-        try {
-            $this->undo->write((int) $mutation['user_id'], function () use ($mutation, $calendar, $befores, &$out, $done): void {
-                $this->undo->restoreSnapshots($mutation);
-                foreach ($befores as $i => $t) {
-                    if (!empty($t['remove'])) {
-                        continue;
-                    }
-                    $master = !empty($t['uid'])
-                        ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']])
-                        : null;
-                    $master ??= $this->writer()->rowByGoogleId((int) $calendar['id'], (string) $t['googleId']);
-                    if ($master === null || empty($master['rrule'])) {
-                        continue;
-                    }
-                    $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
-                    $out[$i] = array_replace($t, ['master' => $now['master'], 'exceptions' => $now['exceptions'], 'skips' => $now['skips']]);
-                }
-                throw $done;
-            });
-        } catch (\RuntimeException $e) {
-            if ($e !== $done) {
-                throw $e;
+        $year = (int) \BetterCal\Support\Time::nowUtc()->format('Y');
+        $left = json_decode((string) ($mutation['after_json'] ?? ''), true)['tables']['events'] ?? [];
+        $out = [];
+        foreach ($befores as $i => $t) {
+            $asked = $t['asked'] ?? null;
+            unset($t['asked']);
+            $out[$i] = $t;
+            if (!empty($t['remove']) || empty($t['master'])) {
+                continue;
             }
+            $master = !empty($t['uid'])
+                ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']])
+                : null;
+            $master ??= $this->writer()->rowByGoogleId((int) $calendar['id'], (string) $t['googleId']);
+            if ($master === null || empty($master['rrule'])) {
+                continue;
+            }
+            $now = GoogleSeries::stateOf($master, $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL ORDER BY id', [(int) $master['id']]));
+            if (!is_array($asked) || empty($asked['master'])) {
+                $asked = $now;
+                foreach ($left as $r) {
+                    if ((string) ($r['uid'] ?? '') === (string) $master['uid'] && ($r['recurrence_instance_utc'] ?? null) === null && !empty($r['rrule'])) {
+                        $asked = GoogleSeries::stateOf($r, array_values(array_filter($left, static fn(array $d): bool => (int) ($d['recurrence_parent_id'] ?? 0) === (int) $r['id'])));
+                    }
+                }
+            }
+            $out[$i] = GoogleSeries::deltasOver($asked, $t, $now, $year);
         }
-        return $out;
+        return array_values($out);
     }
 
     /**

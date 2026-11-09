@@ -1,0 +1,39 @@
+{
+    "about": "A tag on an ordinary day (local data alone), undone so its row goes, then the series' notes changed for all events, then the tag redone: the row comes back with its tag over the series as it is now (the new notes), not the notes it showed when tagged, and a poll after changes nothing (N3 of the review of 9de4e3dc..8e568077, seed 419 case 578; x-agree, x-follow)",
+    "series": {
+        "family": "monthly_day_list",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=1,15",
+        "import": false,
+        "bound": "count",
+        "boundAt": 10,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-02-12 09:30",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.444,
+            "what": "tags"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.916
+        },
+        {
+            "do": "w-all",
+            "pick": 0.504,
+            "what": "description"
+        },
+        {
+            "do": "redo",
+            "pick": 0.427
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.5
+        }
+    ]
+}

@@ -69,6 +69,11 @@ if ($shards > 1 && !$child) {
             $merged['na'][$why] = ($merged['na'][$why] ?? 0) + $n;
         }
         $merged['seconds'] = max($merged['seconds'], $part['seconds']);
+        foreach ($part['pairs'] ?? [] as $a => $bs) {
+            foreach ($bs as $b => $n) {
+                $merged['pairs'][$a][$b] = ($merged['pairs'][$a][$b] ?? 0) + $n;
+            }
+        }
     }
     usort($merged['records'], static fn(array $a, array $b): int => [isset($a['spec']['fixed']) ? 1 : 0, $a['n']] <=> [isset($b['spec']['fixed']) ? 1 : 0, $b['n']]);
     exit(interleaveReport($merged, $findingsFile, $seed, $quiet));
@@ -146,6 +151,14 @@ try {
         $spec = $result['spec'];
         $out['counts']['cases']++;
         $out['counts']['steps'] += count($spec['steps']);
+        $prev = 'start';
+        foreach ($spec['steps'] as $st) {
+            if (($st['ran'] ?? 'skipped') === 'skipped') {
+                continue;
+            }
+            $out['pairs'][$prev][$st['do']] = ($out['pairs'][$prev][$st['do']] ?? 0) + 1;
+            $prev = $st['do'];
+        }
         foreach ($result['runs'] as $c => $byRole) {
             foreach ($byRole as $role => $n) {
                 $out['runs'][$c][$role] = ($out['runs'][$c][$role] ?? 0) + $n;
@@ -275,6 +288,31 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
     foreach ($out['na'] as $why => $n) {
         echo "  not applicable ($n): $why\n";
     }
+    // Coverage by pair of consecutive step kinds that ran: every kind can follow every kind, and a setup kind the start, so the pairs a
+    // run never exercised are listed by their first step, with how often each first step ran at all.
+    require_once __DIR__ . '/Interleave.php'; // the parent of --shards loads nothing else
+    $kinds = array_keys(Interleave::WEIGHTS);
+    $never = [];
+    $ran = 0;
+    foreach (array_merge(['start'], $kinds) as $a) {
+        // A case starts with its setup steps only.
+        foreach ($a === 'start' ? array_values(array_unique(Interleave::SETUP)) : $kinds as $b) {
+            if (($out['pairs'][$a][$b] ?? 0) > 0) {
+                $ran++;
+            } else {
+                $never[$a][] = $b;
+            }
+        }
+    }
+    $all = count($kinds) * count($kinds) + count(array_unique(Interleave::SETUP));
+    echo "  step pairs run: $ran of $all the generator can draw\n";
+    if (!$quiet) {
+        foreach ($never as $a => $bs) {
+            echo "    never after $a (" . array_sum($out['pairs'][$a] ?? []) . ' runs of it): ' . implode(', ', $bs) . "\n";
+        }
+    }
+    $out['coverage'] = ['pairsRun' => $ran, 'pairsDrawable' => $all, 'never' => $never];
+    file_put_contents($findingsFile, json_encode(['mode' => 'interleave', 'seed' => $seed] + $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
     echo count($out['records']) . " failing checks, " . count($bySig) . " signatures\n";
     foreach ($bySig as $sig => $list) {
         $cases = array_unique(array_map(static fn(array $r): string => (string) ($r['spec']['fixed'] ?? $r['n']), $list));

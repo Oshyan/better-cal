@@ -28,6 +28,8 @@ final class Interleave
         'finish' => 5, 'putback' => 5,
         'u-entry' => 4, 'u-bare' => 5, 'redo' => 2,
     ];
+    /** The setup steps a case starts with (w-this-l twice: its weight). */
+    public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
@@ -100,7 +102,7 @@ final class Interleave
             'allDay' => false, 'tzid' => 'America/Los_Angeles', 'start' => '2027-03-01 10:00', 'length' => 60];
         $steps = [];
         foreach (range(1, $r->int(1, 3)) as $_) {
-            $steps[] = self::drawStep($r, $r->pick(['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1']));
+            $steps[] = self::drawStep($r, $r->pick(self::SETUP));
         }
         foreach (range(1, $r->int(3, 8)) as $_) {
             $steps[] = self::drawStep($r, $r->weighted(self::WEIGHTS));
@@ -1200,7 +1202,7 @@ final class Interleave
             && $error === 'google_conflict' && ($this->ldigest($s1['rows'])[$gid] ?? 1) == ($s1['g']['digest'][$gid] ?? 2)) {
             unset($this->dirty[$gid]);
         }
-        $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok']];
+        $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok'], 'rows0' => $s0['rows']];
         if ($out['ok'] && ($kind === 'w-' || $kind === 'f-')) {
             foreach (array_keys($asked['fields']) as $f) {
                 $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true,
@@ -1388,32 +1390,84 @@ final class Interleave
             }
             return;
         }
-        if (!$fieldEdit || ($asked['kind'] ?? '') === 'redo') {
+        if (!$fieldEdit) {
             return;
         }
-        // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included.
-        $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
-            && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null))
-            && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
-        if ($later !== []) {
-            $this->ran('x-undo-fields', 'stale');
-            $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of step $of went through though a later change (step " . implode(', ', array_unique(array_column($later, 'step'))) . ') changed the same field: stale_undo by the rule (A3)', $context);
-            return;
+        $redo = ($asked['kind'] ?? '') === 'redo';
+        if (!$redo) {
+            // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included.
+            $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
+                && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null))
+                && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
+            if ($later !== []) {
+                $this->ran('x-undo-fields', 'stale');
+                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of step $of went through though a later change (step " . implode(', ', array_unique(array_column($later, 'step'))) . ') changed the same field: stale_undo by the rule (A3)', $context);
+                return;
+            }
         }
-        $this->ran('x-undo-fields', 'fields back');
+        // Exact, against the rows before the edit (decisions.md, "The undo of a Google edit sends back only the fields that
+        // edit changed": "Each changed field goes back at its before value over the event as it stands ... redo carries
+        // the same fields"): an undo puts each field the edit set back at the value it had before the edit (a day the edit
+        // made its own goes back to the series' value as it stands now), a redo puts the edit's value back, and every other
+        // field of every row stays as it was before the undo or redo.
+        $this->ran('x-undo-fields', $redo ? 'redo fields exact' : 'fields back exact');
         $gid = (string) $orig['asked']['gid'];
-        $was = $this->done[$of]['before'] ?? null;
-        foreach ($orig['asked']['fields'] as $f => $v) {
-            $now = null;
-            foreach ($s1['rows'] as $r) {
-                if ($orig['asked']['kind'] === 'all' && (string) $r['google_event_id'] === $gid && $r['recurrence_parent_id'] === null) {
-                    $now = (string) $r[$f];
-                }
-                if ($orig['asked']['kind'] === 'this' && $r['recurrence_instance_utc'] === ($orig['asked']['key'] ?? null)) {
-                    $now = (string) $r[$f];
+        $key = $orig['asked']['key'] ?? null;
+        $kind = $orig['asked']['kind'];
+        $masterOf = static function (array $rows) use ($gid): ?array {
+            foreach (self::masters($rows) as $m) {
+                if ((string) $m['google_event_id'] === $gid) {
+                    return $m;
                 }
             }
-            $this->expect('x-undo-fields', $now !== $v, "step {$this->step} ($do): undo takes back the $f step $of set", $context + ['field' => $f, 'sent' => $v, 'now' => $now]);
+            return null;
+        };
+        $dayOf = static function (array $rows, ?array $master) use ($key): ?array {
+            if ($master === null || $key === null) {
+                return null;
+            }
+            foreach ($rows as $r) {
+                if ((int) ($r['recurrence_parent_id'] ?? 0) === (int) $master['id'] && $r['recurrence_instance_utc'] === $key) {
+                    return $r;
+                }
+            }
+            return null;
+        };
+        $rowsBefore = $this->done[$of]['rows0'] ?? [];
+        $master0 = $masterOf($rowsBefore);
+        $master1 = $masterOf($s1['rows']);
+        $day0 = $dayOf($rowsBefore, $master0);
+        $day1 = $dayOf($s1['rows'], $master1);
+        $target = null;
+        foreach ($orig['asked']['fields'] as $f => $v) {
+            if ($kind === 'all') {
+                $now = $master1 === null ? null : (string) $master1[$f];
+                $want = $redo ? (string) $v : ($master0 === null ? null : (string) $master0[$f]);
+                $target = $master1['id'] ?? null;
+            } else {
+                $now = $day1 !== null ? (string) $day1[$f] : ($master1 === null ? null : (string) $master1[$f]);
+                $ownedBefore = $day0 !== null && in_array($f, $day0['own'], true);
+                $want = $redo ? (string) $v : ($ownedBefore ? (string) $day0[$f] : ($master1 === null ? null : (string) $master1[$f]));
+                $target = $day1['id'] ?? ($day0['id'] ?? null);
+            }
+            $this->expect('x-undo-fields', $now === $want, "step {$this->step} ($do): " . ($redo ? 'redo puts back' : 'undo puts back') . " the exact $f " . ($redo ? 'step ' . $of . ' set' : 'it had before step ' . $of),
+                $context + ['field' => $f, 'want' => $want, 'now' => $now]);
+        }
+        // Everything else as it was before this undo or redo: every row but the edit's own, every field of that row but the edit's.
+        $fields = array_keys($orig['asked']['fields']);
+        foreach (array_unique(array_merge(array_keys($s0['l']), array_keys($s1['l']))) as $id) {
+            $a = $s0['l'][$id] ?? null;
+            $b = $s1['l'][$id] ?? null;
+            if ($a == $b) {
+                continue;
+            }
+            $own = $kind === 'this' && ($a === null || $b === null || (int) $id === (int) $target || (string) ($a['key'] ?? $b['key']) === (string) $key);
+            if ($a === null || $b === null) {
+                $this->expect('x-undo-fields', $own, "step {$this->step} ($do): " . ($redo ? 'a redo' : 'an undo') . " of step $of made or removed a row other than the edit's own day", $context + ['row' => $id, 'was' => $a, 'now' => $b]);
+                continue;
+            }
+            $strip = static fn(array $r): array => array_diff_key($r, array_flip(array_merge($fields, ['own'])));
+            $this->expect('x-undo-fields', $strip($a) == $strip($b), "step {$this->step} ($do): " . ($redo ? 'a redo' : 'an undo') . " of step $of changed something it did not change", $context + ['row' => $id, 'diff' => self::diff([$id => $strip($a)], [$id => $strip($b)])]);
         }
     }
 

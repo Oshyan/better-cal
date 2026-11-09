@@ -1,0 +1,26 @@
+{
+    "about": "A rename for all events with a day renamed at Google between its master write and its read-back (kept as that day's own title), then the rename undone by its entry: the undo puts the series' title back and keeps the day's own title from Google, its row standing (x-undo-fields, exact; seed 307 case 371)",
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=9",
+        "import": false,
+        "bound": "until",
+        "boundAt": 11,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2028-02-28 00:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-race",
+            "pick": 0.019,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.136
+        }
+    ]
+}

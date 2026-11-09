@@ -1,0 +1,31 @@
+{
+    "about": "A day given a tag (its row made by that entry), then a place for all events, which rewrites that row, then the tag's entry undone: stale, since a newer change stands on the row the entry made (x-undo-fields; api-contract.md, stale_undo, \"added something to an item this one made\").",
+    "series": {
+        "family": "yearly_day",
+        "rrule": "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=16",
+        "import": false,
+        "bound": "until",
+        "boundAt": 10,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2027-01-31 01:30",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.896,
+            "what": "tags"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.485,
+            "what": "location"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.367
+        }
+    ]
+}

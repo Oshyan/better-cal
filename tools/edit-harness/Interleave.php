@@ -37,6 +37,8 @@ final class Interleave
     /** The setup steps a case starts with (w-this-l twice: its weight). */
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
+    /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
+    public const CHECKS = ['x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
@@ -461,13 +463,30 @@ final class Interleave
             return;
         }
         $this->ran('step', $do . ($out['ok'] ? '' : ' refused'));
-        $this->check($do, $out, $s0, $this->snap());
+        $s1 = $this->snap();
+        if ($this->probe !== null && $this->probeStep === $this->step) {
+            // An oracle probe (OracleProbes.php): damage injected into what the step's checks read, which a check that
+            // keeps its contract must then fail on.
+            [$out, $s0, $s1] = $this->probe->call($this, $do, $out, $s0, $s1);
+        }
+        $this->check($do, $out, $s0, $s1);
     }
 
     /** @var array<int,array{before:array,after:array,step:int}> each Activity entry's rows by identity before and after the step that made it */
     private array $entryStates = [];
     /** The day a w-race step's remote change touched, kept out of that step's entry (someone else's change, not the request's). */
     private ?string $racedIdent = null;
+    /** An oracle probe's damage, applied after the step numbered probeStep (OracleProbes.php); null in every ordinary run. */
+    public ?\Closure $probe = null;
+    public ?int $probeStep = null;
+
+    /** A snapshot's comparable states read again from its rows, after a probe changed them. */
+    private function reshape(array $s): array
+    {
+        $s['l'] = $this->lstate($s['rows']);
+        $s['here']['l'] = $s['l'];
+        return $s;
+    }
 
     /** What the step about to fail asked (set before the product is called, so a refusal still knows its series). */
     private ?array $lastAsked = null;
@@ -1594,8 +1613,33 @@ final class Interleave
             if ($fields === ['+'] || $fields === ['-']) {
                 if (($b === null) !== ($c === null)) {
                     $out[$ident] = $fields;
+                } elseif ($b !== null && $c !== null) {
+                    // A row the entry made that a newer change has changed since, in any field or its own list: the newer
+                    // change stands on the item this one made (api-contract.md, stale_undo: "added something to an item
+                    // this one made", "changed the same field"), and undoing would take it away with the row.
+                    $f = array_values(array_filter(array_merge(self::judged('series:', $b, $c), ['own']), static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                    if ($f !== []) {
+                        $out[$ident] = $f;
+                    }
                 }
                 continue;
+            }
+            if (str_starts_with($ident, 'series:') && in_array('skips', $fields, true)) {
+                // A day the entry skipped or brought back that a newer change has made, removed or changed since: the
+                // newer change stands on that date (api-contract.md, stale_undo: "changed its times where this deleted,
+                // edited or split off a date, or the other way round"; "removed or made the same item").
+                $g = substr($ident, strlen('series:'));
+                $a = $state['before'][$ident] ?? null;
+                $keys = array_merge(array_diff($a['skips'] ?? [], $b['skips'] ?? []), array_diff($b['skips'] ?? [], $a['skips'] ?? []));
+                foreach ($keys as $k) {
+                    $day = 'day:' . $g . ':' . $k;
+                    $x = $state['after'][$day] ?? null;
+                    $y = $now[$day] ?? null;
+                    $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
+                    if ($plain($x) != $plain($y)) {
+                        $out[$day] = ['date skipped or brought back'];
+                    }
+                }
             }
             foreach ($fields as $f) {
                 if ($c === null || ($b[$f] ?? null) != ($c[$f] ?? null)) {

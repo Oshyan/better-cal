@@ -152,8 +152,10 @@ final class GoogleSync
         }
         unset($changes);
         self::assertWithinDeadline($deadline);
+        $whole = $syncToken === null;
+        $emptyRefused = false;
         // The account first, as every change to its data takes it (Undo::write).
-        return (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged): int {
+        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -182,6 +184,20 @@ final class GoogleSync
                 $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), 0);
                 return 0;
             }
+            // An empty listing never deletes: a whole read (the first, or
+            // after a 410) that lists nothing live for a calendar holding
+            // rows is not applied. Rows and sync position stay as they are,
+            // the calendar goes to Review, and the next poll reads it whole
+            // again. Google names permission changes among a 410's causes,
+            // and a listing that lost its access lists nothing; a calendar
+            // emptied on purpose still empties through a delta poll.
+            if ($whole && $snapshot === [] && $this->storedCount($calendarId) > 0) {
+                $emptyRefused = true;
+                return 0;
+            }
+            if ($whole) {
+                ReviewQueue::closeGoogleEmpty($this->db, (int) $calendar['user_id'], $calendarId);
+            }
             // Feeds::sync loads and indexes every stored row (including a
             // soft-deleted one), while the new snapshot is still resident.
             // Re-query under the account lock immediately before that load.
@@ -194,6 +210,13 @@ final class GoogleSync
             $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+        if ($emptyRefused) {
+            $message = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+            error_log('google sync: calendar ' . $calendarId . ': a whole read listed nothing; not applied');
+            (new Undo($this->db))->write((int) $calendar['user_id'], fn() => ReviewQueue::holdGoogleEmpty($this->db, (int) $calendar['user_id'], $calendar));
+            throw new \RuntimeException($message);
+        }
+        return $count;
     }
 
     /**

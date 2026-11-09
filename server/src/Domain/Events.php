@@ -390,7 +390,7 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null): void
     {
         $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
         if ($google !== null) {
@@ -400,7 +400,7 @@ final class Events
         // No snapshots, but what it changed is known: the event, which an
         // older undo of it (its tags, say) stands on.
         $touches = $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
-        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, touches: $touches);
+        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, $details, touches: $touches);
     }
 
     private function googleUndo(): GoogleUndo

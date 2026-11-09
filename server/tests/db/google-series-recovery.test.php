@@ -1027,4 +1027,39 @@ return static function (Db $db): void {
         $out = $recover($s, 'putBack');
         checkEq('a rename\'s answer lost, nothing changed since: Put back restores it', [true, $was], [$out['ok'], $held($s, 'smpl3weekly')]);
     });
+
+    // ---- Put back judges an answered step by content (the digest), 2026-11-09 ----------
+
+    scenario('google recovery: answered steps, then the series written at Google with nothing changed (every etag moves): Put back reverses it; a changed field refuses it', function () use ($setup, $move, $held, $stored, $pending, $recover, $refused): void {
+        $dry = $setup();
+        $move($dry);
+        $writes = $dry->t->writes;
+        for ($n = 2; $n <= $writes; $n++) {
+            // Writes 1 to n-1 answered, write n refused (412): half done with answered steps only.
+            $s = $setup();
+            $was = $held($s, 'smpl3weekly');
+            $s->t->staleAt = $n;
+            try {
+                $move($s);
+            } catch (HttpError) {
+            }
+            $etag = $s->fake->events['smpl3weekly']['etag'] ?? null;
+            $s->fake->seed($s->fake->events['smpl3weekly']);
+            check("stale at write $n: the stand-in moved the series' etag with its content unchanged", ($s->fake->events['smpl3weekly']['etag'] ?? null) !== $etag);
+            $out = $recover($s, 'putBack');
+            checkEq("stale at write $n, the etag moved, the content not: Put back restores the series at Google and here; nothing left; no pending row", [true, [], $was, $was, []],
+                [$out['ok'], $out['left'], $held($s, 'smpl3weekly'), $stored($s, 'smpl3weekly'), $pending($s)]);
+        }
+        $s = $setup();
+        $s->t->staleAt = 2;
+        try {
+            $move($s);
+        } catch (HttpError) {
+        }
+        $s->fake->seed(array_replace($s->fake->events['smpl3weekly'], ['location' => 'Sample room elsewhere']));
+        $there = $held($s, 'smpl3weekly');
+        [$ok, $code, $words, $listedAfter] = $refused($s);
+        checkEq('an answered step, then the place changed at Google: Put back sends nothing, names the series, and keeps the change in Review',
+            [false, 'google_changed_since', true, $there, 1], [$ok, $code, str_contains($words, "'Sample weekly' changed at Google since"), $held($s, 'smpl3weekly'), $listedAfter]);
+    });
 };

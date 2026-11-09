@@ -1019,6 +1019,7 @@ return static function (Db $db): void {
         checkEq('the bare Undo undoes the older local change and sends nothing to Google; the series entries stay', [1, 'Pizza night', [], 0, 0, 'Sample renamed again'],
             [$undone((int) $localEntry['id']), (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$local]), $s->t->calls,
                 $undone((int) $again['id']), $undone((int) $undoEntry['id']), $s->fake->events['smpl2weekly']['summary'] ?? null]);
+    });
     // The seventh adversarial read: a day's Google id is its series and its occurrence, so a row holding only local
     // data carried by a clock change is found by its undo (P2-1); a row an undo would bring back onto a day skipped
     // since is not brought back, and is named, as on a calendar here (P2-2).

@@ -107,7 +107,7 @@ final class FallbackParser
         $floating = false;
         if (preg_match('/(\d{1,2}(?::\d{2})?\s*(?:am|pm|a|p)\b|\d{1,2}:\d{2}\b|\bnoon\b|\bmidnight\b)(\s+(?:in\s+)?(?:floating|local\s+time)\b)/i', $work, $m, PREG_OFFSET_CAPTURE)) {
             $floating = true;
-            $work = substr($work, 0, $m[2][1]) . ' ' . substr($work, $m[2][1] + strlen($m[2][0]));
+            $work = self::cutSpan($work, $m[2][1], strlen($m[2][0]));
         }
 
         // Repeats first: "every Tuesday", "until Dec 15" and "for 6 weeks"
@@ -629,7 +629,7 @@ final class FallbackParser
                 // "Mon-Fri next week": in the next calendar week (from Monday).
                 if (preg_match('/^\s*next\s+week\b/i', $tail, $nw) === 1) {
                     $ahead = ((1 - $todayW + 7) % 7 ?: 7) + ($from - 1 + 7) % 7;
-                    $rest = substr($work, 0, $range['offset']) . ' ' . substr($tail, strlen($nw[0]));
+                    $rest = self::cutSpan($work, $range['offset'], strlen($range['match']) + strlen($nw[0]));
                 }
                 $start = $now->add(new \DateInterval('P' . $ahead . 'D'));
                 $end = $start->add(new \DateInterval('P' . (($codes[$range['to']] - $from + 7) % 7) . 'D'));
@@ -684,7 +684,7 @@ final class FallbackParser
             }
             // Cut at the match itself, not an earlier copy of the same word
             // ("Meet at Sat Nam Yoga Sat 10am").
-            $rest = substr($work, 0, $pick[0][1]) . ' ' . substr($work, $pick[0][1] + strlen($pick[0][0]));
+            $rest = self::cutSpan($work, $pick[0][1], strlen($pick[0][0]));
             return [$rest, $now->add(new \DateInterval('P' . $diff . 'D')), true, null];
         }
 
@@ -928,7 +928,7 @@ final class FallbackParser
                     $len += strlen($t[0]) + $second['length'];
                 }
             }
-            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end, $first['dated'], $assumed];
+            return [self::cutSpan($work, $at, $len), $first['date'], $end, $first['dated'], $assumed];
         }
         return [$work, null, null, false, []];
     }
@@ -1035,11 +1035,13 @@ final class FallbackParser
         $day = static fn(string $w): ?int => self::WEEKDAYS[$w = strtolower(rtrim($w, '.'))] ?? self::WEEKDAY_ABBR[$w] ?? null;
         $own = (int) $date->format('w');
         [$head, $tail] = [substr($work, 0, $at), substr($work, $at)];
-        if (preg_match('/^\s*,?\s*(' . $names . ')\.?(?![\p{L}\p{N}])\s*,?/iu', $tail, $m) === 1 && $day($m[1]) === $own) {
-            return $head . ' ' . substr($tail, strlen($m[0]));
+        // The comma between the weekday and the date goes with the weekday;
+        // cutSpan takes the one on its far side.
+        if (preg_match('/^\s*,?\s*(' . $names . ')\.?(?![\p{L}\p{N}])/iu', $tail, $m) === 1 && $day($m[1]) === $own) {
+            return self::cutSpan($work, $at, strlen($m[0]));
         }
         if (preg_match('/(?<![\p{L}\p{N}])(' . $names . ')\.?\s*,?\s*$/iu', $head, $m, PREG_OFFSET_CAPTURE) === 1 && $day($m[1][0]) === $own) {
-            return substr($head, 0, $m[0][1]) . ' ' . $tail;
+            return self::cutSpan($work, $m[0][1], strlen($m[0][0]));
         }
         return $work;
     }
@@ -1125,6 +1127,27 @@ final class FallbackParser
         if ($pos === false) {
             return $work;
         }
-        return substr($work, 0, $pos) . ' ' . substr($work, $pos + strlen($match));
+        return self::cutSpan($work, $pos, strlen($match));
+    }
+
+    /**
+     * $work without the $len bytes at $pos, the piece read there (a date, a
+     * time, a weekday, a repeat), and without the separator it stood beside:
+     * a comma or semicolon right after it, else one right before it, goes
+     * with it ("Pizza night Monday, November 16, 6:30 PM, at Luna" leaves
+     * "Pizza night at Luna"). A comma between two words the parser did not
+     * read stays ("Salt, Fat, Acid, Heat reading"). Every cut goes through
+     * here.
+     */
+    public static function cutSpan(string $work, int $pos, int $len): string
+    {
+        $head = substr($work, 0, $pos);
+        $tail = substr($work, $pos + $len);
+        if (preg_match('/^\s*[,;]/', $tail, $m) === 1) {
+            $tail = substr($tail, strlen($m[0]));
+        } elseif (preg_match('/[,;]\s*$/', $head, $m, PREG_OFFSET_CAPTURE) === 1) {
+            $head = substr($head, 0, $m[0][1]);
+        }
+        return $head . ' ' . $tail;
     }
 }

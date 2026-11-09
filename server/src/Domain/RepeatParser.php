@@ -220,7 +220,7 @@ final class RepeatParser
                         $len += strlen($t[0]) + $second['length'];
                     }
                 }
-                $work = substr($work, 0, $at) . ' ' . substr($work, $at + $len);
+                $work = FallbackParser::cutSpan($work, $at, $len);
                 break;
             }
         }
@@ -240,7 +240,7 @@ final class RepeatParser
                     continue;
                 }
                 $out['until'] = $end['date'];
-                $work = substr($work, 0, $at) . ' ' . substr($work, $at + strlen($m[0][0]) + $end['length']);
+                $work = FallbackParser::cutSpan($work, $at, strlen($m[0][0]) + $end['length']);
                 break;
             }
         }
@@ -422,7 +422,7 @@ final class RepeatParser
             $range = [
                 'match' => $m[0][0], 'offset' => $at, 'from' => self::code($m[1][0]), 'to' => self::code($m[2][0]),
                 'byday' => self::dayRange($m[1][0], $m[2][0]),
-                'rest' => substr($work, 0, $at) . ' ' . substr($work, $at + strlen($m[0][0])),
+                'rest' => FallbackParser::cutSpan($work, $at, strlen($m[0][0])),
                 'leading' => trim(substr($work, 0, $at)) === '',
             ];
             if (!$range['leading']) {
@@ -511,6 +511,6 @@ final class RepeatParser
     private static function cut(string $work, string $match): string
     {
         $pos = strpos($work, $match);
-        return $pos === false ? $work : substr($work, 0, $pos) . ' ' . substr($work, $pos + strlen($match));
+        return $pos === false ? $work : FallbackParser::cutSpan($work, $pos, strlen($match));
     }
 }

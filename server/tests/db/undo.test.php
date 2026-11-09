@@ -687,4 +687,49 @@ return static function (Db $db): void {
         checkEq('undo: the edit that made the row undoes; the later notes stay', [null, 'Sample notes'],
             [refusal(fn() => $d->undo->undoById($u, $made)), $db->scalar('SELECT description FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s])]);
     });
+
+    // One definition of staleness (Rule B, 2026-11-09): grounds are fields, an own list's contents among them; a snapshot entry's ground is what its restore puts back.
+    scenario('undo: two edits of different fields of one date undo in either order; a date\'s tags are its field; a clock change stands on the series\' days', function () use ($db, $d, $u, $series): void {
+        $rows = static fn(int $s): array => $db->all('SELECT title, location, description, override_fields AS own, (SELECT GROUP_CONCAT(t.name ORDER BY t.name) FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = events.id) AS tags
+            FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        foreach ([false, true] as $newerFirst) {
+            $s = $series($newerFirst ? 'Sample hike' : 'Sample ride', '2027-02-01');
+            $at = '2027-02-04T18:00:00+00:00';
+            $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => $at, 'description' => 'Sample day notes']);
+            $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+            $d->events->patch($u, $row, ['scope' => 'this', 'instanceStart' => $at, 'title' => 'Sample day title']);
+            $title = lastEntry($db, $u);
+            $d->events->patch($u, $row, ['scope' => 'this', 'instanceStart' => $at, 'location' => 'Sample room Q']);
+            $place = lastEntry($db, $u);
+            $errors = array_map(fn(int $e) => refusal(fn() => $d->undo->undoById($u, $e)), $newerFirst ? [$place, $title] : [$title, $place]);
+            checkEq('undo: title and place of one date, ' . ($newerFirst ? 'newer' : 'older') . ' first: both undo, the notes stay its own (k4)',
+                [[null, null], [['title' => $newerFirst ? 'Sample hike' : 'Sample ride', 'location' => null, 'description' => 'Sample day notes', 'own' => '["description"]', 'tags' => null]]],
+                [$errors, $rows($s)]);
+        }
+        $s = $series('Sample yoga', '2027-02-01');
+        $at = '2027-02-04T18:00:00+00:00';
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => $at, 'tagNames' => ['Sample tag A']]);
+        $first = lastEntry($db, $u);
+        $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        $d->events->patch($u, $row, ['scope' => 'this', 'instanceStart' => $at, 'tagNames' => ['Sample tag A', 'Sample tag B']]);
+        checkEq('undo: the edit that gave a date its tags is stale after a later tag change of that date; both tags stay (k6)', ['stale_undo', 'Sample tag A,Sample tag B'],
+            [refusal(fn() => $d->undo->undoById($u, $first)), $rows($s)[0]['tags'] ?? null]);
+        foreach ([false, true] as $tagsFirst) {
+            $s = $series($tagsFirst ? 'Sample swim' : 'Sample row', '2027-02-01');
+            $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => $at, 'title' => 'Sample day title']);
+            $made = lastEntry($db, $u);
+            $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+            $d->events->patch($u, $row, ['scope' => 'this', 'instanceStart' => $at, 'tagNames' => ['Sample tag C']]);
+            $tags = lastEntry($db, $u);
+            $errors = array_map(fn(int $e) => refusal(fn() => $d->undo->undoById($u, $e)), $tagsFirst ? [$tags, $made] : [$made, $tags]);
+            checkEq('undo: a date\'s row made by one edit and tagged by another, ' . ($tagsFirst ? 'tags' : 'title') . ' undone first: both undo and no row is left (k1)',
+                [[null, null], []], [$errors, $rows($s)]);
+        }
+        $s = $series('Sample dance', '2027-02-01');
+        planned($d->events, $u, $s, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'start' => '2027-02-01T19:00:00+00:00', 'end' => '2027-02-01T20:00:00+00:00']);
+        $clock = lastEntry($db, $u);
+        $d->events->deleteEvent($u, $s, 'this', '2027-02-04T19:00:00+00:00');
+        checkEq('undo: a clock change for all events is stale once a date at the new clock was skipped: its restore puts every date back (t1, a calendar here)', 'stale_undo',
+            refusal(fn() => $d->undo->undoById($u, $clock)));
+    });
 };

@@ -129,8 +129,19 @@ return static function (Db $db): void {
     $unjournaled = static function (int $since, array $before, array $after, bool $vocabulary) use ($db, $changes): array {
         $said = [];
         foreach ($db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id > ?', [$since]) as $t) {
-            // A skipped date's own ground (Undo::SKIP) says its series' skips.
-            $said[$t['row_key']][str_starts_with((string) $t['col'], BetterCal\Domain\Undo::SKIP) ? 'exdates_json' : $t['col']] = true;
+            $col = (string) $t['col'];
+            // A skipped date's own ground (Undo::SKIP), or a skip carried (MOVE), says its series' skips.
+            $said[$t['row_key']][str_starts_with($col, BetterCal\Domain\Undo::SKIP) || str_starts_with($col, BetterCal\Domain\Undo::MOVE) ? 'exdates_json' : $col] = true;
+            // A day's ground is on its series' row (Undo::DAY, MOVE): it says the row at that day, before or
+            // after; the series made or removed whole ("*") says every day of it.
+            $days = str_starts_with($col, BetterCal\Domain\Undo::DAY) ? [explode('|', substr($col, strlen(BetterCal\Domain\Undo::DAY)), 2)[0]]
+                : (str_starts_with($col, BetterCal\Domain\Undo::MOVE) ? explode('>', substr($col, strlen(BetterCal\Domain\Undo::MOVE)), 2) : []);
+            foreach ($before + $after as $key => $row) {
+                if (str_starts_with($key, 'events:') && 'events:' . ($row['recurrence_parent_id'] ?? '') === (string) $t['row_key']
+                    && ($col === '*' || in_array((string) ($row['recurrence_instance_utc'] ?? ''), $days, true))) {
+                    $said[$key]['*'] = true;
+                }
+            }
         }
         $missing = [];
         foreach ($changes($before, $after, $vocabulary) as $key => $cols) {

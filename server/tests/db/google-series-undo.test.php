@@ -794,18 +794,87 @@ return static function (Db $db): void {
         ], [BetterCal\Domain\GoogleUndo::line(BetterCal\Domain\GoogleUndo::undoSummary($legacy, json_encode(['google' => ['kind' => 'series']])), 'Sample crew')]);
     });
 
-    scenario('google undo: a deleted day\'s undo after the series\' clock moved says the times changed (F6)', function () use ($setup, $masterId, $last, $iso): void {
+    scenario('google undo: a deleted day\'s undo after the series\' clock moved brings the day back at its occurrence now (F6, rule A)', function () use ($setup, $masterId, $last, $iso, $held): void {
         $s = $setup();
         $s->events->deleteEvent($s->u, $masterId($s), 'this', $iso('2027-03-08 10:00'));
         $s->events->throwDeferred();
         $delete = $last($s);
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
-        $caught = null;
-        try {
-            $s->undo->undoById($s->u, (int) $delete['id']);
-        } catch (HttpError $e) {
-            $caught = [$e->errorCode, str_contains($e->getMessage(), "times changed")];
+        checkEq('the undo goes through; the day is no longer cancelled at its 11:00 occurrence', [null, false],
+            [refusal(fn() => $s->undo->undoById($s->u, (int) $delete['id'])), in_array('20270308T190000Z', $held($s, 'smpl2weekly')['cancelled'], true)]);
+    });
+
+    // Rule A: an undo of a series change is planned as a forward change is, over the series as stored now (t1, t3 of the fourth adversarial read).
+    scenario('google series undo: a clock change undone after a later change of one day at the new clock carries that day back with it (t1)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow, $sameAfterPoll): void {
+        foreach (['skip', 'title', 'time'] as $mode) {
+            $s = $setup();
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+            $clock = $last($s);
+            $day = $iso('2027-03-08 11:00');
+            match ($mode) {
+                'skip' => $s->events->deleteEvent($s->u, $masterId($s), 'this', $day),
+                'title' => $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $day, 'title' => 'Sample day title']),
+                'time' => $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $day, 'start' => $iso('2027-03-08 15:00'), 'end' => $iso('2027-03-08 16:00')]),
+            };
+            $s->events->throwDeferred();
+            $error = refusal(fn() => $s->undo->undoById($s->u, (int) $clock['id']));
+            $g = $held($s, 'smpl2weekly');
+            $here = $dayRow($s, '2027-03-08 18:00:00');
+            checkEq("$mode: the undo goes through and the day stands at its 10:00 occurrence, at Google and here", match ($mode) {
+                'skip' => [null, $iso('2027-03-01 10:00'), true, null],
+                'title' => [null, $iso('2027-03-01 10:00'), ['Sample day title', $iso('2027-03-08 10:00')], 'Sample day title'],
+                'time' => [null, $iso('2027-03-01 10:00'), ['Sample weekly', $iso('2027-03-08 15:00')], $iso('2027-03-08 15:00')],
+            }, [$error, $g['start'], $mode === 'skip' ? in_array('20270308T180000Z', $g['cancelled'], true) : ($g['records']['20270308T180000Z'] ?? null),
+                $mode === 'skip' ? $here : ($mode === 'title' ? ($here['title'] ?? null) : (isset($here['start_utc']) ? Time::fromDb($here['start_utc'])->setTimezone(new DateTimeZone('America/Los_Angeles'))->format('Y-m-d\TH:i:sP') : null))]);
+            check("$mode: a poll after changes nothing", $sameAfterPoll($s));
         }
-        checkEq('stale, saying the times changed', ['stale_undo', true], $caught);
+    });
+
+    scenario('google undo: a day\'s edit undone after a later clock change for all events goes through, the day inheriting at its occurrence now (t3)', function () use ($setup, $masterId, $last, $iso, $held, $dayRow): void {
+        $s = $setup();
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'title' => 'Sample day title']);
+        $s->events->throwDeferred();
+        $edit = $last($s);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 11:00'), 'end' => $iso('2027-03-01 12:00')]);
+        checkEq('the undo goes through; the day shows the series\' title at 11:00 at Google, and has no row of its own here', [null, ['Sample weekly', $iso('2027-03-08 11:00')], null],
+            [refusal(fn() => $s->undo->undoById($s->u, (int) $edit['id'])), $held($s, 'smpl2weekly')['records']['20270308T190000Z'] ?? ['Sample weekly', $iso('2027-03-08 11:00')], $dayRow($s, '2027-03-08 19:00:00')]);
+    });
+
+    // Rule B: grounds are fields, the own list's contents and a day's tags among them (k4, k6 of the fourth adversarial read).
+    scenario('google undo: two "this event" edits of different fields of one day undo in either order (k4)', function () use ($setup, $masterId, $last, $iso, $dayRow): void {
+        foreach ([false, true] as $newerFirst) {
+            $s = $setup();
+            $at = $iso('2027-03-08 10:00');
+            $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $at, 'description' => 'Sample day notes']);
+            $s->events->throwDeferred();
+            $row = (int) $dayRow($s, '2027-03-08 18:00:00')['id'];
+            $s->events->patch($s->u, $row, ['scope' => 'this', 'instanceStart' => $at, 'title' => 'Sample day title']);
+            $s->events->throwDeferred();
+            $title = $last($s);
+            $s->events->patch($s->u, $row, ['scope' => 'this', 'instanceStart' => $at, 'location' => 'Sample room Q']);
+            $s->events->throwDeferred();
+            $place = $last($s);
+            $errors = [];
+            foreach ($newerFirst ? [$place, $title] : [$title, $place] as $entry) {
+                $errors[] = refusal(fn() => $s->undo->undoById($s->u, (int) $entry['id']));
+            }
+            $here = $dayRow($s, '2027-03-08 18:00:00');
+            checkEq(($newerFirst ? 'newer first' : 'older first') . ': both undo; the notes stay the day\'s own', [[null, null], '["description"]', 'Sample weekly', 'Sample room 1', 'Sample day notes'],
+                [$errors, $here['override_fields'] ?? null, $here['title'] ?? null, $here['location'] ?? null, $here['description'] ?? null]);
+        }
+    });
+
+    scenario('google undo: the edit that gave a day its tags is stale once a later edit changed that day\'s tags; the later tag is kept (k6)', function () use ($setup, $masterId, $last, $iso, $dayRow, $db): void {
+        $s = $setup();
+        $at = $iso('2027-03-08 10:00');
+        $s->events->patch($s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $at, 'tagNames' => ['Sample tag A']]);
+        $s->events->throwDeferred();
+        $first = $last($s);
+        $row = (int) $dayRow($s, '2027-03-08 18:00:00')['id'];
+        $s->events->patch($s->u, $row, ['scope' => 'this', 'instanceStart' => $at, 'tagNames' => ['Sample tag A', 'Sample tag B']]);
+        $s->events->throwDeferred();
+        checkEq('stale; both tags stay', ['stale_undo', ['Sample tag A', 'Sample tag B']],
+            [refusal(fn() => $s->undo->undoById($s->u, (int) $first['id'])),
+                array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$row]), 'name')]);
     });
 };

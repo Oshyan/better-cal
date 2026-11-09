@@ -115,6 +115,8 @@ final class GoogleSeries
 
     /** @var array<int,true> pending rows whose change the transaction open now saves (settle) */
     private array $settled = [];
+    /** @var array<int,int> a recovery's rows carried onto another row (relink, carryHeld): old id => new id, for withRemoved */
+    private array $carried = [];
     /** @var array<int,true> pending rows a run of this process holds (open to ended): its own change, never another's (pendingNames) */
     private static array $ours = [];
 
@@ -2419,6 +2421,7 @@ final class GoogleSeries
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
         $this->feeds->takeDropped(); // what this recovery's stores remove is named (removedDays)
+        $this->carried = [];
         $now = $this->refresh($calendar, $targets, $beforeSend, $pendingId);
         $targets = $this->withStoredIds($calendar, $targets);
         $year = (int) Time::nowUtc()->format('Y');
@@ -2457,21 +2460,43 @@ final class GoogleSeries
         $this->store($calendar, $out['readbacks'], $out['targets'], $pendingId);
         $this->reattach($calendar, $local, $out['targets']);
         $out['differences'] = array_merge($kept, $out['differences'], $this->carryHeld($calendar, $held, $out['targets']));
-        $out = self::withRemoved($out, $this->feeds->takeDropped());
+        $out = $this->withRemoved($out, $this->feeds->takeDropped());
         $this->settle($pendingId);
         return $out;
     }
 
     /**
-     * A recovery's answer with the rows its stores removed while they held
+     * A recovery's answer with the rows it removed while they held
      * something here alone (Feeds::droppedDay, decision A5): named in its
      * differences in words, and by row id and date in `removedDays`, which
-     * its Activity entry carries.
+     * its Activity entry carries. Decided once, at its end, against the
+     * live rows: a row a store dropped that a later step of the same
+     * recovery restored (reattach, bringBack, carryHeld: the same id) or
+     * carried onto another row (relink, carryHeld: $this->carried) is not
+     * removed.
      *
      * @param list<array> $removed
      */
-    private static function withRemoved(array $out, array $removed): array
+    private function withRemoved(array $out, array $removed): array
     {
+        $carried = $this->carried;
+        $this->carried = [];
+        $ids = [];
+        foreach ($removed as $d) {
+            $ids[] = (int) $d['id'];
+            if (isset($carried[(int) $d['id']])) {
+                $ids[] = $carried[(int) $d['id']];
+            }
+        }
+        $live = [];
+        if ($ids !== []) {
+            [$in, $params] = Db::in(array_values(array_unique($ids)));
+            foreach ($this->db->all("SELECT id FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $live[(int) $r['id']] = true;
+            }
+        }
+        $removed = array_values(array_filter($removed, static fn(array $d): bool
+            => !isset($live[(int) $d['id']]) && !isset($live[$carried[(int) $d['id']] ?? 0])));
         if ($removed === []) {
             return $out;
         }
@@ -2545,6 +2570,50 @@ final class GoogleSeries
      */
     private function rewind(array $calendar, array $local, array $targets, array $made): array
     {
+        $snap = [];
+        foreach ($local['events'] ?? [] as $r) {
+            $snap[(int) $r['id']] = $r;
+        }
+        [$kept, $taken] = $this->dropMade($calendar, $local, $targets, $made);
+        $live = [];
+        if ($snap !== []) {
+            [$in, $params] = Db::in(array_keys($snap));
+            foreach ($this->db->all("SELECT id FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $live[(int) $r['id']] = true;
+            }
+        }
+        // A key may be one another of these rows holds now.
+        Events::parkInstanceKeys($this->db, array_keys($live));
+        $gone = [];
+        foreach ($snap as $id => $r) {
+            if (isset($live[$id])) {
+                $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
+            } else {
+                $gone[] = $r;
+            }
+        }
+        $this->bringBack($calendar, $gone, $local);
+        return [$kept, $taken];
+    }
+
+    /**
+     * The rows a store of the change made ($made, the pending row's
+     * `made_json`) that the snapshot (localOf) lacks, among the rows of the
+     * series and events of their own the snapshot and the targets name,
+     * go: Recovery removes only what it made. Any other row the snapshot
+     * lacks is a change made here since, kept and returned. A made row
+     * given something held here alone since (Feeds::retained) is no longer
+     * recovery's alone: where a target names a day at its key, what it
+     * holds is taken (returned, for carryHeld) and the row goes; otherwise
+     * it is kept. Finish's rewind and Put back read the list alike.
+     *
+     * @param array<string,list<array>> $local
+     * @param list<array> $targets
+     * @param array<int,true> $made
+     * @return array{0:list<int>, 1:list<array>} the rows kept that the snapshot lacks, and what was taken
+     */
+    private function dropMade(array $calendar, array $local, array $targets, array $made): array
+    {
         $calendarId = (int) $calendar['id'];
         $snap = [];
         foreach ($local['events'] ?? [] as $r) {
@@ -2594,24 +2663,6 @@ final class GoogleSeries
             }
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
         }
-        $live = [];
-        if ($snap !== []) {
-            [$in, $params] = Db::in(array_keys($snap));
-            foreach ($this->db->all("SELECT id FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
-                $live[(int) $r['id']] = true;
-            }
-        }
-        // A key may be one another of these rows holds now.
-        Events::parkInstanceKeys($this->db, array_keys($live));
-        $gone = [];
-        foreach ($snap as $id => $r) {
-            if (isset($live[$id])) {
-                $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
-            } else {
-                $gone[] = $r;
-            }
-        }
-        $this->bringBack($calendar, $gone, $local);
         return [$kept, $taken];
     }
 
@@ -2761,6 +2812,7 @@ final class GoogleSeries
                 $this->db->run('DELETE FROM events WHERE id = ?', [$wasId]);
             }
             $this->relinks($h['links'], $wasId, $destId, $replace);
+            $this->carried[$wasId] = $destId;
         }
         return $words;
     }
@@ -2919,6 +2971,7 @@ final class GoogleSeries
         $send = fn(string $method, string $path, ?array $body, ?string $ifMatch): array
             => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
         $this->feeds->takeDropped(); // what this recovery's stores remove is named (removedDays)
+        $this->carried = [];
         // Every series checked before anything is sent or stored: Put back
         // is the whole change's, or none of it (half of a split put back
         // would leave two series overlapping).
@@ -3045,8 +3098,13 @@ final class GoogleSeries
             $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
             $this->bringBack($calendar, $this->reattach($calendar, $local, $out['targets']), $local);
             $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $targets));
+            // A row the change made that the snapshot does not hold (an
+            // event of its own it inserted, cancelled above) goes with it,
+            // read from the made list as Finish's rewind reads it.
+            [, $taken] = $this->dropMade($calendar, $local, $out['targets'], $made);
+            $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $taken, $targets));
         }
-        $out = self::withRemoved($out, $this->feeds->takeDropped());
+        $out = $this->withRemoved($out, $this->feeds->takeDropped());
         $this->settle($pendingId);
         $out['targets'] = array_values($out['targets']);
         return $out + ['left' => $left];
@@ -3250,6 +3308,7 @@ final class GoogleSeries
             // Where it is placed belongs to the place Google holds now.
             $own = array_filter($own, static fn(string $col): bool => !str_starts_with($col, 'location_') && $col !== 'geocoded_at', ARRAY_FILTER_USE_KEY);
         }
+        $this->carried[$identity ? $nowId : $wasId] = $to;
         if ($identity) {
             $this->db->run('DELETE FROM events WHERE id = ?', [$nowId]);
             $this->db->upsert('events', array_merge($now, $own, ['id' => $wasId, 'updated_at' => Time::nowDb()]));

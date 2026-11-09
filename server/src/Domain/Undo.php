@@ -1319,6 +1319,8 @@ final class Undo
             throw HttpError::badRequest(is_string($details['notUndoable'] ?? null) ? $details['notUndoable']
                 : 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)', 'not_undoable');
         }
+        // A series with changes not yet at Google takes no undo or redo until they are finished or put back.
+        GoogleUndo::refuseWhilePending($this->db, $this, $mutation);
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         if (GoogleUndo::carries(is_array($details) ? $details : null)) {
             // A write to one Google resource: its inverse goes to Google

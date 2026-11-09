@@ -33,6 +33,7 @@ use BetterCal\Support\Time;
  *   plugin         a plugin turned off because the API key that enabled it was revoked
  *   google_half    a series change that stopped half way at Google (Finish, Put back)
  *   google_differs Google kept something else than a series change said (a notice)
+ *   google_empty   a Google calendar's whole read listed nothing; nothing removed (a notice)
  *
  * invite_new, invite_change, mail_limit and model_limit are stored by the queue itself;
  * the others live where they always did and keep their own endpoints,
@@ -65,11 +66,11 @@ final class ReviewController
         $mailSettings = $this->queue->mailSettings($userId);
         foreach ($storedItems as $c) {
             $open = $c['status'] === 'open';
-            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS], true)) {
+            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR, ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY], true)) {
                 $isModel = $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT;
                 $dismissPath = match ($c['kind']) {
                     ReviewQueue::KIND_MAIL_ERROR => "/review/mail-errors/{$c['id']}/dismiss",
-                    ReviewQueue::KIND_GOOGLE_DIFFERS => "/review/google-differences/{$c['id']}/dismiss",
+                    ReviewQueue::KIND_GOOGLE_DIFFERS, ReviewQueue::KIND_GOOGLE_EMPTY => "/review/google-differences/{$c['id']}/dismiss",
                     default => $isModel ? "/review/model-limits/{$c['id']}/dismiss" : "/review/mail-limits/{$c['id']}/dismiss",
                 };
                 $items[] = [
@@ -347,6 +348,7 @@ final class ReviewController
             'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
             'google_half' => count($this->queue->googleHalfDone($userId)),
             'google_differs' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_DIFFERS),
+            'google_empty' => $this->queue->openCount($userId, ReviewQueue::KIND_GOOGLE_EMPTY),
         ];
     }
 

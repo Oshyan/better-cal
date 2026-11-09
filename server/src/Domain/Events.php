@@ -288,6 +288,20 @@ final class Events
 
     private ?Duplicates $duplicates = null;
 
+    /**
+     * The write gate: an edit, delete or answer touching a series with
+     * changes not yet at Google is refused before anything is read or sent
+     * (GoogleSeries::refusePending), inside the account's write so the
+     * refusal writes nothing. Only a row of a calendar that writes to
+     * Google can be in such a series.
+     */
+    private function refuseWhilePending(int $userId, array $event): void
+    {
+        if (($event['source'] ?? '') === 'feed' && $this->googleCalendarFor((int) $event['calendar_id']) !== null) {
+            GoogleSeries::refusePending($this->db, $userId, (int) $event['calendar_id'], GoogleSeries::namesOf($event));
+        }
+    }
+
     /** The row duplicates are linked by: the series for an occurrence override. */
     private static function seriesId(array $row): int
     {
@@ -376,7 +390,7 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null): void
     {
         $summary .= " on Google calendar '" . (string) $calendar['name'] . "'";
         if ($google !== null) {
@@ -386,7 +400,7 @@ final class Events
         // No snapshots, but what it changed is known: the event, which an
         // older undo of it (its tags, say) stands on.
         $touches = $eventId !== null ? [[Undo::keyOf('events', ['id' => $eventId]), '*']] : [];
-        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, touches: $touches);
+        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary, $details, touches: $touches);
     }
 
     private function googleUndo(): GoogleUndo
@@ -1660,6 +1674,7 @@ final class Events
     private function patchLocked(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
+        $this->refuseWhilePending($userId, $event);
         if (!empty($event['recurrence_parent_id']) && array_key_exists('useSeries', $in)) {
             // "Use series value" sent to the edited day's own row: that row
             // (the master with the day's key works too, in patchThis).
@@ -2182,7 +2197,9 @@ final class Events
 
     private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null, ?array $plan = null): void
     {
-        [$event, $instanceStart] = $this->seriesFrom($userId, $this->get($userId, $id), $scope, $instanceStart);
+        $row = $this->get($userId, $id);
+        $this->refuseWhilePending($userId, $row);
+        [$event, $instanceStart] = $this->seriesFrom($userId, $row, $scope, $instanceStart);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
@@ -2333,6 +2350,7 @@ final class Events
             throw HttpError::badRequest('attendance must be none|interested|going|hidden (or planned|maybe|available)');
         }
         $event = $this->get($userId, $id);
+        $this->refuseWhilePending($userId, $event);
         $isMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
         $targetId = $id;
         $made = false; // the date's own row, made for this answer

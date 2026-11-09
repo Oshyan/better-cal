@@ -152,8 +152,10 @@ final class GoogleSync
         }
         unset($changes);
         self::assertWithinDeadline($deadline);
+        $whole = $syncToken === null;
+        $emptyRefused = false;
         // The account first, as every change to its data takes it (Undo::write).
-        return (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged): int {
+        $count = (new Undo($this->db))->write((int) $calendar['user_id'], function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline, $unchanged, $whole, &$emptyRefused): int {
             // Adopt and every event writer serialize on this row. Re-read the
             // complete Google binding after the fetch so a response from the
             // old authority can never land in a newly-local, moving calendar.
@@ -182,17 +184,78 @@ final class GoogleSync
                 $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), 0);
                 return 0;
             }
+            // An empty listing never deletes: a whole read (the first, or
+            // after a 410) that lists nothing live for a calendar holding
+            // rows is not applied. Rows and sync position stay as they are,
+            // the calendar goes to Review, and the next poll reads it whole
+            // again. Google names permission changes among a 410's causes,
+            // and a listing that lost its access lists nothing; a calendar
+            // emptied on purpose still empties through a delta poll.
+            if ($whole && $snapshot === [] && $this->storedCount($calendarId) > 0) {
+                $emptyRefused = true;
+                return 0;
+            }
+            if ($whole) {
+                ReviewQueue::closeGoogleEmpty($this->db, (int) $calendar['user_id'], $calendarId);
+            }
             // Feeds::sync loads and indexes every stored row (including a
             // soft-deleted one), while the new snapshot is still resident.
             // Re-query under the account lock immediately before that load.
             $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
             self::assertWithinDeadline($deadline);
+            $snapshot = $this->pendingHeld($current, $snapshot, $deadline);
             $count = $this->feeds->sync($current, $snapshot, true, $deadline);
             self::assertWithinDeadline($deadline);
             $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
             $this->feeds->pollSucceeded($current, $this->storedCount($calendarId), $count);
             return $count;
         });
+        if ($emptyRefused) {
+            $message = 'Google listed no events for this calendar while it has events here; nothing was removed, and the next poll reads it again.';
+            error_log('google sync: calendar ' . $calendarId . ': a whole read listed nothing; not applied');
+            (new Undo($this->db))->write((int) $calendar['user_id'], fn() => ReviewQueue::holdGoogleEmpty($this->db, (int) $calendar['user_id'], $calendar));
+            throw new \RuntimeException($message);
+        }
+        return $count;
+    }
+
+    /**
+     * The poll's rule for a series with changes not yet at Google
+     * (GoogleSeries::pendingNames: today a change a failure left half done,
+     * later one queued while offline): the poll neither removes, rewrites
+     * nor adds that series' rows here; it stores everything else. What
+     * Google holds of the series is what Finish rebases over and Put back
+     * checks against, and each reads it from Google when it runs and
+     * stores it then (GoogleSeries::finish, putBack), so the poll leaves
+     * it to them: storing it here would take rows from under the change
+     * (an edited day its part here still names, a day holding data here
+     * alone) and give recovery a series that is neither the change's
+     * before nor its after. The series' entries in the snapshot (by uid,
+     * or by a Google id the change chose) are replaced by its rows as they
+     * stand here, which Feeds::sync then finds unchanged.
+     *
+     * @param list<array> $snapshot
+     * @return list<array>
+     */
+    private function pendingHeld(array $calendar, array $snapshot, ?float $deadline): array
+    {
+        $pending = GoogleSeries::pendingNames($this->db, (int) $calendar['user_id'], (int) $calendar['id']);
+        if ($pending === []) {
+            return $snapshot;
+        }
+        $uids = [];
+        foreach (array_keys($pending) as $name) {
+            $uids[(string) $name] = true;
+        }
+        foreach ($snapshot as $ev) {
+            if (isset($pending[(string) ($ev['google_event_id'] ?? '')])) {
+                $uids[(string) $ev['uid']] = true;
+            }
+        }
+        $kept = array_values(array_filter($snapshot, static fn(array $ev): bool => !isset($uids[(string) $ev['uid']])));
+        [$in, $params] = Db::in(array_map('strval', array_keys($uids)));
+        $rows = $this->db->all("SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL AND uid IN $in", array_merge([(int) $calendar['id']], $params));
+        return array_merge($kept, self::rowsToParsed($rows, null, $deadline));
     }
 
     /**

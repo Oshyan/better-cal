@@ -149,7 +149,11 @@ return static function (Db $db): void {
             new GoogleWriter($db, ($t->auth)(), new Feeds($db), $transport));
     };
     $sync = static fn(object $t): GoogleSync => new GoogleSync($db, ($t->auth)(), new Feeds($db), static fn(string $url, array $headers): array
-        => ($t->answer)('LIST', $headers, ['kind' => 'calendar#events', 'items' => [], 'nextSyncToken' => 'sample-sync-token']));
+        => ($t->answer)('LIST', $headers, ['kind' => 'calendar#events', 'nextSyncToken' => 'sample-sync-token', 'items' => [
+            // The calendar's one event, as the rows hold it: a whole read listing nothing is not applied (an empty listing never deletes).
+            ['id' => 'g-sample', 'iCalUID' => 'sample-meeting@google', 'status' => 'confirmed', 'summary' => 'Sample meeting', 'etag' => '"e1"',
+                'start' => ['dateTime' => '2027-01-11T18:00:00Z', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-11T19:00:00Z', 'timeZone' => 'UTC']],
+        ]]));
     $calendarOf = static fn(object $t): array => $db->one('SELECT * FROM calendars WHERE id = ?', [$t->calendarId]);
     $title = static fn(object $t): string => (string) $db->scalar('SELECT title FROM events WHERE id = ?', [$t->meeting]);
     $sealed = static fn(object $t): ?string => $db->scalar('SELECT access_token_enc FROM google_accounts WHERE id = ?', [$t->account]);

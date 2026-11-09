@@ -668,7 +668,7 @@ final class Interleave
         $inst = self::instanceArg($master, $at[0]);
         $days = $do === 'w-all' ? ['*'] : ['>=' . $at[1]];
         if ($do === 'w-delfollow') {
-            $this->lastAsked = ['kind' => 'delfollow', 'gid' => $gid, 'fields' => [], 'days' => $days];
+            $this->lastAsked = ['kind' => 'delfollow', 'gid' => $gid, 'fields' => [], 'days' => $days, 'whole' => $at[0] === $first[0]];
             $plan = $this->events->previewDelete($this->userId, $mid, 'following', $inst);
             $this->events->deleteEvent($this->userId, $mid, 'following', $inst, null, !empty($plan['whole']) ? null : ['hash' => $plan['hash'], 'choices' => self::selected($plan)]);
             $this->events->throwDeferred();
@@ -1301,7 +1301,10 @@ final class Interleave
             // The series is already gone at Google: the removal completes here (decisions.md, "Removing a series already gone
             // at Google succeeds", case 303).
             $this->ran('x-conflict', 'removal of a series deleted at Google');
-            $this->expect('x-conflict', $out['ok'], "step {$this->step} ($do): removing a series already gone at Google succeeds", $context);
+            if (!empty($asked['whole']) && $failure === null) {
+                // A delete of the whole series from its first day; one from a later day is an edit of the series' end.
+                $this->expect('x-conflict', $out['ok'], "step {$this->step} ($do): removing a series already gone at Google succeeds", $context);
+            }
         }
         if ($isWrite && $gid !== null && isset($this->dirty[$gid]) && $shownDiffers && !($removal && ($s0['g']['digest'][$gid] ?? null) === null) && !$onPending && empty($asked['local']) && $failure === null && !$undoOfDelete && !in_array($asked['kind'], ['create', 'finish', 'putback'], true)) {
             $this->ran('x-conflict', $do);
@@ -1590,7 +1593,6 @@ final class Interleave
                     $this->db->all('SELECT id, source, undone, summary, details_json FROM mutations WHERE user_id = ? ORDER BY id', [$this->userId]))]);
         }
         $state = $this->entryStates[$entry] ?? null;
-        $this->rawNow = $s0['rows'];
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
@@ -1638,9 +1640,6 @@ final class Interleave
         return $out;
     }
 
-    /** The raw rows before the undo or redo being judged, for the occurrence test of the entry's day. */
-    private array $rawNow = [];
-
     /**
      * A day row's ground: the fields it owns, by its own list (decisions.md, "An undo is stale when a poll has since brought
      * a remote change of the same field": "each side's ground the fields that row owns where it was made or removed whole").
@@ -1682,19 +1681,18 @@ final class Interleave
         // An entry about a day no longer an occurrence of the series it names (a later "this and following" took it into a
         // series of its own, a rule or bound change dropped it) is stale before anything else (seed 419 case 852), and one
         // whose series has gone since likewise.
+        // The occurrence is judged against the series as the entry left it, so an entry that itself cut the day off (a delete
+        // of this and following, an answer splitting the series) is not stale by its own doing.
+        $raw = static fn(array $r): array => ['start_utc' => $r['start'], 'end_utc' => $r['end'], 'rrule' => $r['rrule'], 'tzid' => $r['tz'], 'all_day' => $r['allDay']];
         foreach (array_keys($days) as $d) {
             if (preg_match('/^day:([^:]+):(.+)$/', $d, $m) !== 1 || !isset($state['after']['series:' . $m[1]])) {
                 continue;
             }
-            $master = null;
-            foreach ($this->rawNow as $r) {
-                if ($r['recurrence_parent_id'] === null && (string) ($r['google_event_id'] ?? '') === $m[1]) {
-                    $master = $r;
-                }
-            }
-            if ($master === null) {
+            $was = $state['after']['series:' . $m[1]];
+            $is = $now['series:' . $m[1]] ?? null;
+            if ($is === null) {
                 $out[$d] = ['series gone'];
-            } elseif ($master['rrule'] !== null && !Truth::isOccurrence($master, $m[2])) {
+            } elseif ($was['rrule'] !== null && $is['rrule'] !== null && Truth::isOccurrence($raw($was), $m[2]) && !Truth::isOccurrence($raw($is), $m[2])) {
                 $out[$d] = ['no longer an occurrence of its series'];
             }
         }

@@ -133,6 +133,10 @@ final class OracleProbes
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];
                 }],
+            ['check' => 'x-undo-fields', 'what' => 'an undo of an entry nothing has changed since is refused with another reason', 'case' => 'two-days-titled-then-one-undone', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => false, 'error' => 'google_write_failed', 'message' => 'Sample refusal'] + $out, $s0, $s0];
+                }],
             ['check' => 'x-undo-bare', 'what' => 'the bare Undo leaves the entry it should take not undone', 'case' => 'two-changes-then-the-bare-undo-twice', 'step' => 3,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     $this->db->run('UPDATE mutations SET undone = 0 WHERE id = ?', [(int) $out['entry']]);

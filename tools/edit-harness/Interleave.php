@@ -1596,8 +1596,20 @@ final class Interleave
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
             $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
-            if ($error === 'stale_undo' && $state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
-                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since", $context);
+            if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
+                // An undo of an entry nothing has changed since goes through (decisions.md, "An undo is stale when a poll has
+                // since brought a remote change of the same field" and "Staleness has one definition: grounds are fields"):
+                // the only refusals left are the pending gate while a change is half done, not_undoable from the release
+                // gate, and Google's refusal of a series changed there and not yet read (x-conflict's to judge).
+                $gids = array_map(static fn(string $i): string => substr($i, strlen('series:')), array_filter(array_keys(self::entryChange($state)), static fn(string $i): bool => str_starts_with($i, 'series:')));
+                $unread = array_intersect($gids, array_keys($this->dirty)) !== [] || isset($this->dirty[(string) ($asked['gid'] ?? '')]);
+                $allowed = in_array($error, ['google_pending', 'not_undoable'], true) || ($unread && in_array($error, ['google_conflict', 'google_deleted'], true));
+                if (!$allowed) {
+                    $this->fail('x-undo-fields', $error === 'stale_undo'
+                        ? "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused as stale though nothing it changed has changed since"
+                        : "step {$this->step} ($do): an undo of the entry step {$state['step']} made was refused ($error) though nothing it changed has changed since",
+                        ['do' => "$do $error"] + $context);
+                }
             }
             return;
         }
@@ -1787,9 +1799,19 @@ final class Interleave
         foreach ($change as $ident => $fields) {
             $b = $state['after'][$ident] ?? null;
             $c = $now[$ident] ?? null;
-            // A series the entry made (a split from a day on) that a newer change has added a day to, removed one of or changed
-            // one of: every day of it is a day the entry made, so the newer change is on the same day.
+            // A series the entry made whole (a split from a day on, a redo making it again) stands on every later change to it:
+            // every field of what it made is its ground, the series' own fields and skips, and every day of it (decisions.md,
+            // "Staleness has one definition: grounds are fields": a row or series made whole has every field of what it made
+            // as its ground; seed 17 case 202, seed 13 case 173).
             if ($fields === ['+'] && str_starts_with($ident, 'series:')) {
+                if ($c === null) {
+                    $out[$ident] = ['series gone'];
+                    continue;
+                }
+                $f = array_values(array_filter(self::judged($ident, $b, $c), static fn(string $k): bool => ($b[$k] ?? null) != ($c[$k] ?? null)));
+                if ($f !== []) {
+                    $out[$ident] = $f;
+                }
                 $prefix = 'day:' . substr($ident, strlen('series:')) . ':';
                 $plain = static fn(?array $r): ?array => $r === null ? null : array_diff_key($r, ['id' => 1]);
                 foreach (array_unique(array_merge(array_keys($state['after']), array_keys($now))) as $d) {

@@ -621,9 +621,9 @@ final class Interleave
             if ((int) $master['all_day'] === 1 || $scope !== 'all') {
                 return ['skip' => true];
             }
-            $start = Clock::parse((string) $master['start_utc']);
-            $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - $start->getTimestamp();
-            $shift = $what === 'length' ? 0 : ((int) Clock::local((string) $master['start_utc'], (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600);
+            $start = Clock::parse((string) $at[0]);
+            $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - Clock::parse((string) $master['start_utc'])->getTimestamp();
+            $shift = $what === 'length' ? 0 : ((int) Clock::local((string) $at[0], (string) $master['tzid'])->format('G') >= 20 ? -3600 : 3600);
             $len += $what === 'length' ? 1800 : 0;
             $z = Clock::zone((string) $master['tzid']);
             $in += ['start' => Clock::iso(Clock::plus($start, $shift)->setTimezone($z)), 'end' => Clock::iso(Clock::plus($start, $shift + $len)->setTimezone($z)), 'tzid' => $master['tzid'], 'allDay' => false];
@@ -1014,6 +1014,17 @@ final class Interleave
                 $this->ran('x-overlap', 'write during fetch refused: ' . $note->refused);
             } else {
                 $kept = false;
+                $seriesNow = null;
+                foreach (self::masters($s1['rows']) as $mr) {
+                    if ((string) $mr['uid'] === $uid) {
+                        $seriesNow = $mr;
+                    }
+                }
+                $dayNow = $seriesNow !== null ? (self::days($seriesNow, 200)[$date] ?? null) : null;
+                if ($dayNow === null || in_array($dayNow, Recurrence::decodeExdates($seriesNow['exdates_json'] ?? null), true)) {
+                    $kept = true; // the series no longer has the day: x-alone judges its removal
+                    $this->ran('x-overlap', 'day gone from the series');
+                }
                 foreach ($s1['rows'] as $r) {
                     $m = $r['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $r['recurrence_parent_id']] ?? null) : null;
                     if ((string) $r['uid'] === $uid && in_array($tag, $r['tags'], true) && self::dayOf($r, $m) === $date) {
@@ -1192,7 +1203,8 @@ final class Interleave
         $this->done[$this->step] = ['do' => $do, 'asked' => $asked, 'entries' => $entries, 'ok' => $out['ok']];
         if ($out['ok'] && ($kind === 'w-' || $kind === 'f-')) {
             foreach (array_keys($asked['fields']) as $f) {
-                $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true];
+                $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => false, 'field' => $f, 'key' => $asked['key'] ?? null, 'polled' => true,
+                    'from' => ($asked['kind'] ?? '') === 'following' ? ($asked['from'] ?? null) : null];
             }
         }
 
@@ -1381,7 +1393,8 @@ final class Interleave
         }
         // Staleness (decisions.md; A3): a later step not undone that changed the same field, a poll bringing a remote change of it included.
         $later = array_filter($this->touches, fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid'] && isset($orig['asked']['fields'][$t['field']])
-            && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null)));
+            && (empty($t['remote']) ? !$this->stepUndone((int) $t['step']) : $t['polled']) && ($orig['asked']['kind'] === 'all' || $t['key'] === null || $t['key'] === ($orig['asked']['key'] ?? null))
+            && (($t['from'] ?? null) === null || ($orig['asked']['days'][0] ?? '*') === '*' || ($orig['asked']['days'][0] ?? '') >= $t['from']));
         if ($later !== []) {
             $this->ran('x-undo-fields', 'stale');
             $this->fail('x-undo-fields', "step {$this->step} ($do): an undo of step $of went through though a later change (step " . implode(', ', array_unique(array_column($later, 'step'))) . ') changed the same field: stale_undo by the rule (A3)', $context);

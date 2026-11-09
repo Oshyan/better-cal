@@ -1,0 +1,34 @@
+{
+    "about": "A day's place and coordinates changed here, that change undone (the day's row goes with it), the length changed at Google and not read here, then the undo redone: the redo is conditional on what Google shows, so it is refused and writes nothing (x-conflict; review F1, seed 307 case 105).",
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+        "import": false,
+        "bound": "none",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2026-11-27",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-this-m",
+            "pick": 0.211,
+            "what": "location+coords"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.885
+        },
+        {
+            "do": "r-length",
+            "pick": 0.752
+        },
+        {
+            "do": "redo",
+            "pick": 0.183
+        }
+    ]
+}

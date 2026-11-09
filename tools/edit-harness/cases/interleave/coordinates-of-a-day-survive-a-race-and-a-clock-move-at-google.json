@@ -1,0 +1,35 @@
+{
+    "about": "A day given coordinates alone, a series rename with a day renamed at Google before its read-back, the clock moved at Google, then a delta poll: the day keeps its coordinates (x-dropped; review F2, seed 307 case 407).",
+    "series": {
+        "family": "monthly_nth_setpos",
+        "rrule": "FREQ=MONTHLY;BYDAY=WE;BYSETPOS=1",
+        "import": false,
+        "bound": "until",
+        "boundAt": 12,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-01 13:00",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.73,
+            "what": "coords"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.006,
+            "what": "title"
+        },
+        {
+            "do": "r-time",
+            "pick": 0.696
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.619
+        }
+    ]
+}

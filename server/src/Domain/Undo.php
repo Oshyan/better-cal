@@ -1266,9 +1266,11 @@ final class Undo
      * plugins) are passed over, and so is an undo's own entry (a Google
      * calendar's, takesBack): each call steps one change further back, on
      * a Google calendar as on a local one, where an undo records nothing.
-     * Redo is the undo's entry undone by its id. When that last change
-     * can't be undone (an answer already sent, say), that's the answer: an
-     * older one behind it isn't undone instead.
+     * Redo is the undo's entry undone by its id. A line that changed no
+     * row (log-only, touching nothing) is passed over too, judged by what
+     * it changed, never by who wrote it. When that last change can't be
+     * undone (an answer already sent, say), that's the answer: an older one
+     * behind it isn't undone instead.
      *
      * @return array{entity:string,op:string}
      */
@@ -1286,7 +1288,11 @@ final class Undo
                 throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
             }
             $below = (int) $last['id'];
-        } while ($this->takesBack($below));
+            // Passed over: an undo's own entry, and a line that changed no
+            // row (log-only and touching nothing), whoever wrote it: it is
+            // no change to take back. One that changed rows it can't put
+            // back is the answer, below.
+        } while ($this->takesBack($below) || ((int) $last['log_only'] === 1 && $this->db->scalar('SELECT 1 FROM mutation_touches WHERE mutation_id = ? LIMIT 1', [$below]) === null));
         if ((int) $last['log_only'] === 1) {
             throw HttpError::badRequest("The last change can't be undone here: " . $last['summary'], 'not_undoable');
         }

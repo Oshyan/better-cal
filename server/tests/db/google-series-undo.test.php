@@ -513,9 +513,9 @@ return static function (Db $db): void {
         }
         $here = $dayRow($s, '2027-03-08 18:00:00');
         $tags = $here === null ? [] : array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [(int) $here['id']]), 'name');
-        checkEq('the redo goes through onto the polled row: its id, its tag, the place from Google and the title redone', [
-            null, (int) $polled['id'], ['sample-tag'], 'Sample day title', 'Sample remote room', 'Sample day title',
-        ], [$caught, (int) ($here['id'] ?? 0), $tags, $here['title'] ?? null, $here['location'] ?? null, $s->fake->events['smpl2weekly_20270308T180000Z']['summary'] ?? null]);
+        checkEq('the redo goes through onto the polled row: its id, its tag (in its own list too), the place from Google and the title redone', [
+            null, (int) $polled['id'], ['sample-tag'], '["title","location","tags"]', 'Sample day title', 'Sample remote room', 'Sample day title',
+        ], [$caught, (int) ($here['id'] ?? 0), $tags, $here['override_fields'] ?? null, $here['title'] ?? null, $here['location'] ?? null, $s->fake->events['smpl2weekly_20270308T180000Z']['summary'] ?? null]);
         check('a poll after changes nothing', $sameAfterPoll($s));
     });
 
@@ -544,8 +544,8 @@ return static function (Db $db): void {
                 $s->undo->undoById($s->u, (int) $after['id']);
                 checkEq('Finish: the undo is redone like any', ['Sample renamed', 1], [$s->fake->events['smpl2weekly']['summary'], $undone((int) $after['id'])]);
             } else {
-                checkEq('Put back: the change stands, not undone, and the line saying so is not the account\'s own change', [
-                    0, 'Sample renamed', 'system', [],
+                checkEq('Put back: the change stands, not undone, and the line saying so is the person\'s and touches no row', [
+                    0, 'Sample renamed', 'web', [],
                 ], [$undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary'], $after['source'], $pending($s)]);
                 $s->undo->undoLatest($s->u);
                 checkEq('Put back: the bare Undo then undoes the change', [1, 'Sample weekly'], [$undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary']]);

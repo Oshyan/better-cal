@@ -140,6 +140,8 @@ return static function (Db $db): void {
         $s = $setup();
         $entry = $db->insert('mutations', ['user_id' => $s->u, 'entity' => 'event_links', 'entity_id' => $s->trip, 'op' => 'create',
             'before_json' => null, 'after_json' => null, 'source' => 'web', 'summary' => "Added 'Sample review' to 'Sample trip'"]);
+        // What it changed stays named, as for any entry made log-only: the trip.
+        $db->insert('mutation_touches', ['mutation_id' => $entry, 'row_key' => BetterCal\Domain\Undo::keyOf('events', ['id' => $s->trip]), 'col' => '*']);
         $message = null;
         try {
             $s->undo->undoById($s->u, $entry);

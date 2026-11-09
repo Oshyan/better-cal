@@ -983,7 +983,10 @@ return static function (Db $db): void {
             [$kind, $day($s, '20270329T170000Z')[0] ?? null, $back['title'] ?? null, $tags($back)]);
         $s->undo->undoById($s->u, lastEntry($db, $s->u));
         $again = $rowAt($s, '2027-03-29 17:00:00');
-        checkEq('redone: the series\' title again at Google, and the day ordinary again here (its row went, as the first time)', ['Sample weekly', null], [$day($s, '20270329T170000Z')[0] ?? null, $again]);
+        // The tag given on the day's own row is the day's own (its own list says so), so its row stays,
+        // following the series' title, as a day holding only a tag does at Google.
+        checkEq('redone: the series\' title again at Google; the row here stays for its tag, following the series\' title', ['Sample weekly', 'Sample weekly', '["tags"]', ['Sample label']],
+            [$day($s, '20270329T170000Z')[0] ?? null, $again['title'] ?? null, $again['override_fields'] ?? null, $tags($again)]);
         unset($tag);
     });
 

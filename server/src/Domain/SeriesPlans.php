@@ -1307,8 +1307,9 @@ trait SeriesPlans
      * Undo find it as after any undo), its words saying it was finished from
      * Review and what Google kept. Put back takes the undo back whole: the
      * entry stands as it was, not undone and undoable, and the Activity line
-     * that says so is the system's, naming no row, so it neither makes that
-     * entry stale nor stands in front of it for the bare Undo.
+     * that says so is the person's and touches no row, so it neither makes
+     * that entry stale nor stands in front of it for the bare Undo (both
+     * judge an entry by what it changed).
      */
     private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, array $undone, string $how, array $out): array
     {
@@ -1324,8 +1325,8 @@ trait SeriesPlans
                 (new ReviewQueue($this->db, $this))->holdGoogleDifferences($userId, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], (string) $calendar['name'], $differences);
             }
         } else {
-            ActivityContext::with('system', fn() => $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
-                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900)));
+            $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,
+                mb_substr('Put back at Google: the undo that stopped part way is taken back, and this stands: ' . (string) $undone['summary'], 0, 900));
         }
         return ['ok' => true, 'differences' => $differences, 'left' => $out['left'] ?? []];
     }
@@ -1396,6 +1397,30 @@ trait SeriesPlans
             $known = OwnFields::infer($row, $master);
         }
         return OwnFields::encode(array_merge($known ?? [], $fields));
+    }
+
+    /**
+     * An edited day's own list after an edit made on its own row (its id,
+     * not the series' with its key): what it owned and each field the edit
+     * changed (changedOwnFields: tags and people when sent), as a "this
+     * event" edit gives them, so retention (Feeds::heldHere) reads every
+     * field held here alone from the one list. Inside the edit's write; a
+     * row of no series is left alone.
+     */
+    private function ownAfterRowEdit(array $before, array $in): void
+    {
+        if (empty($before['recurrence_parent_id']) || !$this->ownFieldsColumn()) {
+            return;
+        }
+        $after = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $before['id']]);
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $before['recurrence_parent_id']]);
+        if ($after === null || $master === null) {
+            return;
+        }
+        $own = $this->ownAfterThis($after, $master, self::changedOwnFields($before, $after, $in));
+        if ($own !== null && $own !== (string) ($after['override_fields'] ?? '')) {
+            $this->db->update('events', ['override_fields' => $own], 'id = ?', [(int) $after['id']]);
+        }
     }
 
     /**

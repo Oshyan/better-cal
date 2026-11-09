@@ -497,7 +497,7 @@ final class Events
             $localFields += $googleFields;
             $googleFields = [];
         }
-        $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in): void {
+        $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in, $event): void {
             if ($resp !== null) {
                 $this->google()->apply($calendar, [$resp]);
             }
@@ -508,6 +508,7 @@ final class Events
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
             $this->applyPeoplePatch($userId, $id, $in);
+            $this->ownAfterRowEdit($event, $in);
         });
         $left = $this->get($userId, $id);
         $after = ['events' => [$left]] + $this->labels->eventLinkRows($id);
@@ -1911,7 +1912,7 @@ final class Events
         $movesCalendar = isset($fields['calendar_id']) && !empty($event['rrule']);
         $overridesBefore = $movesCalendar ? $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) : [];
 
-        $this->db->tx(function () use ($id, $userId, $fields, $in, $movesCalendar): void {
+        $this->db->tx(function () use ($id, $userId, $fields, $in, $movesCalendar, $event): void {
             if ($fields !== []) {
                 $fields['updated_at'] = Time::nowDb();
                 $this->db->update('events', $fields, 'id = ?', [$id]);
@@ -1923,6 +1924,7 @@ final class Events
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
             $this->applyPeoplePatch($userId, $id, $in);
+            $this->ownAfterRowEdit($event, $in);
         });
 
         $after = $this->get($userId, $id);

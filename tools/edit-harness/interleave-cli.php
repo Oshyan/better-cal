@@ -78,6 +78,8 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
     putenv('BETTERCAL_SESSION_SECRET=' . bin2hex(random_bytes(32)));
 }
 putenv('BETTERCAL_STRICT_JOURNAL=1');
+// Every failing record keeps its case's spec, and the sync refuses to start without memory to spare.
+ini_set('memory_limit', '2048M');
 require $root . '/server/src/bootstrap.php';
 if (isset($opts['model'])) {
     // A patched copy of one product class (the mutation runner's), declared before anything autoloads the tree's.
@@ -112,7 +114,11 @@ try {
         $u = freshUser($db);
         $stand = GoogleStand::make($db, $domains->undo, $u);
         $case = new Interleave($db, $stand->events, new BetterCal\Domain\Undo($db, null, $stand->writer), $stand, $u);
-        return Warnings::during(static fn(): array => $case->run($spec));
+        try {
+            return Warnings::during(static fn(): array => $case->run($spec));
+        } finally {
+            GoogleStand::forget($db, $u);
+        }
     };
     $out = ['records' => [], 'minimal' => [], 'counts' => ['cases' => 0, 'steps' => 0], 'runs' => [], 'na' => []];
     $count = static function (array $result) use (&$out): void {

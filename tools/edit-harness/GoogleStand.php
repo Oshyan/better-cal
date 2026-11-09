@@ -62,6 +62,16 @@ final class GoogleStand
         return $stand;
     }
 
+    /** Lets the stand of an account go (the interleaving mode makes one account per case, and a run of hundreds would keep every stand-in's store). */
+    public static function forget(Db $db, int $userId): void
+    {
+        if (self::$made !== null && isset(self::$made[$db])) {
+            $stands = self::$made[$db];
+            unset($stands[$userId]);
+            self::$made[$db] = $stands;
+        }
+    }
+
     private static function build(Db $db, Undo $undo, int $userId): self
     {
         $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];

@@ -607,6 +607,13 @@ final class GoogleSeries
                 => $this->writer->send($calendar, $method, $path, $body, [], $ifMatch, $beforeSend);
             $items = $this->readBack($calendar, $send, $master !== null && !empty($master['rrule']) ? (string) $master['uid'] : null, $seriesId, null, $beforeSend);
         }
+        // Read by Google's reason, as every answer is (GoogleWriter::refusal):
+        // a target Google no longer has (its read answered 404 or 410, or
+        // lists it cancelled) is deleted at Google, and only a read that
+        // found it is compared with the rows here.
+        if ($master !== null && self::held($items, $seriesId)['master'] === null) {
+            throw GoogleWriter::deleted();
+        }
         if ($master !== null && !self::sameAsStored($items, $seriesId, $master, $rows)) {
             throw new HttpError('google_conflict', GoogleWriter::CONFLICT_MESSAGE, 409);
         }
@@ -616,7 +623,7 @@ final class GoogleSeries
         }
         if (!is_string($etag) || $etag === '') {
             // Not at Google: as the write itself would be answered.
-            throw new HttpError('google_write_failed', 'Google rejected the change: HTTP 404 (Not Found)', 502, ['googleStatus' => 404]);
+            throw GoogleWriter::deleted();
         }
         return ['etag' => $etag, 'items' => $items];
     }

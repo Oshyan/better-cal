@@ -2635,8 +2635,12 @@ final class Undo
 
     /**
      * The retention rule over the day rows an undo put back or changed: a
-     * row that owns nothing and holds nothing here alone (Feeds::retained)
-     * is an ordinary occurrence, with no row, as the sync leaves one.
+     * row that owns nothing and holds nothing here alone (Feeds::retained,
+     * the one function: the fields it owns that are held here alone, tags
+     * and people among them, and what refers to it, trip links included)
+     * is an ordinary occurrence, with no row, as the sync leaves one. Tags
+     * and people a row has without owning them are its series' copy, never
+     * a reason of their own to keep it.
      *
      * @param list<array> $rows
      */
@@ -2651,8 +2655,7 @@ final class Undo
             $seen[$id] = true;
             $now = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
             if ($now !== null && ($now['recurrence_instance_utc'] ?? null) !== null
-                && OwnFields::decode($now['override_fields'] ?? null) === [] && Feeds::retained($this->db, $now, []) === null
-                && $this->db->scalar('SELECT 1 FROM event_tags WHERE event_id = ? UNION SELECT 1 FROM event_people WHERE event_id = ?', [$id, $id]) === null) {
+                && OwnFields::decode($now['override_fields'] ?? null) === [] && Feeds::retained($this->db, $now) === null) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             }
         }

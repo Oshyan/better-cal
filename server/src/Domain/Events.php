@@ -392,9 +392,9 @@ final class Events
      *
      * @param array{0:array,1:array}|null $tables
      */
-    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null, array $kept = []): void
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null, ?array $google = null, ?array $tables = null, ?array $touches = null, ?array $details = null, array $kept = [], ?string $note = null): void
     {
-        $summary = GoogleUndo::line($summary, (string) $calendar['name'], $kept);
+        $summary = GoogleUndo::line($summary, (string) $calendar['name'], $kept, [], $note);
         if ($google !== null) {
             $this->googleUndo()->record($userId, $eventId ?? 0, $summary, $google, $touches, 'update', $tables);
             return;
@@ -764,9 +764,28 @@ final class Events
         }
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
             $event['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($event)]);
-        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        $gone = $this->googleRemove($calendar, $googleId, $authority);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
-        $this->googleJournal($userId, $summary, $calendar, (int) $event['id'], $undo);
+        $this->googleJournal($userId, $summary, $calendar, (int) $event['id'], $undo, note: $gone ? GoogleWriter::ALREADY_GONE : null);
+    }
+
+    /**
+     * A removal at Google of one event or one day, read as every removal
+     * reads one (GoogleWriter::gone, the series path's reading): a target
+     * Google no longer has is removed already, so the removal completes
+     * here. Returns whether it was gone.
+     */
+    private function googleRemove(array $calendar, string $googleId, ?RequestAuthority $authority): bool
+    {
+        try {
+            $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        } catch (HttpError $e) {
+            if (!GoogleWriter::gone($e)) {
+                throw $e;
+            }
+            return true;
+        }
+        return false;
     }
 
     private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void
@@ -786,12 +805,12 @@ final class Events
         $shown = $override ?? $master;
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
-        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        $gone = $this->googleRemove($calendar, $googleId, $authority);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
         // What it changed, as on a local calendar: the series' skipped days
         // (and the day's row, when it had one: its snapshot says so), not the series whole.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo, null,
-            [[Undo::keyOf('events', ['id' => (int) $master['id']]), Undo::SKIP . $instanceUtc]]);
+            [[Undo::keyOf('events', ['id' => (int) $master['id']]), Undo::SKIP . $instanceUtc]], note: $gone ? GoogleWriter::ALREADY_GONE : null);
     }
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
@@ -805,11 +824,12 @@ final class Events
         $googleId = self::requireGoogleId($override);
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($override)['status']],
             $override['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($override)]);
-        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        $gone = $this->googleRemove($calendar, $googleId, $authority);
         $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
         // The day's skip is its ground, as googleDeleteThis records it: the undo takes that skip back.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo, null,
-            empty($override['recurrence_parent_id']) ? [] : [[Undo::keyOf('events', ['id' => (int) $override['recurrence_parent_id']]), Undo::SKIP . (string) $override['recurrence_instance_utc']]]);
+            empty($override['recurrence_parent_id']) ? [] : [[Undo::keyOf('events', ['id' => (int) $override['recurrence_parent_id']]), Undo::SKIP . (string) $override['recurrence_instance_utc']]],
+            note: $gone ? GoogleWriter::ALREADY_GONE : null);
     }
 
 

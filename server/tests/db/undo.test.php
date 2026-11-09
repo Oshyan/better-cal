@@ -834,4 +834,22 @@ return static function (Db $db): void {
             $db->all("SELECT id FROM events WHERE user_id = ? AND title = 'Sample skipped day' AND deleted_at IS NULL", [$u]),
             array_map(static fn(array $x): array => [(string) $x['title'], (string) $x['day']], json_decode((string) $note['details_json'], true)['removedDays'] ?? [])]);
     });
+
+    // One retention function (Feeds::retained): tags a day's row has as its series' copy keep nothing (2026-11-09).
+    scenario('undo: a date\'s row made by a title edit, the series then tagged for all events (the row takes a copy), the date given notes; both edits of the date undone: no row is left, the series keeps its tag (one retention function)', function () use ($db, $d, $u, $series): void {
+        $s = $series('Sample climb', '2027-02-01');
+        $at = '2027-02-04T18:00:00+00:00';
+        $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name');
+        $d->events->patch($u, $s, ['scope' => 'this', 'instanceStart' => $at, 'title' => 'Sample day title']);
+        $made = lastEntry($db, $u);
+        $row = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]);
+        $d->events->patch($u, $s, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'tagNames' => ['Sample series tag']]);
+        $d->events->patch($u, $row, ['scope' => 'this', 'instanceStart' => $at, 'description' => 'Sample day notes']);
+        $notes = lastEntry($db, $u);
+        checkEq('the date\'s row has the series\' tag, a copy it does not own', [['Sample series tag'], '["title","description"]'],
+            [$tagsOf($row), $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$row])]);
+        $errors = [refusal(fn() => $d->undo->undoById($u, $made)), refusal(fn() => $d->undo->undoById($u, $notes))];
+        checkEq('both undo; the date is an ordinary occurrence again (no row); the series keeps its tag', [[null, null], 0, ['Sample series tag']],
+            [$errors, (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s]), $tagsOf($s)]);
+    });
 };

@@ -463,4 +463,50 @@ return static function (Db $db): void {
         $tagged = array_values(array_filter($kept, static fn(array $k): bool => $tags((int) $k['id']) === ['sample-tag']));
         checkEq('after the delta poll the day keeps its row and its tag, now at the new clock', [1, ['tags']], [count($tagged), $own($tagged[0] ?? null)]);
     });
+
+    scenario('google series: an insert whose answer was lost, the event then cancelled at Google: Finish makes it live again by the one conditional write, its body only what differs from the read, If-Match that read\'s etag', function () use ($setup, $masterId, $held, $stored, $secondSync, $db, $iso, $pending): void {
+        $s = $setup();
+        $id = $masterId($s);
+        $s->t->loseFirstPost = true;
+        try {
+            planned($s->events, $s->u, $id, ['scope' => 'following', 'instanceStart' => $iso('2027-03-22 10:00'), 'title' => 'Sample weekly, spring']);
+        } catch (HttpError) {
+        }
+        $newIds = array_keys(array_filter($s->fake->events, static fn(array $e): bool => !empty($e['recurrence']) && $e['id'] !== 'smpl1weekly'));
+        $newId = (string) ($newIds[0] ?? '');
+        // Another client cancels the new series at Google.
+        ($s->fake->writerTransport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/team%40group.calendar.google.com/events/' . $newId, ['status' => 'cancelled'], ['Authorization: Bearer sample-access']);
+        checkEq('the new series is cancelled at Google, the change half done', ['cancelled', 'half'], [$s->fake->events[$newId]['status'] ?? null, $pending($s)[0]['status'] ?? null]);
+        $listed = (new ReviewQueue($db, $s->events))->googleHalfDone($s->u);
+        $s->t->calls = [];
+        $out = $s->events->googleFinish($s->u, (int) $listed[0]['id']);
+        $s->events->throwDeferred();
+        $calls = $s->t->calls;
+        $at = null;
+        foreach ($calls as $i => $c) {
+            if ($c[0] === 'PATCH' && $c[1] === $newId) {
+                $at = $i;
+                break;
+            }
+        }
+        $patch = $at === null ? null : $calls[$at];
+        $read = null;
+        for ($i = ($at ?? 0) - 1; $i >= 0; $i--) {
+            if ($calls[$i][0] === 'GET' && $calls[$i][1] === $newId) {
+                $read = $i;
+                break;
+            }
+        }
+        $keys = array_keys($patch[2] ?? []);
+        sort($keys);
+        checkEq('Finish ok; the revive is a PATCH whose keys are all on the allowed list, with status confirmed, and none the read already holds (the title, the notes)', [true, true, [], 'confirmed', false, false],
+            [$out['ok'], $patch !== null, array_values(array_diff($keys, BetterCal\Domain\GoogleWriter::allowedKeys())), $patch[2]['status'] ?? null,
+                array_key_exists('summary', $patch[2] ?? []), array_key_exists('description', $patch[2] ?? [])]);
+        checkEq('its If-Match is an etag Google gave for the event (a read compared with the rows here first)', true, $patch !== null && $read !== null && is_string($patch[3]) && $patch[3] !== '');
+        $new = $held($s, $newId);
+        checkEq('the new series is live with the plan\'s title and its days; the rows here hold it as Google does; no pending row', ['confirmed', 'Sample weekly, spring', true, []],
+            [$new['status'], $new['title'], $stored($s, $newId) === $new, $pending($s)]);
+        [$before, $after] = $secondSync($s);
+        checkEq('a second sync changes nothing', $before, $after);
+    });
 };

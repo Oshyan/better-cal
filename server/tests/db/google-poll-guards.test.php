@@ -269,4 +269,36 @@ return static function (Db $db): void {
             GoogleWriter::refusal(200, '{}'),
         ]);
     });
+
+    // ---- A removal of something already gone at Google completes ------------
+
+    scenario('google refusals: deleting an event, one day or an edited day that Google had already removed completes here, and the Activity line says Google had already removed it', function () use ($setup, $atGoogle, $db): void {
+        $line = static fn(object $s): string => (string) $db->scalar('SELECT summary FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
+        $s = $setup();
+        $atGoogle($s, 'DELETE', 'smpl7pizza');
+        $s->t->sent = [];
+        $s->events->deleteEvent($s->u, $s->pizzaId, null, null);
+        checkEq('the event: its row gone here, no DELETE sent, the line says Google had already removed it', [null, [], true],
+            [$db->scalar('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$s->pizzaId]), array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')),
+                str_contains($line($s), "Deleted 'Pizza night' on Google calendar 'Sample club'. Google had already removed it.")]);
+
+        $s = $setup();
+        $atGoogle($s, 'DELETE', 'smpl7weekly');
+        $s->t->sent = [];
+        $s->events->deleteEvent($s->u, $s->masterId, 'this', '2027-03-15T17:00:00+00:00');
+        $skips = Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s->masterId]));
+        checkEq('an ordinary day of a series Google had removed: skipped here, no DELETE sent, the line says so', [['2027-03-15 17:00:00'], [], true],
+            [$skips, array_values(array_filter($s->t->sent, static fn(string $m): bool => $m !== 'GET')),
+                str_contains($line($s), "Deleted one occurrence of 'Sample practice' on Google calendar 'Sample club'. Google had already removed it.")]);
+        $s->events->deleteEvent($s->u, $s->dayId, 'this', '2027-03-08T18:00:00+00:00');
+        checkEq('its tagged 8 March: its row gone and the day skipped here, the line says so', [null, true, true],
+            [$db->scalar('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$s->dayId]),
+                in_array('2027-03-08 18:00:00', Recurrence::decodeExdates($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s->masterId])), true),
+                str_contains($line($s), 'Google had already removed it.')]);
+
+        $s = $setup();
+        $atGoogle($s, 'DELETE', 'smpl7pizza');
+        checkEq('an edit of an event Google had removed is still refused as deleted at Google', 'google_deleted',
+            refusal(fn() => $s->events->patch($s->u, $s->pizzaId, ['title' => 'Pizza night, later'])));
+    });
 };

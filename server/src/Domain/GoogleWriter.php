@@ -40,6 +40,9 @@ final class GoogleWriter
     public const CONFLICT_MESSAGE = 'This event changed at Google since you last saw it. Refresh and try again.';
     public const BUSY_MESSAGE = 'Google is busy and refused the change for now; nothing was changed. Try again in a minute.';
     public const DELETED_MESSAGE = 'This event was deleted at Google; nothing was changed. Refresh to see the calendar as Google has it.';
+
+    /** The note on the Activity line of a removal whose target Google had already removed (gone). */
+    public const ALREADY_GONE = 'Google had already removed it';
     /**
      * Google's reasons for a refusal that says "too many requests, wait"
      * (a 403 or 429 of the usageLimits domain): the write changed nothing
@@ -545,6 +548,18 @@ final class GoogleWriter
     public static function deleted(int $googleStatus = 404): HttpError
     {
         return new HttpError('google_deleted', self::DELETED_MESSAGE, 409, ['googleStatus' => $googleStatus]);
+    }
+
+    /**
+     * Whether a refusal says the target is gone at Google (a 404 or 410 on
+     * the write or on the read before it, or the record listed cancelled:
+     * deleted). The one reading every removal makes: to a removal it is
+     * done, so the removal completes here and says Google had already
+     * removed it (ALREADY_GONE); to an edit it stays a refusal. Pure.
+     */
+    public static function gone(HttpError $e): bool
+    {
+        return in_array((int) ($e->extra['googleStatus'] ?? 0), [404, 410], true);
     }
 
     /**

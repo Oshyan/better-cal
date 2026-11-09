@@ -184,6 +184,8 @@ export function ActivityPage() {
             ].filter(Boolean).join(' · ')}</span>`}
           ${en.details && en.details.addedTitles && en.details.addedTitles.length > 0
             && html`<span class="bc-activity-detail">${en.details.addedTitles.join(', ')}</span>`}
+          ${!en.undoable && en.notUndoable
+            && html`<span class="bc-activity-detail" title=${en.notUndoable}>${en.notUndoable}</span>`}
         </span>
         <span class="bc-activity-actions">
           ${en.entity === 'event' && !en.undone && en.op !== 'delete' && html`<button type="button" class="bc-icon-btn" title="Show on calendar" onClick=${() => jump(en)}><${Icon} name="calendar" size=${13} /></button>`}

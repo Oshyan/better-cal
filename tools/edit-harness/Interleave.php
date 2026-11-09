@@ -22,14 +22,20 @@ final class Interleave
     /** The step kinds a case draws, by weight. */
     public const WEIGHTS = [
         'w-all' => 10, 'w-follow' => 3, 'w-delfollow' => 2, 'w-answer' => 2, 'w-this-g' => 6, 'w-this-l' => 8, 'w-this-m' => 4, 'w-del1' => 3, 'w-create' => 2,
-        'r-rename' => 3, 'r-time' => 3, 'r-zone' => 2, 'r-length' => 2, 'r-rule' => 2, 'r-bound' => 3, 'r-skip+' => 2, 'r-skip-' => 1, 'r-exc+' => 3, 'r-exc-' => 1, 'r-gonly' => 3, 'r-delete' => 1,
-        'p-delta' => 8, 'p-whole' => 3, 'p-410' => 2,
+        'r-rename' => 3, 'r-time' => 3, 'r-zone' => 2, 'r-length' => 2, 'r-rule' => 2, 'r-bound' => 3, 'r-skip+' => 2, 'r-skip-' => 1, 'r-exc+' => 3, 'r-exc-' => 1, 'r-gonly' => 3, 'r-delete' => 1, 'r-etag' => 2,
+        'p-delta' => 8, 'p-whole' => 3, 'p-410' => 2, 'p-empty' => 2, 'p-overlap' => 2, 'p-410-pending' => 2, 'p-budget' => 1, 'w-race' => 3,
         'f-lost' => 5, 'f-before' => 3, 'f-fatal' => 3,
         'finish' => 5, 'putback' => 5,
         'u-entry' => 4, 'u-bare' => 5, 'redo' => 2,
     ];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
+    /**
+     * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
+     * time, length and all-day as start and end, title as summary, location, description, url as source, status) and the
+     * series' rule (recurrence), plus a resource's identity (google-calendar.md, What Writes Send).
+     */
+    public const WRITER_KEYS = ['summary', 'description', 'location', 'source', 'start', 'end', 'status', 'recurrence', 'id', 'iCalUID', 'recurringEventId', 'originalStartTime'];
     /** What a write never sends (google-calendar.md, What Writes Send: "Not sent: attendees, reminders and color"). */
     public const NEVER_SENT = ['attendees', 'reminders', 'colorId'];
     /** The fields held here alone a step can send. */
@@ -56,6 +62,16 @@ final class Interleave
     private array $done = [];
     /** @var list<array> what each step touched (series, field, day), for staleness and Finish */
     private array $touches = [];
+    /** @var array<string,true> series changed at Google since the app last learned their etag (a poll, or a write of its own there) */
+    private array $unseen = [];
+    /** @var array<string,true> series whose etag alone changed at Google since the last poll (r-etag) */
+    private array $etagOnly = [];
+    /** The change a w-race step made at Google between the master write and its read-back: [gid, key, title], or null. */
+    private ?array $raced = null;
+    /** What a p-overlap step wrote here while the poll fetched: [row key, tag], or null. */
+    private ?array $overlap = null;
+    /** What a p-budget step held after its stopped read: the comparable state then. */
+    private ?array $budgetMid = null;
 
     public function __construct(
         private readonly Db $db,
@@ -97,6 +113,7 @@ final class Interleave
         $step = ['do' => $do, 'pick' => $r->int(0, 999) / 1000];
         $what = match ($do) {
             'w-all' => $r->pick(['title', 'title', 'description', 'location', 'url', 'tags', 'time', 'length', 'count']),
+            'w-race' => 'title',
             'w-follow' => $r->pick(['title', 'tags', 'description']),
             'w-this-g' => $r->pick(['title', 'description', 'location', 'time']),
             'w-this-l' => $r->pick(['tags', 'tags', 'people', 'reminders', 'icon', 'coords']),
@@ -127,6 +144,8 @@ final class Interleave
         $this->records = $this->runs = $this->na = $this->done = $this->touches = $this->dirty = $this->gids = [];
         $this->pending = $this->recovered = null;
         $this->pendings = [];
+        $this->etagOnly = [];
+        $this->unseen = [];
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
         if ($this->createSeries($spec['series']) === null) {
@@ -354,8 +373,25 @@ final class Interleave
                 $this->gids[(string) $r['google_event_id']] = true;
             }
         }
-        return ['rows' => $rows, 'l' => $this->lstate($rows), 'g' => $this->gstate(), 'req' => count($this->stand->fake->requests),
+        return ['rows' => $rows, 'l' => $this->lstate($rows), 'g' => $this->gstate(), 'req' => count($this->stand->fake->requests), 'here' => $this->here(),
+            'differs' => (int) $this->db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND kind = 'google_differs'", [$this->userId]),
             'mut' => (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) FROM mutations WHERE user_id = ?', [$this->userId]), 'half' => GoogleSeries::halfDoneOf($this->db, $this->userId)];
+    }
+
+    /** What a refusal must leave as it was beyond the comparable rows: every row's Google etag and the calendar's sync token. */
+    private function here(): array
+    {
+        $etags = [];
+        foreach ($this->db->all('SELECT id, google_etag FROM events WHERE user_id = ? AND calendar_id = ? AND id >= ? AND deleted_at IS NULL ORDER BY id', [$this->userId, $this->stand->calendarId, $this->firstId]) as $r) {
+            $etags[(int) $r['id']] = $r['google_etag'];
+        }
+        return ['l' => $this->lstate($this->rows()), 'etags' => $etags, 'token' => $this->db->scalar('SELECT google_sync_token FROM calendars WHERE id = ?', [$this->stand->calendarId])];
+    }
+
+    /** Nothing written here: the rows as compared, each row's etag and the calendar's sync token all as they were. */
+    private static function sameHere(array $s0, array $s1): bool
+    {
+        return $s0['here'] == $s1['here'];
     }
 
     /** The app's writes to the stand-in between two snapshots (the remote client's are marked and left out). */
@@ -384,7 +420,7 @@ final class Interleave
             $out = match (true) {
                 str_starts_with($do, 'w-') => $this->write($do, $step, $s0),
                 str_starts_with($do, 'r-') => $this->remote($do, $step, $s0),
-                str_starts_with($do, 'p-') => $this->poll($do),
+                str_starts_with($do, 'p-') => $this->poll($do, $step, $s0),
                 str_starts_with($do, 'f-') => $this->failing($do, $step, $s0),
                 $do === 'finish', $do === 'putback' => $this->recover($do, $step, $s0),
                 default => $this->undoStep($do, $step),
@@ -485,6 +521,27 @@ final class Interleave
     private function write(string $do, array $step, array $s0): array
     {
         $rows = $s0['rows'];
+        if ($do === 'w-race') {
+            $master = $this->seriesOf($rows, $step['pick']);
+            $occ = $master === null ? null : $this->occurrenceOf($master, fmod($step['pick'] * 11.0, 1.0), 1);
+            if ($master === null || $occ === null || empty($master['google_event_id'])) {
+                return ['skip' => true];
+            }
+            $gid = (string) $master['google_event_id'];
+            $instance = GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1, (string) $master['tzid']);
+            $title = "Sample remote day {$this->step}";
+            $this->raced = [$gid, $occ[0], $title];
+            $fake = $this->stand->fake;
+            $this->stand->knobs->race = static function () use ($fake, $instance, $title): void {
+                $url = 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($instance);
+                ($fake->transport())('PATCH', $url, ['Authorization: Bearer sample-access', 'X-Harness: remote'], ['summary' => $title]);
+            };
+            try {
+                return $this->write('w-all', ['what' => 'title'] + $step, $s0);
+            } finally {
+                $this->stand->knobs->race = null;
+            }
+        }
         if ($do === 'w-create') {
             $day = Days::date(Days::ofDate('2027-02-01') + (int) floor($step['pick'] * 200));
             $this->lastAsked = ['kind' => 'create', 'gid' => null, 'fields' => [], 'days' => [$day]];
@@ -698,6 +755,10 @@ final class Interleave
                 };
                 $touched = [];
                 break;
+            case 'r-etag':
+                $this->stand->fake->seed($g);
+                $this->etagOnly[$gid] = true;
+                return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
             case 'r-delete':
                 [$target, $body, $touched] = [$gid, null, [$touch('series')]];
                 break;
@@ -714,6 +775,7 @@ final class Interleave
             return ['skip' => true];
         }
         $this->dirty[$gid] = true;
+        $this->unseen[$gid] = true;
         foreach ($touched as $t) {
             $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false] + $t;
         }
@@ -723,8 +785,82 @@ final class Interleave
         return ['asked' => ['kind' => 'remote', 'gid' => $gid, 'fields' => [], 'days' => []]];
     }
 
-    private function poll(string $do): array
+    private function poll(string $do, array $step = [], array $s0 = []): array
     {
+        $calendar = $this->stand->calendarId;
+        if ($do === 'p-empty') {
+            // A whole read (or a 410 reset, then a whole read) that lists nothing for a calendar holding rows.
+            if (($s0['rows'] ?? []) === []) {
+                return ['skip' => true];
+            }
+            $this->stand->knobs->emptyNext = true;
+            $this->db->run('UPDATE calendars SET google_sync_token = ? WHERE id = ?', [($step['pick'] ?? 0) < 0.5 ? null : 'stale-token', $calendar]);
+            try {
+                $this->stand->poll();
+            } finally {
+                $this->stand->knobs->emptyNext = false;
+            }
+            return ['asked' => ['kind' => 'poll', 'gid' => null, 'fields' => [], 'days' => []]];
+        }
+        if ($do === 'p-overlap') {
+            // A write here (a tag on an ordinary day) while the poll fetches Google's list.
+            $master = $this->seriesOf($s0['rows'] ?? [], (float) ($step['pick'] ?? 0));
+            $occ = $master === null ? null : $this->occurrenceOf($master, fmod((float) $step['pick'] * 5.0, 1.0));
+            if ($occ === null) {
+                return ['skip' => true];
+            }
+            $tag = "overlap-{$this->step}";
+            $events = $this->events;
+            $user = $this->userId;
+            $inst = self::instanceArg($master, $occ[0]);
+            $mid = (int) $master['id'];
+            $note = (object) ['refused' => null];
+            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note];
+            $this->stand->knobs->duringFetch = static function () use ($events, $user, $mid, $inst, $tag, $note): void {
+                try {
+                    $events->patch($user, $mid, ['scope' => 'this', 'instanceStart' => $inst, 'tagNames' => ['sample', $tag]]);
+                    $events->throwDeferred();
+                } catch (\Throwable $e) {
+                    $note->refused = $e instanceof HttpError ? $e->errorCode : get_class($e);
+                }
+            };
+            try {
+                $this->stand->poll();
+            } finally {
+                $this->stand->knobs->duringFetch = null;
+            }
+            return ['asked' => ['kind' => 'poll', 'gid' => null, 'fields' => [], 'days' => []]];
+        }
+        if ($do === 'p-410-pending') {
+            if ($this->pendings === []) {
+                return ['skip' => true];
+            }
+            $do = 'p-410';
+        }
+        if ($do === 'p-budget') {
+            // A whole read stopped by the page budget (one page allowed, two items a page), then completed.
+            $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$calendar]);
+            $pages = \BetterCal\Support\Limits::get('GOOGLE_SYNC_PAGES');
+            $this->stand->knobs->pageSize = 2;
+            \BetterCal\Support\Limits::configure(['GOOGLE_SYNC_PAGES' => 1]);
+            $stopped = false;
+            try {
+                $this->stand->poll();
+            } catch (\Throwable $e) {
+                // The stopped read: its reason recorded on the calendar, nothing applied.
+                $stopped = true;
+            } finally {
+                $this->stand->knobs->pageSize = null;
+                \BetterCal\Support\Limits::configure(['GOOGLE_SYNC_PAGES' => $pages]);
+            }
+            $this->budgetMid = $stopped ? $this->here() : null;
+            if (!$stopped) {
+                $this->ran('x-budget', 'read fit one page');
+            }
+            $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$calendar]);
+            $this->stand->poll();
+            return ['asked' => ['kind' => 'poll', 'gid' => null, 'fields' => [], 'days' => []]];
+        }
         if ($do === 'p-whole') {
             $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$this->stand->calendarId]);
         } elseif ($do === 'p-410') {
@@ -794,7 +930,9 @@ final class Interleave
         if ($of !== null && $depth < 4) {
             return ['kind' => 'redo'] + $this->askedOfEntry($of, $depth + 1);
         }
-        return ['kind' => 'undo', 'of' => null, 'gid' => null, 'fields' => [], 'days' => ['*']];
+        $d = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true);
+        $gid = isset($d['google']['googleId']) ? explode('_', (string) $d['google']['googleId'], 2)[0] : null;
+        return ['kind' => 'undo', 'of' => null, 'gid' => $gid, 'fields' => [], 'days' => ['*']];
     }
 
     // ---- the checks -----------------------------------------------------------------------
@@ -818,6 +956,70 @@ final class Interleave
             $this->fail('x-honest', "step {$this->step} ($do): the product threw $error instead of answering", $context);
         }
 
+        // x-conditional: every PATCH and DELETE the app sends carries If-Match.
+        foreach ($writes as $q) {
+            $this->ran('x-conditional', $do);
+            if (in_array($q['method'], ['PATCH', 'DELETE'], true) && preg_grep('/^If-Match:\s*\S/i', $q['headers']) === []) {
+                $this->fail('x-conditional', "step {$this->step} ($do): a {$q['method']} went to Google without If-Match", $context + ['path' => rawurldecode(basename((string) $q['path']))]);
+                break;
+            }
+        }
+        // x-write-asked: no key outside the writer's list (OwnFields' fields Google holds, plus the resource's identity).
+        foreach ($writes as $q) {
+            $extra = array_values(array_diff(array_keys((array) $q['body']), self::WRITER_KEYS));
+            if ($extra !== []) {
+                $this->fail('x-write-asked', "step {$this->step} ($do): a write sent " . implode(', ', $extra) . ", outside the writer's list", $context + ['path' => rawurldecode(basename((string) $q['path']))]);
+                break;
+            }
+        }
+        // x-empty: an empty listing never deletes; it is not applied and the next poll tries again.
+        if ($do === 'p-empty') {
+            $this->ran('x-empty', 'empty read');
+            $this->expect('x-empty', $s0['here']['l'] == $s1['here']['l'], "step {$this->step} ($do): a whole read that listed nothing for a calendar holding rows changed no row", $context + ['diff' => self::diff($s0['here']['l'], $s1['here']['l'])]);
+            $this->expect('x-empty', $s1['here']['token'] === $s0['here']['token'] || $s1['here']['token'] === null || $s1['here']['token'] === 'stale-token',
+                "step {$this->step} ($do): an empty listing does not advance the sync position", $context + ['token' => $s1['here']['token']]);
+        }
+        // x-overlap: a write here while a poll fetches survives the poll.
+        if ($do === 'p-overlap' && $this->overlap !== null) {
+            [$key, $tag, $uid, $note] = $this->overlap;
+            $this->overlap = null;
+            if ($note->refused !== null) {
+                // The write itself refused (a series with changes not yet at Google refuses writes, A6): nothing to keep.
+                $this->ran('x-overlap', 'write during fetch refused: ' . $note->refused);
+            } else {
+                $kept = (int) $this->db->scalar('SELECT COUNT(*) FROM events e JOIN event_tags et ON et.event_id = e.id JOIN tags t ON t.id = et.tag_id WHERE e.calendar_id = ? AND e.uid = ? AND e.recurrence_instance_utc = ? AND e.deleted_at IS NULL AND t.name = ?',
+                    [$this->stand->calendarId, $uid, $key, $tag]) > 0;
+                $this->ran('x-overlap', 'write during fetch');
+                $this->expect('x-overlap', $kept, "step {$this->step} ($do): a tag given while the poll fetched Google's list is on its day after the poll", $context + ['key' => $key]);
+            }
+        }
+        // x-budget: a whole read stopped by its page budget applies nothing; the read that completes it then agrees (x-agree).
+        if ($do === 'p-budget' && $this->budgetMid !== null) {
+            $this->ran('x-budget', 'stopped read');
+            $this->expect('x-budget', $this->budgetMid['l'] == $s0['here']['l'], "step {$this->step} ($do): a whole read stopped by its page budget changed no row", $context + ['diff' => self::diff($s0['here']['l'], $this->budgetMid['l'])]);
+            $this->budgetMid = null;
+        }
+        // x-pending, the poll rule: while a series has changes not yet at Google, a poll neither removes nor rewrites its rows.
+        if ($kind === 'p-' && $this->pendings !== []) {
+            $gids = [];
+            foreach ($this->pendings as $p) {
+                $gids += $p['gids'];
+            }
+            $was = self::ofSeries($s0['l'], $gids, $s0['rows']);
+            $now = self::ofSeries($s1['l'], $gids, $s1['rows']);
+            $this->ran('x-pending', 'poll while half done');
+            $this->expect('x-pending', $was == $now, "step {$this->step} ($do): a poll while a series has changes not yet at Google left that series' rows as they were", $context + ['diff' => self::diff($was, $now)]);
+        }
+        // x-readback: a change made at Google between the app's master write and its read-back is kept or named.
+        if ($do === 'w-race' && $this->raced !== null) {
+            [$rg, $rkey, $rtitle] = $this->raced;
+            $this->raced = null;
+            $rec = $s1['g']['digest'][$rg]['records'][$rkey] ?? null;
+            $this->ran('x-readback', 'race');
+            $this->expect('x-readback', ($rec !== null && $rec[0] === $rtitle) || $s1['differs'] > $s0['differs'] || !$out['ok'],
+                "step {$this->step} ($do): a day renamed at Google between the series' write and its read-back keeps its title there, or the change names it", $context + ['key' => $rkey, 'record' => $rec]);
+        }
+
         // x-sync-silent: a poll sends Google nothing.
         if ($kind === 'p-') {
             $this->ran('x-sync-silent', $do);
@@ -839,7 +1041,7 @@ final class Interleave
             if ($out['ok']) {
                 $this->fail('x-pending', "step {$this->step} ($do): a write to a series whose change is half done went through; the settled rule (A6) refuses it with the pending reason, pointing to Review", $context);
             } else {
-                $this->expect('x-pending', self::same($s0['l'], $s1['l']) && $writes === [], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+                $this->expect('x-pending', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             }
         }
 
@@ -872,8 +1074,14 @@ final class Interleave
             $this->ran('x-conflict', $do);
             $this->expect('x-conflict', !$out['ok'] && $error === 'google_conflict', "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused with google_conflict", $context);
             if (!$out['ok']) {
-                $this->expect('x-conflict', self::same($s0['l'], $s1['l']) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
+                $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
             }
+        }
+
+        // x-conflict, the digest's rule: a series whose etag alone moved at Google is not refused.
+        if ($isWrite && $gid !== null && isset($this->etagOnly[$gid]) && !isset($this->dirty[$gid]) && !$onPending && $failure === null && empty($asked['local'])) {
+            $this->ran('x-conflict', 'etag only');
+            $this->expect('x-conflict', $error !== 'google_conflict', "step {$this->step} ($do): a change to a series whose etag alone moved at Google (its content as here) is no conflict", $context);
         }
 
         // x-pending: what a failure leaves.
@@ -894,7 +1102,7 @@ final class Interleave
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
         if ($isWrite && !$out['ok'] && $failure === null && !isset($out['extra']['pending']) && !in_array($do, ['finish', 'putback'], true)) {
             $this->ran('x-honest', 'refusal');
-            $this->expect('x-honest', self::same($s0['l'], $s1['l']) && $s0['g']['digest'] == $s1['g']['digest'], "step {$this->step} ($do): a refusal ($error) changes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+            $this->expect('x-honest', self::sameHere($s0, $s1) && $s0['g']['digest'] == $s1['g']['digest'], "step {$this->step} ($do): a refusal ($error) changes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
         }
         if ($out['ok'] && $kind === 'w-' && $s0['l'] != $s1['l']) {
             $this->ran('x-honest', 'entry');
@@ -907,9 +1115,16 @@ final class Interleave
         // The harness's own bookkeeping: series changed at Google unpolled, entries, touches.
         if ($kind === 'p-' && $out['ok']) {
             $this->dirty = [];
+            $this->etagOnly = [];
+            $this->unseen = [];
             foreach ($this->touches as $i => $t) {
                 $this->touches[$i]['polled'] = true;
             }
+        }
+        // A write of the app's own that Google answered left the app holding the series' etag as it is now (it refreshes
+        // every row's etag after a write), so a change made at Google before it is no longer one the app hasn't seen.
+        if ($gid !== null && $out['ok'] && $writes !== [] && $failure === null) {
+            unset($this->unseen[$gid]);
         }
         // A write that went through left the series' etag here current, so the next one is no conflict; so did a refusal
         // after which the rows hold what Google holds (the product read it back).
@@ -961,7 +1176,7 @@ final class Interleave
         if ($failure === 'before' && $taken === 0) {
             $this->ran('x-pending', 'nothing sent');
             $this->expect('x-pending', !$out['ok'], "step {$this->step}: a write whose first request never left fails", $context);
-            $this->expect('x-pending', $s1['half'] === [] && self::same($s0['l'], $s1['l']) && $s0['g']['digest'] == $s1['g']['digest'],
+            $this->expect('x-pending', $s1['half'] === [] && self::sameHere($s0, $s1) && $s0['g']['digest'] == $s1['g']['digest'],
                 "step {$this->step}: a failure before anything was sent leaves no change half done, nothing here and nothing at Google", $context + ['half' => $s1['half'], 'diff' => self::diff($s0['l'], $s1['l'])]);
             return;
         }
@@ -981,7 +1196,7 @@ final class Interleave
         // from (series-model.md, Recovery: "its etag at Google is the one its last answered step left or the one the
         // change started from"), as much as one made after it.
         $m = ['id' => (int) $new[0]['id'], 'step' => $this->step, 'asked' => $asked, 's0' => $s0, 'gids' => [(string) $asked['gid'] => true],
-            'since' => isset($this->dirty[(string) $asked['gid']]) ? [(string) $asked['gid'] => true] : []];
+            'since' => isset($this->unseen[(string) $asked['gid']]) ? [(string) $asked['gid'] => true] : []];
         // A split's insert is a series of the change too.
         foreach ($this->stand->fake->events as $id => $e) {
             if (!empty($e['recurrence']) && !str_contains((string) $id, '_') && !array_key_exists((string) $id, $s0['g']['digest'])) {
@@ -1006,7 +1221,7 @@ final class Interleave
             $this->ran('x-putback', $changedSince === [] ? 'unchanged' : 'changed since');
             if ($changedSince !== []) {
                 $this->expect('x-putback', $error === 'google_changed_since', "step {$this->step}: Put back after a change at Google since is refused with google_changed_since", $context + ['changedSince' => $changedSince]);
-                $this->expect('x-putback', $writes === [] && self::same($s0['l'], $s1['l']) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
+                $this->expect('x-putback', $writes === [] && self::sameHere($s0, $s1) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
                     $context + ['writes' => self::brief($writes), 'diff' => self::diff($s0['l'], $s1['l'])]);
                 if ($error === 'google_changed_since') {
                     $left = (array) ($out['extra']['left'] ?? []);
@@ -1095,7 +1310,7 @@ final class Interleave
         $fieldEdit = $orig !== null && in_array($orig['asked']['kind'], ['all', 'this'], true) && $orig['asked']['fields'] !== [] && array_diff(array_keys($orig['asked']['fields']), ['title', 'description', 'location', 'url']) === [];
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
-            $this->expect('x-undo-fields', self::same($s0['l'], $s1['l']) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             if ($error === 'stale_undo' && $fieldEdit) {
                 $any = array_filter($this->touches, static fn(array $t): bool => $t['step'] > $of && $t['gid'] === $orig['asked']['gid']);
                 $this->expect('x-undo-fields', $any !== [], "step {$this->step} ($do): an undo of step $of was refused as stale though nothing changed that series since", $context);
@@ -1179,6 +1394,11 @@ final class Interleave
                 }
                 $row = $s0['rows'][$rowId] ?? null;
                 $master = $row !== null && $row['recurrence_parent_id'] !== null ? ($s1['rows'][(int) $row['recurrence_parent_id']] ?? null) : null;
+                if (str_starts_with($item, 'coords:') && $row !== null && self::shownPlace($s1['rows'], $row, $master, $day) !== (string) $row['location']) {
+                    // A1: coordinates are kept while the day's shown place text is unchanged; the text changed in this
+                    // step (whoever changed it, a record Google dropped among them), so they go with the old text.
+                    continue;
+                }
                 $stillHasDay = false;
                 if ($master !== null) {
                     $days = self::days($master, 200);
@@ -1199,6 +1419,17 @@ final class Interleave
     }
 
     /** Whether a step's own request reaches this day and item (interleaving-invariants.md, x-alone). */
+    /** The place text a day shows after a step: its row's on that day of the same series, else the series'. */
+    private static function shownPlace(array $rows, array $before, ?array $master, string $day): string
+    {
+        foreach ($rows as $r) {
+            if ((string) $r['uid'] === (string) $before['uid'] && $r['recurrence_parent_id'] !== null && self::dayOf($r, $master) === $day) {
+                return (string) $r['location'];
+            }
+        }
+        return (string) ($master['location'] ?? '');
+    }
+
     private static function allowed(?array $asked, string $day, string $item): bool
     {
         if ($asked === null) {

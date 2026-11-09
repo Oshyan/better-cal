@@ -1,0 +1,40 @@
+{
+    "about": "Three edited days and a rename at Google, then a whole read stopped after one page: nothing applied (x-budget); the read that completes it agrees with Google (x-agree).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.15,
+            "what": "title"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.45,
+            "what": "description"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.75,
+            "what": "location"
+        },
+        {
+            "do": "r-rename",
+            "pick": 0.1
+        },
+        {
+            "do": "p-budget",
+            "pick": 0.1
+        }
+    ]
+}

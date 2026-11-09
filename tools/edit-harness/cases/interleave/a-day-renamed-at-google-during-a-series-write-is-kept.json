@@ -1,0 +1,22 @@
+{
+    "about": "A series rename here, and a day renamed at Google between its master write and its read-back: the day keeps its title at Google, or the change names it (x-readback).",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-race",
+            "pick": 0.3,
+            "what": "title"
+        }
+    ]
+}

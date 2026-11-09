@@ -415,6 +415,7 @@ final class Interleave
         $knobs = $this->stand->knobs;
         $knobs->writes = $knobs->taken = 0;
         $knobs->fired = null;
+        $knobs->listed = null;
         $out = ['ok' => true, 'error' => null, 'extra' => [], 'asked' => null, 'skip' => false];
         try {
             $out = match (true) {
@@ -957,8 +958,10 @@ final class Interleave
         // A change of this series left half done by an earlier step (checkFailure adds this step's own after).
         $onPending = $gid !== null && array_filter($this->pendings, static fn(array $p): bool => isset($p['gids'][$gid])) !== [];
 
+        // A whole read that listed nothing for a calendar holding rows is refused by the poll (x-empty's expected outcome).
+        $listedEmpty = $kind === 'p-' && $this->stand->knobs->listed === 'empty' && $s0['rows'] !== [];
         // A non-HTTP error from a step that injected none is the product failing to answer.
-        if (!$out['ok'] && !empty($out['thrown']) && $failure === null) {
+        if (!$out['ok'] && !empty($out['thrown']) && $failure === null && !$listedEmpty) {
             $this->fail('x-honest', "step {$this->step} ($do): the product threw $error instead of answering", $context);
         }
 
@@ -978,8 +981,17 @@ final class Interleave
                 break;
             }
         }
-        // x-empty: an empty listing never deletes; it is not applied and the next poll tries again.
-        if ($do === 'p-empty') {
+        // x-empty: an empty listing never deletes; it is not applied, Review shows one notice for the calendar, and the next
+        // poll tries again; the next whole read that lists events closes the notice.
+        $notices = (int) $this->db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND kind = 'google_empty' AND status = 'open'", [$this->userId]);
+        if ($listedEmpty) {
+            $this->ran('x-empty', 'listed nothing: ' . $do);
+            $this->expect('x-empty', $notices === 1, "step {$this->step} ($do): a whole read that listed nothing leaves one open google_empty notice for the calendar", $context + ['notices' => $notices]);
+        } elseif ($kind === 'p-' && $this->stand->knobs->listed === 'events') {
+            $this->ran('x-empty', 'listed events');
+            $this->expect('x-empty', $notices === 0, "step {$this->step} ($do): a whole read that listed events closes the calendar's google_empty notice", $context + ['notices' => $notices]);
+        }
+        if ($listedEmpty) {
             $this->ran('x-empty', 'empty read');
             $this->expect('x-empty', $s0['here']['l'] == $s1['here']['l'], "step {$this->step} ($do): a whole read that listed nothing for a calendar holding rows changed no row", $context + ['diff' => self::diff($s0['here']['l'], $s1['here']['l'])]);
             $this->expect('x-empty', $s1['here']['token'] === $s0['here']['token'] || $s1['here']['token'] === null || $s1['here']['token'] === 'stale-token',
@@ -1555,9 +1567,21 @@ final class Interleave
             }
         }
         $before = $s1['l'];
-        $this->stand->poll();
-        $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$this->stand->calendarId]);
-        $this->stand->poll();
+        $token = $this->db->scalar('SELECT google_sync_token FROM calendars WHERE id = ?', [$this->stand->calendarId]);
+        try {
+            $this->stand->poll();
+            $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$this->stand->calendarId]);
+            $this->stand->poll();
+        } catch (\Throwable $e) {
+            if ($this->stand->knobs->listed !== 'empty') {
+                $this->fail('x-agree', "step {$this->step} ($do): a poll after the step failed: " . get_class($e), $context + ['message' => mb_substr($e->getMessage(), 0, 300)]);
+            }
+            // An empty whole read is refused, as x-empty requires: put the position back as the step left it.
+            $this->db->run('UPDATE calendars SET google_sync_token = ? WHERE id = ?', [$token, $this->stand->calendarId]);
+            $this->stand->knobs->listed = null;
+            return;
+        }
+        $this->stand->knobs->listed = null;
         $after = $this->lstate($this->rows());
         $this->expect('x-agree', self::same($before, $after), "step {$this->step} ($do): a delta poll and then a whole read change no row", $context + ['diff' => self::diff($before, $after)]);
     }

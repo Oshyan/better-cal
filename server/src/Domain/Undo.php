@@ -2035,7 +2035,7 @@ final class Undo
             // snapshot as it was (snapshotOnto); on a Google calendar composed over the day as it stands
             // (overCurrent), a day skipped now left alone and named in $dropped.
             $dropped = [];
-            $restore = $google === [] ? $this->snapshotOnto($before, $after) : $this->overCurrent($before, $after, $mutationId, [], $dropped);
+            $restore = $google === [] ? $this->snapshotOnto($before, $after, $mutationId, $dropped) : $this->overCurrent($before, $after, $mutationId, [], $dropped);
             $removed = array_merge($this->putBack($mutation, $restore, $after, $pieces, $eventIds), $dropped);
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
             // The rows the undo removed, named by row and date in a line of its own (it touches nothing).
@@ -2382,9 +2382,13 @@ final class Undo
      * day) and another row holds that day now (a later change made one
      * since), the snapshot row is that row: it takes that row's id, so
      * what refers to either names the one row and nothing meets on the
-     * day's key, and every other column is the snapshot's.
+     * day's key, and every other column is the snapshot's. And a skip is
+     * the day's value as it stands: a row brought back onto a day skipped
+     * now that this restore leaves skipped is not brought back and is
+     * named in $dropped, as on a Google calendar (skipStands), so the two
+     * agree.
      */
-    private function snapshotOnto(array $before, array $after): array
+    private function snapshotOnto(array $before, array $after, int $entryId, array &$dropped = []): array
     {
         $kept = [];
         foreach ($after['events'] ?? [] as $row) {
@@ -2410,8 +2414,16 @@ final class Undo
             }
             $now = $this->db->one('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
                 [(int) $row['calendar_id'], (string) $row['uid'], (string) $row['recurrence_instance_utc'], (int) $row['id']]);
-            if ($now === null || (array_key_exists((int) $now['id'], $restored) && $restored[(int) $now['id']] !== (string) $row['recurrence_instance_utc'])) {
-                continue; // nothing holds its day now, or a row this restore moves off the day leaves it (Events::parkInstanceKeys)
+            if ($now !== null && array_key_exists((int) $now['id'], $restored) && $restored[(int) $now['id']] !== (string) $row['recurrence_instance_utc']) {
+                $now = null; // a row this restore moves off the day leaves it (Events::parkInstanceKeys)
+            }
+            if ($now === null) {
+                $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
+                if ($series !== null && $this->skipStands($entryId, $series, $before, $after, (string) $row['recurrence_instance_utc'])) {
+                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row), [], 'gone');
+                    $before = self::withoutEvent($before, (int) $row['id']);
+                }
+                continue; // nothing holds its day now: the snapshot row comes back as it was
             }
             $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
         }

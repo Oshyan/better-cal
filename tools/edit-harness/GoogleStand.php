@@ -94,7 +94,7 @@ final class GoogleStand
         // (a write here while Google's list is being fetched); emptyNext makes the next whole listing answer with no items
         // (an empty read); pageSize lists that many items a page (a whole read stopped by the page budget).
         $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'fired' => null,
-            'race' => null, 'duringFetch' => null, 'emptyNext' => false, 'pageSize' => null];
+            'race' => null, 'duringFetch' => null, 'emptyNext' => false, 'pageSize' => null, 'listed' => null];
         $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace, $knobs): array {
             $n = null;
             if ($method !== 'GET') {
@@ -102,10 +102,11 @@ final class GoogleStand
                 if ($knobs->beforeAt === $n) {
                     // Refused before Google took it: a 4xx answer, which tells the app nothing was written (series-model.md,
                     // Recovery: "a refusal (any 4xx, a 412 among them) removes it"). A transport error before sending
-                    // would be a lost answer to the app, which can't tell the two apart.
+                    // would be a lost answer to the app, which can't tell the two apart. A permission 403, which the app does
+                    // not retry; a rate-limit 403 or a 429 is "Google is busy" and retried (GoogleWriter's BUSY_REASONS).
                     $knobs->beforeAt = null;
                     $knobs->fired = 'before';
-                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'Rate Limit Exceeded', 'errors' => [['reason' => 'rateLimitExceeded']]]])];
+                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'The caller does not have permission', 'errors' => [['reason' => 'forbidden']]]])];
                 }
             }
             // The writer sends its bearer token among the headers, as to Google.
@@ -147,9 +148,16 @@ final class GoogleStand
             $whole = str_ends_with((string) parse_url($url, PHP_URL_PATH), '/events') && !str_contains($url, 'syncToken=');
             if ($knobs->emptyNext && $whole) {
                 $knobs->emptyNext = false;
+                $knobs->listed = 'empty';
                 return ['status' => 200, 'body' => json_encode(['kind' => 'calendar#events', 'items' => [], 'nextSyncToken' => 'fake-sync-0'])];
             }
-            return $list($url, $headers);
+            $answer = $list($url, $headers);
+            // What the whole read's first page listed: 'empty' (no items and no further page) or 'events', for x-empty.
+            if ($whole && !str_contains($url, 'pageToken=') && (int) ($answer['status'] ?? 0) === 200) {
+                $page = json_decode((string) $answer['body'], true);
+                $knobs->listed = ($page['items'] ?? []) === [] && !isset($page['nextPageToken']) ? 'empty' : 'events';
+            }
+            return $answer;
         });
         $events = new Events($db, new Recurrence(), $undo, new \BetterCal\Domain\Labels($db),
             new \BetterCal\Domain\Filters($db, $undo, new \BetterCal\Infra\JobQueue($db)), new \BetterCal\Domain\Trips($db, $undo), null, $writer);

@@ -10383,6 +10383,8 @@ require __DIR__ . '/plugins.php';
     )');
     $mdb->run("INSERT INTO calendars VALUES (1, 1, 'local', NULL, NULL, NULL), (2, 1, 'local', NULL, NULL, NULL)");
     $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT, is_container INTEGER, rrule TEXT, recurrence_parent_id INTEGER, google_event_id TEXT, tzid TEXT)');
+    // What an undo on a Google calendar asks first: does the series have changes not yet at Google (none here).
+    $mdb->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, title TEXT, status TEXT, targets_json TEXT, befores_json TEXT)');
     $mdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $mdb->run("INSERT INTO users VALUES (1, '{}')");
     $mdb->run("INSERT INTO events VALUES (10, 1, 1, NULL, 0, NULL, NULL, NULL, 'UTC')");

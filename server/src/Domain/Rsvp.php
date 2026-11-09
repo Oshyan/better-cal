@@ -381,6 +381,7 @@ final class Rsvp
         if ($googleId === '') {
             throw new HttpError('google_write_failed', 'Better-Cal doesn\'t know this event\'s Google id yet; try again after the next sync.', 409);
         }
+        GoogleSeries::refusePending($this->db, (int) $row['user_id'], (int) $calendar['id'], GoogleSeries::namesOf($row));
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) throw HttpError::conflict('google_disconnected', 'Reconnect this Google account in Settings, Connections.');
         $check = function (bool $lock) use ($row, $calendar, $account, $authority): void {

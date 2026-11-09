@@ -162,6 +162,7 @@ The first two 500-case runs found where the rules are thin; these steps and chec
 - `p-empty`: a whole read, or a 410 reset and its whole read, that lists nothing for a calendar holding rows (`emptyNext`).
 - `p-overlap`: a delta poll during whose fetch a day is tagged here (`duringFetch`).
 - `p-410-pending`: a poll after a 410 while a series has changes not yet at Google (skipped when none has).
+- `u-redo` (2026-11-09, after the external review): an undo of a chosen entry, then a redo of the newest undo entry, drawn as those two steps, so a redo nearly always has an entry to redo; the separate `redo` stays.
 - `p-budget`: a whole read stopped after one page of two items (`pageSize` and `GOOGLE_SYNC_PAGES` set to 1), then the read that completes it. A calendar whose listing fits one page completes the first read and the step judges nothing.
 
 **x-conditional: every request that changes something at Google is conditional.** After any step, every PATCH and DELETE the app sent carries `If-Match`. A day with no row here is no exception: its instance is read first and that read's etag sent. From: api-contract.md, Google Calendar ("every edit and delete is sent with the event's stored Google etag as `If-Match`"); series-model.md, Google as a Contract ("the first write is conditional on the stored etag"); decisions.md, the round's rule that every Google request the app sends is conditional. Fixed case: `an-ordinary-day-edited-after-a-rename-at-google-is-conditional`.

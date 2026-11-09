@@ -106,7 +106,8 @@ final class GoogleStand
             // The writer sends its bearer token among the headers, as to Google.
             $answer = $inner($method, $url, $payload, $headers);
             if ($n !== null) {
-                $knobs->taken++;
+                // Taken: a write Google accepted (a 4xx, a 412 among them, wrote nothing).
+                $knobs->taken += (int) ($answer['status'] ?? 500) < 400 ? 1 : 0;
                 if ($knobs->fatalAt === $n) {
                     $knobs->fatalAt = null;
                     $knobs->fired = 'fatal';

@@ -3351,6 +3351,8 @@ body.bc-rescheduling { user-select: none; }
 /* The sender address is the whole point of a refusal line — never ellipsis it
    away the way a long list of imported titles can be. */
 .bc-activity-row.is-refused .bc-activity-detail { white-space: normal; overflow: visible; text-overflow: clip; }
+/* Why an entry cannot be undone is read in full, never cut to one line. */
+.bc-activity-detail.bc-activity-why { white-space: normal; overflow: visible; text-overflow: clip; }
 .bc-activity-blockedtag {
   margin-left: 6px; font-size: 10.5px; color: var(--danger);
   border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);

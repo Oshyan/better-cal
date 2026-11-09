@@ -1098,4 +1098,90 @@ return static function (Db $db): void {
                 [true, $was, (int) $day['id'], ['Sample tag']], [$out['ok'], $held($s, 'smpl3weekly'), (int) ($after['id'] ?? 0), $tagsOf((int) ($after['id'] ?? 0))]);
         }
     });
+
+    // ---- Put back removes the events of their own the change made; a recovery names as removed only rows that are gone ----------
+
+    $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
+    $remindersOf = static fn(int $id): array => array_column(json_decode((string) $db->scalar('SELECT reminders_json FROM events WHERE id = ?', [$id]), true) ?: [], 'minutes');
+    $liveIds = static fn(object $s): array => array_map('intval', array_column($db->all('SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$s->calendarId]), 'id'));
+    $lastRemoved = static fn(object $s): array => array_map('intval', array_column(json_decode((string) $db->scalar('SELECT details_json FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]), true)['removedDays'] ?? [], 'id'));
+    $singlesHere = static fn(object $s): array => $db->all('SELECT id, google_event_id FROM events WHERE calendar_id = ? AND recurrence_parent_id IS NULL AND rrule IS NULL AND deleted_at IS NULL', [$s->calendarId]);
+    // The edited fifth day (its own title) given a reminder and a tag here, then the series cut to four: the day
+    // outside the new end is kept as an event of its own (the outside group's keep), inserted at Google first.
+    $shorten = static function (object $s) use ($masterId, $iso): void {
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-29 10:00'), 'reminders' => [['minutes' => 15]], 'tagNames' => ['Sample day tag']]);
+        $s->events->throwDeferred();
+        $s->t->writes = 0;
+    };
+    $cut = static fn(object $s) => planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'rrule' => 'FREQ=WEEKLY;COUNT=4']);
+
+    scenario('google recovery: a series cut short keeps an edited day as an event of its own, a later step refused or its process stopped: Put back cancels that event at Google and removes its row here in the same run; the day is where the snapshot had it, with its reminder and tag', function () use ($setup, $shorten, $cut, $rowAt, $held, $recover, $tagsOf, $remindersOf, $liveIds, $lastRemoved, $singlesHere, $db): void {
+        $key = '2027-03-29 17:00:00';
+        foreach (['a 403 at the second write' => 'forbidAt', 'a fatal error after the second write' => 'fatalAt'] as $how => $knob) {
+            $s = $setup();
+            $was = $held($s, 'smpl3weekly');
+            $shorten($s);
+            $day = (int) ($rowAt($s, $key)['id'] ?? 0);
+            $s->t->{$knob} = 2;
+            try {
+                $cut($s);
+                $s->events->throwDeferred();
+            } catch (Throwable) {
+            }
+            $s->t->{$knob} = null;
+            $steps = json_decode((string) $db->scalar('SELECT steps_json FROM google_pending WHERE user_id = ?', [$s->u]), true) ?: [];
+            $single = (string) (array_values(array_filter($steps, static fn(array $st): bool => $st['kind'] === 'single'))[0]['id'] ?? '');
+            check("$how: the event of its own was inserted at Google as the first step", $single !== '' && isset($s->fake->events[$single]));
+            $out = $recover($s, 'putBack');
+            $after = $rowAt($s, $key);
+            checkEq("$how: Put back ok; the series at Google as it was; the event of its own cancelled there and no row of it here; the day keeps its row, id, reminder and tag; nothing named as removed that is still here",
+                [true, $was, 'cancelled', [], $day, [15], ['Sample day tag'], []],
+                [$out['ok'], $held($s, 'smpl3weekly'), $s->fake->events[$single]['status'] ?? 'gone', $singlesHere($s), (int) ($after['id'] ?? 0), $remindersOf($day), $tagsOf($day),
+                    array_values(array_intersect($lastRemoved($s), $liveIds($s)))]);
+        }
+    });
+
+    scenario('google recovery: a series cut short, a fatal error after its second write, then Finish or Put back: the answer and the Activity entry name as removed only rows that are gone, and the day\'s reminder and tag survive', function () use ($setup, $shorten, $cut, $recover, $tagsOf, $liveIds, $lastRemoved, $db): void {
+        foreach (['finish', 'putBack'] as $how) {
+            $s = $setup();
+            $shorten($s);
+            $s->t->fatalAt = 2;
+            try {
+                $cut($s);
+                $s->events->throwDeferred();
+            } catch (Throwable) {
+            }
+            $out = $recover($s, $how);
+            $live = $liveIds($s);
+            $tagged = array_values(array_filter($live, static fn(int $id): bool => $tagsOf($id) === ['Sample day tag']));
+            checkEq("$how: ok; removedDays names no live row; no difference says a row was removed; the tag is on one live row",
+                [true, [], [], 1],
+                [$out['ok'], array_values(array_intersect($lastRemoved($s), $live)), array_values(array_intersect(array_column($out['removedDays'] ?? [], 'id'), $live)), count($tagged)]);
+        }
+    });
+
+    scenario('google recovery: the times of every event changed, a 403 at the second write, a poll, then Put back: the days restored with their tags are not named as removed or as kept on another row', function () use ($setup, $masterId, $rowAt, $held, $recover, $tagsOf, $liveIds, $lastRemoved, $iso, $db): void {
+        $s = $setup();
+        $was = $held($s, 'smpl3weekly');
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-08 10:00'), 'tagNames' => ['Sample early tag']]);
+        planned($s->events, $s->u, $masterId($s), ['scope' => 'this', 'instanceStart' => $iso('2027-03-29 10:00'), 'tagNames' => ['Sample late tag']]);
+        $s->events->throwDeferred();
+        $early = (int) ($rowAt($s, '2027-03-08 18:00:00')['id'] ?? 0);
+        $late = (int) ($rowAt($s, '2027-03-29 17:00:00')['id'] ?? 0);
+        $s->t->writes = 0;
+        $s->t->forbidAt = 2;
+        try {
+            planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'start' => $iso('2027-03-01 12:00'), 'end' => $iso('2027-03-01 13:00')]);
+            $s->events->throwDeferred();
+        } catch (HttpError) {
+        }
+        $s->t->forbidAt = null;
+        $s->sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]));
+        $out = $recover($s, 'putBack');
+        $words = implode(' ', $out['differences']);
+        checkEq('Put back ok; the series at Google as it was; both days on their own rows with their tags; nothing named as removed; no words for a removal or a merge',
+            [true, $was, ['Sample early tag'], ['Sample late tag'], [], [], false],
+            [$out['ok'], $held($s, 'smpl3weekly'), $tagsOf($early), $tagsOf($late), array_values(array_intersect($lastRemoved($s), $liveIds($s))), $out['removedDays'] ?? [],
+                str_contains($words, 'Removed here') || str_contains($words, 'already has')]);
+    });
 };

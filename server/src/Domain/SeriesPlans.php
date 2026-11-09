@@ -829,10 +829,17 @@ trait SeriesPlans
                     'exdates_json' => null, 'google_event_id' => null, 'override_fields' => null, 'source' => 'local', 'updated_at' => $now,
                 ] + $cols), 'id = ?', [$rid]);
             }
+            $series = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             foreach ($w['overrides'] as $rid => $cols) {
                 $cols = $this->withOwnColumn($cols);
                 if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
                     $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
+                }
+                // A day carried to another occurrence is that occurrence at Google (Feeds::googleIdAt).
+                if (isset($cols['recurrence_instance_utc'], $byId[$rid]) && $series !== null && !isset($cols['calendar_id'])
+                    && (string) $cols['recurrence_instance_utc'] !== (string) $byId[$rid]['recurrence_instance_utc']
+                    && ($gid = Feeds::googleIdAt($byId[$rid], $series, (string) $cols['recurrence_instance_utc'])) !== null) {
+                    $cols['google_event_id'] = $gid;
                 }
                 $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
             }

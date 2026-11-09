@@ -711,12 +711,27 @@ final class Feeds
         $target['recurrence_instance_utc'] = $at;
         $target['start_utc'] = $at;
         $target['end_utc'] = Time::toDb(Time::fromDb($at)->modify('+' . $length . ' seconds'));
-        // Google names the occurrence by its key: a day moved to a new key
-        // is that occurrence's instance there.
-        if ($at !== $key && !empty($row['google_event_id']) && !empty($series['google_event_id'])) {
-            $target['google_event_id'] = GoogleWriter::instanceId((string) $series['google_event_id'], $at, $allDay, (string) $series['tzid']);
+        if ($at !== $key && ($id = self::googleIdAt($row, $series, $at)) !== null) {
+            $target['google_event_id'] = $id;
         }
         return $target;
+    }
+
+    /**
+     * The id Google knows a day by: its series and its occurrence. A day's
+     * row Google knows ($row has an id there) moved to occurrence $at of
+     * $series is that occurrence's instance there, never the id it carried
+     * from the occurrence it left. The one derivation every place that
+     * moves a day's key uses (a poll, ofSeries; a change for all events,
+     * SeriesPlans; an undo placing a day, Undo::overCurrent). Null for a
+     * row or series Google doesn't know. Pure.
+     */
+    public static function googleIdAt(array $row, array $series, string $at): ?string
+    {
+        if (empty($row['google_event_id']) || empty($series['google_event_id'])) {
+            return null;
+        }
+        return GoogleWriter::instanceId((string) $series['google_event_id'], $at, (int) ($series['all_day'] ?? 0) === 1, (string) ($series['tzid'] ?? 'UTC'));
     }
 
     /**

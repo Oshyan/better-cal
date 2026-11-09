@@ -588,8 +588,10 @@ final class GoogleUndo
                 self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $row, $googleId, $userId, $summary, $local, $g, $mutation): void {
                     $writer->apply($calendar, [], [GoogleWriter::tombstone((string) $row['uid'], $row['recurrence_instance_utc'] !== null ? (string) $row['recurrence_instance_utc'] : null)]);
+                    // A day's delete has its skip as its ground, as Events' day deletes record it.
                     $this->record($userId, (int) $row['id'], $summary,
-                        self::details(self::DELETE, $calendar, $googleId, ['status' => self::bodyOf($row)['status']], $g['etagAfter'] ?? null, null, ['local' => $local, 'undoes' => (int) $mutation['id']]));
+                        self::details(self::DELETE, $calendar, $googleId, ['status' => self::bodyOf($row)['status']], $g['etagAfter'] ?? null, null, ['local' => $local, 'undoes' => (int) $mutation['id']]),
+                        empty($row['recurrence_parent_id']) ? null : [[Undo::keyOf('events', ['id' => (int) $row['recurrence_parent_id']]), Undo::SKIP . (string) $row['recurrence_instance_utc']]]);
                 });
                 return ['entity' => 'event', 'op' => 'update'];
 
@@ -713,7 +715,7 @@ final class GoogleUndo
             $ids = $this->undo->snapshotEventIds($fresh);
             $uids = array_filter(array_map(static fn(array $t): ?string => isset($t['uid']) ? (string) $t['uid'] : null, $targets));
             $was = $this->seriesTables((int) $locked['id'], $uids, $ids);
-            $this->undo->restoreSnapshots($fresh, false, self::placedOf($targets));
+            $removed = array_merge($removed, $this->undo->restoreSnapshots($fresh, false, self::placedOf($targets)));
             $series->store($locked, $out['readbacks'], $out['targets']);
             // A day the undo keeps from Google (changed there while the
             // change ran) stands as the row it was, not one made again.

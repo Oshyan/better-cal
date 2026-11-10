@@ -1444,11 +1444,8 @@ trait SeriesPlans
     {
         $after = array_merge($row, $patch);
         $changed = self::changedOwnFields($row, $after, $in);
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known === null && !empty($row['id'])) {
-            $known = OwnFields::infer($row, $master);
-        }
-        $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known ?? [], $changed)));
+        $known = OwnFields::storedIn($this->db, $row, $master);
+        $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known, $changed)));
         foreach (['start_utc', 'end_utc', 'tzid'] as $col) {
             if ((string) ($placed[$col] ?? '') !== (string) ($after[$col] ?? '')) {
                 $patch[$col] = $placed[$col];
@@ -1463,11 +1460,7 @@ trait SeriesPlans
         if (!$this->ownFieldsColumn()) {
             return null;
         }
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known === null && !empty($row['id'])) {
-            $known = OwnFields::infer($row, $master);
-        }
-        return OwnFields::encode(array_merge($known ?? [], $fields));
+        return OwnFields::encode(array_merge(OwnFields::storedIn($this->db, $row, $master), $fields));
     }
 
     /**
@@ -1516,7 +1509,7 @@ trait SeriesPlans
     private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
-        $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+        $own = OwnFields::storedIn($this->db, $row, $master);
         $left = array_values(array_diff($own, $fields));
         $set = [];
         foreach ($fields as $field) {

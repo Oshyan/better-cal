@@ -500,7 +500,7 @@ final class Feeds
             return null;
         }
         $id = (int) ($row['id'] ?? 0);
-        $fields = self::heldHere($own ?? OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
+        $fields = self::heldHere($own ?? OwnFields::storedIn($db, $row), $row);
         $refs = $id > 0 ? (OwnFields::references($db, [$id])[$id] ?? []) : [];
         return $fields === [] && $refs === [] ? null : ['fields' => $fields, 'refs' => $refs];
     }
@@ -598,13 +598,7 @@ final class Feeds
      */
     public function ownOf(array $row, array $master): array
     {
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known !== null) {
-            return $known;
-        }
-        $of = fn(string $table, string $col, array $r): array => array_column($this->db->all("SELECT $col FROM $table WHERE event_id = ?", [(int) ($r['id'] ?? 0)]), $col);
-        return OwnFields::infer($row, $master, $of('event_tags', 'tag_id', $row), $of('event_tags', 'tag_id', $master),
-            $of('event_people', 'person_id', $row), $of('event_people', 'person_id', $master));
+        return OwnFields::storedIn($this->db, $row, $master);
     }
 
     /**
@@ -1132,7 +1126,8 @@ final class Feeds
                     }
                 }
                 if ($ownColumn && $feedMaster !== null) {
-                    $own = OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
+                    $own = OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster,
+                        $current === null ? null : OwnFields::storedIn($this->db, $current));
                     $columns['override_fields'] = OwnFields::encode($own);
                     // An edited day with nothing of its own is an ordinary
                     // occurrence again (series-model.md, Own Fields), from
@@ -1415,9 +1410,13 @@ final class Feeds
             // Every series this poll changed: each day not owning its tags or
             // people holds the series' (OwnFields::follow), a day kept while
             // its series was away and put under the series made anew included.
-            foreach (array_keys($changedUids) as $uid) {
-                if (isset($masterIdByUid[$uid])) {
-                    OwnFields::follow($this->db, (int) $masterIdByUid[$uid]);
+            // Each series as its rows stand under it now, read back after the poll's writes.
+            foreach (array_chunk(array_map('strval', array_keys($changedUids)), 500) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $series = $this->db->all("SELECT DISTINCT COALESCE(recurrence_parent_id, id) AS series FROM events WHERE calendar_id = ? AND uid IN $in AND deleted_at IS NULL
+                    AND (recurrence_parent_id IS NOT NULL OR rrule IS NOT NULL)", array_merge([$calendarId], $params));
+                foreach ($series as $s) {
+                    OwnFields::follow($this->db, (int) $s['series']);
                 }
             }
             self::assertSyncDeadline($deadline);

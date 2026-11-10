@@ -149,7 +149,7 @@ final class Split
             foreach ($partRows as $row) {
                 $days[] = ['key' => self::keyOut((string) $row['recurrence_instance_utc']), 'newKey' => null, 'kind' => 'edited',
                     'title' => (string) $row['title'], 'outcome' => 'deleted', 'day' => Cal::date($old->dnOf((string) $row['recurrence_instance_utc'])),
-                    'kept' => OwnFields::decode($row['override_fields'] ?? null) ?? [], 'takes' => []];
+                    'kept' => OwnFields::stored($row, $master, $opts['rowTags'][(int) $row['id']] ?? null, $opts['masterTags'] ?? null, $opts['rowPeople'][(int) $row['id']] ?? null, $opts['masterPeople'] ?? null), 'takes' => []];
             }
             foreach ($partSkips as $k) {
                 if ($part->anchor !== null && $k === Time::toDb($start)) {

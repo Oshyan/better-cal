@@ -70,6 +70,58 @@ final class OwnFields
         return $out;
     }
 
+    /**
+     * A stored row's own fields: the one reading of `override_fields`, which
+     * every site that reads a stored day's list goes through. Its list as
+     * stored; for a day's row stored with no list (a poll up to 1.5.4 could
+     * leave one), what migration 063 wrote for such a row: the fields that
+     * differ from its master, tags and people compared when their sets are
+     * given (infer), or nothing when it has no master. A row that is not a
+     * day (a master, an event of its own) or not stored yet (no id) owns
+     * nothing it hasn't listed. What stored rows with no list own is the
+     * owner's to decide; when he does, this is the one place it changes.
+     * Pure; storedIn reads the master and the link sets for it.
+     *
+     * @param ?list<int> $rowTags
+     * @return list<string>
+     */
+    public static function stored(array $row, ?array $master, ?array $rowTags = null, ?array $masterTags = null, ?array $rowPeople = null, ?array $masterPeople = null): array
+    {
+        $known = self::decode($row['override_fields'] ?? null);
+        if ($known !== null) {
+            return $known;
+        }
+        if (empty($row['id']) || empty($row['recurrence_parent_id']) || ($row['recurrence_instance_utc'] ?? null) === null || $master === null) {
+            return [];
+        }
+        return self::infer($row, $master, $rowTags, $masterTags, $rowPeople, $masterPeople);
+    }
+
+    /**
+     * stored() for a row read from the database: its master ($master, else
+     * the row its parent names) and both rows' tag and people sets read only
+     * when the row has no list.
+     *
+     * @return list<string>
+     */
+    public static function storedIn(\BetterCal\Infra\Db $db, array $row, ?array $master = null): array
+    {
+        $known = self::decode($row['override_fields'] ?? null);
+        if ($known !== null) {
+            return $known;
+        }
+        if (empty($row['id']) || empty($row['recurrence_parent_id']) || ($row['recurrence_instance_utc'] ?? null) === null) {
+            return [];
+        }
+        $master ??= $db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']]);
+        if ($master === null) {
+            return [];
+        }
+        $of = static fn(string $table, string $col, int $id): array => array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
+        return self::stored($row, $master, $of('event_tags', 'tag_id', (int) $row['id']), $of('event_tags', 'tag_id', (int) $master['id']),
+            $of('event_people', 'person_id', (int) $row['id']), $of('event_people', 'person_id', (int) $master['id']));
+    }
+
     /** The link tables of a day's tags and people, by own field: [table, the column naming what is linked]. */
     public const LINKS = ['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']];
 
@@ -82,12 +134,12 @@ final class OwnFields
      * re-listed or re-parented a day's row or written a series' links (the
      * link setters, Labels::setEventTags and replaceEventPeople, call it for
      * the event they set): a day whose list names the field keeps its own
-     * set; a day with no list at all is left as it is (a poll up to 1.5.4
-     * could make such a row for an edited day whose series' record it did
-     * not carry, and what one owns is the owner's to decide; a whole-series
-     * plan still gives one the series' set where the plan reads it as not
-     * its own, and writes its list); a series gone or deleted has no set to
-     * follow, and nothing is done. Only a set that differs is written.
+     * set; a day stored with no list (a poll up to 1.5.4 could leave one)
+     * owns what the one reading of a stored list says (stored: by equality
+     * with its series, tags and people compared), so a set of its own that
+     * differs is left and an equal one needs nothing; a series gone or
+     * deleted has no set to follow, and nothing is done. Only a set that
+     * differs is written.
      * Returns the ids of the days it changed.
      *
      * @param ?list<int> $dayIds
@@ -107,9 +159,17 @@ final class OwnFields
                 $days[(int) $r['id']] = self::decode($r['override_fields'] ?? null);
             }
         }
+        // A day stored with no list owns what the one reading says (stored).
+        $master = null;
+        foreach ($days as $dayId => $own) {
+            if ($own === null) {
+                $master ??= $db->one('SELECT * FROM events WHERE id = ?', [$masterId]);
+                $days[$dayId] = self::storedIn($db, (array) $db->one('SELECT * FROM events WHERE id = ?', [$dayId]), $master);
+            }
+        }
         $changed = [];
         foreach (array_intersect_key(self::LINKS, array_flip($fields)) as $field => [$table, $col]) {
-            $follows = array_keys(array_filter($days, static fn(?array $own): bool => $own !== null && !in_array($field, $own, true)));
+            $follows = array_keys(array_filter($days, static fn(array $own): bool => !in_array($field, $own, true)));
             if ($follows === []) {
                 continue;
             }
@@ -453,19 +513,22 @@ final class OwnFields
      * Ownership after a row arrives from elsewhere (Rows from Elsewhere):
      * an unchanged field keeps its ownership; a changed one is its own when
      * it differs from the master's value, inherited when it equals it; a
-     * row never seen, or with no list, by equality.
+     * row never seen by equality.
      *
      * @param array|null $stored the row as stored before this sync, null when new
+     * @param ?list<string> $storedOwn what $stored owns, as the one reading of a stored list gives it (storedIn); given with $stored
      * @return list<string>
      */
-    public static function afterSync(?array $stored, array $incoming, array $master): array
+    public static function afterSync(?array $stored, array $incoming, array $master, ?array $storedOwn = null): array
     {
-        $known = $stored !== null ? self::decode($stored['override_fields'] ?? null) : null;
-        if ($stored === null || $known === null) {
+        if ($stored === null) {
             return self::infer($incoming, $master);
         }
+        if ($storedOwn === null) {
+            throw new \LogicException('afterSync: a stored row comes with what it owns (OwnFields::storedIn)');
+        }
         $byEquality = self::infer($incoming, $master);
-        $own = $known;
+        $own = $storedOwn;
         $changed = self::changedFields($stored, $incoming);
         foreach ($changed as $field) {
             $own = array_values(array_diff($own, [$field]));

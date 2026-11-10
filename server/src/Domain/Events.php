@@ -657,7 +657,8 @@ final class Events
                         'google_etag' => is_string($resp['etag'] ?? null) && $resp['etag'] !== '' ? $resp['etag'] : null,
                         'source' => 'feed',
                         'created_via' => 'feed',
-                        'override_fields' => null,
+                        // Owning nothing yet: what this edit changed is added below.
+                        'override_fields' => OwnFieldsList::encode([]),
                     ]));
                     $created['id'] = (int) $this->db->insert('events', $created);
                 }

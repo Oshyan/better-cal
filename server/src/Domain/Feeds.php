@@ -1308,12 +1308,26 @@ final class Feeds
         $rowFor = $existingByKey;
         $park = [];
         $daysOf = [];
+        // A day's row held before its series (no series above it) is found
+        // at its own key, the name its record has at the other end too. At
+        // Google that name is also a form (an instance's id is its series,
+        // its form and its key: GoogleWriter::instanceOf), so a row Google
+        // knows in the other form than the series this list brings is no
+        // instance of that series: no record of the list is for it, and it
+        // is no day of that series when the rows are settled.
+        $strangers = [];
         foreach ($existing as $index => $row) {
             if (($index & 127) === 0) {
                 self::assertSyncDeadline($deadline);
             }
             if ($row['recurrence_instance_utc'] !== null && $row['recurrence_parent_id'] !== null) {
                 $daysOf[(string) $row['uid']][] = $row;
+            }
+            if (!$unknownSkipped && self::heldBeforeSeries($row) && isset($parsedMasters[(string) $row['uid']])
+                && ($known = GoogleWriter::instanceOf((string) ($row['google_event_id'] ?? ''))) !== null
+                && $known['allDay'] !== ((int) $parsedMasters[(string) $row['uid']]['all_day'] === 1)) {
+                $strangers[(int) $row['id']] = true;
+                unset($rowFor[$row['uid'] . '|' . $row['recurrence_instance_utc']]);
             }
         }
         foreach ($unknownSkipped ? [] : $parsed as $pm) {
@@ -1340,8 +1354,16 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             Events::parkInstanceKeys($this->db, $park);
+            // A held day that is no instance of the series this list brings
+            // lets go of its key too (keys are unique per calendar, uid and
+            // key), before a record of the series takes it; the row goes
+            // when the rows are settled, named with what it held.
+            foreach (array_chunk(array_keys($strangers), 500) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $this->db->run("UPDATE events SET recurrence_instance_utc = NULL WHERE id IN $in", $params);
+            }
             // The rows a record of the list was given to, by row id: what
             // "the feed carries a record for this row" means below. A record
             // that is an ordinary occurrence here (nothing of its own) is
@@ -1490,13 +1512,14 @@ final class Feeds
             // whole read and a delta read alike. A series this poll leaves
             // (an unreadable record) keeps its rows where they are.
             $newMasters = [];
-            $seriesOf = function (array $row) use ($existingByKey, $seen, $masterIdByUid, &$newMasters): array {
+            $seriesOf = function (array $row) use ($existingByKey, $seen, $masterIdByUid, $strangers, &$newMasters): array {
                 $uid = (string) $row['uid'];
                 $was = $existingByKey[$uid . '|'] ?? null;
                 // A day's row is a day of the series the list has for its
                 // uid: the row of a day held before its series too, which
-                // has no series above it until this poll brings one.
-                if ($row['recurrence_instance_utc'] === null || !isset($seen[$uid . '|']) || !isset($masterIdByUid[$uid])) {
+                // has no series above it until this poll brings one (but
+                // not one Google knows as an instance of the other form).
+                if ($row['recurrence_instance_utc'] === null || !isset($seen[$uid . '|']) || !isset($masterIdByUid[$uid]) || isset($strangers[(int) $row['id']])) {
                     return ['seen' => false, 'was' => $was, 'series' => null];
                 }
                 if (!array_key_exists($uid, $newMasters)) {

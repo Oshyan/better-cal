@@ -1004,9 +1004,20 @@ return [
         'what' => 'a day\'s row held before its series is read by its stored list and is no day of the series the list brings, so it is removed when the series arrives',
         'patch' => [
             ['        if ($current !== null && self::heldBeforeSeries($current) && $masterId !== null', '        if (false && $current !== null && self::heldBeforeSeries($current) && $masterId !== null'],
-            ["                if (\$row['recurrence_instance_utc'] === null || !isset(\$seen[\$uid . '|']) || !isset(\$masterIdByUid[\$uid])) {",
-                "                if (\$row['recurrence_parent_id'] === null || !isset(\$seen[\$uid . '|']) || !isset(\$masterIdByUid[\$uid])) {"],
+            ["                if (\$row['recurrence_instance_utc'] === null || !isset(\$seen[\$uid . '|'])", "                if (\$row['recurrence_parent_id'] === null || !isset(\$seen[\$uid . '|'])"],
         ],
         'checks' => $heldDay,
+    ],
+    // A held day is its series' instance by its key and, at Google, by the form its id names. Without the form, a held
+    // day Google knew as a timed instance takes the record the all-day series has at an equal key, which is the next
+    // day's west of UTC: that day's record gets the held day's tag, and nothing is named as gone.
+    [
+        'id' => 'held-day-of-another-form-takes-the-record', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'day-before-series',
+        'what' => 'a day\'s row held before its series is found by its key alone, whatever form its Google id names',
+        'patch' => [["                && \$known['allDay'] !== ((int) \$parsedMasters[(string) \$row['uid']]['all_day'] === 1)) {", "                && false) {"]],
+        'checks' => [
+            'Google, another form: the record of the all-day 7 January is a row of its own, with no tag of the 6th, and the held day\'s row is gone',
+            'Google, another form: Activity names the held day that went, by its date, with its tags',
+        ],
     ],
 ];

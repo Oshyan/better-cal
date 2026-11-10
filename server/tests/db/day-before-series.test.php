@@ -150,6 +150,33 @@ return static function (Db $db): void {
         }
     });
 
+    // At Google an instance is its series, its form and its key. A held day Google knows as an instance of a timed
+    // series is no instance of the series once Google holds it all-day: the list drops its record, and a record of the
+    // all-day series at the same key is another day's (19:00 New York on the 6th has the key of the all-day 7th). The
+    // list is built by hand, as the sync is handed it (GoogleSync::applyChanges leaves a row of the other form out).
+    scenario('day before series, Google: a held day of 6 January at 19:00, then the series arrives all-day with a record of the all-day 7 January at the same key', function () use ($db, $google, $shownOn, $dayRows, $masterOf, $lastPoll, $key): void {
+        $g = $google();
+        $feeds = new Feeds($db);
+        $calendar = static fn(): array => $db->one('SELECT * FROM calendars WHERE id = ?', [$g->calendarId]);
+        $shape = static fn(array $over): array => $over + ['uid' => 'smplform@google.com', 'description' => null, 'location' => null, 'url' => null, 'tzid' => 'UTC', 'all_day' => 1,
+            'rrule' => null, 'exdates' => [], 'status' => 'confirmed', 'recurrence_instance_utc' => null, 'reminders' => []];
+        $feeds->sync($calendar(), [$shape(['title' => 'Sample class, special', 'google_event_id' => 'smplform_20270107T000000Z', 'recurrence_instance_utc' => $key,
+            'all_day' => 0, 'tzid' => 'America/New_York', 'start_utc' => '2027-01-07 01:00:00', 'end_utc' => '2027-01-07 02:00:00'])]);
+        $held = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$g->calendarId]);
+        $g->events->patch($g->u, $held, ['tagNames' => ['sample-sixth']]);
+        checkEq('Google, another form: before, 6 January shows the held day at 20:00 with its tag', [['2027-01-06 20:00', 'Sample class, special', ['sample-sixth']]], $shownOn($g->events, $g->u, $g->calendarId, '2027-01-06'));
+        $feeds->sync($calendar(), [
+            $shape(['title' => 'Sample class', 'google_event_id' => 'smplform', 'rrule' => 'FREQ=DAILY;COUNT=10', 'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00']),
+            $shape(['title' => 'Sample class, long day', 'google_event_id' => 'smplform_20270107', 'recurrence_instance_utc' => $key, 'start_utc' => '2027-01-07 00:00:00', 'end_utc' => '2027-01-08 00:00:00']),
+        ]);
+        $rows = $dayRows($g->calendarId);
+        checkEq('Google, another form: the record of the all-day 7 January is a row of its own, with no tag of the 6th, and the held day\'s row is gone',
+            [[[$key, $masterOf($g->calendarId), 'Sample class, long day', ['title']]], false, []],
+            [array_values($rows), isset($rows[$held]), array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id JOIN events e ON e.id = et.event_id WHERE e.calendar_id = ?', [$g->calendarId]), 'name')]);
+        checkEq('Google, another form: Activity names the held day that went, by its date, with its tags',
+            true, str_contains($lastPoll($g->u), "'Sample class, special' on 2027-01-06 with its tags: it is no longer in the calendar"));
+    });
+
     // ---- An ICS feed ---------------------------------------------------------
 
     $cal = static fn(array $events, string $uid = 'sample-held@example.test'): string => implode("\r\n", array_merge(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Sample//Feed//EN'],

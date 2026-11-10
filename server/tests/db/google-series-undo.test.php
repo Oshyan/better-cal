@@ -580,20 +580,15 @@ return static function (Db $db): void {
             [$caught, $undone((int) $entry['id']), $s->fake->events['smpl2weekly']['summary']]);
     });
 
-    scenario('google series undo: an entry saved before changes kept what they asked is refused with a plain reason', function () use ($setup, $masterId, $last, $undone, $iso, $db): void {
+    scenario('google series undo: an entry recorded by an earlier version is refused with a plain reason, forced too', function () use ($setup, $masterId, $last, $undone, $iso, $db): void {
         $s = $setup();
         planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'location' => 'Sample room 2']);
         $entry = $last($s);
-        $d = json_decode((string) $entry['details_json'], true);
-        foreach ($d['google']['before'] as &$b) {
-            unset($b['asked']);
-        }
-        unset($b);
-        $db->run('UPDATE mutations SET details_json = ? WHERE id = ?', [json_encode($d), (int) $entry['id']]);
+        $db->run('UPDATE mutations SET format = 1 WHERE id = ?', [(int) $entry['id']]);
         $s->t->calls = [];
         $caught = null;
         try {
-            $s->undo->undoById($s->u, (int) $entry['id']);
+            $s->undo->undoById($s->u, (int) $entry['id'], true);
         } catch (HttpError $e) {
             $caught = $e->errorCode;
         }

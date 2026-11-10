@@ -267,20 +267,4 @@ return static function (Db $db): void {
             [(int) ($row($words)['floating'] ?? 0), (int) ($row($preset)['floating'] ?? 0)],
             [($row($words)['google_event_id'] ?? '') !== '', ($row($preset)['google_event_id'] ?? '') !== '']]);
     });
-
-    scenario('google local fields: an entry recorded before 1.5.5 (a list of local parts, no snapshot) still puts its tags back', function () use ($db, $setup, $byGoogleId, $last, $tags): void {
-        $s = $setup();
-        $made = $s->events->create($s->u, ['calendarId' => $s->calendarId, 'title' => 'Sample review', 'start' => '2027-06-01T10:00:00-07:00', 'end' => '2027-06-01T11:00:00-07:00',
-            'tzid' => 'America/Los_Angeles', 'tagNames' => ['sample-tag']]);
-        $googleId = (string) $db->scalar('SELECT google_event_id FROM events WHERE id = ?', [(int) $made['eventId']]);
-        $tagId = (int) $db->scalar('SELECT tag_id FROM event_tags WHERE event_id = ?', [(int) $made['eventId']]);
-        $s->events->deleteEvent($s->u, (int) $made['eventId'], null, null);
-        $entry = $last($s);
-        $details = json_decode((string) $entry['details_json'], true);
-        $details['google']['local'] = ['tags' => [$tagId], 'people' => [], 'reminders' => null, 'trip' => 0, 'own' => null];
-        $db->run('UPDATE mutations SET before_json = ?, details_json = ? WHERE id = ?', ['{"tables":[]}', json_encode($details), (int) $entry['id']]);
-        $s->undo->undoById($s->u, (int) $entry['id']);
-        $back = $byGoogleId($s, $googleId);
-        checkEq('back from Google with the tag the old entry listed', ['Sample review', ['sample-tag']], [$back['title'] ?? null, $back !== null ? $tags((int) $back['id']) : []]);
-    });
 };

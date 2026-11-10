@@ -74,7 +74,7 @@ final class Activity
         // arrive as strings, which MySQL rejects in a LIMIT clause.
         $fetch = $limit + 1; // one extra row = "there is another page"
         $rows = $this->db->all(
-            'SELECT id, entity, entity_id, op, source, summary, details_json, undone, created_at,
+            'SELECT id, entity, entity_id, op, source, summary, details_json, undone, created_at, format,
                     (before_json IS NOT NULL OR after_json IS NOT NULL) AS has_snapshot
              FROM mutations WHERE ' . implode(' AND ', $where) . "
              ORDER BY id DESC LIMIT $fetch",
@@ -96,6 +96,9 @@ final class Activity
             }
             // Held back by the setting (GoogleUndo::seriesUndoOff): not undoable, and why.
             $heldBack = !$seriesUndo && (int) $r['has_snapshot'] === 1 && GoogleUndo::seriesEntry($details);
+            // Recorded by an earlier version (Undo::JOURNAL_FORMAT): never undoable, and why (its own reason, from migration 077 or 064).
+            $older = Undo::olderFormat($r);
+            $olderWhy = $older && (int) $r['undone'] === 0 ? (is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : ((int) $r['has_snapshot'] === 1 ? Undo::OLDER_FORMAT : null)) : null;
             return [
                 'id' => (int) $r['id'],
                 'at' => $at->format('Y-m-d\TH:i:sP'),
@@ -106,8 +109,8 @@ final class Activity
                 'summary' => $r['summary'] !== null ? (string) $r['summary'] : '',
                 'details' => $details,
                 'undone' => (int) $r['undone'] === 1,
-                'undoable' => (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff && !$heldBack,
-            ] + ($heldBack ? ['notUndoable' => GoogleUndo::SERIES_UNDO_OFF] : []);
+                'undoable' => (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff && !$heldBack && !$older,
+            ] + ($heldBack ? ['notUndoable' => GoogleUndo::SERIES_UNDO_OFF] : ($olderWhy !== null ? ['notUndoable' => $olderWhy] : []));
         }, $rows);
 
         return [

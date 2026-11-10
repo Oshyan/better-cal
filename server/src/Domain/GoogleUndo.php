@@ -47,8 +47,6 @@ use BetterCal\Infra\Db;
  *               record() keeps as the entry's before snapshot, so the undo
  *               puts the row back under its id with every relation and
  *               column of its own, then stores Google's answer on top.
- *               An entry recorded before 1.5.5 keeps here the row's tags,
- *               people, reminders, trip flag and own list (restoreLegacy).
  *   responseStatus, attendance  answer: my answer before, and my Planned or
  *               Maybe before (an answer resets it)
  *
@@ -193,18 +191,13 @@ final class GoogleUndo
 
     /**
      * What an edit entry sends back: the fields it recorded as changed
-     * (details `changed`); for one recorded without them, its before body
-     * against the row its after snapshot keeps, else all of the before body.
-     * Pure.
+     * (details `changed`, which every edit entry keeps). Pure.
      *
      * @return list<string>
      */
-    private static function changedOf(array $g, ?array $leftRow): array
+    private static function changedOf(array $g): array
     {
-        if (is_array($g['changed'] ?? null)) {
-            return array_values(array_filter($g['changed'], 'is_string'));
-        }
-        return self::editChanged((array) $g['before'], $leftRow, null);
+        return array_values(array_filter((array) ($g['changed'] ?? []), 'is_string'));
     }
 
     /**
@@ -481,7 +474,7 @@ final class GoogleUndo
                 // field made this entry stale: Undo::staleFor). A day's field
                 // it did not own before goes back to following its series:
                 // the series' value there now, not the one it showed then.
-                $changed = self::changedOf($g, $leftRow);
+                $changed = self::changedOf($g);
                 $dayKey = GoogleSync::droppedInstance($googleId);
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
@@ -548,16 +541,12 @@ final class GoogleUndo
                 // was deleted (the series' values of then).
                 $body = ['status' => $status] + $this->dayBack($calendar, $googleId, json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'][0] ?? null);
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current));
-                $legacy = is_array($g['local'] ?? null) ? $g['local'] : [];
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $removed, $legacy): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $removed): void {
                     if ($removed) {
                         $this->undo->restoreSnapshots($mutation);
                     }
                     $writer->apply($calendar, [$resp]);
-                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId) ?? ($removed ? null : $this->rowForLegacy($calendar, $resp, $legacy));
-                    if ($back !== null && !$removed) {
-                        $this->restoreLegacy($userId, (int) $back['id'], $legacy);
-                    }
+                    $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId);
                     // A day of a series back at the series' own values is an ordinary
                     // occurrence again, with no row here: its series and day are kept,
                     // for the undo's undo to skip it again.
@@ -839,10 +828,8 @@ final class GoogleUndo
      * value the change changed that holds otherwise now was changed at
      * Google while the change ran (a later change of it, here or polled,
      * made the entry stale: Undo::staleFor): kept and named, or, forced,
-     * put back over and named. An entry recorded before changes kept what
-     * they asked is refused: what it asked can't be told from what it
-     * learned from Google. A series the undo removes, one not here, and the
-     * events of their own go as recorded.
+     * put back over and named. A series the undo removes, one not here, and
+     * the events of their own go as recorded.
      *
      * @param list<array> $befores
      * @return array{0:list<array>,1:list<string>,2:list<string>,3:list<array>} the targets, words for what was kept, words for what was put back over, the days it removes (Feeds::droppedDay)
@@ -856,14 +843,12 @@ final class GoogleUndo
         $removed = [];
         $moves = [];
         foreach ($befores as $i => $t) {
-            $asked = $t['asked'] ?? null;
+            // What the change asked (GoogleSeries keeps it with every series' before).
+            $asked = (array) ($t['asked'] ?? []);
             unset($t['asked']);
             $out[$i] = $t;
             if (!empty($t['remove']) || empty($t['master'])) {
                 continue;
-            }
-            if (!is_array($asked) || empty($asked['master'])) {
-                throw HttpError::badRequest("This change was saved before Better-Cal kept what each change asks of Google, so its undo can't tell its own changes from Google's. Change it back by hand.", 'not_undoable');
             }
             $master = !empty($t['uid'])
                 ? $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']])
@@ -1038,64 +1023,6 @@ final class GoogleUndo
     {
         $row = $this->writer()->rowByGoogleId((int) $calendar['id'], $googleId);
         return $row !== null ? (int) $row['id'] : $fallback;
-    }
-
-    /**
-     * For an entry recorded before 1.5.5, which kept only a list of the
-     * row's local parts (details `local`) and not the row: the row for a
-     * day brought back at Google whose answer equals its series on that
-     * day, when the day had local things of its own (tags, people,
-     * reminders, the trip flag, an own list): the sync stores no row for
-     * such a record (Feeds::sync, an ordinary occurrence), so the undo, the
-     * writer here, makes it as the sync would have. Null when the day had
-     * nothing local, or Google's answer is no day of a series. Such entries
-     * leave the undo window a week after the upgrade.
-     */
-    private function rowForLegacy(array $calendar, array $resource, array $local): ?array
-    {
-        $hasLocal = (array) ($local['tags'] ?? []) !== [] || (array) ($local['people'] ?? []) !== [] || is_string($local['reminders'] ?? null)
-            || (int) ($local['trip'] ?? 0) === 1 || (OwnFields::decode($local['own'] ?? null) ?? []) !== [];
-        $parsed = GoogleSync::toParsed($resource);
-        if (!$hasLocal || $parsed === null || !empty($parsed['cancelled']) || $parsed['recurrence_instance_utc'] === null) {
-            return null;
-        }
-        $masterId = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $parsed['uid']]);
-        if ($masterId === null) {
-            return null;
-        }
-        $columns = Feeds::columnsOf($parsed, (int) $masterId) + [
-            'user_id' => (int) $calendar['user_id'],
-            'calendar_id' => (int) $calendar['id'],
-            'uid' => (string) $parsed['uid'],
-            'source' => 'feed',
-            'created_via' => 'feed',
-        ] + (isset($parsed['google_etag']) ? ['google_etag' => $parsed['google_etag']] : []);
-        $id = (int) $this->db->insert('events', $columns);
-        return $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
-    }
-
-    /** For an entry recorded before 1.5.5 (rowForLegacy): the tags, people, reminders, trip flag and own list it kept, back on the row the undo brought back (tags and people still in the account). */
-    private function restoreLegacy(int $userId, int $eventId, array $local): void
-    {
-        $tags = array_values(array_filter(array_map('intval', (array) ($local['tags'] ?? [])), static fn(int $id): bool => $id > 0));
-        if ($tags !== []) {
-            [$in, $params] = Db::in($tags);
-            $this->db->run($this->db->insertIgnore() . " INTO event_tags (event_id, tag_id) SELECT ?, id FROM tags WHERE user_id = ? AND id IN $in", array_merge([$eventId, $userId], $params));
-        }
-        $people = array_values(array_filter(array_map('intval', (array) ($local['people'] ?? [])), static fn(int $id): bool => $id > 0));
-        if ($people !== []) {
-            [$in, $params] = Db::in($people);
-            $this->db->run($this->db->insertIgnore() . " INTO event_people (event_id, person_id) SELECT ?, id FROM people WHERE user_id = ? AND id IN $in", array_merge([$eventId, $userId], $params));
-        }
-        if (is_string($local['reminders'] ?? null)) {
-            $this->db->run('UPDATE events SET reminders_json = ? WHERE id = ?', [$local['reminders'], $eventId]);
-        }
-        if ((int) ($local['trip'] ?? 0) === 1) {
-            $this->db->run('UPDATE events SET is_container = 1 WHERE id = ?', [$eventId]);
-        }
-        if (is_string($local['own'] ?? null) && OwnFields::hasColumn($this->db)) {
-            $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$local['own'], $eventId]);
-        }
     }
 
     private static function etagOf(array $resource): ?string

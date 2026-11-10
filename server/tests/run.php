@@ -196,6 +196,7 @@ function undoJournal(\BetterCal\Infra\Db $db): void
         undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     (require __DIR__ . '/../migrations/056_mutation_touches.php')($db);
     (require __DIR__ . '/../migrations/062_mutation_rows.php')($db);
+    (require __DIR__ . '/../migrations/077_journal_format.php')($db);
     $db->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
 }
 
@@ -10481,7 +10482,7 @@ require __DIR__ . '/plugins.php';
     }
     checkEq('move guard: calendar deletion cannot cascade away resumable state', 'calendar_moving', $deleteCode);
     $snapshot = json_encode(['tables' => ['events' => [['id' => 10, 'calendar_id' => 1, 'uid' => 'sample-event']]]]);
-    $mdb->run("INSERT INTO mutations (id, user_id, entity, entity_id, op, before_json, after_json) VALUES (1, 1, 'event', 10, 'update', ?, ?)", [$snapshot, $snapshot]);
+    $mdb->run("INSERT INTO mutations (id, user_id, entity, entity_id, op, before_json, after_json, format) VALUES (1, 1, 'event', 10, 'update', ?, ?, 2)", [$snapshot, $snapshot]);
     $undoCode = null;
     try {
         (new BetterCal\Domain\Undo($mdb))->undoById(1, 1, true);
@@ -10493,6 +10494,8 @@ require __DIR__ . '/plugins.php';
     $journal->write(1, fn() => $journal->record(1, 'event', 10, 'update', ['events' => [['id' => 10, 'calendar_id' => 1]]], ['events' => [['id' => 10, 'calendar_id' => 2]]]));
     checkEq('move guard: new cross-calendar Undo snapshots index every referenced calendar', [1, 2],
         array_map('intval', array_column($mdb->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = (SELECT MAX(id) FROM mutations) ORDER BY calendar_id'), 'calendar_id')));
+    checkEq('journal format: record() writes the current format; a row inserted without one is format 1',
+        [BetterCal\Domain\Undo::JOURNAL_FORMAT, 1], [(int) $mdb->scalar('SELECT format FROM mutations WHERE id = (SELECT MAX(id) FROM mutations)'), (int) $mdb->scalar('SELECT format FROM mutations WHERE id = 99')]);
     $mdb->run("UPDATE calendar_moves SET cancelled_at = '2026-01-01 00:00:00' WHERE calendar_id = 1 AND status = 'failed'");
     // The older queued row becomes latest again only after removing the later
     // terminal row, demonstrating the guard follows the latest lifecycle.
@@ -11370,32 +11373,23 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'a']]], ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'b']]]
     ));
 
-    // Migration 077 opens an entry only when its touches hold the old
-    // form (Undo::holdsLegacyGround), read from the touches and the events
-    // rows now: never the snapshots.
-    $rowsNow = [3 => ['id' => 3, 'recurrence_parent_id' => null, 'recurrence_instance_utc' => null],
-        4 => ['id' => 4, 'recurrence_parent_id' => 3, 'recurrence_instance_utc' => '2027-01-11 09:00:00']];
-    checkEq('077 decides by touches: events removed whole with their tags and calendar, a series\' own column, a day\'s ground, a carried skip: today\'s form, not opened',
-        [false, false, false, false],
-        [BetterCal\Domain\Undo::holdsLegacyGround([['events:70', '*'], ['event_tags:70|2', '*'], ['events:70', '+'], ['calendars:5', '+']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'title']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'day:2027-01-11 09:00:00|title']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'start_utc'], ['events:3', 'move:2027-01-11 09:00:00>2027-01-11 11:00:00'], ['events:71', 'title']], $rowsNow)]);
-    checkEq('077 decides by touches: a day\'s own row, its tag, the old mark, the whole skips column, a gone row the entry did not remove: the old form, opened',
-        [true, true, true, true, true],
-        [BetterCal\Domain\Undo::holdsLegacyGround([['events:4', 'title']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['event_tags:4|2', '*']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:70', '*'], ['events:3', '~']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'exdates_json']], $rowsNow),
-            BetterCal\Domain\Undo::holdsLegacyGround([['events:71', 'title']], $rowsNow)]);
-    checkEq('077 decides by touches: a gone row its removers say was no day is an event of its own, not opened',
-        false, BetterCal\Domain\Undo::holdsLegacyGround([['events:71', 'title']], $rowsNow + [71 => []]));
-    $movedWas = ['id' => 3, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2027-01-04 09:00:00', 'exdates_json' => '["2027-01-11 09:00:00"]'];
-    $movedNow = ['id' => 3, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2027-01-04 11:00:00', 'exdates_json' => '["2027-01-11 11:00:00"]'];
-    $movedGround = [['events:3', 'start_utc'], ['events:3', 'move:2027-01-11 09:00:00>2027-01-11 11:00:00']];
-    checkEq('077 derives as record() does: a skip carried by a clock change stays its recorded move, never a skip removed and one added',
-        [], array_values(array_filter(BetterCal\Domain\Undo::legacyGround($movedGround, ['events' => [$movedWas]], ['events' => [$movedNow]], [], false),
-            static fn(array $t): bool => str_starts_with($t[1], 'skip:'))));
+    // Journal entries carry their format (Undo::JOURNAL_FORMAT, migration 077): an entry older than the current one is force-only.
+    checkEq('journal format: the current format is 2; an entry with no format, or format 1, is older; format 2 is not',
+        [2, true, true, false], [BetterCal\Domain\Undo::JOURNAL_FORMAT, BetterCal\Domain\Undo::olderFormat(['id' => 1]),
+            BetterCal\Domain\Undo::olderFormat(['format' => '1']), BetterCal\Domain\Undo::olderFormat(['format' => '2'])]);
+    $fmtDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $fmtDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, before_json TEXT, after_json TEXT, details_json TEXT)');
+    $fmtDb->run('CREATE TABLE mutation_rows (mutation_id INTEGER NOT NULL, seq INTEGER NOT NULL, side TEXT, table_name TEXT, rows_json TEXT, PRIMARY KEY (mutation_id, seq))');
+    $fmtDb->run("INSERT INTO mutations VALUES (1, '{}', '{}', NULL), (2, '{}', NULL, '{\"google\":{\"kind\":\"edit\"}}'), (3, NULL, NULL, '{\"notUndoable\":\"Kept as it was\"}'), (4, '{}', '{}', 'not json')");
+    $fmtDb->run("INSERT INTO mutation_rows VALUES (2, 1, 'before', 'events', '[]')");
+    $fmtLine = (require __DIR__ . '/../migrations/077_journal_format.php')($fmtDb);
+    $fmtWhy = static fn(int $id): mixed => json_decode((string) $fmtDb->scalar('SELECT details_json FROM mutations WHERE id = ?', [$id]), true)['notUndoable'] ?? null;
+    checkEq('migration 077: every earlier entry with snapshots is log only with the reason, its pieces gone; one already log only keeps its own reason; unreadable details stay',
+        ['added mutations.format; 3 entries from an earlier format made log only', 0, 0, BetterCal\Domain\Undo::OLDER_FORMAT, BetterCal\Domain\Undo::OLDER_FORMAT, 'edit', 'Kept as it was', 'not json', 1],
+        [$fmtLine, (int) $fmtDb->scalar('SELECT COUNT(*) FROM mutations WHERE before_json IS NOT NULL OR after_json IS NOT NULL'), (int) $fmtDb->scalar('SELECT COUNT(*) FROM mutation_rows'),
+            $fmtWhy(1), $fmtWhy(2), json_decode((string) $fmtDb->scalar('SELECT details_json FROM mutations WHERE id = 2'), true)['google']['kind'] ?? null, $fmtWhy(3),
+            $fmtDb->scalar('SELECT details_json FROM mutations WHERE id = 4'), (int) $fmtDb->scalar('SELECT MIN(format) FROM mutations')]);
+    checkEq('migration 077: a second run changes nothing', 'mutations.format already present; 0 entries from an earlier format made log only', (require __DIR__ . '/../migrations/077_journal_format.php')($fmtDb));
 
     // Sparse places (Order): one moves, the rest stay; no room, all afresh.
     checkEq('order: into an empty list, first or last, between two', [[7 => 1024], [7 => 0], [7 => 3072], [7 => 1536]], [

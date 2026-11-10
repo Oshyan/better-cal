@@ -132,6 +132,7 @@ return static function (Db $db): void {
             ]);
             [$u, $history] = [$old['user'], $old['series']['history']];
             $said = $migrate($db);
+            $db->run('UPDATE mutations SET format = ? WHERE user_id = ?', [BetterCal\Domain\Undo::JOURNAL_FORMAT, $u]); // 064's rewrite, read by undoing it with today's code (077 then makes such entries log only)
             check('migration 064: the journal\'s entries of the series are rewritten', str_contains($said, '; 4 undo entries rewritten, 0 made log-only'), $said);
             checkEq('migration 064: the live skips move', ['2027-03-17 09:30:00', '2027-03-22 09:30:00', '2027-03-19 09:30:00'], $skipsOf($history));
             domains($db)->undo->undoById($u, $old['entries']['last']);
@@ -187,6 +188,7 @@ return static function (Db $db): void {
             $old = oldVersion($source, $chain('gone'));
             [$u, $series, $entries] = [$old['user'], $old['series']['chain'], $old['entries']];
             $said = $migrate($db);
+            $db->run('UPDATE mutations SET format = ? WHERE user_id = ?', [BetterCal\Domain\Undo::JOURNAL_FORMAT, $u]); // 064's rewrite, read by undoing it with today's code (077 then makes such entries log only)
             check('migration 064: a deleted calendar\'s entries are rewritten, none made log-only', str_contains($said, ', 0 made log-only') && !str_contains($said, '; 0 undo entries'), $said);
             domains($db)->undo->undoById($u, $entries['deleted']);
             checkEq('migration 064: undoing the calendar delete brings the day back at the new key, at noon', ['2027-03-17 09:30:00', '2027-03-17 19:00:00', '["time","title"]'], $dayOf($series));
@@ -203,6 +205,7 @@ return static function (Db $db): void {
             $old = oldVersion($source, $chain('changed', [['change' => 'chain', 'fields' => ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=30']], ['entry' => 'rule']]));
             [$u, $series, $entries] = [$old['user'], $old['series']['chain'], $old['entries']];
             $said = $migrate($db);
+            $db->run('UPDATE mutations SET format = ? WHERE user_id = ?', [BetterCal\Domain\Undo::JOURNAL_FORMAT, $u]); // 064's rewrite, read by undoing it with today's code (077 then makes such entries log only)
             check('migration 064: with the rule changed between, none made log-only', str_contains($said, ', 0 made log-only'), $said);
             foreach (['deleted', 'rule', 'clock'] as $name) {
                 domains($db)->undo->undoById($u, $entries[$name]);

@@ -80,6 +80,14 @@ final class OracleProbes
                     $s1['rows'][$row($s1, $owns('title'))]['description'] = 'Sample probe notes';
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            ['check' => 'x-own', 'what' => "an edited day that doesn't own its tags holds one its series doesn't (the link rule)", 'case' => 'two-days-titled-then-one-undone', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    $id = $row($s1, static fn(array $r): bool => $owns('title')($r) && !in_array('tags', $r['own'], true));
+                    $tags = [...$s1['rows'][$id]['tags'], 'sample-probe'];
+                    sort($tags);
+                    $s1['rows'][$id]['tags'] = $tags;
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
             ['check' => 'x-structure', 'what' => "an edited day's key is no occurrence of its series", 'case' => 'tag-on-an-edited-day-then-the-clock-moved-at-google', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
                     $id = $row($s1, $owns('title'));

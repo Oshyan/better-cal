@@ -48,13 +48,117 @@ function checkEq(string $name, mixed $expected, mixed $actual): void
  * the test expected it to go through, say) fails the block as one check
  * and the file's next block still runs; without this, one wrong outcome
  * threw the rest of the file away unseen.
+ *
+ * After the block, the link rule holds over all data (linkRuleCheck): a
+ * violation the block left is named by the block. $linksOptOut is for a
+ * block that builds an older or broken form on purpose: its reason, beside
+ * the call, and the block's own violations are then not counted.
  */
-function scenario(string $name, callable $fn): void
+function scenario(string $name, callable $fn, ?string $linksOptOut = null): void
 {
+    $outer = ($GLOBALS['__scenarioDepth'] ?? 0) === 0;
+    if ($outer) {
+        linkRuleCheck("made outside any block, found before the block '$name'", null, null);
+    }
+    $GLOBALS['__scenarioDepth'] = ($GLOBALS['__scenarioDepth'] ?? 0) + 1;
     try {
         $fn();
     } catch (\Throwable $e) {
         check($name, false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
+    } finally {
+        $GLOBALS['__scenarioDepth']--;
+    }
+    if ($outer) {
+        linkRuleCheck("left by the block '$name'", $name, $linksOptOut);
+    }
+}
+
+// Rule 2, link ownership, as one invariant over all data (audit-155-links, "The invariant as SQL"): a live day row (an
+// events row with a parent and a key, not deleted, whose master is live) holds, as stored event_tags and event_people
+// rows, its own set when its own list (override_fields) names tags or people, and otherwise exactly its master's
+// current set. Two companions are reported apart: no live day row has a NULL list (the pre-063 form, which no writer
+// may leave), and a live day row whose master is missing or deleted is a structure finding, not a link one. Raw SQL on
+// the connection alone: nothing in server/src decides what passes. The edit harness runs the same queries.
+const LINKS_CHECK = "every live day row holds its own tags and people, or exactly its series'";
+const LINKS_LIST_CHECK = 'no live day row has a NULL own list';
+const LINKS_SERIES_CHECK = "no live day row's series is missing or deleted";
+
+/**
+ * Every violation of the link rule and its companions, keyed by kind and day row ("tags:12"), each with its kind
+ * (tags, people, list, series), the day row, its master and what it holds against its master. $userId and $fromId
+ * narrow it to one account's rows from an id on (the edit harness's case); null and 0 read every row.
+ *
+ * @return array<string,array{kind:string,day:int,master:int,what:string}>
+ */
+function linkViolations(BetterCal\Infra\Db $db, ?int $userId = null, int $fromId = 0): array
+{
+    $pdo = $db->pdo();
+    $run = static function (string $sql) use ($pdo, $userId, $fromId): array {
+        $st = $pdo->prepare($sql);
+        $st->execute($userId === null ? [$fromId] : [$fromId, $userId]);
+        return $st->fetchAll(\PDO::FETCH_ASSOC);
+    };
+    $day = 'd.recurrence_parent_id IS NOT NULL AND d.recurrence_instance_utc IS NOT NULL AND d.deleted_at IS NULL AND d.id >= ?'
+        . ($userId === null ? '' : ' AND d.user_id = ?');
+    $out = [];
+    foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
+        $rows = $run("SELECT d.id AS day, m.id AS master, d.override_fields AS own,
+                (SELECT GROUP_CONCAT(x.$col ORDER BY x.$col) FROM $table x WHERE x.event_id = d.id) AS day_set,
+                (SELECT GROUP_CONCAT(y.$col ORDER BY y.$col) FROM $table y WHERE y.event_id = m.id) AS series_set
+            FROM events d JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL
+            WHERE $day AND d.override_fields IS NOT NULL AND d.override_fields NOT LIKE '%\"$field\"%'
+              AND (EXISTS (SELECT 1 FROM $table x WHERE x.event_id = d.id
+                      AND NOT EXISTS (SELECT 1 FROM $table y WHERE y.event_id = m.id AND y.$col = x.$col))
+                OR EXISTS (SELECT 1 FROM $table y WHERE y.event_id = m.id
+                      AND NOT EXISTS (SELECT 1 FROM $table x WHERE x.event_id = d.id AND x.$col = y.$col)))
+            ORDER BY d.id");
+        foreach ($rows as $r) {
+            $out["$field:{$r['day']}"] = ['kind' => $field, 'day' => (int) $r['day'], 'master' => (int) $r['master'],
+                'what' => "day row {$r['day']} (own list {$r['own']}) holds $field [" . ($r['day_set'] ?? '') . "] where its series {$r['master']} holds [" . ($r['series_set'] ?? '') . ']'];
+        }
+    }
+    foreach ($run("SELECT d.id AS day, d.recurrence_parent_id AS master FROM events d JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL
+            WHERE $day AND d.override_fields IS NULL ORDER BY d.id") as $r) {
+        $out["list:{$r['day']}"] = ['kind' => 'list', 'day' => (int) $r['day'], 'master' => (int) $r['master'], 'what' => "day row {$r['day']} of series {$r['master']} has a NULL own list"];
+    }
+    foreach ($run("SELECT d.id AS day, d.recurrence_parent_id AS master, m.id AS found FROM events d LEFT JOIN events m ON m.id = d.recurrence_parent_id
+            WHERE $day AND (m.id IS NULL OR m.deleted_at IS NOT NULL) ORDER BY d.id") as $r) {
+        $out["series:{$r['day']}"] = ['kind' => 'series', 'day' => (int) $r['day'], 'master' => (int) $r['master'],
+            'what' => "day row {$r['day']} is live under series {$r['master']}, which is " . ($r['found'] === null ? 'missing' : 'deleted')];
+    }
+    return $out;
+}
+
+/**
+ * The link rule in the database suite (scenario, and run.php after each file): the violations not already standing
+ * at the last look fail, under $block's labels when a block made them, else as made outside any block ($where says
+ * where they were found). A block always records its three checks, pass or fail; the backstop records failures only.
+ * The connection is the one run.php made for the files ($GLOBALS['__linkDb']); without one nothing is checked.
+ */
+function linkRuleCheck(string $where, ?string $block, ?string $optOut): void
+{
+    $db = $GLOBALS['__linkDb'] ?? null;
+    if ($db === null) {
+        return;
+    }
+    $now = linkViolations($db);
+    $new = array_diff_key($now, $GLOBALS['__linkSeen'] ?? []);
+    // What stands now is what the next look compares with: a row put right and broken again is found again.
+    $GLOBALS['__linkSeen'] = $now;
+    if ($optOut !== null) {
+        if ($new !== []) {
+            $GLOBALS['__linkOptedOut'][$block] = ['why' => $optOut, 'count' => count($new)];
+        }
+        return;
+    }
+    foreach ([LINKS_CHECK => ['tags', 'people'], LINKS_LIST_CHECK => ['list'], LINKS_SERIES_CHECK => ['series']] as $label => $kinds) {
+        $found = array_filter($new, static fn(array $v): bool => in_array($v['kind'], $kinds, true));
+        $detail = $where . ': ' . implode('; ', array_slice(array_column($found, 'what'), 0, 12)) . (count($found) > 12 ? '; and ' . (count($found) - 12) . ' more' : '');
+        if ($block !== null) {
+            check("$block: $label", $found === [], $detail);
+        } elseif ($found !== []) {
+            check($label, false, $detail);
+        }
     }
 }
 

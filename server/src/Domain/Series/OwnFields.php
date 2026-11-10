@@ -72,39 +72,17 @@ final class OwnFields
 
     /**
      * A stored row's own fields: the one reading of `override_fields`, which
-     * every site that reads a stored day's list goes through. Its list as
-     * stored; for a day's row stored with no list (a poll up to 1.5.4 could
-     * leave one), what migration 063 wrote for such a row: the fields that
-     * differ from its master, tags and people compared when their sets are
-     * given (infer), or nothing when it has no master. A row that is not a
-     * day (a master, an event of its own) or not stored yet (no id) owns
-     * nothing it hasn't listed. What stored rows with no list own is the
-     * owner's to decide; when he does, this is the one place it changes.
-     * Pure; storedIn reads the master and the link sets for it.
-     *
-     * @param ?list<int> $rowTags
-     * @return list<string>
-     */
-    public static function stored(array $row, ?array $master, ?array $rowTags = null, ?array $masterTags = null, ?array $rowPeople = null, ?array $masterPeople = null): array
-    {
-        $known = self::decode($row['override_fields'] ?? null);
-        if ($known !== null) {
-            return $known;
-        }
-        if (empty($row['id']) || empty($row['recurrence_parent_id']) || ($row['recurrence_instance_utc'] ?? null) === null || $master === null) {
-            return [];
-        }
-        return self::infer($row, $master, $rowTags, $masterTags, $rowPeople, $masterPeople);
-    }
-
-    /**
-     * stored() for a row read from the database: its master ($master, else
-     * the row its parent names) and both rows' tag and people sets read only
-     * when the row has no list.
+     * every site that reads a stored row's list goes through. Its list as
+     * stored. A row that is not a day (a master, an event of its own) or not
+     * stored yet (no id) owns nothing it hasn't listed. A day's row with no
+     * list is a defect (migration 078 gave every one its list, and every
+     * writer writes one): it is reported (Undo::defect, a failure in the
+     * suites) and read as owning every field, so nothing it holds is
+     * overwritten or dropped by a later change.
      *
      * @return list<string>
      */
-    public static function storedIn(\BetterCal\Infra\Db $db, array $row, ?array $master = null): array
+    public static function stored(array $row): array
     {
         $known = self::decode($row['override_fields'] ?? null);
         if ($known !== null) {
@@ -113,13 +91,8 @@ final class OwnFields
         if (empty($row['id']) || empty($row['recurrence_parent_id']) || ($row['recurrence_instance_utc'] ?? null) === null) {
             return [];
         }
-        $master ??= $db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']]);
-        if ($master === null) {
-            return [];
-        }
-        $of = static fn(string $table, string $col, int $id): array => array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
-        return self::stored($row, $master, $of('event_tags', 'tag_id', (int) $row['id']), $of('event_tags', 'tag_id', (int) $master['id']),
-            $of('event_people', 'person_id', (int) $row['id']), $of('event_people', 'person_id', (int) $master['id']));
+        \BetterCal\Domain\Undo::defect('a day row with no own list (event ' . (int) $row['id'] . '): every day row has one since migration 078');
+        return self::FIELDS;
     }
 
     /** The link tables of a day's tags and people, by own field: [table, the column naming what is linked]. */
@@ -159,12 +132,10 @@ final class OwnFields
                 $days[(int) $r['id']] = self::decode($r['override_fields'] ?? null);
             }
         }
-        // A day stored with no list owns what the one reading says (stored).
-        $master = null;
+        // Through the one reader (stored), which reports a day with no list.
         foreach ($days as $dayId => $own) {
             if ($own === null) {
-                $master ??= $db->one('SELECT * FROM events WHERE id = ?', [$masterId]);
-                $days[$dayId] = self::storedIn($db, (array) $db->one('SELECT * FROM events WHERE id = ?', [$dayId]), $master);
+                $days[$dayId] = self::stored(['id' => $dayId, 'recurrence_parent_id' => $masterId, 'recurrence_instance_utc' => '', 'override_fields' => null]);
             }
         }
         $changed = [];
@@ -282,22 +253,6 @@ final class OwnFields
         'attendance' => ['attendance'],
         'icon' => ['icon'],
     ];
-
-    /** @var \WeakMap<\BetterCal\Infra\Db,bool>|null */
-    private static ?\WeakMap $column = null;
-
-    /** Whether events has override_fields (a database before migration 063 doesn't). */
-    public static function hasColumn(\BetterCal\Infra\Db $db): bool
-    {
-        self::$column ??= new \WeakMap();
-        if (!isset(self::$column[$db])) {
-            $sqlite = $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
-            self::$column[$db] = $sqlite
-                ? in_array('override_fields', array_column($db->all('PRAGMA table_info(`events`)'), 'name'), true)
-                : (int) $db->scalar("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'events' AND COLUMN_NAME = 'override_fields'") > 0;
-        }
-        return self::$column[$db];
-    }
 
     /** The own fields that place a day: its date, clock, length and all-day setting, which are one value of it (its times). */
     public const PLACEMENT = ['date', 'time', 'length', 'allDay'];
@@ -516,19 +471,15 @@ final class OwnFields
      * row never seen by equality.
      *
      * @param array|null $stored the row as stored before this sync, null when new
-     * @param ?list<string> $storedOwn what $stored owns, as the one reading of a stored list gives it (storedIn); given with $stored
      * @return list<string>
      */
-    public static function afterSync(?array $stored, array $incoming, array $master, ?array $storedOwn = null): array
+    public static function afterSync(?array $stored, array $incoming, array $master): array
     {
         if ($stored === null) {
             return self::infer($incoming, $master);
         }
-        if ($storedOwn === null) {
-            throw new \LogicException('afterSync: a stored row comes with what it owns (OwnFields::storedIn)');
-        }
         $byEquality = self::infer($incoming, $master);
-        $own = $storedOwn;
+        $own = self::stored($stored);
         $changed = self::changedFields($stored, $incoming);
         foreach ($changed as $field) {
             $own = array_values(array_diff($own, [$field]));

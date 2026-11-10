@@ -115,7 +115,6 @@ final class CalendarImport
             $masterIdByUid = [];
             $importedMasters = [];
             $seen = [];
-            $ownColumn = OwnFields::hasColumn($this->db);
             // A file's zoned times float when the calendar's new timed events
             // do (#167); a time with no zone floats in any calendar.
             $floatTimed = isset($target['settings_json']) && Calendars::floatTimedFor((string) $target['settings_json']);
@@ -178,7 +177,7 @@ final class CalendarImport
                         : null,
                     'source' => 'local',
                 ];
-                if ($cols['recurrence_parent_id'] !== null && $ownColumn) {
+                if ($cols['recurrence_parent_id'] !== null) {
                     // An edited day never seen before: its own fields by
                     // equality with its master, every field compared (Rows
                     // from Elsewhere), whether the master came in with this

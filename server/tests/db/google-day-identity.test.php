@@ -9,17 +9,17 @@ declare(strict_types=1);
 // keeps each day on its key while every instance id changes form
 // (`<id>_20270111T000000Z` becomes `<id>_20270111`), so a row that kept the
 // old id sent its next "this event" edit, and the undo of an earlier one,
-// to an id Google no longer answers. Each block ends on invariant I1 as raw
-// SQL (shares nothing with the product). Google is the edit harness's
-// stand-in (GoogleStand); google_series_undo is off, as 1.5.5 ships it.
-// The days here are a row holding only a tag and a renamed day, never an
-// edited day holding a Google field through the whole-series change nor a
-// skip, so nothing here leans on the prediction of the master write (R1);
-// the one block that has a renamed day through the change accepts either
-// outcome the rule allows and pins that neither reaches the timed id. The
-// undo of a tag given before the change is where the day's id now
-// (GoogleUndo::dayAt) shows on its own: the undo finds the day's row by
-// that id. Invented data.
+// to an id Google no longer answers. Each block ends on invariant I1, the
+// suite's one definition of it (identityViolations in lib.php: raw SQL,
+// sharing nothing with the product). Google is the edit harness's stand-in
+// (GoogleStand); google_series_undo is off, as 1.5.5 ships it. The days
+// here are a row holding only a tag and a renamed day. The renamed day goes
+// through the whole-series change with its own title (the change keeps an
+// edited day's own fields: review R1), so the undo of its rename is not
+// stale: it goes through, to the date-form id alone, and the day is back
+// to the series' title. The undo of a tag given before the change is where
+// the day's id now (GoogleUndo::dayAt) shows on its own: the undo finds the
+// day's row by that id. Invented data.
 
 use BetterCal\Domain\Undo;
 use BetterCal\EditHarness\GoogleStand;
@@ -36,18 +36,9 @@ return static function (Db $db): void {
     $day = '2027-01-11T00:00:00+00:00';
 
     // Invariant I1 (audit-155-identity, "Invariants over all data"): every live day row with a Google id, whose master
-    // is live and has one, stores the id of its key under its master's form. Raw SQL, one account's rows.
-    $i1 = static function (int $u) use ($db): array {
-        return $db->all("SELECT d.id, d.google_event_id, m.google_event_id AS series, m.all_day, d.recurrence_instance_utc
-            FROM events d
-            JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL AND m.google_event_id IS NOT NULL
-            WHERE d.user_id = ? AND d.deleted_at IS NULL
-              AND d.recurrence_instance_utc IS NOT NULL
-              AND d.google_event_id IS NOT NULL
-              AND d.google_event_id <> CONCAT(m.google_event_id, '_',
-                    CASE WHEN m.all_day = 1 THEN DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%d')
-                         ELSE DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%dT%H%i%sZ') END)", [$u]);
-    };
+    // is live and has one, stores the id of its key under its master's form. The suite's one definition
+    // (identityViolations, kind "id"), one account's rows, each violation in its words.
+    $i1 = static fn(int $u): array => array_values(array_column(array_filter(identityViolations($db, $u), static fn(array $v): bool => $v['kind'] === 'id'), 'what'));
     // The app's writes to the stand-in, as "METHOD id".
     $writes = static fn(GoogleStand $s): array => array_values(array_filter(array_map(static fn(array $r): string => $r['method'] . ' ' . rawurldecode(basename((string) $r['path'])), $s->fake->requests),
         static fn(string $c): bool => !str_starts_with($c, 'GET')));
@@ -136,8 +127,8 @@ return static function (Db $db): void {
             }
         });
 
-    scenario('google day identity: the undo of a rename made before the series was made all-day never goes to the timed id',
-        function () use ($db, $start, $timed, $toAllDay, $day, $series, $dayRow, $writes, $i1): void {
+    scenario('google day identity: the undo of a rename made before the series was made all-day goes to the date-form id, never the timed one',
+        function () use ($db, $start, $timed, $toAllDay, $day, $series, $dayRow, $writes, $i1, $words): void {
             [$u, $s] = $start();
             try {
                 $e = $s->events;
@@ -149,27 +140,21 @@ return static function (Db $db): void {
                 $rename = lastEntry($db, $u);
                 planned($e, $u, $id, $toAllDay);
                 $e->throwDeferred();
+                // The change keeps the renamed day: its own title, here and at Google, under the date-form id on the same key.
+                checkEq('undo across a flip: the change keeps the renamed day, on the date-form id here and at the stand-in',
+                    ['Sample weekly, renamed', $sid . '_20270111', 'Sample weekly, renamed'],
+                    [(string) ($dayRow($id)['title'] ?? ''), (string) ($dayRow($id)['google_event_id'] ?? ''), (string) ($s->fake->events[$sid . '_20270111']['summary'] ?? '')]);
                 checkEq('undo across a flip: I1 holds after the change', [], $i1($u));
                 $s->fake->requests = [];
-                $refused = null;
-                try {
-                    $undo->undoById($u, $rename);
-                } catch (HttpError $x) {
-                    $refused = [$x->errorCode, $x->getMessage()];
-                }
+                // The change did not touch the day's title, so the undo of the rename is not stale: it goes through,
+                // to the day's id now. Never a request to the timed id, which Google no longer answers.
+                checkEq('undo across a flip: the undo goes through', null, $words(static fn() => $undo->undoById($u, $rename)));
                 $sent = $writes($s);
-                // Two outcomes keep the rule, and which one comes depends on whether the change kept the renamed day
-                // (review R1, fixed apart): refused as stale with its reason and nothing sent, or sent to the date-form
-                // id alone. Never a request to the timed id, which Google no longer answers.
                 check('undo across a flip: nothing is sent to the timed id', !in_array('PATCH ' . $sid . '_20270111T000000Z', $sent, true), implode(', ', $sent));
-                if ($refused !== null) {
-                    checkEq('undo across a flip: refused as stale with its reason, nothing sent',
-                        [['stale_undo', 'Newer changes exist for this item; undoing would overwrite them'], []], [$refused, $sent]);
-                } else {
-                    checkEq('undo across a flip: it goes to the date-form id alone', ['PATCH ' . $sid . '_20270111'], $sent);
-                    checkEq('undo across a flip: the day is back to the series\' title, here and at the stand-in',
-                        ['Sample weekly', 'Sample weekly'], [(string) ($dayRow($id)['title'] ?? 'Sample weekly'), (string) ($s->fake->events[$sid . '_20270111']['summary'] ?? 'Sample weekly')]);
-                }
+                checkEq('undo across a flip: it goes to the date-form id alone', ['PATCH ' . $sid . '_20270111'], $sent);
+                // Here the day holds nothing of its own once the title is back, so its row may go; where one stays it shows the series' title.
+                checkEq('undo across a flip: the day is back to the series\' title, here and at the stand-in',
+                    ['Sample weekly', 'Sample weekly'], [(string) ($dayRow($id)['title'] ?? 'Sample weekly'), (string) ($s->fake->events[$sid . '_20270111']['summary'] ?? '')]);
                 checkEq('undo across a flip: I1 holds at the end', [], $i1($u));
             } finally {
                 GoogleStand::forget($db, $u);

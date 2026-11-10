@@ -101,6 +101,237 @@ checkEq('google master body: a new clock carries start and end', ['start', 'end'
 checkEq('google insert body: a new series carries its rule alone, never an EXDATE line', ['RRULE:FREQ=WEEKLY;COUNT=10'], GoogleSeries::insertBody($master)['recurrence']);
 check('google chosen id: 26 characters of Google\'s alphabet', preg_match('/^[0-9a-v]{26}$/', GoogleSeries::chooseId()) === 1);
 
+// ---- What a master write leaves at Google (afterMaster): identity, Google's own resets, and proof ----
+// Each expectation is written from the probe's report (research/google-series/probe-2026-11-07.md, group 3) or from
+// the ids alone, never from the function. Held state in held()'s shape.
+$gm = static fn(array $over = []): array => $over + ['title' => 'Sample weekly', 'description' => 'Sample notes', 'location' => 'Sample room 1', 'status' => 'confirmed',
+    'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=10'];
+$gh = static fn(array $master, array $records, array $cancelled, array $exdates = []): array => ['master' => $master, 'records' => $records,
+    'cancelled' => array_fill_keys($cancelled, true), 'skips' => array_fill_keys(array_merge($cancelled, $exdates), true), 'etags' => []];
+$gKeys = static fn(array $h): array => [array_keys($h['records']), array_keys($h['cancelled']), array_keys($h['skips'])];
+
+// A change between timed and all-day: an id carries its form, so every record and every skip goes, in both
+// directions, at every clock: where the keys coincide (00:00 UTC), where none does (10:00 Los Angeles), and where a
+// timed key is the next day's date key (19:00 New York, a rule on consecutive days).
+$forms = [
+    '00:00 UTC, weekly' => [
+        ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'], ['2027-01-11 00:00:00', '2027-01-18 00:00:00'],
+        ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'], ['2027-01-11 00:00:00', '2027-01-18 00:00:00'],
+    ],
+    '10:00 Los Angeles, weekly' => [
+        ['start_utc' => '2027-01-04 18:00:00', 'end_utc' => '2027-01-04 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;COUNT=4'], ['2027-01-11 18:00:00', '2027-01-18 18:00:00'],
+        ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4'], ['2027-01-11 00:00:00', '2027-01-18 00:00:00'],
+    ],
+    '19:00 New York, daily' => [
+        ['start_utc' => '2027-01-05 00:00:00', 'end_utc' => '2027-01-05 01:00:00', 'all_day' => 0, 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=6'], ['2027-01-07 00:00:00', '2027-01-08 00:00:00'],
+        ['start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => 'FREQ=DAILY;COUNT=6'], ['2027-01-06 00:00:00', '2027-01-07 00:00:00'],
+    ],
+];
+foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
+    foreach ([['timed to all-day', $timed, $timedKeys, $day], ['all-day to timed', $day, $dayKeys, $timed]] as [$way, $from, $keys, $to]) {
+        $old = $gm($from);
+        $new = $gm($to);
+        $len = strtotime($old['end_utc'] . ' UTC') - strtotime($old['start_utc'] . ' UTC');
+        $record = ['description' => 'Own notes for the day.', 'start_utc' => $keys[0], 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($keys[0] . ' UTC') + $len)] + $old;
+        $after = GoogleSeries::afterMaster($gh($old, [$keys[0] => $record], [$keys[1]]), $old, $new);
+        checkEq("google after a master write: $way at $clock drops the edited day's record and the skip, whatever key they share with a day of the new series", [[], [], []], $gKeys($after));
+        checkEq("google after a master write: $way at $clock leaves the master as sent", [(int) $new['all_day'], $new['start_utc'], $new['end_utc']], [(int) $after['master']['all_day'], $after['master']['start_utc'], $after['master']['end_utc']]);
+    }
+}
+
+// The probe's starting state (group 3): weekly at 10:00 Los Angeles, ten times; occurrence 3 moved a day later,
+// occurrence 4 at its own time (15:00), occurrence 5 with its own title, occurrence 6 cancelled.
+[$k3, $k4, $k5, $k6] = ['2027-03-15 17:00:00', '2027-03-22 17:00:00', '2027-03-29 17:00:00', '2027-04-05 17:00:00'];
+$m0 = $gm();
+$probeRecords = [
+    $k3 => ['start_utc' => '2027-03-16 17:00:00', 'end_utc' => '2027-03-16 18:00:00'] + $m0,
+    $k4 => ['start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-22 23:00:00'] + $m0,
+    $k5 => ['title' => 'Sample weekly (one changed)', 'start_utc' => $k5, 'end_utc' => '2027-03-29 18:00:00'] + $m0,
+];
+$h0 = $gh($m0, $probeRecords, [$k6]);
+$times = static fn(array $h): array => array_map(static fn(array $r): array => [$r['start_utc'], $r['end_utc']], $h['records']);
+$whole = [[$k3, $k4, $k5], [$k6], [$k6]];
+$none = [[], [], []];
+foreach ([
+    // [the probe's case, the master as changed, the records, cancelled records and skips left]
+    ['3.1 the start time of day (10:00 to 11:00)', ['start_utc' => '2027-03-01 19:00:00', 'end_utc' => '2027-03-01 20:00:00'], $none],
+    ['3.2 the length (an hour to ninety minutes)', ['end_utc' => '2027-03-01 19:30:00'], $whole],
+    ['3.3 the zone (same clock, America/Denver)', ['start_utc' => '2027-03-01 17:00:00', 'end_utc' => '2027-03-01 18:00:00', 'tzid' => 'America/Denver'], $none],
+    ['3.4 the start date a day later, same rule', ['start_utc' => '2027-03-02 18:00:00', 'end_utc' => '2027-03-02 19:00:00'], $none],
+    ['3.5 the start date onto its second occurrence, same rule', ['start_utc' => '2027-03-08 18:00:00', 'end_utc' => '2027-03-08 19:00:00'], $whole],
+    ['3.6 the rule: a weekday changed (BYDAY=TU)', ['rrule' => 'FREQ=WEEKLY;BYDAY=TU;COUNT=10'], $none],
+    ['3.7 the rule: a weekday added (BYDAY=MO,WE)', ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10'], [[$k3, $k4, $k5], [], []]],
+    ['3.8 the rule: COUNT longer (12)', ['rrule' => 'FREQ=WEEKLY;COUNT=12'], $whole],
+    ['3.9 the rule: COUNT shorter (4)', ['rrule' => 'FREQ=WEEKLY;COUNT=4'], [[$k3, $k4], [], []]],
+    ['3.10 the rule: COUNT to UNTIL (after occurrence 4)', ['rrule' => 'FREQ=WEEKLY;UNTIL=20270323T065959Z'], [[$k3, $k4], [], []]],
+    ['3.11 the rule: the clamped month-end form', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=28,29,30;BYSETPOS=-1;COUNT=4'], $none],
+    ['3.12 the title', ['title' => 'Sample weekly renamed'], $whole],
+    ['3.13 the description', ['description' => 'Sample notes, changed'], $whole],
+    ['3.14 the location', ['location' => 'Sample room 2'], $whole],
+    ['3.15 the status (tentative)', ['status' => 'tentative'], [[$k3, $k4, $k5, $k6], [], []]],
+] as [$case, $change, $left]) {
+    checkEq("google after a master write, probe $case: the records, cancelled records and skips left", $left, $gKeys(GoogleSeries::afterMaster($h0, $m0, $gm($change))));
+}
+checkEq('google after a master write, probe 3.2: every kept record\'s end follows the new length from its own start', [
+    $k3 => ['2027-03-16 17:00:00', '2027-03-16 18:30:00'], $k4 => ['2027-03-22 22:00:00', '2027-03-22 23:30:00'], $k5 => [$k5, '2027-03-29 18:30:00'],
+], $times(GoogleSeries::afterMaster($h0, $m0, $gm(['end_utc' => '2027-03-01 19:30:00']))));
+checkEq('google after a master write, probe 3.5: every kept record\'s own date and time are reset to its occurrence', [
+    $k3 => [$k3, '2027-03-15 18:00:00'], $k4 => [$k4, '2027-03-22 18:00:00'], $k5 => [$k5, '2027-03-29 18:00:00'],
+], $times(GoogleSeries::afterMaster($h0, $m0, $gm(['start_utc' => '2027-03-08 18:00:00', 'end_utc' => '2027-03-08 19:00:00']))));
+checkEq('google after a master write, probe 3.12: the title is written into every record, the one with its own title included',
+    ['Sample weekly renamed', 'Sample weekly renamed', 'Sample weekly renamed'], array_values(array_column(GoogleSeries::afterMaster($h0, $m0, $gm(['title' => 'Sample weekly renamed']))['records'], 'title')));
+$tentative = GoogleSeries::afterMaster($h0, $m0, $gm(['status' => 'tentative']));
+checkEq('google after a master write, probe 3.15: a status is written into every record and brings the cancelled day back at the series\' values',
+    [['tentative', 'tentative', 'tentative', 'tentative'], [$k6, '2027-04-05 18:00:00']], [array_values(array_column($tentative['records'], 'status')), [$tentative['records'][$k6]['start_utc'], $tentative['records'][$k6]['end_utc']]]);
+checkEq('google after a master write, probe 3.16: a skip held as an EXDATE line goes with the rule line sent alone; the records stay', [[$k3, $k4, $k5], [], []],
+    $gKeys(GoogleSeries::afterMaster($gh($m0, $probeRecords, [], [$k6]), $m0, $gm(['title' => 'Sample weekly renamed']))));
+checkEq('google after a master write: nothing changed, nothing sent, the series as it was', $h0, GoogleSeries::afterMaster($h0, $m0, $m0));
+// What the probe has not seen keep records is predicted dropped (decisions.md): wrong that way costs a refused Put back, never a day.
+foreach ([
+    ['the zone alone, no instant moved (10:00 Los Angeles to 11:00 Denver; probe case 3.17 not answered yet)', ['tzid' => 'America/Denver']],
+    ['the link (Google\'s source has no probe case)', ['url' => 'https://example.test/sample']],
+    ['a new frequency that leaves the days where they were (weekly to daily; no probe case)', ['rrule' => 'FREQ=DAILY;COUNT=70']],
+    ['a new interval that leaves some days where they were (every week to every second week; no probe case)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=10']],
+] as [$class, $change]) {
+    checkEq("google after a master write, unproven: $class is predicted to drop every record and skip", $none, $gKeys(GoogleSeries::afterMaster($h0, $m0, $gm($change))));
+}
+// Proven classes together are predicted as each alone (3.16 sent the whole body): a rename with a new length.
+$both = GoogleSeries::afterMaster($h0, $m0, $gm(['title' => 'Sample weekly renamed', 'end_utc' => '2027-03-01 19:30:00']));
+checkEq('google after a master write: a rename with a new length keeps every record, renamed, its end following', [$whole, 'Sample weekly renamed', ['2027-03-22 22:00:00', '2027-03-22 23:30:00']],
+    [$gKeys($both), $both['records'][$k4]['title'], [$both['records'][$k4]['start_utc'], $both['records'][$k4]['end_utc']]]);
+
+// ---- What a read-back holds, by identity (held), and where a step is sent (stepsFor) ----
+// A list that lags a change to all-day: the master in the date form, the old records still listed in the timed form on
+// the very keys the all-day days have. They are no days of that master.
+$dayM = ['id' => 'smpl3', 'iCalUID' => 'smpl3@google.com', 'etag' => '"e2"', 'status' => 'confirmed', 'summary' => 'Sample series',
+    'start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05'], 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']];
+$timedM = ['start' => ['dateTime' => '2027-01-04T00:00:00Z', 'timeZone' => 'UTC'], 'end' => ['dateTime' => '2027-01-04T01:00:00Z', 'timeZone' => 'UTC']] + $dayM;
+$utc = static fn(string $iso): array => ['dateTime' => $iso, 'timeZone' => 'UTC'];
+$timedRecord = ['id' => 'smpl3_20270111T000000Z', 'iCalUID' => 'smpl3@google.com', 'etag' => '"e2"', 'status' => 'confirmed', 'summary' => 'Sample series', 'description' => 'Own notes for the day.',
+    'recurringEventId' => 'smpl3', 'originalStartTime' => $utc('2027-01-11T00:00:00Z'), 'start' => $utc('2027-01-11T00:00:00Z'), 'end' => $utc('2027-01-11T01:00:00Z')];
+$timedSkip = ['id' => 'smpl3_20270118T000000Z', 'iCalUID' => 'smpl3@google.com', 'etag' => '"e2"', 'status' => 'cancelled',
+    'recurringEventId' => 'smpl3', 'originalStartTime' => $utc('2027-01-18T00:00:00Z'), 'start' => $utc('2027-01-18T00:00:00Z'), 'end' => $utc('2027-01-18T01:00:00Z')];
+$dayRecord = ['id' => 'smpl3_20270111', 'iCalUID' => 'smpl3@google.com', 'etag' => '"e2"', 'status' => 'confirmed', 'summary' => 'Sample series', 'description' => 'Own notes for the day.',
+    'recurringEventId' => 'smpl3', 'originalStartTime' => ['date' => '2027-01-11'], 'start' => ['date' => '2027-01-11'], 'end' => ['date' => '2027-01-12']];
+$daySkip = ['id' => 'smpl3_20270118', 'iCalUID' => 'smpl3@google.com', 'etag' => '"e2"', 'status' => 'cancelled',
+    'recurringEventId' => 'smpl3', 'originalStartTime' => ['date' => '2027-01-18'], 'start' => ['date' => '2027-01-18'], 'end' => ['date' => '2027-01-19']];
+$heldKeys = static function (array $h): array {
+    ksort($h['ids']);
+    return [array_keys($h['records']), array_keys($h['cancelled']), array_keys($h['skips']), $h['ids']];
+};
+foreach ([[$dayM, $timedRecord, $timedSkip], [$timedSkip, $timedRecord, $dayM]] as $n => $list) {
+    checkEq('google held: a record and a cancelled record in another form than the master read with them are no days of it, on an equal key too (list order ' . ($n + 1) . ')',
+        [[], [], [], []], $heldKeys(GoogleSeries::held($list, 'smpl3')));
+    checkEq('google held: the other way round, a timed master with date-form records (list order ' . ($n + 1) . ')',
+        [[], [], [], []], $heldKeys(GoogleSeries::held(array_map(static fn(array $i): array => $i === $dayM ? $timedM : ($i === $timedRecord ? $dayRecord : $daySkip), $list), 'smpl3')));
+}
+checkEq('google held: records in the master\'s form are its days by key, each with the id Google lists it under',
+    [['2027-01-11 00:00:00'], ['2027-01-18 00:00:00'], ['2027-01-18 00:00:00'], ['2027-01-11 00:00:00' => 'smpl3_20270111', '2027-01-18 00:00:00' => 'smpl3_20270118']],
+    $heldKeys(GoogleSeries::held([$daySkip, $timedRecord, $dayRecord, $dayM, $timedSkip], 'smpl3')));
+checkEq('google held: the same list read under the timed master holds the timed records and not the date-form ones',
+    [['2027-01-11 00:00:00'], ['2027-01-18 00:00:00'], ['2027-01-18 00:00:00'], ['2027-01-11 00:00:00' => 'smpl3_20270111T000000Z', '2027-01-18 00:00:00' => 'smpl3_20270118T000000Z']],
+    $heldKeys(GoogleSeries::held([$daySkip, $timedRecord, $dayRecord, $timedM, $timedSkip], 'smpl3')));
+// The all-day target over each read: with the master in the date form, the lagging timed records are nothing, so the
+// edited day and the skip are sent to the date-form ids; a day Google lists is sent to the id it lists.
+$dayMaster = ['title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-05 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'url' => null, 'rrule' => 'FREQ=WEEKLY;COUNT=4'];
+$dayTarget = ['uid' => 'smpl3@google.com', 'googleId' => 'smpl3', 'etag' => '"e2"', 'insert' => false, 'remove' => false, 'master' => $dayMaster, 'singles' => [],
+    'exceptions' => ['2027-01-11 00:00:00' => ['description' => 'Own notes for the day.', 'start_utc' => '2027-01-11 00:00:00', 'end_utc' => '2027-01-12 00:00:00', 'own' => ['description']] + $dayMaster], 'skips' => ['2027-01-18 00:00:00']];
+$sent = static fn(array $steps): array => array_map(static fn(array $s): array => [$s[0], $s[1]], $steps);
+checkEq('google steps: over a list that lags a change to all-day, the edited day and the skip go to the date-form ids',
+    [['exception', 'smpl3_20270111'], ['skip', 'smpl3_20270118']], $sent(GoogleSeries::stepsFor($dayTarget, [$dayM, $timedRecord, $timedSkip])));
+checkEq('google steps: a day Google holds as the plan has it, under its date-form id, is not sent again', [], $sent(GoogleSeries::stepsFor($dayTarget, [$dayM, $dayRecord, $daySkip, $timedRecord, $timedSkip])));
+checkEq('google steps: an id is in the form of the master as read, never the target\'s (a timed master read for an all-day target: run() sends no step then)',
+    [['exception', 'smpl3_20270111T000000Z']], $sent(GoogleSeries::stepsFor(['skips' => []] + $dayTarget, [$timedM])));
+
+// ---- The change over what Google holds now (rebase), across a change of form ----
+// With nothing changed at Google since, each day Google holds is as it was before, as the master write leaves it, or
+// as the plan has it, so the plan stands whole: the edited day with its own notes, the skip where the plan has it. At
+// each clock, both directions, and at each point a change can be read at: before its master write landed, right after
+// it, and once every step has.
+$rowOf = static fn(array $master, int $id, string $key): array => ['id' => $id, 'recurrence_instance_utc' => $key, 'description' => 'Own notes for the day.', 'override_fields' => '["description"]',
+    'start_utc' => $key, 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($key . ' UTC') + (strtotime($master['end_utc'] . ' UTC') - strtotime($master['start_utc'] . ' UTC')))] + $master;
+$seriesOf = static fn(array $master, string $edited, string $skipped): array => GoogleSeries::stateOf(
+    ['id' => 1, 'uid' => 'smpl4@google.com', 'google_event_id' => 'smpl4', 'exdates_json' => json_encode([$skipped])] + $master, [$rowOf($master, 2, $edited)]);
+$nowOf = static fn(array $s, bool $days): array => ['master' => $s['master'], 'records' => $days ? $s['exceptions'] : [],
+    'cancelled' => $days ? array_fill_keys($s['skips'], true) : [], 'skips' => $days ? array_fill_keys($s['skips'], true) : [], 'etags' => [], 'ids' => []];
+$daysOf = static fn(array $s): array => [array_map(static fn(array $x): array => [$x['description'], $x['own'], $x['start_utc'], (int) $x['all_day']], $s['exceptions']), $s['skips']];
+$year = 2027;
+foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
+    foreach ([['timed to all-day', $timed, $timedKeys, $day, $dayKeys], ['all-day to timed', $day, $dayKeys, $timed, $timedKeys]] as [$way, $from, $fromKeys, $to, $toKeys]) {
+        $before = $seriesOf($gm($from), $fromKeys[0], $fromKeys[1]);
+        $target = $seriesOf($gm($to), $toKeys[0], $toKeys[1]);
+        foreach ([
+            'before its master write landed' => $nowOf($before, true),
+            'right after its master write' => $nowOf($target, false),
+            'once every step landed' => $nowOf($target, true),
+        ] as $when => $now) {
+            [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
+            checkEq("google rebase: $way at $clock, read $when with nothing changed at Google since: the plan stands whole, nothing said", [$daysOf($target), [], []], [$daysOf($rebased), $words, $conflicts]);
+        }
+    }
+}
+// A change made at Google since, on a day whose row the plan carries: matched by the row, not by the key, so it lands
+// on that day at every clock. The day's title is changed at Google right after the master write (the new form); the
+// plan does not change the title, so Google's stays, with the day's own notes from the plan.
+foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
+    $before = $seriesOf($gm($timed), $timedKeys[0], $timedKeys[1]);
+    $target = $seriesOf($gm($day), $dayKeys[0], $dayKeys[1]);
+    $now = $nowOf($target, false);
+    $now['records'][$dayKeys[0]] = ['title' => 'Renamed at Google', 'start_utc' => $dayKeys[0], 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($dayKeys[0] . ' UTC') + 86400)] + $target['master'];
+    [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
+    $x = $rebased['exceptions'][$dayKeys[0]] ?? [];
+    checkEq("google rebase: timed to all-day at $clock, the edited day renamed at Google since: it keeps Google's title and its own notes, on its own day, and the skip stands",
+        ['Renamed at Google', 'Own notes for the day.', [$dayKeys[1]], []], [$x['title'] ?? null, $x['description'] ?? null, $rebased['skips'], $words]);
+}
+
+// A change made at Google since on a day the plan has no row for, across a change to all-day west of UTC (daily at
+// 19:00 New York, so the timed key of one day is the date key of the next). The day before it was skipped in the old
+// form on that very key; that skip is another instance, another day, and says nothing about this one.
+$nyTimed = $gm($forms['19:00 New York, daily'][0]);
+$nyDay = $gm($forms['19:00 New York, daily'][2]);
+$bare = static fn(array $master, array $skips): array => GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl5@google.com', 'google_event_id' => 'smpl5', 'exdates_json' => json_encode($skips)] + $master, []);
+$before = $bare($nyTimed, ['2027-01-07 00:00:00']); // the evening of 6 Jan in New York, skipped
+$target = $bare($nyDay, ['2027-01-06 00:00:00']);   // all-day 6 Jan, skipped; 7 Jan an ordinary day
+$now = $nowOf($target, false);
+$now['records']['2027-01-07 00:00:00'] = ['title' => 'Renamed at Google', 'start_utc' => '2027-01-07 00:00:00', 'end_utc' => '2027-01-08 00:00:00'] + $target['master'];
+[$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
+checkEq('google rebase: made all-day west of UTC, the day after a skipped day renamed at Google since: it keeps Google\'s title (the plan changes nothing of that day), and the skip stands on its own day',
+    [['2027-01-07 00:00:00' => 'Renamed at Google'], ['2027-01-06 00:00:00'], []], [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words]);
+$now = $nowOf($target, false);
+$now['cancelled']['2027-01-07 00:00:00'] = $now['skips']['2027-01-07 00:00:00'] = true;
+[$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
+checkEq('google rebase: made all-day west of UTC, the day after a skipped day deleted at Google since: it stays deleted, beside the plan\'s own skip',
+    [[], ['2027-01-06 00:00:00', '2027-01-07 00:00:00'], []], [$rebased['exceptions'], $rebased['skips'], $words]);
+// The same day skipped before and in the plan (00:00 UTC, the keys coincide and are one day), renamed at Google after
+// the master write brought it back: the plan's skip would overwrite a change made elsewhere, so it is kept and named.
+$before = $bare($gm($forms['00:00 UTC, weekly'][0]), ['2027-01-18 00:00:00']);
+$target = $bare($gm($forms['00:00 UTC, weekly'][2]), ['2027-01-18 00:00:00']);
+$now = $nowOf($target, false);
+$now['records']['2027-01-18 00:00:00'] = ['title' => 'Renamed at Google', 'start_utc' => '2027-01-18 00:00:00', 'end_utc' => '2027-01-19 00:00:00'] + $target['master'];
+[$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
+checkEq('google rebase: made all-day at 00:00 UTC, a skipped day renamed at Google since the master write: kept as Google has it and named, never skipped over',
+    [['2027-01-18 00:00:00' => 'Renamed at Google'], [], [BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 1, 18), $year) . ' was changed at Google since this change stopped; left as Google has it.'], [['2027-01-18 00:00:00', 'day']]],
+    [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words, $conflicts]);
+
+// A write of an unproven class is read against both answers. The link changed with the length (an hour to ninety
+// minutes) over a day with its own time and length: if Google kept the record, its end followed the new length (probe
+// 3.2), which is the write's own effect, not a change made since; if it dropped it, the day is ordinary. Either way
+// the day's own time and length are the plan's.
+$wk = $gm();
+$ownRow = ['id' => 2, 'recurrence_instance_utc' => $k4, 'start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-23 00:30:00', 'override_fields' => '["time","length"]'] + $wk;
+$before = GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl6@google.com', 'google_event_id' => 'smpl6', 'exdates_json' => json_encode([$k6])] + $wk, [$ownRow]);
+$longer = ['end_utc' => '2027-03-01 19:30:00', 'url' => 'https://example.test/sample'] + $wk;
+$target = GoogleSeries::stateOf(['id' => 1, 'uid' => 'smpl6@google.com', 'google_event_id' => 'smpl6', 'exdates_json' => json_encode([$k6])] + $longer, [['url' => 'https://example.test/sample'] + $ownRow]);
+$kept = $nowOf($target, false);
+$kept['records'][$k4] = ['start_utc' => '2027-03-22 22:00:00', 'end_utc' => '2027-03-22 23:30:00'] + $wk;
+$kept['cancelled'][$k6] = $kept['skips'][$k6] = true;
+foreach (['Google kept the record, its end following the new length' => $kept, 'Google dropped the record and the skip' => $nowOf($target, false)] as $answer => $now) {
+    [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
+    checkEq("google rebase: the link and the length changed together, $answer: the day keeps its own time and length, the skip stands, nothing said",
+        [['2027-03-22 22:00:00', '2027-03-23 00:30:00', ['length', 'time']], [$k6], [], []],
+        [[$rebased['exceptions'][$k4]['start_utc'] ?? null, $rebased['exceptions'][$k4]['end_utc'] ?? null, (static function (array $own): array { sort($own); return $own; })($rebased['exceptions'][$k4]['own'] ?? [])], $rebased['skips'], $words, $conflicts]);
+}
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

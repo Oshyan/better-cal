@@ -29,7 +29,7 @@ final class Probe
     public const GROUPS = [
         '1' => ['Rule forms', 'Each rule inserted alone, then read back: accepted or refused (with the error), and the exact text that comes back.'],
         '2' => ['Each exception kind alone', 'On a timed weekly series and on an all-day one: a moved instance, one with its own time, a title-only edit, a cancellation by DELETE and by PATCH, and one beyond a shortened end; then the exception-key checks in Pacific/Auckland and Asia/Tokyo. After each: the instance id form, the master\'s recurrence, its etag and `updated`, and the delta.'],
-        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event; 3.30 and 3.31 change only its ordinary occurrence 4, a timed day made all-day.'],
+        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event; 3.30 and 3.31 change only its ordinary occurrence 4, a timed day made all-day. Cases 3.32 to 3.35 are from the first starting state again: the master changes the app has no proof for (a link, a new frequency, a new interval) and two proven changes in one body (a rename with a new length).'],
         '4' => ['The split', 'Trim with UNTIL and with COUNT, then insert the new series, over the same starting state as group 3, cut at occurrence 5.'],
         '5' => ['Etags and conditional writes', 'Stability across reads, what a master or an instance write does to the other\'s etags, and If-Match on PATCH and DELETE of masters and instances.'],
         '6' => ['Deletes and their reverse', 'A deleted event read back, PATCH to confirmed on it and on a cancelled instance, and an insert with an id the client chose.'],
@@ -1069,6 +1069,46 @@ final class Probe
                 $c->finding = $this->formFinding($c, $m);
             });
         }
+
+        // The master changes the app's prediction has no proof for
+        // (GoogleSeries::unproven predicts every exception dropped until a
+        // case here shows them kept), each from the group's own starting
+        // state and sent as the app sends a master change (the fields that
+        // differ and the rule as its one line, GoogleSeries::masterBody): a
+        // link set on the series, which Google holds as `source` (are the
+        // exceptions kept, and is the link written into them as a title
+        // is); a new frequency that leaves every exception on a day of the
+        // new rule (weekly to daily); a new interval that leaves some of
+        // them there (every second week: occurrences 3 and 5 stay days of
+        // the rule, 4 and 6 do not). And two proven changes in one body, a
+        // rename with a new length: whether they act together as each does
+        // alone (3.12 and 3.2).
+        $unproven = [
+            ['3.32', 'a link set on the series (source)', ['source' => ['url' => 'https://example.test/probe-series', 'title' => 'example.test'], 'recurrence' => $rule]],
+            ['3.33', 'the rule: a new frequency that leaves every exception on a day of it (FREQ=DAILY)', ['recurrence' => ['RRULE:FREQ=DAILY;COUNT=70']]],
+            ['3.34', 'the rule: a new interval that leaves occurrences 3 and 5 on days of it (INTERVAL=2)', ['recurrence' => ['RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=10']]],
+            ['3.35', 'the title and the length in one body (renamed, an hour to ninety minutes)',
+                ['summary' => 'Probe weekly renamed'] + $span($la('2027-03-01 10:00'), $la('2027-03-01 11:30')) + ['recurrence' => $rule]],
+        ];
+        foreach ($unproven as [$id, $title, $patch]) {
+            $this->probeCase('3', $id, $title, function (CaseRun $c) use ($id, $patch): void {
+                [$m] = $this->withExceptions($c);
+                $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the master', 'PATCH', '/events/' . rawurlencode($m), [], $patch));
+                $c->finding = ($id === '3.32' ? $this->sourceStory($c, $m) . '; ' : '') . $this->seriesFinding($c, $m);
+            });
+        }
+    }
+
+    /** The link (`source`) of the master and of each exception record between the two reads: whether a link set on a series is written into its exceptions. */
+    private function sourceStory(CaseRun $c, string $id): string
+    {
+        $url = static fn(?array $e): string => isset($e['source']['url']) ? "'" . $e['source']['url'] . "'" : 'none';
+        $parts = ['master ' . $url($c->before[$id]['master'] ?? null) . ' -> ' . $url($c->after[$id]['master'] ?? null)];
+        $before = self::exceptions($c->before[$id] ?? []);
+        foreach (self::exceptions($c->after[$id] ?? []) as $key => $e) {
+            $parts[] = $this->label($c, (string) $key) . ' ' . $url($before[$key] ?? null) . ' -> ' . $url($e);
+        }
+        return 'the link (source): ' . implode(', ', $parts);
     }
 
     /**

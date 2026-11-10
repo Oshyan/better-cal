@@ -150,10 +150,10 @@ final class OracleProbes
                     $s1['rows'][$id]['own'] = array_values(array_diff($s1['rows'][$id]['own'], ['title']));
                     return [$out, $s0, $this->reshape($s1)];
                 }],
-            ['check' => 'x-undo-fields', 'what' => "a redo that takes back a day's links gives it the series' tags instead", 'case' => 'a-day-made-by-notes-kept-by-a-place-its-tags-go-back-as-links-on-undo-and-redo', 'step' => 8,
+            ['check' => 'x-undo-fields', 'what' => "an undo of the notes that made a day's row, kept for its place, takes away the series' tags it shows without owning them", 'case' => 'a-day-made-by-notes-kept-by-a-place-keeps-the-series-tags-on-undo-and-redo', 'step' => 6,
                 'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
                     $id = $row($s1, $owns('location'));
-                    $s1['rows'][$id]['tags'] = ['sample'];
+                    $s1['rows'][$id]['tags'] = [];
                     return [$out, $s0, $this->reshape($s1)];
                 }],
             ['check' => 'x-undo-fields', 'what' => 'an undo goes through though a poll brought a newer change of its field', 'case' => 'rename-then-a-rename-at-google-polled-then-undo', 'step' => 4,

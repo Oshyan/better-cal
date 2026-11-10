@@ -1,0 +1,55 @@
+{
+    "about": "A day given notes and its own time on a short weekly series, another day deleted, a skip added at Google unpolled, then a time change for all events from the day asking the clock the day already owns, its answer lost and then a fatal failure: with no other day to move, nothing is sent and nothing changes here, so it is no conflict and nothing is refused; a request that changes nothing sends nothing (seed 857 case 249; review of 94693e30 to cb2c6082; x-conflict)",
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO,FR,SA",
+        "import": false,
+        "bound": "count",
+        "boundAt": 2,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-02-04 23:30",
+        "length": 120
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.315,
+            "what": "description"
+        },
+        {
+            "do": "w-del1",
+            "pick": 0.102
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.75,
+            "what": "time"
+        },
+        {
+            "do": "r-skip+",
+            "pick": 0.343
+        },
+        {
+            "do": "f-lost",
+            "pick": 0.114,
+            "k": 3,
+            "write": "w-all",
+            "what": "time"
+        },
+        {
+            "do": "f-fatal",
+            "pick": 0.687,
+            "k": 3,
+            "write": "w-all",
+            "what": "time"
+        },
+        {
+            "do": "f-before",
+            "pick": 0.724,
+            "k": 1,
+            "write": "w-delfollow"
+        }
+    ]
+}

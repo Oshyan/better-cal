@@ -1,0 +1,24 @@
+{
+    "about": "A monthly series on the 29th at 13:00 Lord Howe with no end; two days deleted; the series' time changed for all events with the answer of its third write lost (the master write and one day's cancellation answered); Finish; then one of the deletes undone by its entry. The change carried each skip to its new key and changed nothing of it, so the undo goes through and the day is back on its own date (x-undo-fields). From seed 82447 case 139.",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "monthly_day_late",
+        "rrule": "FREQ=MONTHLY;BYMONTHDAY=29",
+        "import": false,
+        "bound": "none",
+        "boundAt": 10,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "Australia/Lord_Howe",
+        "start": "2027-03-28 13:00",
+        "length": 120
+    },
+    "steps": [
+        {"do": "w-del1", "pick": 0.379},
+        {"do": "w-del1", "pick": 0.052},
+        {"do": "f-lost", "pick": 0.857, "k": 3, "write": "w-all", "what": "time"},
+        {"do": "finish", "pick": 0.776},
+        {"do": "u-entry", "pick": 0.483}
+    ]
+}

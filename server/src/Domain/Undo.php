@@ -340,8 +340,8 @@ final class Undo
         // snapshots back, what that restore puts back besides; an entry
         // sent to Google is undone by a planned write (GoogleUndo), which
         // carries the days, and stands on what it changed alone.
-        $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables, $touches),
-            GoogleUndo::carries($details) ? [] : self::restoredGround($beforeTables, $afterTables), $touches));
+        $this->recordTouches($mutationId, array_merge(self::changeGround($beforeTables, $afterTables, $touches),
+            GoogleUndo::carries($details) ? [] : self::restoredGround($beforeTables, $afterTables)));
         // A write to Google that undo can send back keeps what to send in
         // its details (GoogleUndo): no snapshot for one resource, the rows'
         // own snapshots for a whole series, kept as any change keeps them.
@@ -966,6 +966,41 @@ final class Undo
             $out[] = [$series, self::ADDED . '>' . $added['after']];
         }
         return $out;
+    }
+
+    /**
+     * What a planned series change did with its days that its rows'
+     * snapshots can't show, as the grounds its entry records beside them
+     * ($writes: Series\Model's): where each skip went, since a skip has no
+     * row to follow (skipMoveGrounds), and which days the change brought
+     * into being (addedGrounds). Each row's move is read from the snapshots
+     * themselves (touchesOf). The one function every entry of a change for
+     * all events asks, however the change ended: the commit here, the
+     * commit on a Google calendar, an undo's or redo's plan, and Review's
+     * Finish of a change that stopped half way, from the plan its pending
+     * row kept. Pure.
+     *
+     * @return list<array{0:string,1:string}>
+     */
+    public static function planGrounds(int $seriesId, array $writes): array
+    {
+        return array_merge(self::skipMoveGrounds($seriesId, (array) ($writes['skipMoves'] ?? [])), self::addedGrounds($seriesId, $writes['added'] ?? null));
+    }
+
+    /**
+     * A change's ground from what it keeps: what its snapshots show it
+     * changed, read with its planner's record ($recorded: touchesOf takes a
+     * skip the plan carried as that move, never as two skips changed), and
+     * that record itself. What record() writes for every entry, and what a
+     * log-only entry that keeps no snapshots (Review's Finish) is given, so
+     * the two can't read one change two ways. Pure.
+     *
+     * @param list<array{0:string,1:string}> $recorded
+     * @return list<array{0:string,1:string}>
+     */
+    public static function changeGround(?array $before, ?array $after, array $recorded = []): array
+    {
+        return array_merge(self::touchesOf($before, $after, $recorded), $recorded);
     }
 
     /** The ground of one field of one day (dayGround). */

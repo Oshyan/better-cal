@@ -667,7 +667,7 @@ trait SeriesPlans
             ['events' => $beforeRows] + $beforeLinks,
             ['events' => $afterRows] + Undo::linksOf($this->db, array_merge([$id], $touchedIds, $created, $createdEdited)),
             mb_substr((string) $result['plan']['summary'], 0, 300),
-            touches: array_merge(Undo::skipMoveGrounds($id, $w['skipMoves'] ?? []), Undo::addedGrounds($id, $w['added'] ?? null))
+            touches: Undo::planGrounds($id, $w)
         );
         ChangeLog::recordUpdate($this->db, $master, $afterMaster);
         foreach ($w['detach'] + array_flip($created) as $rid => $_) {
@@ -975,11 +975,12 @@ trait SeriesPlans
         $this->tripRules($id, $localFields);
         self::requireGoogleId($master);
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
+        // The change's part here, kept with its pending row for Finish, and what its entry records of the plan
+        // (plannedGrounds), whichever of the two records it. `was`: the master's own columns before this change
+        // wrote any of them here (the trip rules write the flag first), for Finish's "changed here since".
+        $part = ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))];
         try {
-            $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                // `was`: the master's own columns before this change wrote any of them here
-                // (the trip rules write the flag first), for Finish's "changed here since".
-                ['kind' => 'series', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
+            $out = $this->googleSeries()->apply($userId, $calendar, [$target], (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority), $part);
         } catch (HttpError $e) {
             if (!GoogleSeries::reachedGoogle($e)) {
                 throw $e; // nothing at Google: nothing here either, the transaction rolls back whole
@@ -997,7 +998,7 @@ trait SeriesPlans
         });
         $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
             [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid']], array_merge(array_keys($w['detach'] ?? []), $created)),
-                array_merge(Undo::skipMoveGrounds($id, $w['skipMoves'] ?? []), Undo::addedGrounds($id, $w['added'] ?? null))]);
+                self::plannedGrounds($part)]);
     }
 
     /**
@@ -1028,9 +1029,9 @@ trait SeriesPlans
         [$oldTarget, $newTarget] = GoogleSeries::splitTargets($master, $rows, $w);
         $targets = $newTarget === null ? [$oldTarget] : [$oldTarget, $newTarget];
         $summary = mb_substr((string) $result['plan']['summary'], 0, 300);
+        $part = ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))];
         try {
-            $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority),
-                ['kind' => 'split', 'eventId' => $id, 'writes' => $w, 'input' => $in, 'was' => array_diff_key($master, array_flip(GoogleWriter::GOOGLE_COLUMNS))]);
+            $out = $this->googleSeries()->apply($userId, $calendar, $targets, (string) $master['title'], $summary, $id, $this->googleBeforeSend($authority), $part);
         } catch (HttpError $e) {
             if (!GoogleSeries::reachedGoogle($e)) {
                 throw $e; // nothing at Google: nothing here either, the transaction rolls back whole
@@ -1052,7 +1053,7 @@ trait SeriesPlans
         });
         $this->googleAfter($userId, $calendar, $id, (string) $master['title'], $summary, $out['differences'],
             [$out['befores'], $beforeTables, $this->googleSeriesTables($calendar, [(string) $master['uid'], (string) ($identity['uid'] ?? '')],
-                array_merge(array_keys($w['plan']['detach'] ?? []), $created))]);
+                array_merge(array_keys($w['plan']['detach'] ?? []), $created)), self::plannedGrounds($part)]);
         if ($newId !== null) {
             $this->splitEventId = $newId;
         }
@@ -1216,6 +1217,27 @@ trait SeriesPlans
     }
 
     /**
+     * What the entry of a series change on a Google calendar records of
+     * its plan, beside the rows' snapshots: the planner's own record of
+     * what it did with the series' days (Undo::planGrounds: where each skip
+     * went, which days it added), read from the change's part here as its
+     * pending row keeps it ($part: `kind`, `eventId`, `writes`). One
+     * function for the entry the commit leaves and for the one Review's
+     * Finish leaves when it completes the same change, so a day's older
+     * undo is judged alike after either. A split records none: the days
+     * before its cut stay where they are, and those from it on leave the
+     * series for one the entry makes whole, which the snapshots show (a
+     * day's row leaving and joining, a skip gone from the old series), so
+     * an older change to such a day is stale by the series it left. Pure.
+     *
+     * @return list<array{0:string,1:string}>
+     */
+    private static function plannedGrounds(array $part): array
+    {
+        return ($part['kind'] ?? '') === 'series' ? Undo::planGrounds((int) ($part['eventId'] ?? 0), (array) ($part['writes'] ?? [])) : [];
+    }
+
+    /**
      * The trip flag a plan writes on its edited rows (Model::SERIES_COLUMNS),
      * written before the Google calls so the trip rules read the end state
      * (Trips::assertRules); a refusal rolls the transaction back with
@@ -1301,10 +1323,12 @@ trait SeriesPlans
             $isUndo = is_array($plan) && isset($plan['undo']);
             // The entry it undoes as its pending row kept it (its snapshots), the live row's when still there.
             // Finish's entry's ground is what the change it completes changed here, as any change's is
-            // (Undo::touchesOf): the series' rows as they were before that change began (its pending row's
-            // own record of them, local_json), against the rows it leaves. Put back leaves the rows as they
-            // were before the change, so its ground is the half-done change it closes (its pending row) and
-            // no row: no earlier entry stands on it, and the bare Undo still answers with its line.
+            // (Undo::changeGround): the series' rows as they were before that change began (its pending row's
+            // own record of them, local_json), against the rows it leaves, read with what the change's plan
+            // recorded of its days (plannedGrounds, from the plan the pending row kept): the same function over
+            // the same record as the entry the change would have left had it not stopped. Put back leaves the
+            // rows as they were before the change, so its ground is the half-done change it closes (its pending
+            // row) and no row: no earlier entry stands on it, and the bare Undo still answers with its line.
             $uidsOf = static fn(?string $json): array => array_map(static fn(array $t): string => (string) $t['uid'], array_filter(json_decode((string) $json, true) ?: [], static fn($t): bool => is_array($t) && !empty($t['uid'])));
             $recovered = array_values(array_unique(array_merge($uidsOf($row['targets_json'] ?? null), $uidsOf($row['befores_json'] ?? null))));
             $began = json_decode((string) ($row['local_json'] ?? ''), true);
@@ -1358,7 +1382,8 @@ trait SeriesPlans
                 . ($left !== [] ? ' ' . implode(' ', $left) : '');
             $this->googleAfter($userId, $calendar, $row['event_id'] !== null ? (int) $row['event_id'] : null, (string) $row['title'], $what, $out['differences'],
                 details: isset($out['removedDays']) ? ['removedDays' => $out['removedDays']] : null,
-                touches: $was === null ? [['google_pending:' . $pendingId, '*']] : Undo::touchesOf($was, $this->googleSeriesTables($calendar, $recovered)));
+                touches: $was === null ? [['google_pending:' . $pendingId, '*']]
+                    : Undo::changeGround($was, $this->googleSeriesTables($calendar, $recovered), is_array($plan) ? self::plannedGrounds($plan) : []));
             return ['ok' => true, 'differences' => $out['differences'], 'left' => $left];
         });
     }

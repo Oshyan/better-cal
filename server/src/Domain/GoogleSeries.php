@@ -2823,7 +2823,9 @@ final class GoogleSeries
      * event of its own) goes, each snapshot row takes back its place and
      * Google's columns (SYNCED), and a row gone since comes back whole with
      * what hung off it. What a live row has of its own (reminders, flags,
-     * tags, people) stays as it is now. Recovery removes only what it made:
+     * tags, people) stays as it is now, but for what a store of the change
+     * took of it: the coordinates of its place, which go back with the
+     * place's text (placeBack). Recovery removes only what it made:
      * any other row of those series the snapshot lacks is a change made
      * here since (a tag on an ordinary day, which makes its row), kept as
      * it stands and returned, for the plan to be applied over it (follow).
@@ -2849,22 +2851,97 @@ final class GoogleSeries
         $live = [];
         if ($snap !== []) {
             [$in, $params] = Db::in(array_keys($snap));
-            foreach ($this->db->all("SELECT id FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
-                $live[(int) $r['id']] = true;
+            foreach ($this->db->all("SELECT * FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $live[(int) $r['id']] = $r;
             }
         }
         // A key may be one another of these rows holds now.
         Events::parkInstanceKeys($this->db, array_keys($live));
         $gone = [];
+        $synced = array_flip(self::SYNCED);
+        $written = $synced + array_flip(OwnFields::COORDINATE_COLUMNS);
         foreach ($snap as $id => $r) {
             if (isset($live[$id])) {
-                $this->db->update('events', array_intersect_key($r, array_flip(self::SYNCED)), 'id = ?', [$id]);
+                // Google's columns as the snapshot has them, the place one
+                // value (Feeds::followed: coordinates of another text go with
+                // that text), then what a store took of it (placeBack).
+                $stood = Feeds::followed($live[$id], array_intersect_key($r, $synced));
+                $stood = array_merge($stood, self::placeBack($r, $stood));
+                $this->db->update('events', array_intersect_key($stood, $written), 'id = ?', [$id]);
             } else {
                 $gone[] = $r;
             }
         }
         $this->bringBack($calendar, $gone, $local);
         return [$kept, $taken];
+    }
+
+    /**
+     * The coordinates a row of the snapshot ($was) takes back where it
+     * stands again ($now: the row as a store left it, or the row a store
+     * made in its place): what a store of a half-done change took of what
+     * the row held here alone. A place is its text with the coordinates
+     * picked for it, one value (Own Fields; Feeds::followed), and no feed
+     * carries the coordinates: a store that changes a row's text empties
+     * them, and one that brings the text back can't bring them. That is the
+     * change's own passing effect, never something that happened at Google.
+     * So a row showing the snapshot's text has the snapshot's coordinates,
+     * with where they came from; one showing another text keeps what it has
+     * (they belong to the place it shows now), and so does one whose
+     * coordinates a person or a client placed here since for the same text
+     * (a lookup's are not: it fills what a store emptied). The one decision
+     * for every way a snapshot's row comes back: left live (rewind, Put
+     * back's placesBack), made again under another id (relink); a row
+     * brought back whole (bringBack) has them with the rest. Pure.
+     *
+     * @return array<string,mixed> the coordinate columns to write on $now
+     */
+    private static function placeBack(array $was, array $now): array
+    {
+        $placed = static fn(array $r): bool => ($r['location_lat'] ?? null) !== null && ($r['location_lng'] ?? null) !== null;
+        if (!$placed($was) || (string) ($was['location'] ?? '') !== (string) ($now['location'] ?? '')) {
+            return [];
+        }
+        $same = Feeds::sameValue('location_lat', $now['location_lat'] ?? null, $was['location_lat'])
+            && Feeds::sameValue('location_lng', $now['location_lng'] ?? null, $was['location_lng']);
+        if (!$same && $placed($now) && in_array((string) ($now['location_source'] ?? ''), ['picked', 'supplied'], true)) {
+            return []; // placed here since
+        }
+        $out = [];
+        foreach (OwnFields::COORDINATE_COLUMNS as $col) {
+            if (array_key_exists($col, $was) && !Feeds::sameValue($col, $now[$col] ?? null, $was[$col])) {
+                $out[$col] = $was[$col];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Each row the snapshot holds (localOf) that stands here now, as the
+     * recovery's stores left it, takes back what they took of what it held
+     * here alone: the coordinates of its place (placeBack), and with them a
+     * day's ownership of the place, which a day showing its series' text
+     * has by its coordinates alone and loses with them. What Put back calls
+     * once Google's state is stored; Finish's rewind does the same on the
+     * rows it puts back, before the change's writer runs.
+     *
+     * @param array<string,list<array>> $local
+     */
+    private function placesBack(array $local): void
+    {
+        foreach ($local['events'] ?? [] as $was) {
+            $now = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $was['id']]);
+            $patch = $now === null ? [] : self::placeBack($was, $now);
+            if ($patch === []) {
+                continue;
+            }
+            $wasOwn = OwnFields::decode($was['override_fields'] ?? null) ?? [];
+            $nowOwn = OwnFields::decode($now['override_fields'] ?? null);
+            if ($nowOwn !== null && in_array('location', $wasOwn, true) && !in_array('location', $nowOwn, true)) {
+                $patch['override_fields'] = OwnFields::encode(array_merge($nowOwn, ['location']));
+            }
+            $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [(int) $was['id']]);
+        }
     }
 
     /**
@@ -3411,6 +3488,9 @@ final class GoogleSeries
             // target names it, dropped by a store of the change).
             $local = json_decode((string) ($row['local_json'] ?? ''), true) ?: [];
             $this->bringBack($calendar, $this->reattach($calendar, $local, $out['targets']), $local);
+            // And one that stood through the change's stores takes back
+            // what they took of what it held here alone (placesBack).
+            $this->placesBack($local);
             $out['differences'] = array_merge($out['differences'], $this->carryHeld($calendar, $held, $targets));
             // A row the change made that the snapshot does not hold (an
             // event of its own it inserted, cancelled above) goes with it,
@@ -3636,7 +3716,11 @@ final class GoogleSeries
                 }
             }
         }
-        $own = array_diff_key($was, array_flip(self::SYNCED), ['id' => true, 'created_at' => true, 'updated_at' => true]);
+        // Its own columns, the place's coordinates by the one decision
+        // (placeBack: they go back where the row shows the text they were
+        // picked for, and belong to the place Google holds now otherwise).
+        $own = array_diff_key($was, array_flip(self::SYNCED), array_flip(OwnFields::COORDINATE_COLUMNS), ['id' => true, 'created_at' => true, 'updated_at' => true])
+            + self::placeBack($was, $now);
         // A day's series columns (the trip and clock-time flags) are its
         // series' now, never the snapshot's: a flag set on the series while
         // the change was pending reaches the day brought back (rule C).
@@ -3647,10 +3731,6 @@ final class GoogleSeries
                     $own[$col] = $master[$col];
                 }
             }
-        }
-        if ((string) ($was['location'] ?? '') !== (string) ($now['location'] ?? '')) {
-            // Where it is placed belongs to the place Google holds now.
-            $own = array_filter($own, static fn(string $col): bool => !str_starts_with($col, 'location_') && $col !== 'geocoded_at', ARRAY_FILTER_USE_KEY);
         }
         $ownedLinks = $wasOwn === null ? [] : array_values(array_intersect(array_keys(OwnFields::LINKS), $wasOwn));
         if ($ownedLinks !== [] && array_diff($ownedLinks, $nowOwn) !== []) {

@@ -600,6 +600,33 @@ return [
         'patch' => [['} while ($this->takesBack($below) || ', '} while (false || ']],
         'cases' => ['two-changes-then-the-bare-undo-twice'],
     ],
+    // Recovery keeps what a day held here alone (GoogleSeries::placeBack): a store of a half-done change empties the
+    // coordinates of a row whose place text it changes, and Finish and Put back give them back with the text. Without
+    // it on Finish's rows (rewind), a day that stood through the stores shows its own place again with no coordinates.
+    [
+        'id' => 'finish-leaves-what-a-store-cleared', 'file' => 'server/src/Domain/GoogleSeries.php', 'checks' => ['x-alone'], 'interleave' => true,
+        'what' => 'Finish puts a row\'s place text back from the snapshot without the coordinates a store of the half-done change took',
+        'patch' => [["                \$stood = array_merge(\$stood, self::placeBack(\$r, \$stood));\n", '']],
+        'cases' => ['a-day-tagged-then-given-coordinates-a-place-for-all-then-a-flip-stopped-after-its-master-write-then-finished',
+            'a-day-with-reminders-then-its-own-place-with-coordinates-a-time-change-whose-second-answer-was-lost-then-finished'],
+    ],
+    // The same on Put back's rows (placesBack): the rows are then not as they were before the change.
+    [
+        'id' => 'put-back-leaves-what-a-store-cleared', 'file' => 'server/src/Domain/GoogleSeries.php', 'checks' => ['x-alone', 'x-putback'], 'interleave' => true,
+        'what' => 'Put back leaves a row that stood through the half-done change\'s stores without the coordinates they took',
+        'patch' => [["            \$this->placesBack(\$local);\n", '']],
+        'cases' => ['a-day-tagged-then-given-coordinates-a-place-for-all-then-a-flip-stopped-after-its-master-write-then-put-back'],
+    ],
+    // Finish's entry records what the change did with the days by the function the commit uses (SeriesPlans::
+    // plannedGrounds). Recorded from the rows' difference alone again, a skip the change carried reads as the old key
+    // and the new key both changed, and the undo of an earlier delete of that day is refused as stale.
+    [
+        'id' => 'finish-entry-from-the-row-difference', 'file' => 'server/src/Domain/SeriesPlans.php', 'checks' => ['x-undo-fields'], 'interleave' => true,
+        'what' => 'Finish\'s entry is recorded from the difference of the rows alone, without the plan\'s record of where each skip went',
+        'patch' => [['is_array($plan) ? self::plannedGrounds($plan) : []));', '[]));']],
+        'cases' => ['a-day-deleted-then-a-flip-whose-master-answer-was-lost-finished-then-the-delete-undone',
+            'two-days-deleted-then-a-time-change-whose-third-answer-was-lost-finished-then-a-delete-undone'],
+    ],
     // The link rule (server/tests/db/lib.php, linkViolations), hung after every block of the database suite: a writer
     // that makes a day's row without its series' tags and people must fail the block that ran it, and nothing else.
     [

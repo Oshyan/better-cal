@@ -139,7 +139,7 @@ return static function (Db $db): void {
     scenario('google local undo: an entry recorded before the rule, with no snapshots, still answers not_undoable with its reason', function () use ($db, $setup): void {
         $s = $setup();
         $entry = $db->insert('mutations', ['user_id' => $s->u, 'entity' => 'event_links', 'entity_id' => $s->trip, 'op' => 'create',
-            'before_json' => null, 'after_json' => null, 'source' => 'web', 'summary' => "Added 'Sample review' to 'Sample trip'"]);
+            'before_json' => null, 'after_json' => null, 'source' => 'web', 'summary' => "Added 'Sample review' to 'Sample trip'", 'format' => Undo::JOURNAL_FORMAT]);
         // What it changed stays named, as for any entry made log-only: the trip.
         $db->insert('mutation_touches', ['mutation_id' => $entry, 'row_key' => BetterCal\Domain\Undo::keyOf('events', ['id' => $s->trip]), 'col' => '*']);
         $message = null;
@@ -184,6 +184,28 @@ return static function (Db $db): void {
         checkEq('redo by the undo\'s entry puts the first title back', 'Sample review, first', $row($s)['title']);
         $s->undo->undoLatest($s->u);
         checkEq('and the bare Undo takes the redo back', ['Sample review', 'Sample review'], [$row($s)['title'], $s->fake->events['smpl4single']['summary'] ?? null]);
+    });
+
+    scenario('google local undo: the undo\'s entry recorded by an earlier version: its redo refuses with the words, forced or not, and is listed so', function () use ($db, $setup, $last, $row, $undone): void {
+        $s = $setup();
+        $s->events->patch($s->u, $s->id, ['title' => 'Sample review, renamed']);
+        $s->undo->undoById($s->u, (int) $last($s)['id']);
+        $undoEntry = (int) $last($s)['id'];
+        $db->run('UPDATE mutations SET format = 1 WHERE id = ?', [$undoEntry]);
+        $s->t->calls = [];
+        $why = static function (callable $fn): ?array {
+            try {
+                $fn();
+                return null;
+            } catch (HttpError $e) {
+                return [$e->status, $e->errorCode, $e->getMessage()];
+            }
+        };
+        $older = [409, 'not_undoable', Undo::OLDER_FORMAT];
+        checkEq('redo, unforced and forced: 409 not_undoable with the words, nothing sent to Google, the title as it was undone', [$older, $older, [], 'Sample review', 0],
+            [$why(fn() => $s->undo->undoById($s->u, $undoEntry)), $why(fn() => $s->undo->undoById($s->u, $undoEntry, true)), $s->t->calls, $row($s)['title'], $undone($undoEntry)]);
+        $listed = (new BetterCal\Domain\Activity($db))->list($s->u, [])['entries'][0];
+        checkEq('Activity lists the undo\'s entry as not undoable, with the words', [$undoEntry, false, Undo::OLDER_FORMAT], [$listed['id'], $listed['undoable'], $listed['notUndoable'] ?? null]);
     });
 
     $tagsOf = static fn(object $s): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$s->id]), 'name');

@@ -171,6 +171,23 @@ The findings file (`findings-interleave.json` by default, ignored by git) has ev
 
 A share of the drawn cases (`--flips F`, 0.2 by default, chosen from the seed and case number alone, so every other case draws as before; 911/230 is not among them) is given a whole-series change between timed and all-day (`Interleave::withFlip`, a `w-all` step whose `what` is `flip`): its series becomes one at 00:00 UTC at UTC, east of it (09:00 Tokyo, 13:00 Auckland) or west of it (19:00 and 20:00 New York, 16:00 and 17:00 Los Angeles), or at 10:00 Los Angeles where no key coincides, daily, weekly or weekly on two adjacent weekdays, timed or all-day (made timed at that clock, kept in the series as `flipZone` and `flipClock`), and one of three goes in among its steps: the flip alone; the flip stopped right after its master write (`f-before` at its second write), then Finish or Put back; or the flip stopped before its master write's answer came back (`f-lost` at its first), a change made at the stand-in, then Finish or Put back. The checks read a flip as a time-class change of the series. A change made at the stand-in in the old form before the master write lands is not reachable: the stand-in has no knob that fires between the series read and the master write. The fixed cases `cases/interleave/a-flip-*` hold the two stops, and `a-day-*-then-the-series-made-timed-*` three undos and redos across a flip west of UTC.
 
+### Day Shapes
+
+A second share (`--day-shapes F`, 0.15 by default, from the cases the flip share leaves, by `crc32("dayshape:seed:n")` alone) replaces a case's series and steps with a day shape (`Interleave::withDayShape`): a daily or weekly series at 19:00 New York, 07:00 Tokyo, 10:00 Los Angeles or 00:00 UTC (the control), timed or all-day. The shapes:
+
+- **A day with no row and no skip when the series changes**, then an undo or redo of the change that made it so: a tag given and undone, notes given and undone (then redone), notes given then "use series value" (then that undone), a day deleted and brought back (then the delete redone). The change between is a flip or a zone change keeping the wall clock (to a zone across the date line, so a day's old key shows on another date there), made here or made at the stand-in (`r-flip`, `r-zone`) and read by a delta poll.
+- **Staleness:** notes given and undone, the change, other notes given to the same day, then the first notes redone.
+- **A flip stopped before its master write lands:** a day given its own notes, the flip with the network down from its master write on (`f-net`, the stand-in's `netAt`: the app has journaled the step, Google still holds the old form, the change is half done), a change made at the stand-in in the old form (`r-day-rename`, `r-day-delete`, `r-day-time`, `r-day-notes`, the day found by date in Google's own listing), then Finish or Put back.
+
+**x-day** judges each by date, from the harness's own date arithmetic (a row's date is its key read in the series' zone, or the key's date when all-day):
+
+- The redo or undo puts the tag or notes on the row of the marked day's own date and on no row of the day before or after. A delete's redo skips that date and neither neighbour.
+- The redo over newer notes is refused `stale_undo` with nothing written here or sent.
+- After the stopped flip, Finish completes: the plan's edited day keeps its notes on its own date, the day changed at Google holds the plan's result and nothing of that change (nor do its neighbours), and the change is named by the date the day had ("{day} was …"). Put back is refused with nothing written or sent.
+- A refusal is accepted only for the shape the fix names (a delete's redo after a change of form or zone a poll brought, `mayRefuse` in the step's judge, set by the shape and not by the answer), and then only with nothing written or sent.
+
+Two oracle probes validate it: a redone day's notes moved to the next day, and Finish carrying the change made at Google onto the next day. `--flips 0 --day-shapes 0` gives a seed's draw from before both shares. The fixed cases `cases/interleave/a-day-notes-redone-*` and `a-daily-*-its-master-write-not-taken-*` hold the clocks and the stops.
+
 ### Oracle Probes
 
 ```

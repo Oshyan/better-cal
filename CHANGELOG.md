@@ -4,6 +4,37 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 1.5.5 (unreleased)
+
+Google calendars, CalDAV and undo after an outside review and a round of independent bug hunts: every request to Google is conditional, a change that stops half way can be finished or put back, a day keeps what only Better-Cal holds for it, and an undo refuses with its reason where it can't be sure which day it is about ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
+
+- **An event on a Google calendar can be switched between timed and all-day.** Google refused the request Better-Cal sent ("Invalid start time"), for single events, single days and whole repeating events. The request now also clears the time, or the date, the event no longer has, which is what Google accepts.
+- **A CalDAV app's change to a repeating event keeps its edited days.** A time change sent by a CalDAV client deleted the days it sent nothing for, with their tags and reminders. Those days are now kept, moved or merged, as a feed poll does, and named in Activity when something does go.
+- **A day's tags and people follow its repeating event from every direction:** a CalDAV write, an import, a poll, Finish, Put back, and the undo of a deleted or merged person.
+- **Answering a repeating invitation on a Google calendar no longer shows its deleted days again** until the next poll.
+- **A day moved by its date alone off a spring-forward day shows at the event's clock,** not an hour off, and follows later time changes.
+- **A day named in a file, feed or emailed update is read under its repeating event:** one sent as a whole day under a timed event lands on its own date, also west of UTC.
+- **A day you were invited to on its own joins its repeating event** when that arrives, instead of being deleted with its tag.
+- **An import leaves out events you deleted here before, and says how many.** It used to count them as already there and say nothing.
+- **Undo refuses where it can't place the day.** A change to one day of a repeating event that was since moved, re-zoned or switched between timed and all-day is refused with a sentence naming the change, where it could act on the neighbouring day. "Undo anyway" is no longer offered for these.
+- **Undo of a change to all events on a Google calendar waits for 1.5.6.** Activity says so where its Undo would be, and the plain Undo steps past such a change to the one before it.
+- **Half done at Google:** Finish keeps what was changed in Google Calendar meanwhile when your change leaves every day where it was, and otherwise names each thing that was lost and why. Keeping a calendar as a copy, or deleting it, closes a half-done change that can no longer run.
+- **Refusals and Finish's notes are in plainer words,** and Activity shows in full why an entry can't be undone.
+- **Marking a person as here works** (the database column never learned that kind).
+- **An unchanged feed is not read again,** and Google's access token is shared between the worker and the browser, so outside connections do less.
+- Maintainers: `tools/google-probe` ran again on 2026-11-10 ([findings](docs/design/research/google-series/probe-2026-11-10.md)); the stand-in for Google now refuses what Google refuses. The edit harness can run with whole-series undo off, as shipped (`--series-undo off`), checks the link rule and provider identity over all data after every step, and has an interleaving mode with its own probes. Standing rules for contributors and agents are in [AGENTS.md](AGENTS.md).
+
+**What the upgrade loses:** undo for changes made before the upgrade. Entries recorded by earlier versions stay in Activity and say why they can't be undone (at most a week of undo). Nothing else: no event, tag, person or setting changes.
+
+**Known limits:**
+
+- Right after a change to all events on a Google calendar, the plain Undo may reach an older change to one day that it can no longer place, refuse it, and keep stopping there. Undo other entries from the Activity page.
+- A half-done change that can be neither finished nor put back is cleared by deleting its calendar here or keeping it as a copy. A "Leave as Google has it" action comes in 1.5.6.
+- When your access to a Google calendar is taken away at Google, Better-Cal does not notice; deleting the calendar here is the way out.
+- The timed and all-day switch on Google is built to the request real Google accepted in the probe; it has not yet run from an installed build.
+
+Operators: migrations 070 to 078 (the Google token on its account, half-done changes' plans, edited days placed by their own fields, feed validators, the person kinds, the journal's format, and each edited day's own-fields list filled where 1.5.0 to 1.5.4 left it empty); `update.php` or the update page as usual.
+
 ## 1.5.4 (2026-11-07)
 
 Google calendars go onto the same series model as local ones, after a probe of what Google actually does with recurring events, and every change made to a Google calendar undoes. An event can keep its clock time in any zone ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).

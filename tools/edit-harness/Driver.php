@@ -41,6 +41,13 @@ final class Driver
      */
     public static float $floating = 0.25;
     public static float $floatFlip = 0.1;
+
+    /**
+     * The share of drawn Google-mode cases replaced by an identity shape (Delta::identity, README, Google: Identity):
+     * chosen from the case's seed and number alone, so every other drawn case is as before; --identity sets it, 0 turns
+     * it off. Local runs never take it.
+     */
+    public static float $identity = 0.2;
     private static ?bool $floatColumn = null;
 
     /** Does this product store floating times (events.floating, migration 069)? */
@@ -113,6 +120,19 @@ final class Driver
         $this->splitCount = null;
         $this->spec = $spec;
         $this->rng = $r;
+        // An identity shape in place of the drawn case, for a share of the drawn Google cases (by seed and number alone).
+        if ($this->google !== null && !isset($spec['vector']) && !isset($spec['fixed']) && $this->share('identity', self::$identity)) {
+            $spec = Delta::identity(new Rng(crc32('identity-draw:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % 1_000_003)) + $spec;
+            $this->spec = $spec;
+        }
+        if (isset($spec['identity'])) {
+            $this->product['identity'][$spec['identity']] = 1;
+            if ($this->google !== null && in_array($spec['identity'], Delta::IDENTITY_PENDING, true)) {
+                // Whether Google keeps or drops exceptions on a zone change that moves no instant is not yet known from
+                // real Google (the stand-in keeps them): this case's failures are reported apart until the live probe answers.
+                $this->unoracled[] = 'identity: a zone change keeping the same moment, Google\'s behaviour pending a live probe';
+            }
+        }
         $this->controls = $this->makeControls();
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->fixtures = [];

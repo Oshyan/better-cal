@@ -251,7 +251,12 @@ final class OracleProbes
                 }],
             // x-day: the day a redo acted on moved to its neighbour (the undo fault's own symptom), and the change made at Google
             // while a flip was stopped carried by Finish onto a neighbouring day.
-            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-day-notes-redone-after-a-daily-00-utc-series-made-all-day', 'step' => 4,
+            // The gate removed: a day with no row and no skip when its series was made all-day, its redo answered as done.
+            ['check' => 'x-day', 'what' => 'the redo of a change to a day with no recorded place goes through', 'case' => 'a-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-tagged-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     foreach ($s1['rows'] as $id => $r) {
                         if ($r['recurrence_parent_id'] !== null && str_starts_with((string) $r['description'], 'Sample notes')) {

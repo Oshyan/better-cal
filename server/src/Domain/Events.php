@@ -712,9 +712,10 @@ final class Events
      * An instance of an all-day series can't be given a clock time at
      * Google (the probe, 2.2a: 400 "Invalid start time"), so a "this event"
      * edit that would make a day of an all-day Google series timed is
-     * refused here before anything is sent, with the reason.
+     * refused here before anything is sent, with the reason. The undo and
+     * the redo of such an edit ask the same (GoogleUndo::undo).
      */
-    private static function refuseTimedUnderAllDay(array $master, int $rowAllDay): void
+    public static function refuseTimedUnderAllDay(array $master, int $rowAllDay): void
     {
         if ((int) $master['all_day'] === 1 && $rowAllDay === 0) {
             throw new HttpError('google_all_day', 'At Google, a day of an all-day series can\'t be given a clock time. Make the series timed, or keep this day all-day.', 422);

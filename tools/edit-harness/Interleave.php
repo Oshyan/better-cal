@@ -181,8 +181,9 @@ final class Interleave
     {
         [$tz, $clock] = $r->pick(self::DAY_CLOCKS);
         [$family, $rrule] = $r->pick([['daily', 'FREQ=DAILY'], ['weekly_bare', 'FREQ=WEEKLY'], ['weekly_list', 'FREQ=WEEKLY;BYDAY=MO,TU']]);
-        $shape = $r->weighted(['tag' => 3, 'notes' => 3, 'useSeries' => 2, 'delete' => 3, 'stale' => 3, 'stopped' => 4]);
-        $change = $shape === 'stopped' ? 'flipHere' : $r->weighted(['flipHere' => 3, 'zoneHere' => 2, 'flipThere' => 2, 'zoneThere' => 2]);
+        $shape = $r->weighted(['tag' => 3, 'notes' => 3, 'useSeries' => 2, 'delete' => 3, 'stale' => 3, 'stopped' => 4, 'tagged' => 3, 'taggedStale' => 2, 'skipUndo' => 2]);
+        // A delete's own skip is carried by a change made here; one made at the stand-in drops it, so that shape is drawn here only.
+        $change = $shape === 'stopped' ? 'flipHere' : ($shape === 'skipUndo' ? $r->weighted(['flipHere' => 3, 'zoneHere' => 2]) : $r->weighted(['flipHere' => 3, 'zoneHere' => 2, 'flipThere' => 2, 'zoneThere' => 2]));
         $zone = str_starts_with($change, 'zone');
         $allDay = !$zone && $r->chance(0.5);
         $monday = $r->pick(['2027-01-04', '2027-01-18']);
@@ -196,13 +197,20 @@ final class Interleave
             'flipThere' => [['do' => 'r-flip', 'pick' => 0.0], ['do' => 'p-delta', 'pick' => 0.0]],
             'zoneThere' => [['do' => 'r-zone', 'pick' => 0.0], ['do' => 'p-delta', 'pick' => 0.0]],
         };
-        // The redo of a delete, or its undo, on an ordinary day after a change of form or zone a poll brought: the one
-        // shape whose refusal before anything is written or sent is accepted (the zone of a timed key can't be told).
-        // Only where the record can't say which day it was: a timed series made all-day, or moved to another zone, at the
-        // stand-in (a series made timed there is never refused).
-        $mayRefuse = $shape === 'delete' && ($change === 'zoneThere' || ($change === 'flipThere' && !$allDay));
-        $judge = static fn(string $expect): array => ['mark' => 'd', 'expect' => $expect, 'mayRefuse' => $mayRefuse];
+        // What the journal holds of the marked day when the series is re-placed, set by the shape and never by the answer
+        // (decisions.md, "An undo acts on a day only where the journal says exactly where it is"): `none`, a day with no
+        // row and no skip then, whose undo or redo is refused before anything is written or sent; `row`, the entry's own
+        // row still there, carried with the series; `skip`, a delete's own skip, carried by a change made here.
+        $judge = static fn(string $expect, string $anchor = 'none'): array => ['mark' => 'd', 'expect' => $expect, 'anchor' => $anchor];
         $case['steps'] = match ($shape) {
+            // A day holding a tag (a row) when its notes are given and undone: the redo's own row is carried by the change.
+            'tagged' => array_merge([['do' => 'w-this-l', 'pick' => $pick, 'what' => 'tags', 'mark' => 't'], ['do' => 'w-this-g', 'pick' => 0.0, 'what' => 'description', 'onMark' => 't', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]],
+                $changeSteps, [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('description', 'row')]]),
+            // The same, with other notes given to that day after the change: the day is placed, so staleness answers.
+            'taggedStale' => array_merge([['do' => 'w-this-l', 'pick' => $pick, 'what' => 'tags', 'mark' => 't'], ['do' => 'w-this-g', 'pick' => 0.0, 'what' => 'description', 'onMark' => 't', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]],
+                $changeSteps, [['do' => 'w-this-g', 'pick' => 0.0, 'what' => 'description', 'onMark' => 'd'], ['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('stale', 'row')]]),
+            // A day deleted, the change made here (its skip carried), then the delete undone: the day is a day again on its own date.
+            'skipUndo' => array_merge([['do' => 'w-del1', 'pick' => $pick, 'mark' => 'd']], $changeSteps, [['do' => 'u-entry', 'pick' => 0.0, 'entryOf' => 'd', 'judge' => $judge('day', 'skip')]]),
             'tag' => array_merge([['do' => 'w-this-l', 'pick' => $pick, 'what' => 'tags', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
                 [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('tags')]]),
             'notes' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
@@ -988,6 +996,15 @@ final class Interleave
         };
         $wrote = array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => !in_array('X-Harness: remote', (array) ($q['headers'] ?? []), true)));
         $quiet = self::sameHere($s0, $s1) && $wrote === [];
+        if ($judge['expect'] !== 'stopped' && ($judge['anchor'] ?? 'none') === 'none') {
+            // The gate, before staleness and whatever was changed since: a day with no row and no skip when its series was
+            // re-placed has no recorded place, and is never placed by its key or its date.
+            $this->ran('x-day', 'unplaced');
+            $this->expect('x-day', !$out['ok'] && $out['error'] === 'not_undoable' && $quiet,
+                "step {$this->step} ($do): the undo or redo of a change to a day that had no row and no skip when its series was re-placed is refused (not_undoable), with nothing written here or sent",
+                $context + ['out' => $out['error'] ?? 'went through', 'message' => $out['message'] ?? null, 'sent' => count($wrote)]);
+            return;
+        }
         if ($judge['expect'] === 'stale') {
             $this->ran('x-day', 'stale');
             $this->expect('x-day', !$out['ok'] && $out['error'] === 'stale_undo' && $quiet,
@@ -1003,11 +1020,17 @@ final class Interleave
         }
         if (!$out['ok']) {
             $this->ran('x-day', 'refused');
-            $this->expect('x-day', !empty($judge['mayRefuse']) && $out['error'] === 'not_undoable' && $quiet,
-                "step {$this->step} ($do): refused, which only a delete's redo after a timed series was made all-day or moved its zone at Google may be, as not_undoable, and then with nothing written or sent", $context + ['out' => $out['error'], 'message' => $out['message'] ?? null]);
+            $this->fail('x-day', "step {$this->step} ($do): refused, though the journal says exactly where the day is (its own row is still there, or the change carried its skip)", $context + ['out' => $out['error'], 'message' => $out['message'] ?? null]);
             return;
         }
         $this->ran('x-day', $judge['expect']);
+        if ($judge['expect'] === 'day') {
+            $this->expect('x-day', !$skipped($date), "step {$this->step} ($do): the day is a day again on its own date", $context + ['skips' => $master['exdates_json']]);
+            foreach ($near as $n) {
+                $this->expect('x-day', !$skipped($n), "step {$this->step} ($do): the day before or after is not skipped", $context + ['near' => $n, 'skips' => $master['exdates_json']]);
+            }
+            return;
+        }
         if ($judge['expect'] === 'stopped') {
             $this->judgeStopped($do, $mark, $master, $dayRows, $skipped, $near, $out, $s0, $s1, $context);
             return;

@@ -1,0 +1,56 @@
+{
+    "about": "The same, the series made all-day at the stand-in and read by a poll: the poll carries the tagged day's row with its id, so the redo's own row is still there and the notes land on the day's own date (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-04 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "Asia/Tokyo"
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.3,
+            "what": "tags",
+            "mark": "t"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0,
+            "what": "description",
+            "onMark": "t",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0
+        },
+        {
+            "do": "r-flip",
+            "pick": 0
+        },
+        {
+            "do": "p-delta",
+            "pick": 0
+        },
+        {
+            "do": "redo",
+            "pick": 0,
+            "judge": {
+                "mark": "d",
+                "expect": "description",
+                "anchor": "row"
+            }
+        }
+    ]
+}

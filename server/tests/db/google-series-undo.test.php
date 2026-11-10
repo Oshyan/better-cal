@@ -721,7 +721,8 @@ return static function (Db $db): void {
         } catch (HttpError $e) {
             $caught = [$e->errorCode, str_contains($e->getMessage(), 'no longer part of the series')];
         }
-        checkEq('stale, saying the day left its series; nothing sent', [['stale_undo', true], []],
+        // not_undoable since the gate (1.5.5), was stale_undo: force cannot pass this refusal, and the app offers "Undo anyway" for stale_undo.
+        checkEq('refused, saying the day left its series; nothing sent', [['not_undoable', true], []],
             [$caught, array_values(array_filter($s->t->calls, static fn(array $c): bool => $c[0] !== 'GET'))]);
     });
 

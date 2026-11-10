@@ -360,7 +360,9 @@ return static function (Db $db): void {
                 $s->events->patch($s->u, $day, ['tagNames' => ['Sample label']]);
                 $person = $db->insert('people', ['user_id' => $s->u, 'name' => 'Sam Sample']);
                 $db->insert('event_people', ['event_id' => $day, 'person_id' => $person]);
-                $db->update('events', ['reminders_json' => '[{"minutes":30}]'], 'id = ?', [$day]);
+                // The person is the day's own, so its own list says so (the link rule: a set the list doesn't name is the series').
+                $own = BetterCal\Domain\Series\OwnFields::decode($db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day])) ?? [];
+                $db->update('events', ['reminders_json' => '[{"minutes":30}]', 'override_fields' => BetterCal\Domain\Series\OwnFields::encode(BetterCal\Domain\Series\OwnFields::normalize([...$own, 'people']))], 'id = ?', [$day]);
                 $home = (int) $s->d->calendars->create($s->u, ['name' => 'Sample home'])['id'];
                 $trip = (int) $s->events->create($s->u, eventAt($home, 'Sample trip', '2027-03-28', ['isContainer' => true]))['eventId'];
                 $s->trips->attach($s->u, $trip, $day);

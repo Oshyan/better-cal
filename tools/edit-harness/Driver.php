@@ -209,6 +209,7 @@ final class Driver
             $this->fail('b-this', 'a "this event" edit was refused: ' . $e->errorCode, ['message' => $e->getMessage()]);
             return $this->result('none');
         }
+        $this->checkLinkRule('the case\'s "this event" edits');
         Prof::mark('state');
         $before = $this->state($id);
         Prof::mark('snapshot');
@@ -286,6 +287,7 @@ final class Driver
             $this->matchOptions($before, $after, $acted, $v, $sent, $s0);
         }
         $this->checkTripLinks($before, $acted, $sent);
+        $this->checkLinkRule('the edit');
         if ($this->google !== null) {
             // What the stand-in holds equals the rows here, and a poll changes nothing (8-google). Undo sends the
             // series as it was back to Google (#172): every row as before the edit, but for the etags Google changes
@@ -296,6 +298,7 @@ final class Driver
                 $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),
                     'after Undo on a Google calendar every row is as before the edit by its place in the series, but for the etags Google changes on every write (a day Google gives back may come back under a new id here)');
                 $this->checkGoogleHeld($id);
+                $this->checkLinkRule('Undo');
             }
             $this->na('redo and the undo stack on a Google calendar');
             return $this->result($path);
@@ -304,9 +307,11 @@ final class Driver
         // Undo: every row as it was.
         if ($this->undoLatest('f-undo', 'undo')) {
             $this->same('f-undo', $s0, $this->snapshot(), 'after Undo every row is byte-identical to before the edit');
+            $this->checkLinkRule('Undo');
             try {
                 Prof::mark('redo');
                 $this->replay($id, $before, $acted, $v, $sent);
+                $this->checkLinkRule('the edit applied again');
                 $s1r = $this->snapshot();
                 $this->same('f-redo', self::roles($s1, $id), self::roles($s1r, $id), 'the edit applied again gives the same rows under new ids');
                 Prof::mark('stack');
@@ -324,6 +329,24 @@ final class Driver
         foreach ($this->db->all('SELECT l.id, l.container_id, l.event_id, c.is_container AS trip, m.is_container AS stop FROM event_links l JOIN events c ON c.id = l.container_id JOIN events m ON m.id = l.event_id WHERE (l.container_id >= ? OR l.event_id >= ?) AND c.user_id = ? AND c.deleted_at IS NULL AND m.deleted_at IS NULL', [$this->firstId, $this->firstId, $this->userId]) as $l) {
             $this->check($inv, !((int) $l['trip'] === 1 && (int) $l['stop'] === 1), 'after a write no live link has both its trip and its stop flagged (a trip inside a trip)', ['link' => $l]);
             $this->check($inv, (int) $l['container_id'] !== (int) $l['event_id'], 'no trip is its own stop', ['link' => $l]);
+        }
+    }
+
+    /**
+     * l-links, l-list, l-series (README, The Invariants): the link rule over the case's rows, read from the database by
+     * the database suite's own raw SQL (server/tests/db/lib.php, linkViolations), never from the oracle. Every live day
+     * row holds its own tags and people when its list names them, else exactly its series'; none has a NULL list; none
+     * outlives its series. $when names the point (the edit, an option, an undo, a redo, a step).
+     */
+    private function checkLinkRule(string $when): void
+    {
+        foreach (linkViolations($this->db, $this->userId, $this->firstId) as $v) {
+            $inv = ['tags' => 'l-links', 'people' => 'l-links', 'list' => 'l-list', 'series' => 'l-series'][$v['kind']];
+            $this->fail($inv, "after $when: " . match ($v['kind']) {
+                'list' => 'a live day row has a NULL own list',
+                'series' => "a live day row's series is missing or deleted",
+                default => "a live day row doesn't hold its own {$v['kind']} or exactly its series'",
+            }, ['row' => $v['day'], 'series' => $v['master'], 'found' => $v['what']]);
         }
     }
 
@@ -1443,6 +1466,7 @@ final class Driver
         $this->checkTripRule('b-trip');
         $this->checkEdit($st, $this->state($st['id']), $acted, $v, $sent, $s0);
         $this->checkTripLinks($st, $acted, $sent);
+        $this->checkLinkRule('the option committed');
     }
 
     /** The edit applied again after Undo, with the same choices. */
@@ -1502,10 +1526,13 @@ final class Driver
         if ($done === null) {
             return;
         }
+        $this->checkLinkRule('the second edit');
         if ($this->undoLatest('f-stack', 'undo of the second edit')) {
             $this->same('f-stack', $s1, $this->snapshot(), 'undoing the second edit gives the state after the first');
+            $this->checkLinkRule('Undo of the second edit');
             if ($this->undoLatest('f-stack', 'undo of the first edit under the second')) {
                 $this->same('f-stack', $s0, $this->snapshot(), 'undoing both gives the state before either');
+                $this->checkLinkRule('Undo of the first edit under the second');
             }
         }
     }

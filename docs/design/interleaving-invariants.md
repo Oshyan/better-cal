@@ -86,9 +86,9 @@ From: series-model.md, Own Fields; the harness's invariant h (README); api-contr
 
 ### x-own: an edited day follows the series in what it doesn't own
 
-After any write that succeeds and after any poll, every field of an edited row outside its `override_fields` (the date, time, length and all-day placement included, by `OwnFields::placed`'s rule as the harness reads it) equals the series' value at its occurrence. After a poll, ownership follows Rows from Elsewhere: a field unchanged at Google keeps its ownership, one changed to the master's value becomes inherited, one changed to another value its own.
+After any write that succeeds and after any poll, every field of an edited row outside its `override_fields` (the date, time, length and all-day placement included, by `OwnFields::placed`'s rule as the harness reads it) equals the series' value at its occurrence. Tags and people are compared as sets: a day that doesn't own them holds exactly its series' set as it stands in the same snapshot (the link rule; the database suite and the series mode check the same rule over all data by raw SQL). After a poll, ownership follows Rows from Elsewhere: a field unchanged at Google keeps its ownership, one changed to the master's value becomes inherited, one changed to another value its own.
 
-From: series-model.md, Own Fields ("A series-wide change reaches every field an edited day doesn't own; its own fields stay"); Rows from Elsewhere (the three rules).
+From: series-model.md, Own Fields ("A series-wide change reaches every field an edited day doesn't own; its own fields stay"); Rows from Elsewhere (the three rules); decisions.md, "A day kept by an undo shows the series' tags and people it does not own" ("a day's tags and people are its own only when its own list says so; otherwise its links are the series' copy").
 
 ### x-conflict: a stale etag is refused whole
 

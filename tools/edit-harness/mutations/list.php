@@ -459,4 +459,30 @@ return [
         'patch' => [['} while ($this->takesBack($below) || ', '} while (false || ']],
         'cases' => ['two-changes-then-the-bare-undo-twice'],
     ],
+    // The link rule (server/tests/db/lib.php, linkViolations), hung after every block of the database suite: a writer
+    // that makes a day's row without its series' tags and people must fail the block that ran it, and nothing else.
+    [
+        'id' => 'answer-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'link-rule',
+        'what' => 'the row an answer for one day makes (Events::ensureOverride) leaves out its series\' tags and people',
+        'patch' => [[
+            "            \$this->db->run(\$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [\$id, \$masterId]);\n"
+            . "            \$this->db->run(\$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [\$id, \$masterId]);\n",
+            "            // mutated: the series' tags and people are not copied\n",
+        ]],
+        'checks' => ["an answer for one day of a tagged series with a person: every live day row holds its own tags and people, or exactly its series'"],
+    ],
+    // The same rule in the series harness (l-links, read by the database suite's raw SQL after every step): the row a
+    // "this event" edit makes (Events::patchThis) starts without its series' tags and people. f-undo trips too: Undo
+    // composes the day's links from its series (Undo::followLinks), so the rows after Undo are not the broken ones before.
+    [
+        'id' => 'this-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'checks' => ['l-links', 'f-undo'],
+        'what' => 'the row a "this event" edit makes (Events::patchThis) does not start with its series\' tags and people',
+        'patch' => [
+            ["                \$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',\n                [\$id, \$masterId]\n",
+                "                \$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE 1 = 0 AND event_id = ?',\n                [\$id, \$masterId]\n"],
+            ["                \$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',\n                [\$id, \$masterId]\n",
+                "                \$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE 1 = 0 AND event_id = ?',\n                [\$id, \$masterId]\n"],
+        ],
+        'cases' => ['edited-day-rejoins-the-series'],
+    ],
 ];

@@ -198,7 +198,9 @@ final class Interleave
         };
         // The redo of a delete, or its undo, on an ordinary day after a change of form or zone a poll brought: the one
         // shape whose refusal before anything is written or sent is accepted (the zone of a timed key can't be told).
-        $mayRefuse = $shape === 'delete' && in_array($change, ['flipThere', 'zoneThere'], true);
+        // Only where the record can't say which day it was: a timed series made all-day, or moved to another zone, at the
+        // stand-in (a series made timed there is never refused).
+        $mayRefuse = $shape === 'delete' && ($change === 'zoneThere' || ($change === 'flipThere' && !$allDay));
         $judge = static fn(string $expect): array => ['mark' => 'd', 'expect' => $expect, 'mayRefuse' => $mayRefuse];
         $case['steps'] = match ($shape) {
             'tag' => array_merge([['do' => 'w-this-l', 'pick' => $pick, 'what' => 'tags', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
@@ -1001,8 +1003,8 @@ final class Interleave
         }
         if (!$out['ok']) {
             $this->ran('x-day', 'refused');
-            $this->expect('x-day', !empty($judge['mayRefuse']) && $quiet,
-                "step {$this->step} ($do): refused, which only a delete's redo or undo after a change of form or zone a poll brought may be, and then with nothing written or sent", $context + ['out' => $out['error'], 'message' => $out['message'] ?? null]);
+            $this->expect('x-day', !empty($judge['mayRefuse']) && $out['error'] === 'not_undoable' && $quiet,
+                "step {$this->step} ($do): refused, which only a delete's redo after a timed series was made all-day or moved its zone at Google may be, as not_undoable, and then with nothing written or sent", $context + ['out' => $out['error'], 'message' => $out['message'] ?? null]);
             return;
         }
         $this->ran('x-day', $judge['expect']);

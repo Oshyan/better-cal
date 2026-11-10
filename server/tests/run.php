@@ -11373,7 +11373,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'a']]], ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'b']]]
     ));
 
-    // Journal entries carry their format (Undo::JOURNAL_FORMAT, migration 077): an entry older than the current one is force-only.
+    // Journal entries carry their format (Undo::JOURNAL_FORMAT, migration 077): an entry older than the current one is log only.
     checkEq('journal format: the current format is 2; an entry with no format, or format 1, is older; format 2 is not',
         [2, true, true, false], [BetterCal\Domain\Undo::JOURNAL_FORMAT, BetterCal\Domain\Undo::olderFormat(['id' => 1]),
             BetterCal\Domain\Undo::olderFormat(['format' => '1']), BetterCal\Domain\Undo::olderFormat(['format' => '2'])]);

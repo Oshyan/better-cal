@@ -1,5 +1,5 @@
 {
-    "about": "A daily series at 19:00 New York (00:00 UTC the next day), a day given its own notes and the change undone (no row, no skip), the series made all-day, then the redo: the notes land on the day's own date and on neither neighbour (x-day).",
+    "about": "A daily series at 19:00 New York (00:00 UTC the next day), a day given its own notes and the change undone (no row, no skip), the series made all-day, then the redo. Since the gate (decisions.md, \"An undo acts on a day only where the journal says exactly where it is\") the redo is refused as not_undoable, with nothing written here or sent: the day had no row and no skip when the series was re-placed, so nothing recorded where it went, and it is never placed by its key or its date (x-day).",
     "seed": 0,
     "n": 0,
     "series": {
@@ -26,20 +26,20 @@
         },
         {
             "do": "u-bare",
-            "pick": 0.0
+            "pick": 0
         },
         {
             "do": "w-all",
-            "pick": 0.0,
+            "pick": 0,
             "what": "flip"
         },
         {
             "do": "redo",
-            "pick": 0.0,
+            "pick": 0,
             "judge": {
                 "mark": "d",
                 "expect": "description",
-                "mayRefuse": false
+                "anchor": "none"
             }
         }
     ]

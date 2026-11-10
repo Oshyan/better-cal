@@ -69,7 +69,9 @@ return static function (Db $db): void {
         $d->events->patch($u, $standup, ['scope' => 'this', 'instanceStart' => '2026-11-04T19:00:00+00:00', 'title' => 'Standup and demo']);
         $oneDate = lastEntry($db, $u);
         $edited = $count('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$standup]);
-        checkEq('undo: a whole series changed, then one date of it edited: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $wholeSeries)));
+        // Was stale_undo until the gate (1.5.5): force cannot pass this (it would leave the edited date on another day of
+        // the series as it was), and a refusal force cannot pass is not_undoable.
+        checkEq('undo: a whole series changed, then one date of it edited: refused, forced or not', 'not_undoable', refusal(fn() => $d->undo->undoById($u, $wholeSeries)));
         checkEq('undo: a series made, then one date of it edited: stale, and the edited date stays', ['stale_undo', 1],
             [refusal(fn() => $d->undo->undoById($u, $seriesMade)), $edited]);
         $d->events->patch($u, $standup, ['scope' => 'this', 'instanceStart' => '2026-11-06T19:00:00+00:00', 'title' => 'Standup, short']);
@@ -93,7 +95,8 @@ return static function (Db $db): void {
         $later($a, '2026-12-01');
         $timeChange = lastEntry($db, $u);
         $d->events->deleteEvent($u, $a, 'this', '2026-12-03T19:00:00+00:00');
-        checkEq('undo: a series moved to another time, then one date deleted: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
+        // not_undoable since the gate, was stale_undo: the time put back would leave the skip on another day, and force cannot pass that.
+        checkEq('undo: a series moved to another time, then one date deleted: refused, forced or not', 'not_undoable', refusal(fn() => $d->undo->undoById($u, $timeChange)));
         $b = $series('Evening walk', '2026-12-01');
         $later($b, '2026-12-01');
         $timeChange = lastEntry($db, $u);
@@ -104,7 +107,8 @@ return static function (Db $db): void {
         $timeChange = lastEntry($db, $u);
         $d->events->setAttendance($u, $c, 'going', 'this', '2026-12-04T19:00:00+00:00');
         $answered = lastEntry($db, $u);
-        checkEq('undo: a series moved to another time, then one date marked going: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $timeChange)));
+        // not_undoable since the gate, was stale_undo (as above).
+        checkEq('undo: a series moved to another time, then one date marked going: refused, forced or not', 'not_undoable', refusal(fn() => $d->undo->undoById($u, $timeChange)));
         $d->undo->undoById($u, $answered);
         checkEq("undo: the date's going undone, its row made for it goes too", 0,
             $count('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$c]));
@@ -131,7 +135,8 @@ return static function (Db $db): void {
         $d->events->deleteEvent($u, $g, 'this', '2026-12-08T18:00:00+00:00');
         $skipped = lastEntry($db, $u);
         planned($d->events, $u, $g, ['scope' => 'following', 'instanceStart' => '2026-12-06T18:00:00+00:00', 'title' => 'Walk, later']);
-        checkEq('undo: a date skipped, then the series split before it: stale', 'stale_undo', refusal(fn() => $d->undo->undoById($u, $skipped)));
+        // not_undoable since the gate, was stale_undo: the day is no longer a day of this series, and force cannot pass that.
+        checkEq('undo: a date skipped, then the series split before it: refused, forced or not', 'not_undoable', refusal(fn() => $d->undo->undoById($u, $skipped)));
 
         // A split carrying a skipped date, then another date skipped on the
         // old series: since 1.5.1 the split takes the carried skip off the
@@ -729,7 +734,8 @@ return static function (Db $db): void {
         planned($d->events, $u, $s, ['scope' => 'all', 'instanceStart' => '2027-02-01T18:00:00+00:00', 'start' => '2027-02-01T19:00:00+00:00', 'end' => '2027-02-01T20:00:00+00:00']);
         $clock = lastEntry($db, $u);
         $d->events->deleteEvent($u, $s, 'this', '2027-02-04T19:00:00+00:00');
-        checkEq('undo: a clock change for all events is stale once a date at the new clock was skipped: its restore puts every date back (t1, a calendar here)', 'stale_undo',
+        // not_undoable since the gate, was stale_undo: the clock put back would leave the skip on another time's day, and force cannot pass that.
+        checkEq('undo: a clock change for all events is refused once a date at the new clock was skipped: its restore puts every date back (t1, a calendar here)', 'not_undoable',
             refusal(fn() => $d->undo->undoById($u, $clock)));
     });
 

@@ -3,14 +3,20 @@
 declare(strict_types=1);
 
 // An undo, and a redo, of a change to one day of a series, across a change
-// of the series' form (timed made all-day, or back) or of its time zone. A
-// key names a day only under the series it was written in: a timed key is a
-// UTC instant, read in the series' zone; an all-day key is a date. So the
-// day an entry is about is its key's date under the form and zone the
-// series had when the entry was written, and the undo or redo acts on the
-// series' occurrence on that date as the series stands
-// (docs/design/decisions.md, "An entry's key names a day under the series
-// it was written in"; Undo::dayNow).
+// of the series' form (timed made all-day, or back) or of its time zone,
+// in four zones, made here and brought by a poll. Such a change re-places
+// the series' days, and an equal key is another day wherever the key's UTC
+// date is not its local one. So the undo acts only where the journal says
+// exactly where the day is: its own row is still there, or the change
+// recorded a move for it (a row it carried, a skip it carried). A day that
+// had no row and no skip then has no recorded place: it is refused, forced
+// or not, with nothing written and nothing sent, in every zone, and never
+// lands on another day (docs/design/decisions.md, "An undo acts on a day
+// only where the journal says exactly where it is"; Undo::dayNow). Until
+// 2026-11-10 this file expected such a day placed by its date under the
+// form and zone its key was written in; an independent read found that
+// reading wrong for a zone change at the same moments and for the
+// planner's own moves, so those cells are refusals here now.
 //
 // Every expected day is this file's own date arithmetic: the day acted on
 // is always 6 January 2027 of a daily series of ten from the 4th, the keys
@@ -51,13 +57,10 @@ return static function (Db $db): void {
     // The suffix of Google's id for that day, in the series' form.
     $suffixOf = static fn(bool $allDay, string $key): string => (new DateTimeImmutable($key, $utc))->format($allDay ? 'Ymd' : 'Ymd\THis\Z');
     $iso = static fn(int $d, array $z, int $addHours = 0): string => sprintf('2027-01-%02dT%02d:%s:00%s', $d, (int) substr($z[1], 0, 2) + $addHours, substr($z[1], 3, 2), $z[2]);
-    // The words of a refusal where the day cannot be told.
-    $untold = static fn(bool $form, bool $redo): string => 'This series ' . ($form ? 'changed between timed and all-day' : 'changed its time zone')
-        . " since this was done, and the record of this change doesn't say which day it was on, so it can't be " . ($redo ? 'redone' : 'undone')
-        . ' here. You can make the change again on that day.';
-    // The same where nothing shows the series changed (the entry's own record disagrees with itself): no change is claimed.
-    $unsaid = static fn(bool $redo): string => "The record of this change doesn't say which day it was on, so it can't be " . ($redo ? 'redone' : 'undone')
-        . ' here. You can make the change again on that day.';
+    // The words of the refusal where a change that re-placed the series holds no record of the day.
+    $unplaced = static fn(string $what, bool $redo): string => "This series $what since this was done, so it's no longer certain which day it was on, and it can't be "
+        . ($redo ? 'redone' : 'undone') . ' here. You can make the change again on the day.';
+    $whatOf = ['form' => 'changed between timed and all-day', 'zone' => 'changed its time zone'];
     $stale = 'Newer changes exist for this item; undoing would overwrite them';
 
     // What the series holds here, by the local day each row's key names under the series as it stands:
@@ -92,10 +95,10 @@ return static function (Db $db): void {
      * One case on a Google calendar. $c: `z` the zone; `allDay` the form the series starts in; `before` the steps
      * before the change; `change` ('form', 'zone' or 'none') and `by` ('app' or 'poll'); `between` the steps after it;
      * then the entry the last `undo` step recorded (a redo), or else the entry of the last step of `before` (an undo),
-     * is undone. `expect`: `result` ('done', 'stale', 'untold' or an error code), `rows`, `skips`, and `sent`, the
+     * is undone. `expect`: `result` ('done', 'stale', 'unplaced' or an error code), `rows`, `skips`, and `sent`, the
      * writes Google was sent as [method, the day's id suffix].
      */
-    $google = static function (array $c) use ($db, $keyOf, $suffixOf, $iso, $untold, $unsaid, $stale, $held, $tables, $first, $tokyoEvening): void {
+    $google = static function (array $c) use ($db, $keyOf, $suffixOf, $iso, $unplaced, $whatOf, $stale, $held, $tables, $first, $tokyoEvening): void {
         $u = freshUser($db);
         seriesUndo($db, $u, false);
         $d = domains($db);
@@ -189,20 +192,9 @@ return static function (Db $db): void {
                         $arg === 'app' ? $all($times(false, $z)) : $remote($bodyOf(false, $z));
                         $now->z = $z;
                         break;
-                    // Damage, by hand: the entry's own record made to disagree with itself. The id it journaled for the
-                    // day is rewritten as a date (an all-day series' id) while its body and its row stay timed.
-                    case 'damage':
-                        $details = json_decode((string) $db->scalar('SELECT details_json FROM mutations WHERE id = ?', [(int) $target]), true);
-                        $details['google']['googleId'] = substr((string) $details['google']['googleId'], 0, strlen($gid) + 1) . $suffixOf(true, $keyOf(false, 6, $now->z));
-                        $db->update('mutations', ['details_json' => json_encode($details)], 'id = ?', [(int) $target]);
-                        break;
-                    // Damage, by hand: the journal no longer says the last change made the series all-day or timed.
-                    case 'forget':
-                        $db->run("DELETE FROM mutation_touches WHERE mutation_id = ? AND col IN ('all_day', 'tzid')", [lastEntry($db, $u)]);
-                        break;
                     default: throw new LogicException("no step $do");
                 }
-                if ($do !== 'undo' && $do !== 'damage' && !$redo && !$chosen) {
+                if ($do !== 'undo' && !$redo && !$chosen) {
                     $target = lastEntry($db, $u);
                 }
             };
@@ -227,13 +219,23 @@ return static function (Db $db): void {
             $x = $c['expect'];
             $result = $error === null ? 'done' : match (true) {
                 $error->errorCode === 'stale_undo' && $error->getMessage() === $stale => 'stale',
-                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_untold' && ($c['change'] ?? 'none') !== 'none' && $error->getMessage() === $untold(($c['change'] ?? '') === 'form' || in_array('form:app', $c['between'] ?? [], true) || in_array('form:poll', $c['between'] ?? [], true), $redo) => 'untold',
-                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_untold' && ($c['change'] ?? 'none') === 'none' && $error->getMessage() === $unsaid($redo) => 'unsaid',
+                // The change that re-placed the series with no record of the day says what it did: the case's own change.
+                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_unplaced' && $error->getMessage() === $unplaced($whatOf[$c['change'] ?? ''] ?? '', $redo) => 'unplaced',
                 default => $error->errorCode . ': ' . $error->getMessage(),
             };
-            checkEq("$name: " . ['done' => 'it goes through', 'stale' => 'it is refused as stale, a newer change of the same thing standing', 'untold' => 'it is refused, in the words that say what changed and that the day cannot be told',
-                'unsaid' => 'it is refused, in words that say the day cannot be told and claim no change of the series'][$x['result']] ?? "$name: " . $x['result'],
+            checkEq("$name: " . ['done' => 'it goes through', 'stale' => 'it is refused as stale, a newer change of the same thing standing',
+                'unplaced' => 'it is refused, in the words that say what changed and that the day is no longer certain'][$x['result']] ?? "$name: " . $x['result'],
                 $x['result'], $result);
+            if ($x['result'] === 'unplaced' && $result === 'unplaced') {
+                // Force passes staleness, never this.
+                $forced = null;
+                try {
+                    $undo->undoById($u, (int) $target, true);
+                } catch (HttpError $thrown) {
+                    $forced = $thrown->getMessage();
+                }
+                checkEq("$name: forced, the same refusal", $error->getMessage(), $forced);
+            }
             $writes = [];
             foreach ($s->fake->requests as $r) {
                 if ($r['method'] !== 'GET') {
@@ -259,6 +261,7 @@ return static function (Db $db): void {
 
     $tag = [['sample-day'], null, false];
     $notes = [[], $first, false];
+    $refused = static fn(array $rows = [], string $says = 'nothing changes'): array => ['result' => 'unplaced', 'rows' => $rows, 'says' => $says];
     foreach ($zones as $zoneName => $z) {
         foreach (['made all-day' => false, 'made timed' => true] as $direction => $startsAllDay) {
             $to = !$startsAllDay;
@@ -268,37 +271,36 @@ return static function (Db $db): void {
                 $case = static fn(string $what, array $before, array $expect, array $between = []): array => [
                     'name' => "$zoneName $direction $where, $what", 'z' => $z, 'allDay' => $startsAllDay, 'before' => $before, 'change' => 'form', 'by' => $by, 'between' => $between, 'expect' => $expect];
                 $cases = [
-                    // The day has a row or a skip when the form changes: carried by its recorded move, or dropped by Google and so stale.
+                    // The entry's own row is still there when it is undone: the day is that row, wherever the change carried it.
                     $case('a tag given, then undone', ['tag'], ['result' => 'done', 'sent' => [], 'rows' => [], 'says' => 'the tag is gone and the day is ordinary again']),
+                    $case('a tag, then notes given and undone, then redone', ['tag', 'notes', 'undo'], ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => ['6 Jan' => [['sample-day'], $first, false]], 'says' => 'the notes are back on 6 January beside its tag']),
+                    // The same, where a change made here keeps the row and Google, changing the form itself, drops its record: the poll
+                    // takes the row away, nothing recorded where the day went, and the undo is refused.
                     $case('notes given, then undone', ['notes'], $by === 'app'
                         ? ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => [], 'says' => 'the notes are gone from 6 January']
-                        : ['result' => 'stale', 'rows' => [], 'says' => 'Google dropped the notes with the old form, and nothing holds them']),
+                        : $refused([], 'Google dropped the notes with the old form, and nothing holds them')),
+                    // A delete's own skip: carried by a change made here (its move recorded, or its key the same), dropped by Google with the old form.
                     $case('the day deleted, then that undone', ['delete'], $by === 'app'
                         ? ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => [], 'says' => '6 January is a day again']
-                        : ['result' => 'stale', 'rows' => [], 'says' => 'Google dropped the skip with the old form, and 6 January is a day already']),
-                    $case('a tag, then notes given and undone, then redone', ['tag', 'notes', 'undo'], ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => ['6 Jan' => [['sample-day'], $first, false]], 'says' => 'the notes are back on 6 January beside its tag']),
+                        : $refused([], 'Google dropped the skip with the old form, and 6 January is a day already')),
                     $case('notes given, the day deleted, then the delete undone', ['notes', 'delete'], $by === 'app'
                         ? ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => ['6 Jan' => $notes], 'says' => '6 January is back with its notes, on 6 January']
-                        : ['result' => 'stale', 'rows' => [], 'says' => 'Google dropped the skip with the old form, and 6 January is a day already']),
-                    // The day has neither when the form changes: nothing recorded a move for it.
-                    $case('a tag given and undone, then redone', ['tag', 'undo'], ['result' => 'done', 'sent' => [], 'rows' => ['6 Jan' => $tag], 'says' => 'the tag is on 6 January']),
-                    $case('notes given and undone, then redone', ['notes', 'undo'], ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']),
-                    $case('notes given back to the series, then that undone', ['notes', 'notes-back'], ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']),
-                    // A delete or its undo of an ordinary day keeps only the day's id: a date for an all-day series, an instant
-                    // with no zone for a timed one. A change made here keeps the series as it was; a poll keeps nothing of it.
-                    $case('the day deleted and that undone, then the delete redone', ['delete', 'undo'], $by === 'poll' && $to
-                        ? ['result' => 'untold', 'rows' => [], 'says' => 'no day is skipped']
-                        : ['result' => 'done', 'sent' => [['DELETE', $sixth]], 'rows' => [], 'skips' => ['6 Jan'], 'says' => '6 January is skipped, and no other day']),
-                    // Staleness reads the same day: newer notes on 6 January stand, whatever its key is now.
+                        : $refused([], 'Google dropped the skip with the old form, and 6 January is a day already')),
+                    // The day has neither a row nor a skip when the form changes: nothing recorded where it went. Refused in
+                    // every zone, 00:00 UTC included, where the equal key happens to be the day.
+                    $case('a tag given and undone, then redone', ['tag', 'undo'], $refused()),
+                    $case('notes given and undone, then redone', ['notes', 'undo'], $refused()),
+                    $case('notes given back to the series, then that undone', ['notes', 'notes-back'], $refused()),
+                    $case('the day deleted and that undone, then the delete redone', ['delete', 'undo'], $refused([], 'no day is skipped')),
+                    // The gate comes before staleness: newer notes on the same day stand, and the refusal is the gate's.
                     $case('notes given and undone, newer notes given to the same day, then the first redone', ['notes', 'undo'],
-                        ['result' => 'stale', 'rows' => ['6 Jan' => [[], 'Newer notes', false]], 'says' => 'the newer notes stand on 6 January'], ['newer-notes']),
+                        $refused(['6 Jan' => [[], 'Newer notes', false]], 'the newer notes stand on 6 January'), ['newer-notes']),
                 ];
-                // West of UTC an old key is the string of the neighbouring day's new key: a newer change of that other day is no reason to refuse.
+                // West of UTC an old key is the string of the neighbouring day's new key: that day's notes stay its own.
                 if ($zoneName === '19:00 New York') {
                     $other = $to ? 7 : 5;
                     $cases[] = $case("notes given and undone, notes given to $other January whose new key is the old key of the 6th, then the first redone", ['notes', 'undo'],
-                        ['result' => 'done', 'sent' => [['PATCH', $sixth]], 'rows' => $to ? ['6 Jan' => $notes, '7 Jan' => [[], 'Notes of another day', false]] : ['5 Jan' => [[], 'Notes of another day', false], '6 Jan' => $notes],
-                            'says' => "the first notes are on 6 January and the other day's on $other January"], ["other-day-notes:$other"]);
+                        $refused([$other . ' Jan' => [[], 'Notes of another day', false]], "the other day's notes are on $other January, and 6 January holds none"), ["other-day-notes:$other"]);
                 }
                 foreach ($cases as $c) {
                     scenario('undo form day, ' . $c['name'], fn() => $google($c));
@@ -316,14 +318,13 @@ return static function (Db $db): void {
             'name' => "19:00 New York moved to 19:00 Tokyo $where, $what", 'z' => $ny, 'allDay' => false, 'before' => $before, 'change' => 'zone', 'by' => $by, 'between' => $between, 'expect' => $expect];
         foreach ([
             $case('a tag given, then undone', ['tag'], ['result' => 'done', 'sent' => [], 'rows' => [], 'says' => 'the tag is gone and the day is ordinary again']),
-            $case('a tag given and undone, then redone', ['tag', 'undo'], ['result' => 'done', 'sent' => [], 'rows' => ['6 Jan' => $tag], 'says' => 'the tag is on 6 January']),
-            $case('notes given and undone, then redone', ['notes', 'undo'], ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']),
-            $case('notes given back to the series, then that undone', ['notes', 'notes-back'], ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']),
-            $case('the day deleted and that undone, then the delete redone', ['delete', 'undo'], $by === 'poll'
-                ? ['result' => 'untold', 'rows' => [], 'says' => 'no day is skipped']
-                : ['result' => 'done', 'sent' => [['DELETE', $sixthTokyo]], 'rows' => [], 'skips' => ['6 Jan'], 'says' => '6 January is skipped, and no other day']),
+            $case('a tag, then notes given and undone, then redone', ['tag', 'notes', 'undo'], ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => [['sample-day'], $first, false]], 'says' => 'the notes are back on 6 January beside its tag']),
+            $case('a tag given and undone, then redone', ['tag', 'undo'], $refused()),
+            $case('notes given and undone, then redone', ['notes', 'undo'], $refused()),
+            $case('notes given back to the series, then that undone', ['notes', 'notes-back'], $refused()),
+            $case('the day deleted and that undone, then the delete redone', ['delete', 'undo'], $refused([], 'no day is skipped')),
             $case('notes given and undone, newer notes given to the same day, then the first redone', ['notes', 'undo'],
-                ['result' => 'stale', 'rows' => ['6 Jan' => [[], 'Newer notes', false]], 'says' => 'the newer notes stand on 6 January'], ['newer-notes']),
+                $refused(['6 Jan' => [[], 'Newer notes', false]], 'the newer notes stand on 6 January'), ['newer-notes']),
         ] as $c) {
             scenario('undo form day, ' . $c['name'], fn() => $google($c));
         }
@@ -332,61 +333,31 @@ return static function (Db $db): void {
     // Shapes of a day and of the journal beyond the plain ones, 19:00 New York.
     $sixthDay = $suffixOf(true, $keyOf(true, 6, $ny));
     $shapes = [
-        // A day at a time and in a zone of its own: its row's zone and the body it showed are the day's, not the series',
-        // so neither says which zone its key was written in. A change made here keeps the series as it was.
+        // A day with a time, a form or a date of its own, its change undone (so it has no row), then the series moved: refused like any other.
         ['name' => 'a day given a time and a zone of its own and that undone, the series moved to Tokyo here, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['own-time', 'undo'], 'change' => 'zone', 'by' => 'app', 'anyPlace' => true,
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => [[], null, false]], 'says' => 'the row with the time of its own is 6 January\'s']],
+            'before' => ['own-time', 'undo'], 'change' => 'zone', 'by' => 'app', 'expect' => $refused()],
         ['name' => 'a day given a time and a zone of its own and that undone, the series moved to Tokyo at Google, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['own-time', 'undo'], 'change' => 'zone', 'by' => 'poll',
-            'expect' => ['result' => 'untold', 'rows' => [], 'says' => 'nothing changes']],
-        // A day made all-day in a timed series: its row and its body are in the day's own form, its id in the series'.
+            'before' => ['own-time', 'undo'], 'change' => 'zone', 'by' => 'poll', 'expect' => $refused()],
         ['name' => 'a day made all-day in a timed series and that undone, the series moved to Tokyo here, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['own-all-day', 'undo'], 'change' => 'zone', 'by' => 'app',
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => [[], null, false]], 'says' => 'the all-day row is 6 January\'s']],
-        // A day moved to a date of its own: its key is still its occurrence's.
+            'before' => ['own-all-day', 'undo'], 'change' => 'zone', 'by' => 'app', 'expect' => $refused()],
         ['name' => 'a day moved to the 8th and that undone, the series moved to Tokyo here, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['own-date', 'undo'], 'change' => 'zone', 'by' => 'app', 'anyPlace' => true,
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthTokyo]], 'rows' => ['6 Jan' => [[], null, false]], 'says' => 'the row moved to the 8th is 6 January\'s']],
-        // A form change brought by a poll after a recorded move: the tagged day's notes are undone, the series' clock
-        // moves an hour here (the row is carried and its move recorded), the tag goes back to the series (the row goes),
-        // then Google makes the series all-day. The carried key is one of the series before the poll, as the entry's own was.
+            'before' => ['own-date', 'undo'], 'change' => 'zone', 'by' => 'app', 'expect' => $refused()],
+        // A recorded move, then a change with no record: the tagged day's notes are undone, the series' clock moves an
+        // hour here (the row is carried and its move recorded), the tag goes back to the series (the row goes), then
+        // Google makes the series all-day. The first change is followed; the second holds nothing for the day.
         ['name' => 'notes undone on a tagged day, the clock moved here, the tag given back, made all-day at Google, then the notes redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['tag', 'notes', 'undo', 'clock', 'tag-back'], 'change' => 'form', 'by' => 'poll',
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthDay]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']],
-        // Two changes of form in a row: the series is as it was, and so is the day's id.
+            'before' => ['tag', 'notes', 'undo', 'clock', 'tag-back'], 'change' => 'form', 'by' => 'poll', 'expect' => $refused()],
+        // Two changes of form in a row leave the series as it was, and still nothing recorded where the day went through them.
         ['name' => 'notes given and undone, made all-day here and timed again here, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['form:app'],
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $suffixOf(false, $keyOf(false, 6, $ny))]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']],
+            'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['form:app'], 'expect' => $refused()],
         ['name' => 'notes given and undone, made all-day at Google and timed again at Google, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll'],
-            'expect' => ['result' => 'done', 'sent' => [['PATCH', $suffixOf(false, $keyOf(false, 6, $ny))]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes are on 6 January']],
+            'before' => ['notes', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll'], 'expect' => $refused()],
         ['name' => 'a tag given and undone, made all-day at Google, then made 19:00 Tokyo at Google, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['tag', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll', 'zone:poll'],
-            'expect' => ['result' => 'done', 'sent' => [], 'rows' => ['6 Jan' => $tag], 'says' => 'the tag is on 6 January']],
-        // An answer to an invitation for one day is about that day's row: it is carried with the row.
+            'before' => ['tag', 'undo'], 'change' => 'form', 'by' => 'poll', 'between' => ['form:poll', 'zone:poll'], 'expect' => $refused()],
+        // An answer to an invitation for one day is about that day's row: the row is still there, carried with the series.
         ['name' => 'an invitation answered for one day with notes, made all-day here, then the answer undone', 'z' => $ny, 'allDay' => false, 'guests' => true,
             'before' => ['notes', 'answer'], 'change' => 'form', 'by' => 'app',
             'expect' => ['result' => 'done', 'sent' => [['PATCH', $sixthDay]], 'rows' => ['6 Jan' => $notes], 'says' => 'the notes stay on 6 January, where the answer was']],
-        // Force passes staleness, never a day that can't be told: the undo of a delete after Google made the series
-        // all-day is stale (Google dropped the skip), and forced it is refused, the delete's id being an instant with no zone.
-        ['name' => 'the day deleted, made all-day at Google, then that undone by force', 'z' => $ny, 'allDay' => false,
-            'before' => ['delete'], 'change' => 'form', 'by' => 'poll', 'force' => true,
-            'expect' => ['result' => 'untold', 'rows' => [], 'says' => 'nothing changes']],
-        // Injected damage: an entry whose own record disagrees with itself (a date id, a timed body and row), the
-        // series never changed. Refused before anything, and the words claim no change of the series.
-        ['name' => 'notes given, the entry\'s id rewritten by hand as a date, then undone', 'z' => $ny, 'allDay' => false,
-            'before' => ['notes', 'damage'], 'change' => 'none',
-            'expect' => ['result' => 'unsaid', 'rows' => ['6 Jan' => $notes], 'says' => 'the notes stay on 6 January']],
-        // Injected damage: the series made all-day here, and the journal's word that it was removed by hand. The entry's
-        // own record still says what the series was: a tag's rows say timed in New York, and the redo lands on its day;
-        // a delete's bare id says timed and no zone, and it is refused in the words for a change of form.
-        ['name' => 'a tag given and undone, made all-day here with the journal\'s word of it removed by hand, then redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['tag', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['forget'],
-            'expect' => ['result' => 'done', 'sent' => [], 'rows' => ['6 Jan' => $tag], 'says' => 'the tag is on 6 January']],
-        ['name' => 'the day deleted and that undone, made all-day here with the journal\'s word of it removed by hand, then the delete redone', 'z' => $ny, 'allDay' => false,
-            'before' => ['delete', 'undo'], 'change' => 'form', 'by' => 'app', 'between' => ['forget'],
-            'expect' => ['result' => 'untold', 'rows' => [], 'says' => 'no day is skipped']],
     ];
     foreach ($shapes as $c) {
         scenario('undo form day, 19:00 New York, ' . $c['name'], fn() => $google($c));
@@ -448,10 +419,10 @@ return static function (Db $db): void {
         });
     }
 
-    // A calendar of the account's own: a change of the series' times made here stands on every day of it, so an older
-    // change to one day is refused as stale. Forced, the snapshot restore puts the day's row back: on its own day.
+    // A calendar of the account's own: a snapshot is of the series as it was, so the row a change removed comes back
+    // nowhere once the series' form changed, forced or not, and the answer is never "stale", which force would pass.
     foreach (['made all-day' => false, 'made timed' => true] as $direction => $startsAllDay) {
-        scenario("undo form day, an own calendar at 19:00 New York $direction, a tag given back to the series then that undone: refused as stale, and forced, the tag is on 6 January", function () use ($db, $iso, $held, $stale, $ny, $startsAllDay, $direction): void {
+        scenario("undo form day, an own calendar at 19:00 New York $direction, a tag given back to the series then that undone: refused, forced or not", function () use ($db, $iso, $held, $ny, $startsAllDay, $direction): void {
             $u = freshUser($db);
             $d = domains($db);
             $e = $d->events;
@@ -464,18 +435,18 @@ return static function (Db $db): void {
             $e->patch($u, $id, ['scope' => 'this', 'instanceStart' => $at(6), 'useSeries' => ['tags']]);
             $entry = lastEntry($db, $u);
             planned($e, $u, $id, ['scope' => 'all', 'instanceStart' => $at(4)] + ($startsAllDay ? $timed : $days));
-            $refused = null;
-            try {
-                $d->undo->undoById($u, $entry);
-            } catch (HttpError $error) {
-                $refused = $error->getMessage();
+            $words = "This series changed between timed and all-day since this was done, and what this change held is of the series as it was, so it can't be undone here. You can make the change again on the day.";
+            $refusals = [];
+            foreach ([false, true] as $force) {
+                try {
+                    $d->undo->undoById($u, $entry, $force);
+                    $refusals[] = null;
+                } catch (HttpError $error) {
+                    $refusals[] = [$error->errorCode, $error->getMessage()];
+                }
             }
-            checkEq("an own calendar $direction: the undo is refused as stale, and the day has no row", [$stale, ['rows' => [], 'skips' => []]], [$refused, $held($id)]);
-            $d->undo->undoById($u, $entry, true);
-            checkEq("an own calendar $direction: forced, the tag is back on 6 January and on no other day", ['rows' => ['6 Jan' => [['sample-day'], null, false]], 'skips' => []], $held($id));
-            $row = $db->one('SELECT all_day, recurrence_instance_utc FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
-            checkEq("an own calendar $direction: and its row is in the series' form now, at 6 January's key",
-                [(int) !$startsAllDay, $startsAllDay ? '2027-01-07 00:00:00' : '2027-01-06 00:00:00'], [(int) ($row['all_day'] ?? -1), $row['recurrence_instance_utc'] ?? null]);
+            checkEq("an own calendar $direction: refused, forced or not, in words that say what changed", [['not_undoable', $words], ['not_undoable', $words]], $refusals);
+            checkEq("an own calendar $direction: no row is brought back on any day", ['rows' => [], 'skips' => []], $held($id));
         });
     }
 };

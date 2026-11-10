@@ -27,60 +27,54 @@ $undoCase = static fn(string $case, array $undoes): array => array_merge(
     ["$case: the refusal names the rows and the rule"],
 );
 
-// The assertion labels of undo-form-day.test.php the two mutations of an undo's day must fail: its cases are named by
-// zone, direction and where the change was made, as the test names them.
-$undoDay = (static function (): array {
-    $sent = "Google is sent one write, to that day's id as the series stands";
-    $read = [];
-    $stale = [];
-    $redone = static fn(string $case, bool $delete): array => array_merge(
-        ["$case, a tag given and undone, then redone: the tag is on 6 January"],
-        ...array_map(static fn(string $what): array => ["$case, $what: $sent", "$case, $what: the notes are on 6 January"], ['notes given and undone, then redone', 'notes given back to the series, then that undone']),
-        ...($delete ? [["$case, the day deleted and that undone, then the delete redone: $sent", "$case, the day deleted and that undone, then the delete redone: 6 January is skipped, and no other day"]] : []),
-    );
-    $newer = static fn(string $case): array => array_map(static fn(string $label): string => "$case, notes given and undone, newer notes given to the same day, then the first redone: $label",
-        ['it is refused as stale, a newer change of the same thing standing', 'refused before anything: no request to Google of any kind, and every table as it was', 'the newer notes stand on 6 January']);
-    foreach (['19:00 New York' => ['made all-day', 'made timed'], '07:00 Tokyo' => ['made all-day'], '10:00 Los Angeles' => ['made timed']] as $zone => $directions) {
-        foreach ($directions as $direction) {
-            foreach (['here', 'at Google'] as $where) {
-                // A redo of a delete after Google made the series all-day is refused (the record does not say the day), mutated or not.
-                $read = array_merge($read, $redone("$zone $direction $where", !($where === 'at Google' && $direction === 'made all-day')));
-                if ($zone === '19:00 New York') {
-                    $other = $direction === 'made all-day' ? 7 : 5;
-                    $case = "$zone $direction $where, notes given and undone, notes given to $other January whose new key is the old key of the 6th, then the first redone";
-                    $place = "$case: the first notes are on 6 January and the other day's on $other January";
-                    $read = array_merge($read, ["$case: $sent", $place]);
-                    $stale = array_merge($stale, ["$case: it goes through", "$case: $sent", $place]);
-                }
-            }
+// The assertion labels of undo-day-gate.test.php the mutations of the undo gate must fail: its refusals are three
+// assertions each (the words, nothing sent or written, and the same under force), named as the test names its cases.
+$gateLabels = static function (array $cases): array {
+    $say = ['w' => 'refused, in words that say what changed', 'q' => 'refused before anything: no request to Google of any kind, and every table as it was',
+        'f' => 'forced, the same refusal, nothing sent, nothing written'];
+    $out = [];
+    foreach ($cases as $case => $labels) {
+        foreach ($labels as $label) {
+            $out[] = "$case: " . ($say[$label] ?? $label);
         }
     }
-    // Where the day is found either way, only staleness can tell the newer change: every zone but 00:00 UTC, where the keys are one.
-    foreach (['19:00 New York', '07:00 Tokyo', '10:00 Los Angeles'] as $zone) {
-        foreach (['made all-day', 'made timed'] as $direction) {
-            foreach (['here', 'at Google'] as $where) {
-                $stale = array_merge($stale, $newer("$zone $direction $where"));
-            }
-        }
-    }
+    return $out;
+};
+$gatePlaced = (static function () use ($gateLabels): array {
+    $cases = [];
     foreach (['here', 'at Google'] as $where) {
-        $read = array_merge($read, $redone("19:00 New York moved to 19:00 Tokyo $where", $where === 'here'));
-        $stale = array_merge($stale, $newer("19:00 New York moved to 19:00 Tokyo $where"));
+        $cases["zone moved at the same moments $where: notes given to 6 Jan and undone, then redone (no row, no skip)"] = ['w', 'q', 'f'];
+        $cases["zone moved at the same moments $where: a tag given to 6 Jan and undone, then redone (no row, no skip)"] = ['w', 'q', 'f'];
+        $cases["zone moved at the same moments $where: 6 Jan deleted and that undone, then the delete redone (no row, no skip)"] = ['w', 'q', 'f', 'no day is skipped, here or at Google'];
+        // Placed by its key again, a day of a series made all-day is at no key the series has: still refused, in other words.
+        foreach (['a time and zone of its own (21:00 New York held in Berlin)', 'moved to the 8th at the series clock'] as $shape) {
+            $cases["6 Jan given $shape and that undone, the series made all-day $where, then redone (no row, no skip)"] = ['w', 'f'];
+        }
     }
-    foreach ([
-        'a day given a time and a zone of its own and that undone, the series moved to Tokyo here, then redone' => "the row with the time of its own is 6 January's",
-        'a day made all-day in a timed series and that undone, the series moved to Tokyo here, then redone' => "the all-day row is 6 January's",
-        'a day moved to the 8th and that undone, the series moved to Tokyo here, then redone' => "the row moved to the 8th is 6 January's",
-        'notes undone on a tagged day, the clock moved here, the tag given back, made all-day at Google, then the notes redone' => 'the notes are on 6 January',
-    ] as $case => $label) {
-        $read = array_merge($read, ["$case: $sent", "$case: $label"]);
+    $cases['zone moved at the same moments here: notes undone, newer notes given to the same occurrence, then the first redone'] = ['w', 'f', 'the newer notes stand on K'];
+    $cases['daily dragged a day later here, the day holding nothing when the series moves: notes given and undone, then redone'] = ['w', 'q', 'f'];
+    $cases['daily dragged a day later here: the day deleted and that undone, then the delete redone'] = ['w', 'q', 'f', 'no day is skipped'];
+    // After a weekday change or a time across midnight the old key is no occurrence at all: refused as a day the series lacks.
+    foreach (['weekly Tuesday moved to Wednesday', 'daily 23:00 moved to 02:00 the next morning'] as $what) {
+        $cases["$what here, the day holding nothing when the series moves: notes given and undone, then redone"] = ['w', 'f'];
+        $cases["$what here: the day deleted and that undone, then the delete redone"] = ['w', 'f'];
     }
-    $read[] = 'a tag given and undone, made all-day at Google, then made 19:00 Tokyo at Google, then redone: the tag is on 6 January';
-    $read[] = 'a tag given and undone, made all-day here with the journal\'s word of it removed by hand, then redone: the tag is on 6 January';
-    foreach (['made all-day', 'made timed'] as $direction) {
-        $read = array_merge($read, ["an own calendar $direction: forced, the tag is back on 6 January and on no other day", "an own calendar $direction: and its row is in the series' form now, at 6 January's key"]);
+    $cases['monthly on the 1st and 15th, every 15th moved a month later here: notes given to 15 Feb and undone, then redone'] = ['w', 'q', 'f'];
+    return $gateLabels($cases);
+})();
+$gateSnapshot = (static function (): array {
+    $out = [];
+    foreach (['the clock moved to 20:00', 'moved to Tokyo at the same moments', 'moved to 19:00 Tokyo', 'made all-day'] as $what) {
+        foreach (['a tag given to 6 Jan and given back' => false, '6 Jan renamed, then deleted' => true] as $did => $written) {
+            $case = "$did, the series $what, then that undone";
+            $out[] = "$case: refused, in words that say what changed (never as stale, which force would pass)";
+            $out[] = "$case: forced, the same refusal";
+            if ($written) {
+                $out[] = "$case: nothing was written";
+            }
+        }
     }
-    return ['read' => $read, 'stale' => $stale];
+    return $out;
 })();
 
 return [
@@ -798,26 +792,26 @@ return [
             ]),
         ), ['Finish', 'Put back'])), ['19:00 New York made all-day, a tag on 6 January and notes on the 7th', 'all-day made 19:00 New York, notes on 7 January and a tag on the 8th'])),
     ],
-    // An undo's day (Undo::dayNow): a key names a day only under the series it was written in. Read under the series
-    // as it stands, a redo of a day that had no row or skip when the series was made all-day or timed, or moved to
-    // another zone, acts on the neighbouring day wherever the key's UTC date is not its local one: 19:00 New York both
-    // ways, 07:00 Tokyo made all-day, 10:00 Los Angeles made timed, the zone change, and the forced undo on an own
-    // calendar. The cases where the two readings agree, the days carried by a recorded move, and the refusals do not fail.
+    // The undo gate (Undo::dayNow; decisions.md, "An undo acts on a day only where the journal says exactly where it is"):
+    // a day with no row and no skip when its series was re-placed has no recorded place. With the refusal taken out and
+    // the day placed by its key again, the redo acts on the neighbouring occurrence after a zone change at the same
+    // moments, a start moved a day and a monthly member moved a month, and is refused in other words where the old key
+    // is no occurrence at all. The days the journal places (a row still there, a recorded move, a delete's own skip),
+    // the calendars here and the days a series no longer has do not fail.
     [
-        'id' => 'undo-day-read-as-the-series-stands', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'undo-form-day',
-        'what' => 'the day an undo acts on is its entry\'s key read under the series as it stands, not under the form and zone the key was written in',
-        'patch' => [[', null, $series, Calc::dayOf($now, $frame[0], $frame[1]));', ', null, $series);']],
-        'checks' => $undoDay['read'],
+        'id' => 'undo-gate-places-a-day-by-its-key', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'undo-day-gate',
+        'what' => 'a day with no row and no skip when its series was re-placed is placed by its key again, where the gate refuses it',
+        'patch' => [['                throw $this->unplaced($entryId, $unrecorded);', '                $now = $key;']],
+        'checks' => $gatePlaced,
     ],
-    // Staleness over the same day (Undo::staleFor): two grounds of days of a series re-formed between them compared
-    // by their keys as written. A redo then overwrites newer notes on the same day where the day's key changed, and is
-    // refused over a newer change of the neighbouring day whose new key is the old key's string.
+    // The same gate on a calendar here (Undo::snapshotStands): a snapshot is of the series as it was. Let through
+    // across a re-placing change, a forced undo puts the row or the skip back at the old key, in the old form, and an
+    // unforced one answers as stale, which force passes.
     [
-        'id' => 'undo-stale-by-key-across-a-reform', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'undo-form-day',
-        'what' => 'two day grounds of a series made all-day or timed, or moved to another zone, between them are compared by their keys, not by the day each names',
-        'patch' => [["                \$hit = self::conflicts(self::atKey(\$mine, '#' . Calc::dayOf((string) self::dayKeyOf(\$mine), \$frame[0], \$frame[1])),\n                    self::atKey(\$later, '#' . Calc::dayOf((string) self::dayKeyOf(\$later), \$f[0], \$f[1])), 'events');",
-            "                \$hit = self::conflicts(\$mine, \$later, 'events');"]],
-        'checks' => $undoDay['stale'],
+        'id' => 'undo-snapshot-back-across-a-re-placing-change', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'undo-day-gate',
+        'what' => 'on a calendar here a row or a skip a snapshot holds comes back though the series\' time, zone or form changed since',
+        'patch' => [["        \$since = \$this->replacing(\$series, \$userId, \$entryId)['entries'];\n        if (\$since !== []) {", "        \$since = \$this->replacing(\$series, \$userId, \$entryId)['entries'];\n        if (false) {"]],
+        'checks' => $gateSnapshot,
     ],
     // Coming up in an order the contract does not allow: every stated order reversed (days, all-day first, instant). c-next
     // accepts either order only among entries that tie on all three, so reversing the stated orders still trips it, on a

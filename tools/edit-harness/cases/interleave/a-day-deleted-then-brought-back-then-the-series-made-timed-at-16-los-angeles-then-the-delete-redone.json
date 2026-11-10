@@ -1,12 +1,38 @@
 {
-    "about": "A daily all-day series, one day deleted and the delete undone, the series made timed at 16:00 Los Angeles (00:00 UTC the next day) for all events, then the redo of the delete: the same day is skipped again, on its own date (x-undo-fields). On the tree with the R1 fix the redo lands on the equal key, which west of UTC is the day before: that day is given a record and the deleted day stays.",
+    "about": "A daily all-day series, one day deleted and the delete undone (so the day has no row and no skip), the series made timed at 16:00 Los Angeles (00:00 UTC the next day) for all events, then the redo of the delete: refused as not_undoable with nothing written here or sent, since nothing recorded where that day went (x-undo-fields: a refused undo writes nothing). Before the gate it was placed: first on the equal key, which west of UTC is the day before, then by its date.",
     "seed": 0,
     "n": 0,
-    "series": {"family": "daily", "rrule": "FREQ=DAILY", "import": false, "bound": "count", "boundAt": 8, "untilForm": "dayend", "allDay": true, "tzid": "UTC", "start": "2027-01-18", "length": 1, "flipZone": "America/Los_Angeles", "flipClock": 57600},
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-01-18",
+        "length": 1,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 57600
+    },
     "steps": [
-        {"do": "w-del1", "pick": 0.64},
-        {"do": "u-bare", "pick": 0.0},
-        {"do": "w-all", "pick": 0, "what": "flip"},
-        {"do": "redo", "pick": 0}
+        {
+            "do": "w-del1",
+            "pick": 0.64
+        },
+        {
+            "do": "u-bare",
+            "pick": 0
+        },
+        {
+            "do": "w-all",
+            "pick": 0,
+            "what": "flip"
+        },
+        {
+            "do": "redo",
+            "pick": 0
+        }
     ]
 }

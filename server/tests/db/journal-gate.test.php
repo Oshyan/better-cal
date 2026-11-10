@@ -494,7 +494,6 @@ return static function (Db $db): void {
         'Undo::snapshotEventRows' => 'reads ids for naming, writes nothing',
         'Undo::snapshotEventIds' => 'reads ids for naming, writes nothing',
         'Undo::dayNow' => 'a reader for a restore already admitted',
-        'Undo::writtenIn' => 'pure: what an entry holds of its series\' form and zone, read for dayNow',
         'Undo::recordRemoved' => 'records, takes nothing back',
         'Undo::recordRemovedEvents' => 'records, takes nothing back',
         'Undo::noteSettings' => 'records, takes nothing back',

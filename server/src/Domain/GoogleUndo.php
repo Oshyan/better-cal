@@ -220,7 +220,7 @@ final class GoogleUndo
         if ($target === null) {
             return $before;
         }
-        $owned = $wasRow === null ? [] : OwnFields::stored($wasRow, $master);
+        $owned = $wasRow === null ? [] : OwnFields::stored($wasRow);
         $series = self::bodyOf(Feeds::followed($base, $target));
         foreach (array_diff(GoogleWriter::allowedKeys(), GoogleWriter::keysOf(OwnFields::googleHeld($owned))) as $key) {
             if (array_key_exists($key, $series)) {
@@ -954,7 +954,7 @@ final class GoogleUndo
                 // A day the restored series no longer has is removed, and named by its row and date.
                 foreach ($rows as $row) {
                     if (in_array((int) $row['id'], array_map('intval', $writes['delete']), true)) {
-                        $own = OwnFields::storedIn($this->db, $row, $master);
+                        $own = OwnFields::stored($row);
                         $removed[] = Feeds::droppedDay($row, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
                     }
                 }

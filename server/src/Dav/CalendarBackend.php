@@ -450,7 +450,6 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 }
             }
             $feeds = new Feeds($this->db);
-            $ownColumn = OwnFields::hasColumn($this->db);
             $given = []; // the rows a record of the PUT was given to, by id
             foreach ($parsedOverrides as $ov) {
                 $cols = DavIcs::eventColumns($ov);
@@ -460,10 +459,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 if ($current !== null) {
                     $given[(int) $current['id']] = true;
                 }
-                if ($ownColumn) {
-                    // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere; Feeds::ownAfter, the sync's reading).
-                    $cols['override_fields'] = OwnFields::encode($feeds->ownAfter($current, $cols, $masterCols, $masterId));
-                }
+                // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere; Feeds::ownAfter, the sync's reading).
+                $cols['override_fields'] = OwnFields::encode($feeds->ownAfter($current, $cols, $masterCols, $masterId));
                 if ($current !== null) {
                     $this->db->update('events', $cols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [(int) $current['id']]);
                 } else {
@@ -493,7 +490,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             // was given to was deleted outright with what it held.
             $series = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterId]);
             $settled = $feeds->settle($calendarId, array_filter($existingByInstance, static fn(array $r): bool => !isset($given[(int) $r['id']])), [], [],
-                static fn(array $row): array => ['seen' => true, 'was' => $existingMaster, 'series' => $series], $ownColumn, null, $uid);
+                static fn(array $row): array => ['seen' => true, 'was' => $existingMaster, 'series' => $series], null, $uid);
             // A client's PUT carries no tags or people: each day it makes,
             // brings back or keeps holds the series' where its list doesn't
             // name its own (OwnFields::follow), and the after snapshot below

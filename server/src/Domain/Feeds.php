@@ -500,7 +500,7 @@ final class Feeds
             return null;
         }
         $id = (int) ($row['id'] ?? 0);
-        $fields = self::heldHere($own ?? OwnFields::storedIn($db, $row), $row);
+        $fields = self::heldHere($own ?? OwnFields::stored($row), $row);
         $refs = $id > 0 ? (OwnFields::references($db, [$id])[$id] ?? []) : [];
         return $fields === [] && $refs === [] ? null : ['fields' => $fields, 'refs' => $refs];
     }
@@ -589,16 +589,16 @@ final class Feeds
     }
 
     /**
-     * An edited row's own fields: its list, or for a row stored before the
-     * list (null) the fields that differ from its series, tags and people
-     * included (OwnFields::infer), so a tag given before migration 063 is
-     * still the day's own.
+     * An edited row's own fields: its list, through the one reader of a
+     * stored list (OwnFields::stored). $master is no longer read: a row's
+     * list is what it owns.
      *
      * @return list<string>
      */
     public function ownOf(array $row, array $master): array
     {
-        return OwnFields::storedIn($this->db, $row, $master);
+        unset($master);
+        return OwnFields::stored($row);
     }
 
     /**
@@ -625,8 +625,7 @@ final class Feeds
             && ($series = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterId])) !== null) {
             return $this->ownUnder(array_merge($current, $columns), $series);
         }
-        return OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $master,
-            $current === null ? null : OwnFields::storedIn($this->db, $current));
+        return OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $master);
     }
 
     /** A day's row held before its series: a key, and no series above it. Pure. */
@@ -637,8 +636,8 @@ final class Feeds
 
     /**
      * What a day's row held before its series owns once that series stands
-     * above it: the one reading of a day's row stored with no list
-     * (OwnFields::storedIn), which is what such a row is to this series,
+     * above it: what a row never seen under a series owns, by equality
+     * with it (OwnFields::infer, the reading afterSync gives a new row),
      * since whatever list it has was written with no series to read it
      * against. So: the fields that differ from the series, its tags and
      * people compared as sets.
@@ -647,7 +646,9 @@ final class Feeds
      */
     private function ownUnder(array $row, array $series): array
     {
-        return OwnFields::storedIn($this->db, ['override_fields' => null, 'recurrence_parent_id' => (int) $series['id']] + $row, $series);
+        $of = fn(string $table, string $col, int $id): array => array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
+        return OwnFields::infer($row, $series, $of('event_tags', 'tag_id', (int) $row['id']), $of('event_tags', 'tag_id', (int) $series['id']),
+            $of('event_people', 'person_id', (int) $row['id']), $of('event_people', 'person_id', (int) $series['id']));
     }
 
     /**
@@ -662,7 +663,7 @@ final class Feeds
      *
      * @param list<string> $held
      */
-    private function mergeInto(array $source, int $holderId, array $held, ?array $series, bool $ownColumn): void
+    private function mergeInto(array $source, int $holderId, array $held, ?array $series): void
     {
         $sourceId = (int) $source['id'];
         $holder = $this->db->one('SELECT * FROM events WHERE id = ?', [$holderId]);
@@ -709,7 +710,7 @@ final class Feeds
                 $this->db->run('UPDATE event_plugin_data SET event_id = ? WHERE event_id = ? AND plugin_id = ? AND k = ?', [$holderId, $sourceId, $data['plugin_id'], $data['k']]);
             }
         }
-        if ($ownColumn && $taken !== []) {
+        if ($taken !== []) {
             $set['override_fields'] = OwnFields::encode(array_merge($own, $taken));
         }
         if ($set !== []) {
@@ -1059,7 +1060,7 @@ final class Feeds
      * @param ?string $uid the one uid the rows are of, when the caller has one
      * @return array{touches:list<array{0:string,1:string}>, uids:array<string,true>, removed:int, updated:list<int>, dropped:list<array>}
      */
-    public function settle(int $calendarId, iterable $rows, array $given, array $written, callable $seriesOf, bool $ownColumn, ?float $deadline = null, ?string $uid = null): array
+    public function settle(int $calendarId, iterable $rows, array $given, array $written, callable $seriesOf, ?float $deadline = null, ?string $uid = null): array
     {
         $touches = [];
         $uids = [];
@@ -1185,11 +1186,9 @@ final class Feeds
                     $changed[$col] = $value;
                 }
             }
-            if ($ownColumn) {
-                $list = OwnFields::encode($held);
-                if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
-                    $changed['override_fields'] = $list;
-                }
+            $list = OwnFields::encode($held);
+            if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
+                $changed['override_fields'] = $list;
             }
             $moved = (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc'];
             if ($changed === [] && !$moved) {
@@ -1207,7 +1206,7 @@ final class Feeds
         foreach ($merge as $id => $holderId) {
             [$now, $after, $held, $refs, $series] = $follow[$id];
             $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
-            $this->mergeInto($after + ['id' => $id], $holderId, $held, $series, $ownColumn);
+            $this->mergeInto($after + ['id' => $id], $holderId, $held, $series);
             $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
             $droppedDays[] = self::droppedDay($now, $held, $refs, 'merged');
             $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
@@ -1276,7 +1275,6 @@ final class Feeds
         // An edited day's own fields follow from what changed at the other
         // end (series-model.md, Rows from Elsewhere): its master's values as
         // this poll brings them.
-        $ownColumn = OwnFields::hasColumn($this->db);
         $parsedMasters = [];
         foreach ($parsed as $pm) {
             if ($pm['recurrence_instance_utc'] === null) {
@@ -1354,7 +1352,7 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             Events::parkInstanceKeys($this->db, $park);
             // A held day that is no instance of the series this list brings
             // lets go of its key too (keys are unique per calendar, uid and
@@ -1391,7 +1389,7 @@ final class Feeds
 
                 $current = $rowFor[$key] ?? null;
                 $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
-                if ($ownColumn && $feedMaster === null && $current === null && $ev['recurrence_instance_utc'] !== null) {
+                if ($feedMaster === null && $current === null && $ev['recurrence_instance_utc'] !== null) {
                     // A new edited day whose series' record this poll doesn't
                     // carry still gets its own list. Its series kept here (the
                     // record skipped as unreadable, so the poll leaves the
@@ -1406,7 +1404,7 @@ final class Feeds
                         $columns['override_fields'] = OwnFields::encode([]);
                     }
                 }
-                if ($ownColumn && $feedMaster !== null) {
+                if ($feedMaster !== null) {
                     $own = $this->ownAfter($current, $columns, $feedMaster, $masterIdByUid[(string) $ev['uid']] ?? null);
                     $columns['override_fields'] = OwnFields::encode($own);
                     // An edited day with nothing of its own is an ordinary
@@ -1528,7 +1526,7 @@ final class Feeds
                 return ['seen' => true, 'was' => $was, 'series' => $newMasters[$uid]];
             };
             $settled = $this->settle($calendarId, $unknownSkipped ? [] : array_filter($existingByKey, static fn(array $r): bool => !isset($protected[$r['uid']])),
-                $given, $updatedEventIds, $seriesOf, $ownColumn, $deadline);
+                $given, $updatedEventIds, $seriesOf, $deadline);
             $droppedDays = $settled['dropped'];
             $touches = array_merge($touches, $settled['touches']);
             $changedUids += $settled['uids'];

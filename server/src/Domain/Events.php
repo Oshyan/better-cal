@@ -618,10 +618,8 @@ final class Events
                 // the person set to the series' own stays the day's own, and
                 // a day left with nothing of its own goes back to the series.
                 $fields = $googleFields + $localFields;
-                if ($this->ownFieldsColumn()) {
-                    $after = array_merge($existing, $fields);
-                    $fields['override_fields'] = $this->ownAfterThis($after, $master, $changed);
-                }
+                $after = array_merge($existing, $fields);
+                $fields['override_fields'] = $this->ownAfterThis($after, $master, $changed);
                 if ($fields !== []) {
                     $this->db->update('events', $fields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
                 }
@@ -650,7 +648,7 @@ final class Events
                     // though Google holds no record of it: its own part is
                     // held here alone (Feeds::sync, rows the feed no longer
                     // carries).
-                    $created = $this->withOwnColumn(array_merge($made, [
+                    $created = array_merge($made, [
                         'recurrence_parent_id' => $masterId,
                         'recurrence_instance_utc' => $instanceUtc,
                         'google_event_id' => (string) ($resp['id'] ?? $instanceId),
@@ -659,7 +657,7 @@ final class Events
                         'created_via' => 'feed',
                         // Owning nothing yet: what this edit changed is added below.
                         'override_fields' => OwnFieldsList::encode([]),
-                    ]));
+                    ]);
                     $created['id'] = (int) $this->db->insert('events', $created);
                 }
                 $rowId = (int) $created['id'];
@@ -678,10 +676,8 @@ final class Events
             // The day's own list, as every writer keeps it (Own Fields): what
             // this edit changed, on top of what the row owned (the sync's
             // reading of Google's answer infers only Google's fields).
-            if ($this->ownFieldsColumn()) {
-                $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [$rowId]);
-                $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, $changed), $rowId]);
-            }
+            $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [$rowId]);
+            $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, $changed), $rowId]);
             // The tags and people it doesn't own are the series' (OwnFields::follow).
             OwnFieldsList::follow($this->db, $masterId, [$rowId]);
             return true;
@@ -2015,7 +2011,6 @@ final class Events
         $override['start_utc'] = Time::toDb($instStart);
         $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $override['override_fields'] = OwnFieldsList::encode([]);
-        $override = $this->withOwnColumn($override);
         $newId = $this->db->tx(function () use ($override, $masterId): int {
             $id = $this->db->insert('events', $override);
             // Owning nothing, it holds the series' tags and people (OwnFields::follow).
@@ -2063,7 +2058,6 @@ final class Events
         $row['source'] = 'local';
         $row['created_via'] = ActivityContext::get();
         $row['override_fields'] = null;
-        $row = $this->withOwnColumn($row);
         $row = array_merge($row, $this->columnPatch($row, $in, null, forOverride: true));
         $copyFromId = $existingOverrideId ?? ($master !== null ? (int) $master['id'] : null);
 
@@ -2180,7 +2174,6 @@ final class Events
         [$patch, $changed] = $this->placedThis($occurrence, $this->columnPatch($override, $in, $instanceUtc, forOverride: true), $master, $in);
         $override = array_merge($override, $patch);
         $override['override_fields'] = OwnFieldsList::encode($changed);
-        $override = $this->withOwnColumn($override);
 
         $newId = $this->db->tx(function () use ($override, $masterId, $userId, $in): int {
             $id = $this->db->insert('events', $override);
@@ -2417,9 +2410,9 @@ final class Events
         $beforeRows = [$target];
         $this->db->tx(function () use ($targetId, $attendance, $isMaster, $scope, &$beforeRows, $target): void {
             $this->db->update('events', ['attendance' => $attendance], 'id = ?', [$targetId]);
-            if (!empty($target['recurrence_parent_id']) && $this->ownFieldsColumn()) {
+            if (!empty($target['recurrence_parent_id'])) {
                 // An answer for one day is that day's own.
-                $list = OwnFieldsList::storedIn($this->db, $target);
+                $list = OwnFieldsList::stored($target);
                 $this->db->update('events', ['override_fields' => OwnFieldsList::encode(array_merge($list, ['attendance']))], 'id = ?', [$targetId]);
             }
             // The series' edited dates answer with it; from a day on, those
@@ -2428,13 +2421,11 @@ final class Events
                 $overrides = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$targetId]);
                 $beforeRows = array_merge($beforeRows, $overrides);
                 $this->db->run('UPDATE events SET attendance = ? WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$attendance, $targetId]);
-                if ($this->ownFieldsColumn()) {
-                    // The series' answer reached every day: none owns its answer now.
-                    foreach ($overrides as $ov) {
-                        $list = OwnFieldsList::storedIn($this->db, $ov);
-                        if (in_array('attendance', $list, true)) {
-                            $this->db->update('events', ['override_fields' => OwnFieldsList::encode(array_diff($list, ['attendance']))], 'id = ?', [(int) $ov['id']]);
-                        }
+                // The series' answer reached every day: none owns its answer now.
+                foreach ($overrides as $ov) {
+                    $list = OwnFieldsList::stored($ov);
+                    if (in_array('attendance', $list, true)) {
+                        $this->db->update('events', ['override_fields' => OwnFieldsList::encode(array_diff($list, ['attendance']))], 'id = ?', [(int) $ov['id']]);
                     }
                 }
             }
@@ -2711,7 +2702,7 @@ final class Events
             // only when so, like hasReminders, as lists drop nulls.
             'isException' => !empty($row['recurrence_parent_id']) ? true : null,
             // An edited day's own fields (migration 063), in OwnFields::FIELDS order.
-            'ownFields' => !empty($row['recurrence_parent_id']) ? OwnFieldsList::storedIn($this->db, $row) : null,
+            'ownFields' => !empty($row['recurrence_parent_id']) ? OwnFieldsList::stored($row) : null,
             // Its series, for the editor's "Edited day of <title>" and for
             // "Use series value" sent to the master by the day's key:
             // seriesKey is the key (RECURRENCE-ID) as an instant in UTC, or

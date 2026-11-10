@@ -1039,7 +1039,7 @@ return [
         'id' => 'put-deletes-unmatched-rows', 'file' => 'server/src/Dav/CalendarBackend.php', 'dbtest' => 'caldav-kept-here',
         'what' => 'a CalDAV PUT deletes every stored day row it gave no record to, with what the row held here alone',
         'patch' => [["            \$settled = \$feeds->settle(\$calendarId, array_filter(\$existingByInstance, static fn(array \$r): bool => !isset(\$given[(int) \$r['id']])), [], [],\n"
-            . "                static fn(array \$row): array => ['seen' => true, 'was' => \$existingMaster, 'series' => \$series], \$ownColumn, null, \$uid);",
+            . "                static fn(array \$row): array => ['seen' => true, 'was' => \$existingMaster, 'series' => \$series], null, \$uid);",
             "            foreach (\$existingByInstance as \$row) {\n                if (!isset(\$given[(int) \$row['id']])) {\n                    \$this->db->run('DELETE FROM events WHERE id = ?', [(int) \$row['id']]);\n                }\n            }\n"
             . "            \$settled = ['dropped' => []];"]],
         'checks' => $putKept,

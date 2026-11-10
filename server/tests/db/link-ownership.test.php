@@ -284,13 +284,12 @@ return static function (Db $db): void {
         }
     });
 
-    // A day's row with no own list, as a feed could leave one before 1.5.5
-    // (built here by raw SQL: no writer leaves one now). What such a row owns
-    // is the owner's to decide; until then a change to the series' tags and
-    // people for all events reaches it as it did before 1.5.5: the plan reads
-    // a set equal to the series' as not its own (Model::ownOf), gives it the
-    // new set and writes its list.
-    scenario('link ownership: a day\'s row with no own list holding the series\' tags and people takes the new ones from a change for all events', function () use ($db, $weekly, $tagsOf, $peopleOf, $dayRow): void {
+    // A day's row with no own list, as a feed poll in 1.5.0 to 1.5.4 could
+    // leave one (built here by hand: no writer here leaves one, as the poll
+    // blocks above show), given its list by migration 078; then a change to
+    // the series' tags and people for all events reaches it by its list.
+    $fill = require dirname(__DIR__, 2) . '/migrations/078_day_lists_filled.php';
+    scenario('link ownership: a day\'s row left with no own list is given one by the 1.5.5 upgrade, and then takes the series\' new tags and people', function () use ($db, $weekly, $tagsOf, $peopleOf, $dayRow, $fill): void {
         $u = freshUser($db);
         $d = domains($db);
         $cal = Settings::defaultCalendarId($db, $u);
@@ -298,10 +297,11 @@ return static function (Db $db): void {
         $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample older day']);
         $day = (int) $dayRow($id, '2027-01-11 09:00:00')['id'];
         $db->run('UPDATE events SET override_fields = NULL WHERE id = ?', [$day]);
+        $fill($db);
+        checkEq('link ownership: the upgrade gave the day its list by equality with its series: its title', '["title"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
         planned($d->events, $u, $id, ['scope' => 'all', 'tagNames' => ['Sample C'], 'personNames' => ['Sam Sample']]);
-        checkEq('link ownership: the day with no own list took the series\' new tag and person, and keeps its own title', [['Sample C'], ['Sam Sample'], 'Sample older day'],
+        checkEq('link ownership: the day took the series\' new tag and person, and keeps its own title', [['Sample C'], ['Sam Sample'], 'Sample older day'],
             [$tagsOf($day), $peopleOf($day), $db->scalar('SELECT title FROM events WHERE id = ?', [$day])]);
-        checkEq('link ownership: the plan wrote the day\'s list, its title alone', '["title"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
     });
 
     // ---- Undo follows every series its rows stand under now -------------------
@@ -395,10 +395,10 @@ return static function (Db $db): void {
              (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NOT NULL', [$id, '2027-01-11 09:00:00'])]);
     });
 
-    // A day stored with no list (as a poll up to 1.5.4 could leave one; built
-    // by raw SQL) owns what the one reading says: its own tags, which differ
-    // from its series'. An answer for that day keeps them its own.
-    scenario('link ownership: an answer for a day stored with no own list keeps what the one reading says it owns', function () use ($db, $series, $holds, $tagsOf): void {
+    // The hunter's case: an answer for a day left with no own list, which no
+    // writer here leaves now; a row built that way by hand is given its list
+    // by migration 078, which keeps the tags it owned, and an answer keeps them.
+    scenario('link ownership: a day left with no own list and its own tags, given its list by the upgrade, keeps them through an answer', function () use ($db, $series, $holds, $tagsOf, $fill): void {
         $u = freshUser($db);
         $d = domains($db);
         $cal = Settings::defaultCalendarId($db, $u);
@@ -406,12 +406,14 @@ return static function (Db $db): void {
         $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample own day', 'tagNames' => ['Sample B']]);
         $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$id]);
         $db->run('UPDATE events SET override_fields = NULL WHERE id = ?', [$day]);
+        $fill($db);
+        checkEq('link ownership: the upgrade gave the day its title and its tags', '["title","tags"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
         $d->events->setAttendance($u, $id, 'going', 'this', '2027-01-11T09:00:00Z');
         checkEq('link ownership: after the answer the day owns its title, its tags and its answer', '["title","attendance","tags"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
-        $holds('an answer for a day stored with no own list (Events::answerAttendance)', $u);
+        $holds('an answer for a day the upgrade gave its list (Events::answerAttendance)', $u);
         planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-04T09:00:00Z', 'tagNames' => ['Sample C']]);
-        checkEq('link ownership: the day keeps the tags it owned before the answer', ['Sample B'], $tagsOf($day));
-    }, 'builds the stored no-list form of 1.5.0 to 1.5.4 on purpose (by raw SQL), to show the one reading of it');
+        checkEq('link ownership: the day keeps the tags it owned', ['Sample B'], $tagsOf($day));
+    });
 
     // ---- Google: the stand-in, a writer of each kind, Finish and Put back -----
 

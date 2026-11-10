@@ -9000,8 +9000,8 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         (10, 1, 2, 'single@google', 'Sample meeting', '2030-06-01 10:00:00', '2030-06-01 11:00:00', 0, 'UTC', 'feed', 'g-single')");
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, rrule, source, google_event_id) VALUES
         (11, 1, 2, 'series@google', 'Sample standup', '2030-06-01 09:00:00', '2030-06-01 09:30:00', 0, 'UTC', 'FREQ=DAILY;COUNT=6', 'feed', 'g-series')");
-    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, recurrence_parent_id, recurrence_instance_utc, source, google_event_id) VALUES
-        (12, 1, 2, 'series@google', 'Sample standup, later', '2030-06-02 10:00:00', '2030-06-02 10:30:00', 0, 'UTC', 11, '2030-06-02 09:00:00', 'feed', 'g-series_20300602T090000Z')");
+    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, recurrence_parent_id, recurrence_instance_utc, source, google_event_id, override_fields) VALUES
+        (12, 1, 2, 'series@google', 'Sample standup, later', '2030-06-02 10:00:00', '2030-06-02 10:30:00', 0, 'UTC', 11, '2030-06-02 09:00:00', 'feed', 'g-series_20300602T090000Z', '[\"time\",\"title\"]')");
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source) VALUES
         (20, 1, 1, 'local-sample', 'Sample lunch', '2030-06-05 12:00:00', '2030-06-05 13:00:00', 0, 'UTC', 'local')");
     $gw->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');

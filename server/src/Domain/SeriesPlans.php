@@ -50,21 +50,6 @@ trait SeriesPlans
         }
     }
 
-    /** Whether events has override_fields (a database before 063 doesn't). */
-    private function ownFieldsColumn(): bool
-    {
-        return OwnFields::hasColumn($this->db);
-    }
-
-    /** $cols without override_fields where the database has no such column. */
-    private function withOwnColumn(array $cols): array
-    {
-        if (!$this->ownFieldsColumn()) {
-            unset($cols['override_fields']);
-        }
-        return $cols;
-    }
-
     /**
      * A rule sent for a series: validated, except that a series whose
      * stored rule the expander can't read (RSCALE, X- parts) takes the sent
@@ -778,7 +763,7 @@ trait SeriesPlans
             $row['override_fields'] = null;
             $row['created_via'] = ActivityContext::get();
             $row = array_merge($row, $w['part'], $pw['master']);
-            $newId = $this->db->insert('events', $this->withOwnColumn($row));
+            $newId = $this->db->insert('events', $row);
             $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
             $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
             // The rows keyed from the split on belong to it (a new uid, so
@@ -830,14 +815,13 @@ trait SeriesPlans
             $park = array_merge($park, array_keys($w['detach']));
             self::parkInstanceKeys($this->db, $park);
             foreach ($w['detach'] as $rid => $cols) {
-                $this->db->update('events', $this->withOwnColumn([
+                $this->db->update('events', [
                     'recurrence_parent_id' => null, 'recurrence_instance_utc' => null, 'uid' => Ids::ulid(), 'rrule' => null,
                     'exdates_json' => null, 'google_event_id' => null, 'override_fields' => null, 'source' => 'local', 'updated_at' => $now,
-                ] + $cols), 'id = ?', [$rid]);
+                ] + $cols, 'id = ?', [$rid]);
             }
             $series = $this->db->one('SELECT * FROM events WHERE id = ?', [$id]);
             foreach ($w['overrides'] as $rid => $cols) {
-                $cols = $this->withOwnColumn($cols);
                 if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
                     $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
                 }
@@ -862,7 +846,7 @@ trait SeriesPlans
                 $row['google_event_id'] = null;
                 $row['override_fields'] = null;
                 $row['created_via'] = ActivityContext::get();
-                $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $placed)));
+                $newId = $this->db->insert('events', array_merge($row, $placed));
                 $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
                 $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
                 $created[] = $newId;
@@ -879,7 +863,7 @@ trait SeriesPlans
                 // Its id is its occurrence's at Google in the series' form as written (Feeds::googleIdAt), never the
                 // series' own id the copy carries; none where the series has none.
                 $row['google_event_id'] = isset($cols['recurrence_instance_utc']) ? Feeds::googleIdAt($after, $after, (string) $cols['recurrence_instance_utc']) : null;
-                $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
+                $newId = $this->db->insert('events', array_merge($row, $cols));
                 $createdEdited[] = $newId;
             }
             // The series' tags and people. The plan names, besides the
@@ -1469,7 +1453,7 @@ trait SeriesPlans
     {
         $after = array_merge($row, $patch);
         $changed = self::changedOwnFields($row, $after, $in);
-        $known = OwnFields::storedIn($this->db, $row, $master);
+        $known = OwnFields::stored($row);
         $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known, $changed)));
         foreach (['start_utc', 'end_utc', 'tzid'] as $col) {
             if ((string) ($placed[$col] ?? '') !== (string) ($after[$col] ?? '')) {
@@ -1482,10 +1466,7 @@ trait SeriesPlans
     /** A row's own list after a "this event" edit added $fields to it. */
     private function ownAfterThis(array $row, array $master, array $fields): ?string
     {
-        if (!$this->ownFieldsColumn()) {
-            return null;
-        }
-        return OwnFields::encode(array_merge(OwnFields::storedIn($this->db, $row, $master), $fields));
+        return OwnFields::encode(array_merge(OwnFields::stored($row), $fields));
     }
 
     /**
@@ -1498,7 +1479,7 @@ trait SeriesPlans
      */
     private function ownAfterRowEdit(array $before, array $in): void
     {
-        if (empty($before['recurrence_parent_id']) || !$this->ownFieldsColumn()) {
+        if (empty($before['recurrence_parent_id'])) {
             return;
         }
         $after = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $before['id']]);
@@ -1534,7 +1515,7 @@ trait SeriesPlans
     private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
-        $own = OwnFields::storedIn($this->db, $row, $master);
+        $own = OwnFields::stored($row);
         $left = array_values(array_diff($own, $fields));
         $set = [];
         foreach ($fields as $field) {
@@ -1597,7 +1578,7 @@ trait SeriesPlans
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
                 return;
             }
-            $this->db->update('events', $this->withOwnColumn($set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()]), 'id = ?', [$id]);
+            $this->db->update('events', $set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()], 'id = ?', [$id]);
             // Tags or people taken back are the series' again (OwnFields::follow).
             OwnFields::follow($this->db, (int) $master['id'], [$id]);
             unset($userId, $fields);

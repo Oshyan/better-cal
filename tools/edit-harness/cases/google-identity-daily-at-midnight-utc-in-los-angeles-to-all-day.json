@@ -1,0 +1,18 @@
+{
+    "n": 6,
+    "seed": 0,
+    "identity": "toAllDayShifted",
+    "series": {"family": "daily", "rrule": "FREQ=DAILY", "import": false, "bound": "count", "boundAt": 8, "untilForm": "dayend", "allDay": false, "tzid": "America/Los_Angeles", "start": "2027-01-04 16:00", "length": 60, "floating": false},
+    "exceptions": [
+        {"at": 1, "kind": "edit", "own": ["location", "description"], "days": 1, "mins": 45, "zone": "America/New_York", "len": 30},
+        {"at": 4, "kind": "skip"}
+    ],
+    "acted": 3,
+    "from": "later",
+    "vector": {"scope": "all", "date": 0, "clock": 0, "zone": null, "length": 0, "allDay": true, "toZone": "UTC", "toClock": 0, "trip": false, "fields": [], "rule": "absent", "sameForm": "text", "newRule": "FREQ=WEEKLY;BYDAY=TU,TH", "bound": null, "via": "master", "startOnly": false},
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {"edit": []},
+    "preselected": {"edit": true}
+}

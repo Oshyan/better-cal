@@ -5,7 +5,7 @@
 //
 //   BC_TEST_DB=127.0.0.1:3306 php tools/edit-harness/harness.php [--cases N] [--seed S]
 //       [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]]
-//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]
+//       [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google] [--identity F]
 //
 // --fixed runs the fixed cases (cases/*.json, or the files named) after the
 // drawn ones (--cases 0 for the fixed ones alone; a full run of 1,000 cases or
@@ -30,9 +30,9 @@ if (in_array('--interleave', $argv, true)) {
     exit(0);
 }
 
-$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'product:', 'google']);
+$opts = getopt('', ['cases:', 'seed:', 'family:', 'case:', 'no-shrink', 'quiet', 'help', 'fixed::', 'save-spec:', 'findings:', 'model:', 'find:', 'shards:', 'shard:', 'partial:', 'every-option:', 'typed:', 'floating:', 'identity:', 'product:', 'google']);
 if (isset($opts['help'])) {
-    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google]\n";
+    echo "Usage: BC_TEST_DB=host:port php harness.php [--cases N] [--seed S] [--family F] [--case N] [--no-shrink] [--quiet] [--fixed[=FILE,...]] [--save-spec DIR] [--findings FILE] [--model FILE] [--find CHECK|ROLE] [--shards N] [--every-option F] [--google] [--identity F]\n";
     exit(0);
 }
 $googleMode = isset($opts['google']);
@@ -103,6 +103,10 @@ if (isset($opts['typed'])) {
 // --floating F: the share of drawn timed series made floating (README, Floating); 0 turns floating cases off.
 if (isset($opts['floating'])) {
     BetterCal\EditHarness\Driver::$floating = (float) $opts['floating'];
+}
+// --identity F: the share of drawn Google cases replaced by an identity shape (README, Google: Identity); 0 turns it off.
+if (isset($opts['identity'])) {
+    BetterCal\EditHarness\Driver::$identity = (float) $opts['identity'];
 }
 if (!BetterCal\EditHarness\Product::$plan) {
     // No plan API: the wall clocks typed are a 1.5 request field, so every case is sent untyped (counted as not applicable).
@@ -374,6 +378,9 @@ try {
     }
     if (isset($opts['floating'])) {
         array_push($pass, '--floating', (string) $opts['floating']);
+    }
+    if (isset($opts['identity'])) {
+        array_push($pass, '--identity', (string) $opts['identity']);
     }
     if ($fixed !== null) {
         $pass[] = $opts['fixed'] === false ? '--fixed' : '--fixed=' . $opts['fixed'];

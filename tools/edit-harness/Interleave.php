@@ -2307,6 +2307,13 @@ final class Interleave
                     $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f has another than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => (string) $r[$f], 'series' => (string) $master[$f]]);
                 }
             }
+            // Tags and people as sets (the snapshot keeps each sorted): a day's are its own only when its list says so,
+            // otherwise exactly its series' as they stand (the link rule, audit-155-links).
+            foreach (['tags', 'people'] as $f) {
+                if (!in_array($f, $r['own'], true) && $r[$f] !== $master[$f]) {
+                    $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f holds another set than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => $r[$f], 'series' => $master[$f]]);
+                }
+            }
             if (!in_array('time', $r['own'], true) && !in_array('date', $r['own'], true) && (int) $r['all_day'] === (int) $master['all_day'] && $r['start_utc'] !== $key) {
                 $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that owns neither its date nor its time doesn't start at its key", $context + ['row' => $id, 'start' => $r['start_utc'], 'key' => $key]);
             }

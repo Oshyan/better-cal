@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
+use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\FeedCredentials;
 use BetterCal\Infra\HttpClient;
@@ -453,10 +454,10 @@ final class Feeds
      * they were picked for (heldHere), and a new text clears them, as it
      * does on every feed row. The one list (OwnFields::HELD_HERE).
      */
-    private const HELD_HERE_FIELDS = \BetterCal\Domain\Series\OwnFields::HELD_HERE;
+    private const HELD_HERE_FIELDS = OwnFields::HELD_HERE;
 
     /** The place's columns no feed carries: its coordinates and where they came from (OwnFields::COORDINATE_COLUMNS). */
-    private const COORDINATE_COLUMNS = \BetterCal\Domain\Series\OwnFields::COORDINATE_COLUMNS;
+    private const COORDINATE_COLUMNS = OwnFields::COORDINATE_COLUMNS;
 
     /**
      * What an edited day holds here alone, of the fields it owns ($own),
@@ -473,7 +474,7 @@ final class Feeds
         if (in_array('location', $own, true) && ($row['location_lat'] ?? null) !== null && ($row['location_lng'] ?? null) !== null) {
             $held[] = 'location';
         }
-        return \BetterCal\Domain\Series\OwnFields::normalize($held);
+        return OwnFields::normalize($held);
     }
 
     /**
@@ -499,8 +500,8 @@ final class Feeds
             return null;
         }
         $id = (int) ($row['id'] ?? 0);
-        $fields = self::heldHere($own ?? \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
-        $refs = $id > 0 ? (\BetterCal\Domain\Series\OwnFields::references($db, [$id])[$id] ?? []) : [];
+        $fields = self::heldHere($own ?? OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
+        $refs = $id > 0 ? (OwnFields::references($db, [$id])[$id] ?? []) : [];
         return $fields === [] && $refs === [] ? null : ['fields' => $fields, 'refs' => $refs];
     }
 
@@ -565,7 +566,7 @@ final class Feeds
     {
         $id = (int) $row['id'];
         $set = [];
-        foreach (\BetterCal\Domain\Series\OwnFields::COLUMNS as $field => $cols) {
+        foreach (OwnFields::COLUMNS as $field => $cols) {
             if (in_array($field, $own, true) || ($fields !== null && !in_array($field, $fields, true))) {
                 continue;
             }
@@ -580,19 +581,10 @@ final class Feeds
         if ($changed !== []) {
             $db->update('events', array_intersect_key($after, array_flip($changed)), 'id = ?', [$id]);
         }
-        $linked = false;
-        foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
-            if (in_array($field, $own, true) || ($fields !== null && !in_array($field, $fields, true))) {
-                continue;
-            }
-            $of = static fn(int $event): array => array_map('intval', array_column($db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$event]), $col));
-            if ($of($id) === $of((int) $master['id'])) {
-                continue;
-            }
-            $db->run("DELETE FROM `$table` WHERE event_id = ?", [$id]);
-            $db->run($db->insertIgnore() . " INTO `$table` (event_id, `$col`) SELECT ?, `$col` FROM `$table` WHERE event_id = ?", [$id, (int) $master['id']]);
-            $linked = true;
-        }
+        // Its tags and people: the one function every writer uses (OwnFields::follow).
+        $links = array_values(array_filter(array_keys(OwnFields::LINKS),
+            static fn(string $f): bool => !in_array($f, $own, true) && ($fields === null || in_array($f, $fields, true))));
+        $linked = $links !== [] && OwnFields::follow($db, (int) $master['id'], [$id], $links) !== [];
         return $changed !== [] || $linked;
     }
 
@@ -606,12 +598,12 @@ final class Feeds
      */
     public function ownOf(array $row, array $master): array
     {
-        $known = \BetterCal\Domain\Series\OwnFields::decode($row['override_fields'] ?? null);
+        $known = OwnFields::decode($row['override_fields'] ?? null);
         if ($known !== null) {
             return $known;
         }
         $of = fn(string $table, string $col, array $r): array => array_column($this->db->all("SELECT $col FROM $table WHERE event_id = ?", [(int) ($r['id'] ?? 0)]), $col);
-        return \BetterCal\Domain\Series\OwnFields::infer($row, $master, $of('event_tags', 'tag_id', $row), $of('event_tags', 'tag_id', $master),
+        return OwnFields::infer($row, $master, $of('event_tags', 'tag_id', $row), $of('event_tags', 'tag_id', $master),
             $of('event_people', 'person_id', $row), $of('event_people', 'person_id', $master));
     }
 
@@ -675,7 +667,7 @@ final class Feeds
             }
         }
         if ($ownColumn && $taken !== []) {
-            $set['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode(array_merge($own, $taken));
+            $set['override_fields'] = OwnFields::encode(array_merge($own, $taken));
         }
         if ($set !== []) {
             $this->db->update('events', $set + ['updated_at' => Time::nowDb()], 'id = ?', [$holderId]);
@@ -867,7 +859,7 @@ final class Feeds
         if (($row['location_lat'] ?? null) !== null && ($row['location_lng'] ?? null) !== null) {
             $held[] = 'location';
         }
-        return \BetterCal\Domain\Series\OwnFields::normalize(array_values(array_intersect($held, array_merge(self::HELD_HERE_FIELDS, ['location']))));
+        return OwnFields::normalize(array_values(array_intersect($held, array_merge(self::HELD_HERE_FIELDS, ['location']))));
     }
 
     /**
@@ -967,7 +959,7 @@ final class Feeds
         // An edited day's own fields follow from what changed at the other
         // end (series-model.md, Rows from Elsewhere): its master's values as
         // this poll brings them.
-        $ownColumn = \BetterCal\Domain\Series\OwnFields::hasColumn($this->db);
+        $ownColumn = OwnFields::hasColumn($this->db);
         $parsedMasters = [];
         foreach ($parsed as $pm) {
             if ($pm['recurrence_instance_utc'] === null) {
@@ -1003,9 +995,24 @@ final class Feeds
 
                 $current = $existingByKey[$key] ?? null;
                 $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
+                if ($ownColumn && $feedMaster === null && $current === null && $ev['recurrence_instance_utc'] !== null) {
+                    // A new edited day whose series' record this poll doesn't
+                    // carry still gets its own list. Its series kept here (the
+                    // record skipped as unreadable, so the poll leaves the
+                    // stored master as it is) is its master, read as stored,
+                    // by the same rule below; with no series to stand under
+                    // (none stored, or one this poll removes) it owns nothing,
+                    // as migration 063 left such a day.
+                    $stored = $existingByKey[$ev['uid'] . '|'] ?? null;
+                    if ($stored !== null && $stored['deleted_at'] === null && ($unknownSkipped || isset($protected[(string) $ev['uid']]))) {
+                        $feedMaster = $stored;
+                    } else {
+                        $columns['override_fields'] = OwnFields::encode([]);
+                    }
+                }
                 if ($ownColumn && $feedMaster !== null) {
-                    $own = \BetterCal\Domain\Series\OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
-                    $columns['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode($own);
+                    $own = OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
+                    $columns['override_fields'] = OwnFields::encode($own);
                     // An edited day with nothing of its own is an ordinary
                     // occurrence again (series-model.md, Own Fields), from
                     // elsewhere as from a writer here: a record equal to its
@@ -1017,7 +1024,7 @@ final class Feeds
                     // those from becoming edited days here.
                     $ownInvite = ($columns['invite_json'] ?? null) !== null && !self::sameValue('invite_json', $feedMaster['invite_json'] ?? null, $columns['invite_json']);
                     if ($own === [] && !$ownInvite
-                        && ($current === null || \BetterCal\Domain\Series\OwnFields::references($this->db, [(int) $current['id']]) === [])) {
+                        && ($current === null || OwnFields::references($this->db, [(int) $current['id']]) === [])) {
                         $plain[$key] = true;
                         continue;
                     }
@@ -1043,7 +1050,7 @@ final class Feeds
                     // does: the one composition (followSeries), links alone.
                     if ($series !== null) {
                         self::followSeries($this->db, $columns + ['id' => $id], $series,
-                            \BetterCal\Domain\Series\OwnFields::decode($columns['override_fields'] ?? null) ?? [], ['tags', 'people']);
+                            OwnFields::decode($columns['override_fields'] ?? null) ?? [], ['tags', 'people']);
                     }
                     // The row, not its calendar: undoing the subscription
                     // still takes what its polls brought (a day's row: the
@@ -1151,7 +1158,7 @@ final class Feeds
                         if ($row['deleted_at'] === null) {
                             $master = $row['recurrence_parent_id'] !== null ? ($existingByKey[$uid . '|'] ?? null) : null;
                             $held = $master !== null ? self::heldHere($this->ownOf($row, $master), $row) : ($row['recurrence_parent_id'] === null ? $this->heldByEvent($row) : []);
-                            $refs = \BetterCal\Domain\Series\OwnFields::references($this->db, [$id])[$id] ?? [];
+                            $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
                             if ($held !== [] || $refs !== []) {
                                 $deleted[$id] = [$held, $refs];
                             }
@@ -1244,7 +1251,7 @@ final class Feeds
                     }
                 }
                 if ($ownColumn) {
-                    $list = \BetterCal\Domain\Series\OwnFields::encode($held);
+                    $list = OwnFields::encode($held);
                     if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
                         $changed['override_fields'] = $list;
                     }
@@ -1279,6 +1286,14 @@ final class Feeds
                 }
                 $changedUids[(string) $now['uid']] = true;
                 $removedCount++;
+            }
+            // Every series this poll changed: each day not owning its tags or
+            // people holds the series' (OwnFields::follow), a day kept while
+            // its series was away and put under the series made anew included.
+            foreach (array_keys($changedUids) as $uid) {
+                if (isset($masterIdByUid[$uid])) {
+                    OwnFields::follow($this->db, (int) $masterIdByUid[$uid]);
+                }
             }
             self::assertSyncDeadline($deadline);
 

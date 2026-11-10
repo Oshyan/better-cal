@@ -8,6 +8,7 @@ use BetterCal\Domain\CalendarMoveGuard;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
+use BetterCal\Domain\Series\OwnFields;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
@@ -435,10 +436,10 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 $seenInstances[$instance] = true;
                 $cols['recurrence_parent_id'] = $masterId;
                 $current = $existingByInstance[$instance] ?? null;
-                if (\BetterCal\Domain\Series\OwnFields::hasColumn($this->db)) {
+                if (OwnFields::hasColumn($this->db)) {
                     // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere).
-                    $cols['override_fields'] = \BetterCal\Domain\Series\OwnFields::encode(
-                        \BetterCal\Domain\Series\OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols));
+                    $cols['override_fields'] = OwnFields::encode(
+                        OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols));
                 }
                 if ($current !== null) {
                     $this->db->update('events', $cols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [(int) $current['id']]);
@@ -461,6 +462,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }
+            // A client's PUT carries no tags or people: each day it makes,
+            // brings back or keeps holds the series' where its list doesn't
+            // name its own (OwnFields::follow), and the after snapshot below
+            // records them, so its undo takes them back with the row.
+            OwnFields::follow($this->db, $masterId);
             $afterRows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ?', [$calendarId, $uid]);
             $this->undo->record(
                 $userId,

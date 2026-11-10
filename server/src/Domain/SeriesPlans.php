@@ -794,6 +794,8 @@ trait SeriesPlans
                 $moved[$rid] = $set + $byId[$rid];
             }
             ($this->seriesPlanWriter($userId, $newId, ['master' => []] + $pw, $in, $moved, $created, $createdEdited))();
+            // The days left with the old part follow it as it stands (OwnFields::follow).
+            OwnFields::follow($this->db, $id);
             return $newId;
         };
     }
@@ -865,7 +867,7 @@ trait SeriesPlans
             }
             // An occurrence the plan makes an edited day (the day acted on,
             // where it keeps a placement of its own): its row, as "this event"
-            // makes one, from the series as written, with its tags and people.
+            // makes one, from the series as written (its tags and people below).
             foreach ($w['createEdited'] ?? [] as $cols) {
                 $row = $this->copyForChild($after);
                 $row['recurrence_parent_id'] = $id;
@@ -873,18 +875,22 @@ trait SeriesPlans
                 $row['exdates_json'] = null;
                 $row['created_via'] = ActivityContext::get();
                 $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
                 $createdEdited[] = $newId;
             }
-            foreach ($w['tags'] as $target => $names) {
-                $this->labels->setEventTags($userId, $target === 'master' ? $id : (int) $target, $names);
+            // The series' tags and people. The plan names, besides the
+            // series, each day that takes them (one whose list after no
+            // longer names the field); those days take them by following
+            // the series (below), never by a set of their own: Finish may
+            // leave the series' set as it stands (localDeltasOver), and a
+            // day's set is then the series', not the planned one.
+            if (isset($w['tags']['master'])) {
+                $this->labels->setEventTags($userId, $id, $w['tags']['master']);
             }
-            foreach (array_keys($w['people']) as $target) {
-                $this->applyPeoplePatch($userId, $target === 'master' ? $id : (int) $target, $in);
+            if (isset($w['people']['master'])) {
+                $this->applyPeoplePatch($userId, $id, $in);
             }
-            foreach (array_merge($created, $createdEdited) as $newId) {
-                // A created row takes the series' new tags and people too.
+            foreach ($created as $newId) {
+                // An event of its own the plan makes takes the series' new tags and people too.
                 if (isset($w['tags']['master'])) {
                     $this->labels->setEventTags($userId, $newId, $w['tags']['master']);
                 }
@@ -892,6 +898,10 @@ trait SeriesPlans
                     $this->applyPeoplePatch($userId, $newId, $in);
                 }
             }
+            // Every day of the series as written, a row made here included,
+            // holds the series' tags and people where its list doesn't name
+            // them (OwnFields::follow).
+            OwnFields::follow($this->db, $id);
         };
     }
 
@@ -1565,15 +1575,9 @@ trait SeriesPlans
                 return;
             }
             $this->db->update('events', $this->withOwnColumn($set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()]), 'id = ?', [$id]);
-            if (in_array('tags', $fields, true)) {
-                $this->db->run('DELETE FROM event_tags WHERE event_id = ?', [$id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, (int) $master['id']]);
-            }
-            if (in_array('people', $fields, true)) {
-                $this->db->run('DELETE FROM event_people WHERE event_id = ?', [$id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, (int) $master['id']]);
-            }
-            unset($userId);
+            // Tags or people taken back are the series' again (OwnFields::follow).
+            OwnFields::follow($this->db, (int) $master['id'], [$id]);
+            unset($userId, $fields);
         });
         if ($resp !== null) {
             $this->google()->apply($google, [$resp]);

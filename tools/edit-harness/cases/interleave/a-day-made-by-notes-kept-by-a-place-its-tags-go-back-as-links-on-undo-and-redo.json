@@ -1,0 +1,57 @@
+{
+    "about": "A day given notes (its row made then, with the series' tags and people copied onto it), then a place, then a title for all events with another day renamed at Google during it; the notes undone keep the row for its place and take away the links the notes' entry gave it, a redo gives them back, and a redo of that redo takes them away again: a day row's tags and people are its own links, put back exactly as a set, never re-derived from the series (decisions.md, \"The undo of a Google edit sends back only the fields that edit changed\"; seed 307 case 183; x-undo-fields)",
+    "series": {
+        "family": "weekly_one",
+        "rrule": "FREQ=WEEKLY;BYDAY=SU",
+        "import": false,
+        "bound": "none",
+        "boundAt": 3,
+        "untilForm": "exact",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-03-14",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "w-del1",
+            "pick": 0.391
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.886,
+            "what": "description"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.316,
+            "what": "location"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.254,
+            "what": "title"
+        },
+        {
+            "do": "w-race",
+            "pick": 0.417,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.559
+        },
+        {
+            "do": "redo",
+            "pick": 0
+        },
+        {
+            "do": "redo",
+            "pick": 0.029
+        },
+        {
+            "do": "p-delta",
+            "pick": 0.416
+        }
+    ]
+}

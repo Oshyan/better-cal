@@ -1,5 +1,5 @@
 {
-    "about": "A day given its own icon, then a title and a tag of its own in one edit, then a rename for all events, then the title and tag edit undone: the day owned its icon before and not its title, so its title goes back to following the series at the new name, not the series title the entry's snapshot showed, and its icon stays its own (decisions.md, \"The undo of a Google edit sends back only the fields that edit changed\"; seed 743 case 79; x-undo-fields)",
+    "about": "A day given its own icon, then a title and a tag of its own in one edit, then a rename for all events, then the title and tag edit undone: the day owned its icon before and not its title, so its title goes back to following the series at the new name, not the series title the entry's snapshot showed, and its icon stays its own; the redo then gives the day its title back as its own, at the edit's value, not the series' title (decisions.md, \"The undo of a Google edit sends back only the fields that edit changed\"; seed 743 case 79; x-undo-fields)",
     "series": {
         "family": "weekly_bare",
         "rrule": "FREQ=WEEKLY",
@@ -31,6 +31,10 @@
         {
             "do": "u-entry",
             "pick": 0.3
+        },
+        {
+            "do": "redo",
+            "pick": 0
         }
     ]
 }

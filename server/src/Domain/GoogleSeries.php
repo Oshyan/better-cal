@@ -961,7 +961,7 @@ final class GoogleSeries
                     // applies them): a day changed at Google since the read
                     // keeps that change where the change doesn't touch the
                     // field, and is named where it does; never overwritten.
-                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent');
+                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent', false, !empty($targets[$i + 1]['insert']));
                     $targets[$i] = $t;
                     $differences = array_merge($differences, $words);
                 }
@@ -2044,11 +2044,13 @@ final class GoogleSeries
      * the change's own write would have left one (put back to the series
      * at Google since) follows the series, as a day the change has no row
      * for: its own list is what it holds now (nothing Google holds), never
-     * the change's.
+     * the change's. $split: the change is "this and following" and $target
+     * is the series it cuts, so a day past its new end lives on in the
+     * series the change makes after it (the reason a person reads says so).
      *
      * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it (and for what was changed at Google and is not kept across a change of form), and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
      */
-    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false): array
+    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false, bool $split = false): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
             return [$target, [], [], []];
@@ -2154,10 +2156,13 @@ final class GoogleSeries
             // new end; for a split, in the series that follows it), where
             // the plan puts nothing: no step can reach it, so a change made
             // at Google there is never carried in this series. It is named
-            // as not kept, unless it is the change's own effect.
+            // as not kept, unless it is the change's own effect: because
+            // the series ends before it, or, where the change is a split,
+            // because the change split the series before it (the day is
+            // still there, in the series that follows).
             if ($found && $why === null && $x === null && $t !== 'skip' && !self::named($master, $key, $allDay)) {
                 if (!in_array($c, [$bHere, $p, $q], true)) {
-                    $words[] = self::sinceWords($bHere, $c, $key, $before['master'], 'the series now ends before that day', $thisYear, $since);
+                    $words[] = self::sinceWords($bHere, $c, $key, $before['master'], $split ? 'this change split the series before that day' : 'the series now ends before that day', $thisYear, $since);
                 }
                 continue;
             }
@@ -2951,7 +2956,8 @@ final class GoogleSeries
             if ($items === null || !is_array($before) || empty($before['master'])) {
                 continue;
             }
-            [$rebased, $words] = self::rebase($before, $t, self::held($items, (string) $t['googleId']), $year);
+            // A series this change made (its before is its removal) right after this one: the change is a split, and this the series it cuts.
+            [$rebased, $words] = self::rebase($before, $t, self::held($items, (string) $t['googleId']), $year, 'since this change stopped', false, empty($t['insert']) && !empty($befores[$i + 1]['remove']));
             $targets[$i] = $rebased;
             $kept = array_merge($kept, $words);
         }

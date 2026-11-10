@@ -62,7 +62,8 @@ return static function (Db $db): void {
     // (the old series' new end) is sent and not taken; Fri 8 Jan, a day of the part, is deleted at Google in the series
     // as Google still holds it; then Finish. By date: Mon 4 and Tue 5 Jan keep the old name, Wed 6 to Mon 11 Jan take
     // the new one and Wed 6 Jan keeps its notes. Fri 8 Jan is past the old series' new end, where no step can reach it,
-    // and the series that follows is made whole as planned: the deletion is named as not kept. (The hunter's probe
+    // and the series that follows is made whole as planned: the deletion is named as not kept, because this change split
+    // the series before that day. (The hunter's probe
     // expected it kept in the new series; carrying a change from one series of a split into the other needs the two
     // read together and the planner's word on whether the part kept its keys, so it is named.)
     scenario('F2 sibling: this and following renamed, its first write sent and not taken, Fri 8 Jan deleted at Google, then Finish', function () use ($build, $la, $day): void {
@@ -84,7 +85,7 @@ return static function (Db $db): void {
             $expect = ['2027-01-04 10:00|Sample series||', '2027-01-05 10:00|Sample series||', '2027-01-06 10:00|Renamed part|Notes A|', '2027-01-07 10:00|Renamed part||',
                 '2027-01-08 10:00|Renamed part||', '2027-01-09 10:00|Renamed part||', '2027-01-10 10:00|Renamed part||', '2027-01-11 10:00|Renamed part||'];
             checkEq("$name: the deletion made at Google is named once, by its date, as not kept",
-                [$day('2027-01-08') . ' was deleted at Google since this change stopped; that change is not kept, because the series now ends before that day.'], $out['differences'] ?? null);
+                [$day('2027-01-08') . ' was deleted at Google since this change stopped; that change is not kept, because this change split the series before that day.'], $out['differences'] ?? null);
             checkEq("$name: Finish sends nothing to a day past the old series' new end", [], array_values(array_filter(H::writes($t, $from), static fn(string $w): bool => str_contains($w, '_20270108T180000Z') && str_starts_with($w, 'PATCH ' . $t->gid . '_'))));
             check("$name: by date, the part is renamed and whole as planned", $now === $expect,
                 "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect))

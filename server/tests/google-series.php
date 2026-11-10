@@ -445,6 +445,9 @@ $now['cancelled']['2027-01-04 18:00:00'] = $now['skips']['2027-01-04 18:00:00'] 
 checkEq('google rebase: a shorter series, its master write not yet at Google: a rename on the day it drops is named as not kept and no day is made of it; a deletion on a day it keeps is carried',
     [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because the series now ends before that day.']],
     [array_keys($rebased['exceptions']), $rebased['skips'], $words]);
+[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'since this change stopped', false, true);
+checkEq('google rebase: the same where the series is shorter because the change split it there (a series follows): the day is still there, and the reason says so',
+    [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because this change split the series before that day.'], $words);
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $nowOf($shorter, true), $year);
 checkEq('google rebase: the shorter series once its master write landed (Google dropped what was past the end itself): the plan whole, nothing said',
     [$daysOf($shorter), []], [$daysOf($rebased), $words]);

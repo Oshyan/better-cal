@@ -29,7 +29,7 @@ final class Probe
     public const GROUPS = [
         '1' => ['Rule forms', 'Each rule inserted alone, then read back: accepted or refused (with the error), and the exact text that comes back.'],
         '2' => ['Each exception kind alone', 'On a timed weekly series and on an all-day one: a moved instance, one with its own time, a title-only edit, a cancellation by DELETE and by PATCH, and one beyond a shortened end; then the exception-key checks in Pacific/Auckland and Asia/Tokyo. After each: the instance id form, the master\'s recurrence, its etag and `updated`, and the delta.'],
-        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event.'],
+        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event; 3.30 and 3.31 change only its ordinary occurrence 4, a timed day made all-day.'],
         '4' => ['The split', 'Trim with UNTIL and with COUNT, then insert the new series, over the same starting state as group 3, cut at occurrence 5.'],
         '5' => ['Etags and conditional writes', 'Stability across reads, what a master or an instance write does to the other\'s etags, and If-Match on PATCH and DELETE of masters and instances.'],
         '6' => ['Deletes and their reverse', 'A deleted event read back, PATCH to confirmed on it and on a cancelled instance, and an insert with an id the client chose.'],
@@ -1041,6 +1041,31 @@ final class Probe
                 $m = $this->formBase($c, $tz, $start, []);
                 $body = $nulls ? $nulled($body) + $body : $body;
                 $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the event', 'PATCH', '/events/' . rawurlencode($m), [], $body));
+                $c->finding = $this->formFinding($c, $m);
+            });
+        }
+
+        // One day of a timed series made all-day: the same body builder on an
+        // instance (Events::patchBody, GoogleWriter::patchOf over the day as it
+        // shows and as it is to be), an instance PATCH whose start and end are
+        // dates over an instance whose start is a clock. Occurrence 4 of the
+        // 10:00 Los Angeles series (22 March, 17:00 UTC) is an ordinary day.
+        $dayRow = static fn(bool $allDay): array => [
+            'title' => 'Probe form', 'description' => null, 'location' => null, 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
+            'start_utc' => $allDay ? '2027-03-22 00:00:00' : '2027-03-22 17:00:00', 'end_utc' => $allDay ? '2027-03-23 00:00:00' : '2027-03-22 18:00:00',
+            'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : self::LA,
+        ];
+        $dayBody = GoogleWriter::patchOf(GoogleWriter::body($dayRow(false)), GoogleWriter::body($dayRow(true)));
+        $days = [
+            ['3.30', 'one day of a timed series made all-day, as the app sends it', $dayBody],
+            ['3.31', 'one day of a timed series made all-day, the clock fields nulled', $nulled($dayBody) + $dayBody],
+        ];
+        foreach ($days as [$id, $title, $body]) {
+            $this->probeCase('3', $id, $title, function (CaseRun $c) use ($body, $rule): void {
+                $m = $this->formBase($c, self::LA, '2027-03-01 10:00', $rule);
+                $inst = $this->instanceItems($c, $m)[3] ?? throw new \RuntimeException('the series has no occurrence 4');
+                $c->labels[self::key($inst)] = 'occurrence 4 (made all-day)';
+                $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch occurrence 4', 'PATCH', '/events/' . rawurlencode((string) $inst['id']), [], $body));
                 $c->finding = $this->formFinding($c, $m);
             });
         }

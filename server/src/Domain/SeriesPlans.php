@@ -1304,15 +1304,33 @@ trait SeriesPlans
             $recovered = array_values(array_unique(array_merge($uidsOf($row['targets_json'] ?? null), $uidsOf($row['befores_json'] ?? null))));
             $began = json_decode((string) ($row['local_json'] ?? ''), true);
             $was = $isUndo || $how !== 'finish' ? null : (is_array($began) && $began !== [] ? $began : $this->googleSeriesTables($calendar, $recovered));
-            $undone = $isUndo ? ($this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId])
-                ?? (is_array($plan['entry'] ?? null) ? $plan['entry'] + ['user_id' => $userId] : null)) : null;
+            // Finish of an undo or redo takes its entry back, so it gets it through the one loader
+            // (GoogleUndo::entryToFinish, Undo::entryToTakeBack): an entry in an older format, or a
+            // copy that doesn't say it is current, is refused here, before the pending row is marked
+            // running and before any request to Google, so the row stays half done for Review exactly
+            // as it was. Put back takes no entry back (it reads only the pending row); it asks only
+            // whether Finish would refuse, so its own refusal never points to a Finish that can't run.
+            $undone = null;
+            $neither = null;
+            if ($isUndo && $how === 'finish') {
+                $undone = GoogleUndo::entryToFinish($this->db, $userId, $plan);
+            } elseif ($isUndo) {
+                try {
+                    GoogleUndo::entryToFinish($this->db, $userId, $plan);
+                } catch (HttpError $e) {
+                    if ($e->errorCode !== 'not_undoable') {
+                        throw $e;
+                    }
+                    $neither = GoogleUndo::neitherWay(GoogleUndo::pendingRedo($this->db, $userId, $plan));
+                }
+            }
             try {
                 $out = $how === 'finish'
                     ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority),
                         $isUndo ? function () use ($undone): array {
                             // The undo's part here: the rows as the change found them.
                             // What can't be put back is said, and Google's side completes.
-                            if ($undone === null || ($undone['before_json'] ?? null) === null) {
+                            if (($undone['before_json'] ?? null) === null) {
                                 return ["The rows here could not be put back as they were before the change: what it kept of them is gone."];
                             }
                             try {
@@ -1322,13 +1340,13 @@ trait SeriesPlans
                             }
                             return [];
                         } : $this->googleLocalPlan($userId))
-                    : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
+                    : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority), $neither);
             } catch (HttpError $e) {
                 $stopped = $e;
                 throw $e;
             }
             if ($isUndo) {
-                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone ?? ['id' => (int) $plan['undo'], 'user_id' => $userId, 'entity_id' => (int) ($row['event_id'] ?? 0), 'summary' => (string) ($plan['summary'] ?? '')], $how, $out);
+                return $this->recoveredUndo($userId, $calendar, $row, $plan, $undone, $how, $out);
             }
             $left = $out['left'] ?? [];
             $what = ($how === 'finish' ? "Finished '" . (string) $row['title'] . "' at Google" : "Put '" . (string) $row['title'] . "' back at Google")
@@ -1352,7 +1370,7 @@ trait SeriesPlans
      * that entry stale nor stands in front of it for the bare Undo (both
      * judge an entry by what it changed).
      */
-    private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, array $undone, string $how, array $out): array
+    private function recoveredUndo(int $userId, array $calendar, array $row, array $plan, ?array $undone, string $how, array $out): array
     {
         $differences = array_values(array_merge((array) ($plan['kept'] ?? []), $out['differences']));
         // The undo's bare action, kept with its pending row; a row written
@@ -1369,7 +1387,7 @@ trait SeriesPlans
             }
         } else {
             // Named for what it was: an undo of a change, or a redo (an undo of an undo's entry).
-            $redo = (json_decode((string) ($undone['details_json'] ?? ''), true)['google']['undoes'] ?? null) !== null;
+            $redo = GoogleUndo::pendingRedo($this->db, $userId, $plan);
             // The action the undo kept with its pending row, never one cut from a line.
             $what = $summary;
             $this->undo->record($userId, 'event', (int) ($row['event_id'] ?? 0), 'update', null, null,

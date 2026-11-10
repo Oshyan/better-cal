@@ -425,6 +425,48 @@ final class Interleave
         return $s0['here'] == $s1['here'];
     }
 
+    /**
+     * The rows a step that applied nothing of its own leaves: the rows before it, plus the write the harness itself
+     * scheduled during the step, exactly as scheduled. Only p-overlap schedules one (a tag given to a day while the
+     * poll fetches, $this->overlap): that day's row, the one it had or a new one under the day's key, holds the
+     * scheduled tags and owns them, and every other field of it is as before, or for a new row its series' at that
+     * occurrence (its start the key, its length the series', per RFC 5545 3.8.5.3). Every other row is as before.
+     * Built from the harness's own record of the write, never from the product; a write the product refused, or none
+     * scheduled, leaves the rows before the step. A new row is taken from $l1 only by its identity (its series and
+     * key); its content is all expected.
+     */
+    private function beforeAndScheduled(array $l0, array $l1): array
+    {
+        if ($this->overlap === null || $this->overlap[3]->refused !== null) {
+            return $l0;
+        }
+        [$key, $tag, , , , $mid] = $this->overlap;
+        $tags = ['sample', $tag];
+        sort($tags);
+        $ofDay = static fn(array $r): bool => (int) $r['parent'] === $mid && (string) $r['key'] === (string) $key;
+        foreach ($l0 as $id => $r) {
+            if ($ofDay($r)) {
+                $own = array_values(array_unique(array_merge($r['own'], ['tags'])));
+                sort($own);
+                $l0[$id] = ['tags' => $tags, 'own' => $own] + $r;
+                return $l0;
+            }
+        }
+        $master = $l0[$mid] ?? null;
+        if ($master === null) {
+            return $l0;
+        }
+        foreach (array_diff_key($l1, $l0) as $id => $r) {
+            if ($ofDay($r)) {
+                $length = Clock::parse((string) $master['end'])->getTimestamp() - Clock::parse((string) $master['start'])->getTimestamp();
+                $l0[$id] = ['parent' => $r['parent'], 'key' => $r['key'], 'rrule' => null, 'skips' => [], 'own' => ['tags'], 'tags' => $tags,
+                    'start' => (string) $key, 'end' => Clock::db(Clock::plus(Clock::parse((string) $key), $length))] + $master;
+                break;
+            }
+        }
+        return $l0;
+    }
+
     /** The app's writes to the stand-in between two snapshots (the remote client's are marked and left out). */
     private function writesBetween(array $s0, array $s1): array
     {
@@ -925,7 +967,11 @@ final class Interleave
             $inst = self::instanceArg($master, $occ[0]);
             $mid = (int) $master['id'];
             $note = (object) ['refused' => null];
-            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note, $occ[1]];
+            $this->overlap = [$occ[0], $tag, (string) $master['uid'], $note, $occ[1], $mid];
+            // The tag given during the fetch is this step's own request (and its Activity entry is this step's), recorded
+            // before the poll runs so a poll that refuses its listing still knows what the step scheduled.
+            $asked = ['kind' => 'this', 'gid' => (string) $master['google_event_id'], 'key' => $occ[0], 'fields' => ['tags' => ['sample', $tag]], 'days' => [$occ[1]], 'local' => true];
+            $this->lastAsked = $asked;
             $this->stand->knobs->duringFetch = static function () use ($events, $user, $mid, $inst, $tag, $note): void {
                 try {
                     $events->patch($user, $mid, ['scope' => 'this', 'instanceStart' => $inst, 'tagNames' => ['sample', $tag]]);
@@ -939,8 +985,7 @@ final class Interleave
             } finally {
                 $this->stand->knobs->duringFetch = null;
             }
-            // The tag given during the fetch is this step's own request (and its Activity entry is this step's).
-            return ['asked' => ['kind' => 'this', 'gid' => (string) $master['google_event_id'], 'key' => $occ[0], 'fields' => ['tags' => ['sample', $tag]], 'days' => [$occ[1]], 'local' => true]];
+            return ['asked' => $asked];
         }
         if ($do === 'p-410-pending') {
             if ($this->pendings === []) {
@@ -1186,8 +1231,9 @@ final class Interleave
             $this->expect('x-empty', $notices === 0, "step {$this->step} ($do): a whole read that listed events closes the calendar's google_empty notice", $context + ['notices' => $notices]);
         }
         if ($listedEmpty) {
-            $this->ran('x-empty', 'empty read');
-            $this->expect('x-empty', $s0['here']['l'] == $s1['here']['l'], "step {$this->step} ($do): a whole read that listed nothing for a calendar holding rows changed no row", $context + ['diff' => self::diff($s0['here']['l'], $s1['here']['l'])]);
+            $this->ran('x-empty', $this->overlap !== null && $this->overlap[3]->refused === null ? 'empty read with a write during the fetch' : 'empty read');
+            $want = $this->beforeAndScheduled($s0['here']['l'], $s1['here']['l']);
+            $this->expect('x-empty', $want == $s1['here']['l'], "step {$this->step} ($do): a whole read that listed nothing for a calendar holding rows changed no row (the step's own write during the fetch aside)", $context + ['diff' => self::diff($want, $s1['here']['l'])]);
             $this->expect('x-empty', $s1['here']['token'] === $s0['here']['token'] || $s1['here']['token'] === null || $s1['here']['token'] === 'stale-token',
                 "step {$this->step} ($do): an empty listing does not advance the sync position", $context + ['token' => $s1['here']['token']]);
         }

@@ -683,8 +683,8 @@ final class GoogleUndo
             if ($locked === null || !GoogleSync::sameBinding($calendar, $locked)) {
                 throw HttpError::conflict('google_binding_changed', 'This calendar changed while the undo was running. Reload before trying again.');
             }
-            $fresh = $this->db->one('SELECT * FROM mutations WHERE id = ?', [(int) $mutation['id']]);
-            if ($fresh === null || (int) $fresh['undone'] === 1) {
+            $fresh = Undo::entryToTakeBack($this->db, $userId, (int) $mutation['id']);
+            if ((int) $fresh['undone'] === 1) {
                 throw HttpError::badRequest('Already undone', 'already_undone');
             }
             [$inverse, $kept, $overwrote, $removed, $moves] = $this->inverseOf($fresh, $locked, (array) $g['before'], $force);
@@ -694,12 +694,13 @@ final class GoogleUndo
                 // Its part here, kept with a pending row for Finish and Put
                 // back, whole: which entry it undoes, that entry as it is now
                 // (its snapshots, which Finish puts back, so Finish never
-                // depends on the entry still being there), and its words:
-                // its bare action (undoSummary's, composed into a line once,
-                // by line), what Google kept, what it overwrote, the days it
-                // removes.
+                // depends on the entry still being there, its format with it,
+                // which Finish's loader reads when the entry is gone:
+                // Undo::entryToTakeBack), and its words: its bare action
+                // (undoSummary's, composed into a line once, by line), what
+                // Google kept, what it overwrote, the days it removes.
                 $out = $series->apply($userId, $locked, $targets, $title, $summary, (int) $mutation['entity_id'] ?: null, $beforeSend,
-                    ['undo' => (int) $mutation['id'], 'entry' => array_intersect_key($fresh, array_flip(['id', 'user_id', 'entity_id', 'summary', 'details_json', 'before_json', 'after_json'])),
+                    ['undo' => (int) $mutation['id'], 'entry' => array_intersect_key($fresh, array_flip(['id', 'user_id', 'entity_id', 'summary', 'details_json', 'before_json', 'after_json', 'format'])),
                         'action' => $summary, 'kept' => $kept, 'forced' => $overwrote] + ($removed === [] ? [] : ['removedDays' => $removed]) + ($moves === [] ? [] : ['moves' => $moves]));
             } catch (HttpError $e) {
                 if (!GoogleSeries::reachedGoogle($e)) {
@@ -740,6 +741,7 @@ final class GoogleUndo
      */
     public function finishUndo(array $mutation, array $calendar, string $summary, array $kept, array $befores, array $was, array $uids, array $readUids, array $forced = [], ?string $note = null, array $removed = [], array $touches = []): int
     {
+        Undo::assertCurrentFormat($mutation, 'GoogleUndo::finishUndo');
         $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [(int) $mutation['id']]);
         $ids = $this->undo->snapshotEventIds($mutation);
         // The days it removed, named by row and date (Feeds::droppedDay), as a poll names its own.
@@ -749,6 +751,50 @@ final class GoogleUndo
         return $this->recordSeries((int) $mutation['user_id'], (int) $mutation['entity_id'], $summary, $calendar, $befores, $was,
             $this->seriesTables((int) $calendar['id'], array_merge($uids, $readUids), array_merge($ids, array_map('intval', array_column($was['events'] ?? [], 'id')))), (int) $mutation['id'],
             array_values(array_unique($kept)), array_values(array_unique($forced)), $note, $removed, $touches);
+    }
+
+    /**
+     * The entry a pending undo or redo (its plan names it in `undo`) takes
+     * back, for Review's Finish: through the one loader
+     * (Undo::entryToTakeBack, the copy the plan kept deciding when the live
+     * row is gone), its refusal said in Finish's words (finishRefused).
+     * Reads the journal and nothing at Google. Asked before Finish marks or
+     * sends anything, by Put back for its words, and by Review's list.
+     */
+    public static function entryToFinish(Db $db, int $userId, array $plan): array
+    {
+        try {
+            return Undo::entryToTakeBack($db, $userId, (int) $plan['undo'], is_array($plan['entry'] ?? null) ? $plan['entry'] : []);
+        } catch (HttpError $e) {
+            if ($e->errorCode !== 'not_undoable') {
+                throw $e;
+            }
+            throw HttpError::conflict('not_undoable', self::finishRefused(self::pendingRedo($db, $userId, $plan)));
+        }
+    }
+
+    /** Is a pending row's plan a redo (its entry an undo's own, `google.undoes`)? Its details, the live row's or the copy's; words only. */
+    public static function pendingRedo(Db $db, int $userId, array $plan): bool
+    {
+        $details = $db->scalar('SELECT details_json FROM mutations WHERE id = ? AND user_id = ?', [(int) $plan['undo'], $userId])
+            ?? (is_array($plan['entry'] ?? null) ? ($plan['entry']['details_json'] ?? null) : null);
+        return (json_decode((string) $details, true)['google']['undoes'] ?? null) !== null;
+    }
+
+    /** Why Finish can't complete a pending undo (or redo) whose entry is in an older format, and what is left. */
+    public static function finishRefused(bool $redo): string
+    {
+        return $redo
+            ? "The undo this redoes was recorded by an earlier version of Better-Cal and can't be redone after the upgrade, so Finish can't complete this redo. Put back returns the series to how it was before the redo began, unless it changed at Google since."
+            : "The change this undoes was recorded by an earlier version of Better-Cal and can't be undone after the upgrade, so Finish can't complete this undo. Put back returns the series to how it was before the undo began, unless it changed at Google since.";
+    }
+
+    /** Put back's last words when it refuses (Google changed since) and Finish is refused too: nothing promised that would refuse. */
+    public static function neitherWay(bool $redo): string
+    {
+        return $redo
+            ? "Nothing was put back, and Finish can't complete this redo: the undo it redoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review."
+            : "Nothing was put back, and Finish can't complete this undo: the change it undoes was recorded by an earlier version of Better-Cal. The series takes no other change here while this is listed in Review.";
     }
 
     /**

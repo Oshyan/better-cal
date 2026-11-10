@@ -1846,6 +1846,56 @@ final class Undo
     }
 
     /**
+     * The one way any code gets an entry to undo, redo or finish undoing:
+     * the live row (every column, its format among them), refused with 409
+     * not_undoable and its reason when it is in an older format
+     * (JOURNAL_FORMAT). With the live row gone, $copy decides: the copy a
+     * pending undo kept of its entry (plan.entry, GoogleUndo::undoSeries), or
+     * [] for a plan that kept none; it is taken only when it carries the
+     * current format, and a copy without `format` is an older plan form,
+     * refused the same way, never defaulted. With no $copy, a gone entry is
+     * 404. Checks nothing else: whether the entry is already undone, still
+     * has snapshots or is stale is each caller's, in its own order.
+     */
+    public static function entryToTakeBack(Db $db, int $userId, int $entryId, ?array $copy = null): array
+    {
+        $entry = $db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [$entryId, $userId]);
+        if ($entry === null) {
+            if ($copy === null) {
+                throw HttpError::notFound('No such activity entry');
+            }
+            if ((int) ($copy['format'] ?? 0) !== self::JOURNAL_FORMAT) {
+                throw HttpError::conflict('not_undoable', self::OLDER_FORMAT);
+            }
+            return ['user_id' => $userId] + $copy;
+        }
+        if (self::olderFormat($entry)) {
+            $details = json_decode((string) ($entry['details_json'] ?? ''), true);
+            throw HttpError::conflict('not_undoable', is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : self::OLDER_FORMAT);
+        }
+        return $entry;
+    }
+
+    /**
+     * The backstop at each point an entry's content is written back here
+     * (restoreSnapshots, apply, GoogleUndo::finishUndo): an entry that did
+     * not come through entryToTakeBack fails closed. One without `format` is
+     * a programming error (misuse) and is refused; an older one is refused
+     * with its reason. Not the gate: on the recovery path these points come
+     * after Google's writes; the gate is the loader, before anything.
+     */
+    public static function assertCurrentFormat(array $entry, string $where): void
+    {
+        if (!array_key_exists('format', $entry)) {
+            self::misuse($where . ' with an entry that did not come through Undo::entryToTakeBack (no format)');
+            throw HttpError::conflict('not_undoable', self::OLDER_FORMAT);
+        }
+        if (self::olderFormat($entry)) {
+            throw HttpError::conflict('not_undoable', self::OLDER_FORMAT);
+        }
+    }
+
+    /**
      * Undo one specific activity entry (docs: 7-day window). Refuses
      * an entry in an older journal format (olderFormat), forced or not,
      * log-only rows (no snapshots, or snapshots already pruned) and, unless
@@ -1856,20 +1906,11 @@ final class Undo
      */
     public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null): array
     {
-        $mutation = $this->db->one(
-            'SELECT * FROM mutations WHERE id = ? AND user_id = ?',
-            [$mutationId, $userId]
-        );
-        if ($mutation === null) {
-            throw HttpError::notFound('No such activity entry');
-        }
+        // Through the one loader: an entry recorded by an earlier version
+        // (JOURNAL_FORMAT) is refused here, forced or not, before anything.
+        $mutation = self::entryToTakeBack($this->db, $userId, $mutationId);
         if ((int) $mutation['undone'] === 1) {
             throw HttpError::badRequest('Already undone', 'already_undone');
-        }
-        // Recorded by an earlier version (JOURNAL_FORMAT): log only since migration 077, forced or not.
-        if (self::olderFormat($mutation)) {
-            $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
-            throw HttpError::conflict('not_undoable', is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : self::OLDER_FORMAT);
         }
         if ($mutation['before_json'] === null && $mutation['after_json'] === null) {
             // Made log-only for a reason of its own (migration 064), it says so.
@@ -2018,6 +2059,7 @@ final class Undo
 
     private function apply(array $mutation, ?RequestAuthority $authority = null, bool $force = false): array
     {
+        self::assertCurrentFormat($mutation, 'Undo::apply');
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
         $calendarIds = self::calendarIdsOf($before, $after);
@@ -2422,6 +2464,7 @@ final class Undo
         if (!isset(self::$writing[spl_object_id($this->db) . ':' . (int) $mutation['user_id']])) {
             self::misuse('Undo::restoreSnapshots outside Undo::write');
         }
+        self::assertCurrentFormat($mutation, 'Undo::restoreSnapshots');
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
         if ($hereAlone) {

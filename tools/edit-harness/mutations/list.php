@@ -543,4 +543,26 @@ return [
         'patch' => [['$allDay ? \'Ymd\' : \'Ymd\THis\Z\'', '$allDay ? \'Ymd\THis\Z\' : \'Ymd\THis\Z\'']],
         'checks' => ["a tag given to one ordinary day of an all-day Google series: every live day row's Google id is its key's id under its series' form"],
     ],
+    // The merge of a Google list (rule 1 of 1.5.5): a dropped item acts by its key again, whatever form its id names,
+    // so it is taken for the resource of the series' form at that key. The checks are pure (server/tests/google-merge.php),
+    // run through the database suite's file of the same name, which is how this runner judges by label. Each fails in
+    // some order of its list or in all of them: a record or a row of the series' form removed, a skip of it cleared.
+    [
+        'id' => 'merge-dropped-by-key', 'file' => 'server/src/Domain/GoogleSync.php', 'dbtest' => 'google-merge',
+        'what' => 'a dropped item of a Google list is related to a row or a skip by its key alone, not by the form its id names',
+        'patch' => [["\$f = isset(\$ev['instance_all_day']) ? self::form((bool) \$ev['instance_all_day'])", "\$f = isset(\$ev['instance_all_day']) && empty(\$ev['dropped']) ? self::form((bool) \$ev['instance_all_day'])"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $form): array => array_map(static fn(string $what): string => "merge ($form): $what", [
+                'a record of the series\' form stands beside the other form\'s dropped item on its key',
+                'a read-back with the new master, a record and a skip of its form and the other form\'s dropped items on the same keys',
+                'a row stored under the other form\'s id is its master\'s form, and the other form\'s dropped item leaves it',
+                'a delta that carries the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that does not carry the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that changes no skipped day leaves the stored skips in their stored order',
+                'a delta that skips two more days writes the skips in key order, whatever order it lists them in',
+                'a stored row with no master goes with the dropped item of its own id, not with the other form\'s',
+            ]), ['date', 'time'])),
+            ['merge: an all-day day of a timed series is a row under its timed master'],
+        ),
+    ],
 ];

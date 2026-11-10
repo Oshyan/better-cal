@@ -443,26 +443,50 @@ final class GoogleSync
             return null;
         }
         $uid = Ics::uidOrNew(Ics::structural($uid));
-        $instance = null;
-        if (isset($item['originalStartTime'])) {
-            $instance = self::whenUtc($item['originalStartTime']);
-        }
-        if (($item['status'] ?? 'confirmed') === 'cancelled') {
-            // An exception record Google dropped (a master change that reset
-            // the series, an end before it; probe 3.1, 2.6) comes as a
-            // cancelled item under the record's instance id, with the
-            // series' iCalUID and no originalStartTime: the record is gone,
-            // the series is not, and the day is no skip. The row Google
-            // knew by that id goes, nothing else.
-            $dropped = $instance === null ? (GoogleWriter::instanceOf((string) ($item['id'] ?? ''))['key'] ?? null) : null;
-            if ($dropped !== null) {
-                return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $dropped, 'dropped' => true];
-            }
-            return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instance];
-        }
         // Google's own id for the resource: what the API is addressed by when
         // writing back (an exception's id is the instance id form).
         $googleId = isset($item['id']) ? (string) $item['id'] : null;
+        $cancelled = ($item['status'] ?? 'confirmed') === 'cancelled';
+        // What the item is, before what it says. An instance of a series is
+        // what Google marks as one (originalStartTime, recurringEventId), or
+        // a cancelled item under an instance id: an exception record Google
+        // dropped (a master change that reset the series, an end before it;
+        // probe 3.1, 2.6) comes so, with the series' iCalUID and neither
+        // mark. An instance is its series, its form (timed or all-day) and
+        // its key, never its key alone (GoogleWriter::instanceId): the key
+        // and the form are read from originalStartTime, by its shape, and
+        // for an item without one from its id. An instance never speaks as
+        // its series: one whose identity can't be read names nothing here.
+        $marked = isset($item['originalStartTime']) || (string) ($item['recurringEventId'] ?? '') !== '';
+        $original = is_array($item['originalStartTime'] ?? null) ? self::whenUtc($item['originalStartTime']) : null;
+        $instance = null;
+        $instanceAllDay = null;
+        if ($original !== null) {
+            $instance = $original;
+            $instanceAllDay = isset($item['originalStartTime']['date']);
+        } elseif ($marked || $cancelled) {
+            $of = GoogleWriter::instanceOf((string) $googleId);
+            if ($of !== null) {
+                $instance = $of['key'];
+                $instanceAllDay = $of['allDay'];
+            } elseif ($marked) {
+                error_log('google sync: an instance of series ' . $uid . ' whose day could not be read was left out');
+                return null;
+            }
+        }
+        if ($cancelled) {
+            if ($instance === null) {
+                return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => null];
+            }
+            // A cancelled record (it has its originalStartTime) is a skipped
+            // day. A dropped one (none) says the record under that id is
+            // gone: the series is not, and the day is no skip. Each names
+            // the one resource with its id, whatever sits at the same key in
+            // the other form (applyChanges).
+            return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instance]
+                + ($original === null ? ['dropped' => true] : [])
+                + ['google_event_id' => $googleId, 'instance_all_day' => $instanceAllDay];
+        }
         if (!isset($item['start'])) {
             return null;
         }
@@ -525,7 +549,12 @@ final class GoogleSync
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
             'google_event_id' => $googleId,
-        ] + (isset($item['etag']) && is_string($item['etag']) && $item['etag'] !== '' && strlen($item['etag']) <= 255
+        ] + ($instance !== null
+            // An instance's form: its series' when the record was made (the
+            // shape of originalStartTime), never its own start's, which an
+            // all-day day of a timed series has in the other shape.
+            ? ['instance_all_day' => $instanceAllDay]
+            : []) + (isset($item['etag']) && is_string($item['etag']) && $item['etag'] !== '' && strlen($item['etag']) <= 255
             // Google's version of the resource, sent back as If-Match on the
             // next write (GoogleWriter). Only when Google sends one, so an
             // answer without it leaves the stored one alone.
@@ -539,33 +568,60 @@ final class GoogleSync
     }
 
     /**
-     * Apply a change list to a snapshot (both in the parsed shape). Keys are
-     * uid|instance, like Feeds::sync. A cancelled master removes its whole
-     * series; a cancelled instance removes its override and becomes an
-     * EXDATE on the master, which is how Google says "this one is skipped".
-     * A live instance in the changes is a day that isn't skipped, whatever
-     * the master said before (a cancelled day put back at Google).
+     * Merge a list of Google items into a snapshot (both in the parsed
+     * shape): the calendar's rows as Google holds them once the list is
+     * read. A poll hands it a whole read (no snapshot) or a delta, a single
+     * write its answer (GoogleWriter::apply), a series change its read-back
+     * (GoogleSeries::store). Google gives a list no order, so the result is
+     * a function of the set of items: the same for every order of the list.
      *
-     * $delta: the changes are a sync-token delta, not the whole calendar
-     * and not a write's own answer. Google keeps a skipped day as a
-     * cancelled instance, not an EXDATE line, so a changed master arriving
-     * in a delta carries none of them; the probe (2026-11-07, case 7.2)
-     * found Google lists the series' cancelled instances again in the same
-     * delta. The skipped days of a changed master are then: the cancelled
-     * instances in the delta, the master's own EXDATE lines, and every skip
-     * stored here that the delta doesn't contradict with a live instance on
-     * that day. A write's answer (GoogleWriter::apply) is not a delta: the
-     * master was just sent with every skip as an EXDATE line, so its lines
-     * are the whole list, and a skip it left out was put back.
+     * An item is related to a row or a skipped day by identity, never by
+     * its key alone. An instance at Google is its series, its form (timed
+     * or all-day) and its key (GoogleWriter::instanceId): a timed occurrence
+     * at 00:00 UTC and the all-day one with the same key are two resources,
+     * and a change of form leaves both in one list. The rules (decisions.md,
+     * "A list from Google is merged by identity, whatever its order"):
      *
-     * A skip is Google's like a record: a master change that drops the
-     * series' exceptions (a clock, zone, rule or COUNT change; probe 3.1,
-     * 3.7) drops its cancelled records too, and the delta lists each as a
-     * dropped item (a cancelled item under the day's instance id with no
-     * originalStartTime). A dropped item says Google holds nothing of its
-     * own on that day, neither a record nor a skip: the row there goes and
-     * the stored skip goes with it, unless the master's own EXDATE lines in
-     * the same list name the day (a record dropped for an EXDATE, 3.16).
+     * 1. One item per resource. A series (or an event that doesn't repeat)
+     *    is named by its uid, an instance by its series, form and key;
+     *    where a list names one twice, the later stands. That is the only
+     *    use of order, and it is within one resource.
+     * 2. The final master of a series is the list's when it has one, else
+     *    the snapshot's, and its form is the series' form. A cancelled
+     *    master removes the series: its rows go, and a record of it listed
+     *    live beside it makes no row.
+     * 3. A snapshot row's identity is its key under the form of the master
+     *    it was stored under, and a stored skip's the same. A row with no
+     *    master in the snapshot has the form its stored Google id names.
+     * 4. A dropped item (a record Google no longer holds: cancelled, no
+     *    originalStartTime) speaks only about the resource with its id: the
+     *    row with its identity goes and the stored skip with its identity
+     *    is no skip. It touches nothing of the other form at the same key.
+     * 5. Only the final master's form counts. A snapshot row or stored skip
+     *    of another form is nothing Google can hold under that master: the
+     *    row leaves and the skip clears, whether or not the list names a
+     *    dropped item for it (a change of form made elsewhere). A live or
+     *    cancelled record of another form is left out, with a log line.
+     * 6. Within the final form a key has at most one item: a live record is
+     *    a row and no skip, a cancelled record a skip and no row, a dropped
+     *    item neither, unless the master's own EXDATE lines in the same
+     *    list name the day (a record dropped for an EXDATE line, 3.16).
+     * 7. The skips of a master the list carries are its EXDATE lines, the
+     *    cancelled records of its form and, in a delta, the stored skips of
+     *    its form that no live record and no dropped item contradicts
+     *    (Google keeps a skipped day as a cancelled instance, so a changed
+     *    master arriving in a delta carries no line for it; probe 7.2). A
+     *    write's answer is not a delta: the master was just sent with every
+     *    skip as an EXDATE line, so a skip it left out was put back. A
+     *    master the list doesn't carry keeps its stored skips the same way.
+     *
+     * An instance item with no form (GoogleWriter::tombstone: the app's own
+     * word about the day at a key, made under the series as stored) is of
+     * the series' form. A series with no master, listed or stored, has no
+     * form to judge by: each item acts on its own identity.
+     *
+     * $delta: the changes are a sync-token delta, not the whole calendar,
+     * not a read-back and not a write's own answer (rule 7).
      *
      * @param list<array> $snapshot
      * @param list<array> $changes
@@ -584,102 +640,63 @@ final class GoogleSync
             throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'cached Google calendar'));
         }
         Recurrence::assertExdateBatch($snapshot);
-        $byKey = [];
-        $keysByUid = [];
-        // The skipped days stored here, per series, before any change.
-        $storedSkips = [];
-        foreach ($snapshot as $index => $ev) {
-            if (($index & 127) === 0) {
-                self::assertWithinDeadline($deadline);
-            }
-            $key = self::key($ev);
-            $byKey[$key] = $ev;
-            $keysByUid[(string) $ev['uid']][$key] = true;
-            if ($ev['recurrence_instance_utc'] === null) {
-                $storedSkips[(string) $ev['uid']] = $ev['exdates'] ?? [];
-            }
-        }
-        // Per series: the days the changes skip, and the days they say
-        // happen (a live instance), each the last word on its day.
-        $skipped = [];
-        $live = [];
-        $droppedKeys = [];
-        $unskipped = [];
-        $changedMasters = [];
-        // Series the changes cancel whole: a record of one listed live in
-        // the same list (Google lists a removed series' records with it, and
-        // what it does with them is its own) makes no row without its series.
-        $removed = [];
+        // Rule 1 for a series' own item: the later one listed stands. Its
+        // instances' items wait, in the order listed, until the series'
+        // form is known (mergeSeries).
+        $listed = [];
+        $items = [];
         foreach ($changes as $index => $ev) {
             if (($index & 127) === 0) {
                 self::assertWithinDeadline($deadline);
             }
-            $uid = (string) $ev['uid'];
-            $instance = $ev['recurrence_instance_utc'];
-            if (!empty($ev['cancelled'])) {
-                if ($instance === null) {
-                    foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
-                        unset($byKey[$key]);
-                    }
-                    unset($keysByUid[$uid], $changedMasters[$uid], $skipped[$uid], $live[$uid], $unskipped[$uid]);
-                    $removed[$uid] = true;
-                } elseif (!empty($ev['dropped'])) {
-                    // A dropped exception record: its row goes unless a live
-                    // row in this list takes the key; the day is no skip.
-                    $droppedKeys[$uid][self::key($ev)] = $instance;
-                    unset($skipped[$uid][$instance]);
-                    $unskipped[$uid][$instance] = true;
-                } else {
-                    $key = self::key($ev);
-                    unset($byKey[$key], $keysByUid[$uid][$key], $live[$uid][$instance], $unskipped[$uid][$instance]);
-                    $skipped[$uid][$instance] = true;
-                }
-                continue;
-            }
-            $key = self::key($ev);
-            if (!isset($byKey[$key]) && count($byKey) >= $maxEvents) {
-                throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'Google calendar'));
-            }
-            $byKey[$key] = $ev;
-            $keysByUid[$uid][$key] = true;
-            if ($instance === null) {
-                $changedMasters[$uid] = true;
-                unset($removed[$uid]);
+            if ($ev['recurrence_instance_utc'] === null) {
+                $listed[(string) $ev['uid']] = $ev;
             } else {
-                unset($skipped[$uid][$instance]);
-                $live[$uid][$instance] = true;
+                $items[(string) $ev['uid']][] = $ev;
             }
         }
-        foreach (array_keys($removed) as $uid) {
-            foreach (array_keys($keysByUid[$uid] ?? []) as $key) {
-                unset($byKey[$key]);
+        // The snapshot by key, and what it holds of each series the list
+        // names. Every other row passes through as it is.
+        $byKey = [];
+        $masters = [];
+        $rows = [];
+        foreach ($snapshot as $index => $ev) {
+            if (($index & 127) === 0) {
+                self::assertWithinDeadline($deadline);
             }
-            unset($keysByUid[$uid], $skipped[$uid], $live[$uid], $unskipped[$uid]);
-        }
-        foreach ($droppedKeys as $uid => $keys) {
-            foreach ($keys as $key => $instance) {
-                if (!isset($live[$uid][$instance])) {
-                    unset($byKey[$key], $keysByUid[$uid][$key]);
-                }
-            }
-        }
-        foreach (array_keys($changedMasters + $skipped + $live + $unskipped) as $uid) {
-            $uid = (string) $uid;
-            $masterKey = $uid . '|';
-            if (!isset($byKey[$masterKey])) {
+            $uid = (string) $ev['uid'];
+            $byKey[self::key($ev)] = $ev;
+            if (!isset($listed[$uid]) && !isset($items[$uid])) {
                 continue;
             }
-            $dates = $byKey[$masterKey]['exdates'] ?? [];
-            // The master's own EXDATE lines, when this list carries it.
-            $lines = isset($changedMasters[$uid]) ? array_flip($dates) : [];
-            if ($delta && isset($changedMasters[$uid])) {
-                $dates = array_merge($dates, $storedSkips[$uid] ?? []);
+            if ($ev['recurrence_instance_utc'] === null) {
+                $masters[$uid] = $ev;
+            } else {
+                $rows[$uid][(string) $ev['recurrence_instance_utc']] = $ev;
             }
-            $dates = array_merge($dates, array_keys($skipped[$uid] ?? []));
-            $dates = array_values(array_filter($dates, static fn(string $d): bool => !isset($live[$uid][$d])
-                && (!isset($unskipped[$uid][$d]) || isset($lines[$d]) || isset($skipped[$uid][$d]))));
-            $byKey[$masterKey]['exdates'] = Recurrence::validateExdates($dates);
         }
+        // Each series the list names, in the order of its uid and not the
+        // list's: a row that stays keeps its place, a new one is appended,
+        // the master first and then its days by key.
+        $named = array_map('strval', array_keys($listed + $items));
+        sort($named, SORT_STRING);
+        foreach ($named as $index => $uid) {
+            if (($index & 127) === 0) {
+                self::assertWithinDeadline($deadline);
+            }
+            $after = self::mergeSeries($uid, $masters[$uid] ?? null, $rows[$uid] ?? [], $listed[$uid] ?? null, $items[$uid] ?? [], $delta);
+            foreach (array_merge(isset($masters[$uid]) ? [''] : [], array_keys($rows[$uid] ?? [])) as $key) {
+                if (!isset($after[$key])) {
+                    unset($byKey[$uid . '|' . $key]);
+                }
+            }
+            foreach ($after as $key => $ev) {
+                $byKey[$uid . '|' . $key] = $ev;
+            }
+        }
+        // The limit is on what the calendar holds after the list, not on a
+        // moment of walking it: a list that adds one event and removes
+        // another is the same list in either order.
         $result = array_values($byKey);
         if (count($result) > $maxEvents) {
             throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'Google calendar'));
@@ -687,6 +704,131 @@ final class GoogleSync
         Recurrence::assertExdateBatch($result);
         self::assertWithinDeadline($deadline);
         return $result;
+    }
+
+    /**
+     * One series after a list, by the rules of applyChanges: its master
+     * under '' and its days' rows under their keys, or nothing when the
+     * list cancels it.
+     *
+     * @param array<string,array> $storedRows the snapshot's day rows of the series, by key
+     * @param list<array> $items the list's instance items of the series, in the order listed
+     * @return array<string,array>
+     */
+    private static function mergeSeries(string $uid, ?array $storedMaster, array $storedRows, ?array $listed, array $items, bool $delta): array
+    {
+        // Rule 2: the final master, and the series' form.
+        if ($listed !== null && !empty($listed['cancelled'])) {
+            return [];
+        }
+        $master = $listed ?? $storedMaster;
+        $form = $master === null ? null : self::form((int) ($master['all_day'] ?? 0) === 1);
+        $storedForm = $storedMaster === null ? null : self::form((int) ($storedMaster['all_day'] ?? 0) === 1);
+        // Rule 3: each stored row under its identity, form then key.
+        $held = [];
+        $formAt = [];
+        foreach ($storedRows as $key => $row) {
+            $f = $storedForm ?? self::form(GoogleWriter::instanceOf((string) ($row['google_event_id'] ?? ''))['allDay'] ?? null);
+            $held[$f][(string) $key] = $row;
+            $formAt[(string) $key] = $f;
+        }
+        // Rule 1: one item per identity, the later standing. An item that
+        // names no form is of the series' form; in a series with no master
+        // it names the row stored at its key.
+        $said = [];
+        foreach ($items as $ev) {
+            $key = (string) $ev['recurrence_instance_utc'];
+            $f = isset($ev['instance_all_day']) ? self::form((bool) $ev['instance_all_day']) : ($form ?? $formAt[$key] ?? self::form(null));
+            $said[$f][$key] = $ev;
+        }
+        // Rules 4 to 6: what each item says of the resource with its
+        // identity. Only the series' form counts toward its days.
+        $live = [];
+        $cancelled = [];
+        $dropped = [];
+        $strays = 0;
+        foreach ($said as $f => $ofForm) {
+            $counts = $form === null || (string) $f === $form;
+            foreach ($ofForm as $key => $ev) {
+                $key = (string) $key;
+                if (!empty($ev['dropped'])) {
+                    unset($held[$f][$key]);
+                    if ($counts) {
+                        $dropped[$key] = true;
+                    }
+                } elseif (!$counts) {
+                    $strays++;
+                } elseif (!empty($ev['cancelled'])) {
+                    unset($held[$f][$key]);
+                    $cancelled[$key] = true;
+                } else {
+                    $held[$f][$key] = $ev;
+                    $live[$key] = true;
+                }
+            }
+        }
+        if ($strays > 0) {
+            error_log('google sync: series ' . $uid . ': ' . $strays . ' record(s) listed in a form other than the series\' own were left out');
+        }
+        // Rule 5: the rows of the series' form are its days. With no master
+        // there is no form to judge by, and where two forms would give one
+        // key the forms' order decides, never the list's.
+        if ($form !== null) {
+            $days = $held[$form] ?? [];
+        } else {
+            ksort($held, SORT_STRING);
+            $days = [];
+            foreach ($held as $ofForm) {
+                foreach ($ofForm as $key => $row) {
+                    $days[(string) $key] = $row;
+                }
+            }
+        }
+        ksort($days, SORT_STRING);
+        $out = [];
+        if ($master !== null) {
+            // Rule 7. The skips are a set: the master's own lines, the
+            // stored skips kept and the cancelled records, less the days a
+            // live record holds.
+            $lines = $listed !== null ? (array) ($listed['exdates'] ?? []) : [];
+            $kept = $listed === null || ($delta && $storedForm === $form) ? (array) ($storedMaster['exdates'] ?? []) : [];
+            $skips = [];
+            foreach ($lines as $d) {
+                $skips[(string) $d] = true;
+            }
+            foreach ($kept as $d) {
+                if (!isset($dropped[(string) $d])) {
+                    $skips[(string) $d] = true;
+                }
+            }
+            foreach (array_keys($cancelled) as $d) {
+                $skips[(string) $d] = true;
+            }
+            foreach (array_keys($live) as $d) {
+                unset($skips[(string) $d]);
+            }
+            // Written in key order, whatever order the list named them in.
+            // A list that changes no skipped day leaves the stored list as
+            // it is: Feeds::sameValue compares it in order, and a merge
+            // that skips and brings back nothing is no change to the master.
+            ksort($skips, SORT_STRING);
+            $dates = array_map('strval', array_keys($skips));
+            $was = $storedMaster === null ? [] : array_map('strval', (array) ($storedMaster['exdates'] ?? []));
+            $wasSet = array_values(array_unique($was));
+            sort($wasSet, SORT_STRING);
+            $master['exdates'] = Recurrence::validateExdates($wasSet === $dates ? $was : $dates);
+            $out[''] = $master;
+        }
+        foreach ($days as $key => $row) {
+            $out[(string) $key] = $row;
+        }
+        return $out;
+    }
+
+    /** A form as a word: 'date' (all-day), 'time' (timed), '' (none known). */
+    private static function form(?bool $allDay): string
+    {
+        return $allDay === null ? '' : ($allDay ? 'date' : 'time');
     }
 
     /**

@@ -272,7 +272,8 @@ final class GoogleUndo
             return ['googleId' => $googleId, 'key' => (string) $key];
         }
         if ($master !== null) {
-            $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
+            // The id says the form its key was written in (a date or an instant); the key alone does not.
+            $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key, [$of['allDay'], null]);
             if ($at !== null) {
                 // Its identity now: the series id, its occurrence now and the series' form now. Never the
                 // id the entry journaled, which names the form of then (a series made all-day since keeps
@@ -304,6 +305,9 @@ final class GoogleUndo
         // The series as it is with the day back: its skip of the day is what this undo takes away.
         $skips = array_values(array_diff(Recurrence::decodeExdates($master['exdates_json'] ?? null), [(string) $key]));
         $master['exdates_json'] = $skips === [] ? null : json_encode($skips);
+        // The removed row at the day's key now ($googleId is the day's id as the series stands, dayAt): the key it was
+        // removed at is one of the series as it was, and read under this one it is another day's values (its start).
+        $row = $row === null ? null : array_merge($row, ['recurrence_instance_utc' => (string) $key]);
         $day = $row ?? (['recurrence_instance_utc' => (string) $key, 'recurrence_parent_id' => (int) $master['id'], 'override_fields' => '[]'] + $master);
         $body = $this->beforeOver($row !== null ? self::bodyOf($row) : [], $row ?? $day, $day, $master);
         return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));

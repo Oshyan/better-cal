@@ -507,4 +507,28 @@ return [
         ]],
         'cases' => ['edited-day-rejoins-the-series'],
     ],
+    // A day row's stored Google id is an identity (audit-155-identity, fix list items 6 and 7): derived whenever the
+    // row is placed, and an undo addresses the day by its id now. The database cases make a series timed at 00:00 UTC
+    // all-day (each day keeps its key, every id changes form) over a day holding only a tag. The change made here is
+    // placed by the plan's writer as well as by the store's sync, so the guard in ofSeries alone shows on the change
+    // made at Google, which a poll alone places.
+    [
+        'id' => 'ofseries-id-only-on-key-move', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'google-day-identity',
+        'what' => 'Feeds::ofSeries derives a placed day\'s Google id only when its key moves, as before 1.5.5',
+        'patch' => [['        return $placed($target, $at);', '        return $at !== $key ? $placed($target, $at) : $target;']],
+        'checks' => [
+            'made all-day at Google: after the poll the series is all-day and the tagged day keeps its key and takes the date-form id',
+            'made all-day at Google: I1 holds after the poll',
+            'made all-day at Google: the next rename goes through',
+            'made all-day at Google: the next rename goes to the date-form id',
+            'made all-day at Google: I1 holds at the end',
+        ],
+    ],
+    [
+        'id' => 'dayat-journaled-id', 'file' => 'server/src/Domain/GoogleUndo.php', 'dbtest' => 'google-day-identity',
+        'what' => 'GoogleUndo::dayAt returns the id the entry journaled when the day\'s key is the same now, whatever form the series has since',
+        'patch' => [["                return ['googleId' => GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];",
+            "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
+        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
+    ],
 ];

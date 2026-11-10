@@ -841,10 +841,12 @@ trait SeriesPlans
                 if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
                     $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
                 }
-                // A day carried to another occurrence is that occurrence at Google (Feeds::googleIdAt).
-                if (isset($cols['recurrence_instance_utc'], $byId[$rid]) && $series !== null && !isset($cols['calendar_id'])
-                    && (string) $cols['recurrence_instance_utc'] !== (string) $byId[$rid]['recurrence_instance_utc']
-                    && ($gid = Feeds::googleIdAt($byId[$rid], $series, (string) $cols['recurrence_instance_utc'])) !== null) {
+                // A day placed by the plan is its occurrence at Google in the
+                // series' form as written, on a new key or its own
+                // (Feeds::googleIdAt): a form change moves the id, not the key.
+                $key = array_key_exists('recurrence_instance_utc', $cols) ? $cols['recurrence_instance_utc'] : ($byId[$rid]['recurrence_instance_utc'] ?? null);
+                if ($key !== null && isset($byId[$rid]) && $series !== null && !isset($cols['calendar_id'])
+                    && ($gid = Feeds::googleIdAt($byId[$rid], $series, (string) $key)) !== null) {
                     $cols['google_event_id'] = $gid;
                 }
                 $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
@@ -874,6 +876,9 @@ trait SeriesPlans
                 $row['rrule'] = null;
                 $row['exdates_json'] = null;
                 $row['created_via'] = ActivityContext::get();
+                // Its id is its occurrence's at Google in the series' form as written (Feeds::googleIdAt), never the
+                // series' own id the copy carries; none where the series has none.
+                $row['google_event_id'] = isset($cols['recurrence_instance_utc']) ? Feeds::googleIdAt($after, $after, (string) $cols['recurrence_instance_utc']) : null;
                 $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
                 $createdEdited[] = $newId;
             }

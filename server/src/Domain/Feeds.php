@@ -718,6 +718,15 @@ final class Feeds
         if (empty($series['rrule'])) {
             return null;
         }
+        // The id Google knows the day by wherever it is placed: its key
+        // under the series' form now (googleIdAt), derived every time,
+        // since a form change at a key that stays changes the id too.
+        $placed = static function (array $target, string $at) use ($row, $series): array {
+            if (($id = self::googleIdAt($row, $series, $at)) !== null) {
+                $target['google_event_id'] = $id;
+            }
+            return $target;
+        };
         $calcOf = static function (?array $r): ?\BetterCal\Domain\Series\Calc {
             if ($r === null || empty($r['rrule'])) {
                 return null;
@@ -731,7 +740,7 @@ final class Feeds
         };
         $calc = $calcOf($series);
         if ($calc === null) {
-            return $target;
+            return $placed($target, $key);
         }
         try {
             $skips = Recurrence::decodeExdates($series['exdates_json'] ?? null);
@@ -742,7 +751,7 @@ final class Feeds
         try {
             $on = array_values(array_diff($calc->keysOn($dn), $skips));
         } catch (\BetterCal\Domain\Series\WalkIncomplete) {
-            return $target;
+            return $placed($target, $key);
         }
         $at = in_array($key, $on, true) ? $key : (count($on) === 1 ? $on[0] : null);
         if ($at === null) {
@@ -752,21 +761,21 @@ final class Feeds
         $target['recurrence_instance_utc'] = $at;
         $target['start_utc'] = $at;
         $target['end_utc'] = Time::toDb(Time::fromDb($at)->modify('+' . $length . ' seconds'));
-        if ($at !== $key && ($id = self::googleIdAt($row, $series, $at)) !== null) {
-            $target['google_event_id'] = $id;
-        }
-        return $target;
+        return $placed($target, $at);
     }
 
     /**
-     * The id Google knows a day by: its series and its occurrence. A day's
-     * row Google knows ($row has an id there) moved to occurrence $at of
-     * $series is that occurrence's instance there, never the id it carried
-     * from the occurrence it left or the series it left. The one
-     * derivation every place that moves a day's key or series uses (a
-     * poll, ofSeries; a change for all events and a split, SeriesPlans; an
-     * undo placing a day, Undo::overCurrent). Null for a
-     * row or series Google doesn't know. Pure.
+     * The id Google knows a day by: its series id, its form and its
+     * occurrence (GoogleWriter::instanceId). A day's row Google knows ($row
+     * has an id there) placed at occurrence $at of $series is that
+     * occurrence's instance there, in the series' form as it is now, never
+     * the id it carried from the occurrence, the form or the series it
+     * left. Derived whenever a row is placed, not only when its key moves:
+     * a series made all-day keeps a day at 00:00 UTC on its key while its id
+     * changes form. The one derivation every place that places a day uses
+     * (a poll, ofSeries; a change for all events and a split, SeriesPlans;
+     * an undo placing a day, Undo::overCurrent). Null for a row or series
+     * Google doesn't know. Pure.
      */
     public static function googleIdAt(array $row, array $series, string $at): ?string
     {

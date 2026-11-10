@@ -1183,11 +1183,13 @@ final class GoogleSeries
      * every other field of the resource (extrasOf).
      *
      * A record is an instance by its identity, which is its series, its
-     * form and its key (GoogleWriter::instanceOf of its own id), never by
-     * its key alone: one whose id is in another form than the master read
-     * with it (a list that lags a change between timed and all-day) is no
-     * day of that master and is left out, whatever key it shares with one.
-     * `ids` keeps the id Google lists each record under, by its key.
+     * form and its key, never by its key alone. Its form and its id are
+     * the ones the sync reads for every instance item (GoogleSync::toParsed:
+     * `instance_all_day`, `google_event_id`), the one reading of an item's
+     * identity. A record in another form than the master read with it (a
+     * list that lags a change between timed and all-day) is no day of that
+     * master and is left out, whatever key it shares with one. `ids` keeps
+     * the id Google lists each record under, by its key.
      *
      * @return array{master:?array, records:array<string,array>, cancelled:array<string,true>, skips:array<string,true>, etags:array<string,string>, ids:array<string,string>}
      */
@@ -1211,17 +1213,16 @@ final class GoogleSeries
                 continue;
             }
             if (empty($parsed['dropped']) && $parsed['recurrence_instance_utc'] !== null) {
-                $days[] = [(string) ($item['id'] ?? ''), $parsed];
+                $days[] = $parsed;
             }
         }
         // Each record against the master it was read with (a list gives no order, so the master is found first).
-        foreach ($days as [$id, $parsed]) {
-            $of = GoogleWriter::instanceOf($id);
-            if ($out['master'] !== null && $of !== null && $of['allDay'] !== ((int) $out['master']['all_day'] === 1)) {
+        foreach ($days as $parsed) {
+            if ($out['master'] !== null && (bool) $parsed['instance_all_day'] !== ((int) $out['master']['all_day'] === 1)) {
                 continue;
             }
             $key = (string) $parsed['recurrence_instance_utc'];
-            $out['ids'][$key] = $id;
+            $out['ids'][$key] = (string) $parsed['google_event_id'];
             if (!empty($parsed['cancelled'])) {
                 $out['cancelled'][$key] = true;
                 $out['skips'][$key] = true;

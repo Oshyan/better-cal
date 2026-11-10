@@ -611,7 +611,9 @@ trait Invariants
     private function checkUnsupported(array $before, array $after, array $sent, array $choices, ?array $plan): void
     {
         $edit = $sent['edit'];
-        $x = new Expect($before, $edit);
+        // The edit as committed, its answered choices included (an adopted time is measured from the occurrence, so it
+        // moves no day), as the supported path reads it.
+        $x = (new Expect($before, $edit + ['adopt' => $choices]))->withZone($choices['zone'] ?? null);
         $why = $x->refusal();
         if ($why !== null) {
             $this->fail('e-refusal', 'the design refuses this edit (' . $why . '), and it was applied', ['rrule' => $before['row']['rrule']]);
@@ -1349,7 +1351,7 @@ trait Invariants
         }
         // The part's plan: its adoption groups, and (on the case's own commit) its preselections against the design's.
         $partGroups = array_column($sent['_plan']['groups'] ?? [], null, 'id');
-        $this->checkAdoptions(new Expect($part, $edit), $partGroups);
+        $this->checkAdoptions($x, $partGroups);
         if ($this->trial === null && $this->splitBaseline !== null) {
             $this->checkPreselection($this->splitBaseline, $part, $edit);
         }

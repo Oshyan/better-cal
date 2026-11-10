@@ -503,7 +503,7 @@ final class GoogleUndo
                     $this->undo->checkRestore($mutation, true);
                 }
                 $resp = $send === [] ? null : self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $send, $beforeSend, $current));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $send, $googleId, $now, $row, $rowId, $changed, $userId, $summary, $mutation, $local): void {
                     $was = $this->rowTables($rowId);
                     // The row put back first (made again under its id, or
                     // removed, as the edit found it), Google's answer stored
@@ -512,7 +512,7 @@ final class GoogleUndo
                         $this->undo->restoreSnapshots($mutation, true);
                     }
                     if ($resp !== null) {
-                        $writer->apply($calendar, [$resp]);
+                        $writer->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($send));
                     }
                     // The undo's own entry carries the fields it sent back,
                     // each at its value before the undo, so undoing it (redo)
@@ -547,11 +547,11 @@ final class GoogleUndo
                 // was deleted (the series' values of then).
                 $body = ['status' => $status] + $this->dayBack($calendar, $googleId, json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'][0] ?? null);
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current));
-                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $googleId, $userId, $summary, $mutation, $removed): void {
+                $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $body, $googleId, $userId, $summary, $mutation, $removed): void {
                     if ($removed) {
                         $this->undo->restoreSnapshots($mutation);
                     }
-                    $writer->apply($calendar, [$resp]);
+                    $writer->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($body));
                     $back = $writer->rowByGoogleId((int) $calendar['id'], $googleId);
                     // A day of a series back at the series' own values is an ordinary
                     // occurrence again, with no row here: its series and day are kept,
@@ -575,7 +575,7 @@ final class GoogleUndo
                     // that one occurrence skips it (Events: the instance deleted at Google, a skip here).
                         self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
                     $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $googleId, $userId, $summary, $mutation, $occurrence, $g): void {
-                        $writer->apply($calendar, [], [GoogleWriter::tombstone($occurrence['uid'], $occurrence['key'])]);
+                        $writer->apply($calendar, [], false, [GoogleWriter::tombstone($occurrence['uid'], $occurrence['key'])]);
                         $master = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
                             [(int) $calendar['id'], $occurrence['uid']]);
                         $this->record($userId, $master !== null ? (int) $master : (int) $mutation['entity_id'], $summary,
@@ -590,7 +590,7 @@ final class GoogleUndo
                 $local = $this->localOf($row);
                 self::refusingConflict(fn() => $writer->delete($calendar, $googleId, $beforeSend));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $row, $googleId, $userId, $summary, $local, $g, $mutation): void {
-                    $writer->apply($calendar, [], [GoogleWriter::tombstone((string) $row['uid'], $row['recurrence_instance_utc'] !== null ? (string) $row['recurrence_instance_utc'] : null)]);
+                    $writer->apply($calendar, [], false, [GoogleWriter::tombstone((string) $row['uid'], $row['recurrence_instance_utc'] !== null ? (string) $row['recurrence_instance_utc'] : null)]);
                     // A day's delete has its skip as its ground, as Events' day deletes record it.
                     $this->record($userId, (int) $row['id'], $summary,
                         self::details(self::DELETE, $calendar, $googleId, ['status' => self::bodyOf($row)['status']], $g['etagAfter'] ?? null, null, ['local' => $local, 'undoes' => (int) $mutation['id']]),
@@ -619,7 +619,8 @@ final class GoogleUndo
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, ['attendees' => array_values($attendees)], $beforeSend, $current));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $row, $googleId, $userId, $summary, $was, $current, $g, $mutation): void {
                     $attendance = $row['attendance'] ?? null;
-                    $writer->apply($calendar, [$resp]);
+                    // The guest list alone was sent back: the answer says nothing of the series' skipped days.
+                    $writer->apply($calendar, [$resp], false);
                     if (is_string($g['attendance'] ?? null)) {
                         $this->db->run('UPDATE events SET attendance = ? WHERE id = ?', [$g['attendance'], (int) $row['id']]);
                     }
@@ -948,7 +949,7 @@ final class GoogleUndo
                 foreach ($rows as $row) {
                     if (in_array((int) $row['id'], array_map('intval', $writes['delete']), true)) {
                         $own = OwnFields::decode($row['override_fields'] ?? null) ?? [];
-                        $removed[] = Feeds::droppedDay($row, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
+                        $removed[] = Feeds::droppedDay($row, $master, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
                     }
                 }
             }

@@ -2378,7 +2378,7 @@ final class GoogleSeries
         foreach ($rows as $r) {
             $had[(int) $r['id']] = true;
         }
-        $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($others), GoogleSync::toParsedList($items));
+        $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($others), GoogleSync::toParsedList($items), true);
         $this->feeds->sync($calendar, $snapshot, journal: false);
         if ($pendingId !== null && $uids !== []) {
             [$in, $params] = Db::in(array_keys($uids));

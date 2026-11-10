@@ -1585,7 +1585,7 @@ trait SeriesPlans
             unset($userId, $fields);
         });
         if ($resp !== null) {
-            $this->google()->apply($google, [$resp]);
+            $this->google()->apply($google, [$resp], false); // one day's record: no recurrence sent
         }
         $after = $gone ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
         $summary = "Used the series' " . Words::andList(array_map(static fn(string $f): string => $f === 'location' ? 'place' : $f, $fields)) . " for '" . (string) $row['title'] . "'";

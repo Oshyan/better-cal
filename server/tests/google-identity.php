@@ -94,7 +94,7 @@ if (!function_exists('check')) {
     $case = static function (string $name, array $snapshot, array $changes, bool $delta, array $want) use ($read, $permutations): void {
         $seen = [];
         foreach ($permutations($changes) as $order) {
-            $seen[json_encode($read(GoogleSync::applyChanges($snapshot, $order, delta: $delta)))] = true;
+            $seen[json_encode($read(GoogleSync::applyChanges($snapshot, $order, !$delta)))] = true;
         }
         check("google identity, applyChanges: $name (every order of the list gives " . json_encode($want) . ')', array_keys($seen) === [json_encode($want)],
             'got ' . implode(' | ', array_keys($seen)));

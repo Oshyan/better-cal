@@ -450,18 +450,38 @@ final class GoogleWriter
      * resources upsert, the tombstones delete or become EXDATEs. The next
      * scheduled poll sees the same changes again and finds nothing to do.
      *
+     * $sentRecurrence: whether the write these answer sent the series'
+     * recurrence (its rule and every skip as an EXDATE line). Only then is
+     * the answer everything about the series' skipped days. An answer to a
+     * write that sent none (an answer to an invitation, a status, a field,
+     * one day) is the series' or the day's own resource and says nothing of
+     * the days Google holds as cancelled records, so the skips stored here
+     * stand (GoogleSync::applyChanges, rule 7). The writer knows what it
+     * sent, and says so at every call.
+     *
      * @param list<array> $resources Google event resources
      * @param list<array{cancelled:true,uid:string,recurrence_instance_utc:?string}> $tombstones
      */
-    public function apply(array $calendar, array $resources, array $tombstones = []): void
+    public function apply(array $calendar, array $resources, bool $sentRecurrence, array $tombstones = []): void
     {
         $changes = array_merge(GoogleSync::toParsedList($resources), $tombstones);
         $snapshot = GoogleSync::applyChanges(GoogleSync::rowsToParsed($this->db->all(
             'SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL',
             [(int) $calendar['id']]
-        )), $changes);
+        )), $changes, $sentRecurrence);
         // No feed roll-up in Activity: the caller records what the person did.
         $this->feeds->sync($calendar, $snapshot, journal: false);
+    }
+
+    /**
+     * Whether a body sent to Google says the series' recurrence: the one
+     * reading of "the write sent the recurrence" every caller of apply
+     * gives. An insert's body always does (body), a PATCH's only when the
+     * rule or the skips changed (patchOf), an instance's never. Pure.
+     */
+    public static function sendsRecurrence(array $body): bool
+    {
+        return array_key_exists('recurrence', $body);
     }
 
     public function rowByGoogleId(int $calendarId, string $googleId): ?array

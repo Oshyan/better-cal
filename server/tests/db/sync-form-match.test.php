@@ -224,7 +224,7 @@ return static function (Db $db): void {
                 $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]);
                 $snapshot = GoogleSync::applyChanges(
                     GoogleSync::rowsToParsed($db->all('SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$s->calendarId])),
-                    GoogleSync::toParsedList([$master]), null, null, true);
+                    GoogleSync::toParsedList([$master]), false);
                 $s->feeds->sync($calendar, $snapshot);
                 checkEq('after: no skip is left, the series is in its new form, and the tagged day is the row it was, at its own day\'s key with its tag',
                     [[], (int) $toAllDay, [[$id, $now($tagged), (int) $toAllDay]], ['sample-day']],

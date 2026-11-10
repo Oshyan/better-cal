@@ -448,7 +448,8 @@ final class Events
     {
         $resp = $this->google()->insert($calendar, $row, $this->googleBeforeSend($authority));
         $id = $this->googleCommit($authority, function () use ($calendar, $resp, $row, $userId, $in): ?int {
-            $this->google()->apply($calendar, [$resp]);
+            // An insert sends the whole event, its recurrence with it.
+            $this->google()->apply($calendar, [$resp], GoogleWriter::sendsRecurrence(GoogleWriter::body($row)));
             $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? ''));
             if ($created === null) {
                 return null; // what Google answered is still kept
@@ -501,9 +502,9 @@ final class Events
             $localFields += $googleFields;
             $googleFields = [];
         }
-        $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in, $event): void {
+        $this->googleCommit($authority, function () use ($calendar, $resp, $body, $id, $userId, $localFields, $in, $event): void {
             if ($resp !== null) {
-                $this->google()->apply($calendar, [$resp]);
+                $this->google()->apply($calendar, [$resp], GoogleWriter::sendsRecurrence($body));
             }
             if ($localFields !== []) {
                 $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
@@ -627,7 +628,8 @@ final class Events
                 }
             }
             if ($resp !== null) {
-                $this->google()->apply($calendar, [$resp]);
+                // One day's write: an instance's body never says the series' recurrence.
+                $this->google()->apply($calendar, [$resp], false);
             }
             if ($existing !== null) {
                 if ($this->db->one('SELECT id FROM events WHERE id = ? AND deleted_at IS NULL', [$rowId]) === null) {
@@ -765,7 +767,7 @@ final class Events
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($event)['status']],
             $event['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($event)]);
         $gone = $this->googleRemove($calendar, $googleId, $authority);
-        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $event['uid'], null)]));
         $this->googleJournal($userId, $summary, $calendar, (int) $event['id'], $undo, note: $gone ? GoogleWriter::ALREADY_GONE : null);
     }
 
@@ -806,7 +808,7 @@ final class Events
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
         $gone = $this->googleRemove($calendar, $googleId, $authority);
-        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
         // What it changed, as on a local calendar: the series' skipped days
         // (and the day's row, when it had one: its snapshot says so), not the series whole.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id'], $undo, null,
@@ -825,7 +827,7 @@ final class Events
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => GoogleUndo::bodyOf($override)['status']],
             $override['google_etag'] ?? null, null, ['local' => $this->googleUndo()->localOf($override)]);
         $gone = $this->googleRemove($calendar, $googleId, $authority);
-        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], false, [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
         // The day's skip is its ground, as googleDeleteThis records it: the undo takes that skip back.
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id'], $undo, null,
             empty($override['recurrence_parent_id']) ? [] : [[Undo::keyOf('events', ['id' => (int) $override['recurrence_parent_id']]), Undo::SKIP . (string) $override['recurrence_instance_utc']]],

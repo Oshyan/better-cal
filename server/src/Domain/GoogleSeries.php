@@ -204,7 +204,8 @@ final class GoogleSeries
     {
         $exceptions = [];
         foreach ($rows as $row) {
-            $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+            // The one reading of a stored list (OwnFields::stored); what Google holds needs no tag or people sets.
+            $own = OwnFields::stored($row, $master);
             $x = self::exceptionOf($row, $own, $master);
             if ($x === null) {
                 continue;
@@ -262,7 +263,8 @@ final class GoogleSeries
                 continue;
             }
             $r = array_merge($row, $w['overrides'][$id] ?? []);
-            $own = OwnFields::decode($r['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+            // The plan's list where it writes one, else the stored row's by the one reading (OwnFields::stored).
+            $own = OwnFields::stored(array_key_exists('override_fields', $w['overrides'][$id] ?? []) ? $r : $row, $master);
             $x = self::exceptionOf($r, $own, $after);
             if ($x === null) {
                 continue; // the series' own day to Google
@@ -2371,7 +2373,7 @@ final class GoogleSeries
                 $t = $targetOf[(string) $r['uid']] ?? null;
                 $key = $t === null ? (string) $r['recurrence_instance_utc'] : self::whereNow($t, (string) $r['recurrence_instance_utc'], $mastersHere[(int) ($r['recurrence_parent_id'] ?? 0)] ?? null);
                 $at = (string) $r['uid'] . '|' . $key;
-                $local[$at] = array_values(array_unique(array_merge($local[$at] ?? [], Feeds::heldHere(OwnFields::decode($r['override_fields'] ?? null) ?? [], $r))));
+                $local[$at] = array_values(array_unique(array_merge($local[$at] ?? [], Feeds::heldHere(OwnFields::storedIn($this->db, $r, $mastersHere[(int) ($r['recurrence_parent_id'] ?? 0)] ?? null), $r))));
             }
         }
         $had = [];
@@ -2501,7 +2503,8 @@ final class GoogleSeries
     {
         $out = [];
         $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
-            'SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status IN (?, ?) ORDER BY p.id DESC',
+            'SELECT p.*, c.name AS calendar_name, c.provider AS cal_provider, c.google_calendar_id AS cal_google_calendar_id, c.google_account_id AS cal_google_account_id, c.google_access_role AS cal_google_access_role
+             FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status IN (?, ?) ORDER BY p.id DESC',
             [$userId, self::STATUS_HALF, self::STATUS_RUNNING]
         ));
         foreach ($rows as $row) {
@@ -2534,6 +2537,9 @@ final class GoogleSeries
                 'stepsDone' => count($steps),
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
                 'finishRefused' => $finishRefused,
+                // The calendar no longer writes to Google: neither Finish nor Put back can run, and why.
+                'unrecoverable' => self::unrecoverable(['provider' => $row['cal_provider'], 'google_calendar_id' => $row['cal_google_calendar_id'],
+                    'google_account_id' => $row['cal_google_account_id'], 'google_access_role' => $row['cal_google_access_role']]),
             ];
         }
         return $out;
@@ -2630,10 +2636,113 @@ final class GoogleSeries
             $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
-                throw new HttpError('google_pending',
-                    "A change to '" . $which['title'] . "' is not yet complete at Google. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
+                throw self::pendingRefusal($which);
             }
         }
+    }
+
+    /** The refusal of anything that waits on a half-done change: 409 google_pending, naming it and pointing to Review. @param array{id:int,title:string} $which */
+    private static function pendingRefusal(array $which): HttpError
+    {
+        return new HttpError('google_pending',
+            "A change to '" . $which['title'] . "' is not yet complete at Google. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
+    }
+
+    /**
+     * An operation on a whole calendar that would leave Finish and Put back
+     * nothing to work on (the calendar kept as a calendar of its own, or
+     * deleted here) is refused while any change on it is half done at
+     * Google, as a write to its series is (refusePending). Read on the
+     * journal's connection, like pendingNames.
+     */
+    public static function refusePendingOnCalendar(Db $db, int $userId, int $calendarId): void
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            'SELECT id, title FROM google_pending WHERE user_id = ? AND calendar_id = ? AND status IN (?, ?) ORDER BY id DESC',
+            [$userId, $calendarId, self::STATUS_HALF, self::STATUS_RUNNING]
+        ));
+        foreach ($rows as $row) {
+            if (!isset(self::$ours[(int) $row['id']])) {
+                throw self::pendingRefusal(['id' => (int) $row['id'], 'title' => (string) $row['title']]);
+            }
+        }
+    }
+
+    /** Why a half-done change was closed without finishing (closeNeverRunnable), said in its Activity line. */
+    public const CLOSED_KEPT = 'this calendar is kept as a copy here now.';
+    public const CLOSED_DELETED = 'its calendar was deleted here.';
+    public const CLOSED_NOT_GOOGLE = 'this calendar no longer writes to Google from here.';
+
+    /**
+     * Close every change half done at Google on this calendar, which can
+     * never run again (its calendar deleted here, or no longer a Google
+     * calendar here): the pending row removed, nothing sent, the rows here
+     * left as they are, and one log-only Activity line per change saying
+     * what was closed and why. Inside the account's write, so the closing
+     * commits with the change that made it true. A run of it still under
+     * way in another process is refused (google_pending_running).
+     */
+    public static function closeNeverRunnable(Db $db, Undo $undo, int $userId, int $calendarId, string $why): int
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            'SELECT id, title, status FROM google_pending WHERE user_id = ? AND calendar_id = ? ORDER BY id',
+            [$userId, $calendarId]
+        ));
+        foreach ($rows as $row) {
+            if ((string) $row['status'] === self::STATUS_RUNNING && !self::stopped($db, (int) $row['id']) && !isset(self::$ours[(int) $row['id']])) {
+                throw HttpError::conflict('google_pending_running', 'This change is still under way.');
+            }
+        }
+        foreach ($rows as $row) {
+            $db->run('DELETE FROM google_pending WHERE id = ?', [(int) $row['id']]);
+            $undo->record($userId, 'calendar', $calendarId, 'update', null, null,
+                "A change to '" . (string) $row['title'] . "' that was half done at Google was closed without finishing: " . $why);
+        }
+        return count($rows);
+    }
+
+    /**
+     * The same closing for the rows an earlier version left that can never
+     * run: their calendar gone, or no longer a Google calendar (kept as a
+     * copy while a change was half done). Run by the daily retention pass
+     * (Activity::prune). Returns how many were closed.
+     */
+    public static function closeLeftBehind(Db $db): int
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            "SELECT DISTINCT p.user_id, p.calendar_id, c.id AS present FROM google_pending p LEFT JOIN calendars c ON c.id = p.calendar_id
+             WHERE c.id IS NULL OR c.provider <> 'google' OR c.google_calendar_id IS NULL ORDER BY p.user_id, p.calendar_id"
+        ));
+        $closed = 0;
+        foreach ($rows as $r) {
+            $undo = new Undo($db);
+            $closed += (int) $undo->write((int) $r['user_id'], fn(): int => self::closeNeverRunnable($db, $undo, (int) $r['user_id'], (int) $r['calendar_id'],
+                $r['present'] === null ? self::CLOSED_DELETED : self::CLOSED_NOT_GOOGLE));
+        }
+        return $closed;
+    }
+
+    /**
+     * Why neither Finish nor Put back can run for a change on this calendar
+     * now, and what would bring them back, or null when they can: they need
+     * the calendar to write to Google (GoogleWriter::writable). The one
+     * answer for Review's list and for the refusal of either.
+     */
+    public static function unrecoverable(?array $calendar): ?string
+    {
+        if ($calendar !== null && GoogleWriter::writable($calendar)) {
+            return null;
+        }
+        if ($calendar === null || ($calendar['provider'] ?? '') !== 'google' || empty($calendar['google_calendar_id'])) {
+            return 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
+        }
+        if ($calendar['google_account_id'] === null) {
+            return 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
+        }
+        if (($calendar['google_access_role'] ?? null) === null) {
+            return 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
+        }
+        return 'This account can no longer edit this calendar at Google, so Finish and Put back can no longer run for this change.';
     }
 
     /** A pending row of the account, as the journal holds it now, or null. */
@@ -2685,6 +2794,13 @@ final class GoogleSeries
      */
     public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?\Closure $commit = null): array
     {
+        // Finish of an undo or redo takes its entry back: the one loader is asked here, the lowest
+        // public way to complete one, before the row is marked running or Google is asked, so no
+        // caller can skip it (GoogleUndo::entryToFinish; Review's Finish asks it first for the entry).
+        $plan = json_decode((string) ($this->pendingOf($userId, $pendingId)['plan_json'] ?? ''), true);
+        if (is_array($plan) && isset($plan['undo'])) {
+            GoogleUndo::entryToFinish($this->db, $userId, $plan);
+        }
         $row = $this->pendingRow($userId, $pendingId);
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
         $targets = json_decode((string) $row['targets_json'], true) ?: [];
@@ -3220,7 +3336,7 @@ final class GoogleSeries
                 }
             }
             if ($h['fields'] !== [] && OwnFields::hasColumn($this->db)) {
-                $patch['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(OwnFields::decode($dest['override_fields'] ?? null) ?? [], $h['fields'])));
+                $patch['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(OwnFields::storedIn($this->db, $dest), $h['fields'])));
             }
             if ($patch !== []) {
                 $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$destId]);
@@ -3347,13 +3463,14 @@ final class GoogleSeries
      * own steps follow the change's in the journal, so a Put back that
      * stops half way is put back again from where it got to.
      *
-     * $neither: the refusal's last words when Finish is refused too (a
-     * pending undo of an entry in an older format, GoogleUndo::neitherWay),
-     * in place of the sentence that points to Finish.
+     * When Finish is refused too (a pending undo or redo of an entry in an
+     * older format: GoogleUndo::entryToFinish), the refusal's last words say
+     * so (GoogleUndo::neitherWay) in place of the sentence that points to
+     * Finish. Put back itself takes no entry back.
      *
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>, left:list<string>}
      */
-    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?string $neither = null): array
+    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
@@ -3457,6 +3574,18 @@ final class GoogleSeries
             $run[$i] = $b;
         }
         if ($left !== []) {
+            $neither = null;
+            $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+            if (is_array($plan) && isset($plan['undo'])) {
+                try {
+                    GoogleUndo::entryToFinish($this->db, $userId, $plan);
+                } catch (HttpError $e) {
+                    if ($e->errorCode !== 'not_undoable') {
+                        throw $e;
+                    }
+                    $neither = GoogleUndo::neitherWay(GoogleUndo::pendingRedo($this->db, $userId, $plan));
+                }
+            }
             $words = implode(' ', $left) . ' ' . ($neither ?? 'Nothing was put back; Finish completes the change from what Google has now.');
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             $this->endUnlessTx($pendingId, true);
@@ -3691,8 +3820,17 @@ final class GoogleSeries
         // list, and is the set it had (with the new row's where that row
         // owned its own too); a set it didn't own is its series' copy,
         // never carried: the day follows its series (OwnFields::follow).
-        $wasOwn = $was['recurrence_instance_utc'] !== null ? OwnFields::decode($was['override_fields'] ?? null) : null;
-        $nowOwn = OwnFields::decode($now['override_fields'] ?? null) ?? [];
+        // The snapshot's day is gone here: the one reading of its list, over its links as the snapshot held them.
+        $wasOwn = null;
+        if ($was['recurrence_instance_utc'] !== null) {
+            $wasMaster = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) ($was['recurrence_parent_id'] ?? 0)]);
+            $held = static fn(string $table, string $col, int $id, array $rows): array => array_values(array_map('intval', array_column(array_filter($rows, static fn(array $l): bool => (int) ($l['event_id'] ?? 0) === $id), $col)));
+            $live = fn(string $table, string $col, int $id): array => array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ?", [$id]), $col));
+            $wasOwn = OwnFields::stored($was, $wasMaster,
+                $held('event_tags', 'tag_id', $wasId, $local['event_tags'] ?? []), $wasMaster === null ? null : $live('event_tags', 'tag_id', (int) $wasMaster['id']),
+                $held('event_people', 'person_id', $wasId, $local['event_people'] ?? []), $wasMaster === null ? null : $live('event_people', 'person_id', (int) $wasMaster['id']));
+        }
+        $nowOwn = OwnFields::storedIn($this->db, $now);
         $takes = [];
         foreach (OwnFields::LINKS as $field => [$linkTable]) {
             $takes[$linkTable] = $wasOwn === null ? [true, true] : [in_array($field, $wasOwn, true), in_array($field, $nowOwn, true) || !in_array($field, $wasOwn, true)];

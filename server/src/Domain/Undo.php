@@ -1739,10 +1739,14 @@ final class Undo
                     continue;
                 }
                 $sides[$side] = true;
-                $own = OwnFields::decode($r['override_fields'] ?? null);
-                if ($own === null) {
-                    continue;
+                // The one reading of a stored list, against the series' row in the same snapshot (its placement needs no tag or people sets).
+                $seriesRow = null;
+                foreach (self::tables($entry[$side] ?? null)['events'] ?? [] as $m) {
+                    if (is_array($m) && (int) ($m['id'] ?? 0) === $seriesId && ($m['recurrence_instance_utc'] ?? null) === null) {
+                        $seriesRow = $m;
+                    }
                 }
+                $own = OwnFields::stored($r, $seriesRow);
                 $ownsForm = in_array('allDay', $own, true);
                 $ownsZone = $ownsForm || in_array('time', $own, true);
                 if ($side === 'before_json') {
@@ -2696,7 +2700,7 @@ final class Undo
                         // occurrence with nothing of its own from this entry,
                         // composed over the row as it stands; whether the
                         // row stays is the retention rule's (below).
-                        $this->withoutOwn($row);
+                        $this->withoutOwn($row, $after);
                         $ownChanged[] = $row;
                         continue;
                     }
@@ -3107,7 +3111,7 @@ final class Undo
             }
             if ($now === null) {
                 if ($series !== null && $this->skipStands($entryId, $series, $before, $after, (string) $row['recurrence_instance_utc'])) {
-                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row), [], 'gone');
+                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere($this->ownInSnapshot($row, $before), $row), [], 'gone');
                     $before = self::withoutEvent($before, (int) $row['id']);
                 }
                 continue; // nothing holds its day now: the snapshot row comes back as it was
@@ -3123,20 +3127,40 @@ final class Undo
      * all-day flag says nothing of the series' form, one that owns its time
      * nothing of its zone). [all-day or null, zone or null]. Pure.
      */
-    private static function heldBy(array $row): array
+    private static function heldBy(array $row, ?array $series): array
     {
-        $own = OwnFields::decode($row['override_fields'] ?? null);
-        if ($own === null || in_array('allDay', $own, true)) {
+        // What it owns by the one reading of a stored list (its placement needs no tag or people sets).
+        $own = OwnFields::stored($row, $series);
+        if (in_array('allDay', $own, true)) {
             return [null, null];
         }
         $allDay = (int) ($row['all_day'] ?? 0) === 1;
         return [$allDay, $allDay || in_array('time', $own, true) ? null : Time::normalizeTzid((string) ($row['tzid'] ?? 'UTC'))];
     }
 
+    /**
+     * What a day's row in an entry's snapshots owns, by the one reading of a
+     * stored list (OwnFields::stored), over the tag and people sets the
+     * snapshots hold for it ($tables) and its series' as they stand here.
+     *
+     * @return list<string>
+     */
+    private function ownInSnapshot(array $row, array $tables): array
+    {
+        if (OwnFields::decode($row['override_fields'] ?? null) !== null || empty($row['recurrence_parent_id'])) {
+            return OwnFields::stored($row, null);
+        }
+        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']]);
+        $snap = static fn(string $table, string $col): array => array_values(array_map('intval', array_column(array_filter($tables[$table] ?? [],
+            static fn(array $l): bool => (int) ($l['event_id'] ?? 0) === (int) ($row['id'] ?? 0)), $col)));
+        $live = fn(string $table, string $col): array => $master === null ? [] : array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ?", [(int) $master['id']]), $col));
+        return OwnFields::stored($row, $master, $snap('event_tags', 'tag_id'), $live('event_tags', 'tag_id'), $snap('event_people', 'person_id'), $live('event_people', 'person_id'));
+    }
+
     /** Whether a day's row was written under another form or zone than its series has now (heldBy against the series' row). Pure. */
     private static function reframed(array $row, array $series): bool
     {
-        [$allDay, $tz] = self::heldBy($row);
+        [$allDay, $tz] = self::heldBy($row, $series);
         $now = self::frameOf($series);
         return ($allDay !== null && $allDay !== $now[0]) || ($tz !== null && !$now[0] && $tz !== $now[1]);
     }
@@ -3196,15 +3220,13 @@ final class Undo
                 if (!isset($row['id']) || $this->db->scalar('SELECT 1 FROM events WHERE id = ?', [(int) $row['id']]) !== null) {
                     continue;
                 }
-                $a = OwnFields::decode($was['override_fields'] ?? null) ?? [];
-                $b = OwnFields::decode($row['override_fields'] ?? null);
-                if ($b !== null) {
-                    $row['override_fields'] = $before['events'][$i]['override_fields'] = OwnFields::encode(array_values(array_diff($b, $a)));
-                }
+                $a = $this->ownInSnapshot($was, $after);
+                $b = $this->ownInSnapshot($row, $before);
+                $row['override_fields'] = $before['events'][$i]['override_fields'] = OwnFields::encode(array_values(array_diff($b, $a)));
             }
             $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
             // Where a planned undo puts the day ($placed: row id => its key in the series the undo restores), else where later changes carried it.
-            $at = $placed[(int) ($row['id'] ?? 0)] ?? ($series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc'], self::heldBy($row)));
+            $at = $placed[(int) ($row['id'] ?? 0)] ?? ($series === null ? null : $this->dayNow($entryId, $series, (string) $row['recurrence_instance_utc'], self::heldBy($row, $series)));
             $key = $at ?? (string) $row['recurrence_instance_utc'];
             $now = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ? AND id <> ? AND deleted_at IS NULL',
                 [(int) $row['calendar_id'], (string) $row['uid'], $key, (int) $row['id']]);
@@ -3216,7 +3238,7 @@ final class Undo
                 // leaves it: nothing to compose onto, so the row is not
                 // brought back (one the entry kept off the day goes with
                 // the entry), and what it held is named as removed.
-                $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::decode($row['override_fields'] ?? null) ?? [], $row), [], 'gone');
+                $dropped[] = Feeds::droppedDay($row, Feeds::heldHere($this->ownInSnapshot($row, $before), $row), [], 'gone');
                 $before = self::withoutEvent($before, (int) $row['id']);
                 continue;
             }
@@ -3232,14 +3254,11 @@ final class Undo
                 $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
                 $row = $before['events'][$i];
             }
-            $own = OwnFields::decode($row['override_fields'] ?? null);
-            if ($own === null) {
-                continue;
-            }
+            $own = $this->ownInSnapshot($row, $before);
             $nowOwn = [];
             if ($now !== null) {
                 $composed = $now;
-                $nowOwn = OwnFields::decode($now['override_fields'] ?? null) ?? [];
+                $nowOwn = OwnFields::storedIn($this->db, $now);
             } else {
                 $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
                     [(int) $row['calendar_id'], (string) $row['uid']]);
@@ -3302,13 +3321,13 @@ final class Undo
             if ($was === null || !array_key_exists('override_fields', $row) || ($row['recurrence_instance_utc'] ?? null) === null) {
                 continue;
             }
-            $b = OwnFields::decode($row['override_fields'] ?? null);
-            $a = OwnFields::decode($was['override_fields'] ?? null);
-            $now = $this->db->scalar('SELECT override_fields FROM events WHERE id = ?', [(int) $row['id']]);
-            $n = OwnFields::decode($now);
-            if ($b === null || $a === null || $n === null || $b === $a) {
+            $b = $this->ownInSnapshot($row, $before);
+            $a = $this->ownInSnapshot($was, $after);
+            $now = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]);
+            if ($now === null || $b === $a) {
                 continue;
             }
+            $n = OwnFields::storedIn($this->db, $now);
             $list = OwnFields::normalize(array_merge(array_diff($n, array_diff($a, $b)), array_diff($b, $a)));
             if ($list !== OwnFields::normalize($b)) {
                 $before['events'][$i]['override_fields'] = OwnFields::encode($list);
@@ -3325,14 +3344,14 @@ final class Undo
      * stale against, stays its own. Whether the row stays is the retention
      * rule's (retain).
      */
-    private function withoutOwn(array $made): void
+    private function withoutOwn(array $made, array $after): void
     {
         $now = isset($made['id']) ? $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $made['id']]) : null;
         if ($now === null) {
             return;
         }
-        $gave = OwnFields::decode($made['override_fields'] ?? null) ?? OwnFields::FIELDS;
-        $owns = OwnFields::decode($now['override_fields'] ?? null) ?? [];
+        $gave = $this->ownInSnapshot($made, $after);
+        $owns = OwnFields::storedIn($this->db, $now);
         $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) ($now['recurrence_parent_id'] ?? 0)]);
         $series = $master === null ? null : Feeds::ofSeries($now, null, $master);
         $set = ['override_fields' => OwnFields::encode(array_values(array_diff($owns, $gave)))];
@@ -3376,26 +3395,52 @@ final class Undo
             $seen[$id] = true;
             $now = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
             if ($now !== null && ($now['recurrence_instance_utc'] ?? null) !== null
-                && OwnFields::decode($now['override_fields'] ?? null) === [] && Feeds::retained($this->db, $now) === null) {
+                && OwnFields::storedIn($this->db, $now) === [] && Feeds::retained($this->db, $now) === null) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             }
         }
     }
 
     /**
-     * Each series an undo or redo touched (a master in its snapshots, or the
-     * series of a day's row in them), as it now stands: every day of it
-     * takes the tags and people it doesn't own from the series, through the
-     * one function every writer uses (OwnFields::follow); a set a day owns
-     * is left as it is. Rows an entry kept in pieces (a calendar's events)
-     * come back whole with their series and its links, as they were.
+     * Once an undo or redo has put back what it puts back: every series
+     * that any row it touched stands under now (each event a row of its
+     * snapshots names, in any table, its tags, people and references
+     * included, read from the database after the restore, never from the
+     * parent a snapshot names) is followed whole: every day of it takes the
+     * tags and people it doesn't own from the series, through the one
+     * function every writer uses (OwnFields::follow); a set a day owns is
+     * left as it is. A link row put back onto a day that no longer owns
+     * that field is the series' copy, so the day holds exactly the series'
+     * set. An undo of a person's delete or merge is no different from one
+     * of a tag's. Rows an entry kept in pieces (a calendar's events, every
+     * row of a calendar deleted whole) come back whole with their series
+     * and its links, as they were, and are not read again.
      */
     private function followLinks(array $before, array $after): void
     {
+        // Every event a row of the entry names, in any table (its own row,
+        // its tags and people, what refers to it), read where it stands now.
+        $named = [];
+        $cols = ['events' => ['id'], 'event_tags' => ['event_id'], 'event_people' => ['event_id']];
+        foreach (OwnFields::REFERENCES as [$table, , $eventCols]) {
+            $cols[$table] = $eventCols;
+        }
+        foreach ([$before, $after] as $tables) {
+            foreach ($cols as $table => $names) {
+                foreach ($tables[$table] ?? [] as $r) {
+                    foreach ($names as $col) {
+                        if (is_array($r) && (int) ($r[$col] ?? 0) > 0) {
+                            $named[(int) $r[$col]] = true;
+                        }
+                    }
+                }
+            }
+        }
         $series = [];
-        foreach ([$before['events'] ?? [], $after['events'] ?? []] as $rows) {
-            foreach ($rows as $r) {
-                $id = !empty($r['recurrence_parent_id']) ? (int) $r['recurrence_parent_id'] : (!empty($r['rrule']) ? (int) ($r['id'] ?? 0) : 0);
+        foreach (array_chunk(array_keys($named), 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            foreach ($this->db->all("SELECT id, recurrence_parent_id, rrule FROM events WHERE id IN $in AND deleted_at IS NULL", $params) as $r) {
+                $id = !empty($r['recurrence_parent_id']) ? (int) $r['recurrence_parent_id'] : (!empty($r['rrule']) ? (int) $r['id'] : 0);
                 if ($id > 0) {
                     $series[$id] = true;
                 }

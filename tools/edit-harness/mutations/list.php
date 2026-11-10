@@ -501,28 +501,48 @@ return [
             ],
         ),
     ],
-    // The journal format gate (rule 3 of 1.5.5): Finish of a pending undo gets its entry as it did before the one
-    // loader, the live row else the plan's copy, with no look at the format. Every Finish row of the table fails in
-    // both variants (Google is written to and the pending row changes), with the reviewer's probe and the open case;
-    // the backstops refuse after Google's writes, and a copy without `format` reaching one is a journaling misuse.
+    // The journal format gate (rule 3 of 1.5.5). Finish of a pending undo or redo meets the one loader twice: Review's
+    // Finish asks it for the entry (SeriesPlans::recoverTx), and GoogleSeries::finish, the lowest public way to complete
+    // one, asks it before the row is marked or Google is asked, so a caller that skips the first still meets the second
+    // (bypassing recoverTx's ask alone trips nothing, by construction). The first mutation opens the loader for Finish
+    // (GoogleUndo::entryToFinish loads the entry as before, the live row else the copy, with no look at the format):
+    // every Finish row of the table fails in both variants, the direct rows too, with the reviewer's probe, Review's
+    // offer and the open case; a copy without `format` reaching a backstop is a journaling misuse. The second removes
+    // the ask in GoogleSeries::finish alone: Review's Finish still refuses, and the direct rows fail.
     [
-        'id' => 'journal-gate-finish-bypass', 'file' => 'server/src/Domain/SeriesPlans.php', 'dbtest' => 'journal-gate',
-        'what' => 'Review\'s Finish of a pending undo loads the entry it undoes without the one loader (Undo::entryToTakeBack)',
-        'patch' => [["                \$undone = GoogleUndo::entryToFinish(\$this->db, \$userId, \$plan);",
-            "                \$undone = \$this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) \$plan['undo'], \$userId]) ?? (is_array(\$plan['entry'] ?? null) ? \$plan['entry'] + ['user_id' => \$userId] : ['id' => (int) \$plan['undo'], 'user_id' => \$userId, 'entity_id' => 0, 'summary' => '', 'before_json' => null, 'after_json' => null, 'details_json' => null, 'format' => Undo::JOURNAL_FORMAT]);"]],
+        'id' => 'journal-gate-loader-open', 'file' => 'server/src/Domain/GoogleUndo.php', 'dbtest' => 'journal-gate',
+        'what' => 'Finish gets the entry a pending undo takes back without the one loader\'s format look (GoogleUndo::entryToFinish)',
+        'patch' => [["            return Undo::entryToTakeBack(\$db, \$userId, (int) \$plan['undo'], is_array(\$plan['entry'] ?? null) ? \$plan['entry'] : []);",
+            "            return \$db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) \$plan['undo'], \$userId]) ?? (is_array(\$plan['entry'] ?? null) ? \$plan['entry'] + ['user_id' => \$userId] : ['id' => (int) \$plan['undo'], 'user_id' => \$userId, 'entity_id' => 0, 'summary' => '', 'before_json' => null, 'after_json' => null, 'details_json' => null, 'format' => Undo::JOURNAL_FORMAT]);"]],
         'checks' => array_merge(
             array_merge(...array_map(static fn(string $variant): array => array_merge(...array_map(static fn(string $row): array => array_map(
-                static fn(string $what): string => "journal gate [$variant]: SeriesPlans::googleFinish$row: $what",
+                static fn(string $what): string => "journal gate [$variant]: $row: $what",
                 ['refused with the code and words', 'no request to Google of any kind', 'nothing written (every table as it was)'],
-            ), [' of a pending undo', ' of a pending redo', ', entry gone, its copy older', ', entry gone, its copy without format', ', entry gone, no copy', ', a redo, entry gone, its copy without format'])),
+            ), ['SeriesPlans::googleFinish of a pending undo', 'SeriesPlans::googleFinish of a pending redo', 'SeriesPlans::googleFinish, entry gone, its copy older',
+                'SeriesPlans::googleFinish, entry gone, its copy without format', 'SeriesPlans::googleFinish, entry gone, no copy', 'SeriesPlans::googleFinish, a redo, entry gone, its copy without format',
+                'GoogleSeries::finish (direct)', 'GoogleSeries::finish (direct), entry gone, its copy without format'])),
                 ['077 run (snapshots dropped)', 'snapshots kept'])),
             [
                 'after the upgrade: Finish refused (409 not_undoable, the words), no request to Google, the pending row exactly as it was, the tags as the stop left them, Google\'s title as the stop left it',
+                'Put back alone, the summary ending with why Finish can\'t complete it',
+                'Put back refuses: Google changed since; its words never point to Finish',
                 'Finish refuses with its words, no request to Google; the pending row stays half done with Put back\'s words',
                 'the pending row is exactly as Put back\'s refusal left it',
+                'Review still lists it, saying why Finish is not offered',
                 'every change to undoable data was journaled in Undo::write',
             ],
         ),
+    ],
+    [
+        'id' => 'journal-gate-finish-direct', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'journal-gate',
+        'what' => 'GoogleSeries::finish, called directly, completes a pending undo without asking the one loader',
+        'patch' => [["        if (is_array(\$plan) && isset(\$plan['undo'])) {\n            GoogleUndo::entryToFinish(\$this->db, \$userId, \$plan);\n        }\n        \$row = \$this->pendingRow(\$userId, \$pendingId);",
+            "        \$row = \$this->pendingRow(\$userId, \$pendingId);"]],
+        'checks' => array_merge(...array_map(static fn(string $variant): array => array_merge(...array_map(static fn(string $row): array => array_map(
+            static fn(string $what): string => "journal gate [$variant]: $row: $what",
+            ['refused with the code and words', 'no request to Google of any kind', 'nothing written (every table as it was)'],
+        ), ['GoogleSeries::finish (direct)', 'GoogleSeries::finish (direct), entry gone, its copy without format'])),
+            ['077 run (snapshots dropped)', 'snapshots kept'])),
     ],
     // Provider identity (rule 1 of 1.5.5): what a master write leaves at Google is predicted by each record's id under
     // the old master's form (GoogleSeries::afterMaster, S1). Here the id is read in the new master's form instead, so
@@ -651,6 +671,32 @@ return [
             "            // this edit sends are its own, set next (mutated: not followed).\n",
         ]],
         'cases' => ['edited-day-rejoins-the-series'],
+    ],
+    // Which series an undo follows (Undo::followLinks): every series its rows stand under now, read back after the
+    // restore. The mutation reads them from the entry's own event rows and their parents as the snapshot names them,
+    // so an undo that restores only link rows (a person's delete or merge) follows nothing, and one whose day moved to
+    // another series since (a split) follows the old one.
+    [
+        'id' => 'undo-follows-the-snapshot-parent', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'link-ownership',
+        'what' => 'an undo follows the series its snapshot names, not the one its rows stand under now',
+        'patch' => [[
+            "            foreach (\$this->db->all(\"SELECT id, recurrence_parent_id, rrule FROM events WHERE id IN \$in AND deleted_at IS NULL\", \$params) as \$r) {\n",
+            "            foreach (array_merge(\$before['events'] ?? [], \$after['events'] ?? []) as \$r) {\n",
+        ]],
+        'checks' => [
+            "link ownership: after undo of a person deleted, a day made since (People::delete), every day holds its own set or its series' set",
+            'link ownership: the day made since the delete holds the person brought back',
+            "link ownership: after undo of a person merged, a day made since (People::update, a rename onto a name taken), every day holds its own set or its series' set",
+            'link ownership: the day made since the merge holds the first person again',
+            "link ownership: after undo of a person deleted, onto a day that gave its people back to its series since, every day holds its own set or its series' set",
+            "link ownership: the day that gave its people back holds exactly its series' set",
+            "link ownership: undoing a person's delete or merge leaves every day holding its own people or exactly its series': every live day row holds its own tags and people, or exactly its series'",
+            "link ownership: after a forced undo of a day's own tags after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",
+            "link ownership: the day holds its new series' tags",
+            "link ownership: after a forced undo of a day's own people after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",
+            "link ownership: the day holds its new series' people",
+            "link ownership: a forced undo of a day's own tags or people after a split moved the day leaves it with its new series' set: every live day row holds its own tags and people, or exactly its series'",
+        ],
     ],
     // A day row's stored Google id is an identity (audit-155-identity, fix list items 6 and 7): derived whenever the
     // row is placed, and an undo addresses the day by its id now. The database cases make a series timed at 00:00 UTC

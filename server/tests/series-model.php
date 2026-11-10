@@ -786,9 +786,9 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
     $stored = smEdited($chorus, 4, '2027-04-13 19:00', ['title' => 'Rehearsal'], null, ['title']);
     $masterRehearsal = ['title' => 'Rehearsal'] + $chorus;
     checkEq('Own fields across a sync (Rows from Elsewhere)', [['title'], ['title', 'location'], [], ['time']], [
-        OwnFields::afterSync($stored, $stored, $masterRehearsal),
-        OwnFields::afterSync($stored, ['location' => 'Sample Annex'] + $stored, $chorus),
-        OwnFields::afterSync(smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Choir'], null, ['title']), smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Chorus']), $chorus),
+        OwnFields::afterSync($stored, $stored, $masterRehearsal, ['title']),
+        OwnFields::afterSync($stored, ['location' => 'Sample Annex'] + $stored, $chorus, ['title']),
+        OwnFields::afterSync(smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Choir'], null, ['title']), smEdited($chorus, 5, '2027-02-02 19:00', ['title' => 'Chorus']), $chorus, ['title']),
         OwnFields::afterSync(null, smEdited($chorus, 7, '2027-04-27 19:00', [], '2027-04-27 19:30'), $chorus),
     ]);
     // ---- 1.5.0 integration review ------------------------------------------

@@ -9385,7 +9385,8 @@ require __DIR__ . '/plugins.php';
     $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
     $adb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
     (require __DIR__ . '/../migrations/062_mutation_rows.php')($adb);
-    $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY)');
+    $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, provider TEXT, google_calendar_id TEXT)');
+    $adb->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, title TEXT NOT NULL DEFAULT \'\', status TEXT NOT NULL DEFAULT \'running\')');
     $adb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, label TEXT)');
     $adb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
     $adb->run("INSERT INTO mutations (id, created_at, before_json, after_json) VALUES
@@ -10671,12 +10672,12 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $tdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $tdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, synctoken INTEGER DEFAULT 1)');
     davJournal($tdb);
-    $tdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, is_container INTEGER, updated_at TEXT, deleted_at TEXT)');
+    $tdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, is_container INTEGER, updated_at TEXT, deleted_at TEXT, rrule TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT)');
     $tdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY AUTOINCREMENT, container_id INTEGER, event_id INTEGER, position INTEGER)');
     undoJournal($tdb);
     eventLinkTables($tdb);
     $tdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', 1), (2, 1, 'local', 'ics', 1)");
-    $tdb->run("INSERT INTO events VALUES
+    $tdb->run("INSERT INTO events (id, user_id, calendar_id, uid, is_container, updated_at, deleted_at) VALUES
         (10, 1, 1, 'sample-trip', 1, '2026-01-01 00:00:00', NULL),
         (20, 1, 2, 'sample-member', 0, '2026-01-01 00:00:00', NULL)");
     $tripUndo = new BetterCal\Domain\Undo($tdb);
@@ -10689,7 +10690,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         (int) $tdb->scalar('SELECT COUNT(*) FROM event_links'),
         (int) $tdb->scalar('SELECT COUNT(*) FROM events'),
     ]);
-    $tdb->run("INSERT INTO events VALUES (30,1,2,'second-member',0,NULL,NULL)");
+    $tdb->run("INSERT INTO events (id, user_id, calendar_id, uid, is_container, updated_at, deleted_at) VALUES (30,1,2,'second-member',0,NULL,NULL)");
     $tripDomain->attach(1, 10, 20);
     $tripDomain->attach(1, 10, 30);
     $delta = $tdb->one('SELECT before_json, after_json FROM mutations ORDER BY id DESC LIMIT 1');

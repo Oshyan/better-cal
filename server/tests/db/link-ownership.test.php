@@ -304,6 +304,115 @@ return static function (Db $db): void {
         checkEq('link ownership: the plan wrote the day\'s list, its title alone', '["title"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
     });
 
+    // ---- Undo follows every series its rows stand under now -------------------
+
+    // A series with or without its tag and person, weekly from 4 January 2027.
+    $series = static fn(Events $events, int $u, int $cal, array $more): int => (int) $events->create($u, ['calendarId' => $cal, 'title' => 'Sample weekly',
+        'start' => '2027-01-04T09:00:00Z', 'end' => '2027-01-04T10:00:00Z', 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=8'] + $more)['eventId'];
+    $personId = static fn(int $u, string $name): int => (int) $db->scalar('SELECT id FROM people WHERE user_id = ? AND name = ?', [$u, $name]);
+
+    scenario('link ownership: undoing a person\'s delete or merge leaves every day holding its own people or exactly its series\'', function () use ($db, $series, $personId, $holds, $peopleOf, $dayRow): void {
+        // Deleted, a day edited, the delete undone: the day takes the person back with its series.
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['personNames' => ['Alex Example']]);
+        $people = new BetterCal\Domain\People($db);
+        $people->delete($u, $personId($u, 'Alex Example'));
+        $entry = lastEntry($db, $u);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample renamed day']);
+        $d->undo->undoById($u, $entry);
+        $holds('undo of a person deleted, a day made since (People::delete)', $u);
+        checkEq('link ownership: the day made since the delete holds the person brought back', ['Alex Example'], $peopleOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']));
+        // Merged into another, a day edited, the merge undone: the day is back with the first person.
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['personNames' => ['Alex Example']]);
+        $d->events->create($u, eventAt($cal, 'Sample other', '2027-02-01', ['personNames' => ['Sam Sample']]));
+        $people = new BetterCal\Domain\People($db);
+        $people->update($u, $personId($u, 'Alex Example'), ['name' => 'Sam Sample']);
+        $entry = lastEntry($db, $u);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample renamed day']);
+        $d->undo->undoById($u, $entry);
+        $holds('undo of a person merged, a day made since (People::update, a rename onto a name taken)', $u);
+        checkEq('link ownership: the day made since the merge holds the first person again', ['Alex Example'], $peopleOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']));
+        // A day owning a person, the person deleted, the day given back its series' people, the delete undone:
+        // the person's link put back onto a day that no longer owns its people is the series' copy, so it holds the series' set.
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['personNames' => ['Sam Sample']]);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample renamed day', 'personNames' => ['Alex Example']]);
+        $people = new BetterCal\Domain\People($db);
+        $people->delete($u, $personId($u, 'Alex Example'));
+        $entry = lastEntry($db, $u);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'useSeries' => ['people']]);
+        $d->undo->undoById($u, $entry);
+        $holds('undo of a person deleted, onto a day that gave its people back to its series since', $u);
+        checkEq('link ownership: the day that gave its people back holds exactly its series\' set', ['Sam Sample'], $peopleOf((int) $dayRow($id, '2027-01-11 09:00:00')['id']));
+    });
+
+    scenario('link ownership: a forced undo of a day\'s own tags or people after a split moved the day leaves it with its new series\' set', function () use ($db, $series, $holds, $tagsOf, $peopleOf, $dayRow): void {
+        foreach (['tags' => ['tagNames', ['Sample A'], ['Sample B'], ['Sample C']], 'people' => ['personNames', ['Alex Example'], ['Sam Sample'], ['Pat Placeholder']]] as $field => [$key, $seriesSet, $daySet, $splitSet]) {
+            $u = freshUser($db);
+            $d = domains($db);
+            $cal = Settings::defaultCalendarId($db, $u);
+            $id = $series($d->events, $u, $cal, [$key => $seriesSet]);
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-25T09:00:00Z', 'title' => 'Sample own day']);
+            $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-25T09:00:00Z', $key => $daySet]);
+            $entry = lastEntry($db, $u);
+            planned($d->events, $u, $id, ['scope' => 'following', 'instanceStart' => '2027-01-18T09:00:00Z', $key => $splitSet]);
+            $d->undo->undoById($u, $entry, true);
+            $holds("a forced undo of a day's own $field after a split moved it (Undo::followLinks, the series it stands under now)", $u);
+            $day = (int) $db->scalar('SELECT id FROM events WHERE user_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$u, '2027-01-25 09:00:00']);
+            checkEq("link ownership: the day holds its new series' $field", $splitSet, $field === 'tags' ? $tagsOf($day) : $peopleOf($day));
+        }
+    });
+
+    // ---- An import that meets a deleted series of the same UID ----------------
+
+    scenario('link ownership: importing a series and its edited day after the series was deleted brings the series back with the file\'s content; its undo deletes it again', function () use ($db, $series, $seriesIcs, $holds, $tagsOf, $dayRow): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['tagNames' => ['Sample A']]);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample older day']);
+        $uid = (string) $db->scalar('SELECT uid FROM events WHERE id = ?', [$id]);
+        $d->events->deleteEvent($u, $id, 'all', null);
+        $out = (new CalendarImport($db, $d->calendars))->importIcs($u, $seriesIcs($uid, ['20270118T090000Z' => 'Sample imported day']), 'ignored', null, $cal);
+        checkEq('link ownership: the series and its day come in, the series brought back; nothing is said to be there already', [2, 1, 0], [$out['imported'], $out['broughtBack'], $out['alreadyThere']]);
+        checkEq('link ownership: the series is live again under its own id, with the file\'s title, and holds its tag', [null, 'Sample weekly', ['Sample A']],
+            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]), $db->scalar('SELECT title FROM events WHERE id = ?', [$id]), $tagsOf($id)]);
+        $day = $dayRow($id, '2027-01-18 09:00:00');
+        checkEq('link ownership: the imported day stands under the series brought back and holds its tag', ['Sample A'], $day === null ? null : $tagsOf((int) $day['id']));
+        checkEq('link ownership: the deleted day the file does not carry is gone for good, as a PUT leaves it', 0, (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ?', [$id, '2027-01-11 09:00:00']));
+        $holds('an import that brings back a deleted series (CalendarImport::importIcs)', $u);
+        $d->undo->undoById($u, lastEntry($db, $u));
+        $holds('undo of an import that brought back a deleted series', $u);
+        checkEq('link ownership: undone, the series is deleted again and its deleted day is back as it was, deleted', [true, 1],
+            [$db->scalar('SELECT deleted_at FROM events WHERE id = ?', [$id]) !== null,
+             (int) $db->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NOT NULL', [$id, '2027-01-11 09:00:00'])]);
+    });
+
+    // A day stored with no list (as a poll up to 1.5.4 could leave one; built
+    // by raw SQL) owns what the one reading says: its own tags, which differ
+    // from its series'. An answer for that day keeps them its own.
+    scenario('link ownership: an answer for a day stored with no own list keeps what the one reading says it owns', function () use ($db, $series, $holds, $tagsOf): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $cal = Settings::defaultCalendarId($db, $u);
+        $id = $series($d->events, $u, $cal, ['tagNames' => ['Sample A']]);
+        $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-11T09:00:00Z', 'title' => 'Sample own day', 'tagNames' => ['Sample B']]);
+        $day = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$id]);
+        $db->run('UPDATE events SET override_fields = NULL WHERE id = ?', [$day]);
+        $d->events->setAttendance($u, $id, 'going', 'this', '2027-01-11T09:00:00Z');
+        checkEq('link ownership: after the answer the day owns its title, its tags and its answer', '["title","attendance","tags"]', $db->scalar('SELECT override_fields FROM events WHERE id = ?', [$day]));
+        $holds('an answer for a day stored with no own list (Events::answerAttendance)', $u);
+        planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-04T09:00:00Z', 'tagNames' => ['Sample C']]);
+        checkEq('link ownership: the day keeps the tags it owned before the answer', ['Sample B'], $tagsOf($day));
+    }, 'builds the stored no-list form of 1.5.0 to 1.5.4 on purpose (by raw SQL), to show the one reading of it');
+
     // ---- Google: the stand-in, a writer of each kind, Finish and Put back -----
 
     $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
@@ -518,6 +627,7 @@ return static function (Db $db): void {
             'Infra/Db.php:upsertMany' => 'neutral: the statement builder the writers above use',
         ];
         $found = [];
+        $journals = [];
         $root = dirname(__DIR__, 2) . '/src';
         $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
         foreach ($it as $file) {
@@ -534,8 +644,32 @@ return static function (Db $db): void {
                 if ($writes) {
                     $found[substr($file->getPathname(), strlen($root) + 1) . ':' . $fn] = true;
                 }
+                // The undo side: a place that reads link rows into an entry's
+                // snapshots, whose undo puts them back.
+                if (preg_match('/SELECT \* FROM `?(event_tags|event_people)`?\b|\'(event_tags|event_people)\' => \["event_id IN/', $line) && !preg_match('/^\s*(\*|\/\/)/', $line)) {
+                    $journals[substr($file->getPathname(), strlen($root) + 1) . ':' . $fn] = true;
+                }
             }
         }
+        // Every place that journals link rows, with the block above that undoes
+        // what it journals. An undo puts link rows back only through
+        // Undo::putBack, which follows every series a restored row's event
+        // stands under now (Undo::followLinks reads the link tables too), so a
+        // new place is covered by construction; naming it here makes it seen
+        // and asks for a block that runs its undo.
+        $journalInventory = [
+            'Domain/People.php:updateLocked' => 'run: undo of a person merged, a day made since',
+            'Domain/People.php:delete' => 'run: undo of a person deleted, a day made since; and onto a day that gave its people back',
+            'Domain/Labels.php:eventLinkRows' => 'run: every "this event" edit and plan, undone',
+            'Domain/GoogleUndo.php:rowTables' => 'run: every Google writer above, undone',
+            'Domain/Undo.php:linksOf' => 'run: CalDAV PUT, import, every plan, undone',
+        ];
+        $unjournaled = array_values(array_diff(array_keys($journals), array_keys($journalInventory)));
+        sort($unjournaled);
+        checkEq('link ownership: no place that journals link rows is missing from the undo inventory', [], $unjournaled);
+        $journalStale = array_values(array_diff(array_keys($journalInventory), array_keys($journals)));
+        sort($journalStale);
+        checkEq('link ownership: the undo inventory names no place that no longer journals link rows', [], $journalStale);
         $unnamed = array_values(array_diff(array_keys($found), array_keys($inventory)));
         sort($unnamed);
         checkEq('link ownership: no statement writing links or making a row is missing from the inventory (name it, run it above, or say why it is neutral)', [], $unnamed);

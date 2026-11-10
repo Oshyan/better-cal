@@ -461,7 +461,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 if (OwnFields::hasColumn($this->db)) {
                     // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere).
                     $cols['override_fields'] = OwnFields::encode(
-                        OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols));
+                        OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols,
+                            $current === null ? null : OwnFields::storedIn($this->db, $current)));
                 }
                 if ($current !== null) {
                     $this->db->update('events', $cols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [(int) $current['id']]);

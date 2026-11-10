@@ -32,6 +32,7 @@ Google calendars, CalDAV and undo after an outside review and a round of indepen
 - A half-done change that can be neither finished nor put back is cleared by deleting its calendar here or keeping it as a copy. A "Leave as Google has it" action comes in 1.5.6.
 - When your access to a Google calendar is taken away at Google, Better-Cal does not notice; deleting the calendar here is the way out.
 - The timed and all-day switch on Google is built to the request real Google accepted in the probe; it has not yet run from an installed build.
+- A repeating event on a Google calendar that starts in the hour a spring clock change skips gains one extra first day when a field is changed for all events ([#252](https://github.com/Oshyan/better-cal/issues/252)). Rare, older than this release, and the extra day can be deleted.
 
 Operators: migrations 070 to 078 (the Google token on its account, half-done changes' plans, edited days placed by their own fields, feed validators, the person kinds, the journal's format, and each edited day's own-fields list filled where 1.5.0 to 1.5.4 left it empty); `update.php` or the update page as usual.
 

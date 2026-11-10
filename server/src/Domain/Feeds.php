@@ -912,6 +912,68 @@ final class Feeds
     }
 
     /**
+     * Where the day rows of a series stand under the series as a list
+     * brings it ($series): for each key a record of the list may have, the
+     * stored row that record is for. While the series keeps its form
+     * (timed, or all-day) a key names the same instance at the other end as
+     * it does here (Google's id for an instance is its series, the form and
+     * the key; a RECURRENCE-ID is a date-time or a date), so a row stands
+     * at its own key, whatever else the series changed. When the form
+     * changes, every name changes with it and an equal key decides nothing:
+     * a timed key is a UTC instant and an all-day key a date at 00:00 UTC,
+     * the same local day at UTC and east of it and different days west of
+     * it (19:00 in New York on the 6th has the key of the all-day 7th). A
+     * row then stands at its image (ofSeries: the series' one occurrence on
+     * the day its key showed under the series as it was), or nowhere when
+     * the series no longer has its day.
+     *
+     * `at` is key => row. `leaving` is the rows that stand at another key
+     * than their own, or nowhere: keys are unique per calendar, uid and
+     * key, so they let go of theirs (Events::parkInstanceKeys) before any
+     * record is written, and each ends with the key it is given or is
+     * removed. Where several rows stand at one key, a row standing at its
+     * own key is the one found there, as the first to claim a day holds it
+     * (sync, below); then a live row before a deleted one, then by id.
+     *
+     * The one answer to "which stored row is this record's" for every list
+     * rows are matched against: a feed's or Google's (sync) and a CalDAV
+     * client's PUT (CalendarBackend::putObject). Pure.
+     *
+     * @param list<array<string,mixed>> $rows the series' day rows as stored
+     * @param array<string,mixed> $was the series' row as stored
+     * @param array<string,mixed> $series the series' row as the list leaves it
+     * @return array{at: array<string,array<string,mixed>>, leaving: list<array<string,mixed>>}
+     */
+    public static function standing(array $rows, array $was, array $series): array
+    {
+        $reformed = ((int) ($was['all_day'] ?? 0) === 1) !== ((int) ($series['all_day'] ?? 0) === 1);
+        $at = [];
+        $leaving = [];
+        $images = [];
+        foreach ($rows as $row) {
+            $key = (string) $row['recurrence_instance_utc'];
+            $to = $key;
+            if ($reformed) {
+                $image = self::ofSeries($row, $was, $series);
+                $to = $image === null ? null : (string) ($image['recurrence_instance_utc'] ?? $key);
+            }
+            if ($to === $key) {
+                $at[$key] = $row;
+                continue;
+            }
+            $leaving[] = $row;
+            if ($to !== null) {
+                $images[] = [$to, $row];
+            }
+        }
+        usort($images, static fn(array $a, array $b): int => [($a[1]['deleted_at'] ?? null) !== null, (int) $a[1]['id']] <=> [($b[1]['deleted_at'] ?? null) !== null, (int) $b[1]['id']]);
+        foreach ($images as [$to, $row]) {
+            $at[$to] ??= $row;
+        }
+        return ['at' => $at, 'leaving' => $leaving];
+    }
+
+    /**
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
@@ -977,12 +1039,58 @@ final class Feeds
                     'invite_json' => $pm['invite_json'] ?? null];
             }
         }
-        // Edited days the feed carries that are ordinary occurrences here
-        // (nothing of their own; below), by key: not stored, and a row one
-        // had goes with the rows the feed no longer carries.
-        $plain = [];
+        // The stored row each record of the list is for, by uid and key
+        // (standing, the one function that says which): the row at the
+        // record's key while its series keeps its form, and in a series
+        // whose form this list changes the row whose day the key is. A row
+        // that leaves its key lets go of it before any record is written
+        // ($park), and takes one again below: its record's with the record,
+        // or its image's when it follows its series. Only for a series this
+        // poll reads whole: one it leaves (an unreadable record, below)
+        // keeps its rows where they are.
+        $rowFor = $existingByKey;
+        $park = [];
+        $daysOf = [];
+        foreach ($existing as $index => $row) {
+            if (($index & 127) === 0) {
+                self::assertSyncDeadline($deadline);
+            }
+            if ($row['recurrence_instance_utc'] !== null && $row['recurrence_parent_id'] !== null) {
+                $daysOf[(string) $row['uid']][] = $row;
+            }
+        }
+        foreach ($unknownSkipped ? [] : $parsed as $pm) {
+            if ($pm['recurrence_instance_utc'] !== null) {
+                break; // masters come first
+            }
+            $uid = (string) $pm['uid'];
+            $was = $existingByKey[$uid . '|'] ?? null;
+            if ($was === null || !isset($daysOf[$uid]) || isset($protected[$uid])) {
+                continue;
+            }
+            $rows = array_values(array_filter($daysOf[$uid], static fn(array $r): bool => (int) $r['recurrence_parent_id'] === (int) $was['id']));
+            unset($daysOf[$uid]); // a series' first record in the list is the one stored
+            $stand = self::standing($rows, $was, array_merge($was, self::columnsOf($pm, null)));
+            foreach ($stand['leaving'] as $r) {
+                unset($rowFor[$uid . '|' . $r['recurrence_instance_utc']]);
+                $park[] = (int) $r['id'];
+            }
+            // Never over a row still at that key (one that is no day of this series' stored row keeps its entry).
+            foreach ($stand['leaving'] === [] ? [] : $stand['at'] as $at => $r) {
+                $rowFor[$uid . '|' . $at] ??= $r;
+            }
+        }
+        unset($daysOf);
+        self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$plain, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+            Events::parkInstanceKeys($this->db, $park);
+            // The rows a record of the list was given to, by row id: what
+            // "the feed carries a record for this row" means below. A record
+            // that is an ordinary occurrence here (nothing of its own) is
+            // given to none: it is not stored, and a row its day had goes
+            // with the rows the feed no longer carries.
+            $given = [];
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -1002,7 +1110,7 @@ final class Feeds
                 // group 5), and a new etag alone is no change to the event.
                 $etag = isset($ev['google_etag']) && $ev['google_etag'] !== '' ? (string) $ev['google_etag'] : null;
 
-                $current = $existingByKey[$key] ?? null;
+                $current = $rowFor[$key] ?? null;
                 $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
                 if ($ownColumn && $feedMaster === null && $current === null && $ev['recurrence_instance_utc'] !== null) {
                     // A new edited day whose series' record this poll doesn't
@@ -1034,9 +1142,11 @@ final class Feeds
                     $ownInvite = ($columns['invite_json'] ?? null) !== null && !self::sameValue('invite_json', $feedMaster['invite_json'] ?? null, $columns['invite_json']);
                     if ($own === [] && !$ownInvite
                         && ($current === null || OwnFields::references($this->db, [(int) $current['id']]) === [])) {
-                        $plain[$key] = true;
                         continue;
                     }
+                }
+                if ($current !== null) {
+                    $given[(int) $current['id']] = true;
                 }
                 if ($current === null) {
                     // A new edited day takes its series' own columns
@@ -1157,7 +1267,7 @@ final class Feeds
                 }
                 $id = (int) $row['id'];
                 $uid = (string) $row['uid'];
-                $carried = isset($seen[$key]) && !isset($plain[$key]);
+                $carried = isset($given[$id]);
                 $seriesSeen = $row['recurrence_parent_id'] !== null && isset($seen[$uid . '|']) && isset($masterIdByUid[$uid]);
                 if (!$seriesSeen || $row['deleted_at'] !== null) {
                     if (!$carried) {
@@ -1188,7 +1298,9 @@ final class Feeds
                 if ($carried && self::recordHolds($own, $now, $series, $was)) {
                     continue;
                 }
-                $target = self::ofSeries($now, $was, $series);
+                // Its image, from the key it had under the series as it was:
+                // a record given to it above may have set its new key already.
+                $target = self::ofSeries(['recurrence_instance_utc' => $row['recurrence_instance_utc']] + $now, $was, $series);
                 $after = $target === null ? $now : self::followed($now, $target);
                 $kept = self::retained($this->db, $after, $own);
                 if ($target === null) {

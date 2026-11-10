@@ -1847,6 +1847,60 @@ final class GoogleSeries
         return $before === $after ? 'kept' : 'conflict';
     }
 
+    /** What a change made at Google did to a day, by the group it changed, as a sentence's verb phrase ("was renamed"); the time by the series' form. */
+    private const DONE_WORDS = ['title' => 'renamed', 'description' => 'given other notes', 'location' => 'given another place', 'status' => 'given another status', 'url' => 'given another link'];
+
+    /**
+     * The changes made at Google that a change of the series between timed
+     * and all-day does not keep (rebase), each in one sentence: every day
+     * Google holds now ($C, held()) otherwise than the change found it
+     * ($B), both read in the form the series had then, so each key is one
+     * instance on both sides. The day is named by its date as it showed
+     * under that form (an evening west of UTC by its own date, never its
+     * key's), with what was done to it at Google. $was is the series as the
+     * change found it; $allDay the form it now takes.
+     *
+     * @return list<string>
+     */
+    private static function notKept(array $B, array $C, array $was, bool $allDay, int $thisYear, string $since): array
+    {
+        $zone = Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']);
+        $keys = [];
+        foreach ([$B, $C] as $h) {
+            foreach (array_merge(array_keys($h['records']), array_keys($h['skips'])) as $k) {
+                $keys[(string) $k] = true;
+            }
+        }
+        ksort($keys);
+        $out = [];
+        foreach (array_keys($keys) as $key) {
+            $key = (string) $key;
+            $b = self::dayIn($B, $key);
+            $c = self::dayIn($C, $key);
+            if ($b === $c) {
+                continue;
+            }
+            $done = [];
+            if ($c === 'skip') {
+                $done[] = 'deleted';
+            } elseif ($b === 'skip') {
+                $done[] = 'brought back';
+            } else {
+                // Its time, by the series' form: a day of a timed series has a time, one of an all-day series a date (moved whole, or over other days).
+                $long = static fn(array $when): int => Time::fromDb((string) $when['end_utc'])->getTimestamp() - Time::fromDb((string) $when['start_utc'])->getTimestamp();
+                foreach (self::GROUPS as $g => $cols) {
+                    if ($b[$g] !== $c[$g]) {
+                        $done[] = self::DONE_WORDS[$g] ?? ((int) $was['all_day'] !== 1 ? 'given another time' : ($long($b[$g]) === $long($c[$g]) ? 'moved to another date' : 'given other dates'));
+                    }
+                }
+            }
+            $last = array_pop($done);
+            $out[] = Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
+                . " at Google $since; that change is not kept, because the series is " . ($allDay ? 'now all-day' : 'no longer all-day') . '.';
+        }
+        return $out;
+    }
+
     /**
      * Rule A: a change applied as its deltas over what Google holds now.
      * $before is the series as the change found it (stateOf, journaled),
@@ -1865,7 +1919,16 @@ final class GoogleSeries
      * found it in. Across a change between timed and all-day that has
      * landed, an equal key names another instance (west of UTC another
      * day), so a day with no row is read against what the master write
-     * left there, never against the day the old form had on that key. Any
+     * left there, never against the day the old form had on that key. And
+     * while that change of form has not reached Google (its master write
+     * sent and not taken, then Finish), nothing Google holds is carried
+     * across it at all: the master write drops every record and skip, a
+     * key of the old form names no day of the new one, and the new form
+     * cannot hold every old value (a clock under an all-day series). The
+     * plan's days stand whole, and each day changed at Google since, read
+     * in the old form against the series as found, is named as not kept
+     * (notKept); carrying such a change to its day by the series model's
+     * image is left for later (decisions.md). Any
      * other value was changed elsewhere since: kept as
      * Google holds it where the change doesn't change that group of that
      * day, and kept and named where it does (a day deleted since, a field
@@ -1879,7 +1942,7 @@ final class GoogleSeries
      * for: its own list is what it holds now (nothing Google holds), never
      * the change's.
      *
-     * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it, and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
+     * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it (and for what was changed at Google and is not kept across a change of form), and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
      */
     public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false): array
     {
@@ -1892,8 +1955,6 @@ final class GoogleSeries
         // The other answer where the write is of a class the probe has not seen keep records: all of them kept (P itself otherwise).
         $Q = self::afterMaster($B, $before['master'], $target['master'], true);
         $C = $now;
-        // An instance is its form and its key: a day B holds at a key is the same instance as the one Google holds there now only in the same form.
-        $sameForm = (int) $before['master']['all_day'] === (int) $C['master']['all_day'];
         $words = [];
         $conflicts = [];
         $overWords = []; // what a forced rebase put back over, apart from what it kept
@@ -1929,8 +1990,23 @@ final class GoogleSeries
         if ($overwrote !== []) {
             $overWords[] = "The series' " . implode(', ', $overwrote) . " (changed at Google $since).";
         }
-        $len = self::lengthOf($master);
         $allDay = (int) $master['all_day'] === 1;
+        // Google still holds the series in the form the change found it in,
+        // and the master write that follows changes that form (the change
+        // stopped before it reached Google): that write drops every record
+        // and every skip Google holds, and no id of the old form names a day
+        // of the new one, so nothing Google holds now is carried by its key.
+        // What changed at Google since is read where it can be, in the old
+        // form, against the series as the change found it, and named as not
+        // kept; the days are then the plan's, over what the master write
+        // leaves (nothing).
+        if ((int) $before['master']['all_day'] === (int) $now['master']['all_day'] && $allDay !== ((int) $now['master']['all_day'] === 1)) {
+            $words = array_merge($words, self::notKept($B, $now, $before['master'], $allDay, $thisYear, $since));
+            $C = $P;
+        }
+        // An instance is its form and its key: a day B holds at a key is the same instance as the one Google holds there now only in the same form.
+        $sameForm = (int) $before['master']['all_day'] === (int) $C['master']['all_day'];
+        $len = self::lengthOf($master);
         $dayWords = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($allDay ? 'UTC' : (string) $master['tzid']))), $thisYear);
         // Each day: the change's own before by the row it is (an edited day may move key), else the day at the key.
         $byRow = [];

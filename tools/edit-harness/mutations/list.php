@@ -496,6 +496,40 @@ return [
             ['harness seed 911 case 193: no forward-edit check fails', 'harness seed 911 case 879: no forward-edit check fails'],
         ),
     ],
+    // Provider identity across a change of form that has not reached Google (GoogleSeries::rebase): the guard that
+    // names a change made at Google as not kept is gone, so what Google holds in the old form is carried by its key
+    // again. West of UTC a rename or a deletion lands on the next day; made timed, it goes to an id that is no day and
+    // is lost; a day given its own time is sent as a clock to an all-day instance and Finish fails. Every run of the
+    // test fails on its words; the New York and all-day runs on what Google and the rows hold too.
+    [
+        'id' => 'google-rebase-carries-by-key-across-forms', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-form-finish',
+        'what' => 'a change made at Google while a change between timed and all-day waits for its master write is carried by its key instead of named as not kept',
+        'patch' => [["        if ((int) \$before['master']['all_day'] === (int) \$now['master']['all_day'] && \$allDay !== ((int) \$now['master']['all_day'] === 1)) {", "        if (false) {"]],
+        'checks' => (static function (): array {
+            $shapes = ['daily 19:00 New York made all-day', 'weekly 10:00 Los Angeles made all-day', 'weekly all-day made 10:00 Los Angeles'];
+            $changes = ['a day renamed at Google', 'a day deleted at Google', 'a day given another time at Google', 'the plan\'s edited day given other notes at Google'];
+            $words = 'Finish names the change made at Google once, by the day\'s own date, as not kept';
+            $writes = 'Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have';
+            $held = ['Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
+                'the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip'];
+            $out = [];
+            foreach ($shapes as $shape) {
+                foreach ($changes as $change) {
+                    // Every run: the words and the writes. Made all-day, the change lands under a date id (a wrong day in New York, the
+                    // right one by accident in Los Angeles), so Google and the rows hold more than the plan; made timed, it goes to an id
+                    // that is no day and is lost, so they hold the plan. A clock sent to an all-day instance is refused and Finish fails.
+                    $fails = [$words, $writes];
+                    if ($shape !== 'weekly all-day made 10:00 Los Angeles') {
+                        $fails = $change === 'a day given another time at Google' ? array_merge(['Finish completes and the change is settled'], $fails) : array_merge($fails, $held);
+                    }
+                    foreach ($fails as $what) {
+                        $out[] = "$shape, $change: $what";
+                    }
+                }
+            }
+            return $out;
+        })(),
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,
@@ -592,5 +626,44 @@ return [
             ]), ['date', 'time'])),
             ['merge: an all-day day of a timed series is a row under its timed master'],
         ),
+    ],
+    // Rule 1, the sync's match (Feeds::standing): a record of a series whose form the list changes is for the row whose day
+    // its key is, not the row at an equal key. Back at the equal key, the records west of UTC take the neighbouring day's
+    // row (a Google poll, delta and whole; an ICS feed, both directions); the controls at UTC and east of it, the changes
+    // of form with no record, and the CalDAV PUT (its own caller of the same function) do not fail.
+    [
+        'id' => 'sync-match-by-equal-key', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-match',
+        'what' => 'the sync gives a record to the stored row at an equal key, whatever form the row\'s series was stored in',
+        'patch' => [['                $current = $rowFor[$key] ?? null;', '                $current = $existingByKey[$key] ?? null;']],
+        'checks' => [
+            'each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
+            'the series is in its new form here, with no skipped day, no row left deleted and no day row without a key',
+            'after: the same two rows on the same two days, as all-day days: the tag on 7 January, the record\'s title on 8 January',
+            'after: the same two rows on the same two days, at 19:00: the record\'s title on 6 January, the tag on 7 January',
+            // No row is at the record's key, so a new row is made and both of the day's rows merge into it.
+            'one row for 4 January: the first of the two, with the record\'s title and both tags; the second is gone and no row is without a key',
+        ],
+    ],
+    // The same patch where the list is a recovery's read-back (GoogleSeries::store after a change of form made here
+    // stopped part way, the rows here still in the old form): with the edited day's record taken by Google in the new
+    // form, the record goes to the tagged day's row, and Put back then finds the rows changed and is refused. The stops
+    // right after the master write hold no record and do not fail, and Finish puts every row right from its snapshot.
+    [
+        'id' => 'sync-match-by-equal-key-in-a-store', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-recovery',
+        'what' => 'the sync gives a record to the stored row at an equal key when it stores what Google holds after a change of form stopped part way',
+        'patch' => [['                $current = $rowFor[$key] ?? null;', '                $current = $existingByKey[$key] ?? null;']],
+        'checks' => array_merge(...array_map(static fn(string $what): array => array_merge(...array_map(static fn(string $then): array => array_map(
+            static fn(string $label): string => "$what, stopped with the notes' write taken and its answer lost, $then: $label",
+            array_merge([
+                'after the stop the tag is on its own day at the new form\'s key, with no notes, and no row is without a key',
+                'after the stop the notes are on their own day, with no tag',
+                'after the stop no other row holds the tag',
+            ], $then === 'Finish' ? [] : [
+                'Put back goes through, nothing left to settle and no row without a key',
+                'after Put back Google holds the series as it was, the notes\' record under its old id',
+                'after Put back the rows here are as they were: the tag and the notes each on their own day in the old form',
+                'and they are the rows they were',
+            ]),
+        ), ['Finish', 'Put back'])), ['19:00 New York made all-day, a tag on 6 January and notes on the 7th', 'all-day made 19:00 New York, notes on 7 January and a tag on the 8th'])),
     ],
 ];

@@ -50,6 +50,10 @@ final class Interleave
     public const NEVER_SENT = ['attendees', 'reminders', 'colorId'];
     /** The fields held here alone a step can send. */
     private const LOCAL = ['tags', 'people', 'reminders', 'icon', 'coords', 'attendance'];
+    /** A day's content field and the own-list names that make it the day's own; a field none of them names follows its series. */
+    private const OWN_OF = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
+        'tags' => ['tags'], 'people' => ['people'], 'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
+        'lat' => ['location', 'coords', 'lat'], 'lng' => ['location', 'coords', 'lat']];
     private const OTHER_ZONES = ['America/Phoenix', 'Europe/Berlin', 'Asia/Tokyo', 'America/New_York', 'Pacific/Auckland'];
 
     private array $records = [];
@@ -2000,6 +2004,16 @@ final class Interleave
                 if (in_array($f, ['key', 'start', 'end'], true) && preg_match('/^day:([^:]+):/', $ident, $mm) === 1 && isset($state['after']['series:' . $mm[1]], $now['series:' . $mm[1]])
                     && self::clockOf($state['after']['series:' . $mm[1]]) !== self::clockOf($now['series:' . $mm[1]])) {
                     continue; // carried to its occurrence now by a times change since (the same entry: "a day's edit undone after one goes back at the day's occurrence now")
+                }
+                $master = preg_match('/^day:([^:]+):/', $ident, $mm) === 1 ? ($result['series:' . $mm[1]] ?? null) : null;
+                if ($master !== null && isset(self::OWN_OF[$f]) && array_intersect(self::OWN_OF[$f], (array) ($was['own'] ?? [])) === []) {
+                    // A field the day did not own before the entry (it followed its series): back to following it, at the
+                    // series' value as it stands now, never the value an old snapshot showed (decisions.md, "The undo of a
+                    // Google edit sends back only the fields that edit changed": "one it did not own (it followed its
+                    // series) goes back to following it, at the series' value there now, so a day given its own title and
+                    // undone after a rename for all events shows the new name"). A field it owned goes back exactly, below.
+                    $this->expect('x-undo-fields', ($r[$f] ?? null) == ($master[$f] ?? null), "step {$this->step} ($do): an undo gives back to the series a $f its entry gave the day, at the series' $f as it stands", $where + ['field' => $f, 'want' => $master[$f] ?? null, 'now' => $r[$f] ?? null]);
+                    continue;
                 }
                 $this->expect('x-undo-fields', ($r[$f] ?? null) == ($was[$f] ?? null), "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $was[$f] ?? null, 'now' => $r[$f] ?? null]);
             }

@@ -129,6 +129,20 @@ final class OracleProbes
                     $s1['rows'][$row($s1, $master)]['title'] = $s0['rows'][$row($s0, $master)]['title'];
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            ['check' => 'x-undo-fields', 'what' => "an undo gives a day back the series' former title, which it only followed, instead of the series' title now", 'case' => 'an-undo-of-a-title-given-to-a-day-with-its-own-icon-after-a-rename-follows-the-new-title', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $day): array {
+                    // The title the day showed before the entry, read from the entry's own snapshot: the series' title then.
+                    $id = $row($s1, $day);
+                    foreach ($this->entryStates as $st) {
+                        foreach ($st['before'] as $ident => $was) {
+                            if (str_starts_with($ident, 'day:') && $was !== null && !in_array('title', (array) ($was['own'] ?? []), true) && isset($was['title'])) {
+                                $s1['rows'][$id]['title'] = $was['title'];
+                                return [$out, $s0, $this->reshape($s1)];
+                            }
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
             ['check' => 'x-undo-fields', 'what' => 'an undo goes through though a poll brought a newer change of its field', 'case' => 'rename-then-a-rename-at-google-polled-then-undo', 'step' => 4,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];

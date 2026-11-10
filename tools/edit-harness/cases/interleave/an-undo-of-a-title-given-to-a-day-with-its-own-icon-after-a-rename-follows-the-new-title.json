@@ -1,0 +1,36 @@
+{
+    "about": "A day given its own icon, then a title and a tag of its own in one edit, then a rename for all events, then the title and tag edit undone: the day owned its icon before and not its title, so its title goes back to following the series at the new name, not the series title the entry's snapshot showed, and its icon stays its own (decisions.md, \"The undo of a Google edit sends back only the fields that edit changed\"; seed 743 case 79; x-undo-fields)",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 09:30",
+        "length": 30
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.4,
+            "what": "icon"
+        },
+        {
+            "do": "w-this-m",
+            "pick": 0.4,
+            "what": "title+tags"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.0,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.3
+        }
+    ]
+}

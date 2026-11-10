@@ -29,7 +29,7 @@ final class Probe
     public const GROUPS = [
         '1' => ['Rule forms', 'Each rule inserted alone, then read back: accepted or refused (with the error), and the exact text that comes back.'],
         '2' => ['Each exception kind alone', 'On a timed weekly series and on an all-day one: a moved instance, one with its own time, a title-only edit, a cancellation by DELETE and by PATCH, and one beyond a shortened end; then the exception-key checks in Pacific/Auckland and Asia/Tokyo. After each: the instance id form, the master\'s recurrence, its etag and `updated`, and the delta.'],
-        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE).'],
+        '3' => ['Master changes over exceptions', 'One master change per case, each from the same starting state: a weekly 10:00 America/Los_Angeles series of ten with occurrence 3 moved a day later, occurrence 4 at its own time (15:00), occurrence 5 with its own title and occurrence 6 cancelled (DELETE). The form cases (3.18 on) start from a different state: a weekly series of ten with occurrence 2 renamed and occurrence 3 cancelled, timed or all-day as the case says, or a single event.'],
         '4' => ['The split', 'Trim with UNTIL and with COUNT, then insert the new series, over the same starting state as group 3, cut at occurrence 5.'],
         '5' => ['Etags and conditional writes', 'Stability across reads, what a master or an instance write does to the other\'s etags, and If-Match on PATCH and DELETE of masters and instances.'],
         '6' => ['Deletes and their reverse', 'A deleted event read back, PATCH to confirmed on it and on a cancelled instance, and an insert with an id the client chose.'],
@@ -975,6 +975,137 @@ final class Probe
             $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the master with GoogleWriter::body', 'PATCH', '/events/' . rawurlencode($m), [], $body));
             $c->finding = $this->seriesFinding($c, $m);
         });
+
+        // A zone change that moves no occurrence: 10:00 in Los Angeles is 11:00 in
+        // Denver all year (both change their clocks the same nights). Case 3.3
+        // changes the zone and the instants together; this one changes the zone alone.
+        $this->probeCase('3', '3.17', 'the zone alone (11:00 America/Denver, the same instants)', function (CaseRun $c) use ($span, $denver): void {
+            [$m] = $this->withExceptions($c);
+            $patch = $span($denver('2027-03-01 11:00'), $denver('2027-03-01 12:00'), 'America/Denver');
+            $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the master', 'PATCH', '/events/' . rawurlencode($m), [], $patch));
+            $c->finding = $this->formFinding($c, $m);
+        });
+
+        // Timed to all-day and back, over a renamed occurrence 2 and a cancelled
+        // occurrence 3 (the exceptions both forms can hold). Each change is sent
+        // twice: as GoogleSeries::masterBody sends it (start and end in the new
+        // form and the rule, nothing said about the old form's fields), and with
+        // the old form's fields sent as nulls. The UTC series starts at 00:00 UTC,
+        // where a timed occurrence and an all-day one fall on the same instant.
+        $rule = ['RRULE:FREQ=WEEKLY;COUNT=10'];
+        $dates = ['start' => ['date' => '2027-03-01'], 'end' => ['date' => '2027-03-02']];
+        $clock = static function (string $tz, string $local): array {
+            $s = new \DateTimeImmutable($local, new \DateTimeZone($tz));
+            return ['start' => ['dateTime' => $s->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz], 'end' => ['dateTime' => $s->modify('+60 minutes')->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz]];
+        };
+        $nulled = static function (array $when): array {
+            $other = isset($when['start']['date']) ? ['dateTime' => null, 'timeZone' => null] : ['date' => null];
+            return ['start' => $when['start'] + $other, 'end' => $when['end'] + $other];
+        };
+        $flips = [
+            ['3.18', 'timed (10:00 Los Angeles) to all-day, as the app sends it', self::LA, '2027-03-01 10:00', $dates],
+            ['3.19', 'timed (10:00 Los Angeles) to all-day, the clock fields nulled', self::LA, '2027-03-01 10:00', $nulled($dates)],
+            ['3.20', 'timed (00:00 UTC) to all-day, as the app sends it', 'UTC', '2027-03-01 00:00', $dates],
+            ['3.21', 'timed (00:00 UTC) to all-day, the clock fields nulled', 'UTC', '2027-03-01 00:00', $nulled($dates)],
+            ['3.22', 'all-day to timed (10:00 Los Angeles), as the app sends it', null, '2027-03-01', $clock(self::LA, '2027-03-01 10:00')],
+            ['3.23', 'all-day to timed (10:00 Los Angeles), the date field nulled', null, '2027-03-01', $nulled($clock(self::LA, '2027-03-01 10:00'))],
+            ['3.24', 'all-day to timed (00:00 UTC), as the app sends it', null, '2027-03-01', $clock('UTC', '2027-03-01 00:00')],
+            ['3.25', 'all-day to timed (00:00 UTC), the date field nulled', null, '2027-03-01', $nulled($clock('UTC', '2027-03-01 00:00'))],
+        ];
+        foreach ($flips as [$id, $title, $tz, $start, $when]) {
+            $this->probeCase('3', $id, $title, function (CaseRun $c) use ($tz, $start, $when, $rule): void {
+                $m = $this->formBase($c, $tz, $start, $rule);
+                $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the master', 'PATCH', '/events/' . rawurlencode($m), [], $when + ['recurrence' => $rule]));
+                $c->finding = $this->formFinding($c, $m);
+            });
+        }
+
+        // The same change on an event that doesn't repeat: the whole body, as
+        // GoogleWriter::body builds it for a single event, and then with the old
+        // form's fields nulled.
+        $single = static fn(bool $allDay, string $tz, string $local): array => GoogleWriter::body([
+            'title' => 'Probe single', 'description' => 'Probe notes ' . self::MARKER_TEXT, 'location' => 'Probe room 1',
+            'start_utc' => Time::toDb(new \DateTimeImmutable($local, new \DateTimeZone($tz))),
+            'end_utc' => Time::toDb((new \DateTimeImmutable($local, new \DateTimeZone($tz)))->modify($allDay ? '+1 day' : '+60 minutes')),
+            'all_day' => $allDay ? 1 : 0, 'tzid' => $tz, 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed',
+        ]);
+        $singles = [
+            ['3.26', 'a single event, timed to all-day, as the app sends it', self::LA, '2027-03-01 10:00', $single(true, 'UTC', '2027-03-01 00:00'), false],
+            ['3.27', 'a single event, timed to all-day, the clock fields nulled', self::LA, '2027-03-01 10:00', $single(true, 'UTC', '2027-03-01 00:00'), true],
+            ['3.28', 'a single event, all-day to timed, as the app sends it', null, '2027-03-01', $single(false, self::LA, '2027-03-01 10:00'), false],
+            ['3.29', 'a single event, all-day to timed, the date field nulled', null, '2027-03-01', $single(false, self::LA, '2027-03-01 10:00'), true],
+        ];
+        foreach ($singles as [$id, $title, $tz, $start, $body, $nulls]) {
+            $this->probeCase('3', $id, $title, function (CaseRun $c) use ($tz, $start, $body, $nulls, $nulled): void {
+                $m = $this->formBase($c, $tz, $start, []);
+                $body = $nulls ? $nulled($body) + $body : $body;
+                $this->standard($c, fn(CaseRun $c) => $this->send($c, 'write', 'patch the event', 'PATCH', '/events/' . rawurlencode($m), [], $body));
+                $c->finding = $this->formFinding($c, $m);
+            });
+        }
+    }
+
+    /**
+     * The starting state of the form cases: a weekly series of ten from
+     * 2027-03-01, at a clock time in a zone or all-day ($tz null), with
+     * occurrence 2 renamed and occurrence 3 cancelled; with no rule, one event.
+     */
+    private function formBase(CaseRun $c, ?string $tz, string $start, array $rule): string
+    {
+        $body = $tz === null ? self::allDay('Probe form', $start, $rule) : self::timed('Probe form', $tz, $start, 60, $rule);
+        if ($rule === []) {
+            unset($body['recurrence']);
+        }
+        $x = $this->insert($c, 'setup', $rule === [] ? 'insert the event' : 'insert the series', $body);
+        $m = (string) ($x['response']['id'] ?? throw new \RuntimeException('the starting event was refused: HTTP ' . $x['status']));
+        if ($rule === []) {
+            return $m;
+        }
+        $items = $this->instanceItems($c, $m);
+        foreach ([2 => 'own title', 3 => 'cancelled'] as $n => $kind) {
+            $inst = $items[$n - 1] ?? throw new \RuntimeException("the series has no occurrence $n");
+            $c->labels[self::key($inst)] = "occurrence $n ($kind)";
+            $path = '/events/' . rawurlencode((string) $inst['id']);
+            $x = $kind === 'cancelled'
+                ? $this->send($c, 'setup', "cancel occurrence $n", 'DELETE', $path)
+                : $this->send($c, 'setup', "occurrence $n renamed", 'PATCH', $path, [], ['summary' => 'Probe form (one changed)']);
+            if ($x['status'] >= 300) {
+                throw new \RuntimeException("setting up the $kind exception failed: HTTP {$x['status']}");
+            }
+        }
+        return $m;
+    }
+
+    /**
+     * The finding of a form case: what the write got, the master's start and
+     * end as they read back, every other record of the series with its id's
+     * suffix and its own originalStartTime, the same for the delta, then the
+     * standard finding.
+     */
+    private function formFinding(CaseRun $c, string $m): string
+    {
+        $raw = static fn(mixed $v): string => (string) json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $record = static function (array $e) use ($m, $raw): string {
+            $id = (string) ($e['id'] ?? '');
+            return ($id === $m ? '{master}' : str_replace($m, '{master}', $id)) . ' ' . (string) ($e['status'] ?? 'no status')
+                . ', originalStartTime ' . $raw($e['originalStartTime'] ?? null)
+                . (isset($e['start']) ? ', start ' . $raw($e['start']) : ', no start')
+                . (isset($e['recurringEventId']) ? '' : ', no recurringEventId');
+        };
+        $parts = [];
+        foreach ($c->writes() as $x) {
+            $parts[] = 'the write: HTTP ' . self::status($x);
+        }
+        $master = $c->after[$m]['master'] ?? null;
+        $parts[] = is_array($master)
+            ? 'the master reads back start ' . $raw($master['start'] ?? null) . ', end ' . $raw($master['end'] ?? null) . ', recurrence ' . $raw($master['recurrence'] ?? null)
+            : 'the master could not be read back (HTTP ' . (int) ($c->after[$m]['status'] ?? 0) . ')';
+        $others = array_values(array_filter($c->after[$m]['list'] ?? [], static fn(array $e): bool => ($e['id'] ?? '') !== $m));
+        $parts[] = 'records in the singleEvents=false list: ' . ($others === [] ? 'none' : implode(' | ', array_map($record, $others)));
+        $delta = array_values(array_filter($c->delta['items'] ?? [], fn(array $e): bool => $this->belongs($c, $e)));
+        $parts[] = 'the delta: ' . ($delta === [] ? 'nothing of this case' : implode(' | ', array_map($record, $delta)));
+        $parts[] = $this->seriesFinding($c, $m);
+        return implode('; ', $parts);
     }
 
     // ---- 4. The split ---------------------------------------------------------------

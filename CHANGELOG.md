@@ -15,7 +15,7 @@ Google calendars, CalDAV and undo after an outside review and a round of indepen
 - **A day moved by its date alone off a spring-forward day shows at the event's clock,** not an hour off, and follows later time changes.
 - **A day named in a file, feed or emailed update is read under its repeating event:** one sent as a whole day under a timed event lands on its own date, also west of UTC.
 - **A day you were invited to on its own joins its repeating event** when that arrives, instead of being deleted with its tag.
-- **An import leaves out events you deleted here before, and says how many.** It used to count them as already there and say nothing.
+- **An import leaves out events you deleted here before, and says how many.** It used to count them as already there and say nothing. This covers a deleted event and a deleted repeating event; one deleted day of a repeating event is not covered yet (see the known limits).
 - **Undo refuses where it can't place the day.** A change to one day of a repeating event that was since moved, re-zoned or switched between timed and all-day is refused with a sentence naming the change, where it could act on the neighbouring day. "Undo anyway" is no longer offered for these.
 - **Undo of a change to all events on a Google calendar waits for 1.5.6.** Activity says so where its Undo would be, and the plain Undo steps past such a change to the one before it.
 - **Half done at Google:** Finish keeps what was changed in Google Calendar meanwhile when your change leaves every day where it was, and otherwise names each thing that was lost and why. Keeping a calendar as a copy, or deleting it, closes a half-done change that can no longer run.
@@ -32,6 +32,8 @@ Google calendars, CalDAV and undo after an outside review and a round of indepen
 - A half-done change that can be neither finished nor put back is cleared by deleting its calendar here or keeping it as a copy. A "Leave as Google has it" action comes in 1.5.6.
 - When your access to a Google calendar is taken away at Google, Better-Cal does not notice; deleting the calendar here is the way out.
 - The timed and all-day switch on Google is built to the request real Google accepted in the probe; it has not yet run from an installed build.
+- An import can still bring back a single day of a repeating event that you deleted here, when the file carries that day as an edited one ([#255](https://github.com/Oshyan/better-cal/issues/255)). Older than this release.
+- "Undo anyway" on a change to one day's time, after its repeating event was since made all-day or moved, can leave that day with times that don't fit the event ([#254](https://github.com/Oshyan/better-cal/issues/254)). The plain Undo refuses, as it should; only the forced one goes wrong. Older than this release.
 - A repeating event on a Google calendar that starts in the hour a spring clock change skips gains one extra first day when a field is changed for all events ([#252](https://github.com/Oshyan/better-cal/issues/252)). Rare, older than this release, and the extra day can be deleted.
 
 Operators: migrations 070 to 078 (the Google token on its account, half-done changes' plans, edited days placed by their own fields, feed validators, the person kinds, the journal's format, and each edited day's own-fields list filled where 1.5.0 to 1.5.4 left it empty); `update.php` or the update page as usual.

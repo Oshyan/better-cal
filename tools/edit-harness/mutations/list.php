@@ -486,11 +486,10 @@ return [
     // that makes a day's row without its series' tags and people must fail the block that ran it, and nothing else.
     [
         'id' => 'answer-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'link-rule',
-        'what' => 'the row an answer for one day makes (Events::ensureOverride) leaves out its series\' tags and people',
+        'what' => 'the row an answer for one day makes (Events::ensureOverride) is not followed to its series\' tags and people (OwnFields::follow)',
         'patch' => [[
-            "            \$this->db->run(\$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [\$id, \$masterId]);\n"
-            . "            \$this->db->run(\$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [\$id, \$masterId]);\n",
-            "            // mutated: the series' tags and people are not copied\n",
+            "            // Owning nothing, it holds the series' tags and people (OwnFields::follow).\n            OwnFieldsList::follow(\$this->db, \$masterId, [\$id]);\n",
+            "            // mutated: the series' tags and people are not followed\n",
         ]],
         'checks' => ["an answer for one day of a tagged series with a person: every live day row holds its own tags and people, or exactly its series'"],
     ],
@@ -499,13 +498,11 @@ return [
     // composes the day's links from its series (Undo::followLinks), so the rows after Undo are not the broken ones before.
     [
         'id' => 'this-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'checks' => ['l-links', 'f-undo'],
-        'what' => 'the row a "this event" edit makes (Events::patchThis) does not start with its series\' tags and people',
-        'patch' => [
-            ["                \$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',\n                [\$id, \$masterId]\n",
-                "                \$this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE 1 = 0 AND event_id = ?',\n                [\$id, \$masterId]\n"],
-            ["                \$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',\n                [\$id, \$masterId]\n",
-                "                \$this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE 1 = 0 AND event_id = ?',\n                [\$id, \$masterId]\n"],
-        ],
+        'what' => 'the row a "this event" edit makes (Events::patchThis) is not followed to its series\' tags and people (OwnFields::follow)',
+        'patch' => [[
+            "            // this edit sends are its own, set next.\n            OwnFieldsList::follow(\$this->db, \$masterId, [\$id]);\n",
+            "            // this edit sends are its own, set next (mutated: not followed).\n",
+        ]],
         'cases' => ['edited-day-rejoins-the-series'],
     ],
 ];

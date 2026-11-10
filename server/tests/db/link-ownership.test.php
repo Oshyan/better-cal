@@ -36,31 +36,13 @@ use BetterCal\Support\Time;
 require_once dirname(__DIR__, 3) . '/tools/google-probe/lib/FakeGoogle.php';
 
 return static function (Db $db): void {
-    // The rule as SQL, over one account (the audit's "The invariant as SQL"):
-    // each live day row under a live master whose list does not name the
-    // field and whose set differs from the master's, and each live day row
-    // with no list at all (not a form a writer here leaves).
-    $broken = static function (int $u) use ($db): array {
-        $out = [];
-        foreach (['tags' => ['event_tags', 'tag_id'], 'people' => ['event_people', 'person_id']] as $field => [$table, $col]) {
-            $rows = $db->all(
-                "SELECT d.id FROM events d JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL
-                 WHERE d.user_id = ? AND d.recurrence_parent_id IS NOT NULL AND d.recurrence_instance_utc IS NOT NULL AND d.deleted_at IS NULL
-                   AND d.override_fields IS NOT NULL AND d.override_fields NOT LIKE ?
-                   AND (EXISTS (SELECT 1 FROM $table x WHERE x.event_id = d.id AND NOT EXISTS (SELECT 1 FROM $table y WHERE y.event_id = m.id AND y.$col = x.$col))
-                     OR EXISTS (SELECT 1 FROM $table y WHERE y.event_id = m.id AND NOT EXISTS (SELECT 1 FROM $table x WHERE x.event_id = d.id AND x.$col = y.$col)))
-                 ORDER BY d.id",
-                [$u, '%"' . $field . '"%']
-            );
-            foreach ($rows as $r) {
-                $out[] = $field . ' of day row ' . $r['id'];
-            }
-        }
-        foreach ($db->all('SELECT id FROM events WHERE user_id = ? AND recurrence_parent_id IS NOT NULL AND deleted_at IS NULL AND override_fields IS NULL ORDER BY id', [$u]) as $r) {
-            $out[] = 'no own list on day row ' . $r['id'];
-        }
-        return $out;
-    };
+    // The rule as SQL, over one account: the suite's one definition
+    // (lib.php, linkViolations: tags, people and a NULL list under a live
+    // series), asserted after each step. A day left under a series this
+    // step removed is a structure finding the block's own check reports at
+    // its end (the "series" kind), not a link one, so it is left out here.
+    $broken = static fn(int $u): array => array_values(array_map(static fn(array $v): string => $v['what'],
+        array_filter(linkViolations($db, $u), static fn(array $v): bool => $v['kind'] !== 'series')));
     // Every writer the table below runs, by name, for the closing inventory.
     $ran = [];
     $holds = static function (string $writer, int $u) use ($broken, &$ran): void {
@@ -294,6 +276,10 @@ return static function (Db $db): void {
                 $holds("a feed poll with the series' record $how (Feeds::sync, new row under a kept series)", $u);
             } else {
                 checkEq('link ownership: with no series left, the day owns nothing, as 063 left such a day', '[]', $day['override_fields'] ?? null);
+                // The series back: the day stands under it again and follows it.
+                $feeds->sync($row(), Ics::parse($seriesIcs($uid, ['20270111T090000Z' => 'Sample feed day'])));
+                checkEq('link ownership: the series back, no live day row is without an own list', [], $nullLists($u));
+                $holds('a feed poll bringing back a series whose day it made while the series was away (Feeds::sync)', $u);
             }
         }
     });

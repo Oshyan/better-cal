@@ -207,8 +207,8 @@ final class Interleave
                 [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('tags')]]),
             'notes' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
                 [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('description')]]),
-            'useSeries' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'w-useseries', 'pick' => 0.0, 'what' => 'description', 'onMark' => 'd']],
-                $changeSteps, [['do' => 'u-bare', 'pick' => 0.0, 'judge' => $judge('description')]]),
+            'useSeries' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'w-useseries', 'pick' => 0.0, 'what' => 'description', 'onMark' => 'd', 'mark' => 'u']],
+                $changeSteps, [['do' => 'u-entry', 'pick' => 0.0, 'entryOf' => 'u', 'judge' => $judge('description')]]),
             'delete' => array_merge([['do' => 'w-del1', 'pick' => $pick, 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
                 [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('skip')]]),
             'stale' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
@@ -646,7 +646,7 @@ final class Interleave
         }
         $this->check($do, $out, $s0, $s1);
         if (isset($step['mark']) && $out['ok'] && isset($out['asked']['days'][0]) && !isset($this->marks[$step['mark']])) {
-            $this->marks[$step['mark']] = ['date' => (string) $out['asked']['days'][0], 'fields' => $out['asked']['fields'] ?? [], 'kind' => $do];
+            $this->marks[$step['mark']] = ['date' => (string) $out['asked']['days'][0], 'fields' => $out['asked']['fields'] ?? [], 'kind' => $do, 'entry' => (int) $s1['mut']];
         }
         if (isset($step['judge'])) {
             $this->judgeDay($do, $step['judge'], $out, $s0, $s1);
@@ -1428,6 +1428,16 @@ final class Interleave
             $this->lastAsked = $this->askedOfEntry($expect) + ['entry' => $expect];
             $this->undo->undoLatest($this->userId);
             return ['entry' => $expect, 'asked' => $this->lastAsked];
+        }
+        if (isset($step['entryOf'])) {
+            // A day shape's undo of the entry a marked step made (not the newest, which is the series' change since).
+            $id = (int) ($this->marks[(string) $step['entryOf']]['entry'] ?? 0);
+            if ($id === 0) {
+                return ['skip' => true];
+            }
+            $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
+            $this->undo->undoById($this->userId, $id);
+            return ['entry' => $id, 'asked' => $this->lastAsked];
         }
         $pool = array_values(array_filter($entries, static fn(array $e): bool => (int) $e['undone'] === 0
             && ($do === 'redo' ? self::undoes($e['details_json']) !== null : !in_array($e['source'], ['feed', 'google', 'system'], true))));

@@ -357,9 +357,8 @@ return static function (Db $db): void {
                 $s = $setup();
                 $was = $held($s, 'smpl3weekly');
                 $day = (int) ($rowAt($s, '2027-03-29 17:00:00')['id'] ?? 0);
-                $s->events->patch($s->u, $day, ['tagNames' => ['Sample label']]);
-                $person = $db->insert('people', ['user_id' => $s->u, 'name' => 'Sam Sample']);
-                $db->insert('event_people', ['event_id' => $day, 'person_id' => $person]);
+                // Its tag and person given by an edit of its own row, so its own list names them (a person linked by hand would be the series' copy, which follows the series).
+                $s->events->patch($s->u, $day, ['tagNames' => ['Sample label'], 'personNames' => ['Sam Sample']]);
                 $db->update('events', ['reminders_json' => '[{"minutes":30}]'], 'id = ?', [$day]);
                 $home = (int) $s->d->calendars->create($s->u, ['name' => 'Sample home'])['id'];
                 $trip = (int) $s->events->create($s->u, eventAt($home, 'Sample trip', '2027-03-28', ['isContainer' => true]))['eventId'];

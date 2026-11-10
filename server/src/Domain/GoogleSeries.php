@@ -1158,12 +1158,6 @@ final class GoogleSeries
         return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
     }
 
-    /** The instance id of an occurrence key under a master. */
-    public static function instanceId(string $googleId, string $key, bool $allDay): string
-    {
-        return GoogleWriter::instanceId($googleId, $key, $allDay, 'UTC');
-    }
-
     // ---- what a series holds (pure; rule B) -----------------------------------------
 
     /**
@@ -1562,7 +1556,7 @@ final class GoogleSeries
             $record = $held['records'][$key] ?? null;
             // A record the target has no edited day for is an ordinary day when it holds the series' values.
             $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && ($x !== null || !self::isPlain($record, $m, $key)) ? $record : null);
-            $id = self::instanceId((string) $t['googleId'], $key, $allDay);
+            $id = GoogleWriter::instanceId((string) $t['googleId'], $key, $allDay);
             if ($want === 'skip') {
                 if ($has !== 'skip') {
                     $out['skip'][] = ['skip', $id, ['status' => 'cancelled'], $key];
@@ -2183,6 +2177,12 @@ final class GoogleSeries
                     [OwnFields::encode(OwnFields::normalize($own)), (int) $calendar['id'], (string) $t['uid'], (string) $key]
                 );
             }
+            // The lists as the store leaves them: each day not owning its
+            // tags or people holds the series' (OwnFields::follow).
+            $masterId = $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [(int) $calendar['id'], (string) $t['uid']]);
+            if ($masterId !== null) {
+                OwnFields::follow($this->db, (int) $masterId);
+            }
         }
     }
 
@@ -2390,8 +2390,7 @@ final class GoogleSeries
         }
         foreach ($names as $name) {
             // A day's Google id (its series' id, then its original start: GoogleWriter::instanceId) names its series too.
-            $cut = strrpos((string) $name, '_');
-            $series = $cut !== false && GoogleSync::droppedInstance((string) $name) !== null ? substr((string) $name, 0, $cut) : null;
+            $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
                 throw new HttpError('google_pending',
@@ -2811,6 +2810,31 @@ final class GoogleSeries
                 }
             }
         }
+        // A day brought back holds the tags and people it doesn't own as its
+        // series has them now, never the snapshot's copy (OwnFields::follow).
+        $this->followSeriesOf(array_keys($gone));
+    }
+
+    /**
+     * The series of each of $ids (its master, or the one it is a day of),
+     * each followed whole: every day of it holds the series' tags and people
+     * where its list doesn't name its own (OwnFields::follow). What a
+     * recovery step calls once it has written rows or links of a series.
+     *
+     * @param list<int> $ids
+     */
+    private function followSeriesOf(array $ids): void
+    {
+        $series = [];
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
+            [$in, $params] = Db::in($chunk);
+            foreach ($this->db->all("SELECT id, recurrence_parent_id FROM events WHERE id IN $in", $params) as $r) {
+                $series[(int) ($r['recurrence_parent_id'] ?? $r['id'])] = true;
+            }
+        }
+        foreach (array_keys($series) as $masterId) {
+            OwnFields::follow($this->db, $masterId);
+        }
     }
 
     /**
@@ -2900,6 +2924,9 @@ final class GoogleSeries
             $this->relinks($h['links'], $wasId, $destId, $replace);
             $this->carried[$wasId] = $destId;
         }
+        // Each day it put back or wrote: the tags and people it doesn't own
+        // are its series' as they stand (OwnFields::follow).
+        $this->followSeriesOf(array_merge(array_values($this->carried), array_map(static fn(array $h): int => (int) $h['row']['id'], $held)));
         return $words;
     }
 
@@ -3269,6 +3296,7 @@ final class GoogleSeries
         }
         $calendarId = (int) $calendar['id'];
         $live = fn(int $id): bool => $this->db->scalar('SELECT 1 FROM events WHERE id = ? AND deleted_at IS NULL', [$id]) !== null;
+        $masters = [];
         foreach ($targets as $t) {
             if (!empty($t['remove']) || empty($t['uid'])) {
                 continue;
@@ -3276,6 +3304,7 @@ final class GoogleSeries
             $uid = (string) $t['uid'];
             $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL', [$calendarId, $uid]);
             if ($master !== null) {
+                $masters[] = (int) $master['id'];
                 foreach ($snap as $id => $r) {
                     if ((string) $r['uid'] === $uid && $r['recurrence_instance_utc'] === null && (int) $r['calendar_id'] === $calendarId && $id !== (int) $master['id'] && !$live($id)) {
                         $this->relink($r, $master, $local, false);
@@ -3312,6 +3341,12 @@ final class GoogleSeries
                 }
             }
         }
+        // Each series it put back together: a day holds the tags and people
+        // it doesn't own as the series has them now, a master that took back
+        // its old links included (OwnFields::follow).
+        foreach ($masters as $masterId) {
+            OwnFields::follow($this->db, $masterId);
+        }
         return $whole;
     }
 
@@ -3334,8 +3369,22 @@ final class GoogleSeries
         }
         $links = [];
         $gained = $identity ? Undo::linksOf($this->db, [$nowId]) : [];
+        // A day's tags and people come with their ownership (Own Fields): a
+        // set the snapshot's day owned is the day's own again, named in its
+        // list, and is the set it had (with the new row's where that row
+        // owned its own too); a set it didn't own is its series' copy,
+        // never carried: the day follows its series (OwnFields::follow).
+        $wasOwn = $was['recurrence_instance_utc'] !== null ? OwnFields::decode($was['override_fields'] ?? null) : null;
+        $nowOwn = OwnFields::decode($now['override_fields'] ?? null) ?? [];
+        $takes = [];
+        foreach (OwnFields::LINKS as $field => [$linkTable]) {
+            $takes[$linkTable] = $wasOwn === null ? [true, true] : [in_array($field, $wasOwn, true), in_array($field, $nowOwn, true) || !in_array($field, $wasOwn, true)];
+        }
         foreach ($eventCols as $table => $cols) {
-            foreach ([[$local[$table] ?? [], $wasId], [$gained[$table] ?? [], $nowId]] as [$rows, $from]) {
+            foreach ([[$local[$table] ?? [], $wasId, 0], [$gained[$table] ?? [], $nowId, 1]] as [$rows, $from, $side]) {
+                if (isset($takes[$table]) && !$takes[$table][$side]) {
+                    continue;
+                }
                 foreach ($rows as $link) {
                     $named = false;
                     foreach ($cols as $col) {
@@ -3365,6 +3414,10 @@ final class GoogleSeries
         if ((string) ($was['location'] ?? '') !== (string) ($now['location'] ?? '')) {
             // Where it is placed belongs to the place Google holds now.
             $own = array_filter($own, static fn(string $col): bool => !str_starts_with($col, 'location_') && $col !== 'geocoded_at', ARRAY_FILTER_USE_KEY);
+        }
+        $ownedLinks = $wasOwn === null ? [] : array_values(array_intersect(array_keys(OwnFields::LINKS), $wasOwn));
+        if ($ownedLinks !== [] && array_diff($ownedLinks, $nowOwn) !== []) {
+            $own['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge($nowOwn, $ownedLinks)));
         }
         $this->carried[$identity ? $nowId : $wasId] = $to;
         if ($identity) {

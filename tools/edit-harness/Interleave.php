@@ -38,7 +38,7 @@ final class Interleave
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
-    public const CHECKS = ['x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
+    public const CHECKS = ['x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
@@ -652,7 +652,7 @@ final class Interleave
             }
             $gid = (string) $master['google_event_id'];
             $onMaster = ($step['race'] ?? 'day') === 'master';
-            $instance = $onMaster ? $gid : GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1, (string) $master['tzid']);
+            $instance = $onMaster ? $gid : GoogleWriter::instanceId($gid, $occ[0], (int) $master['all_day'] === 1);
             $title = $onMaster ? "Sample remote series {$this->step}" : "Sample remote day {$this->step}";
             $this->raced = [$gid, $onMaster ? null : $occ[0], $title];
             $this->lastRace = $onMaster ? null : [$gid, $occ[0], $instance];
@@ -803,7 +803,7 @@ final class Interleave
         $tz = (string) ($g['start']['timeZone'] ?? 'UTC');
         $n = $this->step;
         $occ = $this->occurrenceOf($master, fmod($step['pick'] * 13.0, 1.0));
-        $instance = $occ === null ? null : GoogleWriter::instanceId($gid, $occ[0], $allDay, (string) $master['tzid']);
+        $instance = $occ === null ? null : GoogleWriter::instanceId($gid, $occ[0], $allDay);
         $shift = static function (array $when, int $secs) use ($tz): array {
             $t = (new \DateTimeImmutable((string) $when['dateTime']))->setTimezone(new \DateTimeZone($tz))->modify(($secs >= 0 ? '+' : '') . $secs . ' seconds');
             return ['dateTime' => $t->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
@@ -2272,7 +2272,16 @@ final class Interleave
         return $dateNamed && preg_match('/(?<![0-9])' . $rowId . '(?![0-9])/', $text) === 1;
     }
 
-    /** x-structure, x-own and x-follow, on every live series not changed at Google unpolled. */
+    /**
+     * Google's id of an instance, from the rule alone (audit-155-identity): the series id and the key's date when the
+     * series is all-day (the key is that date at 00:00:00 UTC), else the key as UTC basic time with Z.
+     */
+    private static function googleIdOf(string $series, string $key, bool $allDay): string
+    {
+        return $series . '_' . (new \DateTimeImmutable($key, new \DateTimeZone('UTC')))->format($allDay ? 'Ymd' : 'Ymd\THis\Z');
+    }
+
+    /** x-structure, x-identity (every day row, half-done changes aside), x-own and x-follow, on every live series not changed at Google unpolled. */
     private function checkStructure(string $do, array $s1, array $context): void
     {
         if ($s1['half'] !== []) {
@@ -2280,6 +2289,21 @@ final class Interleave
         }
         $rows = $s1['rows'];
         $this->ran('x-structure', $do);
+        // x-identity: a day row's stored Google id is the id of its key under its master's form (rule 1, I1), worked out
+        // here (googleIdOf), never by GoogleWriter. Not skipped for a series changed at Google unpolled: the rows here
+        // agree among themselves whatever Google holds, and a poll that changes the form must give each day its new id.
+        $this->ran('x-identity', $do);
+        foreach ($rows as $id => $r) {
+            $master = $r['recurrence_parent_id'] !== null ? ($rows[(int) $r['recurrence_parent_id']] ?? null) : null;
+            if ($master === null || empty($r['google_event_id']) || empty($master['google_event_id']) || $r['recurrence_instance_utc'] === null) {
+                continue;
+            }
+            $want = self::googleIdOf((string) $master['google_event_id'], (string) $r['recurrence_instance_utc'], (int) $master['all_day'] === 1);
+            if ((string) $r['google_event_id'] !== $want) {
+                $this->fail('x-identity', "step {$this->step} ($do): a day row's stored Google id is not its key's id under its series' form",
+                    $context + ['row' => $id, 'stored' => $r['google_event_id'], 'want' => $want, 'key' => $r['recurrence_instance_utc'], 'allDay' => (int) $master['all_day'], 'own' => $r['own']]);
+            }
+        }
         $local = ['tags', 'people', 'reminders', 'attendance', 'icon'];
         foreach ($rows as $id => $r) {
             if ($r['recurrence_parent_id'] === null) {
@@ -2305,6 +2329,13 @@ final class Interleave
                 $ownName = $f === 'url' ? 'url' : $f;
                 if (!in_array($ownName, $r['own'], true) && (string) $r[$f] !== (string) $master[$f]) {
                     $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f has another than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => (string) $r[$f], 'series' => (string) $master[$f]]);
+                }
+            }
+            // Tags and people as sets (the snapshot keeps each sorted): a day's are its own only when its list says so,
+            // otherwise exactly its series' as they stand (the link rule, audit-155-links).
+            foreach (['tags', 'people'] as $f) {
+                if (!in_array($f, $r['own'], true) && $r[$f] !== $master[$f]) {
+                    $this->fail($onlyLocal ? 'x-follow' : 'x-own', "step {$this->step} ($do): an edited day that doesn't own its $f holds another set than its series'", $context + ['row' => $id, 'own' => $r['own'], 'day' => $r[$f], 'series' => $master[$f]]);
                 }
             }
             if (!in_array('time', $r['own'], true) && !in_array('date', $r['own'], true) && (int) $r['all_day'] === (int) $master['all_day'] && $r['start_utc'] !== $key) {

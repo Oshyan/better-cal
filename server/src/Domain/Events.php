@@ -573,7 +573,7 @@ final class Events
                 // id; the occurrence's instance id addresses it at Google.
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
                 $resp = $this->google()->patch($calendar, $googleId, $body, $this->googleBeforeSend($authority));
                 $undo = [$googleId, GoogleUndo::bodyOf($existing), $existing['google_etag'] ?? null];
             }
@@ -597,7 +597,7 @@ final class Events
             $occurrence = $override;
             $override = array_merge($override, $patch);
             self::refuseTimedUnderAllDay($master, (int) $override['all_day']);
-            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
             $body = self::patchBody($occurrence, $patchGoogle);
             if ($body !== []) {
                 $resp = $this->google()->patch($calendar, $instanceId, $body, $this->googleBeforeSend($authority));
@@ -662,9 +662,7 @@ final class Events
                     $created['id'] = (int) $this->db->insert('events', $created);
                 }
                 $rowId = (int) $created['id'];
-                // Same event on one day: it starts with the series' tags and people, and its trip flag (a series column).
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+                // Same event on one day: its trip flag is the series' (a series column); its tags and people follow below.
                 if ((int) ($master['is_container'] ?? 0) === 1 && !array_key_exists('is_container', $localFields)) {
                     $localFields['is_container'] = 1;
                 }
@@ -683,6 +681,8 @@ final class Events
                 $stored = $this->db->one('SELECT * FROM events WHERE id = ?', [$rowId]);
                 $this->db->run('UPDATE events SET override_fields = ? WHERE id = ?', [$this->ownAfterThis($stored, $master, $changed), $rowId]);
             }
+            // The tags and people it doesn't own are the series' (OwnFields::follow).
+            OwnFieldsList::follow($this->db, $masterId, [$rowId]);
             return true;
         });
         if (!$found) {
@@ -801,7 +801,7 @@ final class Events
         );
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
-            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
+            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
         $shown = $override ?? $master;
         $undo = GoogleUndo::details(GoogleUndo::DELETE, $calendar, $googleId, ['status' => (string) ($shown['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed'],
             $override['google_etag'] ?? null, null, ['local' => $override !== null ? $this->googleUndo()->localOf($override) : []]);
@@ -2016,8 +2016,8 @@ final class Events
         $override = $this->withOwnColumn($override);
         $newId = $this->db->tx(function () use ($override, $masterId): int {
             $id = $this->db->insert('events', $override);
-            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $masterId]);
-            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $masterId]);
+            // Owning nothing, it holds the series' tags and people (OwnFields::follow).
+            OwnFieldsList::follow($this->db, $masterId, [$id]);
             return $id;
         });
         return $this->get($userId, $newId);
@@ -2182,18 +2182,10 @@ final class Events
 
         $newId = $this->db->tx(function () use ($override, $masterId, $userId, $in): int {
             $id = $this->db->insert('events', $override);
-            // The override represents the same event on one day, so it starts
-            // with the master's tags and people; explicit patch values then
-            // replace them (this is what lets "add person to this occurrence
-            // only" work at all — links are keyed by row id).
-            $this->db->run(
-                $this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',
-                [$id, $masterId]
-            );
-            $this->db->run(
-                $this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',
-                [$id, $masterId]
-            );
+            // The override is the same event on one day: the tags and people
+            // it doesn't own are the series' (OwnFields::follow); the ones
+            // this edit sends are its own, set next.
+            OwnFieldsList::follow($this->db, $masterId, [$id]);
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }

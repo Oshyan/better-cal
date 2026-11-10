@@ -794,6 +794,8 @@ trait SeriesPlans
                 $moved[$rid] = $set + $byId[$rid];
             }
             ($this->seriesPlanWriter($userId, $newId, ['master' => []] + $pw, $in, $moved, $created, $createdEdited))();
+            // The days left with the old part follow it as it stands (OwnFields::follow).
+            OwnFields::follow($this->db, $id);
             return $newId;
         };
     }
@@ -839,10 +841,12 @@ trait SeriesPlans
                 if (!array_key_exists('recurrence_instance_utc', $cols) && in_array($rid, $park, true)) {
                     $cols['recurrence_instance_utc'] = $byId[$rid]['recurrence_instance_utc'];
                 }
-                // A day carried to another occurrence is that occurrence at Google (Feeds::googleIdAt).
-                if (isset($cols['recurrence_instance_utc'], $byId[$rid]) && $series !== null && !isset($cols['calendar_id'])
-                    && (string) $cols['recurrence_instance_utc'] !== (string) $byId[$rid]['recurrence_instance_utc']
-                    && ($gid = Feeds::googleIdAt($byId[$rid], $series, (string) $cols['recurrence_instance_utc'])) !== null) {
+                // A day placed by the plan is its occurrence at Google in the
+                // series' form as written, on a new key or its own
+                // (Feeds::googleIdAt): a form change moves the id, not the key.
+                $key = array_key_exists('recurrence_instance_utc', $cols) ? $cols['recurrence_instance_utc'] : ($byId[$rid]['recurrence_instance_utc'] ?? null);
+                if ($key !== null && isset($byId[$rid]) && $series !== null && !isset($cols['calendar_id'])
+                    && ($gid = Feeds::googleIdAt($byId[$rid], $series, (string) $key)) !== null) {
                     $cols['google_event_id'] = $gid;
                 }
                 $this->db->update('events', $cols + ['updated_at' => $now], 'id = ?', [$rid]);
@@ -865,26 +869,33 @@ trait SeriesPlans
             }
             // An occurrence the plan makes an edited day (the day acted on,
             // where it keeps a placement of its own): its row, as "this event"
-            // makes one, from the series as written, with its tags and people.
+            // makes one, from the series as written (its tags and people below).
             foreach ($w['createEdited'] ?? [] as $cols) {
                 $row = $this->copyForChild($after);
                 $row['recurrence_parent_id'] = $id;
                 $row['rrule'] = null;
                 $row['exdates_json'] = null;
                 $row['created_via'] = ActivityContext::get();
+                // Its id is its occurrence's at Google in the series' form as written (Feeds::googleIdAt), never the
+                // series' own id the copy carries; none where the series has none.
+                $row['google_event_id'] = isset($cols['recurrence_instance_utc']) ? Feeds::googleIdAt($after, $after, (string) $cols['recurrence_instance_utc']) : null;
                 $newId = $this->db->insert('events', $this->withOwnColumn(array_merge($row, $cols)));
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$newId, $id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$newId, $id]);
                 $createdEdited[] = $newId;
             }
-            foreach ($w['tags'] as $target => $names) {
-                $this->labels->setEventTags($userId, $target === 'master' ? $id : (int) $target, $names);
+            // The series' tags and people. The plan names, besides the
+            // series, each day that takes them (one whose list after no
+            // longer names the field); those days take them by following
+            // the series (below), never by a set of their own: Finish may
+            // leave the series' set as it stands (localDeltasOver), and a
+            // day's set is then the series', not the planned one.
+            if (isset($w['tags']['master'])) {
+                $this->labels->setEventTags($userId, $id, $w['tags']['master']);
             }
-            foreach (array_keys($w['people']) as $target) {
-                $this->applyPeoplePatch($userId, $target === 'master' ? $id : (int) $target, $in);
+            if (isset($w['people']['master'])) {
+                $this->applyPeoplePatch($userId, $id, $in);
             }
-            foreach (array_merge($created, $createdEdited) as $newId) {
-                // A created row takes the series' new tags and people too.
+            foreach ($created as $newId) {
+                // An event of its own the plan makes takes the series' new tags and people too.
                 if (isset($w['tags']['master'])) {
                     $this->labels->setEventTags($userId, $newId, $w['tags']['master']);
                 }
@@ -892,6 +903,10 @@ trait SeriesPlans
                     $this->applyPeoplePatch($userId, $newId, $in);
                 }
             }
+            // Every day of the series as written, a row made here included,
+            // holds the series' tags and people where its list doesn't name
+            // them (OwnFields::follow).
+            OwnFields::follow($this->db, $id);
         };
     }
 
@@ -1555,7 +1570,7 @@ trait SeriesPlans
             $body = self::patchBody($row, array_intersect_key($set, array_flip(GoogleWriter::GOOGLE_COLUMNS)));
             if ($body !== []) {
                 $googleId = !empty($row['google_event_id']) ? (string) $row['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1, (string) $master['tzid']);
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
                 $resp = $this->google()->patch($google, $googleId, $body, $this->googleBeforeSend($authority));
             }
         }
@@ -1565,15 +1580,9 @@ trait SeriesPlans
                 return;
             }
             $this->db->update('events', $this->withOwnColumn($set + ['override_fields' => OwnFields::encode($left), 'updated_at' => Time::nowDb()]), 'id = ?', [$id]);
-            if (in_array('tags', $fields, true)) {
-                $this->db->run('DELETE FROM event_tags WHERE event_id = ?', [$id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, (int) $master['id']]);
-            }
-            if (in_array('people', $fields, true)) {
-                $this->db->run('DELETE FROM event_people WHERE event_id = ?', [$id]);
-                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, (int) $master['id']]);
-            }
-            unset($userId);
+            // Tags or people taken back are the series' again (OwnFields::follow).
+            OwnFields::follow($this->db, (int) $master['id'], [$id]);
+            unset($userId, $fields);
         });
         if ($resp !== null) {
             $this->google()->apply($google, [$resp]);

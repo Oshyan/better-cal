@@ -602,6 +602,56 @@ final class Feeds
     }
 
     /**
+     * The own list of a day's row once a record from elsewhere is written
+     * to it (series-model.md, Rows from Elsewhere): for a row stored under
+     * its series, by what the record changed (OwnFields::afterSync); for a
+     * row never seen, by equality with its series. A row held before its
+     * series (a day with no parent: the calendar knew one occurrence, and
+     * its series arrives now) was never read against a series, so its list
+     * says nothing: every field is read by equality with the series as
+     * stored now, its tags and people included (ownUnder), and what was
+     * given to it here is its own. The one reading for a poll and a CalDAV
+     * PUT.
+     *
+     * @param ?array<string,mixed> $current the row as stored, null for a new one
+     * @param array<string,mixed> $columns what the record writes
+     * @param array<string,mixed> $master the series' values as the list brings them
+     * @param ?int $masterId the series' row, as the list has written it
+     * @return list<string>
+     */
+    public function ownAfter(?array $current, array $columns, array $master, ?int $masterId): array
+    {
+        if ($current !== null && self::heldBeforeSeries($current) && $masterId !== null
+            && ($series = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterId])) !== null) {
+            return $this->ownUnder(array_merge($current, $columns), $series);
+        }
+        return OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $master);
+    }
+
+    /** A day's row held before its series: a key, and no series above it. Pure. */
+    public static function heldBeforeSeries(array $row): bool
+    {
+        return ($row['recurrence_instance_utc'] ?? null) !== null && ($row['recurrence_parent_id'] ?? null) === null;
+    }
+
+    /**
+     * What a day's row held before its series owns once that series stands
+     * above it: what a row never seen under a series owns, by equality
+     * with it (OwnFields::infer, the reading afterSync gives a new row),
+     * since whatever list it has was written with no series to read it
+     * against. So: the fields that differ from the series, its tags and
+     * people compared as sets.
+     *
+     * @return list<string>
+     */
+    private function ownUnder(array $row, array $series): array
+    {
+        $of = fn(string $table, string $col, int $id): array => array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ? ORDER BY `$col`", [$id]), $col));
+        return OwnFields::infer($row, $series, $of('event_tags', 'tag_id', (int) $row['id']), $of('event_tags', 'tag_id', (int) $series['id']),
+            $of('event_people', 'person_id', (int) $row['id']), $of('event_people', 'person_id', (int) $series['id']));
+    }
+
+    /**
      * A following row whose image another row holds ($holderId) gives that
      * row what it holds here alone ($held; $source as it follows its
      * series): its tags and people are added to the holder's; its
@@ -993,6 +1043,210 @@ final class Feeds
     }
 
     /**
+     * What becomes of the stored rows once a list's records are written:
+     * the one function for every list rows are matched against, a feed's or
+     * Google's (sync) and a CalDAV client's PUT (CalendarBackend::
+     * putObject). A stored day's row no record was given to is never simply
+     * removed (series-model.md, Rows from Elsewhere; decisions.md, "A
+     * feed's change to a day keeps what is held here"):
+     *
+     * A row whose event or series the list no longer has goes, named with
+     * what it held here alone. Every day's row of a series the list still
+     * has is brought up to its series, whoever made it (created_via is
+     * provenance only). While the list's record for the day holds something
+     * of its own (a field: title, place text, notes, link, status, date,
+     * time, length, all-day; or a guest list of its own), the record
+     * decides those, as written before this. Otherwise (no record, a record
+     * equal to its series, or a delta's stored copy, which says nothing new)
+     * the row keeps exactly what is held here alone (heldHere: tags,
+     * people, reminders, an answer, an icon, picked coordinates, and what
+     * refers to it) and takes the series' values for everything else
+     * (ofSeries), its key moving to its image. Then:
+     *  - the series no longer has its day: the row goes, named with what
+     *    it held;
+     *  - another row already holds its image (the list's record of that
+     *    day, a row that stays, or another row moving there): what it holds
+     *    goes to that row and it goes, named as kept on that day's row;
+     *  - it holds nothing: it is an ordinary occurrence again, no row.
+     * A day's row held before its series (no parent) is a day of the series
+     * the list brings for it, read by equality with that series as a row
+     * never seen is, and put under it when it stays.
+     *
+     * $seriesOf answers for a row: `seen` (the list has the series this
+     * day's row is of), `was` (that series as stored before the list) and
+     * `series` (as stored now). $rows are the rows as stored before the
+     * list; a caller that lets its records decide their rows whatever they
+     * hold (a PUT) leaves those rows out.
+     *
+     * @param iterable<array<string,mixed>> $rows
+     * @param array<int,true> $given the rows a record of the list was given to, by id
+     * @param list<int> $written the rows the list's records changed, read again here
+     * @param callable(array<string,mixed>): array{seen:bool,was:?array,series:?array} $seriesOf
+     * @param ?string $uid the one uid the rows are of, when the caller has one
+     * @return array{touches:list<array{0:string,1:string}>, uids:array<string,true>, removed:int, updated:list<int>, dropped:list<array>}
+     */
+    public function settle(int $calendarId, iterable $rows, array $given, array $written, callable $seriesOf, ?float $deadline = null, ?string $uid = null): array
+    {
+        $touches = [];
+        $uids = [];
+        $removed = 0;
+        $changedIds = [];
+        $droppedDays = [];
+        $index = 0;
+        $drop = [];   // id => the row, gone with nothing named unless $deleted names it
+        $deleted = []; // id => [what it held, what refers to it]: an event or series no longer in the calendar
+        $gone = [];   // id => [the row, what it held]: its day is gone
+        $follow = []; // id => [the row, the row as it follows, what it holds, what refers to it, its series]
+        $under = [];  // id => its series as stored before the list
+        $updated = array_flip($written);
+        foreach ($rows as $row) {
+            if (($index++ & 127) === 0) {
+                self::assertSyncDeadline($deadline);
+            }
+            $id = (int) $row['id'];
+            $carried = isset($given[$id]);
+            $of = $seriesOf($row);
+            // The series a row's key was written under, for the date it is named by if it goes (droppedDay).
+            $under[$id] = $of['was'];
+            if (!$of['seen'] || $row['deleted_at'] !== null) {
+                if (!$carried) {
+                    $drop[$id] = $row;
+                    // An event or a series no longer in the calendar:
+                    // what it held here alone is named (A5).
+                    if ($row['deleted_at'] === null) {
+                        $master = $row['recurrence_parent_id'] !== null ? $of['was'] : null;
+                        $held = $master !== null ? self::heldHere($this->ownOf($row, $master), $row) : ($row['recurrence_parent_id'] === null ? $this->heldByEvent($row) : []);
+                        $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
+                        if ($held !== [] || $refs !== []) {
+                            $deleted[$id] = [$held, $refs];
+                        }
+                    }
+                }
+                continue;
+            }
+            // As the records left it: one given to it may have changed it.
+            $now = isset($updated[$id]) ? $this->db->one('SELECT * FROM events WHERE id = ?', [$id]) : $row;
+            $series = $of['series'];
+            if ($now === null || $series === null) {
+                continue;
+            }
+            $was = $of['was'];
+            // A day held before its series was never read against one: its
+            // list says nothing, and its fields are read by equality (ownAfter).
+            $own = self::heldBeforeSeries($now) ? $this->ownUnder($now, $series) : $this->ownOf($now, $was ?? $series);
+            if ($carried && self::recordHolds($own, $now, $series, $was)) {
+                continue;
+            }
+            // Its image, from the key it had under the series as it was:
+            // a record given to it may have set its new key already.
+            $target = self::ofSeries(['recurrence_instance_utc' => $row['recurrence_instance_utc']] + $now, $was, $series);
+            $after = $target === null ? $now : self::followed($now, $target);
+            $kept = self::retained($this->db, $after, $own);
+            if ($target === null) {
+                $gone[$id] = [$now, $kept['fields'] ?? [], $kept['refs'] ?? []];
+                continue;
+            }
+            if ($kept === null) {
+                $drop[$id] = $now;
+                continue;
+            }
+            if (self::heldBeforeSeries($now)) {
+                $after['recurrence_parent_id'] = (int) $series['id'];
+            }
+            $follow[$id] = [$now, $after, $kept['fields'], $kept['refs'], $series];
+        }
+        self::assertSyncDeadline($deadline);
+
+        // Who holds each day after the list: every row left where it is,
+        // then each following row at its image, the first to claim a day
+        // holding it (a row whose image is its own key first, then by id);
+        // a later one merges into the holder.
+        $merge = []; // id => the holder's id
+        if ($follow !== []) {
+            $holderAt = [];
+            foreach ($this->db->all('SELECT id, uid, recurrence_instance_utc FROM events WHERE calendar_id = ? AND recurrence_instance_utc IS NOT NULL' . ($uid === null ? '' : ' AND uid = ?'),
+                $uid === null ? [$calendarId] : [$calendarId, $uid]) as $r) {
+                $rid = (int) $r['id'];
+                if (!isset($follow[$rid]) && !isset($drop[$rid]) && !isset($gone[$rid])) {
+                    $holderAt[$r['uid'] . '|' . $r['recurrence_instance_utc']] = $rid;
+                }
+            }
+            foreach ([true, false] as $inPlace) {
+                foreach ($follow as $id => [$now, $after]) {
+                    if (((string) $after['recurrence_instance_utc'] === (string) $now['recurrence_instance_utc']) !== $inPlace) {
+                        continue;
+                    }
+                    $at = $now['uid'] . '|' . $after['recurrence_instance_utc'];
+                    if (isset($holderAt[$at])) {
+                        $merge[$id] = $holderAt[$at];
+                    } else {
+                        $holderAt[$at] = $id;
+                    }
+                }
+            }
+        }
+
+        // Keys are unique per calendar: a row moving onto a key another
+        // row leaves takes it once that row has let it go.
+        foreach ($follow as $id => [$now, $after]) {
+            if (isset($merge[$id]) || (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc']) {
+                $this->db->run('UPDATE events SET recurrence_instance_utc = NULL WHERE id = ?', [$id]);
+            }
+        }
+        foreach ($drop + array_map(static fn(array $g): array => $g[0], $gone) as $id => $row) {
+            if (isset($gone[$id]) && ($gone[$id][1] !== [] || $gone[$id][2] !== [])) {
+                $droppedDays[] = self::droppedDay($row, $under[$id] ?? null, $gone[$id][1], $gone[$id][2], 'gone');
+            } elseif (isset($deleted[$id])) {
+                $droppedDays[] = self::droppedDay($row, $under[$id] ?? null, $deleted[$id][0], $deleted[$id][1], 'deleted');
+            }
+            $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
+            $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
+            $uids[(string) $row['uid']] = true;
+            $removed++;
+        }
+        foreach ($follow as $id => [$now, $after, $held]) {
+            if (isset($merge[$id])) {
+                continue;
+            }
+            $changed = [];
+            foreach ($after as $col => $value) {
+                if (array_key_exists($col, $now) && !self::sameValue($col, $now[$col], $value)) {
+                    $changed[$col] = $value;
+                }
+            }
+            $list = OwnFields::encode($held);
+            if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
+                $changed['override_fields'] = $list;
+            }
+            $moved = (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc'];
+            if ($changed === [] && !$moved) {
+                continue;
+            }
+            if ($moved) {
+                $changed['recurrence_instance_utc'] = $after['recurrence_instance_utc'];
+            }
+            $touches = array_merge($touches, Undo::touchesOf(['events' => [$now]], ['events' => [array_merge($now, $changed)]]));
+            $changed['updated_at'] = Time::nowDb();
+            $this->db->update('events', $changed, 'id = ?', [$id]);
+            $uids[(string) $now['uid']] = true;
+            $changedIds[$id] = true;
+        }
+        foreach ($merge as $id => $holderId) {
+            [$now, $after, $held, $refs, $series] = $follow[$id];
+            $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
+            $this->mergeInto($after + ['id' => $id], $holderId, $held, $series);
+            $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
+            $droppedDays[] = self::droppedDay($now, $under[$id] ?? null, $held, $refs, 'merged');
+            $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
+            $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
+            $changedIds[$holderId] = true;
+            $uids[(string) $now['uid']] = true;
+            $removed++;
+        }
+        return ['touches' => $touches, 'uids' => $uids, 'removed' => $removed, 'updated' => array_keys($changedIds), 'dropped' => $droppedDays];
+    }
+
+    /**
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
@@ -1057,6 +1311,17 @@ final class Feeds
                     'invite_json' => $pm['invite_json'] ?? null];
             }
         }
+        // A record of one day is named under its series (Ics::keysUnder):
+        // by the parser where the list carries the series, and here where it
+        // does not and the poll keeps the series as stored (its own record
+        // unreadable: the stored row is the record's master, below).
+        foreach ($parsed as $index => $pm) {
+            $uid = (string) $pm['uid'];
+            if ($pm['recurrence_instance_utc'] !== null && !isset($parsedMasters[$uid]) && ($unknownSkipped || isset($protected[$uid]))
+                && ($stored = $existingByKey[$uid . '|'] ?? null) !== null && $stored['deleted_at'] === null) {
+                $parsed[$index] = Ics::under($pm, $stored);
+            }
+        }
         // The stored row each record of the list is for, by uid and key
         // (standing, the one function that says which): the row at the
         // record's key while its series keeps its form, and in a series
@@ -1069,12 +1334,26 @@ final class Feeds
         $rowFor = $existingByKey;
         $park = [];
         $daysOf = [];
+        // A day's row held before its series (no series above it) is found
+        // at its own key, the name its record has at the other end too. At
+        // Google that name is also a form (an instance's id is its series,
+        // its form and its key: GoogleWriter::instanceOf), so a row Google
+        // knows in the other form than the series this list brings is no
+        // instance of that series: no record of the list is for it, and it
+        // is no day of that series when the rows are settled.
+        $strangers = [];
         foreach ($existing as $index => $row) {
             if (($index & 127) === 0) {
                 self::assertSyncDeadline($deadline);
             }
             if ($row['recurrence_instance_utc'] !== null && $row['recurrence_parent_id'] !== null) {
                 $daysOf[(string) $row['uid']][] = $row;
+            }
+            if (!$unknownSkipped && self::heldBeforeSeries($row) && isset($parsedMasters[(string) $row['uid']])
+                && ($known = GoogleWriter::instanceOf((string) ($row['google_event_id'] ?? ''))) !== null
+                && $known['allDay'] !== ((int) $parsedMasters[(string) $row['uid']]['all_day'] === 1)) {
+                $strangers[(int) $row['id']] = true;
+                unset($rowFor[$row['uid'] . '|' . $row['recurrence_instance_utc']]);
             }
         }
         foreach ($unknownSkipped ? [] : $parsed as $pm) {
@@ -1101,8 +1380,16 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $strangers, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             Events::parkInstanceKeys($this->db, $park);
+            // A held day that is no instance of the series this list brings
+            // lets go of its key too (keys are unique per calendar, uid and
+            // key), before a record of the series takes it; the row goes
+            // when the rows are settled, named with what it held.
+            foreach (array_chunk(array_keys($strangers), 500) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $this->db->run("UPDATE events SET recurrence_instance_utc = NULL WHERE id IN $in", $params);
+            }
             // The rows a record of the list was given to, by row id: what
             // "the feed carries a record for this row" means below. A record
             // that is an ordinary occurrence here (nothing of its own) is
@@ -1146,7 +1433,7 @@ final class Feeds
                     }
                 }
                 if ($feedMaster !== null) {
-                    $own = OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $feedMaster);
+                    $own = $this->ownAfter($current, $columns, $feedMaster, $masterIdByUid[(string) $ev['uid']] ?? null);
                     $columns['override_fields'] = OwnFields::encode($own);
                     // An edited day with nothing of its own is an ordinary
                     // occurrence again (series-model.md, Own Fields), from
@@ -1246,183 +1533,37 @@ final class Feeds
             }
 
             // Rows the feed no longer carries go, and every edited day of a
-            // series the feed still has is brought up to its series by one
-            // rule, whoever made its row (created_via is provenance only;
-            // series-model.md, Rows from Elsewhere; decisions.md, "A feed's
-            // change to a day keeps what is held here"):
-            //
-            // While the feed's record for the day holds something of its own
-            // (a field: title, place text, notes, link, status, date, time,
-            // length, all-day; or a guest list of its own), the record decides
-            // those, as stored above. Otherwise (no record, a record equal to
-            // its series, or a delta's stored copy, which says nothing new)
-            // the row keeps exactly what is held here alone (heldHere: tags,
-            // people, reminders, an answer, an icon, picked coordinates, and
-            // what refers to it) and takes the series' values for everything
-            // else (ofSeries), its key moving to its image. Then:
-            //  - the series no longer has its day: the row goes, named in
-            //    Activity with what it held;
-            //  - another row already holds its image (the feed's record of
-            //    that day, a row that stays, or another row moving there):
-            //    what it holds goes to that row and it goes, named as kept
-            //    on that day's row;
-            //  - it holds nothing: it is an ordinary occurrence again, no row.
-            // A whole read and a delta read alike.
-            $removeIndex = 0;
+            // series the feed still has is brought up to its series, by the
+            // one function every list of records is settled by (settle): a
+            // whole read and a delta read alike. A series this poll leaves
+            // (an unreadable record) keeps its rows where they are.
             $newMasters = [];
-            $droppedDays = [];
-            $drop = [];   // id => the row, gone with nothing named unless $deleted names it
-            $deleted = []; // id => [what it held, what refers to it]: an event or series no longer in the calendar
-            $gone = [];   // id => [the row, what it held]: its day is gone
-            $follow = []; // id => [the row, the row as it follows, what it holds, what refers to it]
-            $updated = array_flip($updatedEventIds);
-            foreach ($existingByKey as $key => $row) {
-                if (($removeIndex++ & 127) === 0) {
-                    self::assertSyncDeadline($deadline);
-                }
-                if ($unknownSkipped || isset($protected[$row['uid']])) {
-                    continue;
-                }
-                $id = (int) $row['id'];
+            $seriesOf = function (array $row) use ($existingByKey, $seen, $masterIdByUid, $strangers, &$newMasters): array {
                 $uid = (string) $row['uid'];
-                $carried = isset($given[$id]);
-                $seriesSeen = $row['recurrence_parent_id'] !== null && isset($seen[$uid . '|']) && isset($masterIdByUid[$uid]);
-                if (!$seriesSeen || $row['deleted_at'] !== null) {
-                    if (!$carried) {
-                        $drop[$id] = $row;
-                        // An event or a series no longer in the calendar:
-                        // what it held here alone is named (A5).
-                        if ($row['deleted_at'] === null) {
-                            $master = $row['recurrence_parent_id'] !== null ? ($existingByKey[$uid . '|'] ?? null) : null;
-                            $held = $master !== null ? self::heldHere($this->ownOf($row, $master), $row) : ($row['recurrence_parent_id'] === null ? $this->heldByEvent($row) : []);
-                            $refs = OwnFields::references($this->db, [$id])[$id] ?? [];
-                            if ($held !== [] || $refs !== []) {
-                                $deleted[$id] = [$held, $refs];
-                            }
-                        }
-                    }
-                    continue;
-                }
-                // As the loop above left it: a record the feed carries may
-                // have changed it.
-                $now = isset($updated[$id]) ? $this->db->one('SELECT * FROM events WHERE id = ?', [$id]) : $row;
-                $newMasters[$uid] ??= $this->db->one('SELECT * FROM events WHERE id = ?', [$masterIdByUid[$uid]]);
-                $series = $newMasters[$uid];
-                if ($now === null || $series === null) {
-                    continue;
-                }
                 $was = $existingByKey[$uid . '|'] ?? null;
-                $own = $this->ownOf($now, $was ?? $series);
-                if ($carried && self::recordHolds($own, $now, $series, $was)) {
-                    continue;
+                // A day's row is a day of the series the list has for its
+                // uid: the row of a day held before its series too, which
+                // has no series above it until this poll brings one (but
+                // not one Google knows as an instance of the other form).
+                if ($row['recurrence_instance_utc'] === null || !isset($seen[$uid . '|']) || !isset($masterIdByUid[$uid]) || isset($strangers[(int) $row['id']])) {
+                    return ['seen' => false, 'was' => $was, 'series' => null];
                 }
-                // Its image, from the key it had under the series as it was:
-                // a record given to it above may have set its new key already.
-                $target = self::ofSeries(['recurrence_instance_utc' => $row['recurrence_instance_utc']] + $now, $was, $series);
-                $after = $target === null ? $now : self::followed($now, $target);
-                $kept = self::retained($this->db, $after, $own);
-                if ($target === null) {
-                    $gone[$id] = [$now, $kept['fields'] ?? [], $kept['refs'] ?? []];
-                    continue;
+                if (!array_key_exists($uid, $newMasters)) {
+                    $newMasters[$uid] = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterIdByUid[$uid]]);
                 }
-                if ($kept === null) {
-                    $drop[$id] = $now;
-                    continue;
-                }
-                $follow[$id] = [$now, $after, $kept['fields'], $kept['refs']];
-            }
-            self::assertSyncDeadline($deadline);
-
-            // Who holds each day after the poll: every row left where it is,
-            // then each following row at its image, the first to claim a day
-            // holding it (a row whose image is its own key first, then by id);
-            // a later one merges into the holder.
-            $merge = []; // id => the holder's id
-            if ($follow !== []) {
-                $holderAt = [];
-                foreach ($this->db->all('SELECT id, uid, recurrence_instance_utc FROM events WHERE calendar_id = ? AND recurrence_instance_utc IS NOT NULL', [$calendarId]) as $r) {
-                    $rid = (int) $r['id'];
-                    if (!isset($follow[$rid]) && !isset($drop[$rid]) && !isset($gone[$rid])) {
-                        $holderAt[$r['uid'] . '|' . $r['recurrence_instance_utc']] = $rid;
-                    }
-                }
-                foreach ([true, false] as $inPlace) {
-                    foreach ($follow as $id => [$now, $after]) {
-                        if (((string) $after['recurrence_instance_utc'] === (string) $now['recurrence_instance_utc']) !== $inPlace) {
-                            continue;
-                        }
-                        $at = $now['uid'] . '|' . $after['recurrence_instance_utc'];
-                        if (isset($holderAt[$at])) {
-                            $merge[$id] = $holderAt[$at];
-                        } else {
-                            $holderAt[$at] = $id;
-                        }
-                    }
-                }
-            }
-
-            // Keys are unique per calendar: a row moving onto a key another
-            // row leaves takes it once that row has let it go.
-            foreach ($follow as $id => [$now, $after]) {
-                if (isset($merge[$id]) || (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc']) {
-                    $this->db->run('UPDATE events SET recurrence_instance_utc = NULL WHERE id = ?', [$id]);
-                }
-            }
-            foreach ($drop + array_map(static fn(array $g): array => $g[0], $gone) as $id => $row) {
-                if (isset($gone[$id]) && ($gone[$id][1] !== [] || $gone[$id][2] !== [])) {
-                    $droppedDays[] = self::droppedDay($row, $existingByKey[$row['uid'] . '|'] ?? null, $gone[$id][1], $gone[$id][2], 'gone');
-                } elseif (isset($deleted[$id])) {
-                    $droppedDays[] = self::droppedDay($row, $existingByKey[$row['uid'] . '|'] ?? null, $deleted[$id][0], $deleted[$id][1], 'deleted');
-                }
-                $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
-                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
-                $changedUids[(string) $row['uid']] = true;
-                $removedCount++;
-            }
-            foreach ($follow as $id => [$now, $after, $held]) {
-                if (isset($merge[$id])) {
-                    continue;
-                }
-                $changed = [];
-                foreach ($after as $col => $value) {
-                    if (array_key_exists($col, $now) && !self::sameValue($col, $now[$col], $value)) {
-                        $changed[$col] = $value;
-                    }
-                }
-                $list = OwnFields::encode($held);
-                if (!self::sameValue('override_fields', $now['override_fields'] ?? null, $list)) {
-                    $changed['override_fields'] = $list;
-                }
-                $moved = (string) $after['recurrence_instance_utc'] !== (string) $now['recurrence_instance_utc'];
-                if ($changed === [] && !$moved) {
-                    continue;
-                }
-                if ($moved) {
-                    $changed['recurrence_instance_utc'] = $after['recurrence_instance_utc'];
-                }
-                $touches = array_merge($touches, Undo::touchesOf(['events' => [$now]], ['events' => [array_merge($now, $changed)]]));
-                $changed['updated_at'] = Time::nowDb();
-                $this->db->update('events', $changed, 'id = ?', [$id]);
-                $changedUids[(string) $now['uid']] = true;
+                return ['seen' => true, 'was' => $was, 'series' => $newMasters[$uid]];
+            };
+            $settled = $this->settle($calendarId, $unknownSkipped ? [] : array_filter($existingByKey, static fn(array $r): bool => !isset($protected[$r['uid']])),
+                $given, $updatedEventIds, $seriesOf, $deadline);
+            $droppedDays = $settled['dropped'];
+            $touches = array_merge($touches, $settled['touches']);
+            $changedUids += $settled['uids'];
+            $removedCount += $settled['removed'];
+            foreach ($settled['updated'] as $id) {
                 if (!in_array($id, $updatedEventIds, true)) {
                     $updatedEventIds[] = $id;
                     $upserts++;
                 }
-            }
-            foreach ($merge as $id => $holderId) {
-                [$now, $after, $held, $refs] = $follow[$id];
-                $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
-                $this->mergeInto($after + ['id' => $id], $holderId, $held, $newMasters[(string) $now['uid']] ?? null);
-                $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
-                $droppedDays[] = self::droppedDay($now, $existingByKey[$now['uid'] . '|'] ?? null, $held, $refs, 'merged');
-                $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
-                $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
-                if (!in_array($holderId, $updatedEventIds, true)) {
-                    $updatedEventIds[] = $holderId;
-                    $upserts++;
-                }
-                $changedUids[(string) $now['uid']] = true;
-                $removedCount++;
             }
             // Every series this poll changed: each day not owning its tags or
             // people holds the series' (OwnFields::follow), a day kept while

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Domain\Series\Cal;
+use BetterCal\Domain\Series\Calc;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
@@ -686,8 +688,117 @@ final class Ics
                 $events[] = $parsed;
             } else $skipped[] = self::unreadableEvent($vevent);
         }
+        $events = self::keyed($events);
         Recurrence::assertExdateBatch($events);
         return $events;
+    }
+
+    /**
+     * Each record of one day keyed under its series where the list holds
+     * the series (the first VEVENT of its UID with no RECURRENCE-ID): the
+     * parser reads one VEVENT at a time, so the key a record leaves
+     * parseVevent with is its name read alone, and its series' form and
+     * zone are known only here. Every reader of a whole iCalendar text
+     * comes through this (parse; MailIngest::parseImip). A reader that
+     * holds the series only as a stored row asks `under` with that row.
+     *
+     * @param list<array<string,mixed>> $events
+     * @return list<array<string,mixed>>
+     */
+    public static function keyed(array $events): array
+    {
+        $series = [];
+        foreach ($events as $ev) {
+            if ($ev['recurrence_instance_utc'] === null && ($ev['recurrence_name'] ?? null) === null) {
+                $series[(string) $ev['uid']] ??= $ev;
+            }
+        }
+        foreach ($events as $i => $ev) {
+            if (($ev['recurrence_name'] ?? null) !== null && isset($series[(string) $ev['uid']])) {
+                $events[$i] = self::under($ev, $series[(string) $ev['uid']]);
+            }
+        }
+        return $events;
+    }
+
+    /**
+     * A parsed record of one day keyed under $series, a parsed VEVENT or a
+     * stored row: its RECURRENCE-ID as the sender wrote it, read under the
+     * series' form and zone (keysUnder). A record with no name kept (one
+     * that did not come from iCalendar text) is returned as it is.
+     *
+     * @param array<string,mixed> $record
+     * @param array<string,mixed> $series
+     * @return array<string,mixed>
+     */
+    public static function under(array $record, array $series): array
+    {
+        if (($record['recurrence_name'] ?? null) !== null) {
+            $record['recurrence_instance_utc'] = self::keysUnder($record['recurrence_name'], $series)[0];
+        }
+        return $record;
+    }
+
+    /**
+     * The keys an iCalendar name of an instance gives under a series: the
+     * one reading of a RECURRENCE-ID or an EXDATE value, for every source
+     * of iCalendar text. A key is a UTC instant under a timed series and a
+     * date at 00:00:00 UTC under an all-day one (series-model.md,
+     * Vocabulary), and a name is a DATE or a DATE-TIME (names), so the
+     * name is read under the SERIES' form and zone, never under the form
+     * of the record that carries it:
+     *
+     * Under a timed series a date-time with a zone or a Z is its instant;
+     * one with neither is that clock in the series' zone (the first of a
+     * repeated hour, the clock plus the gap in a skipped one: Calc::at). A
+     * DATE names a day where RFC 5545 asks for a date-time (3.8.4.4, and
+     * 3.8.5.1 for EXDATE: the value type of DTSTART), and senders write it
+     * anyway: it is every occurrence the series has on that date in its own
+     * zone (the series' clock there when its rule gives none). Read as
+     * 00:00 UTC it named the occurrence of another day west of UTC, or none.
+     *
+     * Under an all-day series a DATE is that date. A date-time is the date
+     * of its instant in the zone the series' days were written in, where
+     * this read knows it (`days_tzid`: a series sent as zoned midnights in
+     * the same text), else the date of its own clock as written.
+     *
+     * $series is a parsed VEVENT or a stored row: all_day, tzid, and for a
+     * DATE under a timed series start_utc, end_utc and rrule. Pure.
+     *
+     * @param array{date?:string,utc?:string,wall?:string} $name
+     * @param array<string,mixed> $series
+     * @return list<string>
+     */
+    public static function keysUnder(array $name, array $series): array
+    {
+        if ((int) ($series['all_day'] ?? 0) === 1) {
+            if (isset($name['date'])) {
+                return [$name['date'] . ' 00:00:00'];
+            }
+            $written = $series['days_tzid'] ?? null;
+            return [(isset($name['utc']) && $written !== null
+                ? Time::dayOf(Time::fromDb($name['utc']), false, (string) $written)
+                : substr((string) $name['wall'], 0, 10)) . ' 00:00:00'];
+        }
+        if (isset($name['utc'])) {
+            return [$name['utc']];
+        }
+        $tz = Time::normalizeTzid((string) ($series['tzid'] ?? 'UTC'));
+        $at = new \DateTimeImmutable((string) ($name['date'] ?? $name['wall']), Time::utc());
+        $dn = Cal::dnOf($at);
+        if (!isset($name['date'])) {
+            return [Time::toDb(Calc::at($dn, [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')], $tz))];
+        }
+        try {
+            $calc = Calc::fromRow(['all_day' => 0, 'tzid' => $tz] + $series + ['exdates_json' => null]);
+            $on = $calc->expandable() ? $calc->keysOn($dn) : [];
+            return $on !== [] ? $on : [$calc->key($dn)];
+        } catch (\Throwable) {
+            // No rule to ask (an event that does not repeat, a rule the
+            // expander can't read): the series' own clock on that date.
+            $start = Time::fromDb((string) $series['start_utc'])->setTimezone(Time::zone($tz));
+            return [Time::toDb(Calc::at($dn, [(int) $start->format('G'), (int) $start->format('i'), (int) $start->format('s')], $tz))];
+        }
     }
 
     public static function unreadableEvent(object $vevent): array
@@ -899,24 +1010,57 @@ final class Ics
             }
             return $out;
         }
-        // A local time in the repeated hour when clocks go back is the earlier
-        // of its two instants (RFC 5545 3.3.5). PHP resolves it to the later
-        // one in zones east of UTC and the earlier one west of it; read the
-        // later, an EXDATE or RECURRENCE-ID missed its occurrence (0.9.15).
-        return array_map(static function ($dt): \DateTimeImmutable {
-            $local = \DateTimeImmutable::createFromInterface($dt);
-            $utc = $local->setTimezone(Time::utc());
-            $zone = $local->getTimezone();
-            if ($zone->getName() !== 'UTC' && $zone->getName() !== 'Z') {
-                foreach ([3600, 1800] as $step) {
-                    $earlier = $utc->modify('-' . $step . ' seconds');
-                    if ($earlier->setTimezone($zone)->format('YmdHis') === $local->format('YmdHis')) {
-                        return $earlier;
-                    }
+        return array_map(static fn($dt): \DateTimeImmutable => self::firstInstant(\DateTimeImmutable::createFromInterface($dt)), $prop->getDateTimes($readTz));
+    }
+
+    /**
+     * The instant a local time names. One in the repeated hour when clocks
+     * go back is the earlier of its two instants (RFC 5545 3.3.5). PHP
+     * resolves it to the later one in zones east of UTC and the earlier one
+     * west of it; read the later, an EXDATE or RECURRENCE-ID missed its
+     * occurrence (0.9.15).
+     */
+    private static function firstInstant(\DateTimeImmutable $local): \DateTimeImmutable
+    {
+        $utc = $local->setTimezone(Time::utc());
+        $zone = $local->getTimezone();
+        if ($zone->getName() !== 'UTC' && $zone->getName() !== 'Z') {
+            foreach ([3600, 1800] as $step) {
+                $earlier = $utc->modify('-' . $step . ' seconds');
+                if ($earlier->setTimezone($zone)->format('YmdHis') === $local->format('YmdHis')) {
+                    return $earlier;
                 }
             }
-            return $utc;
-        }, $prop->getDateTimes($readTz));
+        }
+        return $utc;
+    }
+
+    /**
+     * A RECURRENCE-ID, or the values of an EXDATE line, as the sender wrote
+     * them: the names of instances, each read under a series by keysUnder.
+     * A DATE is ['date' => 'Y-m-d'] (read literally: sabre would apply a
+     * stray TZID to it). A date-time with a zone or a Z is its instant and
+     * its clock as written in its own zone, ['utc' => ..., 'wall' => ...];
+     * one with neither is its clock alone, ['wall' => ...].
+     *
+     * @return list<array{date?:string,utc?:string,wall?:string}>
+     */
+    private static function names(object $prop): array
+    {
+        if ($prop->getValueType() === 'DATE') {
+            return array_map(static fn(\DateTimeImmutable $d): array => ['date' => $d->format('Y-m-d')], self::utcInstants($prop, Time::utc()));
+        }
+        if (self::singletonDate((string) $prop->name) && count($prop->getParts()) !== 1) {
+            throw new \InvalidArgumentException($prop->name . ' must contain one date');
+        }
+        $floating = method_exists($prop, 'isFloating') && $prop->isFloating();
+        $out = [];
+        foreach ($prop->getDateTimes(Time::utc()) as $dt) {
+            $local = \DateTimeImmutable::createFromInterface($dt);
+            $wall = $local->format('Y-m-d H:i:s');
+            $out[] = $floating ? ['wall' => $wall] : ['utc' => self::firstInstant($local)->format(Time::DB), 'wall' => $wall];
+        }
+        return $out;
     }
 
     public static function parseVevent(object $vevent, string $floatName = 'UTC'): ?array
@@ -1007,27 +1151,48 @@ final class Ics
             }
             $tzid = 'UTC';
         }
-        $dayOf = static fn(\DateTimeImmutable $t): \DateTimeImmutable => $zonedDay === null ? $t
-            : new \DateTimeImmutable(Time::dayOf($t, false, $zonedDay), Time::utc());
+        // The zone this VEVENT's days were written in, when it is all-day
+        // sent as zoned midnights: what a date-time naming one of its days
+        // is read in (keysUnder).
+        $daysTzid = $zonedDay?->getName();
 
         // Every path that turns ICS into rows comes through here (feeds,
         // imports, CalDAV, mail): the RRULE is made safe once, at the door.
         $rrule = isset($vevent->RRULE) ? Recurrence::safeRrule((string) $vevent->RRULE) : null;
 
+        // A skipped date names an occurrence of this VEVENT, which is the
+        // series: read under its own form and zone (keysUnder), whatever
+        // value type the line has.
         $exdates = [];
         if (isset($vevent->EXDATE)) {
+            $asSeries = ['all_day' => $allDay ? 1 : 0, 'tzid' => $tzid, 'days_tzid' => $daysTzid,
+                'start_utc' => $start->format(Time::DB), 'end_utc' => $end->format(Time::DB), 'rrule' => $rrule];
             foreach ($vevent->select('EXDATE') as $exProp) {
-                foreach (self::utcInstants($exProp, $readTz) as $exDt) {
-                    $exdates[] = $dayOf($exDt)->format(Time::DB);
+                foreach (self::names($exProp) as $exName) {
+                    array_push($exdates, ...self::keysUnder($exName, $asSeries));
                 }
             }
         }
 
+        // A RECURRENCE-ID names an occurrence of this record's SERIES, which
+        // is another VEVENT: the name is kept as written, and its key is
+        // read under the series by whoever knows it (keyed, for a series in
+        // the same text; under, for one stored). The key given here is the
+        // name read alone, for a record no reader has a series for: a DATE
+        // is a day, and so is a midnight on a record itself sent as zoned
+        // midnights (a sender that writes days that way); any other
+        // date-time is an instant, one with no zone read where this
+        // record's own times are.
+        $recurrenceName = null;
         $recurrenceInstance = null;
         if (isset($vevent->{'RECURRENCE-ID'})) {
             try {
-                $recurrenceInstance = $dayOf(self::utcInstants($vevent->{'RECURRENCE-ID'}, $readTz)[0])->format(Time::DB);
+                $recurrenceName = self::names($vevent->{'RECURRENCE-ID'})[0];
+                $aDay = isset($recurrenceName['date']) || ($zonedDay !== null && substr((string) $recurrenceName['wall'], 11) === '00:00:00');
+                $recurrenceInstance = self::keysUnder($recurrenceName, $aDay ? ['all_day' => 1, 'days_tzid' => $daysTzid]
+                    : ['all_day' => 0, 'tzid' => $daysTzid ?? ($isDate ? $floatName : $tzid)])[0];
             } catch (\Throwable) {
+                $recurrenceName = null;
                 $recurrenceInstance = null;
             }
         }
@@ -1086,6 +1251,11 @@ final class Ics
             'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,
             'recurrence_instance_utc' => $recurrenceInstance,
+            // The RECURRENCE-ID as written, and the zone an all-day VEVENT
+            // sent as zoned midnights was written in: what a key is read
+            // from under a series (keysUnder). Never stored.
+            'recurrence_name' => $recurrenceName,
+            'days_tzid' => $daysTzid,
             'reminders' => $reminders,
         ];
     }

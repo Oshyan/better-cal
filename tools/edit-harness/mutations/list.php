@@ -795,4 +795,13 @@ return [
         'patch' => [['usort($out, static fn(array $a, array $b): int => $order($a) <=> $order($b));', 'usort($out, static fn(array $a, array $b): int => $order($b) <=> $order($a));']],
         'cases' => ['next-an-edited-day-and-the-day-acted-on-tied-on-one-all-day-date', 'next-several-occurrences-on-one-day'],
     ],
+    // An anchored series' bound mis-counted: a COUNT sent read as the stored text, the stored day before a start in a
+    // skipped hour counted in it, so the series shows one event fewer than sent. The driver sends the COUNT the API gives
+    // (the events shown), so the oracle expects no bound change: c-days trips, with a-time and c-untouched for the rule column (seed 48271 case 1087's pinned case).
+    [
+        'id' => 'anchored-count-without-the-stored-day', 'file' => $model, 'checks' => ['c-days', 'a-time', 'c-untouched'],
+        'what' => 'a COUNT sent on an anchored series read as the stored count (the stored day counted in it), so the series shows one event fewer than sent',
+        'patch' => [['                $parsed = Rule::parse((string) $sent, $startDn);', "                \$parsed = Rule::parse((string) \$sent, \$startDn);\n                if (\$this->old->anchor !== null && \$parsed->count !== null) {\n                    \$parsed = \$parsed->withBound(\$parsed->count - 1, null);\n                }"]],
+        'cases' => ['count-sent-back-unchanged-on-a-monthly-series-anchored-before-a-skipped-hour'],
+    ],
 ];

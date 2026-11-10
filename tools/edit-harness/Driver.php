@@ -971,6 +971,12 @@ final class Driver
         $ruleText = null;
         $boundSent = null;
         $oldBound = $this->boundOf((string) $master['rrule']);
+        if (str_starts_with($oldBound, ';COUNT=')) {
+            // A client sends the COUNT the API gives it, the events the series shows: for a start stored a period before a
+            // first day in a skipped hour, the stored count less that stored day (api-contract, "Every COUNT the API speaks
+            // counts the events the series shows"), never the stored text (seed 48271 case 1087).
+            $oldBound = ';COUNT=' . ((int) substr($oldBound, 7) - self::shownFrom($st));
+        }
         // The editor writes an end in the form of the kind the series will be (a date when all-day).
         $toAllDay = $v['allDay'] ? !$st['allDay'] : $st['allDay'];
         $toTz = $toAllDay ? 'UTC' : ($st['allDay'] ? $v['toZone'] : ($v['zone'] ?? $st['tz']));
@@ -1030,7 +1036,8 @@ final class Driver
             return $shape->count === null && $shape->until === null;
         }
         if (isset($b['count'])) {
-            return $shape->count === (int) $b['count'];
+            // A COUNT sent is the events shown; the stored one counts a start stored a period before a skipped hour too.
+            return $shape->count !== null && $shape->count - self::shownFrom($st) === (int) $b['count'];
         }
         if ($shape->until === null || $st['raw'] === []) {
             return false;

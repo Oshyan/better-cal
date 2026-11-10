@@ -249,6 +249,32 @@ final class OracleProbes
                     }
                     return [$out, $s0, $s1];
                 }],
+            // x-day: the day a redo acted on moved to its neighbour (the undo fault's own symptom), and the change made at Google
+            // while a flip was stopped carried by Finish onto a neighbouring day.
+            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-day-notes-redone-after-a-daily-00-utc-series-made-all-day', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ($r['recurrence_parent_id'] !== null && str_starts_with((string) $r['description'], 'Sample notes')) {
+                            foreach (['start_utc', 'end_utc', 'recurrence_instance_utc'] as $c) {
+                                $s1['rows'][$id][$c] = Clock::db(Clock::plus(Clock::parse((string) $r[$c]), 86400));
+                            }
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-day', 'what' => "Finish carries the day's change made at Google onto the next day", 'case' => 'a-daily-10-los-angeles-series-made-all-day-its-master-write-not-taken-the-edited-day-notes-changed-at-google-then-finished', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['rows'] as $id => $r) {
+                        if ($r['recurrence_parent_id'] !== null) {
+                            $s1['rows'][$id]['description'] = 'Sample remote notes probe';
+                            foreach (['start_utc', 'end_utc', 'recurrence_instance_utc'] as $c) {
+                                $s1['rows'][$id][$c] = Clock::db(Clock::plus(Clock::parse((string) $r[$c]), 86400));
+                            }
+                            break;
+                        }
+                    }
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
         ];
     }
 

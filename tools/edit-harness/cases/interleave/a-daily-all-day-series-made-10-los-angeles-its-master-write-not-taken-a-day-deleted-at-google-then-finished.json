@@ -1,0 +1,48 @@
+{
+    "about": "A daily all-day series with a day given its own notes, made timed at 10:00 Los Angeles; its master write meets the network down; a day is deleted at Google in the all-day form; then Finish (x-day, x-finish).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-01-04",
+        "length": 1,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 36000,
+        "otherZone": "America/New_York"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0.0,
+            "k": 1,
+            "write": "w-all",
+            "what": "flip"
+        },
+        {
+            "do": "r-day-delete",
+            "pick": 0.5,
+            "mark": "g"
+        },
+        {
+            "do": "finish",
+            "pick": 0.0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

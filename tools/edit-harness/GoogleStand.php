@@ -93,7 +93,9 @@ final class GoogleStand
         // Google between a master write and its read-back); duringFetch runs once as a poll's first listing request goes out
         // (a write here while Google's list is being fetched); emptyNext makes the next whole listing answer with no items
         // (an empty read); pageSize lists that many items a page (a whole read stopped by the page budget).
-        $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'fired' => null,
+        // netAt: the write numbered so goes nowhere, the network down as it is sent (a transport error, Google takes nothing),
+        // so a write the app journaled before sending it stays half done with Google as it was.
+        $knobs = (object) ['writes' => 0, 'taken' => 0, 'beforeAt' => null, 'loseAt' => null, 'fatalAt' => null, 'netAt' => null, 'down' => false, 'fired' => null,
             'race' => null, 'duringFetch' => null, 'emptyNext' => false, 'pageSize' => null, 'listed' => null];
         $writer = new GoogleWriter($db, $auth, $feeds, static function (string $method, string $url, ?array $payload, array $headers = []) use ($inner, $trace, $knobs): array {
             $n = null;
@@ -108,6 +110,15 @@ final class GoogleStand
                     $knobs->fired = 'before';
                     return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'The caller does not have permission', 'errors' => [['reason' => 'forbidden']]]])];
                 }
+                if ($knobs->netAt === $n) {
+                    $knobs->netAt = null;
+                    $knobs->fired = 'net';
+                    $knobs->down = true;
+                }
+            }
+            if ($knobs->down) {
+                // Down from the write netAt named until the step ends (the caller clears it): no retry gets through.
+                throw new \RuntimeException('HTTP error for the stand-in: network down');
             }
             // The writer sends its bearer token among the headers, as to Google.
             $answer = $inner($method, $url, $payload, $headers);

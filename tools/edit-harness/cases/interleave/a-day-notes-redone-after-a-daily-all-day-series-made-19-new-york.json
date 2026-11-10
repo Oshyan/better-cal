@@ -1,0 +1,46 @@
+{
+    "about": "A daily all-day series, a day given its own notes and the change undone, the series made timed at 19:00 New York, then the redo: the notes land on the day's own date (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-01-04",
+        "length": 1,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "America/Los_Angeles"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0
+        },
+        {
+            "do": "w-all",
+            "pick": 0.0,
+            "what": "flip"
+        },
+        {
+            "do": "redo",
+            "pick": 0.0,
+            "judge": {
+                "mark": "d",
+                "expect": "description",
+                "mayRefuse": false
+            }
+        }
+    ]
+}

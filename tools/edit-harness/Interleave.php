@@ -38,7 +38,7 @@ final class Interleave
     public const SETUP = ['w-this-g', 'w-this-l', 'w-this-l', 'w-this-m', 'w-del1'];
     /** Fields only Google holds (beyond the digest; the A2 scope): the app never sends them, so its writes never change them. */
     /** Every check the oracle makes (docs/design/interleaving-invariants.md), for the oracle probes' account of which are validated. */
-    public const CHECKS = ['x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
+    public const CHECKS = ['x-day', 'x-alone', 'x-dropped', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-conditional', 'x-agree', 'x-follow', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
     public const GOOGLE_ONLY = ['colorId', 'attendees', 'transparency', 'visibility', 'reminders', 'guestsCanModify', 'guestsCanInviteOthers', 'extendedProperties'];
     /**
      * The keys a request body may carry: the fields Google holds of an edited day (OwnFields' list less HELD_HERE: date,
@@ -95,6 +95,8 @@ final class Interleave
     private ?array $overlap = null;
     /** What a p-budget step held after its stopped read: the comparable state then. */
     private ?array $budgetMid = null;
+    /** @var array<string,array{date:string,fields:array,kind:string}> what a step marked acted on (day shapes), by its mark */
+    private array $marks = [];
 
     public function __construct(
         private readonly Db $db,
@@ -140,12 +142,82 @@ final class Interleave
         // change between timed and all-day (README, Interleaving: Flips).
         if (self::$flips > 0 && crc32("flip:$seed:$n") % 10000 < (int) round(self::$flips * 10000)) {
             $case = self::withFlip($case, new Rng(crc32("flip-draw:$seed:$n") % 1_000_003));
+        } elseif (self::$dayShapes > 0 && crc32("dayshape:$seed:$n") % 10000 < (int) round(self::$dayShapes * 10000)) {
+            // Another share, from the cases the flip share left, by seed and case number alone: a day's change undone or
+            // redone across a change of the series' form or zone, the staleness of one, or a flip stopped before its
+            // master write lands with a change at Google in between (README, Interleaving: Day shapes).
+            $case = self::withDayShape($case, new Rng(crc32("dayshape-draw:$seed:$n") % 1_000_003));
         }
         return $case;
     }
 
     /** The share of drawn cases given a flip between timed and all-day (withFlip); interleave-cli's --flips sets it, 0 turns it off. */
     public static float $flips = 0.2;
+
+    /** The share of drawn cases given a day shape (withDayShape); interleave-cli's --day-shapes sets it, 0 turns it off. */
+    public static float $dayShapes = 0.15;
+
+    /** The clocks the day shapes draw: west of UTC both ways, east of it, 10:00 Los Angeles, and 00:00 UTC as the control. */
+    private const DAY_CLOCKS = [['America/New_York', '19:00'], ['Asia/Tokyo', '07:00'], ['America/Los_Angeles', '10:00'], ['UTC', '00:00']];
+
+    /** The zone a zone change moves each clock's series to, keeping its wall clock: across the date line, so a day's old key shows on another date in the other zone (UTC to Berlin is the control). */
+    private const OTHER_ZONE = ['America/New_York' => 'Asia/Tokyo', 'Asia/Tokyo' => 'America/New_York', 'America/Los_Angeles' => 'Asia/Tokyo', 'UTC' => 'Europe/Berlin'];
+
+    /**
+     * A drawn case given a day shape (rule 1, the undo fault and 1A's rule for a stopped form change): its series and
+     * steps replaced, from $r alone.
+     *
+     * - tag, notes, useSeries, delete: a day with no row and no skip when the series' form or zone changes, by a "this
+     *   event" change given and undone (a tag, notes), notes given then "use series value", or a delete undone; then the
+     *   change (a flip or a zone change, made here, or made at the stand-in and read by a poll); then the redo (for
+     *   useSeries, the undo of "use series value"), judged by x-day on the day's own date.
+     * - stale: notes given and undone, the change, other notes given to the same day, then the first redone: refused as
+     *   stale with nothing written or sent (x-day).
+     * - stopped: a day given its own notes, a flip whose master write meets the network down (journaled, Google still in
+     *   the old form), a change made at the stand-in in the old form (a day renamed, deleted, given another time, or the
+     *   edited day's notes changed), then Finish or Put back, judged by x-day.
+     */
+    private static function withDayShape(array $case, Rng $r): array
+    {
+        [$tz, $clock] = $r->pick(self::DAY_CLOCKS);
+        [$family, $rrule] = $r->pick([['daily', 'FREQ=DAILY'], ['weekly_bare', 'FREQ=WEEKLY'], ['weekly_list', 'FREQ=WEEKLY;BYDAY=MO,TU']]);
+        $shape = $r->weighted(['tag' => 3, 'notes' => 3, 'useSeries' => 2, 'delete' => 3, 'stale' => 3, 'stopped' => 4]);
+        $change = $shape === 'stopped' ? 'flipHere' : $r->weighted(['flipHere' => 3, 'zoneHere' => 2, 'flipThere' => 2, 'zoneThere' => 2]);
+        $zone = str_starts_with($change, 'zone');
+        $allDay = !$zone && $r->chance(0.5);
+        $monday = $r->pick(['2027-01-04', '2027-01-18']);
+        $case['series'] = ['family' => $family, 'rrule' => $rrule, 'import' => false, 'bound' => 'count', 'boundAt' => 8, 'untilForm' => 'dayend',
+            'allDay' => $allDay, 'tzid' => $allDay ? 'UTC' : $tz, 'start' => $allDay ? $monday : $monday . ' ' . $clock, 'length' => $allDay ? 1 : 60,
+            'flipZone' => $tz, 'flipClock' => (int) substr($clock, 0, 2) * 3600 + (int) substr($clock, 3, 2) * 60, 'otherZone' => self::OTHER_ZONE[$tz]];
+        $pick = $r->int(150, 850) / 1000;
+        $changeSteps = match ($change) {
+            'flipHere' => [['do' => 'w-all', 'pick' => 0.0, 'what' => 'flip']],
+            'zoneHere' => [['do' => 'w-all', 'pick' => 0.0, 'what' => 'zone']],
+            'flipThere' => [['do' => 'r-flip', 'pick' => 0.0], ['do' => 'p-delta', 'pick' => 0.0]],
+            'zoneThere' => [['do' => 'r-zone', 'pick' => 0.0], ['do' => 'p-delta', 'pick' => 0.0]],
+        };
+        // The redo of a delete, or its undo, on an ordinary day after a change of form or zone a poll brought: the one
+        // shape whose refusal before anything is written or sent is accepted (the zone of a timed key can't be told).
+        $mayRefuse = $shape === 'delete' && in_array($change, ['flipThere', 'zoneThere'], true);
+        $judge = static fn(string $expect): array => ['mark' => 'd', 'expect' => $expect, 'mayRefuse' => $mayRefuse];
+        $case['steps'] = match ($shape) {
+            'tag' => array_merge([['do' => 'w-this-l', 'pick' => $pick, 'what' => 'tags', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
+                [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('tags')]]),
+            'notes' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
+                [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('description')]]),
+            'useSeries' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'w-useseries', 'pick' => 0.0, 'what' => 'description', 'onMark' => 'd']],
+                $changeSteps, [['do' => 'u-bare', 'pick' => 0.0, 'judge' => $judge('description')]]),
+            'delete' => array_merge([['do' => 'w-del1', 'pick' => $pick, 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
+                [['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('skip')]]),
+            'stale' => array_merge([['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'd'], ['do' => 'u-bare', 'pick' => 0.0]], $changeSteps,
+                [['do' => 'w-this-g', 'pick' => 0.0, 'what' => 'description', 'onMark' => 'd'], ['do' => 'redo', 'pick' => 0.0, 'judge' => $judge('stale')]]),
+            'stopped' => [['do' => 'w-this-g', 'pick' => $pick, 'what' => 'description', 'mark' => 'e'], ['do' => 'f-net', 'pick' => 0.0, 'k' => 1, 'write' => 'w-all', 'what' => 'flip'],
+                ['do' => $r->pick(['r-day-rename', 'r-day-delete', 'r-day-time', 'r-day-notes']), 'pick' => $r->int(0, 999) / 1000, 'mark' => 'g'],
+                ['do' => $r->pick(['finish', 'putback']), 'pick' => 0.0, 'judge' => ['mark' => 'g', 'expect' => 'stopped']]],
+        };
+        $case['dayShape'] = $shape . ' ' . $change;
+        return $case;
+    }
 
     /**
      * A drawn case given a whole-series change between timed and all-day (the rule 1 audit's list for this mode): its
@@ -216,7 +288,7 @@ final class Interleave
     public function run(array $spec): array
     {
         $this->spec = $spec;
-        $this->records = $this->runs = $this->na = $this->done = $this->touches = $this->dirty = $this->gids = [];
+        $this->records = $this->runs = $this->na = $this->done = $this->touches = $this->dirty = $this->gids = $this->marks = [];
         $this->pending = $this->recovered = null;
         $this->pendings = [];
         $this->entryStates = [];
@@ -534,6 +606,7 @@ final class Interleave
         $knobs->writes = $knobs->taken = 0;
         $knobs->fired = null;
         $knobs->listed = null;
+        $knobs->down = false;
         $out = ['ok' => true, 'error' => null, 'extra' => [], 'asked' => null, 'skip' => false];
         try {
             $out = match (true) {
@@ -570,6 +643,12 @@ final class Interleave
             [$out, $s0, $s1] = $this->probe->call($this, $do, $out, $s0, $s1);
         }
         $this->check($do, $out, $s0, $s1);
+        if (isset($step['mark']) && $out['ok'] && isset($out['asked']['days'][0]) && !isset($this->marks[$step['mark']])) {
+            $this->marks[$step['mark']] = ['date' => (string) $out['asked']['days'][0], 'fields' => $out['asked']['fields'] ?? [], 'kind' => $do];
+        }
+        if (isset($step['judge'])) {
+            $this->judgeDay($do, $step['judge'], $out, $s0, $s1);
+        }
     }
 
     /** @var array<int,array{before:array,after:array,step:int}> each Activity entry's rows by identity before and after the step that made it */
@@ -724,8 +803,18 @@ final class Interleave
         $gid = (string) $master['google_event_id'];
         $mid = (int) $master['id'];
         $what = (string) ($step['what'] ?? 'title');
-        if (in_array($do, ['w-this-g', 'w-this-l', 'w-this-m', 'w-del1'], true)) {
-            $occ = $this->occurrenceOf($master, fmod($step['pick'] * 7.0, 1.0));
+        if ($do === 'w-useseries' || in_array($do, ['w-this-g', 'w-this-l', 'w-this-m', 'w-del1'], true)) {
+            $occ = isset($step['onMark']) ? $this->markedOccurrence($master, (string) $step['onMark']) : $this->occurrenceOf($master, fmod($step['pick'] * 7.0, 1.0));
+            if ($do === 'w-useseries') {
+                if ($occ === null) {
+                    return ['skip' => true];
+                }
+                [$key, $date] = $occ;
+                $this->lastAsked = ['kind' => 'this', 'gid' => $gid, 'key' => $key, 'fields' => [$what => true], 'days' => [$date], 'local' => false];
+                $this->events->patch($this->userId, $mid, ['scope' => 'this', 'instanceStart' => self::instanceArg($master, $key), 'useSeries' => [$what]]);
+                $this->events->throwDeferred();
+                return ['asked' => $this->lastAsked];
+            }
             if ($occ === null) {
                 return ['skip' => true];
             }
@@ -783,7 +872,17 @@ final class Interleave
         $scope = $do === 'w-all' ? 'all' : 'following';
         $in = ['scope' => $scope, 'instanceStart' => $inst];
         $fields = [];
-        if ($what === 'flip') {
+        if ($what === 'zone') {
+            if ($scope !== 'all' || (int) $master['all_day'] === 1) {
+                return ['skip' => true];
+            }
+            $to = (string) ($this->spec['series']['otherZone'] ?? 'Europe/Berlin');
+            $local = Clock::local((string) $at[0], (string) $master['tzid']);
+            $len = Clock::parse((string) $master['end_utc'])->getTimestamp() - Clock::parse((string) $master['start_utc'])->getTimestamp();
+            $t = new \DateTimeImmutable($local->format('Y-m-d H:i:s'), Clock::zone($to));
+            $in += ['start' => Clock::iso($t), 'end' => Clock::iso(Clock::plus($t, $len)), 'allDay' => false, 'tzid' => $to];
+            $fields = ['time' => true, 'zone' => true];
+        } elseif ($what === 'flip') {
             // Between timed and all-day for all events, from the first day, on its calendar date: an all-day series made
             // timed at the case's clock and zone, a timed one made all-day. A time-class change for the checks.
             if ($scope !== 'all') {
@@ -835,15 +934,153 @@ final class Interleave
         return $c;
     }
 
+    /** A marked day of a master as the series stands now: [key, date], by the date the mark recorded; null when it has none. */
+    private function markedOccurrence(array $master, string $mark): ?array
+    {
+        $date = $this->marks[$mark]['date'] ?? null;
+        if ($date === null) {
+            return null;
+        }
+        $key = self::days($master, 60)[$date] ?? null;
+        return $key === null ? null : [$key, $date];
+    }
+
+    /**
+     * x-day (day shapes): the step acted on the marked day, by its calendar date, and on no neighbouring day. A redo or
+     * undo of a day's tags or notes puts them on the row of that date and on no row of the day before or after; of a
+     * delete, skips that date and neither neighbour; a redo over notes given since is refused as stale with nothing
+     * written or sent. The one accepted refusal (mayRefuse: a delete's redo or undo after a change of form or zone a poll
+     * brought) is a refusal with nothing written or sent. After a flip stopped before its master write and a change made
+     * at Google meanwhile in the old form: Finish completes, the plan's edited day keeps its own notes on its own date,
+     * the day changed at Google holds the plan's result there (nothing of the change made at Google, on it or on a
+     * neighbour), and the change is named once by its date; Put back is refused with nothing written or sent.
+     */
+    private function judgeDay(string $do, array $judge, array $out, array $s0, array $s1): void
+    {
+        $mark = $this->marks[$judge['mark']] ?? null;
+        $context = ['step' => $this->step, 'do' => $do, 'expect' => $judge['expect'], 'mark' => $mark];
+        if ($mark === null) {
+            $this->ran('x-day', 'no mark');
+            return;
+        }
+        $ms = array_values(self::masters($s1['rows']));
+        $master = $ms[0] ?? null;
+        if ($master === null) {
+            $this->fail('x-day', "step {$this->step} ($do): the series is gone", $context);
+            return;
+        }
+        $date = $mark['date'];
+        $near = [Days::date(Days::ofDate($date) - 1), Days::date(Days::ofDate($date) + 1)];
+        $mid = (int) $master['id'];
+        $dayRows = static function (string $d) use ($s1, $master, $mid): array {
+            return array_values(array_filter($s1['rows'], static fn(array $r): bool => (int) ($r['recurrence_parent_id'] ?? 0) === $mid && self::dayOf($r, $master) === $d));
+        };
+        $skipped = static function (string $d) use ($master): bool {
+            foreach (Recurrence::decodeExdates($master['exdates_json'] ?? null) as $k) {
+                $at = (int) $master['all_day'] === 1 ? substr($k, 0, 10) : Clock::local($k, (string) $master['tzid'])->format('Y-m-d');
+                if ($at === $d) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        $wrote = array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => !in_array('X-Harness: remote', (array) ($q['headers'] ?? []), true)));
+        $quiet = self::sameHere($s0, $s1) && $wrote === [];
+        if ($judge['expect'] === 'stale') {
+            $this->ran('x-day', 'stale');
+            $this->expect('x-day', !$out['ok'] && $out['error'] === 'stale_undo' && $quiet,
+                "step {$this->step} ($do): a redo over notes given to the same day since is refused as stale, with nothing written here or sent", $context + ['out' => $out['error'], 'sent' => count($wrote)]);
+            return;
+        }
+        if ($judge['expect'] === 'stopped' && $do === 'putback') {
+            // Put back after a change made at Google since: refused (google_changed_since), Finish offered, nothing sent.
+            $this->ran('x-day', 'stopped put back');
+            $this->expect('x-day', !$out['ok'] && $quiet, "step {$this->step} (putback): Put back after a change at Google since is refused, with nothing written here or sent",
+                $context + ['out' => $out['error'], 'sent' => count($wrote)]);
+            return;
+        }
+        if (!$out['ok']) {
+            $this->ran('x-day', 'refused');
+            $this->expect('x-day', !empty($judge['mayRefuse']) && $quiet,
+                "step {$this->step} ($do): refused, which only a delete's redo or undo after a change of form or zone a poll brought may be, and then with nothing written or sent", $context + ['out' => $out['error'], 'message' => $out['message'] ?? null]);
+            return;
+        }
+        $this->ran('x-day', $judge['expect']);
+        if ($judge['expect'] === 'stopped') {
+            $this->judgeStopped($do, $mark, $master, $dayRows, $skipped, $near, $out, $s0, $s1, $context);
+            return;
+        }
+        $want = $judge['expect'] === 'tags' ? (string) (array_values(array_diff((array) ($mark['fields']['tags'] ?? []), ['sample']))[0] ?? '') : (string) ($mark['fields']['description'] ?? '');
+        $has = static function (array $rows) use ($judge, $want): bool {
+            foreach ($rows as $r) {
+                if ($judge['expect'] === 'tags' ? in_array($want, (array) $r['tags'], true) : (string) $r['description'] === $want) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if ($judge['expect'] === 'skip') {
+            $this->expect('x-day', $skipped($date) && $dayRows($date) === [], "step {$this->step} ($do): the day is skipped on its own date", $context + ['skips' => $master['exdates_json']]);
+            foreach ($near as $n) {
+                $this->expect('x-day', !$skipped($n), "step {$this->step} ($do): the day before or after is not skipped", $context + ['near' => $n, 'skips' => $master['exdates_json']]);
+            }
+            return;
+        }
+        $this->expect('x-day', $has($dayRows($date)), "step {$this->step} ($do): the day's own " . $judge['expect'] . " are back on its own date", $context + ['want' => $want, 'rows' => array_map(static fn(array $r): array => [$r['recurrence_instance_utc'], $r['description'], $r['tags']], $dayRows($date))]);
+        foreach ($near as $n) {
+            $this->expect('x-day', !$has($dayRows($n)), "step {$this->step} ($do): the day before or after has none of them", $context + ['near' => $n, 'want' => $want]);
+        }
+    }
+
+    /** x-day after a flip stopped before its master write landed, a change at Google meanwhile, then Finish or Put back. */
+    private function judgeStopped(string $do, array $mark, array $master, \Closure $dayRows, \Closure $skipped, array $near, array $out, array $s0, array $s1, array $context): void
+    {
+        if ($do === 'putback') {
+            $wrote = array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => !in_array('X-Harness: remote', (array) ($q['headers'] ?? []), true)));
+            $this->expect('x-day', $wrote === [], "step {$this->step} (putback): Put back after a change at Google since sends nothing", $context + ['sent' => count($wrote)]);
+            return;
+        }
+        $edited = $this->marks['e'] ?? null;
+        $notes = (string) ($edited['fields']['description'] ?? '');
+        if ($edited !== null) {
+            $own = array_filter($dayRows($edited['date']), static fn(array $r): bool => (string) $r['description'] === $notes);
+            $this->expect('x-day', $own !== [], "step {$this->step} (finish): the plan's edited day keeps its own notes on its own date", $context + ['edited' => $edited['date'], 'notes' => $notes]);
+        }
+        $date = $mark['date'];
+        $remote = static function (array $rows) use ($mark): bool {
+            foreach ($rows as $r) {
+                if (str_starts_with((string) $r['title'], 'Sample remote day') || str_starts_with((string) $r['description'], 'Sample remote notes')) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        $this->expect('x-day', !$remote($dayRows($date)) && ($mark['kind'] !== 'r-day-delete' || !$skipped($date)),
+            "step {$this->step} (finish): the day changed at Google since holds the plan's result on its own date, not the change made there", $context + ['date' => $date]);
+        foreach ($near as $n) {
+            $this->expect('x-day', !$remote($dayRows($n)) && ($mark['kind'] !== 'r-day-delete' || !$skipped($n) || $n === ($edited['date'] ?? '')),
+                "step {$this->step} (finish): nothing of the change made at Google lands on the day before or after", $context + ['near' => $n]);
+        }
+        // Named once, by the date the day had when it was changed (D j M, the year when not this year).
+        $words = (new \DateTimeImmutable($date))->format(substr($date, 0, 4) === gmdate('Y') ? 'D j M' : 'D j M Y');
+        $text = '';
+        foreach ($this->db->all('SELECT summary, details_json FROM mutations WHERE user_id = ? AND id > ? ORDER BY id', [$this->userId, (int) ($s0['mut'] ?? 0)]) as $m) {
+            $text .= ' ' . $m['summary'] . ' ' . $m['details_json'];
+        }
+        $text .= ' ' . json_encode($out, JSON_UNESCAPED_UNICODE);
+        $this->expect('x-day', str_contains($text, $words . ' was '), "step {$this->step} (finish): the day changed at Google since is named by its date as not kept", $context + ['words' => $words]);
+    }
+
     /** A write with a failure injected at its k-th write to Google. */
     private function failing(string $do, array $step, array $s0): array
     {
         $knobs = $this->stand->knobs;
-        $knobs->{['f-lost' => 'loseAt', 'f-before' => 'beforeAt', 'f-fatal' => 'fatalAt'][$do]} = (int) ($step['k'] ?? 1);
+        $knobs->{['f-lost' => 'loseAt', 'f-before' => 'beforeAt', 'f-fatal' => 'fatalAt', 'f-net' => 'netAt'][$do]} = (int) ($step['k'] ?? 1);
         try {
             return $this->write((string) $step['write'], ['do' => $step['write']] + $step, $s0);
         } finally {
-            $knobs->loseAt = $knobs->beforeAt = $knobs->fatalAt = null;
+            $knobs->loseAt = $knobs->beforeAt = $knobs->fatalAt = $knobs->netAt = null;
+            $knobs->down = false;
         }
     }
 
@@ -878,6 +1115,42 @@ final class Interleave
         $touch = static fn(string $field, ?string $key = null): array => ['field' => $field, 'key' => $key];
         $none = [null, null, []];
         switch ($do) {
+            case 'r-flip':
+                if ($allDay) {
+                    $z = (string) ($this->spec['series']['flipZone'] ?? 'UTC');
+                    $c = (int) ($this->spec['series']['flipClock'] ?? 0);
+                    $t = Clock::at(Days::ofDate((string) $g['start']['date']), $c, $z);
+                    $body = ['start' => ['dateTime' => $t->format('Y-m-d\TH:i:sP'), 'timeZone' => $z], 'end' => ['dateTime' => Clock::plus($t, 3600)->format('Y-m-d\TH:i:sP'), 'timeZone' => $z]];
+                } else {
+                    $d = (new \DateTimeImmutable((string) $g['start']['dateTime']))->setTimezone(new \DateTimeZone($tz))->format('Y-m-d');
+                    $body = ['start' => ['date' => $d], 'end' => ['date' => Days::date(Days::ofDate($d) + 1)]];
+                }
+                [$target, $touched] = [$gid, [$touch('time'), $touch('allDay')]];
+                break;
+            case 'r-day-rename':
+            case 'r-day-delete':
+            case 'r-day-time':
+            case 'r-day-notes':
+                // A day as Google lists it now, in Google's form: the plan's edited day for notes, else another day.
+                $items = json_decode((string) ($this->stand->fake->transport()('GET', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($gid) . '/instances',
+                    ['Authorization: Bearer sample-access', 'X-Harness: remote'], null)['body'] ?? ''), true)['items'] ?? [];
+                $dateOf = static fn(array $i): string => isset($i['start']['date']) ? (string) $i['start']['date'] : (new \DateTimeImmutable((string) $i['start']['dateTime']))->setTimezone(new \DateTimeZone((string) ($i['start']['timeZone'] ?? $tz)))->format('Y-m-d');
+                $edited = $this->marks['e']['date'] ?? null;
+                $pool = array_values(array_filter($items, static fn(array $i): bool => $do === 'r-day-notes' ? $dateOf($i) === $edited : $dateOf($i) !== $edited));
+                if ($pool === [] || ($do === 'r-day-time' && $allDay)) {
+                    return ['skip' => true];
+                }
+                $it = $pool[min(count($pool) - 1, (int) floor($step['pick'] * count($pool)))];
+                $date = $dateOf($it);
+                $body = match ($do) {
+                    'r-day-rename' => ['summary' => "Sample remote day $n"],
+                    'r-day-delete' => ['status' => 'cancelled'],
+                    'r-day-time' => ['start' => $shift($it['start'], 7200), 'end' => $shift($it['end'], 7200)],
+                    'r-day-notes' => ['description' => "Sample remote notes $n"],
+                };
+                $this->marks[(string) ($step['mark'] ?? 'g')] = ['date' => $date, 'fields' => [], 'kind' => $do, 'body' => $body];
+                [$target, $touched] = [(string) $it['id'], [$touch($do === 'r-day-delete' ? 'skip' : ($do === 'r-day-time' ? 'time' : ($do === 'r-day-notes' ? 'description' : 'title')), null)]];
+                break;
             case 'r-rename':
                 [$target, $body, $touched] = [$gid, ['summary' => "Sample remote title $n"], [$touch('title')]];
                 break;

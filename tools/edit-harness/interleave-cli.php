@@ -11,7 +11,7 @@
 // the oracle's own validation instead (OracleProbes.php): each probe's fixed case clean and with its damage injected.
 declare(strict_types=1);
 
-$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes', 'flips:']);
+$opts = getopt('', ['interleave', 'cases:', 'seed:', 'case:', 'no-shrink', 'quiet', 'fixed::', 'findings:', 'model:', 'save-spec:', 'shards:', 'shard:', 'partial:', 'oracle-probes', 'flips:', 'day-shapes:']);
 $cases = (int) ($opts['cases'] ?? 200);
 $seed = (int) ($opts['seed'] ?? 1);
 $onlyCase = isset($opts['case']) ? (int) $opts['case'] : null;
@@ -37,7 +37,7 @@ if ($shards > 1 && !$child) {
     $procs = [];
     for ($k = 0; $k < $shards; $k++) {
         $cmd = [PHP_BINARY, __FILE__, '--interleave', '--cases', (string) $cases, '--seed', (string) $seed, '--shard', "$k/$shards", '--partial', "$tmp/$k.json", '--quiet'];
-        foreach (['no-shrink', 'model', 'fixed', 'flips'] as $o) {
+        foreach (['no-shrink', 'model', 'fixed', 'flips', 'day-shapes'] as $o) {
             if (array_key_exists($o, $opts)) {
                 $cmd[] = $opts[$o] === false ? "--$o" : "--$o=" . $opts[$o];
             }
@@ -99,6 +99,10 @@ require_once __DIR__ . '/OracleProbes.php';
 // --flips F: the share of drawn cases given a change between timed and all-day (Interleave::withFlip); 0 turns it off.
 if (isset($opts['flips'])) {
     BetterCal\EditHarness\Interleave::$flips = (float) $opts['flips'];
+}
+// --day-shapes F: the share of drawn cases given a day shape (Interleave::withDayShape); 0 turns it off.
+if (isset($opts['day-shapes'])) {
+    BetterCal\EditHarness\Interleave::$dayShapes = (float) $opts['day-shapes'];
 }
 BetterCal\EditHarness\Product::use($root);
 

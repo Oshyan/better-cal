@@ -1,0 +1,46 @@
+{
+    "about": "A daily series at 07:00 Tokyo (22:00 UTC the day before), a day given its own notes and the change undone, the series made all-day, then the redo: the notes land on the day's own date (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Tokyo",
+        "start": "2027-01-04 07:00",
+        "length": 60,
+        "flipZone": "Asia/Tokyo",
+        "flipClock": 25200,
+        "otherZone": "Pacific/Auckland"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0
+        },
+        {
+            "do": "w-all",
+            "pick": 0.0,
+            "what": "flip"
+        },
+        {
+            "do": "redo",
+            "pick": 0.0,
+            "judge": {
+                "mark": "d",
+                "expect": "description",
+                "mayRefuse": false
+            }
+        }
+    ]
+}

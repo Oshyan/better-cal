@@ -10,9 +10,24 @@ final class Rng
 {
     private int $state;
 
+    /**
+     * The first state is the seed mixed into 32 bits: (seed * 2654435761 + 1013904223) mod 2^32, worked out in
+     * 16-bit halves so no step leaves 64-bit integers. A caller hands in a derived seed (a run's seed times about a
+     * million, plus the case number), and for a run's seed above about 3,474 the plain product no longer fits: PHP
+     * turned it into a float, the low 15 bits of the state were lost and every case printed a conversion warning
+     * (review of 63a96467 to b6cdb399, R3). Below that the two give the same state, so the recorded small seeds (7,
+     * 9, 23, 31, 211, 307, 911) replay unchanged. A larger seed recorded before 2026-11-10 replays as it ran then
+     * with BC_HARNESS_LEGACY_SEED_MIX=1, on the PHP build it was recorded with (README, Seeds).
+     */
     public function __construct(int $seed)
     {
-        $this->state = ($seed * 2654435761 + 1013904223) & 0xFFFFFFFF ?: 0x9E3779B9;
+        if (getenv('BC_HARNESS_LEGACY_SEED_MIX')) {
+            $this->state = ($seed * 2654435761 + 1013904223) & 0xFFFFFFFF ?: 0x9E3779B9;
+            return;
+        }
+        $s = $seed & 0xFFFFFFFF;
+        $product = (($s & 0xFFFF) * 2654435761 + (((($s >> 16) * 2654435761) & 0xFFFF) << 16)) & 0xFFFFFFFF;
+        $this->state = (($product + 1013904223) & 0xFFFFFFFF) ?: 0x9E3779B9;
     }
 
     public function next(): int

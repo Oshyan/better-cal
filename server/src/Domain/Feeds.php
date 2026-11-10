@@ -934,7 +934,6 @@ final class Feeds
      * removed. Where several rows stand at one key, a row standing at its
      * own key is the one found there, as the first to claim a day holds it
      * (sync, below); then a live row before a deleted one, then by id.
-     * `reformed` says whether the form changed.
      *
      * The one answer to "which stored row is this record's" for every list
      * rows are matched against: a feed's or Google's (sync) and a CalDAV
@@ -943,7 +942,7 @@ final class Feeds
      * @param list<array<string,mixed>> $rows the series' day rows as stored
      * @param array<string,mixed> $was the series' row as stored
      * @param array<string,mixed> $series the series' row as the list leaves it
-     * @return array{at: array<string,array<string,mixed>>, leaving: list<array<string,mixed>>, reformed: bool}
+     * @return array{at: array<string,array<string,mixed>>, leaving: list<array<string,mixed>>}
      */
     public static function standing(array $rows, array $was, array $series): array
     {
@@ -971,22 +970,7 @@ final class Feeds
         foreach ($images as [$to, $row]) {
             $at[$to] ??= $row;
         }
-        return ['at' => $at, 'leaving' => $leaving, 'reformed' => $reformed];
-    }
-
-    /**
-     * Whether a parsed record's columns (columnsOf) say of a stored row
-     * exactly what is stored: the row restated, as a Google delta's list
-     * restates every row the delta did not change. Pure.
-     */
-    private static function restates(array $columns, array $row): bool
-    {
-        foreach ($columns as $col => $value) {
-            if (!self::sameValue($col, $row[$col] ?? null, $value)) {
-                return false;
-            }
-        }
-        return true;
+        return ['at' => $at, 'leaving' => $leaving];
     }
 
     /**
@@ -1066,7 +1050,6 @@ final class Feeds
         // keeps its rows where they are.
         $rowFor = $existingByKey;
         $park = [];
-        $reformed = []; // uid => true: a series whose form this list changes
         $daysOf = [];
         foreach ($existing as $index => $row) {
             if (($index & 127) === 0) {
@@ -1088,9 +1071,6 @@ final class Feeds
             $rows = array_values(array_filter($daysOf[$uid], static fn(array $r): bool => (int) $r['recurrence_parent_id'] === (int) $was['id']));
             unset($daysOf[$uid]); // a series' first record in the list is the one stored
             $stand = self::standing($rows, $was, array_merge($was, self::columnsOf($pm, null)));
-            if ($stand['reformed']) {
-                $reformed[$uid] = true;
-            }
             foreach ($stand['leaving'] as $r) {
                 unset($rowFor[$uid . '|' . $r['recurrence_instance_utc']]);
                 $park[] = (int) $r['id'];
@@ -1103,7 +1083,7 @@ final class Feeds
         unset($daysOf);
         self::assertSyncDeadline($deadline);
         $undo = new Undo($this->db);
-        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, $reformed, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
+        $undo->write($userId, function () use ($ownColumn, $parsedMasters, $parsed, $protected, $unknownSkipped, $existingByKey, $rowFor, $park, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, &$touches, $calendarId, $userId, $deadline, $undo, $journal, $calendar): void {
             Events::parkInstanceKeys($this->db, $park);
             // The rows a record of the list was given to, by row id: what
             // "the feed carries a record for this row" means below. A record
@@ -1130,16 +1110,6 @@ final class Feeds
                 // group 5), and a new etag alone is no change to the event.
                 $etag = isset($ev['google_etag']) && $ev['google_etag'] !== '' ? (string) $ev['google_etag'] : null;
 
-                // A stored row restated (a Google delta's list restates the
-                // rows the delta did not change) in a series whose form the
-                // list changes is in the form it was stored under, which the
-                // other end cannot hold under the series as it is now: no
-                // record of this series, and its key names another day
-                // there, or none. The row follows its series below.
-                if (isset($reformed[(string) $ev['uid']]) && $ev['recurrence_instance_utc'] !== null
-                    && ($copyOf = $existingByKey[$key] ?? null) !== null && $copyOf['deleted_at'] === null && self::restates($columns, $copyOf)) {
-                    continue;
-                }
                 $current = $rowFor[$key] ?? null;
                 $feedMaster = $ev['recurrence_instance_utc'] !== null ? ($parsedMasters[(string) $ev['uid']] ?? null) : null;
                 if ($ownColumn && $feedMaster === null && $current === null && $ev['recurrence_instance_utc'] !== null) {

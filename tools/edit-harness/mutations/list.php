@@ -610,18 +610,26 @@ return [
             'one row for 4 January: the first of the two, with the record\'s title and both tags; the second is gone and no row is without a key',
         ],
     ],
-    // The same match under a Google delta as GoogleSync::applyChanges builds its list today: every stored row restated,
-    // old-form ones included. Read as records of the series in its new form, the restated rows of 6 and 7 January are
-    // given to the neighbouring days' rows. Once applyChanges keeps only the final master's form (audit-155-identity,
-    // the applyChanges model, rule 5) no restated row of the other form reaches the sync: this mutation then trips
-    // nothing, and the clause it removes goes with it.
+    // The same patch where the list is a recovery's read-back (GoogleSeries::store after a change of form made here
+    // stopped part way, the rows here still in the old form): with the edited day's record taken by Google in the new
+    // form, the record goes to the tagged day's row, and Put back then finds the rows changed and is refused. The stops
+    // right after the master write hold no record and do not fail, and Finish puts every row right from its snapshot.
     [
-        'id' => 'sync-restated-row-read-as-a-record', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-match',
-        'what' => 'a stored row a Google delta restates, in a series whose form the delta changes, is read as a record of the series in its new form',
-        'patch' => [['                if (isset($reformed[(string) $ev[\'uid\']]) && $ev[\'recurrence_instance_utc\'] !== null', '                if (false && isset($reformed[(string) $ev[\'uid\']]) && $ev[\'recurrence_instance_utc\'] !== null']],
-        'checks' => [
-            '6 January keeps its row and tag, 7 January its row and reminder, each at its own day\'s key in the new form; 5 and 8 January, whose notes Google dropped, are ordinary days',
-            'each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
-        ],
+        'id' => 'sync-match-by-equal-key-in-a-store', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-recovery',
+        'what' => 'the sync gives a record to the stored row at an equal key when it stores what Google holds after a change of form stopped part way',
+        'patch' => [['                $current = $rowFor[$key] ?? null;', '                $current = $existingByKey[$key] ?? null;']],
+        'checks' => array_merge(...array_map(static fn(string $what): array => array_merge(...array_map(static fn(string $then): array => array_map(
+            static fn(string $label): string => "$what, stopped with the notes' write taken and its answer lost, $then: $label",
+            array_merge([
+                'after the stop the tag is on its own day at the new form\'s key, with no notes, and no row is without a key',
+                'after the stop the notes are on their own day, with no tag',
+                'after the stop no other row holds the tag',
+            ], $then === 'Finish' ? [] : [
+                'Put back goes through, nothing left to settle and no row without a key',
+                'after Put back Google holds the series as it was, the notes\' record under its old id',
+                'after Put back the rows here are as they were: the tag and the notes each on their own day in the old form',
+                'and they are the rows they were',
+            ]),
+        ), ['Finish', 'Put back'])), ['19:00 New York made all-day, a tag on 6 January and notes on the 7th', 'all-day made 19:00 New York, notes on 7 January and a tag on the 8th'])),
     ],
 ];

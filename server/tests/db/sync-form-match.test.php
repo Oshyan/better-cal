@@ -73,7 +73,8 @@ return static function (Db $db): void {
     // here: 5 January with notes of its own (a record at Google), 6 January
     // with a tag and 7 January with a reminder (held here alone, no record
     // at Google), 8 January with notes of its own.
-    $setup = static function (bool $allDay, string $zone, string $clock) use ($db, $cfg, $calendarAt, $times, $keyOf): object {
+    // ($marks, when given, marks the days instead: fn(Events, user, master id, fn(day): its instanceStart).)
+    $setup = static function (bool $allDay, string $zone, string $clock, ?Closure $marks = null) use ($db, $cfg, $calendarAt, $times, $keyOf): object {
         $u = freshUser($db);
         seriesUndo($db, $u, false);
         $d = domains($db);
@@ -100,15 +101,19 @@ return static function (Db $db): void {
         $sync->poll($db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]));
         $masterId = (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$calendarId, 'smplflip']);
         $at = static fn(int $day): string => str_replace(' ', 'T', $keyOf($allDay, $day, $zone, $clock)) . '+00:00';
-        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(5), 'description' => 'Notes for the fifth']);
-        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(6), 'tagNames' => ['sample-day']]);
-        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(7), 'reminders' => [['minutes' => 10]]]);
-        $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(8), 'description' => 'Notes for the eighth']);
+        if ($marks !== null) {
+            $marks($events, $u, $masterId, $at);
+        } else {
+            $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(5), 'description' => 'Notes for the fifth']);
+            $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(6), 'tagNames' => ['sample-day']]);
+            $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(7), 'reminders' => [['minutes' => 10]]]);
+            $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at(8), 'description' => 'Notes for the eighth']);
+        }
         $idOn = [];
         foreach ([5, 6, 7, 8] as $day) {
             $idOn[$day] = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$masterId, $keyOf($allDay, $day, $zone, $clock)]);
         }
-        return (object) ['u' => $u, 'fake' => $fake, 'sync' => $sync, 'calendarId' => $calendarId, 'masterId' => $masterId, 'idOn' => $idOn];
+        return (object) ['u' => $u, 'fake' => $fake, 'sync' => $sync, 'feeds' => $feeds, 'calendarId' => $calendarId, 'masterId' => $masterId, 'idOn' => $idOn];
     };
     // A change made at Google, not through the app.
     $elsewhere = static function (object $s, string $id, array $body) use ($base): void {
@@ -185,6 +190,47 @@ return static function (Db $db): void {
                     });
             }
         }
+    }
+
+    // A skipped day stored in the old form, and a delta that lists the
+    // series' new master and nothing else: no dropped item for the old
+    // cancelled record (the stand-in always lists one, so this list is
+    // built by hand, from the rows as the poll reads them and the master as
+    // Google would send it, and merged and stored by the calls the poll
+    // makes). West of UTC the old skip's key is the key of the neighbouring
+    // day in the new form, the image of the tagged row: kept on the new
+    // master it would hide that day and send the tagged row away as a day
+    // the series no longer has. It is not kept (GoogleSync::applyChanges,
+    // only the final master's form counts), so the tag stays on its day
+    // and the day skipped under the old form is a day again, as it is at
+    // Google, where a change of form drops every record.
+    foreach (['timed made all-day, 6 January skipped and 7 January tagged' => [true, 6, 7], 'all-day made timed, 7 January skipped and 6 January tagged' => [false, 7, 6]] as $what => [$toAllDay, $skipped, $tagged]) {
+        scenario("sync form match, west of UTC, $what, a delta that lists the new master alone: the old-form skip is not kept and the tagged day keeps its row",
+            function () use ($db, $setup, $keyOf, $times, $toAllDay, $skipped, $tagged): void {
+                $zone = 'America/New_York';
+                $s = $setup(!$toAllDay, $zone, '19:00', static function (Events $events, int $u, int $masterId, Closure $at) use ($skipped, $tagged): void {
+                    $events->deleteEvent($u, $masterId, 'this', $at($skipped));
+                    $events->patch($u, $masterId, ['scope' => 'this', 'instanceStart' => $at($tagged), 'tagNames' => ['sample-day']]);
+                });
+                $was = static fn(int $day): string => $keyOf(!$toAllDay, $day, $zone, '19:00');
+                $now = static fn(int $day): string => $keyOf($toAllDay, $day, $zone, '19:00');
+                $row = static fn(): array => array_map(static fn(array $r): array => [(int) $r['id'], $r['recurrence_instance_utc'], (int) $r['all_day']],
+                    $db->all('SELECT id, recurrence_instance_utc, all_day FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$s->masterId]));
+                $skips = static fn(): array => json_decode((string) ($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$s->masterId]) ?? '[]'), true);
+                $id = (int) ($row()[0][0] ?? 0);
+                checkEq('before: the day is skipped under its old-form key, which is the key the tagged day has in the new form, and the tagged day has its row',
+                    [[$was($skipped)], $now($tagged), [[$id, $was($tagged), (int) !$toAllDay]]], [$skips(), $was($skipped), $row()]);
+                $master = $times($toAllDay, $zone, '19:00') + $s->fake->events['smplflip'];
+                $calendar = $db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]);
+                $snapshot = GoogleSync::applyChanges(
+                    GoogleSync::rowsToParsed($db->all('SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$s->calendarId])),
+                    GoogleSync::toParsedList([$master]), null, null, true);
+                $s->feeds->sync($calendar, $snapshot);
+                checkEq('after: no skip is left, the series is in its new form, and the tagged day is the row it was, at its own day\'s key with its tag',
+                    [[], (int) $toAllDay, [[$id, $now($tagged), (int) $toAllDay]], ['sample-day']],
+                    [$skips(), (int) $db->scalar('SELECT all_day FROM events WHERE id = ?', [$s->masterId]), $row(),
+                        array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ?', [$id]), 'name')]);
+            });
     }
 
     // An ICS feed: the same coincidence between a timed RECURRENCE-ID and a

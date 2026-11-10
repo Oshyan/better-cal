@@ -495,9 +495,11 @@ return [
     ],
     // The same rule in the series harness (l-links, read by the database suite's raw SQL after every step): the row a
     // "this event" edit makes (Events::patchThis) starts without its series' tags and people. f-undo trips too: Undo
-    // composes the day's links from its series (Undo::followLinks), so the rows after Undo are not the broken ones before.
+    // composes the day's links from its series (Undo::followLinks), so the rows after Undo are not the broken ones before;
+    // a-fields and c-untouched trip too: the whole-series edit after it ends by following the series (OwnFields::follow),
+    // which puts the broken day's tags and people right, so they change where the edit's request did not name them.
     [
-        'id' => 'this-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'checks' => ['l-links', 'f-undo'],
+        'id' => 'this-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'checks' => ['l-links', 'f-undo', 'a-fields', 'c-untouched'],
         'what' => 'the row a "this event" edit makes (Events::patchThis) is not followed to its series\' tags and people (OwnFields::follow)',
         'patch' => [[
             "            // this edit sends are its own, set next.\n            OwnFieldsList::follow(\$this->db, \$masterId, [\$id]);\n",

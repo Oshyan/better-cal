@@ -430,6 +430,11 @@ final class Calendars
             if ((string) $row['kind'] !== 'subscribed') {
                 throw HttpError::badRequest('Only subscribed calendars can be adopted');
             }
+            // A change half done at Google on it is finished or put back first while it still can be
+            // (the calendar writes to Google for this account); kept as a copy, neither could run.
+            if (GoogleWriter::writable($row)) {
+                GoogleSeries::refusePendingOnCalendar($this->db, $userId, $id);
+            }
             // Adopting a Google calendar makes it wholly ours: the link to Google
             // goes too, so it stops polling AND stops writing through. The
             // events keep their Google ids as history; nothing reads them once
@@ -453,6 +458,8 @@ final class Calendars
             $after = ['calendars' => [$this->db->one('SELECT * FROM calendars WHERE id = ?', [$id])]];
             $this->undo->record($userId, 'calendar', $id, 'update', null, null, "Kept '" . $row['name'] . "' as a calendar of its own",
                 touches: array_merge(Undo::touchesOf($before, $after), array_map(static fn(int $e) => [Undo::keyOf('events', ['id' => $e]), 'source'], $events)));
+            // A change left half done on it (its account disconnected, its access paused) can never run now: closed.
+            GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_KEPT);
         });
         return $this->serializeById($userId, $id);
     }
@@ -520,6 +527,9 @@ final class Calendars
             ], null);
             $this->undo->recordRemovedEvents($entry, 'calendar_id = ?', [$id]);
             $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
+            // Never refused: a change half done at Google on it can never run once it is gone (a Google
+            // calendar's delete can't be undone here), so it is closed with it.
+            GoogleSeries::closeNeverRunnable($this->db, $this->undo, $userId, $id, GoogleSeries::CLOSED_DELETED);
             $next = null;
             $stored = null;
             if ($wasDefault) {

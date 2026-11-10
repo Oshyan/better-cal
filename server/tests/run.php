@@ -9385,7 +9385,8 @@ require __DIR__ . '/plugins.php';
     $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
     $adb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, PRIMARY KEY (mutation_id, calendar_id))');
     (require __DIR__ . '/../migrations/062_mutation_rows.php')($adb);
-    $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY)');
+    $adb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, provider TEXT, google_calendar_id TEXT)');
+    $adb->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, calendar_id INTEGER NOT NULL, title TEXT NOT NULL DEFAULT \'\', status TEXT NOT NULL DEFAULT \'running\')');
     $adb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id TEXT, calendar_id INTEGER, label TEXT)');
     $adb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
     $adb->run("INSERT INTO mutations (id, created_at, before_json, after_json) VALUES

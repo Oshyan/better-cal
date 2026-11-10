@@ -691,14 +691,18 @@ final class Feeds
      * row with it); a day with none, or several and not the key, is gone.
      * A rule the expander can't read keeps the row at its key, its other
      * fields refreshed: it can't be told whether the day is still there.
-     * Pure.
+     * A caller that knows the day the key names without holding the series
+     * as it was (an undo: the form and zone its entry's key was written in,
+     * Undo::dayNow) gives it as $day (Calc::dayOf), and the image is read
+     * from there. Pure.
      *
      * @param array<string,mixed> $row the edited day's row
      * @param array<string,mixed>|null $was its series' row before this poll
      * @param array<string,mixed> $series its series' row after it
+     * @param ?int $day the day the row's key names, when the caller knows it
      * @return array<string,mixed>|null
      */
-    public static function ofSeries(array $row, ?array $was, array $series): ?array
+    public static function ofSeries(array $row, ?array $was, array $series, ?int $day = null): ?array
     {
         $key = (string) $row['recurrence_instance_utc'];
         $allDay = (int) ($series['all_day'] ?? 0) === 1;
@@ -747,7 +751,7 @@ final class Feeds
         } catch (\InvalidArgumentException) {
             $skips = [];
         }
-        $dn = ($calcOf($was) ?? $calc)->dnOf($key);
+        $dn = $day ?? ($calcOf($was) ?? $calc)->dnOf($key);
         try {
             $on = array_values(array_diff($calc->keysOn($dn), $skips));
         } catch (\BetterCal\Domain\Series\WalkIncomplete) {

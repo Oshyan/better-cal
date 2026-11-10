@@ -1,0 +1,45 @@
+{
+ "about": "A day given its own notes, then coordinates picked for it here; its record put back to the series at Google and polled, so it owns only the coordinates; the bare Undo takes them back, and the row, owning nothing and holding nothing here alone, goes (x-undo-fields by the retention rule, seed 60611 case 8). Before, the check demanded every row an entry only changed stay.",
+ "seed": 60611,
+ "n": 8,
+ "series": {
+  "family": "daily",
+  "rrule": "FREQ=DAILY",
+  "import": false,
+  "bound": "count",
+  "boundAt": 8,
+  "untilForm": "dayend",
+  "allDay": false,
+  "tzid": "America/Los_Angeles",
+  "start": "2027-01-18 16:00",
+  "length": 60,
+  "flipZone": "America/Los_Angeles",
+  "flipClock": 57600
+ },
+ "steps": [
+  {
+   "do": "w-this-g",
+   "pick": 0.912,
+   "what": "description"
+  },
+  {
+   "do": "w-this-l",
+   "pick": 0.78,
+   "what": "coords"
+  },
+  {
+   "do": "r-exc-",
+   "pick": 0.09
+  },
+  {
+   "do": "p-delta",
+   "pick": 0.365
+  },
+  {
+   "do": "u-bare",
+   "pick": 0.069,
+   "target": "row"
+  }
+ ],
+ "flip": true
+}

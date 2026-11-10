@@ -746,4 +746,13 @@ return [
             "                \$hit = self::conflicts(\$mine, \$later, 'events');"]],
         'checks' => $undoDay['stale'],
     ],
+    // Coming up in an order the contract does not allow: every stated order reversed (days, all-day first, instant). c-next
+    // accepts either order only among entries that tie on all three, so reversing the stated orders still trips it, on a
+    // case whose first entries tie on one all-day date as on one with several occurrences a day.
+    [
+        'id' => 'next-days-reversed', 'file' => $model, 'checks' => ['c-next'],
+        'what' => 'coming up sorted latest day first, a timed entry before the all-day ones on its day',
+        'patch' => [['usort($out, static fn(array $a, array $b): int => $order($a) <=> $order($b));', 'usort($out, static fn(array $a, array $b): int => $order($b) <=> $order($a));']],
+        'cases' => ['next-an-edited-day-and-the-day-acted-on-tied-on-one-all-day-date', 'next-several-occurrences-on-one-day'],
+    ],
 ];

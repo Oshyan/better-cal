@@ -275,6 +275,29 @@ final class OracleProbes
                     }
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            // The retention rule after an undo: a row its entry only changed goes only when what the undo leaves owns nothing.
+            ['check' => 'x-undo-fields', 'what' => 'an undo of a day\'s notes removes the row, which still owns its tag', 'case' => 'a-tagged-day-given-notes-then-the-notes-undone-keeps-the-row-for-its-tag', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    unset($s1['rows'][$row($s1, $owns('tags'))]);
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            // A4 by the stand-in's state when Finish runs: a remote title no later step superseded is still kept.
+            ['check' => 'x-finish', 'what' => 'Finish drops a title given at Google since that no later step superseded', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-keeps-it', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['g']['digest'] as $g => $d) {
+                        foreach ((array) ($d['records'] ?? []) as $k => $rec) {
+                            if (str_contains((string) $rec[0], 'remote')) {
+                                unset($s1['g']['digest'][$g]['records'][$k]);
+                            }
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // Changed since counts from the failure: a change at Google after it still refuses Put back.
+            ['check' => 'x-putback', 'what' => 'Put back goes ahead though Google changed after the failure (a guest added before it changes nothing alone)', 'case' => 'a-guest-added-at-google-then-notes-for-all-stopped-then-a-colour-at-google-then-put-back-is-refused', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['left' => []]] + $out, $s0, $s1];
+                }],
         ];
     }
 

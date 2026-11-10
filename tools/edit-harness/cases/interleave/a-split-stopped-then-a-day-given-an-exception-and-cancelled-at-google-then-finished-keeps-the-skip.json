@@ -1,0 +1,41 @@
+{
+ "about": "This and following with tags stopped before its second write; a day given an exception at Google with a title and notes, then the same day cancelled at Google; Finish stores the skip, which is what Google holds when it runs (x-finish A4 by the stand-in's state when Finish runs, seed 60611 case 143). Before, A4 expected the remote title on a live record whatever a later remote step did to that day.",
+ "seed": 60611,
+ "n": 143,
+ "series": {
+  "family": "daily",
+  "rrule": "FREQ=DAILY",
+  "import": false,
+  "bound": "count",
+  "boundAt": 8,
+  "untilForm": "dayend",
+  "allDay": false,
+  "tzid": "America/New_York",
+  "start": "2027-01-18 19:00",
+  "length": 60,
+  "flipZone": "America/New_York",
+  "flipClock": 68400
+ },
+ "steps": [
+  {
+   "do": "f-before",
+   "pick": 0.628,
+   "k": 2,
+   "write": "w-follow",
+   "what": "tags"
+  },
+  {
+   "do": "r-exc+",
+   "pick": 0.935
+  },
+  {
+   "do": "r-skip+",
+   "pick": 0.926
+  },
+  {
+   "do": "finish",
+   "pick": 0.496
+  }
+ ],
+ "flip": true
+}

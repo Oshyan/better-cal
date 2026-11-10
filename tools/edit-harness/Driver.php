@@ -1523,7 +1523,10 @@ final class Driver
         $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
         $skips = array_map(static fn(string $k): string => $dateOf($k, $allDay), Recurrence::decodeExdates($m['exdates_json'] ?? null));
         foreach ($days as $d) {
-            $on = array_values(array_filter($rows, static fn(array $r): bool => $dateOf((string) $r['start_utc'], (int) $r['all_day'] === 1) === $d['date']));
+            // A day is its key's date under the series' form (README, Google: Identity), never what merely shows on that
+            // date: a day moved by its own date onto a skipped or edited day's date is another day there (two days on one
+            // date is allowed, Known, Accepted Differences). So a skip is judged by the skip and by a row of its own date.
+            $on = array_values(array_filter($rows, static fn(array $r): bool => $dateOf((string) $r['recurrence_instance_utc'], $allDay) === $d['date']));
             $ok = match ($d['kind']) {
                 'skip' => in_array($d['date'], $skips, true) && $on === [],
                 'edit' => array_filter($on, static fn(array $r): bool => $r['description'] === 'Own notes for the day.' && $r['location'] === 'Sample Room') !== [],

@@ -1,0 +1,38 @@
+{
+    "about": "A guest added to the series at Google and not polled, then notes for all events taken by Google and stopped by a thrown error, then a colour set at Google, then Put back: refused with google_changed_since, since Google changed after the change's last step (x-putback, A2). The guest added before the failure is part of what the change started from and refuses nothing alone (a-guest-added-at-google-then-notes-for-all-stopped-after-their-write-then-put-back-goes-through). Its oracle probe answers Put back ok, which must be caught.",
+    "series": {
+        "family": "weekly_list_i2",
+        "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;WKST=SU",
+        "import": false,
+        "bound": "count",
+        "boundAt": 6,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-05-28",
+        "length": 1
+    },
+    "steps": [
+        {
+            "do": "r-gonly",
+            "pick": 0.361,
+            "what": "attendees"
+        },
+        {
+            "do": "f-fatal",
+            "pick": 0.064,
+            "k": 1,
+            "write": "w-all",
+            "what": "description"
+        },
+        {
+            "do": "r-gonly",
+            "pick": 0.2,
+            "what": "colorId"
+        },
+        {
+            "do": "putback",
+            "pick": 0.065
+        }
+    ]
+}

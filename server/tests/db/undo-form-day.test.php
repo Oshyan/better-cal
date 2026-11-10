@@ -58,8 +58,9 @@ return static function (Db $db): void {
     $suffixOf = static fn(bool $allDay, string $key): string => (new DateTimeImmutable($key, $utc))->format($allDay ? 'Ymd' : 'Ymd\THis\Z');
     $iso = static fn(int $d, array $z, int $addHours = 0): string => sprintf('2027-01-%02dT%02d:%s:00%s', $d, (int) substr($z[1], 0, 2) + $addHours, substr($z[1], 3, 2), $z[2]);
     // The words of the refusal where a change that re-placed the series holds no record of the day.
-    $unplaced = static fn(string $what, bool $redo): string => "This series $what since this was done, so it's no longer certain which day it was on, and it can't be "
-        . ($redo ? 'redone' : 'undone') . ' here. You can make the change again on the day.';
+    // $change: the Activity entry's summary (for a redo, the summary of the change the undo took back).
+    $unplaced = static fn(string $what, bool $redo, string $change): string => "Can't " . ($redo ? 'redo' : 'undo') . " \"$change\". This repeating event $what after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.";
+    $summary = static fn(int $entry): string => (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$entry]);
     $whatOf = ['form' => 'changed between timed and all-day', 'zone' => 'changed its time zone'];
     $stale = 'Newer changes exist for this item; undoing would overwrite them';
 
@@ -98,7 +99,7 @@ return static function (Db $db): void {
      * is undone. `expect`: `result` ('done', 'stale', 'unplaced' or an error code), `rows`, `skips`, and `sent`, the
      * writes Google was sent as [method, the day's id suffix].
      */
-    $google = static function (array $c) use ($db, $keyOf, $suffixOf, $iso, $unplaced, $whatOf, $stale, $held, $tables, $first, $tokyoEvening): void {
+    $google = static function (array $c) use ($db, $keyOf, $suffixOf, $iso, $unplaced, $summary, $whatOf, $stale, $held, $tables, $first, $tokyoEvening): void {
         $u = freshUser($db);
         seriesUndo($db, $u, false);
         $d = domains($db);
@@ -144,9 +145,10 @@ return static function (Db $db): void {
             $bodyOf = static fn(bool $allDay, array $z): array => $allDay ? ['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]
                 : ['start' => ['dateTime' => $iso(4, $z), 'timeZone' => $z[0]], 'end' => ['dateTime' => $iso(4, $z, 1), 'timeZone' => $z[0]]];
             $target = null;
+            $undone = null; // for a redo, the change the undo took back
             $redo = false;
             $chosen = false; // once the steps before the change are done, the entry acted on is fixed
-            $step = static function (string $do) use (&$target, &$redo, &$chosen, $this1, $all, $remote, $bodyOf, $times, $now, $e, $u, $id, $gid, $at, $undo, $db, $s, $first, $iso, $keyOf, $suffixOf, $c, $tokyoEvening): void {
+            $step = static function (string $do) use (&$target, &$undone, &$redo, &$chosen, $this1, $all, $remote, $bodyOf, $times, $now, $e, $u, $id, $gid, $at, $undo, $db, $s, $first, $iso, $keyOf, $suffixOf, $c, $tokyoEvening): void {
                 [$do, $arg] = explode(':', $do, 2) + [1 => ''];
                 switch ($do) {
                     case 'tag': $this1(6, ['tagNames' => ['sample-day']]); break;
@@ -172,7 +174,8 @@ return static function (Db $db): void {
                         (new Rsvp($db, new EmailSender([]), [], $s->writer))->answer($u, $row, 'accepted', $session);
                         break;
                     case 'undo':
-                        $undo->undoById($u, lastEntry($db, $u));
+                        $undone = lastEntry($db, $u);
+                        $undo->undoById($u, $undone);
                         $target = lastEntry($db, $u);
                         $redo = true;
                         break;
@@ -220,7 +223,7 @@ return static function (Db $db): void {
             $result = $error === null ? 'done' : match (true) {
                 $error->errorCode === 'stale_undo' && $error->getMessage() === $stale => 'stale',
                 // The change that re-placed the series with no record of the day says what it did: the case's own change.
-                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_unplaced' && $error->getMessage() === $unplaced($whatOf[$c['change'] ?? ''] ?? '', $redo) => 'unplaced',
+                $error->errorCode === 'not_undoable' && ($error->extra['reason'] ?? null) === 'day_unplaced' && $error->getMessage() === $unplaced($whatOf[$c['change'] ?? ''] ?? '', $redo, $summary($redo ? (int) $undone : (int) $target)) => 'unplaced',
                 default => $error->errorCode . ': ' . $error->getMessage(),
             };
             checkEq("$name: " . ['done' => 'it goes through', 'stale' => 'it is refused as stale, a newer change of the same thing standing',
@@ -435,7 +438,7 @@ return static function (Db $db): void {
             $e->patch($u, $id, ['scope' => 'this', 'instanceStart' => $at(6), 'useSeries' => ['tags']]);
             $entry = lastEntry($db, $u);
             planned($e, $u, $id, ['scope' => 'all', 'instanceStart' => $at(4)] + ($startsAllDay ? $timed : $days));
-            $words = "This series changed between timed and all-day since this was done, and what this change held is of the series as it was, so it can't be undone here. You can make the change again on the day.";
+            $words = "Can't undo \"" . (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$entry]) . "\". This repeating event changed between timed and all-day after that, so the saved copy of that day no longer fits it. Make the change again on the day.";
             $refusals = [];
             foreach ([false, true] as $force) {
                 try {

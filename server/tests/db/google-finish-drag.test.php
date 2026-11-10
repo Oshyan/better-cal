@@ -78,11 +78,11 @@ return static function (Db $db): void {
         'F3 (master write sent and not taken)', 'netAt',
         // The series Wed 6 to Wed 13 Jan whole; the notes on Fri 8 Jan; the deletion made at Google named as not kept.
         [$line('06'), $line('07'), $line('08', 'Notes A'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
-        $day('2027-01-08') . ' was deleted at Google since this change stopped; that change is not kept, because the series moved to another day.'));
+        'While this change was waiting to be finished, ' . $day('2027-01-08') . ' was deleted in Google Calendar. That was lost when the event moved to another day. Make it again there if you still want it.'));
 
     scenario('F3 second block: the same, the master write taken and its answer lost', static fn() => $run(
         'F3 (master write taken, its answer lost)', 'loseAt',
         // The day deleted at Google is Fri 8 Jan of the series as changed: it stays deleted, and the notes that were to show there go with it, named.
         [$line('06'), $line('07'), $line('09'), $line('10'), $line('11'), $line('12'), $line('13')],
-        $day('2027-01-08') . ' was deleted at Google since this change stopped; it stays deleted.'));
+        $day('2027-01-08') . ' was deleted in Google Calendar while this change was waiting to be finished; it stays deleted.'));
 };

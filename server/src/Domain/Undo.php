@@ -1780,8 +1780,23 @@ final class Undo
      */
     private function unplaced(int $entryId, array $cols): HttpError
     {
-        return new HttpError('not_undoable', 'This series ' . self::replacedWords($cols) . " since this was done, so it's no longer certain which day it was on, and it can't be "
-            . ($this->takesBack($entryId) ? 'redone' : 'undone') . ' here. You can make the change again on the day.', 400, ['reason' => self::DAY_UNPLACED]);
+        return new HttpError('not_undoable', "Can't " . ($this->takesBack($entryId) ? 'redo' : 'undo') . ' ' . $this->named($entryId) . '. This repeating event ' . self::replacedWords($cols)
+            . ' after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.', 400, ['reason' => self::DAY_UNPLACED]);
+    }
+
+    /**
+     * The change a refusal names, as the person reads it in Activity: the
+     * entry's summary in double quotes, or for a redo the summary of the
+     * change the undo took back (the entry its details.google.undoes names).
+     */
+    private function named(int $entryId): string
+    {
+        $id = $entryId;
+        if ($this->takesBack($entryId)) {
+            $details = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entryId]), true);
+            $id = (int) $details['google']['undoes'];
+        }
+        return '"' . (string) $this->db->scalar('SELECT summary FROM mutations WHERE id = ?', [$id]) . '"';
     }
 
     /** The refusal where the series no longer has the day, in words true of a bound, a split and a rule alike. */
@@ -3018,8 +3033,8 @@ final class Undo
         $userId = (int) $this->db->scalar('SELECT user_id FROM mutations WHERE id = ?', [$entryId]);
         $since = $this->replacing($series, $userId, $entryId)['entries'];
         if ($since !== []) {
-            throw new HttpError('not_undoable', 'This series ' . self::replacedWords(reset($since))
-                . " since this was done, and what this change held is of the series as it was, so it can't be undone here. You can make the change again on the day.",
+            throw new HttpError('not_undoable', "Can't undo " . $this->named($entryId) . '. This repeating event ' . self::replacedWords(reset($since))
+                . ' after that, so the saved copy of that day no longer fits it. Make the change again on the day.',
                 400, ['reason' => self::DAY_UNPLACED]);
         }
         $this->dayNow($entryId, $series, $key);
@@ -3041,7 +3056,7 @@ final class Undo
             [self::keyOf('events', $series), $userId, $entryId, self::DAY . '%', self::SKIP . '%']
         ) as $later) {
             if (!$this->revertsSince((int) $later['id'], $entryId)) {
-                throw new HttpError('not_undoable', "Days of this series were changed after this, and putting its time back would leave them on other days, so this can't be undone here. You can change the time back by hand.",
+                throw new HttpError('not_undoable', "Can't undo " . $this->named($entryId) . ' yet. Days of this repeating event were changed after it. Undo those newer changes first, or change the time back by hand.',
                     400, ['reason' => self::DAYS_SINCE]);
             }
         }

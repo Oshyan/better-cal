@@ -81,14 +81,14 @@ checkEq('google steps: a cancelled record the plan has no exception for is un-ca
 $year = (int) gmdate('Y');
 $d = static fn(int $m, int $day): string => BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, $m, $day), $year);
 checkEq('google differences: a day Google kept as an ordinary one, a title Google kept, a skip Google kept a day', [
-    'Google kept ' . $d(3, 15) . " as an ordinary day; the plan had 'Sample weekly, renamed' on " . $d(3, 16) . ' at 10:00.',
-    "Google kept 'Sample weekly, renamed' on " . $d(3, 29) . "; the plan had 'Sample weekly, special'.",
-    'Google kept ' . $d(4, 12) . '; the plan skipped it.',
+    'Google kept ' . $d(3, 15) . " as an ordinary day; this change had 'Sample weekly, renamed' on " . $d(3, 16) . ' at 10:00.',
+    "Google kept 'Sample weekly, renamed' on " . $d(3, 29) . "; this change had 'Sample weekly, special'.",
+    $d(4, 12) . ' is still on the calendar: this change deleted it, but Google Calendar kept it.',
 ], GoogleSeries::differences($target, $items, $year));
 checkEq('google differences: none when the read-back equals the plan', [], GoogleSeries::differences([
     'exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'],
 ] + $target, $items, $year));
-checkEq('google differences: a rule Google kept in another form is no difference; another rule is', [[], ['Google kept the rule FREQ=WEEKLY;COUNT=10; the plan had FREQ=WEEKLY;COUNT=4.']], [
+checkEq('google differences: a rule Google kept in another form is no difference; another rule is', [[], ['Google kept the rule FREQ=WEEKLY;COUNT=10; this change had FREQ=WEEKLY;COUNT=4.']], [
     GoogleSeries::differences(['exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'], 'master' => ['rrule' => 'FREQ=WEEKLY;INTERVAL=1;COUNT=10'] + $master] + $target, $items, $year),
     GoogleSeries::differences(['exceptions' => ['2027-03-29 17:00:00' => ['title' => 'Sample weekly, renamed'] + $own], 'skips' => ['2027-04-05 17:00:00'], 'master' => ['rrule' => 'FREQ=WEEKLY;COUNT=4'] + $master] + $target, $items, $year),
 ]);
@@ -310,7 +310,7 @@ $now = $nowOf($target, false);
 $now['records']['2027-01-18 00:00:00'] = ['title' => 'Renamed at Google', 'start_utc' => '2027-01-18 00:00:00', 'end_utc' => '2027-01-19 00:00:00'] + $target['master'];
 [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $now, $year);
 checkEq('google rebase: made all-day at 00:00 UTC, a skipped day renamed at Google since the master write: kept as Google has it and named, never skipped over',
-    [['2027-01-18 00:00:00' => 'Renamed at Google'], [], [BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 1, 18), $year) . ' was changed at Google since this change stopped; left as Google has it.'], [['2027-01-18 00:00:00', 'day']]],
+    [['2027-01-18 00:00:00' => 'Renamed at Google'], [], [BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 1, 18), $year) . " was changed in Google Calendar while this change was waiting to be finished; Google's version of that day was kept."], [['2027-01-18 00:00:00', 'day']]],
     [array_column($rebased['exceptions'], 'title', 'start_utc'), $rebased['skips'], $words, $conflicts]);
 
 // A write of an unproven class is read against both answers. The link changed with the length (an hour to ninety
@@ -347,8 +347,8 @@ $dateWords = static fn(int $day): string => BetterCal\Domain\Series\Words::date(
 $plus = static fn(string $key, int $seconds): string => gmdate('Y-m-d H:i:s', strtotime($key . ' UTC') + $seconds);
 foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
     [$timedOther, $timedDates, $dayOther, $dayDates] = $sinceDays[$clock];
-    foreach ([['timed to all-day', $timed, $timedKeys, $timedOther, $timedDates, $day, $dayKeys, 'now all-day', 'given another time'],
-        ['all-day to timed', $day, $dayKeys, $dayOther, $dayDates, $timed, $timedKeys, 'no longer all-day', 'moved to another date']] as [$way, $from, $fromKeys, $other, $dates, $to, $toKeys, $why, $retimed]) {
+    foreach ([['timed to all-day', $timed, $timedKeys, $timedOther, $timedDates, $day, $dayKeys, 'became all-day', 'given another time'],
+        ['all-day to timed', $day, $dayKeys, $dayOther, $dayDates, $timed, $timedKeys, 'stopped being all-day', 'moved to another date']] as [$way, $from, $fromKeys, $other, $dates, $to, $toKeys, $why, $retimed]) {
         $before = $seriesOf($gm($from), $fromKeys[0], $fromKeys[1]);
         $target = $seriesOf($gm($to), $toKeys[0], $toKeys[1]);
         $m = $before['master'];
@@ -377,7 +377,7 @@ foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
         foreach ($changes as $what => [$change, $date, $done]) {
             [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $change($nowOf($before, true)), $year);
             checkEq("google rebase: $way at $clock, its master write not yet at Google, a day $what at Google since: the plan stands whole and the change is named, by its own date, as not kept",
-                [$daysOf($target), [$dateWords($date) . " was $done at Google since this change stopped; that change is not kept, because the series is $why."], []],
+                [$daysOf($target), ['While this change was waiting to be finished, ' . $dateWords($date) . " was $done in Google Calendar. That was lost when the event $why. Make it again there if you still want it."], []],
                 [$daysOf($rebased), $words, $conflicts]);
         }
     }
@@ -390,8 +390,8 @@ $now['records']['2027-01-09 00:00:00'] = ['title' => 'Renamed at Google', 'descr
 unset($now['cancelled']['2027-01-08 00:00:00'], $now['skips']['2027-01-08 00:00:00']);
 [$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
 checkEq('google rebase: made all-day, not yet at Google, a skipped day brought back and another renamed with other notes and place: one sentence a day, in date order, the plan whole', [$daysOf($target), [
-    $dateWords(7) . ' was brought back at Google since this change stopped; that change is not kept, because the series is now all-day.',
-    $dateWords(8) . ' was renamed, given other notes and given another place at Google since this change stopped; that change is not kept, because the series is now all-day.',
+    'While this change was waiting to be finished, ' . $dateWords(7) . ' was brought back in Google Calendar. That was lost when the event became all-day. Make it again there if you still want it.',
+    'While this change was waiting to be finished, ' . $dateWords(8) . ' was renamed, given other notes and given another place in Google Calendar. That was lost when the event became all-day. Make it again there if you still want it.',
 ]], [$daysOf($rebased), $words]);
 
 // ---- The same on the wider axis: any change whose first write has not reached Google ----
@@ -410,15 +410,15 @@ $renamedAt = static function (array $now, string $key, array $master): array {
 $sinceRename = $renamedAt($nowOf($laBefore, true), '2027-01-25 18:00:00', $laBefore['master']);
 foreach ([
     // [what the change does, the master as changed, where the edited day and the skip are then, the reason a person reads]
-    ['a new time (10:00 to 11:00)', ['start_utc' => '2027-01-04 19:00:00', 'end_utc' => '2027-01-04 20:00:00'], ['2027-01-11 19:00:00', '2027-01-18 19:00:00'], "the series' time changed"],
-    ['another zone keeping the clock (10:00 Denver)', ['start_utc' => '2027-01-04 17:00:00', 'end_utc' => '2027-01-04 18:00:00', 'tzid' => 'America/Denver'], ['2027-01-11 17:00:00', '2027-01-18 17:00:00'], "the series' zone changed"],
-    ['a drag a week along its pattern', ['start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00'], ['2027-01-18 18:00:00', '2027-01-25 18:00:00'], 'the series moved to another day'],
-    ['a new rule (every second week)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=4'], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], "the series' rule changed"],
+    ['a new time (10:00 to 11:00)', ['start_utc' => '2027-01-04 19:00:00', 'end_utc' => '2027-01-04 20:00:00'], ['2027-01-11 19:00:00', '2027-01-18 19:00:00'], "the event's time changed"],
+    ['another zone keeping the clock (10:00 Denver)', ['start_utc' => '2027-01-04 17:00:00', 'end_utc' => '2027-01-04 18:00:00', 'tzid' => 'America/Denver'], ['2027-01-11 17:00:00', '2027-01-18 17:00:00'], "the event's time zone changed"],
+    ['a drag a week along its pattern', ['start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00'], ['2027-01-18 18:00:00', '2027-01-25 18:00:00'], 'the event moved to another day'],
+    ['a new rule (every second week)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=4'], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], 'how the event repeats changed'],
 ] as [$what, $change, $toKeys, $why]) {
     $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), $toKeys[0], $toKeys[1]);
     [$rebased, $words, $conflicts] = GoogleSeries::rebase($laBefore, $target, $sinceRename, $year);
     checkEq("google rebase: $what, its master write not yet at Google, a day renamed at Google since: the plan stands whole and the rename is named as not kept, with the reason",
-        [$daysOf($target), [$dateWords(25) . " was renamed at Google since this change stopped; that change is not kept, because $why."], []], [$daysOf($rebased), $words, $conflicts]);
+        [$daysOf($target), ['While this change was waiting to be finished, ' . $dateWords(25) . " was renamed in Google Calendar. That was lost when $why. Make it again there if you still want it."], []], [$daysOf($rebased), $words, $conflicts]);
     [$rebased, $words] = GoogleSeries::rebase($laBefore, $target, $nowOf($laBefore, true), $year);
     checkEq("google rebase: $what, its master write not yet at Google, nothing changed at Google since: the plan whole, nothing said", [$daysOf($target), []], [$daysOf($rebased), $words]);
 }
@@ -426,7 +426,7 @@ foreach ([
 // the plan changes the same thing (it renames the series, so every day's title), the day's title is kept and named;
 // where it does not (a new length), it is kept with nothing said.
 foreach ([
-    ['a rename of the series', ['title' => 'Sample weekly renamed'], ["'Renamed at Google' on " . $dateWords(25) . ' changed at Google since this change stopped (its title); left as Google has it.']],
+    ['a rename of the series', ['title' => 'Sample weekly renamed'], ["The title of 'Renamed at Google' on " . $dateWords(25) . " was changed in Google Calendar while this change was waiting to be finished; Google's title was kept."]],
     ['a new length (an hour to ninety minutes)', ['end_utc' => '2027-01-04 19:30:00'], []],
 ] as [$what, $change, $said]) {
     $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-11 18:00:00', '2027-01-18 18:00:00');
@@ -443,11 +443,11 @@ $now = $sinceRename;
 $now['cancelled']['2027-01-04 18:00:00'] = $now['skips']['2027-01-04 18:00:00'] = true;
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year);
 checkEq('google rebase: a shorter series, its master write not yet at Google: a rename on the day it drops is named as not kept and no day is made of it; a deletion on a day it keeps is carried',
-    [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because the series now ends before that day.']],
+    [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change ended the event before that day. Make it again there if you still want it.']],
     [array_keys($rebased['exceptions']), $rebased['skips'], $words]);
-[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'since this change stopped', false, true);
+[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'while this change was waiting to be finished', false, true);
 checkEq('google rebase: the same where the series is shorter because the change split it there (a series follows): the day is still there, and the reason says so',
-    [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because this change split the series before that day.'], $words);
+    ['While this change was waiting to be finished, ' . $dateWords(25) . ' was renamed in Google Calendar. That was lost when this change split the event before that day. Make it again there if you still want it.'], $words);
 [$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $nowOf($shorter, true), $year);
 checkEq('google rebase: the shorter series once its master write landed (Google dropped what was past the end itself): the plan whole, nothing said',
     [$daysOf($shorter), []], [$daysOf($rebased), $words]);
@@ -461,7 +461,7 @@ $now = ['master' => $dragged['master'], 'records' => ['2027-01-11 18:00:00' => $
     'cancelled' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'skips' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'etags' => [], 'ids' => []];
 [$rebased, $words, $conflicts] = GoogleSeries::rebase($dragBefore, $dragged, $now, $year);
 checkEq('google rebase: a drag that landed, the day the edited day moves onto deleted at Google since: it stays deleted and is named; the old skip Google kept at its old key is the write\'s own',
-    [[], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], [$dateWords(18) . ' was deleted at Google since this change stopped; it stays deleted.'], [['2027-01-18 18:00:00', 'day']]],
+    [[], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], [$dateWords(18) . ' was deleted in Google Calendar while this change was waiting to be finished; it stays deleted.'], [['2027-01-18 18:00:00', 'day']]],
     [array_keys($rebased['exceptions']), $rebased['skips'], $words, $conflicts]);
 
 // ---- What the condition believes a record holds of a field the day does not own (sameAsStored) ----

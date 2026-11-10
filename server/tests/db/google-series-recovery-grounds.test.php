@@ -353,7 +353,7 @@ return static function (Db $db): void {
             }]);
         checkEq('the clock moved at Google meanwhile: Finish completes, the series at Google\'s clock with the day Google kept', [true, 0, []], [$r['recovered'], $r['left'], $r['changed']['skips']]);
         check('the clock moved at Google meanwhile: Finish names the time it left as Google has it and the day Google kept',
-            count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'time changed at Google'))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'Google kept'))) === 1, json_encode($r['named']));
+            count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, "The event's time was changed in Google Calendar"))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'but Google Calendar kept it'))) === 1, json_encode($r['named']));
         checkEq("the clock moved at Google meanwhile: Finish's entry records the deleted day's skip as gone and no move", [[], true],
             [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
         checkEq('the clock moved at Google meanwhile: the undo of the delete is refused, its skip neither carried nor left standing, with nothing written here and nothing sent',

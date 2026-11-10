@@ -595,6 +595,17 @@ final class Interleave
         return $out;
     }
 
+    /**
+     * The app's writes the stand-in took between two snapshots: those it answered 2xx (a lost answer was taken). A
+     * request it refused changed nothing there, so "writes nothing at Google" is judged by these and by what the
+     * stand-in holds, never by every request sent; what a request carries (If-Match, its keys) and "sends nothing"
+     * still read every request (writesBetween).
+     */
+    private function takenBetween(array $s0, array $s1): array
+    {
+        return array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => (int) ($q['status'] ?? 200) < 300));
+    }
+
     // ---- the steps ---------------------------------------------------------------------
 
     private function runStep(array $step): void
@@ -1528,6 +1539,7 @@ final class Interleave
     {
         $asked = ($out['asked'] ?? null) ?? ['kind' => '?', 'gid' => null, 'fields' => [], 'days' => []];
         $writes = $this->writesBetween($s0, $s1);
+        $taken = $this->takenBetween($s0, $s1);
         $entries = array_map('intval', array_column($this->db->all('SELECT id FROM mutations WHERE user_id = ? AND id > ? ORDER BY id', [$this->userId, $s0['mut']]), 'id'));
         $kind = substr($do, 0, 2);
         $failure = $kind === 'f-' ? $this->stand->knobs->fired : null;
@@ -1644,7 +1656,7 @@ final class Interleave
 
         // A write of the app's own that reached Google on a series whose change is half done (A6 refuses it; until then it
         // goes through) is a change at Google since that change, as a remote one is, for Put back's check.
-        if ($onPending && $out['ok'] && $writes !== [] && !in_array($do, ['finish', 'putback'], true)) {
+        if ($onPending && $out['ok'] && $taken !== [] && !in_array($do, ['finish', 'putback'], true)) {
             foreach ($this->pendings as $id => $p) {
                 if (isset($p['gids'][$gid])) {
                     $this->pendings[$id]['since'][$gid] = true;
@@ -1657,7 +1669,7 @@ final class Interleave
             if ($out['ok']) {
                 $this->fail('x-pending', "step {$this->step} ($do): a write to a series whose change is half done went through; the settled rule (A6) refuses it with the pending reason, pointing to Review", $context);
             } else {
-                $this->expect('x-pending', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+                $this->expect('x-pending', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             }
         }
 
@@ -1723,7 +1735,7 @@ final class Interleave
             $this->ran('x-conflict', 'refused: ' . ($error ?? 'went through'));
             $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused", $context);
             if (!$out['ok']) {
-                $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
+                $this->expect('x-conflict', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($taken)]);
             }
         }
 
@@ -1744,10 +1756,10 @@ final class Interleave
 
         $this->recovered = in_array($do, ['finish', 'putback'], true) && $out['ok'] ? $this->pending : null;
         if ($do === 'finish' || $do === 'putback') {
-            $this->checkRecovery($do, $out, $s0, $s1, $context, $writes);
+            $this->checkRecovery($do, $out, $s0, $s1, $context, $taken);
         }
         if (in_array($do, ['u-entry', 'u-bare', 'redo'], true)) {
-            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $writes);
+            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $taken);
         }
 
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
@@ -1776,7 +1788,7 @@ final class Interleave
         // A series commit or a Finish that went through to Google stores what Google holds after its read-back, as a poll
         // does: for its series the harness's "changed at Google since the last poll" is reset the way a poll resets it
         // (series-model.md, Google as a Contract: "the rows stored are what Google holds after the last read-back").
-        $readBack = $out['ok'] && $writes !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
+        $readBack = $out['ok'] && $taken !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
         if ($readBack) {
             $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
             foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
@@ -1883,7 +1895,7 @@ final class Interleave
         $this->pendings[$m['id']] = $m;
     }
 
-    private function checkRecovery(string $do, array $out, array $s0, array $s1, array $context, array $writes): void
+    private function checkRecovery(string $do, array $out, array $s0, array $s1, array $context, array $taken): void
     {
         $p = $this->pending;
         $answer = $out['answer'] ?? [];
@@ -1897,8 +1909,8 @@ final class Interleave
             $this->ran('x-putback', $changedSince === [] ? 'unchanged' : 'changed since');
             if ($changedSince !== []) {
                 $this->expect('x-putback', $error === 'google_changed_since', "step {$this->step}: Put back after a change at Google since is refused with google_changed_since", $context + ['changedSince' => $changedSince]);
-                $this->expect('x-putback', $writes === [] && self::sameHere($s0, $s1) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
-                    $context + ['writes' => self::brief($writes), 'diff' => self::diff($s0['l'], $s1['l'])]);
+                $this->expect('x-putback', $taken === [] && $s0['g'] == $s1['g'] && self::sameHere($s0, $s1) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
+                    $context + ['writes' => self::brief($taken), 'diff' => self::diff($s0['l'], $s1['l'])]);
                 if ($error === 'google_changed_since') {
                     $left = (array) ($out['extra']['left'] ?? []);
                     $this->expect('x-putback', count($left) === count($changedSince), "step {$this->step}: the refusal names exactly the series changed at Google since", $context + ['left' => $left, 'changedSince' => $changedSince]);
@@ -1999,7 +2011,7 @@ final class Interleave
         $this->settled($p);
     }
 
-    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $writes): void
+    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $taken): void
     {
         $entry = $out['entry'] ?? ($asked['entry'] ?? null);
         $error = $out['ok'] ? null : (string) $out['error'];
@@ -2018,7 +2030,7 @@ final class Interleave
         $state = $this->entryStates[$entry] ?? null;
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
-            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
                 // An undo of an entry nothing has changed since goes through (decisions.md, "An undo is stale when a poll has
                 // since brought a remote change of the same field" and "Staleness has one definition: grounds are fields"):

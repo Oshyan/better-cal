@@ -298,6 +298,15 @@ final class OracleProbes
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null, 'answer' => ['left' => []]] + $out, $s0, $s1];
                 }],
+            // "Writes nothing at Google" is judged by what the stand-in holds and the writes it took, not by requests it
+            // refused: a refused undo after which the stand-in holds something else still fails.
+            ['check' => 'x-undo-fields', 'what' => 'a refused undo leaves Google holding another series title', 'case' => 'two-days-titled-then-one-undone', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1 = $s0;
+                    $gid = array_key_first(array_filter($s1['g']['digest'], static fn($d): bool => $d !== null));
+                    $s1['g']['digest'][$gid]['title'] = 'Sample probe title';
+                    return [['ok' => false, 'error' => 'google_write_failed', 'message' => 'Sample refusal'] + $out, $s0, $s1];
+                }],
         ];
     }
 

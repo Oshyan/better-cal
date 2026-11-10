@@ -649,7 +649,10 @@ return [
         'what' => 'GoogleUndo::dayAt returns the id the entry journaled when the day\'s key is the same now, whatever form the series has since',
         'patch' => [["                return ['googleId' => GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];",
             "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
-        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
+        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag',
+            // The undo of a rename across the same flip, pinned to one PATCH to the date-form id since the prediction fix.
+            'undo across a flip: the undo goes through', 'undo across a flip: it goes to the date-form id alone',
+            "undo across a flip: the day is back to the series' title, here and at the stand-in"],
     ],
     // Provider identity (server/tests/db/lib.php, identityViolations: I1), hung after every block of the database suite:
     // the one function that names an instance at Google builds the all-day form's suffix as the timed form's, so the row

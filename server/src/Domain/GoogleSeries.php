@@ -204,8 +204,7 @@ final class GoogleSeries
     {
         $exceptions = [];
         foreach ($rows as $row) {
-            // The one reading of a stored list (OwnFields::stored); what Google holds needs no tag or people sets.
-            $own = OwnFields::stored($row, $master);
+            $own = OwnFields::stored($row);
             $x = self::exceptionOf($row, $own, $master);
             if ($x === null) {
                 continue;
@@ -263,8 +262,7 @@ final class GoogleSeries
                 continue;
             }
             $r = array_merge($row, $w['overrides'][$id] ?? []);
-            // The plan's list where it writes one, else the stored row's by the one reading (OwnFields::stored).
-            $own = OwnFields::stored(array_key_exists('override_fields', $w['overrides'][$id] ?? []) ? $r : $row, $master);
+            $own = OwnFields::stored($r);
             $x = self::exceptionOf($r, $own, $after);
             if ($x === null) {
                 continue; // the series' own day to Google
@@ -2373,7 +2371,7 @@ final class GoogleSeries
                 $t = $targetOf[(string) $r['uid']] ?? null;
                 $key = $t === null ? (string) $r['recurrence_instance_utc'] : self::whereNow($t, (string) $r['recurrence_instance_utc'], $mastersHere[(int) ($r['recurrence_parent_id'] ?? 0)] ?? null);
                 $at = (string) $r['uid'] . '|' . $key;
-                $local[$at] = array_values(array_unique(array_merge($local[$at] ?? [], Feeds::heldHere(OwnFields::storedIn($this->db, $r, $mastersHere[(int) ($r['recurrence_parent_id'] ?? 0)] ?? null), $r))));
+                $local[$at] = array_values(array_unique(array_merge($local[$at] ?? [], Feeds::heldHere(OwnFields::stored($r), $r))));
             }
         }
         $had = [];
@@ -2391,9 +2389,6 @@ final class GoogleSeries
                 }
             }
             $this->recordMade($pendingId, $made);
-        }
-        if (!OwnFields::hasColumn($this->db)) {
-            return;
         }
         foreach ($targets as $t) {
             if (empty($t['uid'])) {
@@ -3258,8 +3253,8 @@ final class GoogleSeries
                     }
                 }
             }
-            if ($h['fields'] !== [] && OwnFields::hasColumn($this->db)) {
-                $patch['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(OwnFields::storedIn($this->db, $dest), $h['fields'])));
+            if ($h['fields'] !== []) {
+                $patch['override_fields'] = OwnFields::encode(OwnFields::normalize(array_merge(OwnFields::stored($dest), $h['fields'])));
             }
             if ($patch !== []) {
                 $this->db->update('events', $patch + ['updated_at' => Time::nowDb()], 'id = ?', [$destId]);
@@ -3740,17 +3735,8 @@ final class GoogleSeries
         // list, and is the set it had (with the new row's where that row
         // owned its own too); a set it didn't own is its series' copy,
         // never carried: the day follows its series (OwnFields::follow).
-        // The snapshot's day is gone here: the one reading of its list, over its links as the snapshot held them.
-        $wasOwn = null;
-        if ($was['recurrence_instance_utc'] !== null) {
-            $wasMaster = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) ($was['recurrence_parent_id'] ?? 0)]);
-            $held = static fn(string $table, string $col, int $id, array $rows): array => array_values(array_map('intval', array_column(array_filter($rows, static fn(array $l): bool => (int) ($l['event_id'] ?? 0) === $id), $col)));
-            $live = fn(string $table, string $col, int $id): array => array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ?", [$id]), $col));
-            $wasOwn = OwnFields::stored($was, $wasMaster,
-                $held('event_tags', 'tag_id', $wasId, $local['event_tags'] ?? []), $wasMaster === null ? null : $live('event_tags', 'tag_id', (int) $wasMaster['id']),
-                $held('event_people', 'person_id', $wasId, $local['event_people'] ?? []), $wasMaster === null ? null : $live('event_people', 'person_id', (int) $wasMaster['id']));
-        }
-        $nowOwn = OwnFields::storedIn($this->db, $now);
+        $wasOwn = $was['recurrence_instance_utc'] !== null ? OwnFields::stored($was) : null;
+        $nowOwn = OwnFields::stored($now);
         $takes = [];
         foreach (OwnFields::LINKS as $field => [$linkTable]) {
             $takes[$linkTable] = $wasOwn === null ? [true, true] : [in_array($field, $wasOwn, true), in_array($field, $nowOwn, true) || !in_array($field, $wasOwn, true)];

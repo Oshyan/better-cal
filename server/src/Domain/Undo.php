@@ -247,6 +247,16 @@ final class Undo
      * suites (BETTERCAL_STRICT_JOURNAL) keep each, with where it came from,
      * and fail on them (misuses()).
      */
+    /**
+     * A stored state no writer here leaves, met by a reader (a day row with
+     * no own list, OwnFields::stored): reported the way a journaling misuse
+     * is, a failure in the suites and a log line in production.
+     */
+    public static function defect(string $what): void
+    {
+        self::misuse($what);
+    }
+
     private static function misuse(string $what): void
     {
         if (getenv('BETTERCAL_STRICT_JOURNAL') !== '1') {
@@ -887,11 +897,11 @@ final class Undo
         return $out;
     }
 
-    /** A day's row's own fields as grounds: its own list, what places it one field (when); every field for a row stored before own lists. Pure. */
+    /** A day's row's own fields as grounds: its own list (OwnFields::stored, the one reader), what places it one field (when). Pure. */
     private static function ownOf(array $row): array
     {
         $out = [];
-        foreach (OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::FIELDS as $field) {
+        foreach (OwnFields::stored($row) as $field) {
             $out[] = OwnFields::groundOf($field);
         }
         return array_values(array_unique($out));
@@ -2111,7 +2121,27 @@ final class Undo
             $details = json_decode((string) ($entry['details_json'] ?? ''), true);
             throw HttpError::conflict('not_undoable', is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : self::OLDER_FORMAT);
         }
+        // An entry a 1.5.5 development build recorded over a day row that had
+        // no own list yet (migration 078 gave every live one its list): its
+        // snapshot would put that form back, so it is refused, before anything.
+        foreach (['before_json', 'after_json'] as $side) {
+            foreach (self::tables($entry[$side] ?? null)['events'] ?? [] as $row) {
+                if (is_array($row) && self::listless($row)) {
+                    throw HttpError::conflict('not_undoable', self::BEFORE_LISTS);
+                }
+            }
+        }
         return $entry;
+    }
+
+    /** Why an entry holding a day row with no own list can't be taken back (entryToTakeBack, restoreWhole). */
+    public const BEFORE_LISTS = "Recorded before this day's own fields were filled in by the 1.5.5 upgrade; it can't be undone.";
+
+    /** A day's row in a snapshot with no own list, a form no row has since migration 078. Pure. */
+    private static function listless(array $row): bool
+    {
+        return !empty($row['recurrence_parent_id']) && ($row['recurrence_instance_utc'] ?? null) !== null
+            && array_key_exists('override_fields', $row) && ($row['override_fields'] === null || $row['override_fields'] === '');
     }
 
     /**
@@ -2859,7 +2889,7 @@ final class Undo
             }
             if ($now === null) {
                 if ($series !== null && $this->skipStands($entryId, $series, $before, $after, (string) $row['recurrence_instance_utc'])) {
-                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere($this->ownInSnapshot($row, $before), $row), [], 'gone');
+                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
                     $before = self::withoutEvent($before, (int) $row['id']);
                 }
                 continue; // nothing holds its day now: the snapshot row comes back as it was
@@ -2922,25 +2952,6 @@ final class Undo
     }
 
     /**
-     * What a day's row in an entry's snapshots owns, by the one reading of a
-     * stored list (OwnFields::stored), over the tag and people sets the
-     * snapshots hold for it ($tables) and its series' as they stand here.
-     *
-     * @return list<string>
-     */
-    private function ownInSnapshot(array $row, array $tables): array
-    {
-        if (OwnFields::decode($row['override_fields'] ?? null) !== null || empty($row['recurrence_parent_id'])) {
-            return OwnFields::stored($row, null);
-        }
-        $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']]);
-        $snap = static fn(string $table, string $col): array => array_values(array_map('intval', array_column(array_filter($tables[$table] ?? [],
-            static fn(array $l): bool => (int) ($l['event_id'] ?? 0) === (int) ($row['id'] ?? 0)), $col)));
-        $live = fn(string $table, string $col): array => $master === null ? [] : array_map('intval', array_column($this->db->all("SELECT `$col` FROM `$table` WHERE event_id = ?", [(int) $master['id']]), $col));
-        return OwnFields::stored($row, $master, $snap('event_tags', 'tag_id'), $live('event_tags', 'tag_id'), $snap('event_people', 'person_id'), $live('event_people', 'person_id'));
-    }
-
-    /**
      * A day's row an undo or redo brings back (in $before, and in $after
      * not at all, deleted, or gone since), composed over the day as it
      * stands now. Where a row holds that day now (a poll or a later change
@@ -2991,8 +3002,8 @@ final class Undo
                 if (!isset($row['id']) || $this->db->scalar('SELECT 1 FROM events WHERE id = ?', [(int) $row['id']]) !== null) {
                     continue;
                 }
-                $a = $this->ownInSnapshot($was, $after);
-                $b = $this->ownInSnapshot($row, $before);
+                $a = OwnFields::stored($was);
+                $b = OwnFields::stored($row);
                 $row['override_fields'] = $before['events'][$i]['override_fields'] = OwnFields::encode(array_values(array_diff($b, $a)));
             }
             $series = empty($row['recurrence_parent_id']) ? null : $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [(int) $row['recurrence_parent_id']]);
@@ -3009,7 +3020,7 @@ final class Undo
                 // leaves it: nothing to compose onto, so the row is not
                 // brought back (one the entry kept off the day goes with
                 // the entry), and what it held is named as removed.
-                $dropped[] = Feeds::droppedDay($row, Feeds::heldHere($this->ownInSnapshot($row, $before), $row), [], 'gone');
+                $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
                 $before = self::withoutEvent($before, (int) $row['id']);
                 continue;
             }
@@ -3025,11 +3036,11 @@ final class Undo
                 $before = self::renamed($before, (int) $row['id'], (int) $now['id']);
                 $row = $before['events'][$i];
             }
-            $own = $this->ownInSnapshot($row, $before);
+            $own = OwnFields::stored($row);
             $nowOwn = [];
             if ($now !== null) {
                 $composed = $now;
-                $nowOwn = OwnFields::storedIn($this->db, $now);
+                $nowOwn = OwnFields::stored($now);
             } else {
                 $master = $this->db->one('SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL AND deleted_at IS NULL',
                     [(int) $row['calendar_id'], (string) $row['uid']]);
@@ -3092,13 +3103,13 @@ final class Undo
             if ($was === null || !array_key_exists('override_fields', $row) || ($row['recurrence_instance_utc'] ?? null) === null) {
                 continue;
             }
-            $b = $this->ownInSnapshot($row, $before);
-            $a = $this->ownInSnapshot($was, $after);
+            $b = OwnFields::stored($row);
+            $a = OwnFields::stored($was);
             $now = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['id']]);
             if ($now === null || $b === $a) {
                 continue;
             }
-            $n = OwnFields::storedIn($this->db, $now);
+            $n = OwnFields::stored($now);
             $list = OwnFields::normalize(array_merge(array_diff($n, array_diff($a, $b)), array_diff($b, $a)));
             if ($list !== OwnFields::normalize($b)) {
                 $before['events'][$i]['override_fields'] = OwnFields::encode($list);
@@ -3121,8 +3132,8 @@ final class Undo
         if ($now === null) {
             return;
         }
-        $gave = $this->ownInSnapshot($made, $after);
-        $owns = OwnFields::storedIn($this->db, $now);
+        $gave = OwnFields::stored($made);
+        $owns = OwnFields::stored($now);
         $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) ($now['recurrence_parent_id'] ?? 0)]);
         $series = $master === null ? null : Feeds::ofSeries($now, null, $master);
         $set = ['override_fields' => OwnFields::encode(array_values(array_diff($owns, $gave)))];
@@ -3166,7 +3177,7 @@ final class Undo
             $seen[$id] = true;
             $now = $this->db->one('SELECT * FROM events WHERE id = ? AND deleted_at IS NULL', [$id]);
             if ($now !== null && ($now['recurrence_instance_utc'] ?? null) !== null
-                && OwnFields::storedIn($this->db, $now) === [] && Feeds::retained($this->db, $now) === null) {
+                && OwnFields::stored($now) === [] && Feeds::retained($this->db, $now) === null) {
                 $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             }
         }
@@ -3378,6 +3389,10 @@ final class Undo
         }
         $batches = [];
         foreach ($rows as $row) {
+            if ($table === 'events' && self::listless($row)) {
+                // Kept in pieces, so not read by the loader: refused here, inside the undo's transaction, which rolls back whole.
+                throw HttpError::conflict('not_undoable', self::BEFORE_LISTS);
+            }
             if ($isParent) {
                 $whole[self::keyOf($table, $row)] = true;
             }

@@ -679,11 +679,46 @@ final class GoogleSeries
      * the digest of what was read (held, state) equal to the digest of the
      * rows (stateOf), in the fields a column holds (the rows keep none of
      * the rest). The one comparison condition() makes. Pure.
+     *
+     * A day's row is read with the series' value for every field it does
+     * not own (exceptionOf), which is what Google's record holds only where
+     * Google writes a series' field into its records. For a field that is
+     * not proven of (UNWRITTEN: the link), the record may as well still
+     * hold what it held before the series' value changed, and that is no
+     * change made at Google: the record holding either the series' value
+     * or the value its row stores (the sync writes a record's value into
+     * its row's column, owned or not) is as stored. Without this a link
+     * given to a series left every edited day's record reading as changed
+     * at Google, and every later write to the series refused.
      */
     public static function sameAsStored(array $items, string $googleId, array $master, array $rows): bool
     {
-        return self::digest(self::state(self::held($items, $googleId))) === self::digest(self::state(self::heldOf(self::stateOf($master, $rows))));
+        $held = self::held($items, $googleId);
+        foreach ($rows as $row) {
+            $key = (string) ($row['recurrence_instance_utc'] ?? '');
+            if ($held['master'] === null || !isset($held['records'][$key])) {
+                continue;
+            }
+            $owned = OwnFields::googleHeld(OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master));
+            foreach (self::UNWRITTEN as $field => $col) {
+                if (!in_array($field, $owned, true) && self::fieldsOf([$col => $held['records'][$key][$col] ?? null] + $row)[$col] === self::fieldsOf($row)[$col]) {
+                    $held['records'][$key][$col] = $master[$col] ?? null;
+                }
+            }
+        }
+        return self::digest(self::state($held)) === self::digest(self::state(self::heldOf(self::stateOf($master, $rows))));
     }
+
+    /**
+     * The fields of a series it is not proven that Google writes into the
+     * series' records when the master's value changes (own field => its
+     * column). Title, notes, place and status are written in (probe 3.12
+     * to 3.15) and a new time resets or drops the records (3.1 to 3.5);
+     * the link, Google's `source`, has no case yet (3.32 asks). The same
+     * fact as the link's place in unproven(): a field leaves both when a
+     * live probe shows what Google does with it.
+     */
+    private const UNWRITTEN = ['url' => 'url'];
 
     /** How many steps of a pending change may have reached Google, answered or not (0: nothing did). */
     public function stepsDone(int $pendingId): int
@@ -936,11 +971,14 @@ final class GoogleSeries
                     try {
                         $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
                     } catch (HttpError $e) {
-                        // Google lists no such instance (404): a day past the
-                        // 730 occurrences an unbounded series expands to
-                        // there (the contract's cap). The day stays as Google
-                        // has it, and the read-back names the difference.
-                        if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
+                        // Google lists no such instance (404) for a day the
+                        // series has: one past the 730 occurrences an
+                        // unbounded series expands to there (the contract's
+                        // cap). The day stays as Google has it, and the
+                        // read-back names the difference. A 404 for a key
+                        // that is no day of the series is never passed
+                        // over: no step is meant to go to one.
+                        if ((int) ($e->extra['googleStatus'] ?? 0) === 404 && self::named($t['master'], $key, (int) $t['master']['all_day'] === 1)) {
                             continue;
                         }
                         throw $e;
@@ -1525,21 +1563,7 @@ final class GoogleSeries
         }
         $was = (int) $old['all_day'] === 1;
         $allDay = (int) $new['all_day'] === 1;
-        $series = ['start_utc' => $new['start_utc'], 'end_utc' => $new['end_utc'], 'all_day' => (int) $new['all_day'], 'tzid' => (string) $new['tzid'], 'rrule' => (string) $new['rrule'], 'exdates_json' => null];
-        // S1: the id the record has under the old master's form is an id the new master gives one of its occurrences.
-        $named = static function (string $key) use ($series, $was, $allDay): bool {
-            if ($series['rrule'] === '') {
-                return false;
-            }
-            $id = GoogleWriter::instanceId('', $key, $was);
-            $at = Time::fromDb($key);
-            foreach (Recurrence::occurrences($series, $at->modify('-1 day'), $at->modify('+2 days'), null, 8) as $o) {
-                if (GoogleWriter::instanceId('', Time::toDb($o['start']), $allDay) === $id) {
-                    return true;
-                }
-            }
-            return false;
-        };
+        $named = static fn(string $key): bool => self::named($new, $key, $was);
         $follow = static function (array $r, string $key) use ($startChanged, $lenOld, $lenNew, $new, $allDay, $set): array {
             if ($startChanged) {
                 $at = Time::fromDb($key);
@@ -1579,6 +1603,46 @@ final class GoogleSeries
         }
         ksort($out['records']);
         return $out;
+    }
+
+    /**
+     * S1 of afterMaster, and "is this key a day of this series": whether
+     * the id a key has in one form ($was: all-day) is the id the series $m
+     * gives one of its occurrences in its own form, through the one pair
+     * (GoogleWriter::instanceId). With the forms the same, whether the
+     * series has an occurrence at that key.
+     */
+    private static function named(array $m, string $key, bool $was): bool
+    {
+        if ((string) ($m['rrule'] ?? '') === '') {
+            return false;
+        }
+        $allDay = (int) $m['all_day'] === 1;
+        $series = ['start_utc' => $m['start_utc'], 'end_utc' => $m['end_utc'], 'all_day' => $allDay ? 1 : 0, 'tzid' => (string) $m['tzid'], 'rrule' => (string) $m['rrule'], 'exdates_json' => null];
+        $id = GoogleWriter::instanceId('', $key, $was);
+        $at = Time::fromDb($key);
+        foreach (Recurrence::occurrences($series, $at->modify('-1 day'), $at->modify('+2 days'), null, 8) as $o) {
+            if (GoogleWriter::instanceId('', Time::toDb($o['start']), $allDay) === $id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What gives a series' days their keys: its form, its zone when timed,
+     * its start and its rule's days. Not its bound (days past a new end are
+     * gone, the others keep their keys), its length or any other field.
+     * Two masters with the same answer here key every day they share
+     * alike; a change of any part may give a day another key, and only
+     * the planner knows which.
+     *
+     * @return array{form:bool, zone:string, start:string, rule:array<string,string>}
+     */
+    private static function keying(array $m): array
+    {
+        $allDay = (int) $m['all_day'] === 1;
+        return ['form' => $allDay, 'zone' => $allDay ? '' : Time::normalizeTzid((string) $m['tzid']), 'start' => (string) $m['start_utc'], 'rule' => self::patternOf((string) ($m['rrule'] ?? ''))];
     }
 
     /** A rule's days: its parts without its bound (COUNT, UNTIL). @return array<string,string> */
@@ -1851,20 +1915,45 @@ final class GoogleSeries
     private const DONE_WORDS = ['title' => 'renamed', 'description' => 'given other notes', 'location' => 'given another place', 'status' => 'given another status', 'url' => 'given another link'];
 
     /**
-     * The changes made at Google that a change of the series between timed
-     * and all-day does not keep (rebase), each in one sentence: every day
-     * Google holds now ($C, held()) otherwise than the change found it
-     * ($B), both read in the form the series had then, so each key is one
-     * instance on both sides. The day is named by its date as it showed
-     * under that form (an evening west of UTC by its own date, never its
-     * key's), with what was done to it at Google. $was is the series as the
-     * change found it; $allDay the form it now takes.
+     * A change made at Google to one day that the change being finished
+     * does not keep, in one sentence: what was done to it there ($b the day
+     * as the change found it, $c as Google holds it now, both dayIn() of
+     * the series as found, so the key is one instance on both sides), on
+     * its date as it showed in that series (an evening west of UTC by its
+     * own date, never its key's), and why it is not kept ($why, a clause).
+     */
+    private static function sinceWords(string|array $b, string|array $c, string $key, array $was, string $why, int $thisYear, string $since): string
+    {
+        $done = [];
+        if ($c === 'skip') {
+            $done[] = 'deleted';
+        } elseif ($b === 'skip') {
+            $done[] = 'brought back';
+        } else {
+            // Its time, by the series' form: a day of a timed series has a time, one of an all-day series a date (moved whole, or over other days).
+            $long = static fn(array $when): int => Time::fromDb((string) $when['end_utc'])->getTimestamp() - Time::fromDb((string) $when['start_utc'])->getTimestamp();
+            foreach (self::GROUPS as $g => $cols) {
+                if ($b[$g] !== $c[$g]) {
+                    $done[] = self::DONE_WORDS[$g] ?? ((int) $was['all_day'] !== 1 ? 'given another time' : ($long($b[$g]) === $long($c[$g]) ? 'moved to another date' : 'given other dates'));
+                }
+            }
+        }
+        $last = array_pop($done);
+        $zone = Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']);
+        return Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
+            . " at Google $since; that change is not kept, because $why.";
+    }
+
+    /**
+     * The changes made at Google that a change giving the series' days
+     * other keys does not keep (rebase), a sentence each (sinceWords): every
+     * day Google holds now ($C, held()) otherwise than the change found it
+     * ($B), read in the series as found. $was is that series' master.
      *
      * @return list<string>
      */
-    private static function notKept(array $B, array $C, array $was, bool $allDay, int $thisYear, string $since): array
+    private static function notKept(array $B, array $C, array $was, string $why, int $thisYear, string $since): array
     {
-        $zone = Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']);
         $keys = [];
         foreach ([$B, $C] as $h) {
             foreach (array_merge(array_keys($h['records']), array_keys($h['skips'])) as $k) {
@@ -1874,31 +1963,36 @@ final class GoogleSeries
         ksort($keys);
         $out = [];
         foreach (array_keys($keys) as $key) {
-            $key = (string) $key;
-            $b = self::dayIn($B, $key);
-            $c = self::dayIn($C, $key);
-            if ($b === $c) {
-                continue;
+            $b = self::dayIn($B, (string) $key);
+            $c = self::dayIn($C, (string) $key);
+            if ($b !== $c) {
+                $out[] = self::sinceWords($b, $c, (string) $key, $was, $why, $thisYear, $since);
             }
-            $done = [];
-            if ($c === 'skip') {
-                $done[] = 'deleted';
-            } elseif ($b === 'skip') {
-                $done[] = 'brought back';
-            } else {
-                // Its time, by the series' form: a day of a timed series has a time, one of an all-day series a date (moved whole, or over other days).
-                $long = static fn(array $when): int => Time::fromDb((string) $when['end_utc'])->getTimestamp() - Time::fromDb((string) $when['start_utc'])->getTimestamp();
-                foreach (self::GROUPS as $g => $cols) {
-                    if ($b[$g] !== $c[$g]) {
-                        $done[] = self::DONE_WORDS[$g] ?? ((int) $was['all_day'] !== 1 ? 'given another time' : ($long($b[$g]) === $long($c[$g]) ? 'moved to another date' : 'given other dates'));
-                    }
-                }
-            }
-            $last = array_pop($done);
-            $out[] = Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
-                . " at Google $since; that change is not kept, because the series is " . ($allDay ? 'now all-day' : 'no longer all-day') . '.';
         }
         return $out;
+    }
+
+    /**
+     * Why a master write gives the series' days other keys, as the clause
+     * a person reads after "because": the first part of its keying (form,
+     * zone, start, rule's days) in which $to differs from $from. Null when
+     * none does: every day both have keeps its key.
+     */
+    private static function rekeyed(array $from, array $to): ?string
+    {
+        $a = self::keying($from);
+        $b = self::keying($to);
+        if ($a['form'] !== $b['form']) {
+            return $b['form'] ? 'the series is now all-day' : 'the series is no longer all-day';
+        }
+        if ($a['zone'] !== $b['zone']) {
+            return "the series' zone changed";
+        }
+        if ($a['start'] !== $b['start']) {
+            $clock = static fn(array $k): string => Time::fromDb($k['start'])->setTimezone(Time::zone($k['zone'] === '' ? 'UTC' : $k['zone']))->format('H:i');
+            return $clock($a) !== $clock($b) ? "the series' time changed" : 'the series moved to another day';
+        }
+        return $a['rule'] !== $b['rule'] ? "the series' rule changed" : null;
     }
 
     /**
@@ -1915,20 +2009,25 @@ final class GoogleSeries
      * dropped or kept), or as the target has it (a step that landed). The
      * day before is the day of the same instance: the row's own before
      * where the plan carries the day's row, else the day at the same key,
-     * and that only while Google holds the series in the form the change
-     * found it in. Across a change between timed and all-day that has
-     * landed, an equal key names another instance (west of UTC another
-     * day), so a day with no row is read against what the master write
-     * left there, never against the day the old form had on that key. And
-     * while that change of form has not reached Google (its master write
-     * sent and not taken, then Finish), nothing Google holds is carried
-     * across it at all: the master write drops every record and skip, a
-     * key of the old form names no day of the new one, and the new form
-     * cannot hold every old value (a clock under an all-day series). The
+     * and that only while Google keys the series as the change found it
+     * (keying: its form, zone, start and rule's days). Once a master write
+     * that changes any of those has landed, an equal key names another
+     * instance (a new form) or the same instance and another day (a start
+     * moved along the pattern), so a day with no row is read against what
+     * the master write left there, never against the day the series as
+     * found had on that key. And while such a write has not reached Google
+     * (the change's first write sent and not taken, then Finish), nothing
+     * Google holds is carried across it by its key: which key a day of the
+     * series as found has in the series as changed is the planner's to
+     * say, and the target holds that only for the rows it carries. The
      * plan's days stand whole, and each day changed at Google since, read
-     * in the old form against the series as found, is named as not kept
-     * (notKept); carrying such a change to its day by the series model's
-     * image is left for later (decisions.md). Any
+     * in the series as found, is named as not kept with the reason
+     * (notKept, rekeyed). A change that keeps every key (a rename, a new
+     * length, a bound) carries what changed at Google exactly, on its key;
+     * a key the series no longer has as a day, where the plan puts
+     * nothing, is named the same way and never sent to (decisions.md, "A
+     * change made at Google while a change's first write waits is named,
+     * not carried, where the change gives the days other keys"). Any
      * other value was changed elsewhere since: kept as
      * Google holds it where the change doesn't change that group of that
      * day, and kept and named where it does (a day deleted since, a field
@@ -1991,21 +2090,25 @@ final class GoogleSeries
             $overWords[] = "The series' " . implode(', ', $overwrote) . " (changed at Google $since).";
         }
         $allDay = (int) $master['all_day'] === 1;
-        // Google still holds the series in the form the change found it in,
-        // and the master write that follows changes that form (the change
-        // stopped before it reached Google): that write drops every record
-        // and every skip Google holds, and no id of the old form names a day
-        // of the new one, so nothing Google holds now is carried by its key.
-        // What changed at Google since is read where it can be, in the old
-        // form, against the series as the change found it, and named as not
-        // kept; the days are then the plan's, over what the master write
-        // leaves (nothing).
-        if ((int) $before['master']['all_day'] === (int) $now['master']['all_day'] && $allDay !== ((int) $now['master']['all_day'] === 1)) {
-            $words = array_merge($words, self::notKept($B, $now, $before['master'], $allDay, $thisYear, $since));
+        // Google still holds the series keyed as the change found it (the
+        // change's first write has not reached it, or gives no day another
+        // key), so what changed at Google since is read there, each key one
+        // instance in $B and in what Google holds now.
+        $found = self::keying($before['master']) === self::keying($now['master']);
+        // And the master write that follows gives its days other keys (a new
+        // form, zone, time, start day or rule): which key a day of the old
+        // series has in the new one is the planner's to say, and the target
+        // holds that only for the rows it carries. So nothing Google holds
+        // now is carried by its key: each day changed at Google since is
+        // named as not kept, and the days are then the plan's, over what
+        // the master write leaves of the series as found.
+        $why = $found ? self::rekeyed($now['master'], $master) : null;
+        if ($why !== null) {
+            $words = array_merge($words, self::notKept($B, $now, $before['master'], $why, $thisYear, $since));
             $C = $P;
         }
-        // An instance is its form and its key: a day B holds at a key is the same instance as the one Google holds there now only in the same form.
-        $sameForm = (int) $before['master']['all_day'] === (int) $C['master']['all_day'];
+        // A day B holds at a key is the same day as the one Google holds there now only while Google keys the series as the change found it: across a new form an equal key is another instance, and across a start moved along the pattern it is the same instance and another day.
+        $sameKeys = self::keying($before['master']) === self::keying($C['master']);
         $len = self::lengthOf($master);
         $dayWords = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($allDay ? 'UTC' : (string) $master['tzid']))), $thisYear);
         // Each day: the change's own before by the row it is (an edited day may move key), else the day at the key.
@@ -2034,14 +2137,25 @@ final class GoogleSeries
             $t = self::dayIn($T, $key);
             $c = self::dayIn($C, $key);
             // The day before: the row's own, or the day at the key while
-            // that key names the same instance (the form Google holds the
-            // series in now is the form it was found in). Otherwise the
-            // instance at this key came with the master write, and its
-            // before is what that write left there.
-            $known = $byItsRow || $sameForm;
+            // that key names the same day (Google keys the series as the
+            // change found it). Otherwise what Google holds at this key
+            // came with the master write, and its before is what that
+            // write left there.
+            $known = $byItsRow || $sameKeys;
             $bx = $known ? ($before['exceptions'][$wasKey] ?? null) : null;
             $bOwn = $known ? self::dayIn($B, $wasKey) : $p;
-            $bHere = $sameForm ? ($wasKey === $key ? $bOwn : self::dayIn($B, $key)) : $p;
+            $bHere = $sameKeys ? ($wasKey === $key ? $bOwn : self::dayIn($B, $key)) : $p;
+            // A key that is no day of the series as it will be (past its
+            // new end; for a split, in the series that follows it), where
+            // the plan puts nothing: no step can reach it, so a change made
+            // at Google there is never carried in this series. It is named
+            // as not kept, unless it is the change's own effect.
+            if ($found && $why === null && $x === null && $t !== 'skip' && !self::named($master, $key, $allDay)) {
+                if (!in_array($c, [$bHere, $p, $q], true)) {
+                    $words[] = self::sinceWords($bHere, $c, $key, $before['master'], 'the series now ends before that day', $thisYear, $since);
+                }
+                continue;
+            }
             // A day the change leaves as it found it (its own part the same
             // on both sides) that Google put back to the series since: no
             // record now where the change's own write would have left one.
@@ -2063,7 +2177,9 @@ final class GoogleSeries
             $fromNow = []; // the groups of the day taken from what Google holds now, not from the change
             if ($c === 'skip' || $t === 'skip' || $bOwn === 'skip') {
                 // A day skipped on one side: the day as a whole.
-                $wantsChange = self::ownPart($bOwn, $bx) !== self::ownPart($t, $x);
+                // The change changes this day when the day's own part differs, or when it moves a row onto this key from another:
+                // it then puts an edited day where there was none, so a day deleted here since is kept and named, not kept in silence.
+                $wantsChange = self::ownPart($bOwn, $bx) !== self::ownPart($t, $x) || ($byItsRow && $wasKey !== $key);
                 $how = self::threeWay($c, [$bOwn, $bHere, $p, $q, $t], $wantsChange, false);
                 if ($how === 'conflict' && $force) {
                     $conflicts[] = [$key, 'day'];

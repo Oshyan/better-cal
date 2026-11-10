@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 // Finish of a change between timed and all-day whose master write never
 // reached Google, after a change made at Google meanwhile (decisions.md,
-// "A change made at Google while a change of form waits is named, not
-// carried"; series-model.md, Recovery). The change stops with the network
+// "A change made at Google while a change's first write waits is
+// named, not carried, where the change gives the days other keys"; series-model.md, Recovery). The change stops with the network
 // down at its master PATCH: the journal holds the step as sent, Google
 // still holds the series in the old form. Someone then renames a day at
 // Google, deletes one, gives one another time, or changes the notes of the

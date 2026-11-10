@@ -422,11 +422,10 @@ final class Plugins
                     'runId' => $lastRun['run_id'] !== null ? (string) $lastRun['run_id'] : null,
                     // How many undoable mutations that run made: the ops page
                     // only offers "Undo this run" when there is something to
-                    // undo (most runs are idempotent syncs that changed nothing).
-                    'undoableMutations' => $lastRun['run_id'] === null ? 0 : (int) $this->db->one(
-                        'SELECT COUNT(*) c FROM mutations WHERE run_id = ? AND undone = 0 AND before_json IS NOT NULL',
-                        [(string) $lastRun['run_id']]
-                    )['c'],
+                    // undo (most runs are idempotent syncs that changed nothing),
+                    // counted by the one test Activity lists by (Activity::undoability).
+                    'undoableMutations' => $lastRun['run_id'] === null ? 0
+                        : (new Activity($this->db))->runUndoability($userId, (string) $lastRun['run_id'])['undoable'],
                 ],
                 'counts' => $this->impact($userId, $id),
             ];

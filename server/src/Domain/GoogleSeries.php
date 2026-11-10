@@ -2501,7 +2501,8 @@ final class GoogleSeries
     {
         $out = [];
         $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
-            'SELECT p.*, c.name AS calendar_name FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status IN (?, ?) ORDER BY p.id DESC',
+            'SELECT p.*, c.name AS calendar_name, c.provider AS cal_provider, c.google_calendar_id AS cal_google_calendar_id, c.google_account_id AS cal_google_account_id, c.google_access_role AS cal_google_access_role
+             FROM google_pending p JOIN calendars c ON c.id = p.calendar_id WHERE p.user_id = ? AND p.status IN (?, ?) ORDER BY p.id DESC',
             [$userId, self::STATUS_HALF, self::STATUS_RUNNING]
         ));
         foreach ($rows as $row) {
@@ -2534,6 +2535,9 @@ final class GoogleSeries
                 'stepsDone' => count($steps),
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
                 'finishRefused' => $finishRefused,
+                // The calendar no longer writes to Google: neither Finish nor Put back can run, and why.
+                'unrecoverable' => self::unrecoverable(['provider' => $row['cal_provider'], 'google_calendar_id' => $row['cal_google_calendar_id'],
+                    'google_account_id' => $row['cal_google_account_id'], 'google_access_role' => $row['cal_google_access_role']]),
             ];
         }
         return $out;
@@ -2630,10 +2634,59 @@ final class GoogleSeries
             $series = GoogleWriter::instanceOf((string) $name)['series'] ?? null;
             $which = $pending[(string) $name] ?? ($series !== null ? $pending[$series] ?? null : null);
             if ($which !== null) {
-                throw new HttpError('google_pending',
-                    "A change to '" . $which['title'] . "' is not yet complete at Google. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
+                throw self::pendingRefusal($which);
             }
         }
+    }
+
+    /** The refusal of anything that waits on a half-done change: 409 google_pending, naming it and pointing to Review. @param array{id:int,title:string} $which */
+    private static function pendingRefusal(array $which): HttpError
+    {
+        return new HttpError('google_pending',
+            "A change to '" . $which['title'] . "' is not yet complete at Google. Finish it or put it back in Review, then try this again.", 409, ['pending' => $which['id']]);
+    }
+
+    /**
+     * An operation on a whole calendar that would leave Finish and Put back
+     * nothing to work on (the calendar kept as a calendar of its own, or
+     * deleted here) is refused while any change on it is half done at
+     * Google, as a write to its series is (refusePending). Read on the
+     * journal's connection, like pendingNames.
+     */
+    public static function refusePendingOnCalendar(Db $db, int $userId, int $calendarId): void
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            'SELECT id, title FROM google_pending WHERE user_id = ? AND calendar_id = ? AND status IN (?, ?) ORDER BY id DESC',
+            [$userId, $calendarId, self::STATUS_HALF, self::STATUS_RUNNING]
+        ));
+        foreach ($rows as $row) {
+            if (!isset(self::$ours[(int) $row['id']])) {
+                throw self::pendingRefusal(['id' => (int) $row['id'], 'title' => (string) $row['title']]);
+            }
+        }
+    }
+
+    /**
+     * Why neither Finish nor Put back can run for a change on this calendar
+     * now, and what would bring them back, or null when they can: they need
+     * the calendar to write to Google (GoogleWriter::writable). The one
+     * answer for Review's list and for the refusal of either.
+     */
+    public static function unrecoverable(?array $calendar): ?string
+    {
+        if ($calendar !== null && GoogleWriter::writable($calendar)) {
+            return null;
+        }
+        if ($calendar === null || ($calendar['provider'] ?? '') !== 'google' || empty($calendar['google_calendar_id'])) {
+            return 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
+        }
+        if ($calendar['google_account_id'] === null) {
+            return 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
+        }
+        if (($calendar['google_access_role'] ?? null) === null) {
+            return 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
+        }
+        return 'This account can no longer edit this calendar at Google, so Finish and Put back can no longer run for this change.';
     }
 
     /** A pending row of the account, as the journal holds it now, or null. */
@@ -2685,6 +2738,13 @@ final class GoogleSeries
      */
     public function finish(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?\Closure $commit = null): array
     {
+        // Finish of an undo or redo takes its entry back: the one loader is asked here, the lowest
+        // public way to complete one, before the row is marked running or Google is asked, so no
+        // caller can skip it (GoogleUndo::entryToFinish; Review's Finish asks it first for the entry).
+        $plan = json_decode((string) ($this->pendingOf($userId, $pendingId)['plan_json'] ?? ''), true);
+        if (is_array($plan) && isset($plan['undo'])) {
+            GoogleUndo::entryToFinish($this->db, $userId, $plan);
+        }
         $row = $this->pendingRow($userId, $pendingId);
         $steps = json_decode((string) $row['steps_json'], true) ?: [];
         $targets = json_decode((string) $row['targets_json'], true) ?: [];
@@ -3270,13 +3330,14 @@ final class GoogleSeries
      * own steps follow the change's in the journal, so a Put back that
      * stops half way is put back again from where it got to.
      *
-     * $neither: the refusal's last words when Finish is refused too (a
-     * pending undo of an entry in an older format, GoogleUndo::neitherWay),
-     * in place of the sentence that points to Finish.
+     * When Finish is refused too (a pending undo or redo of an entry in an
+     * older format: GoogleUndo::entryToFinish), the refusal's last words say
+     * so (GoogleUndo::neitherWay) in place of the sentence that points to
+     * Finish. Put back itself takes no entry back.
      *
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>, left:list<string>}
      */
-    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?string $neither = null): array
+    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
@@ -3380,6 +3441,18 @@ final class GoogleSeries
             $run[$i] = $b;
         }
         if ($left !== []) {
+            $neither = null;
+            $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+            if (is_array($plan) && isset($plan['undo'])) {
+                try {
+                    GoogleUndo::entryToFinish($this->db, $userId, $plan);
+                } catch (HttpError $e) {
+                    if ($e->errorCode !== 'not_undoable') {
+                        throw $e;
+                    }
+                    $neither = GoogleUndo::neitherWay(GoogleUndo::pendingRedo($this->db, $userId, $plan));
+                }
+            }
             $words = implode(' ', $left) . ' ' . ($neither ?? 'Nothing was put back; Finish completes the change from what Google has now.');
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             $this->endUnlessTx($pendingId, true);

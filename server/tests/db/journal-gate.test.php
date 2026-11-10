@@ -38,6 +38,14 @@ use BetterCal\Support\Time;
 
 require_once dirname(__DIR__, 3) . '/tools/google-probe/lib/FakeGoogle.php';
 
+/** A class the take-back check has never seen, with a method taking a pending id: the check must report it. */
+final class JournalGateSample
+{
+    public function completeUndo(int $userId, int $pendingId): void
+    {
+    }
+}
+
 return static function (Db $db): void {
     $cfg = ['session_secret' => 'sample-session-secret', 'google' => ['client_id' => 'sample-client', 'client_secret' => 'sample-client-secret']];
     $tz = 'America/Los_Angeles';
@@ -116,7 +124,8 @@ return static function (Db $db): void {
         $t->calls = [];
         $t->writes = 0;
         return (object) ['u' => $u, 'fake' => $fake, 't' => $t, 'sync' => $sync, 'events' => $events, 'calendarId' => $calendarId, 'undo' => $undo,
-            'labels' => new BetterCal\Domain\Labels($db), 'local' => Settings::defaultCalendarId($db, $u), 'calendars' => $d->calendars];
+            'labels' => new BetterCal\Domain\Labels($db), 'local' => Settings::defaultCalendarId($db, $u), 'calendars' => $d->calendars,
+            'series' => new GoogleSeries($db, $writer, $feeds), 'account' => $account];
     };
     $masterId = static fn(object $s): int => (int) $db->scalar('SELECT id FROM events WHERE calendar_id = ? AND google_event_id = ? AND deleted_at IS NULL', [$s->calendarId, 'smpl3weekly']);
     $tagsOf = static fn(int $id): array => array_column($db->all('SELECT t.name FROM event_tags et JOIN tags t ON t.id = et.tag_id WHERE et.event_id = ? ORDER BY t.name', [$id]), 'name');
@@ -244,6 +253,13 @@ return static function (Db $db): void {
         }
     };
 
+    // Finish and Put back as Review's controller runs them: the answer, then the deferred error of a run that stopped.
+    $asReview = static function (object $s, string $how, int $pendingId): array {
+        $out = $s->events->{$how}($s->u, $pendingId);
+        $s->events->throwDeferred();
+        return $out;
+    };
+
     // ---- the table: one row per operation that takes an entry back ------------
     // [name, fixture, then (after the entries are older), the operation, expected [code, words] or a closure judging the outcome]
     $table = [
@@ -264,15 +280,20 @@ return static function (Db $db): void {
         ['GoogleUndo::undo, a series change (undoById)', $gseries, null, fn(object $s, array $f) => $words(fn() => $s->undo->undoById($s->u, $f['entry'])), ['not_undoable', $older]],
         ['GoogleUndo::undo, a series change, forced', $gseries, null, fn(object $s, array $f) => $words(fn() => $s->undo->undoById($s->u, $f['entry'], true)), ['not_undoable', $older]],
         ['GoogleUndo::undo, a day\'s edit (undoById)', $gday, null, fn(object $s, array $f) => $words(fn() => $s->undo->undoById($s->u, $f['entry'])), ['not_undoable', $older]],
-        ['SeriesPlans::googleFinish of a pending undo', $pendingUndo, null, fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishUndo]],
-        ['SeriesPlans::googleFinish of a pending redo', $pendingRedo, null, fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishRedo]],
-        ['SeriesPlans::googleFinish, entry gone, its copy older', $pendingUndo, $liveGone('older'), fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishUndo]],
-        ['SeriesPlans::googleFinish, entry gone, its copy without format', $pendingUndo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishUndo]],
-        ['SeriesPlans::googleFinish, entry gone, no copy', $pendingUndo, $liveGone('none'), fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishUndo]],
-        ['SeriesPlans::googleFinish, a redo, entry gone, its copy without format', $pendingRedo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $s->events->googleFinish($s->u, $f['pending'])), ['not_undoable', $finishRedo]],
+        ['SeriesPlans::googleFinish of a pending undo', $pendingUndo, null, fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishUndo]],
+        ['SeriesPlans::googleFinish of a pending redo', $pendingRedo, null, fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishRedo]],
+        ['SeriesPlans::googleFinish, entry gone, its copy older', $pendingUndo, $liveGone('older'), fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishUndo]],
+        ['SeriesPlans::googleFinish, entry gone, its copy without format', $pendingUndo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishUndo]],
+        ['SeriesPlans::googleFinish, entry gone, no copy', $pendingUndo, $liveGone('none'), fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishUndo]],
+        ['SeriesPlans::googleFinish, a redo, entry gone, its copy without format', $pendingRedo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $asReview($s, "googleFinish", $f["pending"])), ['not_undoable', $finishRedo]],
+        // The lowest public way to complete an undo, called as any other caller could, without Review's Finish around it.
+        ['GoogleSeries::finish (direct)', $pendingUndo, null, fn(object $s, array $f) => $words(fn() => $s->series->finish($s->u,
+            $db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]), $f['pending'])), ['not_undoable', $finishUndo]],
+        ['GoogleSeries::finish (direct), entry gone, its copy without format', $pendingUndo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $s->series->finish($s->u,
+            $db->one('SELECT * FROM calendars WHERE id = ?', [$s->calendarId]), $f['pending'])), ['not_undoable', $finishUndo]],
         // Put back takes no entry back: it goes through, below.
-        ['SeriesPlans::googlePutBack', $pendingUndo, null, fn(object $s, array $f) => $words(fn() => $s->events->googlePutBack($s->u, $f['pending'])), 'goes through'],
-        ['SeriesPlans::googlePutBack, entry gone, its copy without format', $pendingUndo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $s->events->googlePutBack($s->u, $f['pending'])), 'goes through'],
+        ['SeriesPlans::googlePutBack', $pendingUndo, null, fn(object $s, array $f) => $words(fn() => $asReview($s, "googlePutBack", $f["pending"])), 'goes through'],
+        ['SeriesPlans::googlePutBack, entry gone, its copy without format', $pendingUndo, $liveGone('unmarked'), fn(object $s, array $f) => $words(fn() => $asReview($s, "googlePutBack", $f["pending"])), 'goes through'],
     ];
 
     foreach (['077 run (snapshots dropped)' => true, 'snapshots kept' => false] as $variant => $migrated) {
@@ -415,57 +436,23 @@ return static function (Db $db): void {
 
     // ---- every take-back operation is in the table --------------------------------
 
-    scenario('journal gate: every public method that takes an entry or a pending row back is a row of the table, or named here with why it is not one', function () use ($table): void {
-        $rows = array_map(static fn(array $r): string => $r[0], $table);
-        // Not an operation of their own, each with the reason.
-        $not = [
-            'Undo::entryToTakeBack' => 'the loader the table runs through',
-            'Undo::assertCurrentFormat' => 'the backstop, not an operation',
-            'Undo::olderFormat' => 'pure',
-            'Undo::restoreSnapshots' => 'reached only from GoogleUndo::undo and SeriesPlans::googleFinish, after the loader; its own backstop',
-            'Undo::checkRestore' => 'reached only from GoogleUndo::undo, after the loader',
-            'Undo::snapshotEventRows' => 'reads ids for naming, writes nothing',
-            'Undo::snapshotEventIds' => 'reads ids for naming, writes nothing',
-            'Undo::dayNow' => 'a reader for a restore already admitted',
-            'Undo::writtenIn' => 'pure: what an entry holds of its series\' form and zone, read for dayNow',
-            'Undo::record' => 'records, takes nothing back',
-            'Undo::recordRemoved' => 'records, takes nothing back',
-            'Undo::recordRemovedEvents' => 'records, takes nothing back',
-            'Undo::noteSettings' => 'records, takes nothing back',
-            'GoogleUndo::finishRefused' => 'words only',
-            'GoogleUndo::neitherWay' => 'words only',
-            'GoogleUndo::finishUndo' => 'reached only from GoogleUndo::undo and SeriesPlans::googleFinish, after the loader; its own backstop',
-            'GoogleUndo::entryToFinish' => 'the loader for Finish, run by the googleFinish rows',
-            'GoogleUndo::pendingRedo' => 'words only',
-            'GoogleUndo::refuseWhilePending' => 'a refusal, after the loader',
-            'GoogleUndo::refuseLeftSeriesOf' => 'a refusal, after the loader',
-            'GoogleUndo::seriesUndoOff' => 'a refusal, after the loader',
-            'GoogleUndo::inverseOf' => 'reached only from GoogleUndo::undo, after the loader',
-            'GoogleUndo::undoSummary' => 'words only',
-        ];
-        $covered = [
-            'Undo::undoById' => true, 'Undo::undoLatest' => true, 'Undo::undoRun' => true, 'Proposals::undoAccept' => true,
-            'GoogleUndo::undo' => true, 'Events::googleFinish' => true, 'Events::googlePutBack' => true,
-        ];
-        $inTable = static function (string $method) use ($rows): bool {
-            [$class, $fn] = explode('::', $method);
-            $class = $class === 'Events' ? 'SeriesPlans' : $class;
-            foreach ($rows as $r) {
-                if (str_starts_with($r, "$class::$fn") || ($method === 'Undo::undoById' && str_contains($r, 'undoById'))) {
-                    return true;
-                }
-            }
-            return false;
-        };
+    // Every public method, in every class under server/src, that takes a pending row's id, an entry or an entry's id,
+    // and in the classes that undo (Undo, GoogleUndo, Events, Proposals) every public one named undo*, *finish* or
+    // *putBack* or taking a run: each is a row of the table (by the row's name) or named here with why it is not one.
+    $scanned = static function (array $classes): array {
         $found = [];
-        foreach ([Undo::class => 'Undo', GoogleUndo::class => 'GoogleUndo', Events::class => 'Events', Proposals::class => 'Proposals'] as $class => $short) {
-            foreach ((new ReflectionClass($class))->getMethods(ReflectionMethod::IS_PUBLIC) as $m) {
+        foreach ($classes as $class) {
+            $r = new ReflectionClass($class);
+            $short = $r->getShortName();
+            $undoer = in_array($class, [Undo::class, GoogleUndo::class, Events::class, Proposals::class], true);
+            foreach ($r->getMethods(ReflectionMethod::IS_PUBLIC) as $m) {
                 if ($m->getDeclaringClass()->getName() !== $class) {
                     continue;
                 }
-                $takes = str_starts_with($m->getName(), 'undo') || str_contains(strtolower($m->getName()), 'finish') || str_contains(strtolower($m->getName()), 'putback');
+                $name = strtolower($m->getName());
+                $takes = $undoer && (str_starts_with($name, 'undo') || str_contains($name, 'finish') || str_contains($name, 'putback'));
                 foreach ($m->getParameters() as $p) {
-                    if (in_array($p->getName(), ['mutationId', 'entryId', 'pendingId', 'runId', 'mutation', 'entry'], true)) {
+                    if (in_array($p->getName(), ['pendingId', 'entryId', 'mutationId', 'mutation', 'entry'], true) || ($undoer && $p->getName() === 'runId')) {
                         $takes = true;
                     }
                 }
@@ -474,16 +461,189 @@ return static function (Db $db): void {
                 }
             }
         }
-        $missing = [];
-        foreach ($found as $method) {
-            if (isset($not[$method])) {
+        sort($found);
+        return array_values(array_unique($found));
+    };
+    $srcClasses = static function (): array {
+        $out = [];
+        $root = dirname(__DIR__, 2) . '/src';
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file->getExtension() !== 'php') {
                 continue;
             }
-            if (!isset($covered[$method]) || !$inTable($method)) {
-                $missing[] = $method;
+            $src = (string) file_get_contents((string) $file);
+            if (preg_match('/^namespace\s+([^;]+);/m', $src, $ns) && preg_match('/^(?:final\s+|abstract\s+|readonly\s+)*class\s+(\w+)/m', $src, $c)
+                && class_exists($ns[1] . '\\' . $c[1])) {
+                $out[] = $ns[1] . '\\' . $c[1];
             }
         }
-        checkEq('no take-back method is missing from the table', [], $missing);
-        checkEq('every method the table names still exists', [], array_values(array_diff(array_keys($covered), $found)));
+        return $out;
+    };
+    // Not an operation of their own, each with the reason.
+    $notOperations = [
+        'Undo::entryToTakeBack' => 'the loader the table runs through',
+        'Undo::assertCurrentFormat' => 'the backstop, not an operation',
+        'Undo::olderFormat' => 'pure',
+        'Undo::restoreSnapshots' => 'reached only from GoogleUndo::undo and SeriesPlans::googleFinish, after the loader; its own backstop',
+        'Undo::checkRestore' => 'reached only from GoogleUndo::undo, after the loader',
+        'Undo::snapshotEventRows' => 'reads ids for naming, writes nothing',
+        'Undo::snapshotEventIds' => 'reads ids for naming, writes nothing',
+        'Undo::dayNow' => 'a reader for a restore already admitted',
+        'Undo::writtenIn' => 'pure: what an entry holds of its series\' form and zone, read for dayNow',
+        'Undo::recordRemoved' => 'records, takes nothing back',
+        'Undo::recordRemovedEvents' => 'records, takes nothing back',
+        'Undo::noteSettings' => 'records, takes nothing back',
+        'GoogleUndo::finishRefused' => 'words only',
+        'GoogleUndo::finishUndo' => 'reached only from GoogleUndo::undo and SeriesPlans::googleFinish, after the loader; its own backstop',
+        'GoogleUndo::entryToFinish' => 'the loader for Finish, run by the googleFinish and GoogleSeries::finish rows',
+        'GoogleUndo::refuseWhilePending' => 'a refusal, after the loader',
+        'GoogleUndo::refuseLeftSeriesOf' => 'a refusal, after the loader',
+        'GoogleUndo::seriesUndoOff' => 'a refusal, after the loader',
+        'GoogleUndo::undoSummary' => 'words only',
+        'GoogleSeries::putBack' => 'takes no entry back (reads only the pending row; asks entryToFinish for its own words); run through SeriesPlans::googlePutBack',
+        'GoogleSeries::pendingOf' => 'reads a pending row, writes nothing',
+        'GoogleSeries::settle' => 'closes a pending row a run completed, after the run',
+        'GoogleSeries::stepsDone' => 'records a run\'s steps, takes nothing back',
+        'GoogleSeries::store' => 'stores what Google read back, takes nothing back',
+        'Proposals::undoRefusal' => 'whether to offer the undo, writes nothing',
+        'Reminders::fireAt' => 'a reminder entry, not a journal entry',
+    ];
+    // The operations, each by the name of its row in the table.
+    $operations = [
+        'Undo::undoById' => 'Undo::undoById', 'Undo::undoLatest' => 'Undo::undoLatest', 'Undo::undoRun' => 'Undo::undoRun', 'Proposals::undoAccept' => 'Proposals::undoAccept',
+        'GoogleUndo::undo' => 'GoogleUndo::undo', 'Events::googleFinish' => 'SeriesPlans::googleFinish', 'Events::googlePutBack' => 'SeriesPlans::googlePutBack',
+        'GoogleSeries::finish' => 'GoogleSeries::finish (direct)',
+    ];
+    $missingFrom = static function (array $found) use ($table, $notOperations, $operations): array {
+        $rows = array_map(static fn(array $r): string => $r[0], $table);
+        return array_values(array_filter($found, static fn(string $m): bool => !isset($notOperations[$m])
+            && (!isset($operations[$m]) || array_filter($rows, static fn(string $r): bool => str_starts_with($r, $operations[$m])) === [])));
+    };
+
+    scenario('journal gate: every public method in server/src that takes an entry or a pending row back is a row of the table, or named here with why it is not one', function () use ($scanned, $srcClasses, $missingFrom, $operations, $notOperations): void {
+        $found = $scanned($srcClasses());
+        checkEq('no take-back method is missing from the table', [], $missingFrom($found));
+        checkEq('every method the table and the list name still exists', [], array_values(array_diff(array_keys($operations + $notOperations), $found)));
+        // The check itself: a new public method taking a pending id, in a class it has never seen, is reported.
+        checkEq('a new such method fails the check', ['JournalGateSample::completeUndo'], $missingFrom($scanned([JournalGateSample::class])));
+    });
+    // ---- a calendar with a change half done at Google (G1 of the sibling hunt) ----------
+    // The rule ("A write to a series whose change is half done is refused") for the calendar: an operation the person
+    // makes here that would leave Finish and Put back nothing to work on (the calendar kept as a calendar of its own,
+    // or deleted) is refused while the change is half done; one that is not theirs to refuse (an account disconnected,
+    // the compromise reset) leaves Review offering only what can work, and saying what brings Finish and Put back back.
+
+    $halfChange = static function (object $s) use ($db, $masterId, $iso): int {
+        $s->t->writes = 0;
+        $s->t->staleAt = 2;
+        refusal(fn() => planned($s->events, $s->u, $masterId($s), ['scope' => 'all', 'instanceStart' => $iso('2027-03-01 10:00'), 'title' => 'Sample renamed']));
+        refusal(fn() => $s->events->throwDeferred());
+        $s->t->staleAt = null;
+        $id = $db->scalar('SELECT id FROM google_pending WHERE user_id = ?', [$s->u]);
+        if ($id === null) {
+            throw new RuntimeException('the change left no pending row');
+        }
+        return (int) $id;
+    };
+    $reviewItem = static function (object $s, string $key) use ($db): ?array {
+        $controller = new \BetterCal\Http\Controllers\ReviewController(new \BetterCal\Domain\ReviewQueue($db, $s->events),
+            new Proposals($db, $s->events, new BetterCal\Domain\Trips($db, $s->undo)), $s->calendars);
+        $req = new \BetterCal\Http\Request('GET', '/review', ['status' => 'all']);
+        $req->user = ['id' => $s->u];
+        $req->authMethod = 'session';
+        foreach (json_decode($controller->index($req)->body, true)['items'] as $i) {
+            if ($i['key'] === $key) {
+                return $i;
+            }
+        }
+        return null;
+    };
+    $caught = static function (callable $fn): ?array {
+        try {
+            $fn();
+            return null;
+        } catch (HttpError $e) {
+            return [$e->status, $e->errorCode, $e->getMessage()];
+        }
+    };
+    $pendingWords = static fn(string $title): string => "A change to '$title' is not yet complete at Google. Finish it or put it back in Review, then try this again.";
+
+    scenario('journal gate: keeping a calendar as a copy of its own, or deleting it, is refused while a change on it is half done at Google; after Put back both go through', function () use ($db, $setup, $halfChange, $digest, $changed, $caught, $pendingWords, $pendingRow): void {
+        foreach (['adopt', 'delete'] as $how) {
+            $s = $setup();
+            $p = $halfChange($s);
+            $title = (string) $pendingRow($s)['title'];
+            $s->t->calls = [];
+            $was = $digest($s);
+            $run = fn() => $how === 'adopt' ? $s->calendars->adopt($s->u, $s->calendarId) : $s->calendars->delete($s->u, $s->calendarId);
+            checkEq("$how: refused 409 google_pending, pointing to Review; nothing sent, nothing written", [[409, 'google_pending', $pendingWords($title)], [], []],
+                [$caught($run), $s->t->calls, $changed($was, $digest($s))]);
+            $s->events->googlePutBack($s->u, $p);
+            $s->events->throwDeferred();
+            checkEq("$how: once put back, it goes through", null, $caught($run));
+        }
+    });
+
+    $calendarCols = static fn(object $s): array => $db->one('SELECT provider, google_calendar_id, google_account_id, google_access_role FROM calendars WHERE id = ?', [$s->calendarId]);
+    $disconnected = 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
+    $paused = 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
+    $keptAsCopy = 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
+
+    scenario('journal gate: a half-done change on a calendar whose Google account was disconnected: Review offers nothing and says to reconnect; Finish says the same; reconnected, both are offered again', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $disconnected): void {
+        $s = $setup();
+        $p = $halfChange($s);
+        // What disconnecting does here (GoogleAuth::disconnect): the account row goes, the calendar's link to it with it.
+        $db->run('DELETE FROM google_accounts WHERE id = ?', [$s->account]);
+        $item = $reviewItem($s, 'google_half:' . $p);
+        $s->t->calls = [];
+        checkEq('Review: still listed, no action, the summary saying how to bring Finish and Put back back', [[], true],
+            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $disconnected)]);
+        checkEq('Finish and Put back refuse with the same words; nothing sent; the row stays half done', [[409, 'google_calendar_gone', $disconnected], [409, 'google_calendar_gone', $disconnected], [], 'half'],
+            [$caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p)), $s->t->calls,
+                (string) $db->scalar('SELECT status FROM google_pending WHERE id = ?', [$p])]);
+        // Connected again and the calendar added there: re-attached (Calendars::reattachGoogle).
+        $account = $db->insert('google_accounts', ['user_id' => $s->u, 'email' => 'owner@example.test',
+            'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', 'sample-session-secret'), 'scopes' => GoogleAuth::SCOPES]);
+        $s->undo->write($s->u, fn() => $s->calendars->reattachGoogle($s->u, $s->calendarId, $account, 'owner', 'owner@example.test'));
+        $reattach = lastEntry($db, $s->u);
+        checkEq('re-attached: Finish and Put back offered again', ['Finish', 'Put back'], array_column($reviewItem($s, 'google_half:' . $p)['actions'] ?? [], 'label'));
+        // The re-attach's own entry would unlink the account again: an operation that changes whether the calendar writes to Google.
+        $undoReattach = $caught(fn() => $s->undo->undoById($s->u, $reattach));
+        checkEq('undoing the re-attach is refused (its entry keeps nothing to restore), and the calendar still writes to Google', [[400, 'not_undoable', 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)'], $account],
+            [$undoReattach, (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$s->calendarId])]);
+    });
+
+    scenario('journal gate: a half-done change after the compromise reset (access paused), and one on a calendar an earlier version kept as a copy: Review offers nothing and says why', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $paused, $keptAsCopy): void {
+        $s = $setup();
+        $p = $halfChange($s);
+        // What the reset does to a Google calendar (Auth): its access role cleared until a poll after reconnecting.
+        $db->run('UPDATE calendars SET google_access_role = NULL WHERE id = ?', [$s->calendarId]);
+        $item = $reviewItem($s, 'google_half:' . $p);
+        checkEq('paused: no action, the reason; Finish refuses with it', [[], true, [409, 'google_calendar_gone', $paused]],
+            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $paused), $caught(fn() => $s->events->googleFinish($s->u, $p))]);
+
+        $s = $setup();
+        $p = $halfChange($s);
+        // A row an earlier version left: the calendar was kept as a copy while the change was half done (what adopt wrote).
+        $db->run("UPDATE calendars SET kind = 'local', provider = 'ics', google_calendar_id = NULL, google_access_role = NULL, google_account_id = NULL WHERE id = ?", [$s->calendarId]);
+        $item = $reviewItem($s, 'google_half:' . $p);
+        checkEq('kept as a copy: still listed, no action, the reason; Finish and Put back refuse with it', [[], true, [409, 'google_calendar_gone', $keptAsCopy], [409, 'google_calendar_gone', $keptAsCopy]],
+            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $keptAsCopy),
+                $caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p))]);
+    });
+
+    // ---- what Review offers on an accepted proposal (G2) ---------------------------------
+
+    scenario('journal gate: Review offers the undo of an accepted proposal only when every entry of its run can be undone, by the test Activity lists by; otherwise it says why', function () use ($db, $setup, $run, $reviewItem, $older): void {
+        $s = $setup();
+        $f = $run($s);
+        $activity = new BetterCal\Domain\Activity($db);
+        $listed = array_filter($activity->list($s->u, [])['entries'], static fn(array $e): bool => in_array($e['id'], array_map('intval', array_column($db->all('SELECT id FROM mutations WHERE run_id = ?', [$f['run']]), 'id')), true));
+        checkEq('current: the undo offered; the run counts its entries as Activity lists them', [['Undo, remove these again'], ['entries' => 2, 'undoable' => 2, 'why' => null], 2],
+            [array_column($reviewItem($s, 'proposal:' . $f['proposal'])['actions'] ?? [], 'label'), $activity->runUndoability($s->u, $f['run']), count(array_filter($listed, static fn(array $e): bool => $e['undoable']))]);
+        $db->run('UPDATE mutations SET format = 1 WHERE user_id = ?', [$s->u]);
+        $item = $reviewItem($s, 'proposal:' . $f['proposal']);
+        checkEq('accepted before the upgrade: no undo offered, the summary saying why in Activity\'s words; the run counts none', [[], true, ['entries' => 2, 'undoable' => 0, 'why' => $older]],
+            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), 'Its events can no longer be removed by undo here. ' . $older), $activity->runUndoability($s->u, $f['run'])]);
     });
 };

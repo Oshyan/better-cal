@@ -94,11 +94,7 @@ final class Activity
                 $decoded = json_decode((string) $r['details_json'], true);
                 $details = is_array($decoded) ? $decoded : null;
             }
-            // Held back by the setting (GoogleUndo::seriesUndoOff): not undoable, and why.
-            $heldBack = !$seriesUndo && (int) $r['has_snapshot'] === 1 && GoogleUndo::seriesEntry($details);
-            // Recorded by an earlier version (Undo::JOURNAL_FORMAT): never undoable, and why (its own reason, from migration 077 or 064).
-            $older = Undo::olderFormat($r);
-            $olderWhy = $older && (int) $r['undone'] === 0 ? (is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : ((int) $r['has_snapshot'] === 1 ? Undo::OLDER_FORMAT : null)) : null;
+            [$undoable, $why] = self::undoability($r, $details, $seriesUndo, $cutoff);
             return [
                 'id' => (int) $r['id'],
                 'at' => $at->format('Y-m-d\TH:i:sP'),
@@ -109,14 +105,58 @@ final class Activity
                 'summary' => $r['summary'] !== null ? (string) $r['summary'] : '',
                 'details' => $details,
                 'undone' => (int) $r['undone'] === 1,
-                'undoable' => (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff && !$heldBack && !$older,
-            ] + ($heldBack ? ['notUndoable' => GoogleUndo::SERIES_UNDO_OFF] : ($olderWhy !== null ? ['notUndoable' => $olderWhy] : []));
+                'undoable' => $undoable,
+            ] + ($why !== null ? ['notUndoable' => $why] : []);
         }, $rows);
 
         return [
             'entries' => $entries,
             'nextBefore' => $more && $entries !== [] ? $entries[count($entries) - 1]['id'] : null,
         ];
+    }
+
+    /**
+     * Can this journal row be undone now, and the reason it can't when it
+     * has one to say: the one test Activity lists by, Review offers a
+     * proposal's undo by and a plugin run counts by. $r holds has_snapshot,
+     * undone, created_at (UTC) and format; its format part is
+     * Undo::olderFormat, the test the loader (Undo::entryToTakeBack) refuses
+     * by. Held back by the setting (GoogleUndo::seriesUndoOff) and recorded
+     * by an earlier version each say why; past the window or log only don't.
+     *
+     * @return array{0:bool,1:?string}
+     */
+    public static function undoability(array $r, ?array $details, bool $seriesUndo, ?\DateTimeImmutable $cutoff = null): array
+    {
+        $cutoff ??= new \DateTimeImmutable('-' . self::UNDO_DAYS . ' days', new \DateTimeZone('UTC'));
+        $at = new \DateTimeImmutable((string) $r['created_at'], new \DateTimeZone('UTC'));
+        $heldBack = !$seriesUndo && (int) $r['has_snapshot'] === 1 && GoogleUndo::seriesEntry($details);
+        $older = Undo::olderFormat($r);
+        $olderWhy = $older && (int) $r['undone'] === 0 ? (is_string($details['notUndoable'] ?? null) ? $details['notUndoable'] : ((int) $r['has_snapshot'] === 1 ? Undo::OLDER_FORMAT : null)) : null;
+        $undoable = (int) $r['has_snapshot'] === 1 && (int) $r['undone'] === 0 && $at >= $cutoff && !$heldBack && !$older;
+        return [$undoable, $heldBack ? GoogleUndo::SERIES_UNDO_OFF : $olderWhy];
+    }
+
+    /**
+     * What a run's entries not yet undone allow (Undo::undoRun undoes
+     * exactly those): how many there are, how many can be undone now
+     * (undoability), and the first reason one can't.
+     *
+     * @return array{entries:int,undoable:int,why:?string}
+     */
+    public function runUndoability(int $userId, string $runId): array
+    {
+        $seriesUndo = Settings::googleSeriesUndo($this->db, $userId);
+        $out = ['entries' => 0, 'undoable' => 0, 'why' => null];
+        foreach ($this->db->all('SELECT undone, created_at, format, details_json, (before_json IS NOT NULL OR after_json IS NOT NULL) AS has_snapshot
+             FROM mutations WHERE user_id = ? AND run_id = ? AND undone = 0', [$userId, $runId]) as $r) {
+            $details = json_decode((string) ($r['details_json'] ?? ''), true);
+            [$undoable, $why] = self::undoability($r, is_array($details) ? $details : null, $seriesUndo);
+            $out['entries']++;
+            $out['undoable'] += $undoable ? 1 : 0;
+            $out['why'] ??= $undoable ? null : $why;
+        }
+        return $out;
     }
 
     /**

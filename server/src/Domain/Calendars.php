@@ -430,6 +430,8 @@ final class Calendars
             if ((string) $row['kind'] !== 'subscribed') {
                 throw HttpError::badRequest('Only subscribed calendars can be adopted');
             }
+            // A change half done at Google on it is finished or put back first: kept as a copy, neither could run.
+            GoogleSeries::refusePendingOnCalendar($this->db, $userId, $id);
             // Adopting a Google calendar makes it wholly ours: the link to Google
             // goes too, so it stops polling AND stops writing through. The
             // events keep their Google ids as history; nothing reads them once
@@ -510,6 +512,8 @@ final class Calendars
         return $this->undo->write($userId, function () use ($userId, $id): ?int {
             CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
             $calendar = $this->get($userId, $id);
+            // A change half done at Google on it is finished or put back first: deleted, neither could run.
+            GoogleSeries::refusePendingOnCalendar($this->db, $userId, $id);
             $wasDefault = Settings::defaultCalendarId($this->db, $userId) === $id;
             // Its events go into the entry a page at a time, kept apart from
             // it: tens of thousands of them in one row of the journal were

@@ -248,4 +248,33 @@ return static function (Db $db): void {
         checkEq('mail, the series first: the day\'s change accepted, 7 January is the whole-day record alone, and 6 and 8 January are the series\' whole days',
             [[$wholeDays(6)], [$wholeDays(7, 'Sample game, whole day')], [$wholeDays(8)]], [$shownOn($f, '2027-01-06'), $shownOn($f, '2027-01-07'), $shownOn($f, '2027-01-08')]);
     });
+
+    // The organizer renames Tuesday 5 January, then makes the series whole days on Mondays and Wednesdays: the series
+    // no longer has the 5th. The held day's key (19:00 New York on the 5th, 00:00 UTC on the 6th) is the key of the
+    // whole-day Wednesday 6 January, a day the new series has; the held change is not for that day.
+    scenario('instance names, emailed change to 5 January held in Review, then the series accepted as whole days on other days: the held change is closed, and 6 January is not changed', function () use ($db, $mailbox, $cal, $game, $who, $accept, $shownOn, $wholeDays): void {
+        $m = $mailbox();
+        $uid = 'sample-mail-gone@example.test';
+        ($m->send)("$uid-series", $cal([array_merge($game, ['SEQUENCE:0'], $who)], $uid, 'REQUEST'));
+        $stored = ($m->series)($uid);
+        $f = (object) ['u' => $m->u, 'd' => $m->d, 'calendarId' => (int) ($stored['calendar_id'] ?? 0)];
+        ($m->send)("$uid-day", $cal([array_merge(['RECURRENCE-ID;TZID=America/New_York:20270105T190000', 'DTSTART;TZID=America/New_York:20270105T190000',
+            'DTEND;TZID=America/New_York:20270105T200000', 'SUMMARY:Sample game, renamed', 'SEQUENCE:1'], $who)], $uid, 'REQUEST'));
+        ($m->send)("$uid-days", $cal([array_merge(['DTSTART;VALUE=DATE:20270104', 'DTEND;VALUE=DATE:20270105', 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6', 'SUMMARY:Sample game', 'SEQUENCE:2'], $who)], $uid, 'REQUEST'));
+        $items = ($m->items)($uid);
+        $ofDay = static fn(array $it): bool => isset(json_decode((string) $it['payload_json'], true)['occurrence']);
+        $day = array_values(array_filter($items, $ofDay))[0] ?? null;
+        $series = array_values(array_filter($items, static fn(array $it): bool => !$ofDay($it)))[0] ?? null;
+        checkEq('mail, a day the series loses: Review holds the change to the Tue 5 Jan 2027 occurrence and the series\' change', [true, true],
+            [$day !== null && str_contains((string) $day['summary'], 'changed the Tue 5 Jan 2027 occurrence'), $series !== null]);
+        if ($series !== null) {
+            $accept($m, (int) $series['id']);
+        }
+        $after = $day === null ? null : $db->one('SELECT status, summary FROM review_items WHERE id = ?', [(int) $day['id']]);
+        checkEq('mail, a day the series loses: the series accepted, the held change is closed, saying the series no longer has Tue 5 Jan 2027',
+            ['superseded', 'Sample Host changed the Tue 5 Jan 2027 occurrence, but the series no longer has that day, so there is nothing to change.'],
+            [$after['status'] ?? null, $after['summary'] ?? null]);
+        checkEq('mail, a day the series loses: 5 January shows nothing, and 6 January the series\' whole day under its own title',
+            [[], [$wholeDays(6)]], [$shownOn($f, '2027-01-05'), $shownOn($f, '2027-01-06')]);
+    });
 };

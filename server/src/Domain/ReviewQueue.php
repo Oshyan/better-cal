@@ -1277,14 +1277,25 @@ final class ReviewQueue
             // instance or none (19:00 in New York on the 6th has the key of
             // the all-day 7th), so the held day goes to its own day's key
             // under the series as it is now, as a stored day's row does
-            // (Feeds::ofSeries). A day the series no longer has keeps its
-            // key and is closed as such when it is accepted.
-            if ($occurrence !== null && $reformed && $pending['kind'] === self::KIND_INVITE_CHANGE
-                && ($image = Feeds::ofSeries(['recurrence_instance_utc' => $occurrence, 'google_event_id' => null], $was, $event)) !== null
-                && (string) ($image['recurrence_instance_utc'] ?? $occurrence) !== $occurrence) {
-                $occurrence = (string) $image['recurrence_instance_utc'];
-                $payload['occurrence'] = $occurrence;
-                $this->db->update('review_items', ['payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES)], 'id = ?', [(int) $pending['id']]);
+            // (Feeds::ofSeries). A day the series no longer has is closed
+            // here, named by its date as the series had it: left open, its
+            // key could name another day of the new form.
+            if ($occurrence !== null && $reformed && $pending['kind'] === self::KIND_INVITE_CHANGE) {
+                $image = Feeds::ofSeries(['recurrence_instance_utc' => $occurrence, 'google_event_id' => null], $was, $event);
+                if ($image === null) {
+                    $who = (string) ($incoming['organizer']['name'] ?? '') ?: (string) ($incoming['organizer']['email'] ?? '') ?: (string) ($payload['from'] ?? '');
+                    $day = self::occurrenceLabel($was, $occurrence, Settings::homeTzid($this->db, $userId));
+                    $this->db->run('UPDATE review_items SET status = ?, decided_at = ?, summary = ? WHERE id = ?', ['superseded', Time::nowDb(),
+                        ($who !== '' ? $who : 'The organizer') . ($method === 'CANCEL' ? " cancelled the $day occurrence, but the series no longer has that day, so there is nothing to skip."
+                            : " changed the $day occurrence, but the series no longer has that day, so there is nothing to change."),
+                        (int) $pending['id']]);
+                    continue;
+                }
+                if ((string) ($image['recurrence_instance_utc'] ?? $occurrence) !== $occurrence) {
+                    $occurrence = (string) $image['recurrence_instance_utc'];
+                    $payload['occurrence'] = $occurrence;
+                    $this->db->update('review_items', ['payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES)], 'id = ?', [(int) $pending['id']]);
+                }
             }
             if ($occurrence !== null) {
                 // One occurrence is numbered apart from its series (#155):

@@ -790,7 +790,7 @@ final class Ics
             return [Time::toDb(Calc::at($dn, [(int) $at->format('G'), (int) $at->format('i'), (int) $at->format('s')], $tz))];
         }
         try {
-            $calc = Calc::fromRow(['all_day' => 0, 'tzid' => $tz, 'exdates_json' => null] + $series);
+            $calc = Calc::fromRow(['all_day' => 0, 'tzid' => $tz] + $series + ['exdates_json' => null]);
             $on = $calc->expandable() ? $calc->keysOn($dn) : [];
             return $on !== [] ? $on : [$calc->key($dn)];
         } catch (\Throwable) {

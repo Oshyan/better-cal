@@ -342,10 +342,14 @@ return static function (Db $db): void {
     scenario('a time change stopped before its master write, the clock moved at Google meanwhile, finished: the entry records the skip gone, and no move', function () use ($run, $la): void {
         $r = $run(['series' => $la, 'plain' => true, 'change' => 'an hour later', 'stop' => 'before its master write lands', 'then' => 'finish',
             'meanwhile' => static function (GoogleStand $s, string $gid): void {
-                $m = $s->fake->events[$gid];
-                $m['start']['dateTime'] = '2027-07-19T20:00:00-07:00';
-                $m['end']['dateTime'] = '2027-07-19T21:00:00-07:00';
-                $s->fake->seed($m);
+                // Made as another client makes it, through the stand-in's own handler, so Google's effect on the
+                // series' days comes with it (the cancelled day's record goes). Seeding the master alone would leave
+                // that record at a key the series no longer has, a state Google never holds.
+                $zone = (string) $s->fake->events[$gid]['start']['timeZone'];
+                $answer = $s->fake->transport()('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($gid),
+                    ['Authorization: Bearer sample-access', 'X-Harness: remote'],
+                    ['start' => ['dateTime' => '2027-07-19T20:00:00-07:00', 'timeZone' => $zone], 'end' => ['dateTime' => '2027-07-19T21:00:00-07:00', 'timeZone' => $zone]]);
+                checkEq('the clock moved at Google meanwhile: the stand-in took the other client\'s change', 200, $answer['status'] ?? null);
             }]);
         checkEq('the clock moved at Google meanwhile: Finish completes, the series at Google\'s clock with the day Google kept', [true, 0, []], [$r['recovered'], $r['left'], $r['changed']['skips']]);
         check('the clock moved at Google meanwhile: Finish names the time it left as Google has it and the day Google kept',

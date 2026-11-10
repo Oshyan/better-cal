@@ -45,6 +45,7 @@ A few habits the codebase keeps:
 - User-facing text is plain, direct and free of jargon; the app never says "error occurred" when it can say what happened.
 - Timestamps are ISO 8601 with a zone offset, everywhere.
 - Anything that writes to Google says so, and says it can't be undone, before and after.
+- Changing how anything is stored or compared? Read [AGENTS.md](AGENTS.md) first: a change to a stored form is a format version bump, never a migration that rewrites old rows.
 - A migration for every schema change, numbered after the last one in `server/migrations/`, and documented in [docs/api-contract.md](docs/api-contract.md) if it changes what the API returns.
 
 ## Versions

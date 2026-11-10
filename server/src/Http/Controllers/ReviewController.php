@@ -224,11 +224,12 @@ final class ReviewController
                 // A pending undo whose entry is in an older format can't be finished
                 // (GoogleUndo::entryToFinish): said up front, and Put back offered alone.
                 'summary' => 'Half done at Google: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
-                    . ' ' . ($half['finishRefused'] ?? 'Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.'),
+                    . ' ' . ($half['unrecoverable'] ?? $half['finishRefused'] ?? 'Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.'),
                 'createdAt' => $half['createdAt'],
                 'eventId' => $half['eventId'],
                 'detail' => $half,
-                'actions' => $canDecide ? array_values(array_filter([
+                // The calendar no longer writes to Google (GoogleSeries::unrecoverable): neither can run, so neither is offered.
+                'actions' => $canDecide && $half['unrecoverable'] === null ? array_values(array_filter([
                     $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
                     self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back"),
                 ])) : [],
@@ -263,15 +264,23 @@ final class ReviewController
                     ) : null,
                     self::action('dismiss', 'Dismiss', "/proposals/{$p['id']}/reject", ['reviewToken' => $p['reviewToken']]),
                 ]));
-            } elseif ($p['status'] === 'accepted' && $canDecide) {
-                $actions = [self::action('undo', 'Undo, remove these again', "/proposals/{$p['id']}/undo")];
+            }
+            // Undo of an accepted proposal takes back every entry its run made, all or nothing
+            // (Proposals::undoAccept): offered only when each can be undone now, by the one test
+            // Activity lists by; otherwise the item says why instead.
+            $cannot = null;
+            if ($p['status'] === 'accepted') {
+                $cannot = $this->proposals->undoRefusal($userId, (int) $p['id']);
+                if ($cannot === null && $canDecide) {
+                    $actions = [self::action('undo', 'Undo, remove these again', "/proposals/{$p['id']}/undo")];
+                }
             }
             $items[] = [
                 'key' => 'proposal:' . $p['id'],
                 'kind' => 'proposal',
                 'status' => $p['status'] === 'rejected' ? 'dismissed' : $p['status'],
                 'title' => $p['title'],
-                'summary' => $p['summary'] ?? null,
+                'summary' => $cannot === null ? ($p['summary'] ?? null) : trim(($p['summary'] ?? '') . ' ' . $cannot),
                 'createdAt' => $p['createdAt'] ?? null,
                 'eventId' => null,
                 'detail' => $p,

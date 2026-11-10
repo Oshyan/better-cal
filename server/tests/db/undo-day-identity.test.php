@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 // Two rules an undo keeps, checked on what it leaves at once, before any
 // poll could mend it. A day is its series and its occurrence where the
-// series has it now (GoogleUndo::dayAt): a redo of an ordinary day's
-// delete after the series' time changed skips that day at Google, here
-// and in its own entry's ground alike. And a day follows its series in
+// journal says exactly where it is now (GoogleUndo::dayAt, Undo::dayNow):
+// a redo of an ordinary day's delete after the series' time changed, the
+// day holding no row and no skip then, is refused with nothing sent,
+// never placed by its date. And a day follows its series in
 // every field it does not own, tags and people included
 // (Feeds::followSeries): undoing a series' tags and people takes a day
 // made since, owning only its notes, back to the series' links, and a day
@@ -24,7 +25,14 @@ require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 return static function (Db $db): void {
     $weekly = ['title' => 'Pizza night', 'start' => '2027-01-04T09:00:00+00:00', 'end' => '2027-01-04T10:00:00+00:00', 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=8'];
 
-    scenario('a redo of an ordinary Google day\'s delete after the series moved skips the day where it is now', function () use ($db, $weekly): void {
+    // Changed with the gate (1.5.5; decisions.md, "An undo acts on a day only where the journal says exactly where it is").
+    // Before, this scenario asserted that the redo went through: Google was sent the delete of 11 Jan at 11:00
+    // (..._20270111T110000Z), the series here skipped 2027-01-11 11:00:00, the calendar no longer showed the day, and
+    // the redo's entry stood on that skip. That placed the day by its date. The day had no row and no skip when the
+    // series' start moved, the planner's mapping for such a day is recorded nowhere, and placing it by date is right
+    // at some clocks (here, two hours later on the same day) and a neighbouring day at others (a time across
+    // midnight, a start moved a day, a weekday changed). So it is refused, forced or not, with nothing sent.
+    scenario('a redo of an ordinary Google day\'s delete after the series moved is refused: nothing recorded where that day went', function () use ($db, $weekly): void {
         $u = freshUser($db);
         seriesUndo($db, $u, false);
         $d = domains($db);
@@ -41,15 +49,21 @@ return static function (Db $db): void {
             planned($e, $u, $id, ['scope' => 'all', 'start' => '2027-01-04T11:00:00+00:00', 'end' => '2027-01-04T12:00:00+00:00']);
             $e->throwDeferred();
             $s->fake->requests = [];
-            $undo->undoById($u, $redo);
-            $entry = lastEntry($db, $u);
-            $sent = array_values(array_filter(array_map(static fn(array $r): string => $r['method'] . ' ' . basename((string) $r['path']), $s->fake->requests), static fn(string $c): bool => str_starts_with($c, 'DELETE')));
-            $window = $e->window($u, new \DateTimeImmutable('2027-01-11T00:00:00Z'), new \DateTimeImmutable('2027-01-12T00:00:00Z'), [$s->calendarId], null, true);
-            $ground = array_map(static fn(array $t): array => [(string) $t['row_key'], (string) $t['col']], $db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ?', [$entry]));
-            checkEq('redo after a move: Google is sent the delete of the day where it is now', ['DELETE fake000001_20270111T110000Z'], $sent);
-            checkEq('redo after a move: the series here skips that day, not the old one', ['2027-01-11 11:00:00'], json_decode((string) $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]), true));
-            checkEq('redo after a move: the calendar no longer shows the day', [], $window);
-            checkEq('redo after a move: its entry stands on that day\'s skip', [["events:$id", 'skip:2027-01-11 11:00:00']], $ground);
+            $last = lastEntry($db, $u);
+            $refused = [];
+            foreach ([false, true] as $force) {
+                try {
+                    $undo->undoById($u, $redo, $force);
+                    $refused[] = null;
+                } catch (\BetterCal\Http\HttpError $error) {
+                    $refused[] = [$error->errorCode, $error->extra['reason'] ?? null, $error->getMessage()];
+                }
+            }
+            $words = "This series was moved to another time or day since this was done, so it's no longer certain which day it was on, and it can't be redone here. You can make the change again on the day.";
+            checkEq('redo after a move: refused, forced or not, in words that say what changed', [['not_undoable', 'day_unplaced', $words], ['not_undoable', 'day_unplaced', $words]], $refused);
+            checkEq('redo after a move: Google is sent nothing of any kind', [], array_column($s->fake->requests, 'method'));
+            checkEq('redo after a move: the series here skips no day, as before', null, $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]));
+            checkEq('redo after a move: the entry is still there to undo, and none was recorded', [0, $last], [(int) $db->scalar('SELECT undone FROM mutations WHERE id = ?', [$redo]), lastEntry($db, $u)]);
         } finally {
             GoogleStand::forget($db, $u);
         }

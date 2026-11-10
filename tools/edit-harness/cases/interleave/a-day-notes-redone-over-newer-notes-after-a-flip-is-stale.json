@@ -1,5 +1,5 @@
 {
-    "about": "A daily series at 19:00 New York, a day given notes and the change undone, the series made all-day, other notes given to the same day, then the first notes redone: refused as stale, with nothing written here or sent (x-day).",
+    "about": "A daily series at 19:00 New York, a day given notes and the change undone, the series made all-day, other notes given to the same day, then the first notes redone: refused with nothing written here or sent (x-day). The gate comes before staleness: the day had no row and no skip when the series was made all-day, so the refusal is not_undoable, which force does not pass, and the newer notes stand. (The file keeps its name; until the gate the refusal was stale_undo.)",
     "seed": 0,
     "n": 0,
     "series": {
@@ -26,26 +26,26 @@
         },
         {
             "do": "u-bare",
-            "pick": 0.0
+            "pick": 0
         },
         {
             "do": "w-all",
-            "pick": 0.0,
+            "pick": 0,
             "what": "flip"
         },
         {
             "do": "w-this-g",
-            "pick": 0.0,
+            "pick": 0,
             "what": "description",
             "onMark": "d"
         },
         {
             "do": "redo",
-            "pick": 0.0,
+            "pick": 0,
             "judge": {
                 "mark": "d",
                 "expect": "stale",
-                "mayRefuse": false
+                "anchor": "none"
             }
         }
     ]

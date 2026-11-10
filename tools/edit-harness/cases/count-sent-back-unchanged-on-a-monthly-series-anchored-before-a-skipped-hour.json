@@ -1,0 +1,60 @@
+{
+    "n": 1087,
+    "seed": 48271,
+    "series": {
+        "family": "monthly_day",
+        "rrule": "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=28",
+        "import": false,
+        "bound": "count",
+        "boundAt": 16,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Europe/Berlin",
+        "start": "2027-01-31 02:30",
+        "length": 60,
+        "floating": true
+    },
+    "exceptions": [],
+    "acted": 11,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 32400,
+        "trip": false,
+        "fields": [],
+        "rule": "same",
+        "sameForm": "editor",
+        "newRule": "FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=23",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "path": "all",
+    "choices": {
+        "edit": {
+            "day": "adopt"
+        }
+    },
+    "preselected": {
+        "edit": true
+    },
+    "request": {
+        "edit": {
+            "target": "master",
+            "body": {
+                "scope": "all",
+                "instanceStart": "2028-11-28T02:30:00+01:00",
+                "rrule": "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=28;COUNT=16"
+            }
+        }
+    }
+}

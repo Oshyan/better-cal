@@ -251,7 +251,12 @@ final class OracleProbes
                 }],
             // x-day: the day a redo acted on moved to its neighbour (the undo fault's own symptom), and the change made at Google
             // while a flip was stopped carried by Finish onto a neighbouring day.
-            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-day-notes-redone-after-a-daily-00-utc-series-made-all-day', 'step' => 4,
+            // The gate removed: a day with no row and no skip when its series was made all-day, its redo answered as done.
+            ['check' => 'x-day', 'what' => 'the redo of a change to a day with no recorded place goes through', 'case' => 'a-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null] + $out, $s0, $s1];
+                }],
+            ['check' => 'x-day', 'what' => "a redone day's notes are on the next day instead of its own", 'case' => 'a-tagged-day-notes-redone-after-a-daily-19-new-york-series-made-all-day', 'step' => 5,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     foreach ($s1['rows'] as $id => $r) {
                         if ($r['recurrence_parent_id'] !== null && str_starts_with((string) $r['description'], 'Sample notes')) {
@@ -274,6 +279,46 @@ final class OracleProbes
                         }
                     }
                     return [$out, $s0, $this->reshape($s1)];
+                }],
+            // The retention rule after an undo: a row its entry only changed goes only when what the undo leaves owns nothing.
+            ['check' => 'x-undo-fields', 'what' => 'an undo of a day\'s notes removes the row, which still owns its tag', 'case' => 'a-tagged-day-given-notes-then-the-notes-undone-keeps-the-row-for-its-tag', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $owns): array {
+                    unset($s1['rows'][$row($s1, $owns('tags'))]);
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            // A4 by the stand-in's state when Finish runs: a remote title no later step superseded is still kept.
+            ['check' => 'x-finish', 'what' => 'Finish drops a title given at Google since that no later step superseded', 'case' => 'a-split-stopped-then-a-day-given-an-exception-at-google-then-finished-keeps-it', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    foreach ($s1['g']['digest'] as $g => $d) {
+                        foreach ((array) ($d['records'] ?? []) as $k => $rec) {
+                            if (str_contains((string) $rec[0], 'remote')) {
+                                unset($s1['g']['digest'][$g]['records'][$k]);
+                            }
+                        }
+                    }
+                    return [$out, $s0, $s1];
+                }],
+            // Changed since counts from the failure: a change at Google after it still refuses Put back.
+            ['check' => 'x-putback', 'what' => 'Put back goes ahead though Google changed after the failure (a guest added before it changes nothing alone)', 'case' => 'a-guest-added-at-google-then-notes-for-all-stopped-then-a-colour-at-google-then-put-back-is-refused', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    return [['ok' => true, 'error' => null, 'answer' => ['left' => []]] + $out, $s0, $s1];
+                }],
+            // "Writes nothing at Google" is judged by what the stand-in holds and the writes it took, not by requests it
+            // refused: a refused undo after which the stand-in holds something else still fails.
+            ['check' => 'x-undo-fields', 'what' => 'a refused undo leaves Google holding another series title', 'case' => 'two-days-titled-then-one-undone', 'step' => 3,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    $s1 = $s0;
+                    $gid = array_key_first(array_filter($s1['g']['digest'], static fn($d): bool => $d !== null));
+                    $s1['g']['digest'][$gid]['title'] = 'Sample probe title';
+                    return [['ok' => false, 'error' => 'google_write_failed', 'message' => 'Sample refusal'] + $out, $s0, $s1];
+                }],
+            // With google_series_undo off (the product's default in 1.5.5), an undo of a whole-series change on a Google
+            // calendar is refused not_undoable: the case runs with it on, so its undo goes through, and the damage turns the
+            // account's setting off after the undo, which reads as the release gate removed.
+            ['check' => 'x-undo-fields', 'what' => 'a whole-series undo on a Google calendar goes through with google_series_undo off', 'case' => 'a-series-rename-undone-redone-undone-redone', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    \seriesUndo($this->db, $this->userId, false);
+                    return [$out, $s0, $s1];
                 }],
         ];
     }

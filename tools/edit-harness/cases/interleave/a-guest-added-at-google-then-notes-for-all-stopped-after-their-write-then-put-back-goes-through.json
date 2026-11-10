@@ -1,0 +1,35 @@
+{
+ "about": "A guest added to the series at Google and not polled; then notes for all events, taken by Google and stopped by a thrown error; then Put back, which goes through, since nothing changed at Google after the change's last step (x-putback, since counted from the failure, A2; seed 60611 case 271). Before, the harness counted the unpolled change made before the failing one as a change since.",
+ "seed": 60611,
+ "n": 271,
+ "series": {
+  "family": "weekly_list_i2",
+  "rrule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;WKST=SU",
+  "import": false,
+  "bound": "count",
+  "boundAt": 6,
+  "untilForm": "dayend",
+  "allDay": true,
+  "tzid": "UTC",
+  "start": "2027-05-28",
+  "length": 1
+ },
+ "steps": [
+  {
+   "do": "r-gonly",
+   "pick": 0.361,
+   "what": "attendees"
+  },
+  {
+   "do": "f-fatal",
+   "pick": 0.064,
+   "k": 1,
+   "write": "w-all",
+   "what": "description"
+  },
+  {
+   "do": "putback",
+   "pick": 0.065
+  }
+ ]
+}

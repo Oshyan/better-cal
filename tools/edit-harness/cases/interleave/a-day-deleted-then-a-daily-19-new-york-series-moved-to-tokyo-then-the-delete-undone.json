@@ -1,0 +1,42 @@
+{
+    "about": "A daily series at 19:00 New York, one day deleted, the series moved to Tokyo keeping 19:00 for all events (the skip carried, its move recorded), then the delete undone: the day is a day again on its own date (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-04 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "Asia/Tokyo"
+    },
+    "steps": [
+        {
+            "do": "w-del1",
+            "pick": 0.3,
+            "mark": "d"
+        },
+        {
+            "do": "w-all",
+            "pick": 0,
+            "what": "zone"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0,
+            "entryOf": "d",
+            "judge": {
+                "mark": "d",
+                "expect": "day",
+                "anchor": "skip"
+            }
+        }
+    ]
+}

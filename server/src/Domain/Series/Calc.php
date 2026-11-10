@@ -396,19 +396,7 @@ final class Calc
     /** The local day an instant falls on in the series' zone. */
     public function dnOf(string $dbUtc): int
     {
-        return self::dayOf($dbUtc, $this->allDay, $this->tz);
-    }
-
-    /**
-     * The day a key names under a series' form and zone: its date as it is
-     * for an all-day series (a key there is a date at 00:00 UTC), its local
-     * date in the zone for a timed one (a key there is an instant). The one
-     * reading of "which day is this key": a key names a day only under the
-     * series it was written in, so every caller says which. Pure.
-     */
-    public static function dayOf(string $dbUtc, bool $allDay, string $tz): int
-    {
-        return Cal::dnOf(Time::fromDb($dbUtc)->setTimezone($allDay ? Time::utc() : Time::zone($tz)));
+        return Cal::dnOf(Time::fromDb($dbUtc)->setTimezone($this->allDay ? Time::utc() : $this->zone()));
     }
 
     /** UNTIL as an instant, read the way the iterator reads it: a date is the end of that day in the series' zone. */

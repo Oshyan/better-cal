@@ -263,6 +263,22 @@ final class Proposals
     }
 
     /** Reverse an acceptance: undo the whole run, reopen the proposal. */
+    /**
+     * Why an accepted proposal can't be undone now, or null when it can:
+     * its undo takes back every entry its run made, all or nothing
+     * (undoAccept, strict undoRun), so each must pass the one test Activity
+     * lists by (Activity::undoability). Review offers the undo only on null.
+     */
+    public function undoRefusal(int $userId, int $id): ?string
+    {
+        $run = $this->db->scalar("SELECT accepted_run_id FROM plugin_proposals WHERE id = ? AND user_id = ? AND status = 'accepted'", [$id, $userId]);
+        $can = $run === null ? ['entries' => 0, 'undoable' => 0, 'why' => null] : (new Activity($this->db))->runUndoability($userId, (string) $run);
+        if ($can['entries'] > 0 && $can['undoable'] === $can['entries']) {
+            return null;
+        }
+        return 'Its events can no longer be removed by undo here. ' . ($can['why'] ?? 'Undo keeps a change for 7 days.');
+    }
+
     public function undoAccept(int $userId, int $id): array
     {
         return (new Undo($this->db))->write($userId, function () use ($userId, $id): array {

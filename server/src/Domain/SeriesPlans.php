@@ -1291,8 +1291,8 @@ trait SeriesPlans
                 throw HttpError::notFound('No such half-done Google change');
             }
             $calendar = CalendarMoveGuard::lockCalendar($this->db, (int) $row['calendar_id']);
-            if ($calendar === null || !GoogleWriter::writable($calendar)) {
-                throw HttpError::conflict('google_calendar_gone', 'The Google calendar this change was for is no longer one this account can edit.');
+            if (($why = GoogleSeries::unrecoverable($calendar)) !== null) {
+                throw HttpError::conflict('google_calendar_gone', $why);
             }
             // An undo of a series change stopped part way (its part here names
             // the entry it undoes): recovered, its journal is what the undo
@@ -1313,22 +1313,9 @@ trait SeriesPlans
             // (GoogleUndo::entryToFinish, Undo::entryToTakeBack): an entry in an older format, or a
             // copy that doesn't say it is current, is refused here, before the pending row is marked
             // running and before any request to Google, so the row stays half done for Review exactly
-            // as it was. Put back takes no entry back (it reads only the pending row); it asks only
-            // whether Finish would refuse, so its own refusal never points to a Finish that can't run.
-            $undone = null;
-            $neither = null;
-            if ($isUndo && $how === 'finish') {
-                $undone = GoogleUndo::entryToFinish($this->db, $userId, $plan);
-            } elseif ($isUndo) {
-                try {
-                    GoogleUndo::entryToFinish($this->db, $userId, $plan);
-                } catch (HttpError $e) {
-                    if ($e->errorCode !== 'not_undoable') {
-                        throw $e;
-                    }
-                    $neither = GoogleUndo::neitherWay(GoogleUndo::pendingRedo($this->db, $userId, $plan));
-                }
-            }
+            // as it was (GoogleSeries::finish asks it again, so a caller that skips this still meets it).
+            // Put back takes no entry back (it reads only the pending row, and words its own refusal).
+            $undone = $isUndo && $how === 'finish' ? GoogleUndo::entryToFinish($this->db, $userId, $plan) : null;
             try {
                 $out = $how === 'finish'
                     ? $this->googleSeries()->finish($userId, $calendar, $pendingId, $this->googleBeforeSend($authority),
@@ -1345,7 +1332,7 @@ trait SeriesPlans
                             }
                             return [];
                         } : $this->googleLocalPlan($userId))
-                    : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority), $neither);
+                    : $this->googleSeries()->putBack($userId, $calendar, $pendingId, $this->googleBeforeSend($authority));
             } catch (HttpError $e) {
                 $stopped = $e;
                 throw $e;
@@ -1444,11 +1431,8 @@ trait SeriesPlans
     {
         $after = array_merge($row, $patch);
         $changed = self::changedOwnFields($row, $after, $in);
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known === null && !empty($row['id'])) {
-            $known = OwnFields::infer($row, $master);
-        }
-        $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known ?? [], $changed)));
+        $known = OwnFields::storedIn($this->db, $row, $master);
+        $placed = OwnFields::placed($after, $master, OwnFields::normalize(array_merge($known, $changed)));
         foreach (['start_utc', 'end_utc', 'tzid'] as $col) {
             if ((string) ($placed[$col] ?? '') !== (string) ($after[$col] ?? '')) {
                 $patch[$col] = $placed[$col];
@@ -1463,11 +1447,7 @@ trait SeriesPlans
         if (!$this->ownFieldsColumn()) {
             return null;
         }
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known === null && !empty($row['id'])) {
-            $known = OwnFields::infer($row, $master);
-        }
-        return OwnFields::encode(array_merge($known ?? [], $fields));
+        return OwnFields::encode(array_merge(OwnFields::storedIn($this->db, $row, $master), $fields));
     }
 
     /**
@@ -1516,7 +1496,7 @@ trait SeriesPlans
     private function useSeriesValues(int $userId, array $master, array $row, array $fields, ?array $google = null, ?RequestAuthority $authority = null): void
     {
         $fields = OwnFields::normalize(array_map('strval', $fields));
-        $own = OwnFields::decode($row['override_fields'] ?? null) ?? OwnFields::infer($row, $master);
+        $own = OwnFields::storedIn($this->db, $row, $master);
         $left = array_values(array_diff($own, $fields));
         $set = [];
         foreach ($fields as $field) {

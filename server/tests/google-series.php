@@ -394,6 +394,111 @@ checkEq('google rebase: made all-day, not yet at Google, a skipped day brought b
     $dateWords(8) . ' was renamed, given other notes and given another place at Google since this change stopped; that change is not kept, because the series is now all-day.',
 ]], [$daysOf($rebased), $words]);
 
+// ---- The same on the wider axis: any change whose first write has not reached Google ----
+// Google holds the series keyed as the change found it. Where the change gives its days other keys (a new time, zone,
+// start day or rule, as a new form does), which key a day has afterwards is the planner's to say, so a change made at
+// Google since is named with a true reason and the plan stands whole. Where it keeps every key (a rename, a new
+// length, a bound), the change made at Google is carried exactly, by its key; on a day the series no longer has, it
+// is named. The series: weekly at 10:00 Los Angeles, four times; 11 Jan edited (its own notes), 18 Jan skipped; the
+// day changed at Google is Mon 25 Jan.
+$laMaster = $gm($forms['10:00 Los Angeles, weekly'][0]);
+$laBefore = $seriesOf($laMaster, '2027-01-11 18:00:00', '2027-01-18 18:00:00');
+$renamedAt = static function (array $now, string $key, array $master): array {
+    $now['records'][$key] = ['title' => 'Renamed at Google', 'start_utc' => $key, 'end_utc' => gmdate('Y-m-d H:i:s', strtotime($key . ' UTC') + 3600)] + $master;
+    return $now;
+};
+$sinceRename = $renamedAt($nowOf($laBefore, true), '2027-01-25 18:00:00', $laBefore['master']);
+foreach ([
+    // [what the change does, the master as changed, where the edited day and the skip are then, the reason a person reads]
+    ['a new time (10:00 to 11:00)', ['start_utc' => '2027-01-04 19:00:00', 'end_utc' => '2027-01-04 20:00:00'], ['2027-01-11 19:00:00', '2027-01-18 19:00:00'], "the series' time changed"],
+    ['another zone keeping the clock (10:00 Denver)', ['start_utc' => '2027-01-04 17:00:00', 'end_utc' => '2027-01-04 18:00:00', 'tzid' => 'America/Denver'], ['2027-01-11 17:00:00', '2027-01-18 17:00:00'], "the series' zone changed"],
+    ['a drag a week along its pattern', ['start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00'], ['2027-01-18 18:00:00', '2027-01-25 18:00:00'], 'the series moved to another day'],
+    ['a new rule (every second week)', ['rrule' => 'FREQ=WEEKLY;INTERVAL=2;COUNT=4'], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], "the series' rule changed"],
+] as [$what, $change, $toKeys, $why]) {
+    $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), $toKeys[0], $toKeys[1]);
+    [$rebased, $words, $conflicts] = GoogleSeries::rebase($laBefore, $target, $sinceRename, $year);
+    checkEq("google rebase: $what, its master write not yet at Google, a day renamed at Google since: the plan stands whole and the rename is named as not kept, with the reason",
+        [$daysOf($target), [$dateWords(25) . " was renamed at Google since this change stopped; that change is not kept, because $why."], []], [$daysOf($rebased), $words, $conflicts]);
+    [$rebased, $words] = GoogleSeries::rebase($laBefore, $target, $nowOf($laBefore, true), $year);
+    checkEq("google rebase: $what, its master write not yet at Google, nothing changed at Google since: the plan whole, nothing said", [$daysOf($target), []], [$daysOf($rebased), $words]);
+}
+// A change that keeps every key: the rename made at Google is carried exactly, on its own key, beside the plan. Where
+// the plan changes the same thing (it renames the series, so every day's title), the day's title is kept and named;
+// where it does not (a new length), it is kept with nothing said.
+foreach ([
+    ['a rename of the series', ['title' => 'Sample weekly renamed'], ["'Renamed at Google' on " . $dateWords(25) . ' changed at Google since this change stopped (its title); left as Google has it.']],
+    ['a new length (an hour to ninety minutes)', ['end_utc' => '2027-01-04 19:30:00'], []],
+] as [$what, $change, $said]) {
+    $target = $seriesOf($gm($change + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-11 18:00:00', '2027-01-18 18:00:00');
+    [$rebased, $words] = GoogleSeries::rebase($laBefore, $target, $sinceRename, $year);
+    checkEq("google rebase: $what, its master write not yet at Google, a day renamed at Google since: the rename is kept on its day, the plan's days beside it",
+        [['2027-01-11 18:00:00', '2027-01-25 18:00:00'], 'Own notes for the day.', 'Renamed at Google', ['title'], ['2027-01-18 18:00:00'], $said],
+        [array_keys($rebased['exceptions']), $rebased['exceptions']['2027-01-11 18:00:00']['description'] ?? null, $rebased['exceptions']['2027-01-25 18:00:00']['title'] ?? null,
+            $rebased['exceptions']['2027-01-25 18:00:00']['own'] ?? null, $rebased['skips'], $words]);
+}
+// A shorter series (four times to three): Mon 25 Jan is no day of it any more, so no step can reach it. The rename made
+// there is named, never sent; a deletion made on a day it keeps (Mon 4 Jan) is carried.
+$shorter = $seriesOf($gm(['rrule' => 'FREQ=WEEKLY;COUNT=3'] + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-11 18:00:00', '2027-01-18 18:00:00');
+$now = $sinceRename;
+$now['cancelled']['2027-01-04 18:00:00'] = $now['skips']['2027-01-04 18:00:00'] = true;
+[$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year);
+checkEq('google rebase: a shorter series, its master write not yet at Google: a rename on the day it drops is named as not kept and no day is made of it; a deletion on a day it keeps is carried',
+    [['2027-01-11 18:00:00'], ['2027-01-04 18:00:00', '2027-01-18 18:00:00'], [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because the series now ends before that day.']],
+    [array_keys($rebased['exceptions']), $rebased['skips'], $words]);
+[, $words] = GoogleSeries::rebase($laBefore, $shorter, $now, $year, 'since this change stopped', false, true);
+checkEq('google rebase: the same where the series is shorter because the change split it there (a series follows): the day is still there, and the reason says so',
+    [$dateWords(25) . ' was renamed at Google since this change stopped; that change is not kept, because this change split the series before that day.'], $words);
+[$rebased, $words] = GoogleSeries::rebase($laBefore, $shorter, $nowOf($shorter, true), $year);
+checkEq('google rebase: the shorter series once its master write landed (Google dropped what was past the end itself): the plan whole, nothing said',
+    [$daysOf($shorter), []], [$daysOf($rebased), $words]);
+// A drag a week along the pattern that landed (its answer lost): 11 Jan edited and 25 Jan skipped before, so the plan has
+// the edited day on 18 Jan and the skip on 1 Feb. Google kept the old record and the old skip at their old keys (probe
+// 3.5), which is the write's own effect. And the day the plan moves the edited day onto, 18 Jan, was deleted at Google
+// since: the deletion stands, and since the plan put an edited day there it is named, not kept in silence.
+$dragBefore = $seriesOf($laMaster, '2027-01-11 18:00:00', '2027-01-25 18:00:00');
+$dragged = $seriesOf($gm(['start_utc' => '2027-01-11 18:00:00', 'end_utc' => '2027-01-11 19:00:00'] + $forms['10:00 Los Angeles, weekly'][0]), '2027-01-18 18:00:00', '2027-02-01 18:00:00');
+$now = ['master' => $dragged['master'], 'records' => ['2027-01-11 18:00:00' => $dragBefore['exceptions']['2027-01-11 18:00:00']],
+    'cancelled' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'skips' => ['2027-01-25 18:00:00' => true, '2027-01-18 18:00:00' => true], 'etags' => [], 'ids' => []];
+[$rebased, $words, $conflicts] = GoogleSeries::rebase($dragBefore, $dragged, $now, $year);
+checkEq('google rebase: a drag that landed, the day the edited day moves onto deleted at Google since: it stays deleted and is named; the old skip Google kept at its old key is the write\'s own',
+    [[], ['2027-01-18 18:00:00', '2027-02-01 18:00:00'], [$dateWords(18) . ' was deleted at Google since this change stopped; it stays deleted.'], [['2027-01-18 18:00:00', 'day']]],
+    [array_keys($rebased['exceptions']), $rebased['skips'], $words, $conflicts]);
+
+// ---- What the condition believes a record holds of a field the day does not own (sameAsStored) ----
+// The series was given a link. It is not proven that Google writes a series' link into its records, so an edited
+// day's record holding either the series' link or the link it held before (none) is as stored; under each answer
+// Google may give, the series is no "changed at Google", and the steps send the day its link where it lacks it.
+$linkUrl = 'https://example.test/sample';
+$linkMaster = ['id' => 1, 'uid' => 'smpl7@google.com', 'google_event_id' => 'smpl7', 'title' => 'Sample series', 'description' => null, 'location' => null, 'status' => 'confirmed', 'url' => $linkUrl,
+    'start_utc' => '2027-01-04 00:00:00', 'end_utc' => '2027-01-04 01:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=4', 'exdates_json' => null];
+$linkRow = ['id' => 2, 'recurrence_instance_utc' => '2027-01-11 00:00:00', 'description' => 'Own notes for the day.', 'url' => null, 'override_fields' => '["description"]',
+    'start_utc' => '2027-01-11 00:00:00', 'end_utc' => '2027-01-11 01:00:00'] + $linkMaster;
+$source = static fn(?string $url): array => $url === null ? [] : ['source' => ['url' => $url, 'title' => 'example.test']];
+$linkItem = ['id' => 'smpl7', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'confirmed', 'summary' => 'Sample series',
+    'start' => $utc('2027-01-04T00:00:00Z'), 'end' => $utc('2027-01-04T01:00:00Z'), 'recurrence' => ['RRULE:FREQ=WEEKLY;COUNT=4']] + $source($linkUrl);
+$linkRecord = static fn(?string $url): array => ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'confirmed', 'summary' => 'Sample series',
+    'description' => 'Own notes for the day.', 'recurringEventId' => 'smpl7', 'originalStartTime' => $utc('2027-01-11T00:00:00Z'), 'start' => $utc('2027-01-11T00:00:00Z'), 'end' => $utc('2027-01-11T01:00:00Z')] + $source($url);
+$linkTarget = GoogleSeries::stateOf($linkMaster, [$linkRow]);
+checkEq('google condition: a series given a link, Google leaving the edited day\'s record without it: as stored, and the day is sent its link',
+    [true, [['exception', 'smpl7_20270111T000000Z', $linkUrl]]],
+    [GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [$linkRow]),
+        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['source']['url'] ?? null], GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord(null)]))]);
+checkEq('google condition: Google having written the link into the record: as stored, nothing to send',
+    [true, []], [GoogleSeries::sameAsStored([$linkItem, $linkRecord($linkUrl)], 'smpl7', $linkMaster, [$linkRow]), GoogleSeries::stepsFor($linkTarget, [$linkItem, $linkRecord($linkUrl)])]);
+$droppedRecord = ['id' => 'smpl7_20270111T000000Z', 'iCalUID' => 'smpl7@google.com', 'etag' => '"e3"', 'status' => 'cancelled', 'summary' => 'Sample series'];
+checkEq('google condition: Google having dropped the record (the rows as a store of that leaves them, the day\'s row gone): as stored, and the plan\'s day is sent whole',
+    [true, [['exception', 'smpl7_20270111T000000Z', 'Own notes for the day.']]],
+    [GoogleSeries::sameAsStored([$linkItem, $droppedRecord], 'smpl7', $linkMaster, []),
+        array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['description'] ?? null], GoogleSeries::stepsFor($linkTarget, [$linkItem, $droppedRecord]))]);
+checkEq('google condition: the record given another link at Google is a change made there; so is any link on a day that owns its own',
+    [false, false, true], [
+        GoogleSeries::sameAsStored([$linkItem, $linkRecord('https://example.test/other')], 'smpl7', $linkMaster, [$linkRow]),
+        GoogleSeries::sameAsStored([$linkItem, $linkRecord($linkUrl)], 'smpl7', $linkMaster, [['override_fields' => '["description","url"]'] + $linkRow]),
+        GoogleSeries::sameAsStored([$linkItem, $linkRecord(null)], 'smpl7', $linkMaster, [['override_fields' => '["description","url"]'] + $linkRow]),
+    ]);
+checkEq('google condition: a field Google is proven to write into its records gets no such latitude (the record keeping an old title is a change)',
+    false, GoogleSeries::sameAsStored([['summary' => 'Sample series renamed'] + $linkItem, $linkRecord($linkUrl)], 'smpl7', ['title' => 'Sample series renamed'] + $linkMaster, [['title' => 'Sample series'] + $linkRow]));
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

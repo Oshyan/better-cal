@@ -1,0 +1,32 @@
+{
+    "about": "A day given a tag here, then notes of its own on the same day, then the bare Undo of the notes: the undo takes the notes back and the row stays, since it still owns its tag (x-undo-fields by the retention rule: a row its entry only changed goes exactly when what the undo leaves of it owns nothing and holds nothing here alone). Its oracle probe removes the row after the undo, which must be caught.",
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "exact",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-03-01 10:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.3,
+            "what": "tags"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0.0,
+            "target": "row"
+        }
+    ]
+}

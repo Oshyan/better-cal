@@ -500,7 +500,7 @@ final class Feeds
             return null;
         }
         $id = (int) ($row['id'] ?? 0);
-        $fields = self::heldHere($own ?? OwnFields::decode($row['override_fields'] ?? null) ?? [], $row);
+        $fields = self::heldHere($own ?? OwnFields::storedIn($db, $row), $row);
         $refs = $id > 0 ? (OwnFields::references($db, [$id])[$id] ?? []) : [];
         return $fields === [] && $refs === [] ? null : ['fields' => $fields, 'refs' => $refs];
     }
@@ -598,13 +598,7 @@ final class Feeds
      */
     public function ownOf(array $row, array $master): array
     {
-        $known = OwnFields::decode($row['override_fields'] ?? null);
-        if ($known !== null) {
-            return $known;
-        }
-        $of = fn(string $table, string $col, array $r): array => array_column($this->db->all("SELECT $col FROM $table WHERE event_id = ?", [(int) ($r['id'] ?? 0)]), $col);
-        return OwnFields::infer($row, $master, $of('event_tags', 'tag_id', $row), $of('event_tags', 'tag_id', $master),
-            $of('event_people', 'person_id', $row), $of('event_people', 'person_id', $master));
+        return OwnFields::storedIn($this->db, $row, $master);
     }
 
     /**
@@ -615,8 +609,9 @@ final class Feeds
      * series (a day with no parent: the calendar knew one occurrence, and
      * its series arrives now) was never read against a series, so its list
      * says nothing: every field is read by equality with the series as
-     * stored now, its tags and people included (ownOf), and what was given
-     * to it here is its own. The one reading for a poll and a CalDAV PUT.
+     * stored now, its tags and people included (ownUnder), and what was
+     * given to it here is its own. The one reading for a poll and a CalDAV
+     * PUT.
      *
      * @param ?array<string,mixed> $current the row as stored, null for a new one
      * @param array<string,mixed> $columns what the record writes
@@ -628,15 +623,31 @@ final class Feeds
     {
         if ($current !== null && self::heldBeforeSeries($current) && $masterId !== null
             && ($series = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterId])) !== null) {
-            return $this->ownOf(['override_fields' => null] + array_merge($current, $columns), $series);
+            return $this->ownUnder(array_merge($current, $columns), $series);
         }
-        return OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $master);
+        return OwnFields::afterSync($current, $current === null ? $columns : array_merge($current, $columns), $master,
+            $current === null ? null : OwnFields::storedIn($this->db, $current));
     }
 
     /** A day's row held before its series: a key, and no series above it. Pure. */
     public static function heldBeforeSeries(array $row): bool
     {
         return ($row['recurrence_instance_utc'] ?? null) !== null && ($row['recurrence_parent_id'] ?? null) === null;
+    }
+
+    /**
+     * What a day's row held before its series owns once that series stands
+     * above it: the one reading of a day's row stored with no list
+     * (OwnFields::storedIn), which is what such a row is to this series,
+     * since whatever list it has was written with no series to read it
+     * against. So: the fields that differ from the series, its tags and
+     * people compared as sets.
+     *
+     * @return list<string>
+     */
+    private function ownUnder(array $row, array $series): array
+    {
+        return OwnFields::storedIn($this->db, ['override_fields' => null, 'recurrence_parent_id' => (int) $series['id']] + $row, $series);
     }
 
     /**
@@ -723,18 +734,14 @@ final class Feeds
      * row with it); a day with none, or several and not the key, is gone.
      * A rule the expander can't read keeps the row at its key, its other
      * fields refreshed: it can't be told whether the day is still there.
-     * A caller that knows the day the key names without holding the series
-     * as it was (an undo: the form and zone its entry's key was written in,
-     * Undo::dayNow) gives it as $day (Calc::dayOf), and the image is read
-     * from there. Pure.
+     * Pure.
      *
      * @param array<string,mixed> $row the edited day's row
      * @param array<string,mixed>|null $was its series' row before this poll
      * @param array<string,mixed> $series its series' row after it
-     * @param ?int $day the day the row's key names, when the caller knows it
      * @return array<string,mixed>|null
      */
-    public static function ofSeries(array $row, ?array $was, array $series, ?int $day = null): ?array
+    public static function ofSeries(array $row, ?array $was, array $series): ?array
     {
         $key = (string) $row['recurrence_instance_utc'];
         $allDay = (int) ($series['all_day'] ?? 0) === 1;
@@ -783,7 +790,7 @@ final class Feeds
         } catch (\InvalidArgumentException) {
             $skips = [];
         }
-        $dn = $day ?? ($calcOf($was) ?? $calc)->dnOf($key);
+        $dn = ($calcOf($was) ?? $calc)->dnOf($key);
         try {
             $on = array_values(array_diff($calc->keysOn($dn), $skips));
         } catch (\BetterCal\Domain\Series\WalkIncomplete) {
@@ -1097,7 +1104,7 @@ final class Feeds
             $was = $of['was'];
             // A day held before its series was never read against one: its
             // list says nothing, and its fields are read by equality (ownAfter).
-            $own = self::heldBeforeSeries($now) ? $this->ownOf(['override_fields' => null] + $now, $series) : $this->ownOf($now, $was ?? $series);
+            $own = self::heldBeforeSeries($now) ? $this->ownUnder($now, $series) : $this->ownOf($now, $was ?? $series);
             if ($carried && self::recordHolds($own, $now, $series, $was)) {
                 continue;
             }
@@ -1512,9 +1519,13 @@ final class Feeds
             // Every series this poll changed: each day not owning its tags or
             // people holds the series' (OwnFields::follow), a day kept while
             // its series was away and put under the series made anew included.
-            foreach (array_keys($changedUids) as $uid) {
-                if (isset($masterIdByUid[$uid])) {
-                    OwnFields::follow($this->db, (int) $masterIdByUid[$uid]);
+            // Each series as its rows stand under it now, read back after the poll's writes.
+            foreach (array_chunk(array_map('strval', array_keys($changedUids)), 500) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $series = $this->db->all("SELECT DISTINCT COALESCE(recurrence_parent_id, id) AS series FROM events WHERE calendar_id = ? AND uid IN $in AND deleted_at IS NULL
+                    AND (recurrence_parent_id IS NOT NULL OR rrule IS NOT NULL)", array_merge([$calendarId], $params));
+                foreach ($series as $s) {
+                    OwnFields::follow($this->db, (int) $s['series']);
                 }
             }
             self::assertSyncDeadline($deadline);

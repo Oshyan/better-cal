@@ -1,0 +1,52 @@
+{
+    "n": 9101,
+    "seed": 0,
+    "series": {
+        "family": "dayset",
+        "rrule": "FREQ=YEARLY;BYYEARDAY=290",
+        "import": true,
+        "bound": "count",
+        "boundAt": 11,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-03-01 23:30",
+        "length": 120,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 3,
+            "kind": "skip"
+        }
+    ],
+    "acted": 1,
+    "from": "occurrence",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {
+        "edit": {}
+    },
+    "preselected": {
+        "edit": true
+    }
+}

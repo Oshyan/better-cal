@@ -1,0 +1,48 @@
+{
+    "about": "A daily series at 10:00 Los Angeles with a day given its own notes, renamed from a day on (a split that changes no time); its first write, the old series' new end, meets the network down; a day of the part is deleted at Google in the series as it still is there; then Finish: both series as planned, the edited day's notes on its own date, the deletion not kept and named once by its date (it is past the old series' new end, where no step can reach it), nothing on a neighbouring day (x-day, x-finish).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 10:00",
+        "length": 60,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 36000,
+        "otherZone": "America/Denver"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0.2,
+            "k": 1,
+            "write": "w-follow",
+            "what": "title"
+        },
+        {
+            "do": "r-day-delete",
+            "pick": 0.7,
+            "mark": "g"
+        },
+        {
+            "do": "finish",
+            "pick": 0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

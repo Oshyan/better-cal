@@ -328,6 +328,10 @@ final class Driver
                 }
             }
             Prof::mark('undo');
+            if (!Product::$seriesUndo && $this->checkHeldBack(Product::seriesChanged($s0['events'], $s1['events']))) {
+                // The product's default in 1.5.5: a whole-series change on a Google calendar stays.
+                return $this->result($path);
+            }
             if ($this->undoLatest('f-undo', 'undo')) {
                 $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),
                     'after Undo on a Google calendar every row is as before the edit by its place in the series, but for the etags Google changes on every write (a day Google gives back may come back under a new id here)');
@@ -967,6 +971,12 @@ final class Driver
         $ruleText = null;
         $boundSent = null;
         $oldBound = $this->boundOf((string) $master['rrule']);
+        if (str_starts_with($oldBound, ';COUNT=')) {
+            // A client sends the COUNT the API gives it, the events the series shows: for a start stored a period before a
+            // first day in a skipped hour, the stored count less that stored day (api-contract, "Every COUNT the API speaks
+            // counts the events the series shows"), never the stored text (seed 48271 case 1087).
+            $oldBound = ';COUNT=' . ((int) substr($oldBound, 7) - self::shownFrom($st));
+        }
         // The editor writes an end in the form of the kind the series will be (a date when all-day).
         $toAllDay = $v['allDay'] ? !$st['allDay'] : $st['allDay'];
         $toTz = $toAllDay ? 'UTC' : ($st['allDay'] ? $v['toZone'] : ($v['zone'] ?? $st['tz']));
@@ -1026,7 +1036,8 @@ final class Driver
             return $shape->count === null && $shape->until === null;
         }
         if (isset($b['count'])) {
-            return $shape->count === (int) $b['count'];
+            // A COUNT sent is the events shown; the stored one counts a start stored a period before a skipped hour too.
+            return $shape->count !== null && $shape->count - self::shownFrom($st) === (int) $b['count'];
         }
         if ($shape->until === null || $st['raw'] === []) {
             return false;
@@ -1523,7 +1534,10 @@ final class Driver
         $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
         $skips = array_map(static fn(string $k): string => $dateOf($k, $allDay), Recurrence::decodeExdates($m['exdates_json'] ?? null));
         foreach ($days as $d) {
-            $on = array_values(array_filter($rows, static fn(array $r): bool => $dateOf((string) $r['start_utc'], (int) $r['all_day'] === 1) === $d['date']));
+            // A day is its key's date under the series' form (README, Google: Identity), never what merely shows on that
+            // date: a day moved by its own date onto a skipped or edited day's date is another day there (two days on one
+            // date is allowed, Known, Accepted Differences). So a skip is judged by the skip and by a row of its own date.
+            $on = array_values(array_filter($rows, static fn(array $r): bool => $dateOf((string) $r['recurrence_instance_utc'], $allDay) === $d['date']));
             $ok = match ($d['kind']) {
                 'skip' => in_array($d['date'], $skips, true) && $on === [],
                 'edit' => array_filter($on, static fn(array $r): bool => $r['description'] === 'Own notes for the day.' && $r['location'] === 'Sample Room') !== [],
@@ -1760,6 +1774,52 @@ final class Driver
         }
         $other = $this->db->scalar('SELECT id FROM events WHERE user_id = ? AND id >= ? AND recurrence_parent_id IS NULL AND rrule IS NOT NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$this->userId, $this->firstId]);
         return $other === null ? null : (int) $other;
+    }
+
+    /**
+     * f-held (Product::$seriesUndo off, the product's default in 1.5.5; decisions.md, "Undo of a whole-series change on a
+     * Google calendar waits for 1.5.6"): the edit changed a series as Google holds it (Product::seriesChanged, from the
+     * rows), so it wrote an entry of kind series; each such entry, undone by its id, is refused 409 not_undoable with the
+     * contract's words, before anything is read or sent and with nothing written; then the bare Undo passes over every
+     * entry of kind series (the series' own making on a Google calendar among them) to the newest own change before it,
+     * or has nothing to undo. Which entries are of kind series is read from the journal's details as stored.
+     */
+    private function checkHeldBack(bool $changed): bool
+    {
+        $series = "JSON_UNQUOTE(JSON_EXTRACT(details_json, '$.google.kind')) = 'series'";
+        $mine = array_map('intval', array_column($this->db->all("SELECT id FROM mutations WHERE user_id = ? AND id > ? AND $series ORDER BY id DESC", [$this->userId, $this->entryBeforeEdit]), 'id'));
+        if (!$changed && $mine === []) {
+            return false; // no whole-series change: Undo as on any Google edit (f-undo)
+        }
+        $this->check('f-held', !$changed || $mine !== [], 'a change to a series as Google holds it records an entry of kind series', []);
+        $undone = fn(): array => array_column($this->db->all('SELECT id, undone FROM mutations WHERE user_id = ? ORDER BY id', [$this->userId]), 'undone', 'id');
+        foreach ($mine as $entry) {
+            $s = $this->snapshot();
+            $u = $undone();
+            $sent = count($this->google->fake->requests);
+            $error = $message = null;
+            try {
+                $this->undo->undoById($this->userId, $entry);
+            } catch (HttpError $e) {
+                [$error, $message] = [$e->errorCode, $e->getMessage()];
+            }
+            $this->check('f-held', $error === 'not_undoable' && $message === Product::SERIES_UNDO_OFF, 'an undo of a whole-series change on a Google calendar is refused not_undoable with the contract\'s words while the setting is off', ['entry' => $entry, 'error' => $error, 'message' => $message]);
+            $this->check('f-held', $this->snapshot() == $s && $undone() == $u && count($this->google->fake->requests) === $sent, 'the refused undo writes nothing and sends Google nothing', ['entry' => $entry, 'sent' => count($this->google->fake->requests) - $sent]);
+        }
+        $this->ran('f-held', 'whole-series undo held back');
+        $want = $this->db->scalar("SELECT MAX(id) FROM mutations WHERE user_id = ? AND undone = 0 AND source IN ('web', 'quickadd', 'review', 'rsvp', 'dedup:owner') AND (details_json IS NULL OR NOT ($series)) AND (before_json IS NOT NULL OR after_json IS NOT NULL)", [$this->userId]);
+        $error = null;
+        try {
+            $this->undo->undoLatest($this->userId);
+        } catch (HttpError $e) {
+            $error = $e->errorCode;
+        }
+        $now = $undone();
+        $this->check('f-held', array_filter($mine, static fn(int $e): bool => (int) ($now[$e] ?? 0) === 1) === [], 'the bare Undo passes over a whole-series change on a Google calendar while the setting is off', ['entries' => $mine]);
+        // That change's own undo may be refused (a setup day the whole-series change touched since is stale): the bare Undo
+        // still went to it, never answering for the held-back entry.
+        $this->check('f-held', $want === null ? $error === 'nothing_to_undo' : ((int) ($now[(int) $want] ?? 0) === 1 || !in_array($error, [null, 'not_undoable', 'nothing_to_undo'], true)), 'the bare Undo takes the change before it', ['want' => $want, 'error' => $error]);
+        return true;
     }
 
     private function undoLatest(string $inv, string $what): bool

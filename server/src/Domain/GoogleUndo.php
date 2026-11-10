@@ -220,7 +220,7 @@ final class GoogleUndo
         if ($target === null) {
             return $before;
         }
-        $owned = $wasRow === null ? [] : (OwnFields::decode($wasRow['override_fields'] ?? null) ?? OwnFields::googleFields());
+        $owned = $wasRow === null ? [] : OwnFields::stored($wasRow, $master);
         $series = self::bodyOf(Feeds::followed($base, $target));
         foreach (array_diff(GoogleWriter::allowedKeys(), GoogleWriter::keysOf(OwnFields::googleHeld($owned))) as $key) {
             if (array_key_exists($key, $series)) {
@@ -235,13 +235,14 @@ final class GoogleUndo
     /**
      * A day is its series' uid and its occurrence: the day an entry names,
      * where it is now. A later change that carried it to another occurrence
-     * (a times or zone change for the whole series, Undo::dayNow) carried
-     * it as any change carries a day, so the entry's undo acts on it there,
-     * the day taking its series' values at that occurrence (rule A). An
-     * entry about a day that is no longer an occurrence of the series it
-     * names (a later "this and following" took it into a series of its own,
-     * a rule or bound change dropped it) is refused as stale, plainly, with
-     * nothing sent. An id that names no day of a series is itself.
+     * and recorded it (Undo::dayNow, the gate) carried it as any change
+     * carries a day, so the entry's undo acts on it there, the day taking
+     * its series' values at that occurrence (rule A). A day no record places
+     * after its series was re-placed, and a day that is no longer an
+     * occurrence of the series the entry names (a later "this and following"
+     * took it into a series of its own, a rule or bound change dropped it),
+     * is refused by that gate with not_undoable, forced or not, with nothing
+     * sent. An id that names no day of a series is itself.
      * dayAt answers the day's whole identity, its Google id and its
      * occurrence key there (null for no day of a series), and the undo
      * acts on that alone: the remote id, the skip here and the ground its
@@ -272,8 +273,7 @@ final class GoogleUndo
             return ['googleId' => $googleId, 'key' => (string) $key];
         }
         if ($master !== null) {
-            // The id says the form its key was written in (a date or an instant); the key alone does not.
-            $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key, [$of['allDay'], null]);
+            $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
             if ($at !== null) {
                 // Its identity now: the series id, its occurrence now and the series' form now. Never the
                 // id the entry journaled, which names the form of then (a series made all-day since keeps
@@ -281,7 +281,7 @@ final class GoogleUndo
                 return ['googleId' => GoogleWriter::instanceId($of['series'], $at, (int) $master['all_day'] === 1), 'key' => $at];
             }
         }
-        throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');
+        throw Undo::dayGone();
     }
 
     /**
@@ -305,8 +305,8 @@ final class GoogleUndo
         // The series as it is with the day back: its skip of the day is what this undo takes away.
         $skips = array_values(array_diff(Recurrence::decodeExdates($master['exdates_json'] ?? null), [(string) $key]));
         $master['exdates_json'] = $skips === [] ? null : json_encode($skips);
-        // The removed row at the day's key now ($googleId is the day's id as the series stands, dayAt): the key it was
-        // removed at is one of the series as it was, and read under this one it is another day's values (its start).
+        // The removed row at the day's key now ($googleId is the day's id as the series stands, dayAt's exact answer): the key it
+        // was removed at is one of the series as it was, and beforeOver would read it against this one by its date.
         $row = $row === null ? null : array_merge($row, ['recurrence_instance_utc' => (string) $key]);
         $day = $row ?? (['recurrence_instance_utc' => (string) $key, 'recurrence_parent_id' => (int) $master['id'], 'override_fields' => '[]'] + $master);
         $body = $this->beforeOver($row !== null ? self::bodyOf($row) : [], $row ?? $day, $day, $master);
@@ -484,6 +484,13 @@ final class GoogleUndo
                 $dayKey = GoogleWriter::instanceOf($googleId)['key'] ?? null;
                 $at = static fn(?array $r): ?array => $r === null || $dayKey === null || ($r['recurrence_instance_utc'] ?? null) === null ? $r : array_merge($r, ['recurrence_instance_utc' => (string) $dayKey]);
                 $send = self::inverse($this->beforeOver($g['before'], $at($wasRow), $row ?? $at($leftRow)), $changed);
+                // What the edit itself is refused, its undo and redo are refused, before anything is sent: a day of a
+                // series that is all-day now can't be given a clock time at Google (Events::refuseTimedUnderAllDay).
+                $of = GoogleWriter::instanceOf($googleId);
+                $series = $of === null ? null : $writer->rowByGoogleId((int) $calendar['id'], $of['series']);
+                if ($series !== null && isset($send['start']['dateTime'])) {
+                    Events::refuseTimedUnderAllDay($series, 0);
+                }
                 // The event as it is now: its row, or, a day with no row
                 // here (the edit made it ordinary, or an undo removed the row
                 // the edit made), as Google shows it, read just before and
@@ -947,7 +954,7 @@ final class GoogleUndo
                 // A day the restored series no longer has is removed, and named by its row and date.
                 foreach ($rows as $row) {
                     if (in_array((int) $row['id'], array_map('intval', $writes['delete']), true)) {
-                        $own = OwnFields::decode($row['override_fields'] ?? null) ?? [];
+                        $own = OwnFields::storedIn($this->db, $row, $master);
                         $removed[] = Feeds::droppedDay($row, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
                     }
                 }

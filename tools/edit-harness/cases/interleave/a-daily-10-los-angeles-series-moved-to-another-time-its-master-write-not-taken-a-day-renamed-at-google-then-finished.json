@@ -1,0 +1,48 @@
+{
+    "about": "A daily series at 10:00 Los Angeles with a day given its own notes, moved to another time for all events; its master write meets the network down (journaled, Google still at 10:00); a day is renamed at Google at the old time; then Finish: the plan on every day, the edited day's notes on its own date, the rename not kept and named once by its date (the series' time changed), nothing sent to an id of the old time, nothing on a neighbouring day (x-day, x-finish).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 10:00",
+        "length": 60,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 36000,
+        "otherZone": "America/Denver"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0,
+            "k": 1,
+            "write": "w-all",
+            "what": "time"
+        },
+        {
+            "do": "r-day-rename",
+            "pick": 0.5,
+            "mark": "g"
+        },
+        {
+            "do": "finish",
+            "pick": 0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

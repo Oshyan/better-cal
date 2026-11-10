@@ -1,0 +1,59 @@
+{
+    "about": "A daily series at 19:00 New York, a day given a tag (a row), then notes and that undone, the series made all-day, other notes given to the same day, then the first notes redone: the day is placed by its own row, so staleness answers, stale_undo, with nothing written here or sent (x-day).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-04 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "Asia/Tokyo"
+    },
+    "steps": [
+        {
+            "do": "w-this-l",
+            "pick": 0.3,
+            "what": "tags",
+            "mark": "t"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0,
+            "what": "description",
+            "onMark": "t",
+            "mark": "d"
+        },
+        {
+            "do": "u-bare",
+            "pick": 0
+        },
+        {
+            "do": "w-all",
+            "pick": 0,
+            "what": "flip"
+        },
+        {
+            "do": "w-this-g",
+            "pick": 0,
+            "what": "description",
+            "onMark": "d"
+        },
+        {
+            "do": "redo",
+            "pick": 0,
+            "judge": {
+                "mark": "d",
+                "expect": "stale",
+                "anchor": "row"
+            }
+        }
+    ]
+}

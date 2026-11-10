@@ -2272,6 +2272,20 @@ final class GoogleSeries
                 continue;
             }
             $steps = json_decode((string) $row['steps_json'], true) ?: [];
+            // A pending undo or redo whose entry Finish's loader refuses (an older format): Review says
+            // so up front and offers Put back alone, never an action that will refuse.
+            $plan = json_decode((string) ($row['plan_json'] ?? ''), true);
+            $finishRefused = null;
+            if (is_array($plan) && isset($plan['undo'])) {
+                try {
+                    GoogleUndo::entryToFinish($db, $userId, $plan);
+                } catch (HttpError $e) {
+                    if ($e->errorCode !== 'not_undoable') {
+                        throw $e;
+                    }
+                    $finishRefused = $e->getMessage();
+                }
+            }
             $out[] = [
                 'id' => (int) $row['id'],
                 'calendarId' => (int) $row['calendar_id'],
@@ -2282,6 +2296,7 @@ final class GoogleSeries
                 'error' => (string) (($row['error'] ?? '') !== '' ? $row['error'] : self::STOPPED_WORDS),
                 'stepsDone' => count($steps),
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
+                'finishRefused' => $finishRefused,
             ];
         }
         return $out;
@@ -2991,9 +3006,13 @@ final class GoogleSeries
      * own steps follow the change's in the journal, so a Put back that
      * stops half way is put back again from where it got to.
      *
+     * $neither: the refusal's last words when Finish is refused too (a
+     * pending undo of an entry in an older format, GoogleUndo::neitherWay),
+     * in place of the sentence that points to Finish.
+     *
      * @return array{readbacks:array<string,list<array>>, differences:list<string>, targets:list<array>, left:list<string>}
      */
-    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null): array
+    public function putBack(int $userId, array $calendar, int $pendingId, ?\Closure $beforeSend = null, ?string $neither = null): array
     {
         $row = $this->pendingRow($userId, $pendingId);
         $befores = json_decode((string) $row['befores_json'], true) ?: [];
@@ -3097,7 +3116,7 @@ final class GoogleSeries
             $run[$i] = $b;
         }
         if ($left !== []) {
-            $words = implode(' ', $left) . ' Nothing was put back; Finish completes the change from what Google has now.';
+            $words = implode(' ', $left) . ' ' . ($neither ?? 'Nothing was put back; Finish completes the change from what Google has now.');
             $this->journaled(fn(Db $j) => $j->update('google_pending', ['status' => self::STATUS_HALF, 'error' => mb_substr($words, 0, 2000), 'updated_at' => Time::nowDb()], 'id = ?', [$pendingId]));
             $this->endUnlessTx($pendingId, true);
             throw new HttpError('google_changed_since', $words, 409, ['pending' => $pendingId, 'left' => $left]);

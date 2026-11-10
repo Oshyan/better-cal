@@ -221,15 +221,17 @@ final class ReviewController
                 'kind' => 'google_half',
                 'status' => 'open',
                 'title' => $half['title'],
+                // A pending undo whose entry is in an older format can't be finished
+                // (GoogleUndo::entryToFinish): said up front, and Put back offered alone.
                 'summary' => 'Half done at Google: ' . $half['summary'] . ' It stopped at step ' . ($half['stepsDone'] + 1) . ': ' . $half['error']
-                    . ' Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.',
+                    . ' ' . ($half['finishRefused'] ?? 'Finish sends the rest from what Google has now; Put back reverses every step done, only while nothing changed at Google since.'),
                 'createdAt' => $half['createdAt'],
                 'eventId' => $half['eventId'],
                 'detail' => $half,
-                'actions' => $canDecide ? [
-                    self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish"),
+                'actions' => $canDecide ? array_values(array_filter([
+                    $half['finishRefused'] === null ? self::action('finish', 'Finish', "/review/google-half/{$half['id']}/finish") : null,
                     self::action('put_back', 'Put back', "/review/google-half/{$half['id']}/put-back"),
-                ] : [],
+                ])) : [],
             ];
         }
         foreach ($this->plugins?->turnedOffByRevokedKey() ?? [] as $plugin) {

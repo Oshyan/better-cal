@@ -1,0 +1,26 @@
+{
+    "about": "A daily series at 20:00 New York (00:00 UTC the next day); one day tagged here, then given picked coordinates; the place changed for all events, so the day keeps its own place, text and coordinates; the series made all-day and stopped right after its master write, which drops the day's record at Google, so the store of the stopped change leaves the day's row showing the series' place with its coordinates gone; then Put back. The rows are as they were before the change: the day shows its own place and holds the coordinates picked for it (x-alone, x-putback).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-07-19 20:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 72000
+    },
+    "steps": [
+        {"do": "w-this-l", "pick": 0.933, "what": "tags"},
+        {"do": "w-this-l", "pick": 0.795, "what": "coords"},
+        {"do": "w-all", "pick": 0.073, "what": "location"},
+        {"do": "f-before", "pick": 0.0, "k": 2, "write": "w-all", "what": "flip"},
+        {"do": "putback", "pick": 0.0}
+    ]
+}

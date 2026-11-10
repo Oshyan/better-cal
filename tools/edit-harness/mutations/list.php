@@ -495,28 +495,48 @@ return [
             ],
         ),
     ],
-    // The journal format gate (rule 3 of 1.5.5): Finish of a pending undo gets its entry as it did before the one
-    // loader, the live row else the plan's copy, with no look at the format. Every Finish row of the table fails in
-    // both variants (Google is written to and the pending row changes), with the reviewer's probe and the open case;
-    // the backstops refuse after Google's writes, and a copy without `format` reaching one is a journaling misuse.
+    // The journal format gate (rule 3 of 1.5.5). Finish of a pending undo or redo meets the one loader twice: Review's
+    // Finish asks it for the entry (SeriesPlans::recoverTx), and GoogleSeries::finish, the lowest public way to complete
+    // one, asks it before the row is marked or Google is asked, so a caller that skips the first still meets the second
+    // (bypassing recoverTx's ask alone trips nothing, by construction). The first mutation opens the loader for Finish
+    // (GoogleUndo::entryToFinish loads the entry as before, the live row else the copy, with no look at the format):
+    // every Finish row of the table fails in both variants, the direct rows too, with the reviewer's probe, Review's
+    // offer and the open case; a copy without `format` reaching a backstop is a journaling misuse. The second removes
+    // the ask in GoogleSeries::finish alone: Review's Finish still refuses, and the direct rows fail.
     [
-        'id' => 'journal-gate-finish-bypass', 'file' => 'server/src/Domain/SeriesPlans.php', 'dbtest' => 'journal-gate',
-        'what' => 'Review\'s Finish of a pending undo loads the entry it undoes without the one loader (Undo::entryToTakeBack)',
-        'patch' => [["                \$undone = GoogleUndo::entryToFinish(\$this->db, \$userId, \$plan);",
-            "                \$undone = \$this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) \$plan['undo'], \$userId]) ?? (is_array(\$plan['entry'] ?? null) ? \$plan['entry'] + ['user_id' => \$userId] : ['id' => (int) \$plan['undo'], 'user_id' => \$userId, 'entity_id' => 0, 'summary' => '', 'before_json' => null, 'after_json' => null, 'details_json' => null, 'format' => Undo::JOURNAL_FORMAT]);"]],
+        'id' => 'journal-gate-loader-open', 'file' => 'server/src/Domain/GoogleUndo.php', 'dbtest' => 'journal-gate',
+        'what' => 'Finish gets the entry a pending undo takes back without the one loader\'s format look (GoogleUndo::entryToFinish)',
+        'patch' => [["            return Undo::entryToTakeBack(\$db, \$userId, (int) \$plan['undo'], is_array(\$plan['entry'] ?? null) ? \$plan['entry'] : []);",
+            "            return \$db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) \$plan['undo'], \$userId]) ?? (is_array(\$plan['entry'] ?? null) ? \$plan['entry'] + ['user_id' => \$userId] : ['id' => (int) \$plan['undo'], 'user_id' => \$userId, 'entity_id' => 0, 'summary' => '', 'before_json' => null, 'after_json' => null, 'details_json' => null, 'format' => Undo::JOURNAL_FORMAT]);"]],
         'checks' => array_merge(
             array_merge(...array_map(static fn(string $variant): array => array_merge(...array_map(static fn(string $row): array => array_map(
-                static fn(string $what): string => "journal gate [$variant]: SeriesPlans::googleFinish$row: $what",
+                static fn(string $what): string => "journal gate [$variant]: $row: $what",
                 ['refused with the code and words', 'no request to Google of any kind', 'nothing written (every table as it was)'],
-            ), [' of a pending undo', ' of a pending redo', ', entry gone, its copy older', ', entry gone, its copy without format', ', entry gone, no copy', ', a redo, entry gone, its copy without format'])),
+            ), ['SeriesPlans::googleFinish of a pending undo', 'SeriesPlans::googleFinish of a pending redo', 'SeriesPlans::googleFinish, entry gone, its copy older',
+                'SeriesPlans::googleFinish, entry gone, its copy without format', 'SeriesPlans::googleFinish, entry gone, no copy', 'SeriesPlans::googleFinish, a redo, entry gone, its copy without format',
+                'GoogleSeries::finish (direct)', 'GoogleSeries::finish (direct), entry gone, its copy without format'])),
                 ['077 run (snapshots dropped)', 'snapshots kept'])),
             [
                 'after the upgrade: Finish refused (409 not_undoable, the words), no request to Google, the pending row exactly as it was, the tags as the stop left them, Google\'s title as the stop left it',
+                'Put back alone, the summary ending with why Finish can\'t complete it',
+                'Put back refuses: Google changed since; its words never point to Finish',
                 'Finish refuses with its words, no request to Google; the pending row stays half done with Put back\'s words',
                 'the pending row is exactly as Put back\'s refusal left it',
+                'Review still lists it, saying why Finish is not offered',
                 'every change to undoable data was journaled in Undo::write',
             ],
         ),
+    ],
+    [
+        'id' => 'journal-gate-finish-direct', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'journal-gate',
+        'what' => 'GoogleSeries::finish, called directly, completes a pending undo without asking the one loader',
+        'patch' => [["        if (is_array(\$plan) && isset(\$plan['undo'])) {\n            GoogleUndo::entryToFinish(\$this->db, \$userId, \$plan);\n        }\n        \$row = \$this->pendingRow(\$userId, \$pendingId);",
+            "        \$row = \$this->pendingRow(\$userId, \$pendingId);"]],
+        'checks' => array_merge(...array_map(static fn(string $variant): array => array_merge(...array_map(static fn(string $row): array => array_map(
+            static fn(string $what): string => "journal gate [$variant]: $row: $what",
+            ['refused with the code and words', 'no request to Google of any kind', 'nothing written (every table as it was)'],
+        ), ['GoogleSeries::finish (direct)', 'GoogleSeries::finish (direct), entry gone, its copy without format'])),
+            ['077 run (snapshots dropped)', 'snapshots kept'])),
     ],
     // Provider identity (rule 1 of 1.5.5): what a master write leaves at Google is predicted by each record's id under
     // the old master's form (GoogleSeries::afterMaster, S1). Here the id is read in the new master's form instead, so
@@ -765,5 +785,14 @@ return [
         'what' => 'on a calendar here a row or a skip a snapshot holds comes back though the series\' time, zone or form changed since',
         'patch' => [["        \$since = \$this->replacing(\$series, \$userId, \$entryId)['entries'];\n        if (\$since !== []) {", "        \$since = \$this->replacing(\$series, \$userId, \$entryId)['entries'];\n        if (false) {"]],
         'checks' => $gateSnapshot,
+    ],
+    // Coming up in an order the contract does not allow: every stated order reversed (days, all-day first, instant). c-next
+    // accepts either order only among entries that tie on all three, so reversing the stated orders still trips it, on a
+    // case whose first entries tie on one all-day date as on one with several occurrences a day.
+    [
+        'id' => 'next-days-reversed', 'file' => $model, 'checks' => ['c-next'],
+        'what' => 'coming up sorted latest day first, a timed entry before the all-day ones on its day',
+        'patch' => [['usort($out, static fn(array $a, array $b): int => $order($a) <=> $order($b));', 'usort($out, static fn(array $a, array $b): int => $order($b) <=> $order($a));']],
+        'cases' => ['next-an-edited-day-and-the-day-acted-on-tied-on-one-all-day-date', 'next-several-occurrences-on-one-day'],
     ],
 ];

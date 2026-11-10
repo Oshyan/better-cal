@@ -350,7 +350,7 @@ final class Runner
 
     private function driver(): Driver
     {
-        $u = \freshUser($this->db);
+        $u = Product::account($this->db);
         $other = (int) $this->domains->calendars->create($u, ['name' => 'Sample other calendar'])['id'];
         if ($this->google) {
             $stand = GoogleStand::make($this->db, $this->domains->undo, $u);

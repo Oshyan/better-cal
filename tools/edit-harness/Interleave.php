@@ -81,8 +81,6 @@ final class Interleave
     private array $done = [];
     /** @var list<array> what each step touched (series, field, day), for staleness and Finish */
     private array $touches = [];
-    /** @var array<string,true> series changed at Google since the app last learned their etag (a poll, or a write of its own there) */
-    private array $unseen = [];
     /** @var array<string,true> series whose etag alone changed at Google since the last poll (r-etag) */
     private array $etagOnly = [];
     /** The change a w-race step (or an undo step given "race") made at Google between the master write and its read-back: [gid, key or null for the master, title], or null. */
@@ -303,7 +301,6 @@ final class Interleave
         $this->pendings = [];
         $this->entryStates = [];
         $this->etagOnly = [];
-        $this->unseen = [];
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->step = 0;
         if ($this->createSeries($spec['series']) === null) {
@@ -604,6 +601,17 @@ final class Interleave
             }
         }
         return $out;
+    }
+
+    /**
+     * The app's writes the stand-in took between two snapshots: those it answered 2xx (a lost answer was taken). A
+     * request it refused changed nothing there, so "writes nothing at Google" is judged by these and by what the
+     * stand-in holds, never by every request sent; what a request carries (If-Match, its keys) and "sends nothing"
+     * still read every request (writesBetween).
+     */
+    private function takenBetween(array $s0, array $s1): array
+    {
+        return array_values(array_filter($this->writesBetween($s0, $s1), static fn(array $q): bool => (int) ($q['status'] ?? 200) < 300));
     }
 
     // ---- the steps ---------------------------------------------------------------------
@@ -1280,12 +1288,11 @@ final class Interleave
         if ($do === 'r-gonly') {
             // A change at Google only in fields the rows here don't hold: no conflict for a write, whose body never carries
             // them (decisions.md, "A write is conditional on what is shown here; Put back on everything"); Put back still
-            // counts it (unseen, and the pending change's since).
+            // counts it (the pending change's since).
             $this->etagOnly[$gid] = true;
         } else {
             $this->dirty[$gid] = true;
         }
-        $this->unseen[$gid] = true;
         foreach ($touched as $t) {
             $this->touches[] = ['step' => $this->step, 'gid' => $gid, 'remote' => true, 'polled' => false] + $t;
         }
@@ -1438,7 +1445,9 @@ final class Interleave
             // Passed over: an undo's own entry. A redo's entry (one that undoes an undo's) is a change of its own, so the bare
             // Undo after an edit, its undo and a redo takes the redo back (decisions.md, "The bare Undo steps one change further
             // back on a Google calendar as it does locally", settled 2026-11-09).
-            $passedOver = fn(array $e): bool => $this->hops((int) $e['id']) % 2 === 1;
+            // With google_series_undo off (Product::$seriesUndo), the product's default in 1.5.5, an entry of kind series is
+            // passed over too (decisions.md, "Undo of a whole-series change on a Google calendar waits for 1.5.6").
+            $passedOver = fn(array $e): bool => $this->hops((int) $e['id']) % 2 === 1 || $this->heldBack((int) $e['id']);
             foreach ($entries as $e) {
                 if ((int) $e['undone'] === 0 && in_array($e['source'], ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'], true) && !$passedOver($e)) {
                     $expect = (int) $e['id'];
@@ -1471,6 +1480,20 @@ final class Interleave
         $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
         $this->undo->undoById($this->userId, $id);
         return ['entry' => $id, 'asked' => $this->lastAsked];
+    }
+
+    /**
+     * Whether the account's setting holds this entry's undo back: google_series_undo off (as the run made the account,
+     * Product::account, read from the account's stored settings) and the entry of kind series, as the journal stores it.
+     */
+    private function heldBack(int $entry): bool
+    {
+        $settings = json_decode((string) $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$this->userId]), true);
+        if (($settings['google_series_undo'] ?? false) === true) {
+            return false;
+        }
+        $d = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true);
+        return is_array($d) && (($d['google']['kind'] ?? null) === 'series');
     }
 
     /** How many undo hops an entry is from the change at the bottom of its chain: 0 a change, 1 its undo, 2 a redo, and so on. */
@@ -1555,6 +1578,7 @@ final class Interleave
     {
         $asked = ($out['asked'] ?? null) ?? ['kind' => '?', 'gid' => null, 'fields' => [], 'days' => []];
         $writes = $this->writesBetween($s0, $s1);
+        $taken = $this->takenBetween($s0, $s1);
         $entries = array_map('intval', array_column($this->db->all('SELECT id FROM mutations WHERE user_id = ? AND id > ? ORDER BY id', [$this->userId, $s0['mut']]), 'id'));
         $kind = substr($do, 0, 2);
         $failure = $kind === 'f-' ? $this->stand->knobs->fired : null;
@@ -1671,7 +1695,7 @@ final class Interleave
 
         // A write of the app's own that reached Google on a series whose change is half done (A6 refuses it; until then it
         // goes through) is a change at Google since that change, as a remote one is, for Put back's check.
-        if ($onPending && $out['ok'] && $writes !== [] && !in_array($do, ['finish', 'putback'], true)) {
+        if ($onPending && $out['ok'] && $taken !== [] && !in_array($do, ['finish', 'putback'], true)) {
             foreach ($this->pendings as $id => $p) {
                 if (isset($p['gids'][$gid])) {
                     $this->pendings[$id]['since'][$gid] = true;
@@ -1684,7 +1708,7 @@ final class Interleave
             if ($out['ok']) {
                 $this->fail('x-pending', "step {$this->step} ($do): a write to a series whose change is half done went through; the settled rule (A6) refuses it with the pending reason, pointing to Review", $context);
             } else {
-                $this->expect('x-pending', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+                $this->expect('x-pending', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a write refused while its series' change is half done writes nothing", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             }
         }
 
@@ -1750,7 +1774,7 @@ final class Interleave
             $this->ran('x-conflict', 'refused: ' . ($error ?? 'went through'));
             $this->expect('x-conflict', !$out['ok'], "step {$this->step} ($do): a change to a series changed at Google since the last poll is refused", $context);
             if (!$out['ok']) {
-                $this->expect('x-conflict', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($writes)]);
+                $this->expect('x-conflict', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): the refusal writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l']), 'writes' => self::brief($taken)]);
             }
         }
 
@@ -1771,10 +1795,10 @@ final class Interleave
 
         $this->recovered = in_array($do, ['finish', 'putback'], true) && $out['ok'] ? $this->pending : null;
         if ($do === 'finish' || $do === 'putback') {
-            $this->checkRecovery($do, $out, $s0, $s1, $context, $writes);
+            $this->checkRecovery($do, $out, $s0, $s1, $context, $taken);
         }
         if (in_array($do, ['u-entry', 'u-bare', 'redo'], true)) {
-            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $writes);
+            $this->checkUndo($do, $out, $s0, $s1, $asked, $context, $taken);
         }
 
         // x-honest: a refusal with no pending change leaves both sides as they were; a write that changed something leaves an entry.
@@ -1794,26 +1818,20 @@ final class Interleave
         if ($kind === 'p-' && $out['ok']) {
             $this->dirty = [];
             $this->etagOnly = [];
-            $this->unseen = [];
             foreach ($this->touches as $i => $t) {
                 $this->touches[$i]['polled'] = true;
             }
-        }
-        // A write of the app's own that Google answered left the app holding the series' etag as it is now (it refreshes
-        // every row's etag after a write), so a change made at Google before it is no longer one the app hasn't seen.
-        if ($gid !== null && $out['ok'] && $writes !== [] && $failure === null) {
-            unset($this->unseen[$gid]);
         }
         // A write that went through left the series' etag here current, so the next one is no conflict; so did a refusal
         // after which the rows hold what Google holds (the product read it back).
         // A series commit or a Finish that went through to Google stores what Google holds after its read-back, as a poll
         // does: for its series the harness's "changed at Google since the last poll" is reset the way a poll resets it
         // (series-model.md, Google as a Contract: "the rows stored are what Google holds after the last read-back").
-        $readBack = $out['ok'] && $writes !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
+        $readBack = $out['ok'] && $taken !== [] && ($do === 'finish' || in_array($asked['kind'] ?? '', ['all', 'following', 'delfollow', 'answer'], true));
         if ($readBack) {
             $series = $do === 'finish' ? array_keys($this->recovered['gids'] ?? []) : [$gid];
             foreach (array_filter($series, static fn($g): bool => $g !== null) as $g) {
-                unset($this->dirty[$g], $this->unseen[$g], $this->etagOnly[$g]);
+                unset($this->dirty[$g], $this->etagOnly[$g]);
                 foreach ($this->touches as $i => $t) {
                     if ($t['gid'] === $g) {
                         $this->touches[$i]['polled'] = true;
@@ -1899,11 +1917,13 @@ final class Interleave
         if ($failure !== 'fatal') {
             $this->expect('x-pending', (int) ($out['extra']['pending'] ?? 0) === (int) $new[0]['id'], "step {$this->step}: the error names the half-done change (pending)", $context + ['extra' => $out['extra']]);
         }
-        // A change made at Google before this one and not yet read here is a change since the state this one started
-        // from (series-model.md, Recovery: "its etag at Google is the one its last answered step left or the one the
-        // change started from"), as much as one made after it.
-        $m = ['id' => (int) $new[0]['id'], 'step' => $this->step, 'asked' => $asked, 's0' => $s0, 'gids' => [(string) $asked['gid'] => true],
-            'since' => isset($this->unseen[(string) $asked['gid']]) ? [(string) $asked['gid'] => true] : []];
+        // "Changed since" counts from the half-done change's last step: only a change made at Google after it is one
+        // (interleaving-invariants.md, A2: "any change made at Google to a series of the change after the failure"). Put
+        // back may run while Google holds what the change started from or what its steps left, judged by content
+        // (series-model.md, Recovery: "its etag at Google is the one its last answered step left or the one the change
+        // started from"), and a change made at Google before this one, read or not, is part of what it started from: the
+        // change read the series before its first write. So the record starts empty, and remote() adds to it.
+        $m = ['id' => (int) $new[0]['id'], 'step' => $this->step, 'asked' => $asked, 's0' => $s0, 'gids' => [(string) $asked['gid'] => true], 'since' => []];
         // A split's insert is a series of the change too.
         foreach ($this->stand->fake->events as $id => $e) {
             if (!empty($e['recurrence']) && !str_contains((string) $id, '_') && !array_key_exists((string) $id, $s0['g']['digest'])) {
@@ -1914,7 +1934,7 @@ final class Interleave
         $this->pendings[$m['id']] = $m;
     }
 
-    private function checkRecovery(string $do, array $out, array $s0, array $s1, array $context, array $writes): void
+    private function checkRecovery(string $do, array $out, array $s0, array $s1, array $context, array $taken): void
     {
         $p = $this->pending;
         $answer = $out['answer'] ?? [];
@@ -1928,8 +1948,8 @@ final class Interleave
             $this->ran('x-putback', $changedSince === [] ? 'unchanged' : 'changed since');
             if ($changedSince !== []) {
                 $this->expect('x-putback', $error === 'google_changed_since', "step {$this->step}: Put back after a change at Google since is refused with google_changed_since", $context + ['changedSince' => $changedSince]);
-                $this->expect('x-putback', $writes === [] && self::sameHere($s0, $s1) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
-                    $context + ['writes' => self::brief($writes), 'diff' => self::diff($s0['l'], $s1['l'])]);
+                $this->expect('x-putback', $taken === [] && $s0['g'] == $s1['g'] && self::sameHere($s0, $s1) && in_array($p['id'], array_column($s1['half'], 'id'), true), "step {$this->step}: a refused Put back sends nothing, changes nothing here and leaves the change in Review",
+                    $context + ['writes' => self::brief($taken), 'diff' => self::diff($s0['l'], $s1['l'])]);
                 if ($error === 'google_changed_since') {
                     $left = (array) ($out['extra']['left'] ?? []);
                     $this->expect('x-putback', count($left) === count($changedSince), "step {$this->step}: the refusal names exactly the series changed at Google since", $context + ['left' => $left, 'changedSince' => $changedSince]);
@@ -1997,22 +2017,40 @@ final class Interleave
                 $this->expect('x-finish', $master['tags'] === $want, "step {$this->step}: after Finish the series has the change's tags (its part here, review R3)", $context + ['want' => $want, 'here' => $master['tags']]);
             }
         }
-        // A4: a change at Google since, to a day or field the change didn't touch, is kept.
+        // A4: a change at Google since, to a day or field the change didn't touch, is kept. What Finish keeps is the
+        // stand-in's state when Finish runs (series-model.md, Recovery: "Finish runs the same targets from Google's state"),
+        // so a later remote step on the same day supersedes an earlier one: a day edited then cancelled at Google is
+        // skipped after Finish, one cancelled then edited holds what the stand-in holds. Each such day is judged against
+        // what the stand-in held for it just before Finish, never against the earliest remote step's value.
+        $g0 = $s0['g']['digest'][$gid] ?? null;
+        $days = [];
         foreach ($this->touches as $t) {
-            if (empty($t['remote']) || $t['step'] < $p['step'] || $t['gid'] !== $gid || $g === null || $t['key'] === null || !in_array($t['field'], ['title', 'description'], true) || isset($asked['fields'][$t['field']])) {
+            if (empty($t['remote']) || $t['step'] < $p['step'] || $t['gid'] !== $gid || $g === null || $g0 === null || $t['key'] === null || !in_array($t['field'], ['title', 'description'], true) || isset($asked['fields'][$t['field']])) {
                 continue;
             }
             if (array_intersect(array_keys($asked['fields']), ['time', 'length', 'count']) !== []) {
                 continue; // a change of the series' time drops every record at Google: Finish can't keep what Google dropped
             }
-            $rec = $g['records'][$t['key']] ?? null;
-            $this->expect('x-finish', $rec !== null && str_contains((string) $rec[$t['field'] === 'title' ? 0 : 5], 'remote'),
-                "step {$this->step}: Finish keeps a change made at Google since to a day the change didn't touch (A4)", $context + ['key' => $t['key'], 'record' => $rec]);
+            $days[(string) $t['key']][$t['field']] = true;
+        }
+        foreach ($days as $key => $fields) {
+            $rec0 = $g0['records'][$key] ?? null;
+            $rec1 = $g['records'][$key] ?? null;
+            $skip0 = in_array($key, (array) ($g0['skips'] ?? []), true);
+            $skip1 = in_array($key, (array) ($g['skips'] ?? []), true);
+            $kept = $skip1 === $skip0;
+            foreach (array_keys($fields) as $f) {
+                $i = $f === 'title' ? 0 : 5;
+                $kept = $kept && ($rec1[$i] ?? null) === ($rec0[$i] ?? null);
+            }
+            $this->ran('x-finish', 'A4 ' . ($skip0 ? 'a day cancelled at Google' : ($rec0 === null ? 'a day put back at Google' : 'a day edited at Google')));
+            $this->expect('x-finish', $kept,
+                "step {$this->step}: Finish keeps a change made at Google since to a day the change didn't touch (A4)", $context + ['key' => $key, 'before' => ['record' => $rec0, 'skipped' => $skip0], 'after' => ['record' => $rec1, 'skipped' => $skip1]]);
         }
         $this->settled($p);
     }
 
-    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $writes): void
+    private function checkUndo(string $do, array $out, array $s0, array $s1, array $asked, array $context, array $taken): void
     {
         $entry = $out['entry'] ?? ($asked['entry'] ?? null);
         $error = $out['ok'] ? null : (string) $out['error'];
@@ -2021,6 +2059,17 @@ final class Interleave
         }
         $context['entry'] = $entry;
         $undone = (int) $this->db->scalar('SELECT undone FROM mutations WHERE id = ?', [$entry]) === 1;
+        if ($this->heldBack((int) $entry)) {
+            // With the setting off: refused 409 not_undoable with the contract's words, before anything is read or sent, with
+            // nothing written (decisions.md, "Undo of a whole-series change on a Google calendar waits for 1.5.6").
+            $this->ran('x-undo-fields', 'held back');
+            $asked = array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true));
+            $this->expect('x-undo-fields', !$out['ok'] && $error === 'not_undoable' && ($out['message'] ?? null) === Product::SERIES_UNDO_OFF,
+                "step {$this->step} ($do): an undo or redo of a whole-series change on a Google calendar is refused not_undoable with the contract's words while the setting is off", $context);
+            $this->expect('x-undo-fields', !$undone && self::sameHere($s0, $s1) && $asked === [] && $s0['g'] == $s1['g'],
+                "step {$this->step} ($do): the held-back undo writes nothing here and sends Google nothing, not even a read", $context + ['sent' => count($asked), 'diff' => self::diff($s0['l'], $s1['l'])]);
+            return;
+        }
         if ($do === 'u-bare') {
             $this->ran('x-undo-bare', 'newest own');
             // Which entry it took; what a refusal wrote is x-conflict's and x-undo-fields' to judge.
@@ -2031,7 +2080,7 @@ final class Interleave
         $state = $this->entryStates[$entry] ?? null;
         if (!$out['ok']) {
             $this->ran('x-undo-fields', 'refused');
-            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $writes === [], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
+            $this->expect('x-undo-fields', self::sameHere($s0, $s1) && $taken === [] && $s0['g'] == $s1['g'], "step {$this->step} ($do): a refused undo ($error) writes nothing here or at Google", $context + ['diff' => self::diff($s0['l'], $s1['l'])]);
             if ($state !== null && $this->changedSince($state, $this->byIdentity($s0['rows'])) === []) {
                 // An undo of an entry nothing has changed since goes through (decisions.md, "An undo is stale when a poll has
                 // since brought a remote change of the same field" and "Staleness has one definition: grounds are fields"):
@@ -2433,8 +2482,23 @@ final class Interleave
                 $fields = self::judged($ident, $was, $r);
                 $fields[] = 'own';
             }
+            // Ownership: for the own-list entries the entry changed, as before it; the rest as before the undo.
+            $flipped = array_merge(array_diff((array) ($was['own'] ?? []), (array) ($state['after'][$ident]['own'] ?? [])), array_diff((array) ($state['after'][$ident]['own'] ?? []), (array) ($was['own'] ?? [])));
+            $wantOwn = array_values(array_unique(array_merge(array_diff((array) ($c['own'] ?? $was['own'] ?? []), $flipped), array_intersect($flipped, (array) ($was['own'] ?? [])))));
+            sort($wantOwn);
+            if (str_starts_with($ident, 'day:')) {
+                // The retention rule (series-model.md, Own Fields: a row that owns nothing and holds nothing here alone is an
+                // ordinary occurrence again): a day row the entry only changed goes exactly when what the undo leaves of it
+                // owns nothing and no trip link names it, and stays otherwise.
+                $links = in_array('links', $fields, true) ? ($was['links'] ?? []) : ($c['links'] ?? $was['links'] ?? []);
+                $goes = $wantOwn === [] && empty($links);
+                $this->expect('x-undo-fields', $r !== null || $goes, "step {$this->step} ($do): an undo removed a row its entry only changed, though what the undo leaves of it owns or holds something", $where + ['was' => $c, 'own' => $wantOwn, 'links' => $links]);
+                $this->expect('x-undo-fields', $r === null || !$goes, "step {$this->step} ($do): an undo left a row that owns nothing and holds nothing here alone, an ordinary occurrence again", $where + ['now' => $r]);
+                $this->ran('x-undo-fields', $goes ? 'row left owning nothing' : 'row left owning something');
+            } else {
+                $this->expect('x-undo-fields', $r !== null, "step {$this->step} ($do): an undo removed a row its entry only changed", $where + ['was' => $c]);
+            }
             if ($r === null) {
-                $this->fail('x-undo-fields', "step {$this->step} ($do): an undo removed a row its entry only changed", $where + ['was' => $c]);
                 continue;
             }
             foreach ($fields as $f) {
@@ -2488,10 +2552,6 @@ final class Interleave
                 }
                 $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
             }
-            // Ownership: for the own-list entries the entry changed, as before it; the rest as before the undo.
-            $flipped = array_merge(array_diff((array) ($was['own'] ?? []), (array) ($state['after'][$ident]['own'] ?? [])), array_diff((array) ($state['after'][$ident]['own'] ?? []), (array) ($was['own'] ?? [])));
-            $wantOwn = array_values(array_unique(array_merge(array_diff((array) ($c['own'] ?? $was['own'] ?? []), $flipped), array_intersect($flipped, (array) ($was['own'] ?? [])))));
-            sort($wantOwn);
             $gotOwn = (array) ($r['own'] ?? []);
             sort($gotOwn);
             $this->expect('x-undo-fields', $gotOwn == $wantOwn, "step {$this->step} ($do): an undo leaves the row's own list as its entry found it", $where + ['want' => $wantOwn, 'now' => $gotOwn]);

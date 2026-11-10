@@ -45,9 +45,23 @@ use BetterCal\Infra\Db;
  * show that is a day of a series now (an entry whose snapshots Google
  * holds), a skips column with no snapshot of its series, a "~" with no
  * day of that series in the snapshots.
- * Added: today's ground of the snapshots (Undo::touchesOf, and
- * restoredGround for an entry undone by putting its snapshots back), as
- * record() adds it.
+ * Added: today's ground of the snapshots (Undo::touchesOf given the
+ * entry's recorded touches, and restoredGround for an entry undone by
+ * putting its snapshots back), as record() adds it, through the same
+ * functions: a skip the entry recorded as carried ("move:") stays that
+ * move, never a skip removed and a skip added.
+ * Opened: only an entry whose touches hold a form above
+ * (Undo::holdsLegacyGround, read from the journal's touches and the
+ * events rows now: "~", "exdates_json", or a key naming an event row that
+ * is a day now, or one gone now that the entry did not remove whole and
+ * whose removal carried a "~", or that no entry removed). An entry
+ * already in today's form is never opened, its snapshots and pieces never
+ * read, and its ground never derived again. One that is opened reads its
+ * pieces one at a time, keeping of them only the days' rows (their id,
+ * series, occurrence, own list, skips, deletion, uid and calendar) and
+ * the links to a day; every other row in a piece was made or removed
+ * whole, its touch the same in both forms and left as stored. So a
+ * calendar deleted in a hundred pieces holds one piece's bodies at a time.
  * Left as stored: every other row's touch (a series' or an event's own
  * column, a calendar, a folder, a tag, a person), already in today's
  * form; a touch of an event row that no longer exists and that no
@@ -64,7 +78,7 @@ use BetterCal\Infra\Db;
  */
 return static function (Db $db): string {
     $undo = new Undo($db);
-    $changed = 0;
+    [$changed, $opened, $pieces] = [0, 0, 0];
     $after = 0;
     do {
         $ids = array_map('intval', array_column($db->all(
@@ -74,9 +88,10 @@ return static function (Db $db): string {
             [$after]
         ), 'mutation_id'));
         foreach ($ids as $id) {
-            $changed += $undo->rewriteLegacyGround($id) ? 1 : 0;
+            $one = $undo->rewriteLegacyGround($id);
+            [$changed, $opened, $pieces] = [$changed + (int) $one['rewritten'], $opened + (int) $one['opened'], $pieces + $one['pieces']];
             $after = $id;
         }
     } while (count($ids) === 200);
-    return "journal grounds in one form: $changed entries rewritten";
+    return "journal grounds in one form: $changed entries rewritten ($opened opened, $pieces pieces read)";
 };

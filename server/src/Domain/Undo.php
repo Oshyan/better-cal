@@ -2655,8 +2655,9 @@ final class Undo
             if ($onto && $now === null) {
                 continue; // nothing holds its day now: the columns it changed go back as they were
             }
-            if ($key !== (string) $row['recurrence_instance_utc'] && $series !== null && ($gid = Feeds::googleIdAt($row, $series, $key)) !== null) {
-                $row['google_event_id'] = $before['events'][$i]['google_event_id'] = $gid; // the occurrence it stands at (Feeds::googleIdAt)
+            if ($series !== null && ($gid = Feeds::googleIdAt($row, $series, $key)) !== null) {
+                // The occurrence it stands at, in its series' form now (Feeds::googleIdAt), on a key that moved or not.
+                $row['google_event_id'] = $before['events'][$i]['google_event_id'] = $gid;
             }
             $row['recurrence_instance_utc'] = $before['events'][$i]['recurrence_instance_utc'] = $key;
             if ($now !== null) {

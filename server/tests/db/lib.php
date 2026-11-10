@@ -49,16 +49,17 @@ function checkEq(string $name, mixed $expected, mixed $actual): void
  * and the file's next block still runs; without this, one wrong outcome
  * threw the rest of the file away unseen.
  *
- * After the block, the link rule holds over all data (linkRuleCheck): a
- * violation the block left is named by the block. $linksOptOut is for a
- * block that builds an older or broken form on purpose: its reason, beside
- * the call, and the block's own violations are then not counted.
+ * After the block, the rules over all data hold (dataRulesCheck: the link
+ * rule and provider identity): a violation the block left is named by the
+ * block. $rulesOptOut is for a block that builds an older or broken form on
+ * purpose: its reason, beside the call, and the block's own violations of
+ * either rule are then not counted.
  */
-function scenario(string $name, callable $fn, ?string $linksOptOut = null): void
+function scenario(string $name, callable $fn, ?string $rulesOptOut = null): void
 {
     $outer = ($GLOBALS['__scenarioDepth'] ?? 0) === 0;
     if ($outer) {
-        linkRuleCheck("made outside any block, found before the block '$name'", null, null);
+        dataRulesCheck("made outside any block, found before the block '$name'", null, null);
     }
     $GLOBALS['__scenarioDepth'] = ($GLOBALS['__scenarioDepth'] ?? 0) + 1;
     try {
@@ -69,7 +70,7 @@ function scenario(string $name, callable $fn, ?string $linksOptOut = null): void
         $GLOBALS['__scenarioDepth']--;
     }
     if ($outer) {
-        linkRuleCheck("left by the block '$name'", $name, $linksOptOut);
+        dataRulesCheck("left by the block '$name'", $name, $rulesOptOut);
     }
 }
 
@@ -129,29 +130,88 @@ function linkViolations(BetterCal\Infra\Db $db, ?int $userId = null, int $fromId
     return $out;
 }
 
+// Rule 1, provider identity, as invariants over all data (audit-155-identity, "Invariants over all data"). An instance
+// at Google is its series id, its form and its key: the id of a key under a master is `<series id>_<YYYYMMDD>` when the
+// master is all-day (the key is that date at 00:00:00 UTC) and `<series id>_<UTC basic time>Z` when it is timed.
+// I1: every live day row with a Google id, whose master is live and has one, stores the id of its key under its
+// master's form. I2: no row is all-day in a zone; and under a live all-day master no live day row's key and no skip has
+// a clock. Raw SQL on the connection alone: nothing in server/src decides what passes, so the id is spelled out here
+// and never asked of GoogleWriter. The edit harness runs the same queries.
+const IDENTITY_CHECK = "every live day row's Google id is its key's id under its series' form";
+const ZONE_CHECK = 'no all-day row is stored in a zone';
+const CLOCK_CHECK = 'no day row or skip of an all-day series has a clock in its key';
+
 /**
- * The link rule in the database suite (scenario, and run.php after each file): the violations not already standing
- * at the last look fail, under $block's labels when a block made them, else as made outside any block ($where says
- * where they were found). A block always records its three checks, pass or fail; the backstop records failures only.
- * The connection is the one run.php made for the files ($GLOBALS['__linkDb']); without one nothing is checked.
+ * Every violation of provider identity, keyed by kind and row ("id:12", "zone:12", "clock:12", "clock:skip:7:<key>"),
+ * each with its kind (id, zone, clock), the row, its master (0 for a row of its own) and what it holds. $userId and
+ * $fromId narrow it to one account's rows from an id on (the edit harness's case); null and 0 read every row.
+ *
+ * @return array<string,array{kind:string,day:int,master:int,what:string}>
  */
-function linkRuleCheck(string $where, ?string $block, ?string $optOut): void
+function identityViolations(BetterCal\Infra\Db $db, ?int $userId = null, int $fromId = 0): array
 {
-    $db = $GLOBALS['__linkDb'] ?? null;
+    $pdo = $db->pdo();
+    $run = static function (string $sql) use ($pdo, $userId, $fromId): array {
+        $st = $pdo->prepare($sql);
+        $st->execute($userId === null ? [$fromId] : [$fromId, $userId]);
+        return $st->fetchAll(\PDO::FETCH_ASSOC);
+    };
+    $mine = static fn(string $t): string => "$t.id >= ?" . ($userId === null ? '' : " AND $t.user_id = ?");
+    $out = [];
+    foreach ($run("SELECT d.id AS day, m.id AS master, d.google_event_id AS stored, m.google_event_id AS series, m.all_day, d.recurrence_instance_utc AS k,
+            CONCAT(m.google_event_id, '_', CASE WHEN m.all_day = 1 THEN DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%d')
+                ELSE DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%dT%H%i%sZ') END) AS want
+        FROM events d JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL AND m.google_event_id IS NOT NULL
+        WHERE {$mine('d')} AND d.deleted_at IS NULL AND d.recurrence_instance_utc IS NOT NULL AND d.google_event_id IS NOT NULL
+          AND d.google_event_id <> CONCAT(m.google_event_id, '_', CASE WHEN m.all_day = 1 THEN DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%d')
+                ELSE DATE_FORMAT(d.recurrence_instance_utc, '%Y%m%dT%H%i%sZ') END)
+        ORDER BY d.id") as $r) {
+        $out["id:{$r['day']}"] = ['kind' => 'id', 'day' => (int) $r['day'], 'master' => (int) $r['master'],
+            'what' => "day row {$r['day']} at key {$r['k']} of " . ((int) $r['all_day'] === 1 ? 'all-day' : 'timed') . " series {$r['master']} ({$r['series']}) stores Google id {$r['stored']} where its key's id is {$r['want']}"];
+    }
+    foreach ($run("SELECT e.id, e.tzid, e.recurrence_parent_id AS master, e.deleted_at FROM events e WHERE {$mine('e')} AND e.all_day = 1 AND e.tzid <> 'UTC' ORDER BY e.id") as $r) {
+        $out["zone:{$r['id']}"] = ['kind' => 'zone', 'day' => (int) $r['id'], 'master' => (int) ($r['master'] ?? 0),
+            'what' => "all-day row {$r['id']}" . ($r['deleted_at'] !== null ? ' (deleted)' : '') . " is stored in the zone {$r['tzid']}"];
+    }
+    foreach ($run("SELECT d.id AS day, m.id AS master, d.recurrence_instance_utc AS k FROM events d JOIN events m ON m.id = d.recurrence_parent_id AND m.deleted_at IS NULL AND m.all_day = 1
+        WHERE {$mine('d')} AND d.deleted_at IS NULL AND d.recurrence_instance_utc IS NOT NULL AND TIME(d.recurrence_instance_utc) <> '00:00:00' ORDER BY d.id") as $r) {
+        $out["clock:{$r['day']}"] = ['kind' => 'clock', 'day' => (int) $r['day'], 'master' => (int) $r['master'],
+            'what' => "day row {$r['day']} of all-day series {$r['master']} has the key {$r['k']}, not a midnight"];
+    }
+    foreach ($run("SELECT m.id AS master, j.v FROM events m, JSON_TABLE(m.exdates_json, '\$[*]' COLUMNS (v VARCHAR(64) PATH '\$')) j
+        WHERE {$mine('m')} AND m.deleted_at IS NULL AND m.all_day = 1 AND m.rrule IS NOT NULL AND m.recurrence_parent_id IS NULL
+          AND JSON_VALID(m.exdates_json) AND j.v NOT LIKE '% 00:00:00' ORDER BY m.id, j.v") as $r) {
+        $out["clock:skip:{$r['master']}:{$r['v']}"] = ['kind' => 'clock', 'day' => 0, 'master' => (int) $r['master'],
+            'what' => "all-day series {$r['master']} skips {$r['v']}, not a midnight"];
+    }
+    return $out;
+}
+
+/**
+ * The rules over all data in the database suite (scenario, and run.php after each file): the link rule
+ * (linkViolations) and provider identity (identityViolations). The violations not already standing at the last look
+ * fail, under $block's labels when a block made them, else as made outside any block ($where says where they were
+ * found). A block always records its six checks, pass or fail; the backstop records failures only. The connection is
+ * the one run.php made for the files ($GLOBALS['__rulesDb']); without one nothing is checked.
+ */
+function dataRulesCheck(string $where, ?string $block, ?string $optOut): void
+{
+    $db = $GLOBALS['__rulesDb'] ?? null;
     if ($db === null) {
         return;
     }
-    $now = linkViolations($db);
-    $new = array_diff_key($now, $GLOBALS['__linkSeen'] ?? []);
+    $now = linkViolations($db) + identityViolations($db);
+    $new = array_diff_key($now, $GLOBALS['__rulesSeen'] ?? []);
     // What stands now is what the next look compares with: a row put right and broken again is found again.
-    $GLOBALS['__linkSeen'] = $now;
+    $GLOBALS['__rulesSeen'] = $now;
     if ($optOut !== null) {
         if ($new !== []) {
-            $GLOBALS['__linkOptedOut'][$block] = ['why' => $optOut, 'count' => count($new)];
+            $GLOBALS['__rulesOptedOut'][$block] = ['why' => $optOut, 'count' => count($new)];
         }
         return;
     }
-    foreach ([LINKS_CHECK => ['tags', 'people'], LINKS_LIST_CHECK => ['list'], LINKS_SERIES_CHECK => ['series']] as $label => $kinds) {
+    foreach ([LINKS_CHECK => ['tags', 'people'], LINKS_LIST_CHECK => ['list'], LINKS_SERIES_CHECK => ['series'],
+        IDENTITY_CHECK => ['id'], ZONE_CHECK => ['zone'], CLOCK_CHECK => ['clock']] as $label => $kinds) {
         $found = array_filter($new, static fn(array $v): bool => in_array($v['kind'], $kinds, true));
         $detail = $where . ': ' . implode('; ', array_slice(array_column($found, 'what'), 0, 12)) . (count($found) > 12 ? '; and ' . (count($found) - 12) . ' more' : '');
         if ($block !== null) {

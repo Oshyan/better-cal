@@ -81,6 +81,7 @@ final class Product
             'combos' => $counts['product']['combos'] ?? [],
             'target' => $counts['product']['target'] ?? [],
             'matchOnRule' => $counts['product']['onRule'] ?? [],
+            'identity' => $counts['product']['identity'] ?? [],
         ];
     }
 
@@ -104,6 +105,7 @@ final class Product
         $line('Edits sent to', $s['target']);
         $line('Plan checks not run (no plan)', $s['noPlan']);
         $line('Not applicable to this product', $s['notApplicable']);
+        $line('Identity shapes run (Google mode, README: Identity)', $s['identity'] ?? []);
         return $out;
     }
 }

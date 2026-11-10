@@ -84,6 +84,12 @@ After any step, every live series of the case has at most one live row per key; 
 
 From: series-model.md, Own Fields; the harness's invariant h (README); api-contract.md, Activity ("Something the change belonged to deleted since makes it `not_undoable`"); series-model.md, Google as a Contract ("no edited day outlives its series or comes back by a poll").
 
+### x-identity: a day row's stored Google id is its identity
+
+After any step, while no change is half done, every live day row with a Google id whose series has one stores the id of its key under its series' form as stored: `<series id>_<YYYYMMDD>` of the key when the series is all-day (the key is that date at 00:00:00 UTC), `<series id>_<UTC basic time>Z` when it is timed. The harness works the id out with its own two-line function (`Interleave::googleIdOf`), never with `GoogleWriter::instanceId`. It is not skipped for a series changed at Google and not yet polled: the rows here agree among themselves whatever Google holds, and the poll that changes a series' form must give each of its days the new form's id. The database suite and the series mode check the same rule over all data by raw SQL (`identityViolations`), with its zone companions.
+
+From: audit-155-identity, the restated rule ("a day row's stored Google id always equals the identity of its key under its master's form") and invariant I1; series-model.md, Google as a Contract.
+
 ### x-own: an edited day follows the series in what it doesn't own
 
 After any write that succeeds and after any poll, every field of an edited row outside its `override_fields` (the date, time, length and all-day placement included, by `OwnFields::placed`'s rule as the harness reads it) equals the series' value at its occurrence. Tags and people are compared as sets: a day that doesn't own them holds exactly its series' set as it stands in the same snapshot (the link rule; the database suite and the series mode check the same rule over all data by raw SQL). After a poll, ownership follows Rows from Elsewhere: a field unchanged at Google keeps its ownership, one changed to the master's value becomes inherited, one changed to another value its own.
@@ -146,14 +152,14 @@ From: api-contract.md, Series Plans, Google calendars ("a difference goes into t
 
 | Step | Invariants |
 |---|---|
-| `w-all`, `w-follow`, `w-delfollow`, `w-answer`, `w-this-g`, `w-this-m`, `w-del1`, `w-create` | x-alone, x-write-asked, x-agree, x-structure, x-own, x-conflict, x-honest |
-| `w-this-l` | x-alone, x-local-silent, x-agree, x-structure, x-own, x-honest |
-| `r-*` | x-alone (rows here untouched by the step itself), x-structure |
-| `p-delta`, `p-whole`, `p-410` | x-alone, x-sync-silent, x-agree, x-follow, x-dropped, x-structure, x-own |
-| `f-lost`, `f-before`, `f-fatal` | x-alone, x-pending, x-structure, x-honest |
-| `finish` | x-alone, x-finish, x-write-asked, x-agree, x-structure, x-own, x-honest |
-| `putback` | x-alone, x-putback, x-agree, x-structure, x-own, x-honest |
-| `u-entry`, `u-bare`, `redo` | x-alone, x-undo-fields, x-undo-bare (`u-bare`), x-local-silent (local-only entries), x-write-asked, x-conflict, x-agree, x-structure, x-own, x-honest |
+| `w-all`, `w-follow`, `w-delfollow`, `w-answer`, `w-this-g`, `w-this-m`, `w-del1`, `w-create` | x-alone, x-write-asked, x-agree, x-structure, x-identity, x-own, x-conflict, x-honest |
+| `w-this-l` | x-alone, x-local-silent, x-agree, x-structure, x-identity, x-own, x-honest |
+| `r-*` | x-alone (rows here untouched by the step itself), x-structure, x-identity |
+| `p-delta`, `p-whole`, `p-410` | x-alone, x-sync-silent, x-agree, x-follow, x-dropped, x-structure, x-identity, x-own |
+| `f-lost`, `f-before`, `f-fatal` | x-alone, x-pending, x-structure, x-identity, x-honest |
+| `finish` | x-alone, x-finish, x-write-asked, x-agree, x-structure, x-identity, x-own, x-honest |
+| `putback` | x-alone, x-putback, x-agree, x-structure, x-identity, x-own, x-honest |
+| `u-entry`, `u-bare`, `redo` | x-alone, x-undo-fields, x-undo-bare (`u-bare`), x-local-silent (local-only entries), x-write-asked, x-conflict, x-agree, x-structure, x-identity, x-own, x-honest |
 
 The harness's existing checks for a single edit (a to i, c-untouched, 8-google, f-undo) still run on every `w-all` and `w-follow` step whose series nothing else touched since the last poll, as in `--google`.
 

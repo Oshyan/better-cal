@@ -92,6 +92,120 @@ final class Delta
         return $v;
     }
 
+    /**
+     * The identity shapes (README, Google: Identity): a whole-series change that changes the identity Google gives an
+     * instance, over a series with an edited day (its own place and notes) and a skipped day. Google names an instance by
+     * the series id and its original start in the master's form (UTC basic time when timed, the date when all-day), while
+     * the rows here key it by a UTC instant (the date at 00:00 UTC when all-day), so the two coincide for a timed
+     * occurrence at midnight UTC while Google's identities differ. Weights per shape.
+     */
+    public const IDENTITY = [
+        'toAllDayMidnight' => 4,   // timed at 00:00 UTC made all-day: the keys here coincide, Google's ids don't
+        'toAllDayShifted' => 2,    // daily at 16:00 Los Angeles (00:00 UTC the next day) made all-day: an old key is another day's new key
+        'toAllDayClock' => 2,      // timed at another clock made all-day: the keys differ
+        'toTimedMidnight' => 4,    // all-day made timed at 00:00 UTC (or 13:00 Auckland in its summer): the keys coincide
+        'toTimedClock' => 2,       // all-day made timed at 10:00 Los Angeles: the keys differ
+        'zoneSameInstant' => 2,    // a zone change keeping the same moment: no instant moves (oracle pending a live probe)
+        'landsOnOther' => 2,       // a drag by one period: each occurrence lands on the next one's old instant
+    ];
+
+    /** The shape whose stand-in behaviour is not yet known from real Google: counted apart (README, Google: Identity). */
+    public const IDENTITY_PENDING = ['zoneSameInstant'];
+
+    /**
+     * A drawn case replaced by an identity shape: its series, edited and skipped days, the day acted on, the vector and
+     * the choices, from $r (an Rng of the case's seed and number alone, so the drawn space of every other case is
+     * untouched). $only names one shape.
+     */
+    public static function identity(Rng $r, ?string $only = null): array
+    {
+        $shape = $only ?? $r->weighted(self::IDENTITY);
+        // Winter dates, so a Los Angeles or Berlin clock and Auckland's summer offset hold for every occurrence.
+        $mondays = ['2026-12-07', '2027-01-04', '2027-01-18', '2027-02-01'];
+        $day = $r->pick($mondays);
+        $bound = $r->weighted(['count' => 3, 'none' => 1, 'until' => 1]);
+        $series = ['family' => 'weekly_bare', 'rrule' => 'FREQ=WEEKLY', 'import' => false, 'bound' => $bound, 'boundAt' => 6, 'untilForm' => 'dayend',
+            'allDay' => false, 'tzid' => 'UTC', 'start' => $day . ' 00:00', 'length' => 60, 'floating' => false];
+        $v = ['scope' => 'all', 'date' => 0, 'clock' => 0, 'zone' => null, 'length' => 0, 'allDay' => false, 'toZone' => 'UTC', 'toClock' => 0,
+            'trip' => false, 'fields' => [], 'rule' => 'absent', 'sameForm' => 'text', 'newRule' => 'FREQ=DAILY;INTERVAL=3', 'bound' => null,
+            'via' => $r->pick(['row', 'master']), 'startOnly' => false];
+        $choices = [];
+        switch ($shape) {
+            case 'toAllDayMidnight':
+                // 00:00 UTC, or 13:00 in Auckland's summer (the same instant): Auckland's day is the UTC day.
+                if ($r->chance(0.5)) {
+                    $series['tzid'] = 'Pacific/Auckland';
+                    $series['start'] = Days::date(Days::ofDate($day) + 1) . ' 13:00';
+                }
+                $v['allDay'] = true;
+                break;
+            case 'toAllDayShifted':
+                $series['family'] = 'daily';
+                $series['rrule'] = 'FREQ=DAILY';
+                $series['boundAt'] = 8;
+                $series['tzid'] = 'America/Los_Angeles';
+                $series['start'] = $day . ' 16:00';
+                $v['allDay'] = true;
+                break;
+            case 'toAllDayClock':
+                $series['tzid'] = $r->pick(['America/Los_Angeles', 'Europe/Berlin']);
+                $series['start'] = $day . ' ' . $r->pick(['10:00', '09:30']);
+                $v['allDay'] = true;
+                break;
+            case 'toTimedMidnight':
+                $series['allDay'] = true;
+                $series['start'] = $day;
+                $series['length'] = 1;
+                $v['allDay'] = true;
+                [$v['toZone'], $v['toClock']] = $r->pick([['UTC', 0], ['Pacific/Auckland', 13 * 3600]]);
+                break;
+            case 'toTimedClock':
+                $series['allDay'] = true;
+                $series['start'] = $day;
+                $series['length'] = 1;
+                $v['allDay'] = true;
+                [$v['toZone'], $v['toClock']] = $r->pick([['America/Los_Angeles', 10 * 3600], ['Europe/Berlin', 9 * 3600 + 1800]]);
+                break;
+            case 'zoneSameInstant':
+                [$series['tzid'], $series['start'], $v['zone']] = $r->pick([
+                    ['America/Los_Angeles', $day . ' 10:00', 'America/Denver'],
+                    ['America/Los_Angeles', $day . ' 10:00', 'Europe/Berlin'],
+                    ['UTC', $day . ' 00:00', 'Pacific/Auckland'],
+                ]);
+                $choices = ['zone' => 'moment'];
+                break;
+            case 'landsOnOther':
+                if ($r->chance(0.5)) {
+                    $series['family'] = 'daily';
+                    $series['rrule'] = 'FREQ=DAILY';
+                    $series['boundAt'] = 8;
+                    $series['tzid'] = 'America/Los_Angeles';
+                    $series['start'] = $day . ' 10:00';
+                    $v['date'] = 1;
+                } else {
+                    $v['date'] = 7;
+                }
+                break;
+        }
+        // The day acted on, an edited day with its own place and notes, and a skipped day, each before or after it;
+        // in a quarter of the cases the day acted on is the edited day itself.
+        $acted = $r->pick([0, 3]);
+        $edited = $r->pick([1, 4]);
+        $skipped = $r->pick([2, 5]);
+        $from = $acted === 0 ? 'first' : 'later';
+        if ($r->chance(0.25)) {
+            $acted = $edited;
+            $from = 'edited';
+        }
+        $own = $r->chance(0.3) ? ['title', 'location', 'description'] : ['location', 'description'];
+        $exceptions = [
+            ['at' => $edited, 'kind' => 'edit', 'own' => $own, 'days' => 1, 'mins' => 45, 'zone' => 'America/New_York', 'len' => 30],
+            ['at' => $skipped, 'kind' => 'skip'],
+        ];
+        return ['series' => $series, 'exceptions' => $exceptions, 'acted' => $acted, 'from' => $from, 'vector' => $v, 'stack' => null,
+            'choices' => ['edit' => $choices], 'preselected' => ['edit' => $choices === []], 'identity' => $shape];
+    }
+
     /** A pattern other than the series' (the editor's Repeat changed): another family, or the same days shifted. */
     private static function otherRule(Rng $r, string $rrule): string
     {

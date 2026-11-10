@@ -41,6 +41,13 @@ final class Driver
      */
     public static float $floating = 0.25;
     public static float $floatFlip = 0.1;
+
+    /**
+     * The share of drawn Google-mode cases replaced by an identity shape (Delta::identity, README, Google: Identity):
+     * chosen from the case's seed and number alone, so every other drawn case is as before; --identity sets it, 0 turns
+     * it off. Local runs never take it.
+     */
+    public static float $identity = 0.2;
     private static ?bool $floatColumn = null;
 
     /** Does this product store floating times (events.floating, migration 069)? */
@@ -113,6 +120,19 @@ final class Driver
         $this->splitCount = null;
         $this->spec = $spec;
         $this->rng = $r;
+        // An identity shape in place of the drawn case, for a share of the drawn Google cases (by seed and number alone).
+        if ($this->google !== null && !isset($spec['vector']) && !isset($spec['fixed']) && $this->share('identity', self::$identity)) {
+            $spec = Delta::identity(new Rng(crc32('identity-draw:' . ($spec['seed'] ?? 0) . ':' . ($spec['n'] ?? 0)) % 1_000_003)) + $spec;
+            $this->spec = $spec;
+        }
+        if (isset($spec['identity'])) {
+            $this->product['identity'][$spec['identity']] = 1;
+            if ($this->google !== null && in_array($spec['identity'], Delta::IDENTITY_PENDING, true)) {
+                // Whether Google keeps or drops exceptions on a zone change that moves no instant is not yet known from
+                // real Google (the stand-in keeps them): this case's failures are reported apart until the live probe answers.
+                $this->unoracled[] = 'identity: a zone change keeping the same moment, Google\'s behaviour pending a live probe';
+            }
+        }
         $this->controls = $this->makeControls();
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');
         $this->fixtures = [];
@@ -336,7 +356,8 @@ final class Driver
      * l-links, l-list, l-series (README, The Invariants): the link rule over the case's rows, read from the database by
      * the database suite's own raw SQL (server/tests/db/lib.php, linkViolations), never from the oracle. Every live day
      * row holds its own tags and people when its list names them, else exactly its series'; none has a NULL list; none
-     * outlives its series. $when names the point (the edit, an option, an undo, a redo, a step).
+     * outlives its series. $when names the point (the edit, an option, an undo, a redo, a step). Provider identity
+     * (checkIdentityRule) runs at the same points.
      */
     private function checkLinkRule(string $when): void
     {
@@ -346,6 +367,25 @@ final class Driver
                 'list' => 'a live day row has a NULL own list',
                 'series' => "a live day row's series is missing or deleted",
                 default => "a live day row doesn't hold its own {$v['kind']} or exactly its series'",
+            }, ['row' => $v['day'], 'series' => $v['master'], 'found' => $v['what']]);
+        }
+        $this->checkIdentityRule($when);
+    }
+
+    /**
+     * id-google, id-zone, id-clock (README, The Invariants): provider identity over the case's rows, read from the
+     * database by the database suite's own raw SQL (server/tests/db/lib.php, identityViolations), never from the oracle
+     * and never through GoogleWriter. Every live day row with a Google id under a live master that has one stores the id
+     * of its key under its master's form; no all-day row is stored in a zone; no live day row's key and no skip of an
+     * all-day series has a clock. Run at every point the link rule is, $when naming it.
+     */
+    private function checkIdentityRule(string $when): void
+    {
+        foreach (identityViolations($this->db, $this->userId, $this->firstId) as $v) {
+            $this->fail('id-' . ['id' => 'google', 'zone' => 'zone', 'clock' => 'clock'][$v['kind']], "after $when: " . match ($v['kind']) {
+                'id' => "a live day row's Google id is not its key's id under its series' form",
+                'zone' => 'an all-day row is stored in a zone',
+                default => 'a key or skip of an all-day series has a clock',
             }, ['row' => $v['day'], 'series' => $v['master'], 'found' => $v['what']]);
         }
     }

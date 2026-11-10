@@ -162,11 +162,14 @@ return static function (Db $db): void {
         $entry = $lastEntry($s);
         $named = array_map(static fn(array $d): array => [$d['id'], $d['day'], $d['held'], $d['why']], json_decode((string) $entry['details_json'], true)['removedDays'] ?? []);
         usort($named, static fn(array $a, array $b): int => $a[0] <=> $b[0]);
-        checkEq('the master, its tagged day and the event, each by id and the date it showed', [
+        // Sorted by id like $named: the first read stores new events in the order of their uids, whatever order Google listed them in.
+        $expected = [
             [$s->masterId, '2027-03-01', ['its tags'], 'deleted'],
             [$s->pizzaId, '2027-03-05', ['its tags'], 'deleted'],
             [$s->dayId, '2027-03-08', ['its tags'], 'deleted'],
-        ], $named);
+        ];
+        usort($expected, static fn(array $a, array $b): int => $a[0] <=> $b[0]);
+        checkEq('the master, its tagged day and the event, each by id and the date it showed', $expected, $named);
         check('the summary names them in words', str_contains((string) $entry['summary'], "'Pizza night' on 2027-03-05 with its tags") && str_contains((string) $entry['summary'], 'no longer in the calendar'), (string) $entry['summary']);
     });
 

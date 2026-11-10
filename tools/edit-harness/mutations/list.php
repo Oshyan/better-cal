@@ -468,6 +468,34 @@ return [
             ],
         ),
     ],
+    // Provider identity (rule 1 of 1.5.5): what a master write leaves at Google is predicted by each record's id under
+    // the old master's form (GoogleSeries::afterMaster, S1). Here the id is read in the new master's form instead, so
+    // the form term is always true and a record or skip on a key the new form also has is predicted kept, as before
+    // the fix (review R1). Every after-write assertion of the coinciding-key scenarios fails, with the harness's own
+    // forward-edit checks on seed 911 cases 193 and 879 that the test runs through the driver; the plan and asked-state
+    // assertions and the two controls at 10:00 Los Angeles hold.
+    [
+        'id' => 'google-after-master-form-term', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-identity',
+        'what' => 'a record\'s identity through a master write read in the new master\'s form, so a change between timed and all-day keeps what shares a key',
+        'patch' => [["            \$id = GoogleWriter::instanceId('', \$key, \$was);", "            \$id = GoogleWriter::instanceId('', \$key, \$allDay);"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $scenario): array => array_map(static fn(string $what): string => "$scenario: $what", [
+                'Google holds the edited day\'s record under its new identity with its notes and place',
+                'Google holds the skipped day as skipped under its new identity',
+                'Google lists the edited day with its notes and place',
+                'Google lists nothing on the skipped day',
+                'a write sent to Google carries the edited day\'s notes and place',
+                'the edited day\'s row is still there with its own notes and place',
+                'the skipped day is still skipped here',
+                'the window shows the edited day with its place and notes',
+                'the window shows nothing on the skipped day',
+            ]), [
+                'timed 00:00 UTC to all-day (edit, then skip)', 'timed 00:00 UTC to all-day (skip, then edit)', 'timed 00:00 UTC to all-day (from the last day)',
+                'all-day to timed 00:00 UTC (edit, then skip)', 'all-day to timed 00:00 UTC (skip, then edit)',
+            ])),
+            ['harness seed 911 case 193: no forward-edit check fails', 'harness seed 911 case 879: no forward-edit check fails'],
+        ),
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,
@@ -506,6 +534,64 @@ return [
             "            // this edit sends are its own, set next (mutated: not followed).\n",
         ]],
         'cases' => ['edited-day-rejoins-the-series'],
+    ],
+    // A day row's stored Google id is an identity (audit-155-identity, fix list items 6 and 7): derived whenever the
+    // row is placed, and an undo addresses the day by its id now. The database cases make a series timed at 00:00 UTC
+    // all-day (each day keeps its key, every id changes form) over a day holding only a tag. The change made here is
+    // placed by the plan's writer as well as by the store's sync, so the guard in ofSeries alone shows on the change
+    // made at Google, which a poll alone places.
+    [
+        'id' => 'ofseries-id-only-on-key-move', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'google-day-identity',
+        'what' => 'Feeds::ofSeries derives a placed day\'s Google id only when its key moves, as before 1.5.5',
+        'patch' => [['        return $placed($target, $at);', '        return $at !== $key ? $placed($target, $at) : $target;']],
+        'checks' => [
+            'made all-day at Google: after the poll the series is all-day and the tagged day keeps its key and takes the date-form id',
+            'made all-day at Google: I1 holds after the poll',
+            'made all-day at Google: the next rename goes through',
+            'made all-day at Google: the next rename goes to the date-form id',
+            'made all-day at Google: I1 holds at the end',
+            // The identity rule the suite checks after every block (lib.php, identityViolations) names the block too.
+            "google day identity: a series made all-day at Google, read by a poll, leaves a day holding only a tag on the date-form id: every live day row's Google id is its key's id under its series' form",
+        ],
+    ],
+    [
+        'id' => 'dayat-journaled-id', 'file' => 'server/src/Domain/GoogleUndo.php', 'dbtest' => 'google-day-identity',
+        'what' => 'GoogleUndo::dayAt returns the id the entry journaled when the day\'s key is the same now, whatever form the series has since',
+        'patch' => [["                return ['googleId' => GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];",
+            "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
+        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
+    ],
+    // Provider identity (server/tests/db/lib.php, identityViolations: I1), hung after every block of the database suite:
+    // the one function that names an instance at Google builds the all-day form's suffix as the timed form's, so the row
+    // a tag given to one ordinary day of an all-day series makes stores a timed id under an all-day master. The block
+    // sends Google nothing, so only its identity check can see it.
+    [
+        'id' => 'all-day-id-in-timed-form', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'identity-rule',
+        'what' => 'GoogleWriter::instanceId builds an all-day instance\'s id in the timed form (<series id>_<date>T000000Z)',
+        'patch' => [['$allDay ? \'Ymd\' : \'Ymd\THis\Z\'', '$allDay ? \'Ymd\THis\Z\' : \'Ymd\THis\Z\'']],
+        'checks' => ["a tag given to one ordinary day of an all-day Google series: every live day row's Google id is its key's id under its series' form"],
+    ],
+    // The merge of a Google list (rule 1 of 1.5.5): a dropped item acts by its key again, whatever form its id names,
+    // so it is taken for the resource of the series' form at that key. The checks are pure (server/tests/google-merge.php),
+    // run through the database suite's file of the same name, which is how this runner judges by label. Each fails in
+    // some order of its list or in all of them: a record or a row of the series' form removed, a skip of it cleared.
+    [
+        'id' => 'merge-dropped-by-key', 'file' => 'server/src/Domain/GoogleSync.php', 'dbtest' => 'google-merge',
+        'what' => 'a dropped item of a Google list is related to a row or a skip by its key alone, not by the form its id names',
+        'patch' => [["\$f = isset(\$ev['instance_all_day']) ? self::form((bool) \$ev['instance_all_day'])", "\$f = isset(\$ev['instance_all_day']) && empty(\$ev['dropped']) ? self::form((bool) \$ev['instance_all_day'])"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $form): array => array_map(static fn(string $what): string => "merge ($form): $what", [
+                'a record of the series\' form stands beside the other form\'s dropped item on its key',
+                'a read-back with the new master, a record and a skip of its form and the other form\'s dropped items on the same keys',
+                'a row stored under the other form\'s id is its master\'s form, and the other form\'s dropped item leaves it',
+                'a delta that carries the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that does not carry the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that changes no skipped day leaves the stored skips in their stored order',
+                'a delta that skips two more days writes the skips in key order, whatever order it lists them in',
+                'a stored row with no master goes with the dropped item of its own id, not with the other form\'s',
+            ]), ['date', 'time'])),
+            ['merge: an all-day day of a timed series is a row under its timed master'],
+        ),
     ],
     // Rule 1, the sync's match (Feeds::standing): a record of a series whose form the list changes is for the row whose day
     // its key is, not the row at an equal key. Back at the equal key, the records west of UTC take the neighbouring day's

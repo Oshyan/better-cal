@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 // The link rule's own negative controls (lib.php, linkViolations and
-// linkRuleCheck): damage made by raw SQL, never by the app, must be
+// dataRulesCheck): damage made by raw SQL, never by the app, must be
 // reported, kind by kind, and a day that owns its tags may hold any set.
 // Then a block that leaves damage behind must fail its own link check,
 // naming the row, and the damage is removed so the file ends clean.
@@ -94,9 +94,9 @@ return static function (Db $db): void {
     check('a block that leaves a day row without its series\' tags fails its link check, under its own name, naming the row',
         count($mine) === 1 && !$mine[0]['pass'] && str_contains($mine[0]['detail'], "day row $damaged ") && str_contains($printed, 'FAIL: a sample block'), json_encode($made));
     $others = array_filter($made, static fn(array $c): bool => $c['name'] !== $name);
-    check('and its other link checks pass', count($others) === 2 && array_filter($others, static fn(array $c): bool => !$c['pass']) === [], json_encode($others));
+    check('and its other checks over all data pass', count($others) === 5 && array_filter($others, static fn(array $c): bool => !$c['pass']) === [], json_encode($others));
     $db->run('DELETE FROM events WHERE id IN (?, ?)', [$damaged, $m]);
-    linkRuleCheck('after the damage is removed', null, null);
+    dataRulesCheck('after the damage is removed', null, null);
 
     // The block the mutation answer-day-without-series-links (tools/edit-harness/mutations/list.php) runs: an answer for
     // one day of a tagged series with a person makes that day's row, which must hold the series' tags and person.

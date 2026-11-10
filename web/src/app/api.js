@@ -848,7 +848,7 @@ export async function undoEntries(ids) {
     }
     toast('Undone');
   } catch (e) {
-    toast(e.code === 'stale_undo' ? 'Changed since, so not undone here. Activity can undo it anyway.' : e.code === 'not_undoable' || e.code === 'google_conflict' ? e.message : 'Undo failed: ' + e.message, { error: true });
+    toast(e.code === 'stale_undo' ? 'Not undone: this was changed again after that. To undo it anyway and overwrite the newer change, use Undo on the Activity page.' : e.code === 'not_undoable' || e.code === 'google_conflict' ? e.message : 'Undo failed: ' + e.message, { error: true });
   }
   await afterUndo();
 }

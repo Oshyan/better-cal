@@ -959,7 +959,7 @@ final class GoogleSeries
                     // applies them): a day changed at Google since the read
                     // keeps that change where the change doesn't touch the
                     // field, and is named where it does; never overwritten.
-                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was sent', false, !empty($targets[$i + 1]['insert']));
+                    [$t, $words] = self::rebase($found[$i], $t, self::held($items, (string) $t['googleId']), $thisYear, 'while this change was being sent', false, !empty($targets[$i + 1]['insert']));
                     $targets[$i] = $t;
                     $differences = array_merge($differences, $words);
                 }
@@ -1801,16 +1801,16 @@ final class GoogleSeries
             return $out;
         }
         if (!self::sameRule((string) ($g['rrule'] ?? ''), (string) $m['rrule'])) {
-            $out[] = 'Google kept the rule ' . ($g['rrule'] ?? 'none') . '; the plan had ' . ($m['rrule'] !== '' ? $m['rrule'] : 'none') . '.';
+            $out[] = 'Google kept the rule ' . ($g['rrule'] ?? 'none') . '; this change had ' . ($m['rrule'] !== '' ? $m['rrule'] : 'none') . '.';
         }
         if ((string) $g['start_utc'] !== (string) $m['start_utc'] || (string) $g['end_utc'] !== (string) $m['end_utc'] || (int) $g['all_day'] !== (int) $m['all_day']) {
             $out[] = self::startWords($g, $m, $thisYear);
         } elseif (!$allDay && self::fieldsOf($g)['tzid'] !== self::fieldsOf($m)['tzid']) {
-            $out[] = "Google kept the series in the zone '" . self::fieldsOf($g)['tzid'] . "'; the plan had '" . self::fieldsOf($m)['tzid'] . "'.";
+            $out[] = "Google kept the series in the zone '" . self::fieldsOf($g)['tzid'] . "'; this change had '" . self::fieldsOf($m)['tzid'] . "'.";
         }
         foreach (['title' => 'title', 'description' => 'notes', 'location' => 'place', 'status' => 'status', 'url' => 'link'] as $col => $word) {
             if (self::fieldsOf($g)[$col] !== self::fieldsOf($m)[$col]) {
-                $out[] = "Google kept the series' $word as '" . (string) ($g[$col] ?? '') . "'; the plan had '" . (string) ($m[$col] ?? '') . "'.";
+                $out[] = "Google kept the series' $word as '" . (string) ($g[$col] ?? '') . "'; this change had '" . (string) ($m[$col] ?? '') . "'.";
             }
         }
         $skipSet = array_fill_keys(array_map('strval', $t['skips']), true);
@@ -1823,29 +1823,29 @@ final class GoogleSeries
             $record = $held['records'][$key] ?? null;
             $name = "'" . $x['title'] . "'";
             if ($record === null) {
-                $out[] = 'Google kept ' . $day($key) . (isset($held['cancelled'][$key]) ? ' skipped' : ' as an ordinary day') . "; the plan had $name on " . $shown($x) . '.';
+                $out[] = 'Google kept ' . $day($key) . (isset($held['cancelled'][$key]) ? ' skipped' : ' as an ordinary day') . "; this change had $name on " . $shown($x) . '.';
                 continue;
             }
             if (self::sameEvent($record, $x)) {
                 continue;
             }
             if ((string) $record['start_utc'] !== (string) $x['start_utc'] || (int) $record['all_day'] !== (int) $x['all_day']) {
-                $out[] = "Google kept $name on " . $shown($record) . '; the plan had ' . $shown($x) . '.';
+                $out[] = "Google kept $name on " . $shown($record) . '; this change had ' . $shown($x) . '.';
             } elseif (trim((string) $record['title']) !== trim((string) $x['title'])) {
-                $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . "; the plan had $name.";
+                $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . "; this change had $name.";
             } else {
-                $out[] = "Google kept $name on " . $day($key) . ' with other details than the plan had.';
+                $out[] = "Google kept $name on " . $day($key) . ' with other details than this change had.';
             }
         }
         foreach ($t['skips'] as $key) {
             if (!isset($held['skips'][$key])) {
-                $out[] = 'Google kept ' . $day((string) $key) . '; the plan skipped it.';
+                $out[] = $day((string) $key) . ' is still on the calendar: this change deleted it, but Google Calendar kept it.';
             }
         }
         foreach ($held['records'] as $key => $record) {
             $key = (string) $key;
             if (!isset($skipSet[$key]) && !isset($t['exceptions'][$key]) && $edited($record, $key)) {
-                $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . '; the plan had an ordinary day.';
+                $out[] = "Google kept '" . $record['title'] . "' on " . $day($key) . '; this change had an ordinary day.';
             }
         }
         foreach (array_keys($held['cancelled']) as $key) {
@@ -1872,7 +1872,7 @@ final class GoogleSeries
     private static function startWords(array $g, array $m, int $thisYear): string
     {
         $tz = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
-        return 'Google kept the series starting ' . self::shown($g, $tz, $thisYear) . '; the plan had ' . self::shown($m, $tz, $thisYear) . '.';
+        return 'Google kept the series starting ' . self::shown($g, $tz, $thisYear) . '; this change had ' . self::shown($m, $tz, $thisYear) . '.';
     }
 
     // ---- the change over what Google holds now (pure; rule A) -------------------------
@@ -1914,6 +1914,19 @@ final class GoogleSeries
         return $before === $after ? 'kept' : 'conflict';
     }
 
+    /** Words in a list a person reads: "title", "title and notes", "title, notes and place". Pure. */
+    private static function listed(array $words): string
+    {
+        $last = array_pop($words);
+        return ($words === [] ? '' : implode(', ', $words) . ' and ') . $last;
+    }
+
+    /** The verb for such a list (listed): "were" for more than one word, or for "notes". Pure. */
+    private static function were(array $words): string
+    {
+        return count($words) > 1 || $words === ['notes'] ? 'were' : 'was';
+    }
+
     /** What a change made at Google did to a day, by the group it changed, as a sentence's verb phrase ("was renamed"); the time by the series' form. */
     private const DONE_WORDS = ['title' => 'renamed', 'description' => 'given other notes', 'location' => 'given another place', 'status' => 'given another status', 'url' => 'given another link'];
 
@@ -1923,7 +1936,7 @@ final class GoogleSeries
      * as the change found it, $c as Google holds it now, both dayIn() of
      * the series as found, so the key is one instance on both sides), on
      * its date as it showed in that series (an evening west of UTC by its
-     * own date, never its key's), and why it is not kept ($why, a clause).
+     * own date, never its key's), and why it is not kept ($why, a past event read after "That was lost when"; $since, the clause that opens the sentence).
      */
     private static function sinceWords(string|array $b, string|array $c, string $key, array $was, string $why, int $thisYear, string $since): string
     {
@@ -1943,8 +1956,8 @@ final class GoogleSeries
         }
         $last = array_pop($done);
         $zone = Time::zone((int) $was['all_day'] === 1 ? 'UTC' : (string) $was['tzid']);
-        return Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
-            . " at Google $since; that change is not kept, because $why.";
+        return ucfirst($since) . ', ' . Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone($zone)), $thisYear) . ' was ' . ($done === [] ? '' : implode(', ', $done) . ' and ') . $last
+            . " in Google Calendar. That was lost when $why. Make it again there if you still want it.";
     }
 
     /**
@@ -1977,7 +1990,7 @@ final class GoogleSeries
 
     /**
      * Why a master write gives the series' days other keys, as the clause
-     * a person reads after "because": the first part of its keying (form,
+     * a person reads after "That was lost when": the first part of its keying (form,
      * zone, start, rule's days) in which $to differs from $from. Null when
      * none does: every day both have keeps its key.
      */
@@ -1986,16 +1999,16 @@ final class GoogleSeries
         $a = self::keying($from);
         $b = self::keying($to);
         if ($a['form'] !== $b['form']) {
-            return $b['form'] ? 'the series is now all-day' : 'the series is no longer all-day';
+            return $b['form'] ? 'the event became all-day' : 'the event stopped being all-day';
         }
         if ($a['zone'] !== $b['zone']) {
-            return "the series' zone changed";
+            return "the event's time zone changed";
         }
         if ($a['start'] !== $b['start']) {
             $clock = static fn(array $k): string => Time::fromDb($k['start'])->setTimezone(Time::zone($k['zone'] === '' ? 'UTC' : $k['zone']))->format('H:i');
-            return $clock($a) !== $clock($b) ? "the series' time changed" : 'the series moved to another day';
+            return $clock($a) !== $clock($b) ? "the event's time changed" : 'the event moved to another day';
         }
-        return $a['rule'] !== $b['rule'] ? "the series' rule changed" : null;
+        return $a['rule'] !== $b['rule'] ? 'how the event repeats changed' : null;
     }
 
     /**
@@ -2048,7 +2061,7 @@ final class GoogleSeries
      *
      * @return array{0:array,1:list<string>,2:list<array{0:?string,1:string}>} the target over what Google holds now, words for what was left as Google has it (and for what was changed at Google and is not kept across a change of form), and each value left so: [day key, or null for the master; field group, or 'day' for a day as a whole]
      */
-    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'since this change stopped', bool $force = false, bool $split = false): array
+    public static function rebase(array $before, array $target, array $now, int $thisYear, string $since = 'while this change was waiting to be finished', bool $force = false, bool $split = false): array
     {
         if ($now['master'] === null || $before['master'] === null || !empty($target['remove'])) {
             return [$target, [], [], []];
@@ -2089,10 +2102,12 @@ final class GoogleSeries
             }
         }
         if ($left !== []) {
-            $words[] = "The series' " . implode(', ', $left) . " changed at Google $since; left as Google has it.";
+            $what = self::listed($left);
+            $were = self::were($left);
+            $words[] = "The event's $what $were changed in Google Calendar $since; Google's $what $were kept.";
         }
         if ($overwrote !== []) {
-            $overWords[] = "The series' " . implode(', ', $overwrote) . " (changed at Google $since).";
+            $overWords[] = "The event's " . self::listed($overwrote) . " (changed in Google Calendar $since).";
         }
         $allDay = (int) $master['all_day'] === 1;
         // Google still holds the series keyed as the change found it (the
@@ -2160,7 +2175,7 @@ final class GoogleSeries
             // still there, in the series that follows).
             if ($found && $why === null && $x === null && $t !== 'skip' && !self::named($master, $key, $allDay)) {
                 if (!in_array($c, [$bHere, $p, $q], true)) {
-                    $words[] = self::sinceWords($bHere, $c, $key, $before['master'], $split ? 'this change split the series before that day' : 'the series now ends before that day', $thisYear, $since);
+                    $words[] = self::sinceWords($bHere, $c, $key, $before['master'], $split ? 'this change split the event before that day' : 'this change ended the event before that day', $thisYear, $since);
                 }
                 continue;
             }
@@ -2191,7 +2206,7 @@ final class GoogleSeries
                 $how = self::threeWay($c, [$bOwn, $bHere, $p, $q, $t], $wantsChange, false);
                 if ($how === 'conflict' && $force) {
                     $conflicts[] = [$key, 'day'];
-                    $overWords[] = $dayWords($key) . " (changed at Google $since).";
+                    $overWords[] = $dayWords($key) . " (changed in Google Calendar $since).";
                     $how = 'change';
                 }
                 if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $q !== 'skip' && $c !== 'skip') {
@@ -2207,8 +2222,8 @@ final class GoogleSeries
                 if ($how === 'conflict') {
                     $conflicts[] = [$key, 'day'];
                     $words[] = $c === 'skip'
-                        ? $dayWords($key) . " was deleted at Google $since; it stays deleted."
-                        : $dayWords($key) . " was changed at Google $since; left as Google has it.";
+                        ? $dayWords($key) . " was deleted in Google Calendar $since; it stays deleted."
+                        : $dayWords($key) . " was changed in Google Calendar $since; Google's version of that day was kept.";
                 }
             } elseif ($follows) {
                 $result = $want;
@@ -2237,10 +2252,12 @@ final class GoogleSeries
                     }
                 }
                 if ($left !== []) {
-                    $words[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " changed at Google $since (its " . implode(', ', $left) . '); left as Google has it.';
+                    $what = self::listed($left);
+                    $were = self::were($left);
+                    $words[] = "The $what of '" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " $were changed in Google Calendar $since; Google's $what $were kept.";
                 }
                 if ($forced !== []) {
-                    $overWords[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " (its " . implode(', ', $forced) . ", changed at Google $since).";
+                    $overWords[] = "'" . trim((string) ($nowRow['title'] ?? '')) . "' on " . $dayWords($key) . " (its " . self::listed($forced) . ", changed in Google Calendar $since).";
                 }
             }
             if ($result === 'skip') {
@@ -2952,7 +2969,7 @@ final class GoogleSeries
                 continue;
             }
             // A series this change made (its before is its removal) right after this one: the change is a split, and this the series it cuts.
-            [$rebased, $words] = self::rebase($before, $t, self::held($items, (string) $t['googleId']), $year, 'since this change stopped', false, empty($t['insert']) && !empty($befores[$i + 1]['remove']));
+            [$rebased, $words] = self::rebase($before, $t, self::held($items, (string) $t['googleId']), $year, 'while this change was waiting to be finished', false, empty($t['insert']) && !empty($befores[$i + 1]['remove']));
             $targets[$i] = $rebased;
             $kept = array_merge($kept, $words);
         }

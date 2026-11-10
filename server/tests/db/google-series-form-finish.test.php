@@ -51,7 +51,7 @@ return static function (Db $db): void {
             'create' => ['start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T20:00:00-05:00', 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=8'],
             'edit' => '2027-01-06T19:00:00-05:00',
             'flip' => ['scope' => 'all', 'instanceStart' => '2027-01-04T19:00:00-05:00', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true],
-            'allDay' => true, 'why' => 'now all-day',
+            'allDay' => true, 'why' => 'became all-day',
             'day' => ['20270109T000000Z', '2027-01-08'], 'edited' => ['20270107T000000Z', '2027-01-06'], 'planned' => ['20270106', '2027-01-06 00:00:00'],
             'retime' => [['start' => ['dateTime' => '2027-01-08T15:00:00-05:00', 'timeZone' => 'America/New_York'], 'end' => ['dateTime' => '2027-01-08T16:00:00-05:00', 'timeZone' => 'America/New_York']], 'given another time'],
         ],
@@ -59,7 +59,7 @@ return static function (Db $db): void {
             'create' => ['start' => '2027-01-04T10:00:00-08:00', 'end' => '2027-01-04T11:00:00-08:00', 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY;COUNT=6'],
             'edit' => '2027-01-11T10:00:00-08:00',
             'flip' => ['scope' => 'all', 'instanceStart' => '2027-01-04T10:00:00-08:00', 'start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true],
-            'allDay' => true, 'why' => 'now all-day',
+            'allDay' => true, 'why' => 'became all-day',
             'day' => ['20270118T180000Z', '2027-01-18'], 'edited' => ['20270111T180000Z', '2027-01-11'], 'planned' => ['20270111', '2027-01-11 00:00:00'],
             'retime' => [['start' => ['dateTime' => '2027-01-18T15:00:00-08:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2027-01-18T16:00:00-08:00', 'timeZone' => 'America/Los_Angeles']], 'given another time'],
         ],
@@ -67,7 +67,7 @@ return static function (Db $db): void {
             'create' => ['start' => '2027-01-04', 'end' => '2027-01-05', 'allDay' => true, 'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=6'],
             'edit' => '2027-01-11',
             'flip' => ['scope' => 'all', 'instanceStart' => '2027-01-04', 'start' => '2027-01-04T10:00:00-08:00', 'end' => '2027-01-04T11:00:00-08:00', 'allDay' => false, 'tzid' => 'America/Los_Angeles'],
-            'allDay' => false, 'why' => 'no longer all-day',
+            'allDay' => false, 'why' => 'stopped being all-day',
             'day' => ['20270118', '2027-01-18'], 'edited' => ['20270111', '2027-01-11'], 'planned' => ['20270111T180000Z', '2027-01-11 18:00:00'],
             'retime' => [['start' => ['date' => '2027-01-19'], 'end' => ['date' => '2027-01-20']], 'moved to another date'],
         ],
@@ -144,7 +144,7 @@ return static function (Db $db): void {
                     }
                     checkEq("$name: Finish completes and the change is settled", [null, 0], [$failed, (int) $db->scalar('SELECT COUNT(*) FROM google_pending WHERE user_id = ?', [$u])]);
                     checkEq("$name: Finish names the change made at Google once, by the day's own date, as not kept",
-                        [$date($c[$which][1]) . " was $done at Google since this change stopped; that change is not kept, because the series is {$c['why']}."], $out['differences'] ?? null);
+                        ['While this change was waiting to be finished, ' . $date($c[$which][1]) . " was $done in Google Calendar. That was lost when the event {$c['why']}. Make it again there if you still want it."], $out['differences'] ?? null);
                     $sent = array_map(static fn(array $r): string => $r['method'] . ' ' . str_replace($gid, '{series}', rawurldecode(basename((string) $r['path']))),
                         array_values(array_filter($s->fake->requests, static fn(array $r): bool => $r['method'] !== 'GET')));
                     checkEq("$name: Finish writes the master and the plan's edited day under its new id, nothing to an old id or to a day the series does not have",

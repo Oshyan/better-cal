@@ -44,7 +44,8 @@ return static function (Db $db): void {
             $s->poll();
             $e->deleteEvent($u, $id, 'this', '2027-01-11T09:00:00+00:00');
             $e->throwDeferred();
-            $undo->undoById($u, lastEntry($db, $u));
+            $deleted = lastEntry($db, $u);
+            $undo->undoById($u, $deleted);
             $redo = lastEntry($db, $u);
             planned($e, $u, $id, ['scope' => 'all', 'start' => '2027-01-04T11:00:00+00:00', 'end' => '2027-01-04T12:00:00+00:00']);
             $e->throwDeferred();
@@ -59,7 +60,7 @@ return static function (Db $db): void {
                     $refused[] = [$error->errorCode, $error->extra['reason'] ?? null, $error->getMessage()];
                 }
             }
-            $words = "This series was moved to another time or day since this was done, so it's no longer certain which day it was on, and it can't be redone here. You can make the change again on the day.";
+            $words = "Can't redo \"" . (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$deleted]) . "\". This repeating event was moved to another time or day after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.";
             checkEq('redo after a move: refused, forced or not, in words that say what changed', [['not_undoable', 'day_unplaced', $words], ['not_undoable', 'day_unplaced', $words]], $refused);
             checkEq('redo after a move: Google is sent nothing of any kind', [], array_column($s->fake->requests, 'method'));
             checkEq('redo after a move: the series here skips no day, as before', null, $db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]));

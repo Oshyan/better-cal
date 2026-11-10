@@ -85,12 +85,12 @@ return static function (Db $db): void {
             $expect = ['2027-01-04 10:00|Sample series||', '2027-01-05 10:00|Sample series||', '2027-01-06 10:00|Renamed part|Notes A|', '2027-01-07 10:00|Renamed part||',
                 '2027-01-08 10:00|Renamed part||', '2027-01-09 10:00|Renamed part||', '2027-01-10 10:00|Renamed part||', '2027-01-11 10:00|Renamed part||'];
             checkEq("$name: the deletion made at Google is named once, by its date, as not kept",
-                [$day('2027-01-08') . ' was deleted at Google since this change stopped; that change is not kept, because this change split the series before that day.'], $out['differences'] ?? null);
+                ['While this change was waiting to be finished, ' . $day('2027-01-08') . ' was deleted in Google Calendar. That was lost when this change split the event before that day. Make it again there if you still want it.'], $out['differences'] ?? null);
             checkEq("$name: Finish sends nothing to a day past the old series' new end", [], array_values(array_filter(H::writes($t, $from), static fn(string $w): bool => str_contains($w, '_20270108T180000Z') && str_starts_with($w, 'PATCH ' . $t->gid . '_'))));
             check("$name: by date, the part is renamed and whole as planned", $now === $expect,
                 "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect))
                 . "\n   the answer's differences: " . json_encode($out['differences'] ?? null) . "\n   Finish wrote:\n     " . implode("\n     ", array_map(static fn(string $w): string => mb_substr($w, 0, 160), H::writes($t, $from))));
-            check("$name: the answer does not call the deletion made at Google the plan's", !str_contains(implode(' ', (array) ($out['differences'] ?? [])), 'the plan skipped it'), json_encode($out['differences'] ?? null));
+            check("$name: the answer does not call the deletion made at Google the plan's", !str_contains(implode(' ', (array) ($out['differences'] ?? [])), 'this change deleted it, but Google Calendar kept it'), json_encode($out['differences'] ?? null));
         } finally {
             H::done($t);
         }
@@ -144,15 +144,15 @@ return static function (Db $db): void {
                     $now = H::settled($t, $name, $la, '2027-01-01', '2027-01-20');
                     if ($knob === 'netAt') {
                         checkEq("$name: the change made at Google is named once, by its date, as not kept",
-                            [$day($date) . " was $done at Google since this change stopped; that change is not kept, because the series' time changed."], $out['differences'] ?? null);
+                            ['While this change was waiting to be finished, ' . $day($date) . " was $done in Google Calendar. That was lost when the event's time changed. Make it again there if you still want it."], $out['differences'] ?? null);
                     }
                     check("$name: by date, the series is at 11:00 and " . ($knob === 'netAt' ? 'exactly as planned, no other day touched' : 'the change made at Google is kept'), $now === $expect,
                         "\n   missing: " . implode("\n            ", array_diff($expect, $now)) . "\n   extra:   " . implode("\n            ", array_diff($now, $expect))
                         . "\n   the answer's differences: " . json_encode($out['differences'] ?? null) . "\n   Finish wrote:\n     " . implode("\n     ", $writes));
                     // What the answer says is true: it names no day "the plan" never had, and never says "left as Google has it" of a value it did not leave.
                     $words = implode(' ', (array) ($out['differences'] ?? []));
-                    check("$name: the answer does not call the change made at Google the plan's", !str_contains($words, "the plan had 'Renamed at Google'") && !str_contains($words, 'the plan skipped it'), $words);
-                    if (str_contains($words, 'left as Google has it')) {
+                    check("$name: the answer does not call the change made at Google the plan's", !str_contains($words, "this change had 'Renamed at Google'") && !str_contains($words, 'this change deleted it, but Google Calendar kept it'), $words);
+                    if (str_contains($words, "Google's notes were kept")) {
                         check("$name: the answer says the notes were left as Google has them, and they were", in_array('2027-01-06 11:00|Sample series|Notes from Google|', $now, true), $words . ' / ' . json_encode(array_values(array_filter($now, static fn(string $l): bool => str_starts_with($l, '2027-01-06')))));
                     }
                 } finally {

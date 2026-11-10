@@ -28,11 +28,12 @@ require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 
 return static function (Db $db): void {
     // The words of each refusal, written out here.
-    $unplaced = static fn(string $what, bool $redo = false): string => "not_undoable/day_unplaced: This series $what since this was done, so it's no longer certain which day it was on, and it can't be "
-        . ($redo ? 'redone' : 'undone') . ' here. You can make the change again on the day.';
-    $outdated = static fn(string $what): string => "not_undoable/day_unplaced: This series $what since this was done, and what this change held is of the series as it was, so it can't be undone here. You can make the change again on the day.";
+    // $change: the Activity entry's summary (for a redo, the summary of the change the undo took back).
+    $unplaced = static fn(string $what, bool $redo, string $change): string => "not_undoable/day_unplaced: Can't " . ($redo ? 'redo' : 'undo') . " \"$change\". This repeating event $what after that, and Better-Cal can no longer tell which of its days the change was on. Make the change again on the day you meant.";
+    $outdated = static fn(string $what, string $change): string => "not_undoable/day_unplaced: Can't undo \"$change\". This repeating event $what after that, so the saved copy of that day no longer fits it. Make the change again on the day.";
     $gone = 'not_undoable/day_gone: That day is no longer part of the series this change was made in (a later change ended the series before it, moved it into another series, or changed how it repeats), so this can\'t be undone.';
-    $daysSince = "not_undoable/days_since: Days of this series were changed after this, and putting its time back would leave them on other days, so this can't be undone here. You can change the time back by hand.";
+    $daysSince = static fn(string $change): string => "not_undoable/days_since: Can't undo \"$change\" yet. Days of this repeating event were changed after it. Undo those newer changes first, or change the time back by hand.";
+    $summary = static fn(int $entry): string => (string) $db->scalar('SELECT summary FROM mutations WHERE id = ?', [$entry]);
     $zone = 'changed its time zone';
     $form = 'changed between timed and all-day';
     $moved = 'was moved to another time or day';
@@ -171,19 +172,19 @@ return static function (Db $db): void {
             checkEq("$name: it goes through, by one write to K's id", ['done', [['PATCH', $Kid]]], [($w->undo)($entry), ($w->sent)()]);
             checkEq("$name: the notes are gone from K, its tag stays, and Google holds none", [[$K => ['Sample notes', ['sample-day']]], []], [($w->rows)(), ($w->atGoogle)()['records']]);
         });
-        $google("zone moved at the same moments $where: notes given to 6 Jan and undone, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone): void {
+        $google("zone moved at the same moments $where: notes given to 6 Jan and undone, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone, $summary): void {
             ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-            checkEq("$name: (setup) the undo goes through and leaves no row", ['done', []], [($w->undo)(($w->last)()), ($w->rows)()]);
+            checkEq("$name: (setup) the undo goes through and leaves no row", ['done', []], [($w->undo)($undone = ($w->last)()), ($w->rows)()]);
             $redo = ($w->last)();
             $setup($w, $name);
-            ($w->refused)($name, $redo, $unplaced($zone, true));
+            ($w->refused)($name, $redo, $unplaced($zone, true, $summary($undone)));
         });
-        $google("zone moved at the same moments $where: a tag given to 6 Jan and undone, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone): void {
+        $google("zone moved at the same moments $where: a tag given to 6 Jan and undone, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone, $summary): void {
             ($w->this1)($sixth, ['tagNames' => ['sample-day']]);
-            checkEq("$name: (setup) the undo goes through and leaves no row", ['done', []], [($w->undo)(($w->last)()), ($w->rows)()]);
+            checkEq("$name: (setup) the undo goes through and leaves no row", ['done', []], [($w->undo)($undone = ($w->last)()), ($w->rows)()]);
             $redo = ($w->last)();
             $setup($w, $name);
-            ($w->refused)($name, $redo, $unplaced($zone, true));
+            ($w->refused)($name, $redo, $unplaced($zone, true, $summary($undone)));
         });
         $google("zone moved at the same moments $where: 6 Jan deleted, then that undone (its own skip still stands at K)", $ny, function (stdClass $w, string $name) use ($sixth, $K, $Kid, $setup): void {
             ($w->deleteDay)($sixth);
@@ -193,23 +194,23 @@ return static function (Db $db): void {
             checkEq("$name: it goes through, by one write to K's id", ['done', [['PATCH', $Kid]]], [($w->undo)($entry), ($w->sent)()]);
             checkEq("$name: no day is skipped here or at Google", [[], []], [($w->skips)(), ($w->atGoogle)()['skips']]);
         });
-        $google("zone moved at the same moments $where: 6 Jan deleted and that undone, then the delete redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone): void {
+        $google("zone moved at the same moments $where: 6 Jan deleted and that undone, then the delete redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $setup, $unplaced, $zone, $summary): void {
             ($w->deleteDay)($sixth);
-            checkEq("$name: (setup) the undo goes through and nothing is skipped", ['done', []], [($w->undo)(($w->last)()), ($w->skips)()]);
+            checkEq("$name: (setup) the undo goes through and nothing is skipped", ['done', []], [($w->undo)($undone = ($w->last)()), ($w->skips)()]);
             $redo = ($w->last)();
             $setup($w, $name);
-            ($w->refused)($name, $redo, $unplaced($zone, true));
+            ($w->refused)($name, $redo, $unplaced($zone, true, $summary($undone)));
             checkEq("$name: no day is skipped, here or at Google", [[], []], [($w->skips)(), ($w->atGoogle)()['skips']]);
         });
     }
     // The gate comes before staleness: a redo whose day can't be placed is refused as that, whatever was changed since.
-    $google('zone moved at the same moments here: notes undone, newer notes given to the same occurrence, then the first redone', $ny, function (stdClass $w, string $name) use ($sixth, $K, $toTokyo, $unplaced, $zone): void {
+    $google('zone moved at the same moments here: notes undone, newer notes given to the same occurrence, then the first redone', $ny, function (stdClass $w, string $name) use ($sixth, $K, $toTokyo, $unplaced, $zone, $summary): void {
         ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         $toTokyo['here']($w);
         ($w->this1)('2027-01-07T09:00:00+09:00', ['description' => 'Newer notes']);
-        ($w->refused)($name, $redo, $unplaced($zone, true));
+        ($w->refused)($name, $redo, $unplaced($zone, true, $summary($undone)));
         checkEq("$name: the newer notes stand on K", [$K => 'Newer notes'], array_map(static fn(array $r): string => $r[0], ($w->rows)()));
     });
 
@@ -230,26 +231,26 @@ return static function (Db $db): void {
         $google("$what here, the day holding a tag (a row) when the series moves: notes given and undone, then redone", $create, function (stdClass $w, string $name) use ($day, $start, $change, $keyAfter, $idAfter): void {
             ($w->this1)($day, ['tagNames' => ['sample-day']]);
             ($w->this1)($day, ['description' => 'Notes of the day']);
-            ($w->undo)(($w->last)());
+            ($w->undo)($undone = ($w->last)());
             $redo = ($w->last)();
             ($w->series)('all', $start, $change);
             checkEq("$name: (setup) the planner carried the tagged day", [$keyAfter], array_keys(($w->rows)()));
             checkEq("$name: it goes through, by one write to the id of the day the planner carried it to", ['done', [['PATCH', $idAfter]]], [($w->undo)($redo), ($w->sent)()]);
             checkEq("$name: the notes are on that day, beside its tag, and on no other", [$keyAfter => ['Notes of the day', ['sample-day']]], ($w->rows)());
         });
-        $google("$what here, the day holding nothing when the series moves: notes given and undone, then redone", $create, function (stdClass $w, string $name) use ($day, $start, $change, $unplaced, $moved): void {
+        $google("$what here, the day holding nothing when the series moves: notes given and undone, then redone", $create, function (stdClass $w, string $name) use ($day, $start, $change, $unplaced, $moved, $summary): void {
             ($w->this1)($day, ['description' => 'Notes of the day']);
-            ($w->undo)(($w->last)());
+            ($w->undo)($undone = ($w->last)());
             $redo = ($w->last)();
             ($w->series)('all', $start, $change);
-            ($w->refused)($name, $redo, $unplaced($moved, true));
+            ($w->refused)($name, $redo, $unplaced($moved, true, $summary($undone)));
         });
-        $google("$what here: the day deleted and that undone, then the delete redone", $create, function (stdClass $w, string $name) use ($day, $start, $change, $unplaced, $moved): void {
+        $google("$what here: the day deleted and that undone, then the delete redone", $create, function (stdClass $w, string $name) use ($day, $start, $change, $unplaced, $moved, $summary): void {
             ($w->deleteDay)($day);
-            ($w->undo)(($w->last)());
+            ($w->undo)($undone = ($w->last)());
             $redo = ($w->last)();
             ($w->series)('all', $start, $change);
-            ($w->refused)($name, $redo, $unplaced($moved, true));
+            ($w->refused)($name, $redo, $unplaced($moved, true, $summary($undone)));
             checkEq("$name: no day is skipped", [], ($w->skips)());
         });
         $google("$what here: the day deleted, the series moved, then the delete undone (the skip's move is recorded)", $create, function (stdClass $w, string $name) use ($day, $start, $change, $keyAfter, $idAfter): void {
@@ -266,35 +267,35 @@ return static function (Db $db): void {
     // code force does not pass. A split after the day leaves it where it was.
     $google('daily made weekly on Monday here: notes given to Wed 6 Jan and undone, then redone', $ny, function (stdClass $w, string $name) use ($sixth, $first, $gone): void {
         ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('all', $first, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO;COUNT=10'], ['reading' => 'keep']);
         ($w->refused)($name, $redo, $gone);
     });
     $google('daily split from 7 Jan here (this and following renamed): notes given to 8 Jan and undone, then redone', $ny, function (stdClass $w, string $name) use ($gone): void {
         ($w->this1)('2027-01-08T19:00:00-05:00', ['description' => 'Notes of the eighth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('following', '2027-01-07T19:00:00-05:00', ['title' => 'Sample practice, later']);
         ($w->refused)($name, $redo, $gone);
     });
     $google('daily split from 8 Jan here: notes given to 6 Jan and undone, then redone (the day stays in the first series)', $ny, function (stdClass $w, string $name) use ($sixth, $K, $Kid): void {
         ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('following', '2027-01-08T19:00:00-05:00', ['title' => 'Sample practice, later']);
         checkEq("$name: it goes through, on 6 Jan", ['done', [$K], [['PATCH', $Kid]]], [($w->undo)($redo), array_keys(($w->rows)()), ($w->sent)()]);
     });
     $google('the count cut from ten to eight here: notes given to 6 Jan and undone, then redone (a bound is no re-placing)', $ny, function (stdClass $w, string $name) use ($sixth, $first, $K, $Kid): void {
         ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('all', $first, ['rrule' => 'FREQ=DAILY;COUNT=8']);
         checkEq("$name: it goes through, on 6 Jan", ['done', [$K], [['PATCH', $Kid]]], [($w->undo)($redo), array_keys(($w->rows)()), ($w->sent)()]);
     });
     $google('the length made two hours here: notes given to 6 Jan and undone, then redone (a length is no re-placing)', $ny, function (stdClass $w, string $name) use ($sixth, $first, $K, $Kid): void {
         ($w->this1)($sixth, ['description' => 'Notes of the sixth']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('all', $first, ['start' => '2027-01-04T19:00:00-05:00', 'end' => '2027-01-04T21:00:00-05:00']);
         checkEq("$name: it goes through, on 6 Jan", ['done', [$K], [['PATCH', $Kid]]], [($w->undo)($redo), array_keys(($w->rows)()), ($w->sent)()]);
@@ -305,14 +306,14 @@ return static function (Db $db): void {
     // 15 Feb (2027-02-16 00:00:00) is still an occurrence: the old 15 Jan's. The planner records the days it brought
     // into being by date, which is its word that it did not keep every day on its date.
     $google('monthly on the 1st and 15th, every 15th moved a month later here: notes given to 15 Feb and undone, then redone', ['rrule' => 'FREQ=MONTHLY;BYMONTHDAY=1,15', 'start' => '2027-01-01T19:00:00-05:00', 'end' => '2027-01-01T20:00:00-05:00', 'allDay' => false, 'tzid' => 'America/New_York'],
-        function (stdClass $w, string $name) use ($unplaced): void {
+        function (stdClass $w, string $name) use ($unplaced, $summary): void {
             ($w->this1)('2027-02-15T19:00:00-05:00', ['description' => 'Notes of the day']);
-            ($w->undo)(($w->last)());
+            ($w->undo)($undone = ($w->last)());
             $redo = ($w->last)();
             ($w->series)('all', '2027-01-15T19:00:00-05:00', ['start' => '2027-02-15T19:00:00-05:00', 'end' => '2027-02-15T20:00:00-05:00'], ['reading' => 'member']);
             $m = $w->db->one('SELECT start_utc, rrule FROM events WHERE id = ?', [$w->id]);
             checkEq("$name: (setup) the series' start and rule are as they were", ['2027-01-02 00:00:00', 'FREQ=MONTHLY;BYMONTHDAY=1,15'], [(string) $m['start_utc'], (string) $m['rrule']]);
-            ($w->refused)($name, $redo, $unplaced('had its days moved', true));
+            ($w->refused)($name, $redo, $unplaced('had its days moved', true, $summary($undone)));
         });
 
     // H7. A day's own time, redone after the series was made all-day: the forward edit's refusal, before anything is sent.
@@ -320,7 +321,7 @@ return static function (Db $db): void {
     $google('6 Jan tagged, given 21:00 and that undone, the series made all-day here, then the time redone', $ny, function (stdClass $w, string $name) use ($sixth, $first): void {
         ($w->this1)($sixth, ['tagNames' => ['sample-day']]);
         ($w->this1)($sixth, ['start' => '2027-01-06T21:00:00-05:00', 'end' => '2027-01-06T22:00:00-05:00']);
-        ($w->undo)(($w->last)());
+        ($w->undo)($undone = ($w->last)());
         $redo = ($w->last)();
         ($w->series)('all', $first, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC']);
         checkEq("$name: (setup) the tagged day is 6 Jan of the all-day series", ['2027-01-06 00:00:00'], array_keys(($w->rows)()));
@@ -331,13 +332,13 @@ return static function (Db $db): void {
     foreach (['a time and zone of its own (21:00 New York held in Berlin)' => ['start' => '2027-01-07T03:00:00+01:00', 'end' => '2027-01-07T04:00:00+01:00', 'tzid' => 'Europe/Berlin'],
         'moved to the 8th at the series clock' => ['start' => '2027-01-08T19:00:00-05:00', 'end' => '2027-01-08T20:00:00-05:00']] as $shape => $edit) {
         foreach (['here', 'at Google'] as $where) {
-            $google("6 Jan given $shape and that undone, the series made all-day $where, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $first, $edit, $where, $unplaced, $form): void {
+            $google("6 Jan given $shape and that undone, the series made all-day $where, then redone (no row, no skip)", $ny, function (stdClass $w, string $name) use ($sixth, $first, $edit, $where, $unplaced, $form, $summary): void {
                 ($w->this1)($sixth, $edit);
-                ($w->undo)(($w->last)());
+                ($w->undo)($undone = ($w->last)());
                 $redo = ($w->last)();
                 $where === 'here' ? ($w->series)('all', $first, ['allDay' => true, 'start' => '2027-01-04', 'end' => '2027-01-05', 'tzid' => 'UTC'])
                     : ($w->remote)(['start' => ['date' => '2027-01-04'], 'end' => ['date' => '2027-01-05']]);
-                ($w->refused)($name, $redo, $unplaced($form, true));
+                ($w->refused)($name, $redo, $unplaced($form, true, $summary($undone)));
             });
         }
     }
@@ -427,10 +428,10 @@ return static function (Db $db): void {
     ];
     foreach ($after as $what => [$change, $choices, $said]) {
         foreach (['a tag given to 6 Jan and given back' => $tagBack, '6 Jan renamed, then deleted' => $renamedThenDeleted] as $did => $make) {
-            $own("$did, the series $what, then that undone", function (int $u, $d, int $home, int $id, callable $refused, string $name) use ($make, $all, $change, $choices, $said, $outdated): void {
+            $own("$did, the series $what, then that undone", function (int $u, $d, int $home, int $id, callable $refused, string $name) use ($make, $all, $change, $choices, $said, $outdated, $summary): void {
                 $entry = $make($d, $u, $id);
                 $all($d, $u, $id, $change, $choices);
-                $refused($entry, $outdated($said));
+                $refused($entry, $outdated($said, $summary($entry)));
             });
         }
     }
@@ -446,11 +447,11 @@ return static function (Db $db): void {
     });
     // The undo of the change of time itself, over days changed after it: they have no recorded place in the series as it was.
     foreach (['a tag given to 6 Jan' => 'tag', '6 Jan deleted' => 'delete'] as $what => $kind) {
-        $own("made all-day, then $what, then the change of form undone", function (int $u, $d, int $home, int $id, callable $refused, string $name) use ($db, $all, $toAllDay, $kind, $daysSince): void {
+        $own("made all-day, then $what, then the change of form undone", function (int $u, $d, int $home, int $id, callable $refused, string $name) use ($db, $all, $toAllDay, $kind, $daysSince, $summary): void {
             $all($d, $u, $id, $toAllDay);
             $form = lastEntry($db, $u);
             $kind === 'tag' ? $d->events->patch($u, $id, ['scope' => 'this', 'instanceStart' => '2027-01-06', 'tagNames' => ['sample-day']]) : $d->events->deleteEvent($u, $id, 'this', '2027-01-06');
-            $refused($form, $daysSince);
+            $refused($form, $daysSince($summary($form)));
         });
     }
     $own('made all-day, then renamed for all events, then the change of form undone (no day changed since)', function (int $u, $d, int $home, int $id, callable $refused, string $name) use ($db, $all, $toAllDay, $undoOf): void {

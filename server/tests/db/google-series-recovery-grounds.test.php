@@ -185,11 +185,12 @@ return static function (Db $db): void {
             }
             $changeEntry = lastEntry($db, $u);
             $changed = $state($id);
-            // The moves the rule asks for, worked out here: each of the tagged day's row and the deleted day's skip, from
-            // its key under the series as it was to its key under the series the change leaves, when the two differ.
+            // The moves the rule asks for, worked out here: each of the days' rows (the day with notes, which Google holds
+            // as an edited day, and the tagged day, held here alone) and the deleted day's skip, from its key under the
+            // series as it was to its key under the series the change leaves, when the two differ.
             $now = $after + $series;
             $moves = [];
-            foreach (array_merge(empty($c['plain']) ? [$tagDay] : [], $c['alsoDeleted'] ?? [], [$skipDay]) as $date) {
+            foreach (array_unique(array_merge(array_column($c['before'] ?? [], 0), empty($c['plain']) ? [$tagDay] : [], $c['alsoDeleted'] ?? [], [$skipDay])) as $date) {
                 [$from, $to] = [$keyOf($date, $series['clock'], $series['zone']), $keyOf($date, $now['clock'], $now['zone'])];
                 if ($from !== $to && ($c['then'] ?? 'finish') === 'finish') {
                     $moves[] = "series move:$from>$to";
@@ -250,12 +251,15 @@ return static function (Db $db): void {
         ['moved to Denver at the same moment', $la, false],
         ['ten events', $la, true],
     ];
+    // Beside the tagged day (a row held here alone) a day with notes of its own, which Google holds as an edited day:
+    // the stores of a stopped change drop and remake its row, and recovery gives it back its id, so its move shows too.
+    $noted = [['2027-07-21', ['description' => 'Bring the sample checklist']]];
     foreach ($cases as [$change, $series, $lands]) {
         $what = "a daily series at {$series['clock']} {$series['zone']} $change";
         $control = null;
-        scenario("$what in one go, a day tagged and a day deleted before it: the control", function () use ($run, $change, $series, $what, $judgeDelete, $judgeTag, &$control): void {
-            $control = $run(['series' => $series, 'change' => $change]);
-            checkEq("$what, in one go: both the tagged day and the deleted day are where they were, by date", [['2027-07-24'], ['2027-07-22']], [$control['changed']['skips'], array_keys($control['changed']['days'])]);
+        scenario("$what in one go, a day tagged and a day deleted before it: the control", function () use ($run, $change, $series, $what, $noted, $judgeDelete, $judgeTag, &$control): void {
+            $control = $run(['series' => $series, 'change' => $change, 'before' => $noted]);
+            checkEq("$what, in one go: the day with notes, the tagged day and the deleted day are where they were, by date", [['2027-07-24'], ['2027-07-21', '2027-07-22']], [$control['changed']['skips'], array_keys($control['changed']['days'])]);
             checkEq("$what, in one go: its entry records a move for the row and for the skip whose key it moved, and none for a key that stays", $control['wantMoves'], $control['moves']);
             if ($change === 'ten events') {
                 check("$what, in one go: its entry records the days it added", in_array('series added', $control['grounds'], true), json_encode($control['grounds']));
@@ -265,12 +269,12 @@ return static function (Db $db): void {
             $judgeTag("$what, in one go", $control);
         });
         foreach (['before its master write lands', 'after its master write, the answer lost'] as $stop) {
-            scenario("$what, stopped $stop, finished from Review, then the delete and the tag undone", function () use ($run, $change, $series, $what, $stop, $lands, $judgeDelete, $judgeTag, &$control): void {
-                $r = $run(['series' => $series, 'change' => $change, 'stop' => $stop, 'then' => 'finish']);
+            scenario("$what, stopped $stop, finished from Review, then the delete and the tag undone", function () use ($run, $change, $series, $what, $stop, $lands, $noted, $judgeDelete, $judgeTag, &$control): void {
+                $r = $run(['series' => $series, 'change' => $change, 'before' => $noted, 'stop' => $stop, 'then' => 'finish']);
                 $name = "$what, stopped $stop";
                 checkEq("$name: the change stops half done, Google having taken " . ($stop === 'before its master write lands' ? 'nothing' : 'its master write') . ', and Finish completes it',
                     [true, $stop === 'before its master write lands' ? 0 : 1, 1, true, 0], [$r['stopped'], $r['took'], $r['half'], $r['recovered'], $r['left']]);
-                checkEq("$name: finished, the tagged day and the deleted day are where they were, by date", [['2027-07-24'], ['2027-07-22']], [$r['changed']['skips'], array_keys($r['changed']['days'])]);
+                checkEq("$name: finished, the day with notes, the tagged day and the deleted day are where they were, by date", [['2027-07-24'], ['2027-07-21', '2027-07-22']], [$r['changed']['skips'], array_keys($r['changed']['days'])]);
                 checkEq("$name: Finish's entry records a move for the row and for the skip whose key the change moved, and none for a key that stays", $r['wantMoves'], $r['moves']);
                 checkEq("$name: Finish's entry records what the change did with the days exactly as the change's own entry does", $control['grounds'] ?? null, $r['grounds']);
                 $judgeDelete($name, $r, $lands);

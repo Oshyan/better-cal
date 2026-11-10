@@ -279,7 +279,8 @@ final class GoogleMove
                     throw new \RuntimeException('A changed occurrence of "' . (string) $row['title'] . '" has no series to belong to');
                 }
                 $instanceId = GoogleWriter::instanceId((string) $master['google_event_id'], (string) $row['recurrence_instance_utc'], (int) $master['all_day'] === 1);
-                $res = $this->writer->patch($target, $instanceId, GoogleWriter::instanceBody($row));
+                // Over the occurrence the import made, which holds its master's form (GoogleWriter::overForm).
+                $res = $this->writer->patch($target, $instanceId, GoogleWriter::overForm(GoogleWriter::instanceBody($row), (int) $master['all_day'] === 1));
                 $this->uploaded($moveId, $token, (int) $row['id'], (string) ($res['id'] ?? $instanceId));
             }
 

@@ -501,6 +501,10 @@ final class GoogleUndo
                     throw self::conflict();
                 }
                 $now = $row !== null ? self::bodyOf($row) : ($parsed !== null ? self::bodyOf($parsed) : []);
+                // Sent over the event as it is now, in the form it holds (GoogleWriter::overForm).
+                if (is_array($now['start'] ?? null)) {
+                    $send = GoogleWriter::overForm($send, isset($now['start']['date']));
+                }
                 $rowId = $row !== null ? (int) $row['id'] : (int) $wasRow['id'];
                 // What the edit changed here (tags, reminders, the trip flag,
                 // the row itself when the edit made it) is put back from the
@@ -553,6 +557,10 @@ final class GoogleUndo
                 // with what Google kept on the cancelled instance from when it
                 // was deleted (the series' values of then).
                 $body = ['status' => $status] + $this->dayBack($calendar, $googleId, json_decode((string) ($mutation['before_json'] ?? ''), true)['tables']['events'][0] ?? null);
+                // Over the cancelled resource as just read, in the form it holds (GoogleWriter::overForm).
+                if (is_array($current['start'] ?? null)) {
+                    $body = GoogleWriter::overForm($body, isset($current['start']['date']));
+                }
                 $resp = self::refusingConflict(fn() => $writer->patch($calendar, $googleId, $body, $beforeSend, $current));
                 $this->commit($mutation, $calendar, $authority, function () use ($writer, $calendar, $resp, $body, $googleId, $userId, $summary, $mutation, $removed): void {
                     if ($removed) {

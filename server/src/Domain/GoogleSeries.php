@@ -1195,7 +1195,10 @@ final class GoogleSeries
         if ($body !== [] || $before === null || (string) $before['rrule'] !== (string) $after['rrule']) {
             $body['recurrence'] = $after['rrule'] !== '' ? ['RRULE:' . $after['rrule']] : [];
         }
-        return array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
+        $body = array_intersect_key($body, array_flip(GoogleWriter::allowedKeys()));
+        // Over the master as last read, in its form (GoogleWriter::overForm):
+        // run() sends this only once that read matched $before (condition).
+        return $before === null ? $body : GoogleWriter::overForm($body, (int) $before['all_day'] === 1);
     }
 
     /**
@@ -1744,6 +1747,19 @@ final class GoogleSeries
         $skipSet = array_fill_keys(array_map('strval', $t['skips']), true);
         $keys = array_values(array_unique(array_map('strval', array_merge(array_keys($t['exceptions']), $t['skips'], array_keys($held['records']), array_keys($held['cancelled'])))));
         sort($keys);
+        // The form each day's resource holds its start in, as listed: a
+        // record's own start (an all-day day of a timed series holds a date),
+        // and a day with no record its master's, which its instance shows. A
+        // dropped record (cancelled, no originalStartTime) is no longer what
+        // its id names (held(), GoogleSync::toParsed): its start says nothing.
+        $forms = [];
+        foreach ($items as $item) {
+            $dropped = (string) ($item['status'] ?? '') === 'cancelled' && !isset($item['originalStartTime']);
+            if (isset($item['id']) && is_array($item['start'] ?? null) && !$dropped) {
+                $forms[(string) $item['id']] = isset($item['start']['date']);
+            }
+        }
+        $over = static fn(string $id, array $body): array => GoogleWriter::overForm($body, $forms[$id] ?? $allDay);
         $out = ['exception' => [], 'skip' => [], 'plain' => []];
         foreach ($keys as $key) {
             $x = $t['exceptions'][$key] ?? null;
@@ -1758,10 +1774,10 @@ final class GoogleSeries
                 }
             } elseif ($want === null) {
                 if ($has !== null) {
-                    $out['plain'][] = ['plain', $id, self::exceptionBody(self::plainAt($m, $key, self::lengthOf($m))), $key];
+                    $out['plain'][] = ['plain', $id, $over($id, self::exceptionBody(self::plainAt($m, $key, self::lengthOf($m)))), $key];
                 }
             } elseif (!is_array($has) || !self::sameEvent($has, $want)) {
-                $out['exception'][] = ['exception', $id, self::exceptionBody($want), $key];
+                $out['exception'][] = ['exception', $id, $over($id, self::exceptionBody($want)), $key];
             }
         }
         return array_merge($out['exception'], $out['skip'], $out['plain']);

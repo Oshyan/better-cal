@@ -11,7 +11,10 @@
 // every exception's end, a bound change keeping them, the split's trimmed
 // series losing the exceptions past its end, an insert with a chosen id and
 // 409 on the same id again, 400 for a local-time UNTIL, HOURLY, and a clock
-// time on an all-day series' instance, and a GET that can lag.
+// time on an all-day series' instance, a GET that can lag, and (the probe of
+// 2026-11-10, 3.18 to 3.31) a PATCH's start and end merged into the held ones,
+// a field sent as null removed and 400 "Invalid start time." for a start or
+// end that would hold a date and a clock time at once.
 //
 // Occurrences come from $expand when the caller gives one (the harness's
 // own evaluator; the database suite's tests the product's expander, since
@@ -318,6 +321,10 @@ final class FakeGoogle
         if (!empty($e['recurrence'])) {
             return $this->patchMaster($e, $body);
         }
+        $body = self::mergedWhen($e, $body);
+        if ($body === null) {
+            return self::error(400, 'Invalid start time.');
+        }
         $master = $seriesId !== $id ? ($this->events[$seriesId] ?? null) : null;
         if ($master !== null) {
             // An instance of an all-day series can't be given a clock time (probe 2.2a).
@@ -354,6 +361,10 @@ final class FakeGoogle
      */
     private function patchMaster(array $old, array $body): array
     {
+        $body = self::mergedWhen($old, $body);
+        if ($body === null) {
+            return self::error(400, 'Invalid start time.');
+        }
         $new = array_replace($old, $body);
         $allDay = isset($new['start']['date']);
         if (isset($body['recurrence'])) {
@@ -411,6 +422,48 @@ final class FakeGoogle
         $this->events[$id] = $new;
         $this->bump($id);
         return self::ok($this->events[$id]);
+    }
+
+    /**
+     * A PATCH's start and end merged into what the event holds, as the probe
+     * of 2026-11-10 found Google merges them (3.18 to 3.31): each field sent
+     * replaces the held one, a field sent as null is removed, and one not
+     * named stays. A start or end that would hold a date and a clock time
+     * together is refused whole (null: the 400 "Invalid start time.", nothing
+     * changed), which is what a body naming only the new form's fields gets
+     * when the form changes. The body with its start and end as they will
+     * be held; other fields as sent.
+     */
+    /**
+     * A change a test makes at Google, as another client would: each start
+     * and end it names set whole, the other form's fields as null, so a
+     * change between timed and all-day made there lands as Google takes one
+     * (3.19 to 3.31). Never what the app sends: only a test's own changes.
+     */
+    public static function asSet(array $body): array
+    {
+        foreach (['start', 'end'] as $k) {
+            if (is_array($body[$k] ?? null)) {
+                $body[$k] += isset($body[$k]['date']) ? ['dateTime' => null, 'timeZone' => null] : ['date' => null];
+            }
+        }
+        return $body;
+    }
+
+    private static function mergedWhen(array $held, array $body): ?array
+    {
+        foreach (['start', 'end'] as $k) {
+            if (!is_array($body[$k] ?? null)) {
+                continue;
+            }
+            $when = array_replace(is_array($held[$k] ?? null) ? $held[$k] : [], $body[$k]);
+            $when = array_filter($when, static fn($v): bool => $v !== null);
+            if (isset($when['date']) && isset($when['dateTime'])) {
+                return null;
+            }
+            $body[$k] = $when;
+        }
+        return $body;
     }
 
     private function delete(string $id, ?string $ifMatch): array

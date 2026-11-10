@@ -117,7 +117,7 @@ return static function (Db $db): void {
     };
     // A change made at Google, not through the app.
     $elsewhere = static function (object $s, string $id, array $body) use ($base): void {
-        $answer = ($s->fake->writerTransport())('PATCH', $base . rawurlencode($id), $body, ['Authorization: Bearer sample-access']);
+        $answer = ($s->fake->writerTransport())('PATCH', $base . rawurlencode($id), \BetterCal\GoogleProbe\FakeGoogle::asSet($body), ['Authorization: Bearer sample-access']);
         if ((int) $answer['status'] !== 200) {
             throw new RuntimeException('the stand-in refused the change to ' . $id . ': ' . $answer['body']);
         }

@@ -78,7 +78,7 @@ return static function (Db $db): void {
                 // A change made at Google (to the series, or to one instance by its id suffix), then a poll.
                 $w->remote = static function (array $body, ?string $suffix = null) use ($w): void {
                     $answer = ($w->s->fake->transport())('PATCH', 'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode(GoogleStand::CALENDAR) . '/events/' . rawurlencode($w->gid . ($suffix === null ? '' : '_' . $suffix)),
-                        ['Authorization: Bearer sample-access', 'X-Harness: remote'], $body);
+                        ['Authorization: Bearer sample-access', 'X-Harness: remote'], \BetterCal\GoogleProbe\FakeGoogle::asSet($body));
                     if ((int) $answer['status'] !== 200) {
                         throw new RuntimeException('the stand-in refused the change made at Google: ' . $answer['body']);
                     }

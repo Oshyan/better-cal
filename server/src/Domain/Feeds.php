@@ -727,12 +727,16 @@ final class Feeds
      * length from there) and every series column (Model::SERIES_COLUMNS:
      * the trip and floating flags), which no edited day owns.
      *
-     * Its day is asked the way a "this event" edit asks (Events::
-     * requireInstance): a key the series' own expansion yields on that day,
-     * not skipped. A key that is no longer one moves to its image, the
-     * series' one occurrence on the day the key showed under the series as
-     * it was (a new clock time or zone for the whole series moves the day's
-     * row with it); a day with none, or several and not the key, is gone.
+     * Its day is asked by identity first and by the day second. A key the
+     * series' own expansion still yields, in the form the key was written
+     * in, is that occurrence, whatever else of the series changed (its
+     * zone with no instant moving, its start along its own pattern): the
+     * row stays at its key, or is gone when that occurrence is skipped. A
+     * key that names no occurrence any more moves to its image, the series'
+     * one occurrence on the day the key showed under the series as it was
+     * (a new clock time for the whole series, or a change between timed
+     * and all-day, moves the day's row with it); a day with none, or
+     * several, is gone.
      * A rule the expander can't read keeps the row at its key, its other
      * fields refreshed: it can't be told whether the day is still there.
      * Pure.
@@ -791,9 +795,19 @@ final class Feeds
         } catch (\InvalidArgumentException) {
             $skips = [];
         }
-        $dn = ($calcOf($was) ?? $calc)->dnOf($key);
         try {
-            $on = array_values(array_diff($calc->keysOn($dn), $skips));
+            // By identity first, by the day second. A key that still names
+            // an occurrence of the series, in the form it was written in,
+            // is that occurrence: the other end's name for it (the series,
+            // the form and the key) has not changed, whatever local date it
+            // had under the series' old zone (19:00 in New York and 00:00
+            // UTC are one instant on two dates). The row is there, or gone
+            // when that occurrence is skipped. A change of form changes
+            // every name, so it goes by the day.
+            $named = ($was === null || ((int) ($was['all_day'] ?? 0) === 1) === $allDay)
+                && in_array($key, $calc->keysOn($calc->dnOf($key)), true);
+            $dn = ($calcOf($was) ?? $calc)->dnOf($key);
+            $on = array_values(array_diff($named ? [$key] : $calc->keysOn($dn), $skips));
         } catch (\BetterCal\Domain\Series\WalkIncomplete) {
             return $placed($target, $key);
         }
@@ -832,27 +846,38 @@ final class Feeds
     /**
      * A row a poll or a recovery removes while it held something here
      * alone, named for its Activity entry (decision A5, the one naming of
-     * a removal for the sync and recovery): its row id, the date it showed
-     * (an edited day's key, an event's or series' start, in its own zone),
+     * a removal for the sync and recovery): its row id, the date it showed,
      * its title, what it held here ($held, and what referred to it, $refs)
      * and why it went: 'gone' (its series no longer has the day), 'merged'
      * (another row holds the day, and took what it held) or 'deleted' (the
      * event or its whole series is no longer in the calendar). Pure.
      *
+     * The date of an edited day is the day its key names, and a key names a
+     * day only under the series it was written in: its date for an all-day
+     * series, its local date in the series' zone for a timed one (Time::
+     * dayOf), never under the row's own form or zone, which a timed day of
+     * an all-day series or a whole day of a timed one has otherwise. So the
+     * caller gives $series, the series' row the key was written under (as
+     * it was before a poll changed it). An event of its own or a series'
+     * master has no key and no series ($series null): its date is its own
+     * start's, in its own form and zone.
+     *
+     * @param array<string,mixed>|null $series the row's series as its key was written under, null for a row with no key
      * @param list<string> $held
      * @param list<string> $refs
      * @return array{id:int,title:string,day:string,held:list<string>,why:string}
      */
-    public static function droppedDay(array $row, array $held, array $refs, string $why): array
+    public static function droppedDay(array $row, ?array $series, array $held, array $refs, string $why): array
     {
         $words = ['location' => 'its coordinates', 'reminders' => 'its reminders', 'attendance' => 'its answer', 'tags' => 'its tags', 'people' => 'its people', 'icon' => 'its icon'];
         $named = array_values(array_intersect_key($words, array_flip($held)));
         if ($refs !== []) {
             $named[] = 'what refers to it';
         }
-        $zone = (int) ($row['all_day'] ?? 0) === 1 ? 'UTC' : (string) ($row['tzid'] ?: 'UTC');
-        $at = (string) ($row['recurrence_instance_utc'] ?? $row['start_utc']);
-        return ['id' => (int) $row['id'], 'title' => (string) $row['title'], 'day' => Time::fromDb($at)->setTimezone(Time::zone($zone))->format('Y-m-d'), 'held' => $named, 'why' => $why];
+        $key = $row['recurrence_instance_utc'] ?? null;
+        $frame = $key !== null && $series !== null ? $series : $row;
+        $day = Time::dayOf(Time::fromDb((string) ($key ?? $row['start_utc'])), (int) ($frame['all_day'] ?? 0) === 1, (string) ($frame['tzid'] ?: 'UTC'));
+        return ['id' => (int) $row['id'], 'title' => (string) $row['title'], 'day' => $day, 'held' => $named, 'why' => $why];
     }
 
     /**
@@ -1072,6 +1097,7 @@ final class Feeds
         $deleted = []; // id => [what it held, what refers to it]: an event or series no longer in the calendar
         $gone = [];   // id => [the row, what it held]: its day is gone
         $follow = []; // id => [the row, the row as it follows, what it holds, what refers to it, its series]
+        $under = [];  // id => its series as stored before the list
         $updated = array_flip($written);
         foreach ($rows as $row) {
             if (($index++ & 127) === 0) {
@@ -1080,6 +1106,8 @@ final class Feeds
             $id = (int) $row['id'];
             $carried = isset($given[$id]);
             $of = $seriesOf($row);
+            // The series a row's key was written under, for the date it is named by if it goes (droppedDay).
+            $under[$id] = $of['was'];
             if (!$of['seen'] || $row['deleted_at'] !== null) {
                 if (!$carried) {
                     $drop[$id] = $row;
@@ -1167,9 +1195,9 @@ final class Feeds
         }
         foreach ($drop + array_map(static fn(array $g): array => $g[0], $gone) as $id => $row) {
             if (isset($gone[$id]) && ($gone[$id][1] !== [] || $gone[$id][2] !== [])) {
-                $droppedDays[] = self::droppedDay($row, $gone[$id][1], $gone[$id][2], 'gone');
+                $droppedDays[] = self::droppedDay($row, $under[$id] ?? null, $gone[$id][1], $gone[$id][2], 'gone');
             } elseif (isset($deleted[$id])) {
-                $droppedDays[] = self::droppedDay($row, $deleted[$id][0], $deleted[$id][1], 'deleted');
+                $droppedDays[] = self::droppedDay($row, $under[$id] ?? null, $deleted[$id][0], $deleted[$id][1], 'deleted');
             }
             $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$row]), null));
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
@@ -1208,7 +1236,7 @@ final class Feeds
             $before = Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])]);
             $this->mergeInto($after + ['id' => $id], $holderId, $held, $series);
             $touches = array_merge($touches, Undo::touchesOf($before, Undo::removedRows($this->db, [$this->db->one('SELECT * FROM events WHERE id = ?', [$holderId])])));
-            $droppedDays[] = self::droppedDay($now, $held, $refs, 'merged');
+            $droppedDays[] = self::droppedDay($now, $under[$id] ?? null, $held, $refs, 'merged');
             $touches = array_merge($touches, Undo::touchesOf(Undo::removedRows($this->db, [$now]), null));
             $this->db->run('DELETE FROM events WHERE id = ?', [$id]);
             $changedIds[$holderId] = true;

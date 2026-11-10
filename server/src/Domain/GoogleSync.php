@@ -135,7 +135,7 @@ final class GoogleSync
         if ($unchanged) {
             $snapshot = [];
         } elseif ($syncToken === null) {
-            $snapshot = self::applyChanges([], $changes, $eventLimit, $deadline);
+            $snapshot = self::applyChanges([], $changes, true, $eventLimit, $deadline);
         } else {
             // Re-evaluate with the parsed remote changes already resident:
             // this is the precise point before PDO would materialise rows.
@@ -147,7 +147,7 @@ final class GoogleSync
             );
             $cached = self::rowsToParsed($rows, $eventLimit, $deadline);
             unset($rows);
-            $snapshot = self::applyChanges($cached, $changes, $eventLimit, $deadline, delta: true);
+            $snapshot = self::applyChanges($cached, $changes, false, $eventLimit, $deadline);
             unset($cached);
         }
         unset($changes);
@@ -606,22 +606,34 @@ final class GoogleSync
      *    a row and no skip, a cancelled record a skip and no row, a dropped
      *    item neither, unless the master's own EXDATE lines in the same
      *    list name the day (a record dropped for an EXDATE line, 3.16).
-     * 7. The skips of a master the list carries are its EXDATE lines, the
-     *    cancelled records of its form and, in a delta, the stored skips of
-     *    its form that no live record and no dropped item contradicts
-     *    (Google keeps a skipped day as a cancelled instance, so a changed
-     *    master arriving in a delta carries no line for it; probe 7.2). A
-     *    write's answer is not a delta: the master was just sent with every
-     *    skip as an EXDATE line, so a skip it left out was put back. A
-     *    master the list doesn't carry keeps its stored skips the same way.
+     * 7. Google holds a series' skipped days in two places: the master's
+     *    EXDATE lines, and a cancelled record per day (what a DELETE of an
+     *    instance leaves; the master gains no line, probe 2.4). A list says
+     *    everything about a series' skips only when it is whole for that
+     *    series ($whole): then they are the master's lines and the
+     *    cancelled records of its form, and a stored skip the list does
+     *    not name was put back. Any other list adds and removes skips only
+     *    by the items it carries: the stored skips of the series' form
+     *    stand, with the master's lines and the cancelled records beside
+     *    them, less each a live record or a dropped item of that form
+     *    contradicts. A master the list doesn't carry keeps its stored
+     *    skips the same way, whatever the list is.
      *
      * An instance item with no form (GoogleWriter::tombstone: the app's own
      * word about the day at a key, made under the series as stored) is of
      * the series' form. A series with no master, listed or stored, has no
      * form to judge by: each item acts on its own identity.
      *
-     * $delta: the changes are a sync-token delta, not the whole calendar,
-     * not a read-back and not a write's own answer (rule 7).
+     * $whole: the list is everything Google holds of each series whose
+     * master it carries: a whole read of the calendar, a read-back of the
+     * series, or the answer to a write that itself sent the series'
+     * recurrence (its lines are then the series' skips as just written). A
+     * sync-token delta is not, nor the answer to a write that sent no
+     * recurrence (an answer to an invitation, a status, a title: Google's
+     * answer is the series' own resource and says nothing of its cancelled
+     * records), nor a tombstone. Every caller says which; there is no
+     * default, since the wrong one clears every skipped day of a series by
+     * saying nothing about them.
      *
      * @param list<array> $snapshot
      * @param list<array> $changes
@@ -630,9 +642,9 @@ final class GoogleSync
     public static function applyChanges(
         array $snapshot,
         array $changes,
+        bool $whole,
         ?int $maxEvents = null,
         ?float $deadline = null,
-        bool $delta = false,
     ): array
     {
         $maxEvents ??= PHP_INT_MAX;
@@ -684,7 +696,7 @@ final class GoogleSync
             if (($index & 127) === 0) {
                 self::assertWithinDeadline($deadline);
             }
-            $after = self::mergeSeries($uid, $masters[$uid] ?? null, $rows[$uid] ?? [], $listed[$uid] ?? null, $items[$uid] ?? [], $delta);
+            $after = self::mergeSeries($uid, $masters[$uid] ?? null, $rows[$uid] ?? [], $listed[$uid] ?? null, $items[$uid] ?? [], $whole);
             foreach (array_merge(isset($masters[$uid]) ? [''] : [], array_keys($rows[$uid] ?? [])) as $key) {
                 if (!isset($after[$key])) {
                     unset($byKey[$uid . '|' . $key]);
@@ -715,7 +727,7 @@ final class GoogleSync
      * @param list<array> $items the list's instance items of the series, in the order listed
      * @return array<string,array>
      */
-    private static function mergeSeries(string $uid, ?array $storedMaster, array $storedRows, ?array $listed, array $items, bool $delta): array
+    private static function mergeSeries(string $uid, ?array $storedMaster, array $storedRows, ?array $listed, array $items, bool $whole): array
     {
         // Rule 2: the final master, and the series' form.
         if ($listed !== null && !empty($listed['cancelled'])) {
@@ -791,7 +803,7 @@ final class GoogleSync
             // stored skips kept and the cancelled records, less the days a
             // live record holds.
             $lines = $listed !== null ? (array) ($listed['exdates'] ?? []) : [];
-            $kept = $listed === null || ($delta && $storedForm === $form) ? (array) ($storedMaster['exdates'] ?? []) : [];
+            $kept = $listed === null || (!$whole && $storedForm === $form) ? (array) ($storedMaster['exdates'] ?? []) : [];
             $skips = [];
             foreach ($lines as $d) {
                 $skips[(string) $d] = true;

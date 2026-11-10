@@ -1055,7 +1055,12 @@ final class Probe
             'start_utc' => $allDay ? '2027-03-22 00:00:00' : '2027-03-22 17:00:00', 'end_utc' => $allDay ? '2027-03-23 00:00:00' : '2027-03-22 18:00:00',
             'all_day' => $allDay ? 1 : 0, 'tzid' => $allDay ? 'UTC' : self::LA,
         ];
-        $dayBody = GoogleWriter::patchOf(GoogleWriter::body($dayRow(false)), GoogleWriter::body($dayRow(true)));
+        // Built by hand, as the other form cases are: the probe runs against the
+        // installed release's source, which need not have the app's newer
+        // builders. What GoogleWriter::patchOf gives for these two rows: the
+        // start and the end, the only keys that differ.
+        $asAllDay = GoogleWriter::body($dayRow(true));
+        $dayBody = ['start' => $asAllDay['start'], 'end' => $asAllDay['end']];
         $days = [
             ['3.30', 'one day of a timed series made all-day, as the app sends it', $dayBody],
             ['3.31', 'one day of a timed series made all-day, the clock fields nulled', $nulled($dayBody) + $dayBody],

@@ -2666,6 +2666,60 @@ final class GoogleSeries
         }
     }
 
+    /** Why a half-done change was closed without finishing (closeNeverRunnable), said in its Activity line. */
+    public const CLOSED_KEPT = 'this calendar is kept as a copy here now.';
+    public const CLOSED_DELETED = 'its calendar was deleted here.';
+    public const CLOSED_NOT_GOOGLE = 'this calendar no longer writes to Google from here.';
+
+    /**
+     * Close every change half done at Google on this calendar, which can
+     * never run again (its calendar deleted here, or no longer a Google
+     * calendar here): the pending row removed, nothing sent, the rows here
+     * left as they are, and one log-only Activity line per change saying
+     * what was closed and why. Inside the account's write, so the closing
+     * commits with the change that made it true. A run of it still under
+     * way in another process is refused (google_pending_running).
+     */
+    public static function closeNeverRunnable(Db $db, Undo $undo, int $userId, int $calendarId, string $why): int
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            'SELECT id, title, status FROM google_pending WHERE user_id = ? AND calendar_id = ? ORDER BY id',
+            [$userId, $calendarId]
+        ));
+        foreach ($rows as $row) {
+            if ((string) $row['status'] === self::STATUS_RUNNING && !self::stopped($db, (int) $row['id']) && !isset(self::$ours[(int) $row['id']])) {
+                throw HttpError::conflict('google_pending_running', 'This change is still under way.');
+            }
+        }
+        foreach ($rows as $row) {
+            $db->run('DELETE FROM google_pending WHERE id = ?', [(int) $row['id']]);
+            $undo->record($userId, 'calendar', $calendarId, 'update', null, null,
+                "A change to '" . (string) $row['title'] . "' that was half done at Google was closed without finishing: " . $why);
+        }
+        return count($rows);
+    }
+
+    /**
+     * The same closing for the rows an earlier version left that can never
+     * run: their calendar gone, or no longer a Google calendar (kept as a
+     * copy while a change was half done). Run by the daily retention pass
+     * (Activity::prune). Returns how many were closed.
+     */
+    public static function closeLeftBehind(Db $db): int
+    {
+        $rows = RequestAuthority::asServer(fn(): array => $db->journal()->all(
+            "SELECT DISTINCT p.user_id, p.calendar_id, c.id AS present FROM google_pending p LEFT JOIN calendars c ON c.id = p.calendar_id
+             WHERE c.id IS NULL OR c.provider <> 'google' OR c.google_calendar_id IS NULL ORDER BY p.user_id, p.calendar_id"
+        ));
+        $closed = 0;
+        foreach ($rows as $r) {
+            $undo = new Undo($db);
+            $closed += (int) $undo->write((int) $r['user_id'], fn(): int => self::closeNeverRunnable($db, $undo, (int) $r['user_id'], (int) $r['calendar_id'],
+                $r['present'] === null ? self::CLOSED_DELETED : self::CLOSED_NOT_GOOGLE));
+        }
+        return $closed;
+    }
+
     /**
      * Why neither Finish nor Put back can run for a change on this calendar
      * now, and what would bring them back, or null when they can: they need

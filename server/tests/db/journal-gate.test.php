@@ -93,6 +93,8 @@ return static function (Db $db): void {
             /** @var list<array{0:string,1:string}> method, id */
             public array $calls = [];
             public ?int $staleAt = null;
+            /** Every write refused as Google refuses an account that may no longer edit the calendar. */
+            public bool $forbidden = false;
             public int $writes = 0;
         };
         $inner = $fake->writerTransport();
@@ -100,6 +102,9 @@ return static function (Db $db): void {
             $t->calls[] = [$method, rawurldecode(basename((string) parse_url($url, PHP_URL_PATH)))];
             if ($method !== 'GET') {
                 $t->writes++;
+                if ($t->forbidden) {
+                    return ['status' => 403, 'body' => json_encode(['error' => ['code' => 403, 'message' => 'Forbidden', 'errors' => [['reason' => 'forbidden', 'message' => 'Forbidden']]]])];
+                }
                 if ($t->staleAt === $t->writes) {
                     return ['status' => 412, 'body' => json_encode(['error' => ['code' => 412, 'message' => 'Precondition Failed']])];
                 }
@@ -568,68 +573,109 @@ return static function (Db $db): void {
     };
     $pendingWords = static fn(string $title): string => "A change to '$title' is not yet complete at Google. Finish it or put it back in Review, then try this again.";
 
-    scenario('journal gate: keeping a calendar as a copy of its own, or deleting it, is refused while a change on it is half done at Google; after Put back both go through', function () use ($db, $setup, $halfChange, $digest, $changed, $caught, $pendingWords, $pendingRow): void {
-        foreach (['adopt', 'delete'] as $how) {
-            $s = $setup();
-            $p = $halfChange($s);
-            $title = (string) $pendingRow($s)['title'];
-            $s->t->calls = [];
-            $was = $digest($s);
-            $run = fn() => $how === 'adopt' ? $s->calendars->adopt($s->u, $s->calendarId) : $s->calendars->delete($s->u, $s->calendarId);
-            checkEq("$how: refused 409 google_pending, pointing to Review; nothing sent, nothing written", [[409, 'google_pending', $pendingWords($title)], [], []],
-                [$caught($run), $s->t->calls, $changed($was, $digest($s))]);
-            $s->events->googlePutBack($s->u, $p);
-            $s->events->throwDeferred();
-            checkEq("$how: once put back, it goes through", null, $caught($run));
-        }
-    });
-
-    $calendarCols = static fn(object $s): array => $db->one('SELECT provider, google_calendar_id, google_account_id, google_access_role FROM calendars WHERE id = ?', [$s->calendarId]);
     $disconnected = 'The Google account this calendar uses is disconnected. Connect it again in Settings, Connections and add this calendar there to re-attach it; then Finish and Put back are offered again.';
     $paused = 'Google access for this calendar is paused. Reconnect the Google account in Settings, Connections; Finish and Put back are offered again after its next update.';
     $keptAsCopy = 'This calendar no longer writes to Google from here, so Finish and Put back can no longer run for this change.';
+    $closedLine = static fn(string $title, string $why): string => "A change to '$title' that was half done at Google was closed without finishing: $why";
+    // The closing, as Activity and the tables show it: the pending row gone, nothing sent, the newest entry the line, log only.
+    $closed = static function (object $s) use ($db): array {
+        $last = $db->one('SELECT summary, before_json, after_json FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 1', [$s->u]);
+        return [(int) $db->scalar('SELECT COUNT(*) FROM google_pending WHERE user_id = ?', [$s->u]), $s->t->calls, (string) $last['summary'], $last['before_json'], $last['after_json']];
+    };
 
-    scenario('journal gate: a half-done change on a calendar whose Google account was disconnected: Review offers nothing and says to reconnect; Finish says the same; reconnected, both are offered again', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $disconnected): void {
+    scenario('journal gate: keeping a calendar that still writes to Google as a copy is refused while a change on it is half done; after Put back it goes through', function () use ($db, $setup, $halfChange, $digest, $changed, $caught, $pendingWords, $pendingRow): void {
         $s = $setup();
         $p = $halfChange($s);
-        // What disconnecting does here (GoogleAuth::disconnect): the account row goes, the calendar's link to it with it.
-        $db->run('DELETE FROM google_accounts WHERE id = ?', [$s->account]);
-        $item = $reviewItem($s, 'google_half:' . $p);
+        $title = (string) $pendingRow($s)['title'];
         $s->t->calls = [];
-        checkEq('Review: still listed, no action, the summary saying how to bring Finish and Put back back', [[], true],
-            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $disconnected)]);
-        checkEq('Finish and Put back refuse with the same words; nothing sent; the row stays half done', [[409, 'google_calendar_gone', $disconnected], [409, 'google_calendar_gone', $disconnected], [], 'half'],
-            [$caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p)), $s->t->calls,
-                (string) $db->scalar('SELECT status FROM google_pending WHERE id = ?', [$p])]);
-        // Connected again and the calendar added there: re-attached (Calendars::reattachGoogle).
+        $was = $digest($s);
+        $adopt = fn() => $s->calendars->adopt($s->u, $s->calendarId);
+        checkEq('refused 409 google_pending, pointing to Review; nothing sent, nothing written', [[409, 'google_pending', $pendingWords($title)], [], []],
+            [$caught($adopt), $s->t->calls, $changed($was, $digest($s))]);
+        $s->events->googlePutBack($s->u, $p);
+        $s->events->throwDeferred();
+        checkEq('once put back, it goes through', null, $caught($adopt));
+    });
+
+    scenario('journal gate: deleting a calendar is never refused; a change half done on it is closed with it, nothing sent, one line in Activity; the delete of a Google calendar can\'t be undone, so the row never comes back', function () use ($db, $setup, $halfChange, $caught, $pendingRow, $closed, $closedLine): void {
+        $s = $setup();
+        $halfChange($s);
+        $title = (string) $pendingRow($s)['title'];
+        $s->t->calls = [];
+        checkEq('the delete goes through', null, $caught(fn() => $s->calendars->delete($s->u, $s->calendarId)));
+        checkEq('closed: no pending row, nothing sent, the line, log only', [0, [], $closedLine($title, 'its calendar was deleted here.'), null, null], $closed($s));
+        $delete = (int) $db->scalar("SELECT MAX(id) FROM mutations WHERE user_id = ? AND entity = 'calendar' AND op = 'delete'", [$s->u]);
+        checkEq('the delete\'s undo is refused (a Google calendar\'s delete keeps nothing it may restore); the calendar and the row stay gone', ['not_undoable', 0, 0],
+            [$caught(fn() => $s->undo->undoById($s->u, $delete))[1] ?? null, (int) $db->scalar('SELECT COUNT(*) FROM calendars WHERE id = ?', [$s->calendarId]), (int) $db->scalar('SELECT COUNT(*) FROM google_pending WHERE user_id = ?', [$s->u])]);
+    });
+
+    scenario('journal gate: write access taken away at Google: Finish and Put back are refused there and adopt here (the calendar still looks writable); deleting the calendar ends it', function () use ($db, $setup, $halfChange, $caught, $pendingRow, $closed, $closedLine, $pendingWords): void {
+        $s = $setup();
+        $p = $halfChange($s);
+        $title = (string) $pendingRow($s)['title'];
+        $s->t->forbidden = true;
+        $finish = $caught(fn() => [$s->events->googleFinish($s->u, $p), $s->events->throwDeferred()]);
+        $putBack = $caught(fn() => [$s->events->googlePutBack($s->u, $p), $s->events->throwDeferred()]);
+        checkEq('Finish and Put back refused by Google; the row stays half done; adopt refused with the pending words', [true, true, 'half', [409, 'google_pending', $pendingWords($title)]],
+            [$finish !== null, $putBack !== null, (string) $db->scalar('SELECT status FROM google_pending WHERE id = ?', [$p]), $caught(fn() => $s->calendars->adopt($s->u, $s->calendarId))]);
+        $s->t->calls = [];
+        $s->calendars->delete($s->u, $s->calendarId);
+        checkEq('deleted: closed, nothing sent, the line', [0, [], $closedLine($title, 'its calendar was deleted here.'), null, null], $closed($s));
+    });
+
+    scenario('journal gate: a calendar that no longer writes to Google for this account (disconnected, paused, a role that can\'t write) is listed with no action and the reason, and keeping it as a copy goes through and closes the change', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $pendingRow, $closed, $closedLine, $disconnected, $paused): void {
+        foreach (['disconnected' => $disconnected, 'paused' => $paused, 'reader' => 'This account can no longer edit this calendar at Google, so Finish and Put back can no longer run for this change.'] as $how => $words) {
+            $s = $setup();
+            $p = $halfChange($s);
+            $title = (string) $pendingRow($s)['title'];
+            if ($how === 'disconnected') {
+                // What disconnecting does here (GoogleAuth::disconnect): the account row goes, the calendar's link to it with it.
+                $db->run('DELETE FROM google_accounts WHERE id = ?', [$s->account]);
+            } else {
+                // The reset clears the role until a poll after reconnecting; a role that can't write is stored as such.
+                $db->run('UPDATE calendars SET google_access_role = ? WHERE id = ?', [$how === 'paused' ? null : 'reader', $s->calendarId]);
+            }
+            $item = $reviewItem($s, 'google_half:' . $p);
+            $s->t->calls = [];
+            checkEq("$how: listed with no action and the reason; Finish and Put back refuse with it, nothing sent", [[], true, [409, 'google_calendar_gone', $words], [409, 'google_calendar_gone', $words], []],
+                [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $words),
+                    $caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p)), $s->t->calls]);
+            checkEq("$how: kept as a copy, it goes through and the change is closed with the line", [null, 0, [], $closedLine($title, 'this calendar is kept as a copy here now.'), null, null],
+                array_merge([$caught(fn() => $s->calendars->adopt($s->u, $s->calendarId))], $closed($s)));
+        }
+    });
+
+    scenario('journal gate: disconnected, then reconnected and the calendar added again: Finish and Put back are offered again; the re-attach is not undoable', function () use ($db, $setup, $halfChange, $reviewItem, $caught): void {
+        $s = $setup();
+        $p = $halfChange($s);
+        $db->run('DELETE FROM google_accounts WHERE id = ?', [$s->account]);
         $account = $db->insert('google_accounts', ['user_id' => $s->u, 'email' => 'owner@example.test',
             'refresh_token_enc' => BetterCal\Infra\Secrets::seal('sample-refresh', 'sample-session-secret'), 'scopes' => GoogleAuth::SCOPES]);
         $s->undo->write($s->u, fn() => $s->calendars->reattachGoogle($s->u, $s->calendarId, $account, 'owner', 'owner@example.test'));
         $reattach = lastEntry($db, $s->u);
         checkEq('re-attached: Finish and Put back offered again', ['Finish', 'Put back'], array_column($reviewItem($s, 'google_half:' . $p)['actions'] ?? [], 'label'));
-        // The re-attach's own entry would unlink the account again: an operation that changes whether the calendar writes to Google.
-        $undoReattach = $caught(fn() => $s->undo->undoById($s->u, $reattach));
         checkEq('undoing the re-attach is refused (its entry keeps nothing to restore), and the calendar still writes to Google', [[400, 'not_undoable', 'This entry is log-only and cannot be undone (automated or older than the 7-day undo window)'], $account],
-            [$undoReattach, (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$s->calendarId])]);
+            [$caught(fn() => $s->undo->undoById($s->u, $reattach)), (int) $db->scalar('SELECT google_account_id FROM calendars WHERE id = ?', [$s->calendarId])]);
     });
 
-    scenario('journal gate: a half-done change after the compromise reset (access paused), and one on a calendar an earlier version kept as a copy: Review offers nothing and says why', function () use ($db, $setup, $halfChange, $reviewItem, $caught, $paused, $keptAsCopy): void {
+    scenario('journal gate: rows an earlier version left that can never run (a calendar kept as a copy, or deleted, with a change half done) are listed with the reason until the daily retention pass closes them, each with its line', function () use ($db, $setup, $halfChange, $reviewItem, $pendingRow, $closed, $closedLine, $keptAsCopy): void {
         $s = $setup();
         $p = $halfChange($s);
-        // What the reset does to a Google calendar (Auth): its access role cleared until a poll after reconnecting.
-        $db->run('UPDATE calendars SET google_access_role = NULL WHERE id = ?', [$s->calendarId]);
-        $item = $reviewItem($s, 'google_half:' . $p);
-        checkEq('paused: no action, the reason; Finish refuses with it', [[], true, [409, 'google_calendar_gone', $paused]],
-            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $paused), $caught(fn() => $s->events->googleFinish($s->u, $p))]);
-
-        $s = $setup();
-        $p = $halfChange($s);
-        // A row an earlier version left: the calendar was kept as a copy while the change was half done (what adopt wrote).
+        $title = (string) $pendingRow($s)['title'];
+        // What adopt wrote before it closed the row: the calendar a copy here, the pending row left.
         $db->run("UPDATE calendars SET kind = 'local', provider = 'ics', google_calendar_id = NULL, google_access_role = NULL, google_account_id = NULL WHERE id = ?", [$s->calendarId]);
         $item = $reviewItem($s, 'google_half:' . $p);
-        checkEq('kept as a copy: still listed, no action, the reason; Finish and Put back refuse with it', [[], true, [409, 'google_calendar_gone', $keptAsCopy], [409, 'google_calendar_gone', $keptAsCopy]],
-            [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $keptAsCopy),
-                $caught(fn() => $s->events->googleFinish($s->u, $p)), $caught(fn() => $s->events->googlePutBack($s->u, $p))]);
+        checkEq('kept as a copy: listed with no action and the reason', [[], true], [$item['actions'] ?? null, str_ends_with((string) ($item['summary'] ?? ''), ' ' . $keptAsCopy)]);
+        $t = $setup();
+        $halfChange($t);
+        $titleT = (string) $pendingRow($t)['title'];
+        // What delete did before it closed the row: the calendar gone, the pending row left (hidden from Review).
+        $db->run('DELETE FROM calendars WHERE id = ?', [$t->calendarId]);
+        $s->t->calls = [];
+        $t->t->calls = [];
+        $out = (new BetterCal\Domain\Activity($db))->prune();
+        checkEq('the pass closes both, nothing sent, each with its line', [true, [0, [], $closedLine($title, 'this calendar no longer writes to Google from here.'), null, null],
+            [0, [], $closedLine($titleT, 'its calendar was deleted here.'), null, null]], [($out['halfDoneClosed'] ?? 0) >= 2, $closed($s), $closed($t)]);
     });
 
     // ---- what Review offers on an accepted proposal (G2) ---------------------------------

@@ -182,6 +182,8 @@ final class Activity
         $this->db->run('DELETE FROM mutation_rows WHERE mutation_id IN (SELECT id FROM mutations WHERE created_at < ?)', [$logCut]);
         $deleted =$this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
         $forgotten = Plugins::forgetGoneCalendars($this->db);
-        return ['snapshotsCleared' => $cleared, 'deleted' => $deleted, 'pluginRowsForgotten' => $forgotten];
+        // Changes half done at Google that can never run (their calendar gone, or kept as a copy by an earlier version): closed.
+        $closed = GoogleSeries::closeLeftBehind($this->db);
+        return ['snapshotsCleared' => $cleared, 'deleted' => $deleted, 'pluginRowsForgotten' => $forgotten, 'halfDoneClosed' => $closed];
     }
 }

@@ -50,9 +50,13 @@ final class Interleave
     public const NEVER_SENT = ['attendees', 'reminders', 'colorId'];
     /** The fields held here alone a step can send. */
     private const LOCAL = ['tags', 'people', 'reminders', 'icon', 'coords', 'attendance'];
-    /** A day's content field and the own-list names that make it the day's own; a field none of them names follows its series. */
+    /**
+     * A day's content field and the own-list names that make it the day's own; a field none of them names follows its
+     * series. Tags and people are not here: a day's row holds them as its own links, the series' copy among them (ground():
+     * "a day's row holds them in its own links"), so an undo puts that set back exactly, never re-derives it from the series.
+     */
     private const OWN_OF = ['title' => ['title'], 'description' => ['description'], 'location' => ['location'], 'url' => ['url'], 'status' => ['status'],
-        'tags' => ['tags'], 'people' => ['people'], 'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
+        'reminders' => ['reminders'], 'icon' => ['icon'], 'attendance' => ['attendance'],
         'lat' => ['location', 'coords', 'lat'], 'lng' => ['location', 'coords', 'lat']];
     private const OTHER_ZONES = ['America/Phoenix', 'Europe/Berlin', 'Asia/Tokyo', 'America/New_York', 'Pacific/Auckland'];
 
@@ -2015,7 +2019,16 @@ final class Interleave
                     $this->expect('x-undo-fields', ($r[$f] ?? null) == ($master[$f] ?? null), "step {$this->step} ($do): an undo gives back to the series a $f its entry gave the day, at the series' $f as it stands", $where + ['field' => $f, 'want' => $master[$f] ?? null, 'now' => $r[$f] ?? null]);
                     continue;
                 }
-                $this->expect('x-undo-fields', ($r[$f] ?? null) == ($was[$f] ?? null), "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $was[$f] ?? null, 'now' => $r[$f] ?? null]);
+                $want = $was[$f] ?? null;
+                $got = $r[$f] ?? null;
+                if (in_array($f, ['tags', 'people'], true)) {
+                    // A set of links: compared as a set.
+                    $want = (array) $want;
+                    $got = (array) $got;
+                    sort($want);
+                    sort($got);
+                }
+                $this->expect('x-undo-fields', $got == $want, "step {$this->step} ($do): an undo puts back the exact $f its entry changed", $where + ['field' => $f, 'want' => $want, 'now' => $got]);
             }
             // Ownership: for the own-list entries the entry changed, as before it; the rest as before the undo.
             $flipped = array_merge(array_diff((array) ($was['own'] ?? []), (array) ($state['after'][$ident]['own'] ?? [])), array_diff((array) ($state['after'][$ident]['own'] ?? []), (array) ($was['own'] ?? [])));

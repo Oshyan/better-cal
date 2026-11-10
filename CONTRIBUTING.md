@@ -30,6 +30,23 @@ bash scripts/tests/deploy-security.sh                 # deploy privilege boundar
 bash scripts/tests/release-security.sh                # release and signing checks
 ```
 
+### Gates: Three Levels
+
+`tools/gates.sh` runs the suites above at the level the moment needs, side by side, one line per gate. Run what fits; running the heaviest level at every step only slows the work down.
+
+| Level | When | What it runs | About |
+|---|---|---|---|
+| `tools/gates.sh quick [db-test ...]` | While working, by a person or an agent | The unit suite, the frontend suites, and only the database test files you name (`undo`, `google-series`, ...): the ones near your change, and your new one | 1 to 2 minutes |
+| `tools/gates.sh merge [--since REF]` | After a merge into your branch or `main` | Every suite. With `--since REF`: also the mutations aimed at files changed since REF, and one seed in each harness mode when the repeating-event engine or the Google write path changed | 3 minutes, about 8 with seeds |
+| `tools/gates.sh full` | Once, on the final tree, before a push to `main` | Every suite, the oracle probes, one recorded seed and one fresh seed in each harness mode, and the whole mutation list | 10 to 15 minutes |
+
+- A worker on one change runs `quick`. It does not run seeds or the mutation list, and it does not re-run everything after merging `main`: the merge into `main` is gated there, once.
+- The harness seeds run **as shipped**. A setting that is off in the release (today: undo of a change to all events on a Google calendar) is off in the gates; measuring it with the setting on is for the work that will turn it on, not a gate for this release.
+- The harness is a randomized test. A recorded seed run again is a regression test and finds nothing new, so the gates carry one; the fresh seed is where it can find something, and its number is printed so a failure replays. Wider runs (more seeds, more cases) are worth doing in the background while other work goes on; they are not gates, and a failure they find is a finding to triage, not a blocked push.
+- What the gates don't replace: before a release, an independent adversarial read of the change by a reviewer who has not seen the work (a person, or an agent from another model), with a runnable probe for each finding. In the 1.5.x rounds that is what found the faults that mattered, after every gate had passed.
+
+`BC_TEST_DB` is read as below; `GATES_LOG` chooses where each gate's output goes, and `GATES_SEED` fixes the fresh seed.
+
 - The deploy runs the smoke suite under five time zones, so a test that only passes in yours will be caught. Try another `TZ` before sending.
 - Add a test with any behavior change. The server has two suites:
   - **`server/tests/run.php`** is plain PHP with no database server, for logic: parsing, recurrence, time zones, serializers, validation, anything that doesn't depend on how the database behaves. Where it needs a table it uses SQLite in memory, so PHP needs `pdo_sqlite` (`php8.4-sqlite3` on Debian and Ubuntu). The CalDAV and iCalendar checks also need `composer install` in `server/` and are skipped without it.

@@ -1808,17 +1808,22 @@ final class Driver
         }
         $this->ran('f-held', 'whole-series undo held back');
         $want = $this->db->scalar("SELECT MAX(id) FROM mutations WHERE user_id = ? AND undone = 0 AND source IN ('web', 'quickadd', 'review', 'rsvp', 'dedup:owner') AND (details_json IS NULL OR NOT ($series)) AND (before_json IS NOT NULL OR after_json IS NOT NULL)", [$this->userId]);
-        $error = null;
+        $error = $said = $reason = null;
         try {
             $this->undo->undoLatest($this->userId);
         } catch (HttpError $e) {
-            $error = $e->errorCode;
+            [$error, $said, $reason] = [$e->errorCode, $e->getMessage(), $e->extra['reason'] ?? null];
         }
         $now = $undone();
         $this->check('f-held', array_filter($mine, static fn(int $e): bool => (int) ($now[$e] ?? 0) === 1) === [], 'the bare Undo passes over a whole-series change on a Google calendar while the setting is off', ['entries' => $mine]);
-        // That change's own undo may be refused (a setup day the whole-series change touched since is stale): the bare Undo
-        // still went to it, never answering for the held-back entry.
-        $this->check('f-held', $want === null ? $error === 'nothing_to_undo' : ((int) ($now[(int) $want] ?? 0) === 1 || !in_array($error, [null, 'not_undoable', 'nothing_to_undo'], true)), 'the bare Undo takes the change before it', ['want' => $want, 'error' => $error]);
+        // That change's own undo may be refused, and the answer is then its own: stale (a setup day the whole-series change
+        // touched since), or not_undoable with the reason the contract gives a day the journal no longer places exactly
+        // (docs/api-contract.md: day_unplaced, day_gone; the held-back change re-placed the series' days, ended it before
+        // that day or moved the day into another series). The bare Undo still went to it: a not_undoable with no such
+        // reason, or in the held-back entry's words, is the held-back entry answering.
+        $own = $error !== null && $error !== 'nothing_to_undo' && $said !== Product::SERIES_UNDO_OFF
+            && ($error !== 'not_undoable' || in_array($reason, ['day_unplaced', 'day_gone'], true));
+        $this->check('f-held', $want === null ? $error === 'nothing_to_undo' : ((int) ($now[(int) $want] ?? 0) === 1 || $own), 'the bare Undo takes the change before it', ['want' => $want, 'error' => $error, 'reason' => $reason, 'said' => $said]);
         return true;
     }
 

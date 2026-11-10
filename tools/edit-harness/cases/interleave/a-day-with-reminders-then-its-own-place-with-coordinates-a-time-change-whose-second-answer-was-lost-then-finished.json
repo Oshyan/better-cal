@@ -1,0 +1,24 @@
+{
+    "about": "A weekly series at 09:00 Tokyo; one day given notes and reminders of its own, then a place of its own with picked coordinates; another day given a place of its own; the series' time changed for all events with the answer of its second write lost, the master write having dropped both days' records at Google, so the store of the stopped change leaves the first day's row, kept for its reminders, showing the series' place with its coordinates gone; then Finish. The day shows its own place again and holds the coordinates picked for it (x-alone). From seed 60611 case 153.",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Tokyo",
+        "start": "2027-01-18 09:00",
+        "length": 60
+    },
+    "steps": [
+        {"do": "w-this-m", "pick": 0.935, "what": "description+reminders"},
+        {"do": "w-this-g", "pick": 0.774, "what": "location"},
+        {"do": "w-this-m", "pick": 0.089, "what": "location+coords"},
+        {"do": "f-lost", "pick": 0.453, "k": 2, "write": "w-all", "what": "time"},
+        {"do": "finish", "pick": 0.0}
+    ]
+}

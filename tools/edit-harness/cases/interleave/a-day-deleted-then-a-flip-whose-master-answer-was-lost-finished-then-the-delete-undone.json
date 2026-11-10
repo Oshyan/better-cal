@@ -1,0 +1,25 @@
+{
+    "about": "A daily series at 17:00 Los Angeles (00:00 UTC the next day); one day deleted; the series made all-day with the answer of its master write lost; Finish; then the delete undone by its entry. The change carried the day's skip to its new key and changed nothing of it, and Finish's entry records that move as the change's own entry does, so the undo goes through and the day is back on its own date (x-undo-fields). From seed 61349 case 359.",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-07-19 17:00",
+        "length": 60,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 61200
+    },
+    "steps": [
+        {"do": "w-del1", "pick": 0.481},
+        {"do": "f-lost", "pick": 0.0, "k": 1, "write": "w-all", "what": "flip"},
+        {"do": "finish", "pick": 0.0},
+        {"do": "u-entry", "pick": 0.583}
+    ]
+}

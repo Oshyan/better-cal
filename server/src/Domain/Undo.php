@@ -339,8 +339,8 @@ final class Undo
         // snapshots back, what that restore puts back besides; an entry
         // sent to Google is undone by a planned write (GoogleUndo), which
         // carries the days, and stands on what it changed alone.
-        $this->recordTouches($mutationId, array_merge(self::touchesOf($beforeTables, $afterTables, $touches),
-            GoogleUndo::carries($details) ? [] : self::restoredGround($beforeTables, $afterTables), $touches));
+        $this->recordTouches($mutationId, array_merge(self::changeGround($beforeTables, $afterTables, $touches),
+            GoogleUndo::carries($details) ? [] : self::restoredGround($beforeTables, $afterTables)));
         // A write to Google that undo can send back keeps what to send in
         // its details (GoogleUndo): no snapshot for one resource, the rows'
         // own snapshots for a whole series, kept as any change keeps them.
@@ -967,6 +967,103 @@ final class Undo
         return $out;
     }
 
+    /**
+     * What a planned series change did with its days that its rows'
+     * snapshots can't show, as the grounds its entry records beside them
+     * ($writes: Series\Model's): where each skip went, since a skip has no
+     * row to follow (skipMoveGrounds), and which days the change brought
+     * into being (addedGrounds). Each row's move is read from the snapshots
+     * themselves (touchesOf). The one function every entry of a change for
+     * all events asks, however the change ended: the commit here, the
+     * commit on a Google calendar, an undo's or redo's plan, and Review's
+     * Finish of a change that stopped half way, from the plan its pending
+     * row kept. Pure.
+     *
+     * @return list<array{0:string,1:string}>
+     */
+    public static function planGrounds(int $seriesId, array $writes): array
+    {
+        return array_merge(self::skipMoveGrounds($seriesId, (array) ($writes['skipMoves'] ?? [])), self::addedGrounds($seriesId, $writes['added'] ?? null));
+    }
+
+    /**
+     * A change's ground from what it keeps: what its snapshots show it
+     * changed, read with its planner's record ($recorded: touchesOf takes a
+     * skip the plan carried as that move, never as two skips changed), and
+     * that record itself, less any move the rows don't show (shownMoves):
+     * an entry says what the change did, not what its plan meant to do.
+     * What record() writes for every entry, and what a
+     * log-only entry that keeps no snapshots (Review's Finish) is given, so
+     * the two can't read one change two ways. Pure.
+     *
+     * @param list<array{0:string,1:string}> $recorded
+     * @return list<array{0:string,1:string}>
+     */
+    public static function changeGround(?array $before, ?array $after, array $recorded = []): array
+    {
+        $recorded = self::shownMoves($before, $after, $recorded);
+        return array_merge(self::touchesOf($before, $after, $recorded), $recorded);
+    }
+
+    /**
+     * A planner's record less the moves the rows don't show: a move stands
+     * in an entry only where the change carried something from that key to
+     * that key, a skip (the series skipped <from> before and skips <to>
+     * after) or a day's row (the same row at <from> before and at <to>
+     * after). The record is the plan's, and the rows are what was stored:
+     * on a Google calendar they are Google's read-back, which can keep a day
+     * the plan skipped, and after Review's Finish over a clock changed at
+     * Google meanwhile they are Google's series. A move that did not happen
+     * would carry a later judgement of that day to a key the series does
+     * not have it at; what did happen to the skip (gone, or made) is read
+     * from the rows (touchesOf). A move of a series whose row is not in
+     * both snapshots stands as given: there is nothing to read it against.
+     * Pure.
+     *
+     * @param list<array{0:string,1:string}> $recorded
+     * @return list<array{0:string,1:string}>
+     */
+    private static function shownMoves(?array $before, ?array $after, array $recorded): array
+    {
+        // Each series' row key => [its skips, its days' rows as id => key].
+        $read = static function (?array $tables): array {
+            $out = [];
+            foreach ($tables['events'] ?? [] as $r) {
+                if (!is_array($r) || !isset($r['id'])) {
+                    continue;
+                }
+                if (($r['recurrence_instance_utc'] ?? null) === null) {
+                    try {
+                        $skips = Recurrence::decodeExdates($r['exdates_json'] ?? null);
+                    } catch (\InvalidArgumentException) {
+                        $skips = [];
+                    }
+                    $out[self::keyOf('events', $r)]['skips'] = $skips;
+                } elseif (!empty($r['recurrence_parent_id'])) {
+                    $out[self::keyOf('events', ['id' => $r['recurrence_parent_id']])]['days'][(int) $r['id']] = (string) $r['recurrence_instance_utc'];
+                }
+            }
+            return $out;
+        };
+        [$was, $now] = [$read($before), $read($after)];
+        return array_values(array_filter($recorded, static function (array $ground) use ($was, $now): bool {
+            [$row, $col] = [(string) $ground[0], (string) $ground[1]];
+            if (!str_starts_with($col, self::MOVE) || !isset($was[$row]['skips'], $now[$row]['skips'])) {
+                return true;
+            }
+            [$from, $to] = explode('>', substr($col, strlen(self::MOVE)), 2) + [1 => ''];
+            if (in_array($from, $was[$row]['skips'], true) && in_array($to, $now[$row]['skips'], true)) {
+                return true;
+            }
+            foreach ($was[$row]['days'] ?? [] as $id => $key) {
+                if ($key === $from && ($now[$row]['days'][$id] ?? null) === $to) {
+                    return true;
+                }
+            }
+            return false;
+        }));
+    }
+
     /** The ground of one field of one day (dayGround). */
     public const DAY = 'day:';
 
@@ -1033,7 +1130,11 @@ final class Undo
      * What a series' skips gained or lost between two versions of its row,
      * as grounds: each date skipped or brought back (SKIP), less those the
      * change carried to another occurrence ($moves, "move:<from>><to>" as
-     * its planner recorded them), which are those moves alone. Pure.
+     * its planner recorded them), which are those moves alone. A move counts
+     * where the rows show it (skipped at <from> before, at <to> after), so
+     * skips carried in a chain, each onto the key the next one left, are
+     * their moves and no skip changed, and a skip the plan carried that is
+     * not there after is that skip gone. Pure.
      *
      * @param list<string> $moves
      * @return list<string>
@@ -1047,15 +1148,21 @@ final class Undo
                 return [];
             }
         };
-        $gone = array_values(array_diff($of($was), $of($now)));
-        $made = array_values(array_diff($of($now), $of($was)));
+        [$before, $after] = [$of($was), $of($now)];
+        // The skips the rows show carried: skipped at <from> before and at <to> after. A chain (one skip onto the key
+        // the next one left) is each of its moves, so a key is judged by whether its own skip left and another came.
+        [$left, $came] = [[], []];
         foreach ($moves as $move) {
             [$from, $to] = explode('>', substr($move, strlen(self::MOVE)), 2) + [1 => ''];
-            if (in_array($from, $gone, true) && in_array($to, $made, true)) {
-                $gone = array_values(array_diff($gone, [$from]));
-                $made = array_values(array_diff($made, [$to]));
+            if (in_array($from, $before, true) && in_array($to, $after, true)) {
+                $left[$from] = true;
+                $came[$to] = true;
             }
         }
+        // Gone: a skip that was not carried and is no longer there, or whose key a carried skip took. Made: a skip no
+        // move brought, on a key that had none or whose own skip was carried away.
+        $gone = array_values(array_filter($before, static fn(string $k): bool => !isset($left[$k]) && (!in_array($k, $after, true) || isset($came[$k]))));
+        $made = array_values(array_filter($after, static fn(string $k): bool => !isset($came[$k]) && (!in_array($k, $before, true) || isset($left[$k]))));
         $out = array_map(static fn(string $d): string => self::SKIP . $d, array_merge($gone, $made));
         sort($out);
         return $out;

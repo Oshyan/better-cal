@@ -948,7 +948,7 @@ final class GoogleUndo
                         : "This change can't be undone as a whole: " . Model::REASONS[$planned['code']], 'not_undoable');
                 }
                 $writes = $planned['writes'];
-                $moves = array_merge($moves, Undo::skipMoveGrounds((int) $master['id'], $writes['skipMoves'] ?? []), Undo::addedGrounds((int) $master['id'], $writes['added'] ?? null));
+                $moves = array_merge($moves, Undo::planGrounds((int) $master['id'], $writes));
                 $target = GoogleSeries::targetOf($master, $rows, $writes);
                 $after = array_merge($master, $writes['master']);
                 // A day the restored series no longer has is removed, and named by its row and date.

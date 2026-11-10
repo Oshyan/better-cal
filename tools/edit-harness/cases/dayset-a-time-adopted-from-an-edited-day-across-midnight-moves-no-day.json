@@ -1,0 +1,67 @@
+{
+    "n": 28,
+    "seed": 48271,
+    "series": {
+        "family": "dayset",
+        "rrule": "FREQ=YEARLY;BYYEARDAY=290",
+        "import": true,
+        "bound": "count",
+        "boundAt": 11,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "UTC",
+        "start": "2027-03-01 23:30",
+        "length": 120,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 0,
+            "kind": "skip"
+        },
+        {
+            "at": 6,
+            "kind": "edit",
+            "own": [
+                "people",
+                "date",
+                "time"
+            ],
+            "days": -2,
+            "mins": 180,
+            "zone": "America/New_York",
+            "len": 30
+        }
+    ],
+    "acted": 6,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 3600,
+        "zone": null,
+        "length": 0,
+        "allDay": false,
+        "toZone": "Asia/Kolkata",
+        "toClock": 66600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=2",
+        "bound": null,
+        "via": "row",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": true,
+    "choices": {
+        "edit": {
+            "time": "adopt"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

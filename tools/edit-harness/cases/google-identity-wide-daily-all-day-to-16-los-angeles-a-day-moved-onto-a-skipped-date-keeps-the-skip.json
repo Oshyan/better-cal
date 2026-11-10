@@ -1,0 +1,78 @@
+{
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-02-01",
+        "length": 1,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 2,
+            "mins": 90,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 4,
+            "kind": "edit",
+            "own": [
+                "location",
+                "description"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 5,
+            "kind": "skip"
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": true,
+        "toZone": "America/Los_Angeles",
+        "toClock": 57600,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=3",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    },
+    "identity": "flipWide",
+    "after": [],
+    "identityMain": "flip",
+    "n": 275,
+    "seed": 52561,
+    "everyOption": false,
+    "typed": false
+}

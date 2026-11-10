@@ -1,0 +1,32 @@
+{
+    "about": "This and following with tags stopped before its second write, then a day given an exception at Google with a title and notes, then Finish: the day keeps the title and notes Google holds, since no later step superseded them (x-finish A4, judged against the stand-in's state when Finish runs). Its oracle probe drops the day's record from what Google holds after Finish, which must be caught.",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-18 19:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "f-before",
+            "pick": 0.628,
+            "k": 2,
+            "write": "w-follow",
+            "what": "tags"
+        },
+        {
+            "do": "r-exc+",
+            "pick": 0.935
+        },
+        {
+            "do": "finish",
+            "pick": 0.496
+        }
+    ]
+}

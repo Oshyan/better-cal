@@ -225,20 +225,14 @@ return static function (Db $db): void {
     };
 
     /**
-     * The undo of the delete, by the rule that holds whatever tells the day: it never acts on another day and never
-     * sends to another day's id. With $lands, it goes through and the day is back on its own date. Without (a series
-     * re-formed since, where the record may not say which day the entry's instant named): it lands on its own day, or
-     * it is refused `not_undoable` with nothing written here and nothing sent. The day-identity gate tightens the
-     * second to "lands on its own day" once it trusts the recorded move of the day's skip, which Finish's entry holds.
+     * The undo of the delete: it lands on its own day, named by its date, and on no other, by writes to that day's own
+     * id alone. An undo acts on a day only where the journal says exactly where it is (series-model.md, "Which day an
+     * undo acts on": Undo::dayNow, a gate): after each change here that is the recorded move of the day's skip, or the
+     * skip left standing at a key that stays, and Finish's entry holds the one and shows the other as the commit's does.
      */
-    $judgeDelete = static function (string $name, array $r, bool $lands) use ($skipDay): void {        if ($r['deleteRefused'] === null) {
-            checkEq("$name: the undo of the delete went through: the day is back on its own date, here and at Google, by writes to its own id alone",
-                [[], [], []], [$r['afterDelete']['skips'], $r['cancelled'], array_values(array_diff($r['deleteSent'], [$r['dayId']]))]);
-            return;
-        }
-        check("$name: the undo of the delete goes through", !$lands, json_encode($r['deleteRefused']));
-        checkEq("$name: refused, the undo of the delete is not_undoable, with nothing written here and nothing sent", ['not_undoable', [], [$skipDay], [$skipDay]],
-            [$r['deleteRefused'][0], $r['deleteSent'], $r['afterDelete']['skips'], $r['cancelled']]);
+    $judgeDelete = static function (string $name, array $r): void {
+        checkEq("$name: the undo of the delete goes through: the day is back on its own date, here and at Google, by writes to its own id alone",
+            [null, [], [], []], [$r['deleteRefused'], $r['afterDelete']['skips'], $r['cancelled'], array_values(array_diff($r['deleteSent'], [$r['dayId']]))]);
     };
     /** The undo of the tag: its row is still there, so it goes through, sends Google nothing, and takes the tag off its own day and no other. */
     $judgeTag = static function (string $name, array $r): void {
@@ -251,17 +245,17 @@ return static function (Db $db): void {
     // change re-form the series: every key is another instant or a date. A series at midnight UTC made all-day, and a
     // zone moved at the same moment, keep every key, and record no move, as the commit records none.
     $cases = [
-        ['an hour later', $la, true],
-        ['made all-day', $la, false],
-        ['made all-day', $midnight, false],
-        ['moved to Denver at the same clock time', $la, false],
-        ['moved to Denver at the same moment', $la, false],
-        ['ten events', $la, true],
+        ['an hour later', $la],
+        ['made all-day', $la],
+        ['made all-day', $midnight],
+        ['moved to Denver at the same clock time', $la],
+        ['moved to Denver at the same moment', $la],
+        ['ten events', $la],
     ];
     // Beside the tagged day (a row held here alone) a day with notes of its own, which Google holds as an edited day:
     // the stores of a stopped change drop and remake its row, and recovery gives it back its id, so its move shows too.
     $noted = [['2027-07-21', ['description' => 'Bring the sample checklist']]];
-    foreach ($cases as [$change, $series, $lands]) {
+    foreach ($cases as [$change, $series]) {
         $what = "a daily series at {$series['clock']} {$series['zone']} $change";
         $control = null;
         scenario("$what in one go, a day tagged and a day deleted before it: the control", function () use ($run, $change, $series, $what, $noted, $judgeDelete, $judgeTag, &$control): void {
@@ -271,12 +265,11 @@ return static function (Db $db): void {
             if ($change === 'ten events') {
                 check("$what, in one go: its entry records the days it added", in_array('series added', $control['grounds'], true), json_encode($control['grounds']));
             }
-            // The control's own undo is the commit's, judged by the same rule; where the series is re-formed it is the day-identity gate's to tighten.
-            $judgeDelete("$what, in one go", $control, false);
+            $judgeDelete("$what, in one go", $control);
             $judgeTag("$what, in one go", $control);
         });
         foreach (['before its master write lands', 'after its master write, the answer lost'] as $stop) {
-            scenario("$what, stopped $stop, finished from Review, then the delete and the tag undone", function () use ($run, $change, $series, $what, $stop, $lands, $noted, $judgeDelete, $judgeTag, &$control): void {
+            scenario("$what, stopped $stop, finished from Review, then the delete and the tag undone", function () use ($run, $change, $series, $what, $stop, $noted, $judgeDelete, $judgeTag, &$control): void {
                 $r = $run(['series' => $series, 'change' => $change, 'before' => $noted, 'stop' => $stop, 'then' => 'finish']);
                 $name = "$what, stopped $stop";
                 checkEq("$name: the change stops half done, Google having taken " . ($stop === 'before its master write lands' ? 'nothing' : 'its master write') . ', and Finish completes it',
@@ -284,7 +277,7 @@ return static function (Db $db): void {
                 checkEq("$name: finished, the day with notes, the tagged day and the deleted day are where they were, by date", [['2027-07-24'], ['2027-07-21', '2027-07-22']], [$r['changed']['skips'], array_keys($r['changed']['days'])]);
                 checkEq("$name: Finish's entry records a move for the row and for the skip whose key the change moved, and none for a key that stays", $r['wantMoves'], $r['moves']);
                 checkEq("$name: Finish's entry records what the change did with the days exactly as the change's own entry does", $control['grounds'] ?? null, $r['grounds']);
-                $judgeDelete($name, $r, $lands);
+                $judgeDelete($name, $r);
                 $judgeTag($name, $r);
             });
         }
@@ -303,7 +296,8 @@ return static function (Db $db): void {
     // A split ("this and following") records no move by either path: the days before its cut stay where they are, and
     // those from it on leave the series for one the entry makes whole, which the rows' own snapshots show. So the
     // deleted day, now a day of the new series, is no longer part of the series its delete was made in: the undo of
-    // the delete is refused as stale after the split in one go and after the split finished from Review alike.
+    // the delete is refused, with nothing written or sent, after the split in one go and after the split finished from
+    // Review alike (`not_undoable`: the day is not where the journal can say it is).
     $controlSplit = null;
     foreach ([null, 'after its master write, the answer lost'] as $stop) {
         scenario('a daily series renamed from 23 July on ' . ($stop === null ? 'in one go' : "with the answer of the old series' write lost, finished from Review") . ', a day after the cut deleted before it', function () use ($run, $la, $stop, &$controlSplit): void {
@@ -316,7 +310,8 @@ return static function (Db $db): void {
                 checkEq("$name: Finish's entry records what the split did with the days exactly as the split's own entry does", $controlSplit['grounds'] ?? null, $r['grounds']);
             }
             checkEq("$name: its entry records no move, and the deleted day's skip leaves the old series", [[], true], [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
-            checkEq("$name: the undo of the delete is refused as stale, the day having left the series it was deleted in, with nothing sent", ['stale_undo', []], [$r['deleteRefused'][0] ?? null, $r['deleteSent']]);
+            checkEq("$name: the undo of the delete is refused, the day having left the series it was deleted in, with nothing written here and nothing sent",
+                ['not_undoable', [], $r['changed']], [$r['deleteRefused'][0] ?? null, $r['deleteSent'], $r['afterDelete']]);
         });
     }
 
@@ -342,7 +337,8 @@ return static function (Db $db): void {
     // lands; meanwhile another client moves the series to 20:00 at Google, which drops the cancelled day there. Finish
     // keeps Google's clock and Google's day and names both. So its entry records that skip as gone and no move of it:
     // the plan's move to 18:00 never happened, and a move recorded for it would carry a later reading of that day to a
-    // key the series does not have. The delete's own skip has changed since, so its undo is refused as stale.
+    // key the series does not have. Nothing carried the delete's skip and it is not left standing, so its undo is
+    // refused with nothing written or sent; with the false move recorded it would have been followed to that key.
     scenario('a time change stopped before its master write, the clock moved at Google meanwhile, finished: the entry records the skip gone, and no move', function () use ($run, $la): void {
         $r = $run(['series' => $la, 'plain' => true, 'change' => 'an hour later', 'stop' => 'before its master write lands', 'then' => 'finish',
             'meanwhile' => static function (GoogleStand $s, string $gid): void {
@@ -356,7 +352,8 @@ return static function (Db $db): void {
             count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'time changed at Google'))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'Google kept'))) === 1, json_encode($r['named']));
         checkEq("the clock moved at Google meanwhile: Finish's entry records the deleted day's skip as gone and no move", [[], true],
             [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
-        checkEq('the clock moved at Google meanwhile: the undo of the delete is refused as stale, its skip having changed since, with nothing sent', ['stale_undo', []], [$r['deleteRefused'][0] ?? null, $r['deleteSent']]);
+        checkEq('the clock moved at Google meanwhile: the undo of the delete is refused, its skip neither carried nor left standing, with nothing written here and nothing sent',
+            ['not_undoable', [], $r['changed']], [$r['deleteRefused'][0] ?? null, $r['deleteSent'], $r['afterDelete']]);
     });
 
     // Put back leaves the rows as they were before the change: its entry stands on the half-done change it closed and
@@ -367,7 +364,7 @@ return static function (Db $db): void {
         checkEq('put back: its entry stands on the half-done change it closed and on no row', ['the half-done change *'], $r['grounds']);
         // Put back leaves the series at its old clock: the day's id is its old key's.
         $r['dayId'] = preg_replace('/_.*$/', '_20270725T000000Z', $r['dayId']);
-        $judgeDelete('put back', $r, true);
+        $judgeDelete('put back', $r);
         $judgeTag('put back', $r);
     });
 

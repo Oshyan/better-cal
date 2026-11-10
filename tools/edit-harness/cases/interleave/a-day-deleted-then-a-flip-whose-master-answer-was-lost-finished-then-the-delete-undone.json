@@ -1,5 +1,5 @@
 {
-    "about": "A daily series at 17:00 Los Angeles (00:00 UTC the next day); one day deleted; the series made all-day with the answer of its master write lost; Finish; then the delete undone by its entry. The change carried the day's skip to its new key and changed nothing of it, so the undo is never refused as stale: it lands on its own day, or, where the record does not say which day the entry's instant named, is refused as not undoable with nothing written or sent (x-undo-fields). From seed 61349 case 359.",
+    "about": "A daily series at 17:00 Los Angeles (00:00 UTC the next day); one day deleted; the series made all-day with the answer of its master write lost; Finish; then the delete undone by its entry. The change carried the day's skip to its new key and changed nothing of it, and Finish's entry records that move as the change's own entry does, so the undo goes through and the day is back on its own date (x-undo-fields). From seed 61349 case 359.",
     "seed": 0,
     "n": 0,
     "series": {

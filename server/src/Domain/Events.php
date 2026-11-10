@@ -2137,6 +2137,9 @@ final class Events
             if ($own !== null && $own !== (string) ($existing['override_fields'] ?? '')) {
                 $fields['override_fields'] = $own;
             }
+            // The day's links are part of what this edit changes (tagNames,
+            // people), so they are journaled with its row, as patchAll does.
+            $beforeLinks = $this->labels->eventLinkRows((int) $existing['id']);
             $this->db->tx(function () use ($existing, $userId, $fields, $in): void {
                 if ($fields !== []) {
                     $fields['updated_at'] = Time::nowDb();
@@ -2148,7 +2151,8 @@ final class Events
                 $this->applyPeoplePatch($userId, (int) $existing['id'], $in);
             });
             $after = $this->get($userId, (int) $existing['id']);
-            $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]], ['events' => [$after]]);
+            $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]] + $beforeLinks,
+                ['events' => [$after]] + $this->labels->eventLinkRows((int) $existing['id']));
             ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
             return;
         }

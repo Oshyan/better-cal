@@ -132,6 +132,14 @@ return static function (Db $db): void {
                 $e->throwDeferred();
                 $undo->undoById($u, $notes);
                 checkEq("notes undone on a day owning its tags ($mode): its own tags stay, its people are the series'", [['location', 'tags'], ['Sample C'], ['Alex Example']], $shown($day('2027-01-18')));
+                // A later change to the set the day owns, undone, is the earlier set, tags and people alike: the edit
+                // of an existing day's row journals its links with the row.
+                $this1('2027-01-18', ['tagNames' => ['Sample C', 'Sample D'], 'personNames' => ['Sam Sample']]);
+                $e->throwDeferred();
+                $more = lastEntry($db, $u);
+                checkEq("a day owning its tags given one more tag and its own person ($mode)", [['location', 'people', 'tags'], ['Sample C', 'Sample D'], ['Sam Sample']], $shown($day('2027-01-18')));
+                $undo->undoById($u, $more);
+                checkEq("that undone ($mode): the earlier own set is back, and the people are the series' again", [['location', 'tags'], ['Sample C'], ['Alex Example']], $shown($day('2027-01-18')));
                 $undo->undoById($u, $tags);
                 checkEq("then the tags edit that made its row undone ($mode): the day kept for its place shows the series' tags again", [['location'], ['Sample A'], ['Alex Example']], $shown($day('2027-01-18')));
             } finally {

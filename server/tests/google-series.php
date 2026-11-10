@@ -332,6 +332,68 @@ foreach (['Google kept the record, its end following the new length' => $kept, '
         [[$rebased['exceptions'][$k4]['start_utc'] ?? null, $rebased['exceptions'][$k4]['end_utc'] ?? null, (static function (array $own): array { sort($own); return $own; })($rebased['exceptions'][$k4]['own'] ?? [])], $rebased['skips'], $words, $conflicts]);
 }
 
+// ---- A change made at Google while a change between timed and all-day waits for its master write ----
+// Finish reads Google still in the old form. The master write that follows drops every record and skip there, and no
+// key of the old form names a day of the new one, so nothing is carried by its key: the plan stands whole, and each
+// day changed at Google since is named once, by its date as it showed under the old form (the evening of Fri 8 Jan in
+// New York is Fri 8 Jan, whatever its key's date), with what was done and that it is not kept. Expectations by date,
+// from the calendar: [the edited day, the day changed at Google] of each series, as month and day.
+$sinceDays = [
+    '00:00 UTC, weekly' => ['2027-01-25 00:00:00', [11, 25], '2027-01-25 00:00:00', [11, 25]],
+    '10:00 Los Angeles, weekly' => ['2027-01-25 18:00:00', [11, 25], '2027-01-25 00:00:00', [11, 25]],
+    '19:00 New York, daily' => ['2027-01-09 00:00:00', [6, 8], '2027-01-08 00:00:00', [6, 8]],
+];
+$dateWords = static fn(int $day): string => BetterCal\Domain\Series\Words::date(BetterCal\Domain\Series\Cal::dn(2027, 1, $day), 2027);
+$plus = static fn(string $key, int $seconds): string => gmdate('Y-m-d H:i:s', strtotime($key . ' UTC') + $seconds);
+foreach ($forms as $clock => [$timed, $timedKeys, $day, $dayKeys]) {
+    [$timedOther, $timedDates, $dayOther, $dayDates] = $sinceDays[$clock];
+    foreach ([['timed to all-day', $timed, $timedKeys, $timedOther, $timedDates, $day, $dayKeys, 'now all-day', 'given another time'],
+        ['all-day to timed', $day, $dayKeys, $dayOther, $dayDates, $timed, $timedKeys, 'no longer all-day', 'moved to another date']] as [$way, $from, $fromKeys, $other, $dates, $to, $toKeys, $why, $retimed]) {
+        $before = $seriesOf($gm($from), $fromKeys[0], $fromKeys[1]);
+        $target = $seriesOf($gm($to), $toKeys[0], $toKeys[1]);
+        $m = $before['master'];
+        $len = strtotime($m['end_utc'] . ' UTC') - strtotime($m['start_utc'] . ' UTC');
+        $ordinary = ['start_utc' => $other, 'end_utc' => $plus($other, $len)] + $m;
+        $changes = [
+            'renamed' => [static function (array $now) use ($other, $ordinary): array {
+                $now['records'][$other] = ['title' => 'Renamed at Google'] + $ordinary;
+                return $now;
+            }, $dates[1], 'renamed'],
+            'deleted' => [static function (array $now) use ($other): array {
+                $now['cancelled'][$other] = $now['skips'][$other] = true;
+                return $now;
+            }, $dates[1], 'deleted'],
+            // A day of a timed series five hours later that day; a day of an all-day series a day later.
+            'given another time, or date' => [static function (array $now) use ($other, $ordinary, $m, $plus, $len): array {
+                $shift = (int) $m['all_day'] === 1 ? 86400 : 18000;
+                $now['records'][$other] = ['start_utc' => $plus($other, $shift), 'end_utc' => $plus($other, $shift + $len)] + $ordinary;
+                return $now;
+            }, $dates[1], $retimed],
+            'the plan\'s edited day given other notes' => [static function (array $now) use ($fromKeys): array {
+                $now['records'][$fromKeys[0]]['description'] = 'Notes from Google';
+                return $now;
+            }, $dates[0], 'given other notes'],
+        ];
+        foreach ($changes as $what => [$change, $date, $done]) {
+            [$rebased, $words, $conflicts] = GoogleSeries::rebase($before, $target, $change($nowOf($before, true)), $year);
+            checkEq("google rebase: $way at $clock, its master write not yet at Google, a day $what at Google since: the plan stands whole and the change is named, by its own date, as not kept",
+                [$daysOf($target), [$dateWords($date) . " was $done at Google since this change stopped; that change is not kept, because the series is $why."], []],
+                [$daysOf($rebased), $words, $conflicts]);
+        }
+    }
+}
+// Several things done to one day are one sentence; a skipped day brought back is named so.
+$before = $seriesOf($gm($forms['19:00 New York, daily'][0]), '2027-01-07 00:00:00', '2027-01-08 00:00:00');
+$target = $seriesOf($gm($forms['19:00 New York, daily'][2]), '2027-01-06 00:00:00', '2027-01-07 00:00:00');
+$now = $nowOf($before, true);
+$now['records']['2027-01-09 00:00:00'] = ['title' => 'Renamed at Google', 'description' => 'Notes from Google', 'location' => 'Sample Annex', 'start_utc' => '2027-01-09 00:00:00', 'end_utc' => '2027-01-09 01:00:00'] + $before['master'];
+unset($now['cancelled']['2027-01-08 00:00:00'], $now['skips']['2027-01-08 00:00:00']);
+[$rebased, $words] = GoogleSeries::rebase($before, $target, $now, $year);
+checkEq('google rebase: made all-day, not yet at Google, a skipped day brought back and another renamed with other notes and place: one sentence a day, in date order, the plan whole', [$daysOf($target), [
+    $dateWords(7) . ' was brought back at Google since this change stopped; that change is not kept, because the series is now all-day.',
+    $dateWords(8) . ' was renamed, given other notes and given another place at Google since this change stopped; that change is not kept, because the series is now all-day.',
+]], [$daysOf($rebased), $words]);
+
 if (!empty($GLOBALS['__standalone'])) {
     echo "\n{$GLOBALS['__pass']} passed, {$GLOBALS['__fail']} failed\n";
     exit($GLOBALS['__fail'] === 0 ? 0 : 1);

@@ -20,6 +20,43 @@ final class Product
     public static bool $plan = true;
 
     /**
+     * The account's google_series_undo setting in a run (`--series-undo on|off`, README: Google). On, the default, as the
+     * database suite's freshUser sets it, so recorded runs measure whole-series undo on a Google calendar as 1.5.6 will
+     * ship it; off is the product's default in 1.5.5, under which such an undo or redo is refused not_undoable with
+     * SERIES_UNDO_OFF, nothing written or sent, and the bare Undo passes over the entry (decisions.md, "Undo of a
+     * whole-series change on a Google calendar waits for 1.5.6").
+     */
+    public static bool $seriesUndo = true;
+
+    /** The words the contract gives that refusal (decisions.md, the same entry): the harness's own copy. */
+    public const SERIES_UNDO_OFF = 'Undo of a change to all events on a Google calendar comes in a later release; this change stays. Undo of a single day still works.';
+
+    /** A new account for a case, with the run's google_series_undo setting. */
+    public static function account(Db $db): int
+    {
+        $u = \freshUser($db);
+        if (!self::$seriesUndo) {
+            \seriesUndo($db, $u, false);
+        }
+        return $u;
+    }
+
+    /** Whether a step between two sets of rows changed a series as Google holds it (a Google-held column of a master, or a master made or removed): an entry of kind series, which the setting holds back. Read from the rows alone. */
+    public static function seriesChanged(array $rows0, array $rows1): bool
+    {
+        $masters = static function (array $rows): array {
+            $out = [];
+            foreach ($rows as $r) {
+                if (($r['recurrence_parent_id'] ?? null) === null && ($r['rrule'] ?? null) !== null && ($r['deleted_at'] ?? null) === null) {
+                    $out[(int) $r['id']] = array_intersect_key($r, array_flip(['title', 'description', 'location', 'url', 'status', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule']));
+                }
+            }
+            return $out;
+        };
+        return $masters($rows0) != $masters($rows1);
+    }
+
+    /**
      * Checks that read a plan (its preview, hash, groups, choices, preselections, data) or the plan's own guarantees,
      * by invariant name: without a plan API they are counted as "no plan", never as failures.
      */

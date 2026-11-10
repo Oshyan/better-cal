@@ -307,6 +307,14 @@ final class OracleProbes
                     $s1['g']['digest'][$gid]['title'] = 'Sample probe title';
                     return [['ok' => false, 'error' => 'google_write_failed', 'message' => 'Sample refusal'] + $out, $s0, $s1];
                 }],
+            // With google_series_undo off (the product's default in 1.5.5), an undo of a whole-series change on a Google
+            // calendar is refused not_undoable: the case runs with it on, so its undo goes through, and the damage turns the
+            // account's setting off after the undo, which reads as the release gate removed.
+            ['check' => 'x-undo-fields', 'what' => 'a whole-series undo on a Google calendar goes through with google_series_undo off', 'case' => 'a-series-rename-undone-redone-undone-redone', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1): array {
+                    \seriesUndo($this->db, $this->userId, false);
+                    return [$out, $s0, $s1];
+                }],
         ];
     }
 

@@ -1422,7 +1422,9 @@ final class Interleave
             // Passed over: an undo's own entry. A redo's entry (one that undoes an undo's) is a change of its own, so the bare
             // Undo after an edit, its undo and a redo takes the redo back (decisions.md, "The bare Undo steps one change further
             // back on a Google calendar as it does locally", settled 2026-11-09).
-            $passedOver = fn(array $e): bool => $this->hops((int) $e['id']) % 2 === 1;
+            // With google_series_undo off (Product::$seriesUndo), the product's default in 1.5.5, an entry of kind series is
+            // passed over too (decisions.md, "Undo of a whole-series change on a Google calendar waits for 1.5.6").
+            $passedOver = fn(array $e): bool => $this->hops((int) $e['id']) % 2 === 1 || $this->heldBack((int) $e['id']);
             foreach ($entries as $e) {
                 if ((int) $e['undone'] === 0 && in_array($e['source'], ['web', 'quickadd', 'review', 'rsvp', 'dedup:owner'], true) && !$passedOver($e)) {
                     $expect = (int) $e['id'];
@@ -1455,6 +1457,20 @@ final class Interleave
         $this->lastAsked = $this->askedOfEntry($id) + ['entry' => $id];
         $this->undo->undoById($this->userId, $id);
         return ['entry' => $id, 'asked' => $this->lastAsked];
+    }
+
+    /**
+     * Whether the account's setting holds this entry's undo back: google_series_undo off (as the run made the account,
+     * Product::account, read from the account's stored settings) and the entry of kind series, as the journal stores it.
+     */
+    private function heldBack(int $entry): bool
+    {
+        $settings = json_decode((string) $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$this->userId]), true);
+        if (($settings['google_series_undo'] ?? false) === true) {
+            return false;
+        }
+        $d = json_decode((string) $this->db->scalar('SELECT details_json FROM mutations WHERE id = ?', [$entry]), true);
+        return is_array($d) && (($d['google']['kind'] ?? null) === 'series');
     }
 
     /** How many undo hops an entry is from the change at the bottom of its chain: 0 a change, 1 its undo, 2 a redo, and so on. */
@@ -2020,6 +2036,17 @@ final class Interleave
         }
         $context['entry'] = $entry;
         $undone = (int) $this->db->scalar('SELECT undone FROM mutations WHERE id = ?', [$entry]) === 1;
+        if ($this->heldBack((int) $entry)) {
+            // With the setting off: refused 409 not_undoable with the contract's words, before anything is read or sent, with
+            // nothing written (decisions.md, "Undo of a whole-series change on a Google calendar waits for 1.5.6").
+            $this->ran('x-undo-fields', 'held back');
+            $asked = array_filter(array_slice($this->stand->fake->requests, $s0['req'], $s1['req'] - $s0['req']), static fn(array $q): bool => !in_array('X-Harness: remote', $q['headers'], true));
+            $this->expect('x-undo-fields', !$out['ok'] && $error === 'not_undoable' && ($out['message'] ?? null) === Product::SERIES_UNDO_OFF,
+                "step {$this->step} ($do): an undo or redo of a whole-series change on a Google calendar is refused not_undoable with the contract's words while the setting is off", $context);
+            $this->expect('x-undo-fields', !$undone && self::sameHere($s0, $s1) && $asked === [] && $s0['g'] == $s1['g'],
+                "step {$this->step} ($do): the held-back undo writes nothing here and sends Google nothing, not even a read", $context + ['sent' => count($asked), 'diff' => self::diff($s0['l'], $s1['l'])]);
+            return;
+        }
         if ($do === 'u-bare') {
             $this->ran('x-undo-bare', 'newest own');
             // Which entry it took; what a refusal wrote is x-conflict's and x-undo-fields' to judge.

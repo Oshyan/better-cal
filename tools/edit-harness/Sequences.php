@@ -53,6 +53,13 @@ trait Sequences
             $this->spec['path'] = 'sequence';
             return $this->result('sequence');
         }
+        if ($this->google !== null && !Product::$seriesUndo && array_intersect(array_column($spec['steps'], 'do'), ['undo', 'undoEntry']) !== []) {
+            // Its undo steps are written for whole-series undo on a Google calendar, held back with the setting off (f-held
+            // checks that refusal on every drawn whole-series case).
+            $this->na('sequence: an undo step of a whole-series change on a Google calendar, with google_series_undo off');
+            $this->spec['path'] = 'sequence';
+            return $this->result('sequence');
+        }
         $this->rng = null;
         $this->controls = $this->makeControls();
         $this->firstId = (int) $this->db->scalar('SELECT COALESCE(MAX(id), 0) + 1 FROM events');

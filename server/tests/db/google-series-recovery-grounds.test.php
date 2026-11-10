@@ -180,10 +180,15 @@ return static function (Db $db): void {
             $took = $s->knobs->taken - $taken;
             $half = $db->all('SELECT id FROM google_pending WHERE user_id = ? ORDER BY id', [$u]);
             $recovered = null;
+            $named = [];
+            if (isset($c['meanwhile'])) {
+                ($c['meanwhile'])($s, $gid);
+            }
             if ($stop !== null) {
                 $out = ($c['then'] ?? 'finish') === 'finish' ? $e->googleFinish($u, (int) ($half[0]['id'] ?? 0)) : $e->googlePutBack($u, (int) ($half[0]['id'] ?? 0));
                 $e->throwDeferred();
                 $recovered = $out['ok'] ?? null;
+                $named = array_map('strval', (array) ($out['differences'] ?? []));
             }
             $changeEntry = lastEntry($db, $u);
             $changed = $state($id);
@@ -210,7 +215,7 @@ return static function (Db $db): void {
             }
             // The deleted day's own id at Google under the series as it stands: the series id and the day's key in its form.
             $dayKey = new DateTimeImmutable($keyOf($skipDay, $now['clock'], $now['zone']), new DateTimeZone('UTC'));
-            return ['stopped' => $stopped !== null && isset($stopped->extra['pending']), 'took' => $took, 'half' => count($half), 'left' => (int) $db->scalar('SELECT COUNT(*) FROM google_pending WHERE user_id = ?', [$u]),
+            return ['named' => $named, 'stopped' => $stopped !== null && isset($stopped->extra['pending']), 'took' => $took, 'half' => count($half), 'left' => (int) $db->scalar('SELECT COUNT(*) FROM google_pending WHERE user_id = ?', [$u]),
                 'recovered' => $recovered, 'changed' => $changed, 'grounds' => $all, 'moves' => array_values(array_filter($all, static fn(string $g): bool => str_starts_with($g, 'series move:'))),
                 'wantMoves' => $moves, 'deleteRefused' => $deleteRefused, 'deleteSent' => $deleteSent, 'afterDelete' => $afterDelete, 'cancelled' => $cancelledAfter,
                 'dayId' => $gid . '_' . $dayKey->format($now['clock'] === null ? 'Ymd' : 'Ymd\THis\Z'), 'tagRefused' => $tagRefused, 'tagSent' => $tagSent, 'after' => $state($id)];
@@ -332,6 +337,27 @@ return static function (Db $db): void {
             checkEq("cut to three, $stop: Finish's entry records what the change did with the days exactly as the change's own entry does", $controlCut['grounds'] ?? null, $r['grounds']);
         });
     }
+
+    // The record is what the change did, not what its plan meant to do. A time change stops before its master write
+    // lands; meanwhile another client moves the series to 20:00 at Google, which drops the cancelled day there. Finish
+    // keeps Google's clock and Google's day and names both. So its entry records that skip as gone and no move of it:
+    // the plan's move to 18:00 never happened, and a move recorded for it would carry a later reading of that day to a
+    // key the series does not have. The delete's own skip has changed since, so its undo is refused as stale.
+    scenario('a time change stopped before its master write, the clock moved at Google meanwhile, finished: the entry records the skip gone, and no move', function () use ($run, $la): void {
+        $r = $run(['series' => $la, 'plain' => true, 'change' => 'an hour later', 'stop' => 'before its master write lands', 'then' => 'finish',
+            'meanwhile' => static function (GoogleStand $s, string $gid): void {
+                $m = $s->fake->events[$gid];
+                $m['start']['dateTime'] = '2027-07-19T20:00:00-07:00';
+                $m['end']['dateTime'] = '2027-07-19T21:00:00-07:00';
+                $s->fake->seed($m);
+            }]);
+        checkEq('the clock moved at Google meanwhile: Finish completes, the series at Google\'s clock with the day Google kept', [true, 0, []], [$r['recovered'], $r['left'], $r['changed']['skips']]);
+        check('the clock moved at Google meanwhile: Finish names the time it left as Google has it and the day Google kept',
+            count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'time changed at Google'))) === 1 && count(array_filter($r['named'], static fn(string $w): bool => str_contains($w, 'Google kept'))) === 1, json_encode($r['named']));
+        checkEq("the clock moved at Google meanwhile: Finish's entry records the deleted day's skip as gone and no move", [[], true],
+            [$r['moves'], in_array('series skip:2027-07-25 00:00:00', $r['grounds'], true)]);
+        checkEq('the clock moved at Google meanwhile: the undo of the delete is refused as stale, its skip having changed since, with nothing sent', ['stale_undo', []], [$r['deleteRefused'][0] ?? null, $r['deleteSent']]);
+    });
 
     // Put back leaves the rows as they were before the change: its entry stands on the half-done change it closed and
     // on no row, so both undos go through as if the change had never been made.

@@ -496,6 +496,40 @@ return [
             ['harness seed 911 case 193: no forward-edit check fails', 'harness seed 911 case 879: no forward-edit check fails'],
         ),
     ],
+    // Provider identity across a change of form that has not reached Google (GoogleSeries::rebase): the guard that
+    // names a change made at Google as not kept is gone, so what Google holds in the old form is carried by its key
+    // again. West of UTC a rename or a deletion lands on the next day; made timed, it goes to an id that is no day and
+    // is lost; a day given its own time is sent as a clock to an all-day instance and Finish fails. Every run of the
+    // test fails on its words; the New York and all-day runs on what Google and the rows hold too.
+    [
+        'id' => 'google-rebase-carries-by-key-across-forms', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-form-finish',
+        'what' => 'a change made at Google while a change between timed and all-day waits for its master write is carried by its key instead of named as not kept',
+        'patch' => [["        if ((int) \$before['master']['all_day'] === (int) \$now['master']['all_day'] && \$allDay !== ((int) \$now['master']['all_day'] === 1)) {", "        if (false) {"]],
+        'checks' => (static function (): array {
+            $shapes = ['daily 19:00 New York made all-day', 'weekly 10:00 Los Angeles made all-day', 'weekly all-day made 10:00 Los Angeles'];
+            $changes = ['a day renamed at Google', 'a day deleted at Google', 'a day given another time at Google', 'the plan\'s edited day given other notes at Google'];
+            $words = 'Finish names the change made at Google once, by the day\'s own date, as not kept';
+            $writes = 'Finish writes the master and the plan\'s edited day under its new id, nothing to an old id or to a day the series does not have';
+            $held = ['Google holds the series in its new kind with the plan\'s edited day alone, on its own date with its notes',
+                'the rows here hold the same: the edited day\'s row on its own date with its notes, no other day, no skip'];
+            $out = [];
+            foreach ($shapes as $shape) {
+                foreach ($changes as $change) {
+                    // Every run: the words and the writes. Made all-day, the change lands under a date id (a wrong day in New York, the
+                    // right one by accident in Los Angeles), so Google and the rows hold more than the plan; made timed, it goes to an id
+                    // that is no day and is lost, so they hold the plan. A clock sent to an all-day instance is refused and Finish fails.
+                    $fails = [$words, $writes];
+                    if ($shape !== 'weekly all-day made 10:00 Los Angeles') {
+                        $fails = $change === 'a day given another time at Google' ? array_merge(['Finish completes and the change is settled'], $fails) : array_merge($fails, $held);
+                    }
+                    foreach ($fails as $what) {
+                        $out[] = "$shape, $change: $what";
+                    }
+                }
+            }
+            return $out;
+        })(),
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,

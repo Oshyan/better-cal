@@ -1399,7 +1399,8 @@ final class Driver
                         break;
                     case 'this':
                         $day = array_values(array_filter($days, static fn(array $d): bool => $d['at'] === $step['at']))[0] ?? null;
-                        if ($day === null || $day['kind'] === 'skip' || $day['kind'] === 'own') {
+                        // A start moved on its pattern moves its days too: the dates kept here are those before it.
+                        if ($day === null || $day['kind'] === 'skip' || $day['kind'] === 'own' || !$flipMain) {
                             $this->na('an identity follow-up rename of a skipped day or a day on its own date or time');
                             break;
                         }

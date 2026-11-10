@@ -83,6 +83,77 @@ $undoDay = (static function (): array {
     return ['read' => $read, 'stale' => $stale];
 })();
 
+// The assertion labels the three mutations of 1.5.5's iCalendar and CalDAV rules must fail, as their tests name them.
+$clockKey = 'no day row or skip of an all-day series has a clock in its key';
+$icsNames = [
+    // The two mixed forms through a feed, a PUT and an import: the days shown, the record's key, and the suite's own
+    // identity rule after each block that leaves a clock key under an all-day series.
+    'feed, timed series: 5 January keeps its game and its tag, 6 January is the whole-day record alone, 7 January its game',
+    'feed, timed series: the record\'s row is keyed at the occurrence of 6 January, 00:00 UTC on the 7th',
+    'feed, timed series: read once more, the same three days',
+    'feed, whole-day series: 6 January is the record at 14:00 alone, with the tag given to that day; its neighbours are whole days',
+    'feed, whole-day series: the record\'s row is keyed at the date of 6 January',
+    "instance names, feed: a whole-day series as zoned midnights whose 6 January gets a clock time: $clockKey",
+    'PUT, timed series: 5 January keeps its game and its tag, 6 January is the whole-day record alone, 7 January its game',
+    'PUT, timed series: the record\'s row is keyed at the occurrence of 6 January',
+    'PUT, whole-day series: 6 January is the record at 14:00 alone, with the tag given to that day; its neighbours are whole days',
+    'PUT, whole-day series: the record\'s row is keyed at the date of 6 January',
+    "instance names, CalDAV PUT: a whole-day series as zoned midnights whose 6 January the client gives a clock time: $clockKey",
+    'import, timed series: 5 January its game, 6 January the whole-day record alone, 7 January its game',
+    'import, timed series: the record\'s row is keyed at the occurrence of 6 January',
+    'import, whole-day series: 6 January is the record at 14:00 alone; its neighbours are whole days',
+    'import, whole-day series: the record\'s row is keyed at the date of 6 January',
+    "instance names, import: a file with each series and its day of the other form: $clockKey",
+    // An emailed update of the timed series (the whole-day one's key, read under the record's own form, is a clock
+    // Review still reads as the same date), and a DATE that names a day of a timed series, by feed and by mail.
+    'mail, timed series: Review holds one change, to the Wed 6 Jan 2027 occurrence',
+    'mail, timed series: accepted, 6 January alone changes',
+    'feed, a DATE in RECURRENCE-ID: 6 January keeps its game, 7 January is the record at 21:00 alone',
+    'feed, a DATE in RECURRENCE-ID: the record\'s row is keyed at the occurrence of 7 January, 00:00 UTC on the 8th',
+    'mail, a DATE name: Review holds one change to a day, and names the Thu 7 Jan 2027 occurrence, the day the organizer changed',
+    'mail, a DATE name: the day\'s change accepted alone, 6 January keeps its game and 7 January is the whole-day record alone',
+    'mail, a DATE name: then the series\' change accepted, every day is a whole day and 7 January still the record alone',
+    'mail, the series first: the held day still names 7 January, now by its date under the whole-day series',
+    'mail, the series first: the day\'s change accepted, 7 January is the whole-day record alone, and 6 and 8 January are the series\' whole days',
+];
+$putKept = [
+    'clock move: 7 January at 20:00 keeps its tag, 8 January at 20:00 its title and tag, 9 January is an ordinary day at 20:00',
+    'clock move: 8 January keeps its reminder, and no row is left without a key',
+    'zone move: 7 January at 22:00 New York keeps its tag, 8 January its title and tag, 9 January is an ordinary day',
+    'zone move: 8 January keeps its reminder, and no row is left without a key',
+    'clock move, no days sent: 7 January keeps its tag, 8 January its tag with the series\' title, each at 20:00',
+    'clock move, no days sent: 8 January keeps its reminder, and no row is left without a key',
+    'a record dropped: 8 January is back to the series\' title and keeps its tag; 7 January keeps its tag',
+    'a record dropped: 8 January is the row it was, owning its reminder and its tag and nothing else, with its reminder',
+    'a day removed: the entry names the row that went, by its id and date, with what it held and why',
+    'a day removed: and says so in words',
+];
+$heldDay = array_merge(
+    array_merge(...array_map(static fn(string $order): array => array_map(static fn(string $label): string => "Google ($order): $label", [
+        'the series arrived, 6 January shows the record Google still holds, at 20:00, with the tag given here',
+        'the row is the row it was, now under its series, owning its time, its title and its tag',
+        'Activity says the series was added and nothing removed',
+        'one more poll, 6 January still shows the record at 20:00 with its tag',
+    ]), ['made', 'reversed'])),
+    [
+        'Google, a record equal to its series, tagged here: 6 January shows the class at 19:00 with its tag',
+        'Google, a record equal to its series, tagged here: the row stays under its series for its tag, owning nothing else',
+        'feed: the series is listed too, 6 January shows the record alone, at 20:00, with the tag given here',
+        'feed: the row is the row it was, now under its series, owning its time, its title and its tag',
+        'feed: Activity names no removed day',
+        'feed: read once more, 6 January still shows the record at 20:00 with its tag',
+        'feed: the record no longer listed, 6 January shows the class at 19:00 and keeps the tag given here',
+        'feed: the row stays for its tag, owning nothing else',
+        'feed, the series without the record, the day tagged here: 6 January shows the class at 19:00 with its tag',
+        'feed, the series without the record, the day tagged here: the row is under its series for its tag',
+        // A PUT reads a held day by the same function (Feeds::ownAfter), so the day it adopts fails with the sync's.
+        'PUT: the series sent with the record, 6 January shows the record at 20:00 with the tag given here, and 5 January the class',
+        'PUT: the row is the row it was, now under its series, owning its time, its title and its tag',
+        'PUT: the series sent without the record, 6 January shows the class at 19:00 and keeps its tag',
+        'PUT: the row stays for its tag, owning nothing else',
+    ],
+);
+
 return [
     [
         'id' => 'placement-zone', 'file' => $model, 'checks' => ['c-shape', 'c-placement'],
@@ -745,5 +816,42 @@ return [
         'patch' => [["                \$hit = self::conflicts(self::atKey(\$mine, '#' . Calc::dayOf((string) self::dayKeyOf(\$mine), \$frame[0], \$frame[1])),\n                    self::atKey(\$later, '#' . Calc::dayOf((string) self::dayKeyOf(\$later), \$f[0], \$f[1])), 'events');",
             "                \$hit = self::conflicts(\$mine, \$later, 'events');"]],
         'checks' => $undoDay['stale'],
+    ],
+    // An iCalendar name of an instance (Ics::keysUnder): a record of one day is keyed under its series' form and zone.
+    // Read under the record's own form again, a day whose form is not its series' lands on another key through every
+    // door (a feed, a CalDAV PUT, an import, an emailed update), and a DATE under a timed series names no occurrence of
+    // it. The skipped dates are read in parseVevent, under the VEVENT that is the series, and do not fail.
+    [
+        'id' => 'ics-key-under-the-record-form', 'file' => 'server/src/Domain/Ics.php', 'dbtest' => 'ics-instance-names',
+        'what' => 'a record of one day is keyed by reading its RECURRENCE-ID under its own form and zone, not its series\'',
+        'patch' => [["            \$record['recurrence_instance_utc'] = self::keysUnder(\$record['recurrence_name'], \$series)[0];",
+            "            \$record['recurrence_instance_utc'] = self::keysUnder(\$record['recurrence_name'], \$record)[0];"]],
+        'checks' => $icsNames,
+    ],
+    // A CalDAV PUT settles the rows it gave no record to by the function the sync uses (Feeds::settle). Deleting them
+    // outright again, a client's clock or zone move takes each edited day's tags and reminders, a dropped record takes
+    // its day's, and a removed day goes unnamed. The undo of each PUT still puts everything back, and the feed is no PUT.
+    [
+        'id' => 'put-deletes-unmatched-rows', 'file' => 'server/src/Dav/CalendarBackend.php', 'dbtest' => 'caldav-kept-here',
+        'what' => 'a CalDAV PUT deletes every stored day row it gave no record to, with what the row held here alone',
+        'patch' => [["            \$settled = \$feeds->settle(\$calendarId, array_filter(\$existingByInstance, static fn(array \$r): bool => !isset(\$given[(int) \$r['id']])), [], [],\n"
+            . "                static fn(array \$row): array => ['seen' => true, 'was' => \$existingMaster, 'series' => \$series], \$ownColumn, null, \$uid);",
+            "            foreach (\$existingByInstance as \$row) {\n                if (!isset(\$given[(int) \$row['id']])) {\n                    \$this->db->run('DELETE FROM events WHERE id = ?', [(int) \$row['id']]);\n                }\n            }\n"
+            . "            \$settled = ['dropped' => []];"]],
+        'checks' => $putKept,
+    ],
+    // A day's row held before its series (no series above it) is its series' day once a list brings the series: read
+    // by equality with it (Feeds::ownAfter) and settled as its day (Feeds::sync's seriesOf). With both back as they
+    // were, its record reads as holding nothing, and the row is removed with the tag given to it here, on a Google
+    // calendar and through a feed. The PUT's own reading (the same ownAfter) fails with it; the controls do not.
+    [
+        'id' => 'sync-removes-a-day-held-before-its-series', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'day-before-series',
+        'what' => 'a day\'s row held before its series is read by its stored list and is no day of the series the list brings, so it is removed when the series arrives',
+        'patch' => [
+            ['        if ($current !== null && self::heldBeforeSeries($current) && $masterId !== null', '        if (false && $current !== null && self::heldBeforeSeries($current) && $masterId !== null'],
+            ["                if (\$row['recurrence_instance_utc'] === null || !isset(\$seen[\$uid . '|']) || !isset(\$masterIdByUid[\$uid])) {",
+                "                if (\$row['recurrence_parent_id'] === null || !isset(\$seen[\$uid . '|']) || !isset(\$masterIdByUid[\$uid])) {"],
+        ],
+        'checks' => $heldDay,
     ],
 ];

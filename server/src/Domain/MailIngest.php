@@ -109,6 +109,10 @@ final class MailIngest
             ];
             $events[] = $parsed;
         }
+        // A day's record sent with its series is named under that series
+        // (Ics::keyed, as every reader of an iCalendar text does); one sent
+        // alone is named under the series the owner has (applyImipEvent).
+        $events = Ics::keyed($events);
         Recurrence::assertExdateBatch($events);
         if ($events === [] && $admitted['skipped'] === []) {
             return null;
@@ -775,6 +779,13 @@ final class MailIngest
             [$userId, $uid]
         );
         $storedInvite = null;
+        // Which occurrence a message about one day names is read under the
+        // series the owner has, in its form and zone (Ics::under): the
+        // message's own DTSTART says what the day becomes, never which day
+        // it is. With no series here yet, the key the message gave stands.
+        if (!empty($ev['recurrence_instance_utc']) && $existing !== null && $existing['recurrence_instance_utc'] === null) {
+            $ev = Ics::under($ev, $existing);
+        }
         $occurrence = !empty($ev['recurrence_instance_utc']) ? (string) $ev['recurrence_instance_utc'] : null;
 
         // Anything that would MUTATE an event the owner already has must prove

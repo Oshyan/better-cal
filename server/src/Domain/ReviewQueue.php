@@ -1173,7 +1173,7 @@ final class ReviewQueue
             $this->events->deleteEvent($userId, $eventId, null, null, $authority);
             $removed = true;
         }
-        $this->reconcilePending($userId, $eventId, (string) $row['source_key']);
+        $this->reconcilePending($userId, $eventId, (string) $row['source_key'], $event);
         return ['eventId' => $eventId, 'removed' => $removed];
     }
 
@@ -1254,18 +1254,38 @@ final class ReviewQueue
         RequestAuthority::checkedTx($this->db, fn() => $this->db->run('UPDATE review_items SET status = ?, decided_at = ? WHERE id = ?', [$status, Time::nowDb(), $id]));
     }
 
-    /** Only an applied decision can make a competing revision stale. */
-    private function reconcilePending(int $userId, int $eventId, string $sourceKey): void
+    /**
+     * Only an applied decision can make a competing revision stale. $was is
+     * the series as it was before the decision just applied changed it.
+     */
+    private function reconcilePending(int $userId, int $eventId, string $sourceKey, ?array $was = null): void
     {
         $event = $this->db->one('SELECT * FROM events WHERE id = ?', [$eventId]);
         if ($event === null) return;
         $stored = json_decode((string) ($event['invite_json'] ?? '{}'), true) ?: [];
+        $reformed = $was !== null && ((int) ($was['all_day'] ?? 0) === 1) !== ((int) ($event['all_day'] ?? 0) === 1);
         foreach ($this->db->all("SELECT * FROM review_items WHERE user_id = ? AND source_key = ? AND kind IN (?, ?) AND status = 'open'",
             [$userId, $sourceKey, self::KIND_INVITE_NEW, self::KIND_INVITE_CHANGE]) as $pending) {
             $payload = self::payload($pending);
             $incoming = (array) ($payload['invite'] ?? []);
             $method = ($payload['method'] ?? '') === 'CANCEL' ? 'CANCEL' : 'REQUEST';
             $occurrence = isset($payload['occurrence']) ? (string) $payload['occurrence'] : null;
+            // A held change to one day names its occurrence by a key, read
+            // under the series as it was when the message came
+            // (MailIngest::applyImipEvent). When the decision just applied
+            // made the series all-day or timed, every key names another
+            // instance or none (19:00 in New York on the 6th has the key of
+            // the all-day 7th), so the held day goes to its own day's key
+            // under the series as it is now, as a stored day's row does
+            // (Feeds::ofSeries). A day the series no longer has keeps its
+            // key and is closed as such when it is accepted.
+            if ($occurrence !== null && $reformed && $pending['kind'] === self::KIND_INVITE_CHANGE
+                && ($image = Feeds::ofSeries(['recurrence_instance_utc' => $occurrence, 'google_event_id' => null], $was, $event)) !== null
+                && (string) ($image['recurrence_instance_utc'] ?? $occurrence) !== $occurrence) {
+                $occurrence = (string) $image['recurrence_instance_utc'];
+                $payload['occurrence'] = $occurrence;
+                $this->db->update('review_items', ['payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES)], 'id = ?', [(int) $pending['id']]);
+            }
             if ($occurrence !== null) {
                 // One occurrence is numbered apart from its series (#155):
                 // judged as holdInviteChange and decide judge it, against its

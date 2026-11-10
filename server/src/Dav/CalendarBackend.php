@@ -449,6 +449,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $rowFor[(string) $at] ??= $r; // never over a row still at that key
                 }
             }
+            $feeds = new Feeds($this->db);
+            $ownColumn = OwnFields::hasColumn($this->db);
             $given = []; // the rows a record of the PUT was given to, by id
             foreach ($parsedOverrides as $ov) {
                 $cols = DavIcs::eventColumns($ov);
@@ -458,10 +460,9 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 if ($current !== null) {
                     $given[(int) $current['id']] = true;
                 }
-                if (OwnFields::hasColumn($this->db)) {
-                    // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere).
-                    $cols['override_fields'] = OwnFields::encode(
-                        OwnFields::afterSync($current, $current === null ? $cols : array_merge($current, $cols), $masterCols));
+                if ($ownColumn) {
+                    // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere; Feeds::ownAfter, the sync's reading).
+                    $cols['override_fields'] = OwnFields::encode($feeds->ownAfter($current, $cols, $masterCols, $masterId));
                 }
                 if ($current !== null) {
                     $this->db->update('events', $cols + ['deleted_at' => null, 'updated_at' => $now], 'id = ?', [(int) $current['id']]);
@@ -477,27 +478,39 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     ]);
                 }
             }
-            // Overrides dropped from the PUT body are gone for good (with what
-            // they carried, which the before snapshot holds for undo).
-            foreach ($existingByInstance as $row) {
-                if (!isset($given[(int) $row['id']])) {
-                    $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
-                }
-            }
+            // What becomes of a stored day's row the PUT gave no record to is
+            // decided by the function the sync uses (Feeds::settle), for a
+            // PUT as for a poll: a PUT is the whole object as the client
+            // has it, and a client holds none of what is kept here alone.
+            // So a row whose day the series still has keeps its tags,
+            // people, reminders, answer and what refers to it on that day
+            // (at its image when the client moved the series' clock or zone
+            // and named its edited days anew, given to the row the record
+            // made there), one holding nothing is an ordinary day again,
+            // and one whose day is gone goes, named in the entry below. A
+            // row a record was given to is as the record says, whatever the
+            // record holds: those are left out. Before, every row no record
+            // was given to was deleted outright with what it held.
+            $series = $this->db->one('SELECT * FROM events WHERE id = ?', [$masterId]);
+            $settled = $feeds->settle($calendarId, array_filter($existingByInstance, static fn(array $r): bool => !isset($given[(int) $r['id']])), [], [],
+                static fn(array $row): array => ['seen' => true, 'was' => $existingMaster, 'series' => $series], $ownColumn, null, $uid);
             // A client's PUT carries no tags or people: each day it makes,
             // brings back or keeps holds the series' where its list doesn't
             // name its own (OwnFields::follow), and the after snapshot below
             // records them, so its undo takes them back with the row.
             OwnFields::follow($this->db, $masterId);
             $afterRows = $this->db->all('SELECT * FROM events WHERE calendar_id = ? AND uid = ?', [$calendarId, $uid]);
-            $this->undo->record(
-                $userId,
-                'event',
-                $masterId,
-                $isNewObject ? 'create' : 'update',
-                $before,
-                ['events' => $afterRows] + Undo::linksOf($this->db, array_map(static fn(array $r): int => (int) $r['id'], $afterRows))
-            );
+            $after = ['events' => $afterRows] + Undo::linksOf($this->db, array_map(static fn(array $r): int => (int) $r['id'], $afterRows));
+            $op = $isNewObject ? 'create' : 'update';
+            // A row that went while it held something here alone is named,
+            // by its id and date, as a poll names one (Feeds::droppedDay):
+            // in the entry's details, and in its words where what it held is
+            // gone with it (a row another row took over lost nothing).
+            $dropped = $settled['dropped'];
+            $lost = array_values(array_filter($dropped, static fn(array $d): bool => $d['why'] !== 'merged'));
+            $this->undo->record($userId, 'event', $masterId, $op, $before, $after,
+                $lost === [] ? null : Undo::defaultSummary('event', $op, $before, $after, \BetterCal\Domain\Settings::homeTzid($this->db, $userId)) . '; removed here: ' . Feeds::droppedWords($lost),
+                $dropped === [] ? null : ['removedDays' => $dropped]);
             ChangeLog::record($this->db, $calendarId, $uid, $isNewObject ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY);
 
             // We re-serialize on read, so the stored bytes differ from the PUT

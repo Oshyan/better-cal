@@ -522,6 +522,8 @@ return [
             'made all-day at Google: the next rename goes through',
             'made all-day at Google: the next rename goes to the date-form id',
             'made all-day at Google: I1 holds at the end',
+            // The identity rule the suite checks after every block (lib.php, identityViolations) names the block too.
+            "google day identity: a series made all-day at Google, read by a poll, leaves a day holding only a tag on the date-form id: every live day row's Google id is its key's id under its series' form",
         ],
     ],
     [

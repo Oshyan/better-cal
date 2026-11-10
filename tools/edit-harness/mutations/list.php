@@ -510,4 +510,87 @@ return [
         'patch' => [['} while ($this->takesBack($below) || ', '} while (false || ']],
         'cases' => ['two-changes-then-the-bare-undo-twice'],
     ],
+    // The link rule (server/tests/db/lib.php, linkViolations), hung after every block of the database suite: a writer
+    // that makes a day's row without its series' tags and people must fail the block that ran it, and nothing else.
+    [
+        'id' => 'answer-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'dbtest' => 'link-rule',
+        'what' => 'the row an answer for one day makes (Events::ensureOverride) is not followed to its series\' tags and people (OwnFields::follow)',
+        'patch' => [[
+            "            // Owning nothing, it holds the series' tags and people (OwnFields::follow).\n            OwnFieldsList::follow(\$this->db, \$masterId, [\$id]);\n",
+            "            // mutated: the series' tags and people are not followed\n",
+        ]],
+        'checks' => ["an answer for one day of a tagged series with a person: every live day row holds its own tags and people, or exactly its series'"],
+    ],
+    // The same rule in the series harness (l-links, read by the database suite's raw SQL after every step): the row a
+    // "this event" edit makes (Events::patchThis) starts without its series' tags and people. f-undo trips too: Undo
+    // composes the day's links from its series (Undo::followLinks), so the rows after Undo are not the broken ones before;
+    // a-fields and c-untouched trip too: the whole-series edit after it ends by following the series (OwnFields::follow),
+    // which puts the broken day's tags and people right, so they change where the edit's request did not name them.
+    [
+        'id' => 'this-day-without-series-links', 'file' => 'server/src/Domain/Events.php', 'checks' => ['l-links', 'f-undo', 'a-fields', 'c-untouched'],
+        'what' => 'the row a "this event" edit makes (Events::patchThis) is not followed to its series\' tags and people (OwnFields::follow)',
+        'patch' => [[
+            "            // this edit sends are its own, set next.\n            OwnFieldsList::follow(\$this->db, \$masterId, [\$id]);\n",
+            "            // this edit sends are its own, set next (mutated: not followed).\n",
+        ]],
+        'cases' => ['edited-day-rejoins-the-series'],
+    ],
+    // A day row's stored Google id is an identity (audit-155-identity, fix list items 6 and 7): derived whenever the
+    // row is placed, and an undo addresses the day by its id now. The database cases make a series timed at 00:00 UTC
+    // all-day (each day keeps its key, every id changes form) over a day holding only a tag. The change made here is
+    // placed by the plan's writer as well as by the store's sync, so the guard in ofSeries alone shows on the change
+    // made at Google, which a poll alone places.
+    [
+        'id' => 'ofseries-id-only-on-key-move', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'google-day-identity',
+        'what' => 'Feeds::ofSeries derives a placed day\'s Google id only when its key moves, as before 1.5.5',
+        'patch' => [['        return $placed($target, $at);', '        return $at !== $key ? $placed($target, $at) : $target;']],
+        'checks' => [
+            'made all-day at Google: after the poll the series is all-day and the tagged day keeps its key and takes the date-form id',
+            'made all-day at Google: I1 holds after the poll',
+            'made all-day at Google: the next rename goes through',
+            'made all-day at Google: the next rename goes to the date-form id',
+            'made all-day at Google: I1 holds at the end',
+            // The identity rule the suite checks after every block (lib.php, identityViolations) names the block too.
+            "google day identity: a series made all-day at Google, read by a poll, leaves a day holding only a tag on the date-form id: every live day row's Google id is its key's id under its series' form",
+        ],
+    ],
+    [
+        'id' => 'dayat-journaled-id', 'file' => 'server/src/Domain/GoogleUndo.php', 'dbtest' => 'google-day-identity',
+        'what' => 'GoogleUndo::dayAt returns the id the entry journaled when the day\'s key is the same now, whatever form the series has since',
+        'patch' => [["                return ['googleId' => GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];",
+            "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
+        'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
+    ],
+    // Provider identity (server/tests/db/lib.php, identityViolations: I1), hung after every block of the database suite:
+    // the one function that names an instance at Google builds the all-day form's suffix as the timed form's, so the row
+    // a tag given to one ordinary day of an all-day series makes stores a timed id under an all-day master. The block
+    // sends Google nothing, so only its identity check can see it.
+    [
+        'id' => 'all-day-id-in-timed-form', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'identity-rule',
+        'what' => 'GoogleWriter::instanceId builds an all-day instance\'s id in the timed form (<series id>_<date>T000000Z)',
+        'patch' => [['$allDay ? \'Ymd\' : \'Ymd\THis\Z\'', '$allDay ? \'Ymd\THis\Z\' : \'Ymd\THis\Z\'']],
+        'checks' => ["a tag given to one ordinary day of an all-day Google series: every live day row's Google id is its key's id under its series' form"],
+    ],
+    // The merge of a Google list (rule 1 of 1.5.5): a dropped item acts by its key again, whatever form its id names,
+    // so it is taken for the resource of the series' form at that key. The checks are pure (server/tests/google-merge.php),
+    // run through the database suite's file of the same name, which is how this runner judges by label. Each fails in
+    // some order of its list or in all of them: a record or a row of the series' form removed, a skip of it cleared.
+    [
+        'id' => 'merge-dropped-by-key', 'file' => 'server/src/Domain/GoogleSync.php', 'dbtest' => 'google-merge',
+        'what' => 'a dropped item of a Google list is related to a row or a skip by its key alone, not by the form its id names',
+        'patch' => [["\$f = isset(\$ev['instance_all_day']) ? self::form((bool) \$ev['instance_all_day'])", "\$f = isset(\$ev['instance_all_day']) && empty(\$ev['dropped']) ? self::form((bool) \$ev['instance_all_day'])"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $form): array => array_map(static fn(string $what): string => "merge ($form): $what", [
+                'a record of the series\' form stands beside the other form\'s dropped item on its key',
+                'a read-back with the new master, a record and a skip of its form and the other form\'s dropped items on the same keys',
+                'a row stored under the other form\'s id is its master\'s form, and the other form\'s dropped item leaves it',
+                'a delta that carries the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that does not carry the master keeps the stored skips, less the one a dropped item of its form names and the one a record brings back, plus a new cancelled record',
+                'a delta that changes no skipped day leaves the stored skips in their stored order',
+                'a delta that skips two more days writes the skips in key order, whatever order it lists them in',
+                'a stored row with no master goes with the dropped item of its own id, not with the other form\'s',
+            ]), ['date', 'time'])),
+            ['merge: an all-day day of a timed series is a row under its timed master'],
+        ),
+    ],
 ];

@@ -76,6 +76,9 @@ $runHere = static function (array $tests): array {
         $migrator->run(static function (string $line): void {
         });
         checkEq(SCHEMA_CHECK, [], $migrator->pending());
+        // The rules over all data (lib.php, dataRulesCheck: links and provider identity) read this database after every block and after every file.
+        $GLOBALS['__rulesDb'] = $db;
+        $GLOBALS['__rulesSeen'] = [];
         foreach ($tests as $file) {
             $files[basename($file)] = false;
             try {
@@ -87,6 +90,12 @@ $runHere = static function (array $tests): array {
                 // the other files still run.
                 check(basename($file) . ' ran to the end', false, get_class($e) . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine(), true);
             }
+            // The backstop: a violation made outside any block of the file, named by the file.
+            dataRulesCheck('made outside any block of ' . basename($file), null, null);
+        }
+        $GLOBALS['__rulesDb'] = null;
+        foreach ($GLOBALS['__rulesOptedOut'] ?? [] as $block => $o) {
+            echo "rules over all data not counted for the block '$block' ({$o['count']} violation(s)): {$o['why']}\n";
         }
         check(JOURNAL_CHECK, BetterCal\Domain\Undo::misuses() === [], implode("\n  ", BetterCal\Domain\Undo::misuses()));
     } finally {

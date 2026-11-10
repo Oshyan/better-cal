@@ -95,6 +95,7 @@ final class CalendarImport
                 ?? (int) $this->calendars->create($userId, ['name' => $name] + ($color !== null ? ['color' => $color] : []))['id'];
             $imported = 0;
             $importedIds = [];
+            $days = []; // master id => the edited days imported under it
             $alreadyThere = 0;
             $masterIdByUid = [];
             $importedMasters = [];
@@ -158,6 +159,9 @@ final class CalendarImport
                     $cols['override_fields'] = OwnFields::encode($master === null ? [] : OwnFields::infer($row, $master));
                 }
                 $id = $this->db->insert('events', $cols);
+                if ($cols['recurrence_parent_id'] !== null) {
+                    $days[(int) $cols['recurrence_parent_id']][] = $id;
+                }
                 if ($ev['recurrence_instance_utc'] === null) {
                     $masterIdByUid[(string) $ev['uid']] = $id;
                     $importedMasters[(string) $ev['uid']] = $cols + ['icon' => null, 'attendance' => 'none'];
@@ -165,16 +169,24 @@ final class CalendarImport
                 $importedIds[] = $id;
                 $imported++;
             }
+            // A file carries no tags or people: an edited day it brings in
+            // under a series holds the series' (OwnFields::follow), the
+            // series already in the calendar with its tags included.
+            foreach ($days as $masterId => $ids) {
+                OwnFields::follow($this->db, $masterId, $ids);
+            }
             // Undoable: undone, the events it brought in go (and an undo of
-            // the calendar's making knows they're in it).
+            // the calendar's making knows they're in it), with the links
+            // those days took from their series.
             if ($importedIds !== []) {
                 $rows = [];
                 foreach (array_chunk($importedIds, 500) as $chunk) {
                     [$in, $params] = Db::in($chunk);
                     $rows = array_merge($rows, $this->db->all("SELECT * FROM events WHERE id IN $in", $params));
                 }
+                $links = $days === [] ? [] : Undo::linksOf($this->db, array_merge(...array_values($days)));
                 $calendarName = (string) $this->db->scalar('SELECT name FROM calendars WHERE id = ?', [$calendarId]);
-                ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, ['events' => $rows],
+                ActivityContext::with('import', fn() => $undo->record($userId, 'calendar', $calendarId, 'update', null, ['events' => $rows] + $links,
                     'Imported ' . $imported . ($imported === 1 ? ' event' : ' events') . " into '" . $calendarName . "'"));
             }
             return ['calendarId' => $calendarId, 'imported' => $imported, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];

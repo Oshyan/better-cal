@@ -274,8 +274,10 @@ final class GoogleUndo
         if ($master !== null) {
             $at = $this->undo->dayNow((int) $mutation['id'], $master, (string) $key);
             if ($at !== null) {
-                return ['googleId' => $at === (string) $key ? $googleId
-                    : GoogleWriter::instanceId($of['series'], $at, (int) $master['all_day'] === 1), 'key' => $at];
+                // Its identity now: the series id, its occurrence now and the series' form now. Never the
+                // id the entry journaled, which names the form of then (a series made all-day since keeps
+                // a day at 00:00 UTC on its key under another id).
+                return ['googleId' => GoogleWriter::instanceId($of['series'], $at, (int) $master['all_day'] === 1), 'key' => $at];
             }
         }
         throw HttpError::badRequest("That day is no longer part of the series this change was made in (a later change moved it into another series or ended the series before it), so this can't be undone.", 'stale_undo');

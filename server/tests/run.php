@@ -1909,7 +1909,7 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT,
         status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
         style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
-        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT
+        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT, override_fields TEXT
     )");
     $adb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $adb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
@@ -8993,7 +8993,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
         status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
         style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
         invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT, google_etag TEXT,
-        location_source TEXT, location_provider TEXT, location_placed_at TEXT
+        location_source TEXT, location_provider TEXT, location_placed_at TEXT, override_fields TEXT
     )");
     $gw->run('CREATE TABLE google_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER, event_id INTEGER, title TEXT, summary TEXT, status TEXT, error TEXT, targets_json TEXT, befores_json TEXT, local_json TEXT, plan_json TEXT, made_json TEXT, steps_json TEXT, created_at TEXT, updated_at TEXT)');
     $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, google_event_id) VALUES
@@ -12308,6 +12308,9 @@ use BetterCal\Infra\Secrets;
     $answer = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($renamed, ['exdates' => ['2027-03-15 17:00:00']])]));
     checkEq('merge answer: a write\'s answer is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
 }
+
+// A list from Google merged by identity, over every order of the list.
+require __DIR__ . '/google-merge.php';
 
 // --- Google write-through: body shape, instance ids, writability -----------------
 use BetterCal\Domain\GoogleWriter;

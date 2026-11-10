@@ -86,6 +86,8 @@ return static function (Db $db): void {
         $runner->runFixed([dirname(__DIR__, 3) . '/tools/edit-harness/cases/limitations/legacy-all-day-series-at-local-midnights.json']);
         $got = array_values(array_unique(array_column($runner->failures, 'invariant')));
         sort($got);
-        checkEq('edit harness: the legacy case fails as documented (its start read a day early and off its rule, the evaluator\'s days not the window\'s, and the rename rewriting the row in UTC)', ['a-time', 'c-days', 'c-occurrences', 'c-placement', 'c-untouched', 'g', 'g-created'], $got);
+        // id-zone: the case builds the pre-035 form on purpose, an all-day row stored in its zone, which provider identity
+        // (I2) refuses over all data; the fixture is the broken form, not a writer.
+        checkEq('edit harness: the legacy case fails as documented (its start read a day early and off its rule, the evaluator\'s days not the window\'s, the rename rewriting the row in UTC, and an all-day row stored in its zone)', ['a-time', 'c-days', 'c-occurrences', 'c-placement', 'c-untouched', 'g', 'g-created', 'id-zone'], $got);
     });
 };

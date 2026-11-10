@@ -160,6 +160,7 @@ trait Sequences
                 $done[$this->step] = ['s0' => $s0, 's1' => $this->snapshot(), 'entries' => $entries];
             }
             $this->checkExpect(['step' => $this->step] + ($step['expect'] ?? []));
+            $this->checkLinkRule("step {$this->step} ({$step['do']})");
             for ($r = $n0; $r < count($this->records); $r++) {
                 $this->records[$r]['detail']['step'] = $this->step;
             }

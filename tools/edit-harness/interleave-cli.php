@@ -331,7 +331,7 @@ function interleaveReport(array $out, string $findingsFile, int $seed, bool $qui
         }
         echo "  $check: " . array_sum($byRole) . " runs\n";
     }
-    $required = ['x-alone', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-agree', 'x-structure', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-conditional', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
+    $required = ['x-alone', 'x-sync-silent', 'x-local-silent', 'x-write-asked', 'x-agree', 'x-structure', 'x-identity', 'x-own', 'x-conflict', 'x-pending', 'x-finish', 'x-putback', 'x-undo-fields', 'x-undo-bare', 'x-honest', 'x-conditional', 'x-empty', 'x-overlap', 'x-budget', 'x-readback'];
     $missing = array_values(array_filter($required, static fn(string $c): bool => array_sum($out['runs'][$c] ?? []) === 0));
     foreach ($out['na'] as $why => $n) {
         echo "  not applicable ($n): $why\n";

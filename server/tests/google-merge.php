@@ -142,7 +142,7 @@ if (!function_exists('check')) {
         foreach ($permutations($list) as $order) {
             [$got, $said] = $logged(static function () use ($snapshot, $order, $delta, $max) {
                 try {
-                    return GoogleSync::applyChanges($snapshot, $order, $max, null, $delta);
+                    return GoogleSync::applyChanges($snapshot, $order, !$delta, $max);
                 } catch (\RuntimeException $e) {
                     return ['threw' => $e->getMessage()];
                 }
@@ -210,6 +210,34 @@ if (!function_exists('check')) {
     // The limit is on the calendar after the list: one event added and another removed at the limit is the same list in either order.
     $everyOrder('merge: an event added and another removed at the limit fit in either order', [$other],
         [['cancelled' => true, 'uid' => 'smpls@google.com', 'recurrence_instance_utc' => null], $master('date')], true, ['skips' => [], 'rows' => []], 1);
+    // --- Which day a row is (Feeds::ofSeries): by identity first, by the day second ---
+    // A daily game at 19:00 in New York from Tuesday 5 January 2027: the game of Wednesday the 6th is the instant
+    // 2027-01-07T00:00Z, which is also the key an all-day series gives Thursday the 7th.
+    $gameOf = static fn(array $more): array => $more + ['title' => 'Sample game', 'description' => null, 'location' => null, 'url' => null, 'status' => 'confirmed',
+        'start_utc' => '2027-01-06 00:00:00', 'end_utc' => '2027-01-06 02:00:00', 'all_day' => 0, 'tzid' => 'America/New_York', 'rrule' => 'FREQ=DAILY;COUNT=10', 'exdates_json' => null];
+    $newYork = $gameOf([]);
+    $wednesday = ['recurrence_instance_utc' => '2027-01-07 00:00:00'];
+    $dayOf = static fn(array $was, array $series): ?string => \BetterCal\Domain\Feeds::ofSeries($wednesday, $was, $series)['recurrence_instance_utc'] ?? null;
+    checkEq('which day: a zone rewritten with no instant moving (00:00 UTC) leaves the row on its own occurrence', '2027-01-07 00:00:00', $dayOf($newYork, $gameOf(['tzid' => 'UTC'])));
+    checkEq('which day: the same rewritten as 09:00 Tokyo', '2027-01-07 00:00:00', $dayOf($newYork, $gameOf(['tzid' => 'Asia/Tokyo'])));
+    checkEq('which day: that occurrence skipped in the rewritten series: the row\'s day is gone, not the neighbour\'s', null,
+        $dayOf($newYork, $gameOf(['tzid' => 'UTC', 'exdates_json' => '["2027-01-07 00:00:00"]'])));
+    checkEq('which day: a new clock time (20:00 New York) names no occurrence at the old key, so the row goes with its day, Wednesday the 6th', '2027-01-07 01:00:00',
+        $dayOf($newYork, $gameOf(['start_utc' => '2027-01-06 01:00:00', 'end_utc' => '2027-01-06 03:00:00'])));
+    checkEq('which day: made all-day, every name changes: the row goes to the day it showed, the 6th, though the 7th has its key', '2027-01-06 00:00:00',
+        $dayOf($newYork, $gameOf(['start_utc' => '2027-01-05 00:00:00', 'end_utc' => '2027-01-06 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'])));
+    checkEq('which day: the start moved along its own pattern (probe 3.5) leaves the row at its instant', '2027-01-07 00:00:00',
+        $dayOf($newYork, $gameOf(['start_utc' => '2027-01-07 00:00:00', 'end_utc' => '2027-01-07 02:00:00'])));
+
+    // --- The date a removed day is named by (Feeds::droppedDay): its key under its series' form and zone ---
+    $named = static fn(array $row, ?array $series): string => \BetterCal\Domain\Feeds::droppedDay(['id' => 7, 'title' => 'Sample day'] + $row, $series, [], [], 'gone')['day'];
+    checkEq('day named: a whole day of a 19:00 New York series is the day its series gives the key, the 6th', '2027-01-06',
+        $named(['recurrence_instance_utc' => '2027-01-07 00:00:00', 'start_utc' => '2027-01-06 00:00:00', 'all_day' => 1, 'tzid' => 'UTC'], $newYork));
+    checkEq('day named: a timed day of an all-day series is its key\'s date, the 6th', '2027-01-06',
+        $named(['recurrence_instance_utc' => '2027-01-06 00:00:00', 'start_utc' => '2027-01-06 19:00:00', 'all_day' => 0, 'tzid' => 'America/New_York'], ['all_day' => 1, 'tzid' => 'UTC'] + $newYork));
+    checkEq('day named: an event of its own is named by its own start in its own zone', '2027-01-06',
+        $named(['recurrence_instance_utc' => null, 'start_utc' => '2027-01-07 00:00:00', 'all_day' => 0, 'tzid' => 'America/New_York'], null));
+
     $everyOrder('merge: two events added over the limit are refused in either order', [],
         [$other, $master('date')], true, ['threw' => 'Google calendar has more than the safe limit of 1 events for this server; the existing calendar and sync position were kept unchanged.'], 1);
 })();

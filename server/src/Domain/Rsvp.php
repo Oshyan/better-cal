@@ -426,7 +426,8 @@ final class Rsvp
             ['responseStatus' => $was, 'attendance' => (string) ($row['attendance'] ?? 'none')]);
         (new Undo($this->db))->write((int) $row['user_id'], function () use ($check, $calendar, $resp, $row, $journal, $google): void {
             $check(true);
-            $this->google->apply($calendar, [$resp]);
+            // The answer sent the guest list alone: Google's answer says nothing of the series' skipped days.
+            $this->google->apply($calendar, [$resp], false);
             // The answer decides Planned or Maybe again (Events::relationship),
             // over any choice made by hand since the last answer.
             $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);

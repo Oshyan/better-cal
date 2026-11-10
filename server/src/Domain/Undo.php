@@ -2814,7 +2814,7 @@ final class Undo
                 $at = Feeds::ofSeries($row, null, ['exdates_json' => null] + $master);
                 $own = $feeds->ownOf($row, $master);
                 if ($at === null) {
-                    $removed[] = Feeds::droppedDay($row, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
+                    $removed[] = Feeds::droppedDay($row, $master, Feeds::heldHere($own, $row), OwnFields::references($this->db, [(int) $row['id']])[(int) $row['id']] ?? [], 'gone');
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                     continue;
                 }
@@ -2996,7 +2996,7 @@ final class Undo
             }
             if ($now === null) {
                 if ($series !== null && $this->skipStands($entryId, $series, $before, $after, (string) $row['recurrence_instance_utc'])) {
-                    $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
+                    $dropped[] = Feeds::droppedDay($row, $series, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
                     $before = self::withoutEvent($before, (int) $row['id']);
                 }
                 continue; // nothing holds its day now: the snapshot row comes back as it was
@@ -3127,7 +3127,7 @@ final class Undo
                 // leaves it: nothing to compose onto, so the row is not
                 // brought back (one the entry kept off the day goes with
                 // the entry), and what it held is named as removed.
-                $dropped[] = Feeds::droppedDay($row, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
+                $dropped[] = Feeds::droppedDay($row, $series, Feeds::heldHere(OwnFields::stored($row), $row), [], 'gone');
                 $before = self::withoutEvent($before, (int) $row['id']);
                 continue;
             }

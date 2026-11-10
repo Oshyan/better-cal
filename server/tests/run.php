@@ -12185,7 +12185,7 @@ use BetterCal\Infra\Secrets;
         $tombstone,                                                   // one instance skipped -> EXDATE on the series
         ['cancelled' => true, 'uid' => 'abc@google.com', 'recurrence_instance_utc' => null], // dinner deleted
         GoogleSync::toParsed(['id' => 'n1', 'iCalUID' => 'n1@google.com', 'summary' => 'New', 'start' => ['date' => '2026-11-01'], 'end' => ['date' => '2026-11-02']]),
-    ]);
+    ], true);
     $byUid = [];
     foreach ($merged as $ev) {
         $byUid[$ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '')] = $ev;
@@ -12194,14 +12194,14 @@ use BetterCal\Infra\Secrets;
     check('merge: new event is present', isset($byUid['n1@google.com|']));
     check('merge: exception survives', isset($byUid['r1@google.com|2026-10-12 08:00:00']));
     checkEq('merge: cancelled instance became an EXDATE on the series', ['2026-09-28 08:00:00', '2026-10-05 08:00:00', '2026-10-19 08:00:00'], $byUid['r1@google.com|']['exdates']);
-    $gone = GoogleSync::applyChanges($merged, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null]]);
+    $gone = GoogleSync::applyChanges($merged, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null]], true);
     check('merge: cancelling the series removes master and exception', count(array_filter($gone, static fn(array $e): bool => $e['uid'] === 'r1@google.com')) === 0);
     // Google lists a removed series' records with it, live or not: none of them is a row without its series.
     $ofSeries = static fn(array $list): int => count(array_filter($list, static fn(array $e): bool => $e['uid'] === 'r1@google.com'));
     checkEq('merge: a record listed live beside its series\' cancellation makes no row', 0,
-        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception])));
+        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception], true)));
     checkEq('merge: a series listed live again after its cancellation is back with its record', 2,
-        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception, $series])));
+        $ofSeries(GoogleSync::applyChanges($snapshot, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null], $exception, $series], true)));
 
     // GoogleSeries: a link is a value like every other field Google holds, compared on the read-back, sent where it differs, cleared where the plan has none.
     $gm = ['title' => 'Sample weekly', 'description' => null, 'location' => null, 'status' => 'confirmed', 'start_utc' => '2027-03-01 18:00:00', 'end_utc' => '2027-03-01 19:00:00',
@@ -12223,14 +12223,14 @@ use BetterCal\Infra\Secrets;
     $plain = BetterCal\Domain\GoogleSeries::stepsFor(['exceptions' => []] + $gTarget, [$gItem('smpl1', '2027-03-01', 'https://example.test/series'), $gItem('smpl1_20270308T180000Z', '2027-03-08', null, 'Sample weekly, once')]);
     checkEq('google series: a record the plan has no edited day for is put back to the series\' values, its link included', [['plain', 'smpl1_20270308T180000Z', 'Sample weekly', 'https://example.test/series']],
         array_map(static fn(array $s): array => [$s[0], $s[1], $s[2]['summary'] ?? null, $s[2]['source']['url'] ?? null], $plain));
-    $atGoogleCap = GoogleSync::applyChanges([$timed], [array_merge($timed, ['title' => 'Updated'])], 1);
+    $atGoogleCap = GoogleSync::applyChanges([$timed], [array_merge($timed, ['title' => 'Updated'])], true, 1);
     checkEq('merge budget: an update at the exact snapshot cap remains allowed', 'Updated', $atGoogleCap[0]['title']);
     $googleMergeRejected = false;
     try {
         GoogleSync::applyChanges([$timed], [GoogleSync::toParsed([
             'id' => 'over-cap', 'iCalUID' => 'over-cap@google.com', 'summary' => 'Over cap',
             'start' => ['date' => '2026-12-01'], 'end' => ['date' => '2026-12-02'],
-        ])], 1);
+        ])], true, 1);
     } catch (RuntimeException $e) {
         $googleMergeRejected = str_contains($e->getMessage(), 'safe limit of 1');
     }
@@ -12238,6 +12238,7 @@ use BetterCal\Infra\Secrets;
     checkEq('merge budget: deletion at the exact cap remains allowed', [], GoogleSync::applyChanges(
         [$timed],
         [['cancelled' => true, 'uid' => $timed['uid'], 'recurrence_instance_utc' => null]],
+        true,
         1,
     ));
 
@@ -12283,7 +12284,7 @@ use BetterCal\Infra\Secrets;
         }
         return $out;
     };
-    $deltaMerged = $byKeyOf(GoogleSync::applyChanges([$skippedMaster, $etagException], [$renamed], delta: true));
+    $deltaMerged = $byKeyOf(GoogleSync::applyChanges([$skippedMaster, $etagException], [$renamed], false));
     checkEq('merge delta: a changed master keeps the stored skips and the exception the delta did not carry', [
         'Sample standup renamed', ['2027-03-15 17:00:00', '2027-03-22 17:00:00'], true, '"3600000000000000"',
     ], [
@@ -12293,7 +12294,7 @@ use BetterCal\Infra\Secrets;
     $resent = GoogleSync::toParsed(['id' => 'probe1a2b3c_20270315T170000Z', 'iCalUID' => 'probe1a2b3c@google.com', 'status' => 'cancelled',
         'recurringEventId' => 'probe1a2b3c', 'originalStartTime' => ['dateTime' => '2027-03-15T10:00:00-07:00']]);
     $backAtGoogle = array_merge($etagException, ['recurrence_instance_utc' => '2027-03-22 17:00:00', 'start_utc' => '2027-03-22 17:00:00', 'end_utc' => '2027-03-22 17:30:00']);
-    $deltaContradicted = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$renamed, $resent, $backAtGoogle], delta: true));
+    $deltaContradicted = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$renamed, $resent, $backAtGoogle], false));
     checkEq('merge delta: a cancelled instance re-sent stays skipped; a day the delta brings back live is no longer skipped', ['2027-03-15 17:00:00'],
         $deltaContradicted['probe1a2b3c@google.com|']['exdates']);
     // A skip is Google's: a master change that drops it (a new clock, zone,
@@ -12301,13 +12302,16 @@ use BetterCal\Infra\Secrets;
     $droppedSkip = GoogleSync::toParsed(['id' => 'probe1a2b3c_20270315T170000Z', 'iCalUID' => 'probe1a2b3c@google.com', 'status' => 'cancelled']);
     $retimed = array_merge($renamed, ['start_utc' => '2027-03-01 19:00:00', 'end_utc' => '2027-03-01 19:30:00']);
     checkEq('merge delta: a skip Google dropped with a master change goes; one it did not drop stays', ['2027-03-22 17:00:00'],
-        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$retimed, $droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$retimed, $droppedSkip], false))['probe1a2b3c@google.com|']['exdates']);
     checkEq('merge delta: a dropped skip goes on a delta that does not carry its master', ['2027-03-22 17:00:00'],
-        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$droppedSkip], false))['probe1a2b3c@google.com|']['exdates']);
     checkEq('merge delta: a record dropped for an EXDATE line the master carries stays skipped', ['2027-03-15 17:00:00', '2027-03-22 17:00:00'],
-        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($retimed, ['exdates' => ['2027-03-15 17:00:00']]), $droppedSkip], delta: true))['probe1a2b3c@google.com|']['exdates']);
-    $answer = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($renamed, ['exdates' => ['2027-03-15 17:00:00']])]));
-    checkEq('merge answer: a write\'s answer is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($retimed, ['exdates' => ['2027-03-15 17:00:00']]), $droppedSkip], false))['probe1a2b3c@google.com|']['exdates']);
+    $answer = $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [array_merge($renamed, ['exdates' => ['2027-03-15 17:00:00']])], true));
+    checkEq('merge answer: the answer to a write that sent the recurrence is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
+    // An answer to a write that sent no recurrence (an answer to an invitation, a title) is the series' own resource: it names no skipped day, and none goes.
+    checkEq('merge answer: the answer to a write that sent no recurrence leaves the stored skips', ['2027-03-15 17:00:00', '2027-03-22 17:00:00'],
+        $byKeyOf(GoogleSync::applyChanges([$skippedMaster], [$renamed], false))['probe1a2b3c@google.com|']['exdates']);
 }
 
 // A list from Google merged by identity, over every order of the list.

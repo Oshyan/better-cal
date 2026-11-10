@@ -697,6 +697,37 @@ return [
             'F1 (second write the network down): the series can be deleted afterwards',
         ],
     ],
+    // What a write's answer says of a series' skipped days (rule 7 of the merge): every answer taken as whole for its
+    // series, as before the writer said what it sent. An answer to an invitation, and its undo, then bring every skipped
+    // day back until the next poll.
+    [
+        'id' => 'answer-read-as-whole', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'google-answer-skips',
+        'what' => 'the answer to a write that sent no recurrence is merged as everything Google holds of the series, so its stored skips go',
+        'patch' => [["        )), \$changes, \$sentRecurrence);", "        )), \$changes, true);"]],
+        'checks' => [
+            'after the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+            'after the undo of the answer: 6 January is still a skipped day, and the calendar shows 5 and 7 January only',
+        ],
+    ],
+    // Which day a row is (Feeds::ofSeries): by the day its key showed under the series as it was, before asking whether
+    // the key is still an occurrence. A zone rewritten with no instant moving then carries every local-only day to the
+    // neighbouring occurrence and gives it the neighbour's Google id.
+    [
+        'id' => 'ofseries-day-before-identity', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-zone-same-moment',
+        'what' => 'a row whose key is still an occurrence of its series is placed by the local day the key had under the old zone',
+        'patch' => [["            \$on = array_values(array_diff(\$named ? [\$key] : \$calc->keysOn(\$dn), \$skips));", "            \$on = array_values(array_diff(\$calc->keysOn(\$dn), \$skips));"]],
+        'checks' => [
+            'after: the tag is still on the occurrence at 2027-01-07T00:00Z, the same instance at Google',
+            'after: the tag is still on the occurrence at 2027-01-07T00:00Z',
+        ],
+    ],
+    // The date a removed day is named by (Feeds::droppedDay): read under the row's own form and zone, not its series'.
+    [
+        'id' => 'dropped-day-by-own-form', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'activity-day-named',
+        'what' => 'a removed day is named by its key read under the row\'s own form and zone, a day off for a day whose form is not its series\'',
+        'patch' => [["        \$frame = \$key !== null && \$series !== null ? \$series : \$row;", "        \$frame = \$row;"]],
+        'checks' => ['the row is gone, and Activity names it by 6 January, the date it showed'],
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,

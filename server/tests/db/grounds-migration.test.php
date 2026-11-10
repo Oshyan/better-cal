@@ -15,7 +15,10 @@ declare(strict_types=1);
 
 use BetterCal\Domain\Settings;
 use BetterCal\Domain\Undo;
+use BetterCal\EditHarness\GoogleStand;
 use BetterCal\Infra\Db;
+
+require_once dirname(__DIR__, 3) . '/tools/edit-harness/lib.php';
 
 return static function (Db $db): void {
     $migrate = require dirname(__DIR__, 2) . '/migrations/077_grounds_one_form.php';
@@ -102,6 +105,45 @@ return static function (Db $db): void {
         checkEq('077: refused as stale against anything later on the series', [["events:$series", '*']], $ground($entry));
         checkEq('077: which every later touch of the series conflicts with', [true, true],
             [Undo::conflicts('*', 'day:2027-01-25 18:00:00|description', 'events'), Undo::conflicts('*', 'title', 'events')]);
+    });
+
+    // An entry already in today's form is never derived again: a clock
+    // change that carried a skipped day records the skip's move, and the
+    // migration leaves it so, where deriving it again without the move
+    // made it a skip removed and a skip added, and the day's undo stale.
+    scenario('077: a skipped day carried by a clock change keeps its move, and its undo goes through (Google)', function () use ($db, $migrate, $legacy, $ground): void {
+        $u = freshUser($db);
+        seriesUndo($db, $u, false);
+        $d = domains($db);
+        $s = GoogleStand::make($db, $d->undo, $u);
+        try {
+            $e = $s->events;
+            $undo = new Undo($db, null, $s->writer);
+            $id = (int) $e->create($u, ['calendarId' => $s->calendarId, 'title' => 'Pizza night', 'start' => '2027-01-04T09:00:00+00:00', 'end' => '2027-01-04T10:00:00+00:00',
+                'tzid' => 'UTC', 'rrule' => 'FREQ=WEEKLY;COUNT=8'])['eventId'];
+            $s->poll();
+            $e->deleteEvent($u, $id, 'this', '2027-01-11T09:00:00+00:00');
+            $e->throwDeferred();
+            $deleted = lastEntry($db, $u);
+            planned($e, $u, $id, ['scope' => 'all', 'instanceStart' => '2027-01-04T09:00:00+00:00', 'start' => '2027-01-04T11:00:00+00:00', 'end' => '2027-01-04T12:00:00+00:00']);
+            $e->throwDeferred();
+            $moved = lastEntry($db, $u);
+            [$deletedWas, $movedWas] = [$ground($deleted), $ground($moved)];
+            check('077 (a carried skip): the clock change recorded the skip\'s move', in_array(["events:$id", 'move:2027-01-11 09:00:00>2027-01-11 11:00:00'], $movedWas, true), json_encode($movedWas));
+            // As the version before this one stored both (the review's cross-version shape): the same touches, written directly.
+            $legacy($deleted, $deletedWas);
+            $legacy($moved, $movedWas);
+            $migrate($db);
+            checkEq('077 (a carried skip): both entries\' grounds are as they were', [$deletedWas, $movedWas], [$ground($deleted), $ground($moved)]);
+            $undo->undoById($u, $deleted);
+            $e->throwDeferred();
+            $window = $e->window($u, new \DateTimeImmutable('2027-01-11T00:00:00Z'), new \DateTimeImmutable('2027-01-12T00:00:00Z'), [$s->calendarId], null, true);
+            checkEq('077 (a carried skip): the day\'s undo goes through, the day back at 11:00 and skipped nowhere',
+                [1, '2027-01-11T11:00:00', []],
+                [count($window), substr((string) ($window[0]['start_utc'] ?? $window[0]['start'] ?? ''), 0, 19), json_decode((string) ($db->scalar('SELECT exdates_json FROM events WHERE id = ?', [$id]) ?? '[]'), true)]);
+        } finally {
+            GoogleStand::forget($db, $u);
+        }
     });
 
     scenario('077: through 1.5.4\'s own code, a day renamed twice, then once more after the upgrade', function () use ($db, $migrate): void {

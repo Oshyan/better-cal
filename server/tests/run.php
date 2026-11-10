@@ -11370,6 +11370,33 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'a']]], ['events' => [['id' => 9, 'title' => 'Same', 'updated_at' => 'b']]]
     ));
 
+    // Migration 077 opens an entry only when its touches hold the old
+    // form (Undo::holdsLegacyGround), read from the touches and the events
+    // rows now: never the snapshots.
+    $rowsNow = [3 => ['id' => 3, 'recurrence_parent_id' => null, 'recurrence_instance_utc' => null],
+        4 => ['id' => 4, 'recurrence_parent_id' => 3, 'recurrence_instance_utc' => '2027-01-11 09:00:00']];
+    checkEq('077 decides by touches: events removed whole with their tags and calendar, a series\' own column, a day\'s ground, a carried skip: today\'s form, not opened',
+        [false, false, false, false],
+        [BetterCal\Domain\Undo::holdsLegacyGround([['events:70', '*'], ['event_tags:70|2', '*'], ['events:70', '+'], ['calendars:5', '+']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'title']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'day:2027-01-11 09:00:00|title']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'start_utc'], ['events:3', 'move:2027-01-11 09:00:00>2027-01-11 11:00:00'], ['events:71', 'title']], $rowsNow)]);
+    checkEq('077 decides by touches: a day\'s own row, its tag, the old mark, the whole skips column, a gone row the entry did not remove: the old form, opened',
+        [true, true, true, true, true],
+        [BetterCal\Domain\Undo::holdsLegacyGround([['events:4', 'title']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['event_tags:4|2', '*']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:70', '*'], ['events:3', '~']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:3', 'exdates_json']], $rowsNow),
+            BetterCal\Domain\Undo::holdsLegacyGround([['events:71', 'title']], $rowsNow)]);
+    checkEq('077 decides by touches: a gone row its removers say was no day is an event of its own, not opened',
+        false, BetterCal\Domain\Undo::holdsLegacyGround([['events:71', 'title']], $rowsNow + [71 => []]));
+    $movedWas = ['id' => 3, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2027-01-04 09:00:00', 'exdates_json' => '["2027-01-11 09:00:00"]'];
+    $movedNow = ['id' => 3, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2027-01-04 11:00:00', 'exdates_json' => '["2027-01-11 11:00:00"]'];
+    $movedGround = [['events:3', 'start_utc'], ['events:3', 'move:2027-01-11 09:00:00>2027-01-11 11:00:00']];
+    checkEq('077 derives as record() does: a skip carried by a clock change stays its recorded move, never a skip removed and one added',
+        [], array_values(array_filter(BetterCal\Domain\Undo::legacyGround($movedGround, ['events' => [$movedWas]], ['events' => [$movedNow]], [], false),
+            static fn(array $t): bool => str_starts_with($t[1], 'skip:'))));
+
     // Sparse places (Order): one moves, the rest stay; no room, all afresh.
     checkEq('order: into an empty list, first or last, between two', [[7 => 1024], [7 => 0], [7 => 3072], [7 => 1536]], [
         BetterCal\Domain\Order::place([], 7, 0),

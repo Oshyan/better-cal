@@ -162,6 +162,53 @@ return static function (Db $suiteDb): void {
         checkEq('large calendar: deleted again and undone again, the same rows are back', $was, $digest());
     });
 
+    // Migration 077 over this calendar's deletion, in a process of its own
+    // at a 128 MB memory limit: an entry in today's form is never opened,
+    // and one recorded in 1.5.4's form (written directly over the pieces
+    // today's delete keeps) is rewritten reading one piece at a time.
+    scenario('large calendar: migration 077 over its deletion, at a 128 MB limit', function () use ($db, $d, $u, $big, $series, $count, $was, $digest): void {
+        $migrate = static function (): array {
+            $p = proc_open([PHP_BINARY, '-d', 'memory_limit=128M', __DIR__ . '/migration-077-child.php'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+            return [proc_close($p), trim($out)];
+        };
+        $dayRow = (int) $db->scalar('SELECT id FROM events WHERE recurrence_parent_id = ?', [$series]);
+        $occurrence = (string) $db->scalar('SELECT recurrence_instance_utc FROM events WHERE id = ?', [$dayRow]);
+        $dayTag = (int) $db->scalar('SELECT tag_id FROM event_tags WHERE event_id = ? ORDER BY tag_id LIMIT 1', [$dayRow]);
+        $d->calendars->delete($u, $big);
+        $entry = lastEntry($db, $u);
+        $pieces = $count('SELECT COUNT(*) FROM mutation_rows WHERE mutation_id = ?', [$entry]);
+        check('large calendar: its deletion is kept in pieces', $pieces > 50, "$pieces pieces");
+
+        [$exit, $out] = $migrate();
+        checkEq('large calendar: 077 over a journal in today\'s form completes at 128 MB, opening nothing and reading no piece',
+            [0, 'journal grounds in one form: 0 entries rewritten (0 opened, 0 pieces read)'], [$exit, strtok($out, "\n")]);
+
+        // As 1.5.4 recorded the day's row removed: the row whole, its tag
+        // link, and the marks they leave, in place of today's day grounds.
+        $db->run("DELETE FROM mutation_touches WHERE mutation_id = ? AND row_key = ? AND col LIKE 'day:%'", [$entry, "events:$series"]);
+        foreach ([["events:$dayRow", '*'], ["events:$series", '~'], ["event_tags:$dayRow|$dayTag", '*'], ["events:$dayRow", '+']] as [$row, $col]) {
+            $db->insert('mutation_touches', ['mutation_id' => $entry, 'row_key' => $row, 'col' => $col]);
+        }
+        // Opened besides: the trip's link to one of its events, which names a
+        // row this deletion removed; with the deletion's "~", only the
+        // snapshots can say whether that row was a day (it wasn't: unchanged).
+        [$exit, $out] = $migrate();
+        checkEq('large calendar: 077 over the same deletion in 1.5.4\'s form completes at 128 MB, rewriting it from every piece',
+            [0, "journal grounds in one form: 1 entries rewritten (2 opened, $pieces pieces read)"], [$exit, strtok($out, "\n")]);
+        check('large calendar: and stays well under the limit', preg_match('/peak_bytes=(\d+)/', $out, $peak) === 1 && (int) $peak[1] < 64 * 1048576, $out);
+        $ground = array_map(static fn(array $t): string => $t['row_key'] . ' ' . $t['col'],
+            $db->all('SELECT row_key, col FROM mutation_touches WHERE mutation_id = ? AND (row_key IN (?, ?, ?) OR col = ?)', [$entry, "events:$series", "events:$dayRow", "event_tags:$dayRow|$dayTag", '~']));
+        checkEq('large calendar: rewritten, the day\'s row is its title and tags on its series, and no old key is left',
+            [true, true, [], []],
+            [in_array("events:$series day:$occurrence|title", $ground, true), in_array("events:$series day:$occurrence|tags", $ground, true),
+                array_values(array_filter($ground, static fn(string $g): bool => str_starts_with($g, "events:$dayRow ") || str_starts_with($g, "event_tags:$dayRow|"))),
+                array_values(array_filter($ground, static fn(string $g): bool => str_ends_with($g, ' ~')))]);
+
+        $d->undo->undoById($u, $entry);
+        checkRestored('large calendar: after 077, its deletion still undoes, every row back as it was', $was, $digest());
+    });
+
     scenario('large calendar: a delete whose entry cannot be written changes nothing', function () use ($db, $d, $u, $big, $count, $was, $digest): void {
         // The journal's pieces refused, as a full disk or a dropped
         // connection would: the delete fails, and the calendar stays.

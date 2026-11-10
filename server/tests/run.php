@@ -12309,6 +12309,9 @@ use BetterCal\Infra\Secrets;
     checkEq('merge answer: a write\'s answer is the whole list, so a skip it left out was put back', ['2027-03-15 17:00:00'], $answer['probe1a2b3c@google.com|']['exdates']);
 }
 
+// A list from Google merged by identity, over every order of the list.
+require __DIR__ . '/google-merge.php';
+
 // --- Google write-through: body shape, instance ids, writability -----------------
 use BetterCal\Domain\GoogleWriter;
 

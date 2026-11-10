@@ -1,0 +1,104 @@
+{
+    "n": 429,
+    "seed": 52817,
+    "series": {
+        "family": "weekly_list",
+        "rrule": "FREQ=WEEKLY;BYDAY=TU,TH,SU",
+        "import": false,
+        "bound": "count",
+        "boundAt": 10,
+        "untilForm": "exact",
+        "allDay": true,
+        "tzid": "UTC",
+        "start": "2027-06-21",
+        "length": 1,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 0,
+            "kind": "edit",
+            "own": [
+                "location",
+                "description"
+            ],
+            "days": 2,
+            "mins": 180,
+            "zone": "America/New_York",
+            "len": 60
+        },
+        {
+            "at": 5,
+            "kind": "edit",
+            "own": [
+                "date"
+            ],
+            "days": 3,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 7,
+            "kind": "edit",
+            "own": [
+                "title",
+                "location",
+                "url",
+                "tags",
+                "date"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "Asia/Tokyo",
+            "len": -15
+        },
+        {
+            "at": 6,
+            "kind": "edit",
+            "own": [
+                "title"
+            ],
+            "days": -2,
+            "mins": 180,
+            "zone": "America/New_York",
+            "len": 30
+        }
+    ],
+    "acted": 6,
+    "from": "edited",
+    "vector": {
+        "scope": "all",
+        "date": 1,
+        "clock": 0,
+        "zone": null,
+        "length": 1,
+        "allDay": false,
+        "toZone": "Pacific/Auckland",
+        "toClock": 32400,
+        "trip": false,
+        "fields": {
+            "status": "tentative"
+        },
+        "rule": "same",
+        "sameForm": "editor",
+        "newRule": "FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=16",
+        "bound": {
+            "untilAt": 6
+        },
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "everyOption": false,
+    "typed": false,
+    "choices": {
+        "edit": {
+            "reading": "member",
+            "outside": "keep"
+        }
+    },
+    "preselected": {
+        "edit": true
+    }
+}

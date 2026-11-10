@@ -65,6 +65,57 @@ trait PlanNext
         return $items;
     }
 
+    /**
+     * The eligible set in an order the contract allows, as close to the
+     * listed one as it allows. The contract orders coming up by the day each
+     * shows on, an all-day event first on its day, then by instant, and
+     * states no further tie-break (api-contract, The plan), so items that tie
+     * on all three may come in any order: within each run of tied items, the
+     * ones the list names at those positions are put first in the list's
+     * order, and the rest follow in the harness's. Nothing else moves, so the
+     * set, every stated order and the cut at the limit are still compared
+     * exactly. With $kind, an occurrence matches an entry listed as an
+     * occurrence or as the day acted on, as checkNext reads them.
+     */
+    private static function tiesAsListed(array $items, array $listed, bool $kind): array
+    {
+        $tie = static fn(array $i): array => [$i['dn'], $i['allDay'], $i['ts']];
+        $same = static function (array $want, mixed $got) use ($kind): bool {
+            if (!is_array($got)) {
+                return false;
+            }
+            if (!$kind) {
+                return array_diff_key($want, ['kind' => 1]) === $got;
+            }
+            if ($want['kind'] === 'occurrence' && in_array($got['kind'] ?? null, ['occurrence', 'acted'], true)) {
+                $got['kind'] = 'occurrence';
+            }
+            return $want === $got;
+        };
+        $out = [];
+        $n = count($items);
+        for ($i = 0; $i < $n;) {
+            $j = $i;
+            while ($j < $n && $tie($items[$j]) === $tie($items[$i])) {
+                $j++;
+            }
+            $run = array_slice($items, $i, $j - $i);
+            for ($p = $i; $p < $j && $run !== []; $p++) {
+                foreach ($run as $r => $item) {
+                    if ($same($item['entry'], $listed[$p] ?? null)) {
+                        $out[] = $item;
+                        unset($run[$r]);
+                        continue 2;
+                    }
+                }
+                break;
+            }
+            array_push($out, ...array_values($run));
+            $i = $j;
+        }
+        return $out;
+    }
+
     /** The cutoff, in the display zone: the least of the landed day, the request's day, the acted row's day after and the created row's day. */
     private static function cutoff(array $after, array $edit, array $ctx): int
     {
@@ -98,7 +149,7 @@ trait PlanNext
         }
         $cut = self::cutoff($after, $edit, $ctx);
         $items = $this->eligible($after, $edit, $ctx, $cut);
-        $want = array_map(static fn(array $i): array => $i['entry'], array_slice($items, 0, self::NEXT_LIMIT));
+        $want = array_map(static fn(array $i): array => $i['entry'], array_slice(self::tiesAsListed($items, $next, true), 0, self::NEXT_LIMIT));
         foreach ($want as $i => $e) {
             if ($e['kind'] === 'occurrence' && in_array($next[$i]['kind'] ?? null, ['occurrence', 'acted'], true)) {
                 $next[$i]['kind'] = 'occurrence';
@@ -119,8 +170,9 @@ trait PlanNext
             foreach ($g['options'] ?? [] as $o) {
                 if (($o['id'] ?? null) === $g['selected'] && isset($o['next'])) {
                     $strip = static fn(array $e): array => array_diff_key($e, ['kind' => 1]);
-                    $this->expect('c-next', 'the chosen reading\'s next events are the first three coming up', 'chosen reading next', array_map($strip, array_slice($want, 0, 3)),
-                        array_map(static fn(mixed $e): mixed => self::norm($e, ['start', 'allDay', 'tz']), $o['next']));
+                    $got = array_map(static fn(mixed $e): mixed => self::norm($e, ['start', 'allDay', 'tz']), $o['next']);
+                    $first = array_map(static fn(array $i): array => $strip($i['entry']), array_slice(self::tiesAsListed($items, $got, false), 0, 3));
+                    $this->expect('c-next', 'the chosen reading\'s next events are the first three coming up', 'chosen reading next', $first, $got);
                 }
             }
         }

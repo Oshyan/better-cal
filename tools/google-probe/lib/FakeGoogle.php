@@ -191,6 +191,9 @@ final class FakeGoogle
             return self::error(401, 'Invalid Credentials');
         }
         $answer = $this->route($method, $path, $query, $headers, $payload);
+        // The status the stand-in answered, beside the request: a write it refused (4xx) took nothing. A lost answer was
+        // taken, so its status is recorded before the answer is lost.
+        $this->requests[$n - 1]['status'] = (int) $answer['status'];
         if ($n === $this->loseAnswerAt) {
             throw new \RuntimeException('HTTP error for the fake: the answer was lost');
         }

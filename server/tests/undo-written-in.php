@@ -54,8 +54,10 @@ checkEq('written in: a snapshot entry (an ICS or own calendar): the series\' own
     $wiSays(false, 'America/New_York'), $wiIn($wiEntry(null, [$wiMaster(false)], [$wiMaster(false), $wiRow(['tags'])])));
 checkEq('written in: a snapshot entry holding only the day\'s row, which owns neither its form nor its time',
     $wiSays(false, 'America/New_York'), $wiIn($wiEntry(null, [$wiRow(['tags'])], [])));
-checkEq('written in: a row stored before own lists says nothing',
-    $wiSays(null, null), $wiIn($wiEntry(null, [['override_fields' => null] + $wiRow([])], [])));
+// A row stored with no list owns what the one reading of a stored list says (OwnFields::stored):
+// with no series row in the entry, nothing, as migration 063 wrote, so its form and zone are the series'.
+checkEq('written in: a row stored before own lists, with no series row in the entry, owns nothing and speaks for the series',
+    $wiSays(false, 'America/New_York'), $wiIn($wiEntry(null, [['override_fields' => null] + $wiRow([])], [])));
 checkEq('written in: a change that re-formed the series itself: a row it removed is of the series before, whatever the series is after',
     $wiSays(false, 'America/New_York'), $wiIn($wiEntry(null, [$wiMaster(false), $wiRow(['tags'])], [$wiMaster(true)])));
 checkEq('written in: the same entry says nothing of a key it holds no row for',

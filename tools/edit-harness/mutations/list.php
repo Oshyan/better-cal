@@ -625,6 +625,32 @@ return [
         ]],
         'cases' => ['edited-day-rejoins-the-series'],
     ],
+    // Which series an undo follows (Undo::followLinks): every series its rows stand under now, read back after the
+    // restore. The mutation reads them from the entry's own event rows and their parents as the snapshot names them,
+    // so an undo that restores only link rows (a person's delete or merge) follows nothing, and one whose day moved to
+    // another series since (a split) follows the old one.
+    [
+        'id' => 'undo-follows-the-snapshot-parent', 'file' => 'server/src/Domain/Undo.php', 'dbtest' => 'link-ownership',
+        'what' => 'an undo follows the series its snapshot names, not the one its rows stand under now',
+        'patch' => [[
+            "            foreach (\$this->db->all(\"SELECT id, recurrence_parent_id, rrule FROM events WHERE id IN \$in AND deleted_at IS NULL\", \$params) as \$r) {\n",
+            "            foreach (array_merge(\$before['events'] ?? [], \$after['events'] ?? []) as \$r) {\n",
+        ]],
+        'checks' => [
+            "link ownership: after undo of a person deleted, a day made since (People::delete), every day holds its own set or its series' set",
+            'link ownership: the day made since the delete holds the person brought back',
+            "link ownership: after undo of a person merged, a day made since (People::update, a rename onto a name taken), every day holds its own set or its series' set",
+            'link ownership: the day made since the merge holds the first person again',
+            "link ownership: after undo of a person deleted, onto a day that gave its people back to its series since, every day holds its own set or its series' set",
+            "link ownership: the day that gave its people back holds exactly its series' set",
+            "link ownership: undoing a person's delete or merge leaves every day holding its own people or exactly its series': every live day row holds its own tags and people, or exactly its series'",
+            "link ownership: after a forced undo of a day's own tags after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",
+            "link ownership: the day holds its new series' tags",
+            "link ownership: after a forced undo of a day's own people after a split moved it (Undo::followLinks, the series it stands under now), every day holds its own set or its series' set",
+            "link ownership: the day holds its new series' people",
+            "link ownership: a forced undo of a day's own tags or people after a split moved the day leaves it with its new series' set: every live day row holds its own tags and people, or exactly its series'",
+        ],
+    ],
     // A day row's stored Google id is an identity (audit-155-identity, fix list items 6 and 7): derived whenever the
     // row is placed, and an undo addresses the day by its id now. The database cases make a series timed at 00:00 UTC
     // all-day (each day keeps its key, every id changes form) over a day holding only a tag. The change made here is

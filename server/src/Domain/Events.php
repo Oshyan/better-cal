@@ -657,7 +657,8 @@ final class Events
                         'google_etag' => is_string($resp['etag'] ?? null) && $resp['etag'] !== '' ? $resp['etag'] : null,
                         'source' => 'feed',
                         'created_via' => 'feed',
-                        'override_fields' => null,
+                        // Owning nothing yet: what this edit changed is added below.
+                        'override_fields' => OwnFieldsList::encode([]),
                     ]));
                     $created['id'] = (int) $this->db->insert('events', $created);
                 }
@@ -2418,7 +2419,7 @@ final class Events
             $this->db->update('events', ['attendance' => $attendance], 'id = ?', [$targetId]);
             if (!empty($target['recurrence_parent_id']) && $this->ownFieldsColumn()) {
                 // An answer for one day is that day's own.
-                $list = OwnFieldsList::decode($target['override_fields'] ?? null) ?? [];
+                $list = OwnFieldsList::storedIn($this->db, $target);
                 $this->db->update('events', ['override_fields' => OwnFieldsList::encode(array_merge($list, ['attendance']))], 'id = ?', [$targetId]);
             }
             // The series' edited dates answer with it; from a day on, those
@@ -2430,8 +2431,8 @@ final class Events
                 if ($this->ownFieldsColumn()) {
                     // The series' answer reached every day: none owns its answer now.
                     foreach ($overrides as $ov) {
-                        $list = OwnFieldsList::decode($ov['override_fields'] ?? null);
-                        if ($list !== null && in_array('attendance', $list, true)) {
+                        $list = OwnFieldsList::storedIn($this->db, $ov);
+                        if (in_array('attendance', $list, true)) {
                             $this->db->update('events', ['override_fields' => OwnFieldsList::encode(array_diff($list, ['attendance']))], 'id = ?', [(int) $ov['id']]);
                         }
                     }
@@ -2710,7 +2711,7 @@ final class Events
             // only when so, like hasReminders, as lists drop nulls.
             'isException' => !empty($row['recurrence_parent_id']) ? true : null,
             // An edited day's own fields (migration 063), in OwnFields::FIELDS order.
-            'ownFields' => !empty($row['recurrence_parent_id']) ? Series\OwnFields::decode($row['override_fields'] ?? null) : null,
+            'ownFields' => !empty($row['recurrence_parent_id']) ? OwnFieldsList::storedIn($this->db, $row) : null,
             // Its series, for the editor's "Edited day of <title>" and for
             // "Use series value" sent to the master by the day's key:
             // seriesKey is the key (RECURRENCE-ID) as an instant in UTC, or

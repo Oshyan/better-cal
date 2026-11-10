@@ -569,7 +569,7 @@ final class Model
                 $w['delete'] = array_values(array_filter(array_map('intval', $w['delete']), static fn(int $d): bool => $d !== $id));
                 $cols = ['recurrence_instance_utc' => $to] + ($w['overrides'][$id] ?? []);
                 $cols['recurrence_instance_utc'] = $to;
-                if (array_intersect(OwnFields::decode($r['override_fields'] ?? null) ?? [], OwnFields::PLACEMENT) === []) {
+                if (array_intersect(self::storedOwn($r, $master, $opts), OwnFields::PLACEMENT) === []) {
                     $start = Time::fromDb($to);
                     $cols['start_utc'] = $to;
                     $cols['end_utc'] = Time::toDb($allDay ? $start->modify('+' . max(1, (int) round($length / 86400)) . ' days') : $start->modify('+' . $length . ' seconds'));
@@ -614,7 +614,7 @@ final class Model
                     continue;
                 }
                 $w['overrides'][$id]['recurrence_instance_utc'] = (string) $at['recurrence_instance_utc'];
-                if (array_intersect(OwnFields::decode($byId[(int) $id]['override_fields'] ?? null) ?? [], OwnFields::PLACEMENT) === []) {
+                if (array_intersect(self::storedOwn($byId[(int) $id] ?? [], $master, $opts), OwnFields::PLACEMENT) === []) {
                     $w['overrides'][$id]['start_utc'] = (string) $at['start_utc'];
                     $w['overrides'][$id]['end_utc'] = (string) $at['end_utc'];
                 }
@@ -3519,9 +3519,19 @@ final class Model
     private function ownOf(array $row): array
     {
         $id = (int) $row['id'];
-        $fields = OwnFields::decode($row['override_fields'] ?? null)
-            ?? OwnFields::infer($row, $this->master, $this->opts['rowTags'][$id] ?? null, $this->opts['masterTags'] ?? null, $this->opts['rowPeople'][$id] ?? null, $this->opts['masterPeople'] ?? null);
-        return OwnFields::own($fields, $this->opts['rowLinks'][$id] ?? []);
+        return OwnFields::own(self::storedOwn($row, $this->master, $this->opts), $this->opts['rowLinks'][$id] ?? []);
+    }
+
+    /**
+     * A row's own fields by the one reading of a stored list (OwnFields::stored), over the tag and people sets
+     * the caller read for the plan ($opts rowTags, masterTags, rowPeople, masterPeople).
+     *
+     * @return list<string>
+     */
+    private static function storedOwn(array $row, array $master, array $opts): array
+    {
+        $id = (int) ($row['id'] ?? 0);
+        return OwnFields::stored($row, $master, $opts['rowTags'][$id] ?? null, $opts['masterTags'] ?? null, $opts['rowPeople'][$id] ?? null, $opts['masterPeople'] ?? null);
     }
 
     /**

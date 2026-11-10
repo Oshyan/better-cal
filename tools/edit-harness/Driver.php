@@ -311,6 +311,15 @@ final class Driver
             // series as it was back to Google (#172): every row as before the edit, but for the etags Google changes
             // on every write, and the stand-in holding it as the rows here do. Redo and the stack are the local run's.
             $this->checkGoogleHeld($id);
+            if (isset($this->spec['after'])) {
+                // An identity shape's follow-ups (Delta::flipWide): each checked as it goes; the undo comparison would read
+                // the last follow-up's entry, so it is the stack's and not run here.
+                $this->identityAfter($id, $before);
+                if ($this->spec['after'] !== []) {
+                    $this->na('f-undo after an identity shape\'s follow-ups (they are the newest entries)');
+                    return $this->result($path);
+                }
+            }
             Prof::mark('undo');
             if ($this->undoLatest('f-undo', 'undo')) {
                 $this->same('f-undo', self::roles(self::withoutEtags($s0), $id), self::roles(self::withoutEtags($this->snapshot()), $id),
@@ -1321,6 +1330,157 @@ final class Driver
             return;
         }
         $this->same('8-google', $before, $this->snapshot(), 'a poll after the edit changes no row');
+    }
+
+    /**
+     * An identity shape's follow-ups (Delta::flipWide, README: Identity), after the main change: another flip of the
+     * series' kind, a "this event" rename of one of its days, a delta poll, a whole read, an undo of the last "this
+     * event" change made before the main change. After the main change and each follow-up: 8-google and 8-google-id,
+     * and, when the main change was a flip, i-days: each day keeps its own date and what made it its own (the oracle
+     * here is the spec: a flip moves no day, so every day is on the calendar date it was made on).
+     */
+    private function identityAfter(int $id, array $before): void
+    {
+        $days = [];
+        foreach ($this->spec['exceptions'] ?? [] as $ex) {
+            $occ = $before['raw'][$ex['at']] ?? null;
+            if ($occ === null) {
+                continue;
+            }
+            $kind = $ex['kind'] === 'skip' ? 'skip' : (in_array('description', $ex['own'], true) ? 'edit' : (in_array('tags', $ex['own'], true) ? 'tag'
+                : (in_array('reminders', $ex['own'], true) ? 'reminder' : 'own')));
+            $days[] = ['date' => Days::date($occ['dn']), 'kind' => $kind, 'at' => $ex['at']];
+        }
+        $flipMain = ($this->spec['identityMain'] ?? 'flip') === 'flip';
+        // The entry of the last "this event" change before the main change: the second newest now.
+        $entries = array_map('intval', array_column($this->db->all('SELECT id FROM mutations WHERE user_id = ? ORDER BY id DESC LIMIT 2', [$this->userId]), 'id'));
+        $thisEntry = $entries[1] ?? null;
+        if ($flipMain) {
+            $this->checkDays($id, $days, 'after the main change');
+        }
+        $v = $this->spec['vector'];
+        foreach ($this->spec['after'] as $n => $step) {
+            $label = 'after follow-up ' . ($n + 1) . ' (' . $step['step'] . ')';
+            $m = $this->row($id);
+            if ($m === [] || $m['deleted_at'] !== null || $m['rrule'] === null) {
+                $this->na('an identity follow-up on a series no longer there');
+                return;
+            }
+            $allDay = (int) $m['all_day'] === 1;
+            $tz = $allDay ? 'UTC' : (string) $m['tzid'];
+            $startLocal = Clock::local((string) $m['start_utc'], $tz);
+            $atDate = function (string $date) use ($allDay, $tz, $startLocal): string {
+                return $allDay ? $date : Clock::iso(new \DateTimeImmutable($date . ' ' . $startLocal->format('H:i:s'), Clock::zone($tz)));
+            };
+            try {
+                switch ($step['step']) {
+                    case 'flip':
+                        $date = $startLocal->format('Y-m-d');
+                        if ($allDay) {
+                            $at = Clock::at(Days::ofDate($date), (int) $v['toClock'], (string) $v['toZone']);
+                            $in = ['scope' => 'all', 'instanceStart' => $date, 'start' => Clock::iso($at), 'end' => Clock::iso(Clock::plus($at, 3600)), 'allDay' => false, 'tzid' => (string) $v['toZone']];
+                        } else {
+                            $in = ['scope' => 'all', 'instanceStart' => Clock::iso($startLocal), 'start' => $date, 'end' => Days::date(Days::ofDate($date) + 1), 'allDay' => true];
+                        }
+                        $plan = $this->events->previewPatch($this->userId, $id, $in);
+                        $choices = [];
+                        foreach ($plan['groups'] ?? [] as $g) {
+                            $choices[$g['id']] = $g['selected'];
+                        }
+                        try {
+                            $this->events->patch($this->userId, $id, $in + ['plan' => ['hash' => $plan['hash'], 'choices' => $choices]]);
+                        } catch (HttpError $e) {
+                            if ($e->errorCode === 'series_refused') {
+                                $this->na('an identity follow-up flip the design refuses (series_refused)');
+                                return;
+                            }
+                            throw $e;
+                        }
+                        break;
+                    case 'this':
+                        $day = array_values(array_filter($days, static fn(array $d): bool => $d['at'] === $step['at']))[0] ?? null;
+                        if ($day === null || $day['kind'] === 'skip' || $day['kind'] === 'own') {
+                            $this->na('an identity follow-up rename of a skipped day or a day on its own date or time');
+                            break;
+                        }
+                        $title = 'Sample series, renamed after';
+                        $error = null;
+                        try {
+                            $this->events->patch($this->userId, $id, ['scope' => 'this', 'instanceStart' => $atDate($day['date']), 'title' => $title]);
+                        } catch (HttpError $e) {
+                            $error = $e->errorCode . ': ' . $e->getMessage();
+                        }
+                        $this->check('i-this', $error === null, 'a "this event" rename of a day after the change goes through', ['date' => $day['date'], 'error' => $error]);
+                        if ($error === null) {
+                            $key = $allDay ? $day['date'] . ' 00:00:00' : Clock::db(new \DateTimeImmutable($atDate($day['date'])));
+                            $gid = GoogleStand::idOf((string) $m['google_event_id'], $key, $allDay);
+                            $this->check('i-this', (string) ($this->google->fake->events[$gid]['summary'] ?? '') === $title,
+                                'the rename reaches Google on the day\'s id in the series\' form', ['id' => $gid, 'held' => $this->google->fake->events[$gid]['summary'] ?? null]);
+                        }
+                        break;
+                    case 'poll':
+                    case 'whole':
+                        if ($step['step'] === 'whole') {
+                            $this->db->run('UPDATE calendars SET google_sync_token = NULL WHERE id = ?', [$this->calendarId]);
+                        }
+                        $s0 = self::withoutEtags($this->snapshot());
+                        $this->google->poll();
+                        $this->same('i-' . $step['step'], $s0, self::withoutEtags($this->snapshot()), $step['step'] === 'poll' ? 'a delta poll after the change changes no row' : 'a whole read after the change changes no row');
+                        break;
+                    case 'undoThis':
+                        if ($thisEntry === null) {
+                            break;
+                        }
+                        $this->google->fake->requests = [];
+                        $refused = null;
+                        try {
+                            $this->undo->undoById($this->userId, $thisEntry);
+                        } catch (HttpError $e) {
+                            $refused = $e->errorCode;
+                        }
+                        $writes = array_values(array_filter($this->google->fake->requests, static fn(array $r): bool => $r['method'] !== 'GET'));
+                        if ($refused !== null) {
+                            $this->check('i-undo', $writes === [], 'an undo of a "this event" change made before the change, refused, sends nothing', ['refused' => $refused, 'sent' => array_column($writes, 'path')]);
+                        } else {
+                            $gid = (string) $m['google_event_id'];
+                            $wrong = array_values(array_filter(array_map(static fn(array $r): string => rawurldecode(basename((string) $r['path'])), $writes),
+                                static fn(string $p): bool => str_starts_with($p, $gid . '_') && (preg_match('/^\d{8}$/', substr($p, strlen($gid) + 1)) === 1) !== $allDay));
+                            $this->check('i-undo', $wrong === [], 'an undo of a "this event" change made before the change sends nothing to an id of the other form', ['sent' => $wrong]);
+                        }
+                        break;
+                }
+            } catch (\Throwable $e) {
+                $this->fail('i-after', 'an identity follow-up failed: ' . $label . ': ' . ($e instanceof HttpError ? $e->errorCode : get_class($e)), ['message' => mb_substr($e->getMessage(), 0, 300)]);
+                return;
+            }
+            $this->checkGoogleHeld($id);
+            if ($flipMain && in_array($step['step'], ['flip', 'poll', 'whole'], true)) {
+                $this->checkDays($id, $days, $label);
+            }
+        }
+    }
+
+    /** i-days: each day on the calendar date it was made on, with what made it its own (README, Google: Identity). */
+    private function checkDays(int $id, array $days, string $when): void
+    {
+        $m = $this->row($id);
+        $allDay = (int) $m['all_day'] === 1;
+        $tz = (string) $m['tzid'];
+        $dateOf = static fn(string $db, bool $rowAllDay): string => $rowAllDay ? substr($db, 0, 10) : Clock::local($db, $tz)->format('Y-m-d');
+        $rows = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
+        $skips = array_map(static fn(string $k): string => $dateOf($k, $allDay), Recurrence::decodeExdates($m['exdates_json'] ?? null));
+        foreach ($days as $d) {
+            $on = array_values(array_filter($rows, static fn(array $r): bool => $dateOf((string) $r['start_utc'], (int) $r['all_day'] === 1) === $d['date']));
+            $ok = match ($d['kind']) {
+                'skip' => in_array($d['date'], $skips, true) && $on === [],
+                'edit' => array_filter($on, static fn(array $r): bool => $r['description'] === 'Own notes for the day.' && $r['location'] === 'Sample Room') !== [],
+                'tag' => array_filter($on, fn(array $r): bool => in_array('own', $this->labels([(int) $r['id']])[0][(int) $r['id']] ?? [], true)) !== [],
+                'reminder' => array_filter($on, static fn(array $r): bool => str_contains((string) ($r['reminders_json'] ?? ''), '10')) !== [],
+                default => true,
+            };
+            $this->check('i-days', $ok, 'each day is on the calendar date it was made on, with what made it its own: a ' . $d['kind'] . ' day, ' . $when,
+                ['date' => $d['date'], 'kind' => $d['kind'], 'rows' => array_map(static fn(array $r): array => [$r['recurrence_instance_utc'], $r['all_day'], $r['description'], $r['override_fields']], $rows), 'skips' => $skips]);
+        }
     }
 
     /** What a Google calendar would be offered for the same edit, from the same rows (invariant i). */

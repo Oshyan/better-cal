@@ -1,0 +1,95 @@
+{
+    "series": {
+        "family": "weekly_bare",
+        "rrule": "FREQ=WEEKLY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "Asia/Tokyo",
+        "start": "2027-02-01 09:00",
+        "length": 60,
+        "floating": false
+    },
+    "exceptions": [
+        {
+            "at": 1,
+            "kind": "edit",
+            "own": [
+                "time"
+            ],
+            "days": 2,
+            "mins": 90,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 2,
+            "kind": "edit",
+            "own": [
+                "tags"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        },
+        {
+            "at": 3,
+            "kind": "edit",
+            "own": [
+                "location",
+                "description"
+            ],
+            "days": 1,
+            "mins": 45,
+            "zone": "America/New_York",
+            "len": 30
+        }
+    ],
+    "acted": 0,
+    "from": "first",
+    "vector": {
+        "scope": "all",
+        "date": 0,
+        "clock": 0,
+        "zone": null,
+        "length": 0,
+        "allDay": true,
+        "toZone": "Asia/Tokyo",
+        "toClock": 32400,
+        "trip": false,
+        "fields": [],
+        "rule": "absent",
+        "sameForm": "text",
+        "newRule": "FREQ=DAILY;INTERVAL=3",
+        "bound": null,
+        "via": "master",
+        "startOnly": false
+    },
+    "stack": null,
+    "choices": {
+        "edit": []
+    },
+    "preselected": {
+        "edit": true
+    },
+    "identity": "flipWide",
+    "after": [
+        {
+            "step": "poll"
+        },
+        {
+            "step": "undoThis"
+        },
+        {
+            "step": "undoThis"
+        }
+    ],
+    "identityMain": "flip",
+    "n": 29,
+    "seed": 911,
+    "everyOption": false,
+    "typed": false
+}

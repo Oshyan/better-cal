@@ -973,14 +973,17 @@ final class GoogleSeries
                     try {
                         $resource = $step($kind, $id, $key, fn() => $send('PATCH', '/' . rawurlencode($id), $body, $chain), ['expect' => self::digest(self::state($after, true)), 'extras' => true]);
                     } catch (HttpError $e) {
-                        // Google lists no such instance (404) for a day the
-                        // series has: one past the 730 occurrences an
-                        // unbounded series expands to there (the contract's
-                        // cap). The day stays as Google has it, and the
-                        // read-back names the difference. A 404 for a key
-                        // that is no day of the series is never passed
-                        // over: no step is meant to go to one.
-                        if ((int) ($e->extra['googleStatus'] ?? 0) === 404 && self::named($t['master'], $key, (int) $t['master']['all_day'] === 1)) {
+                        // Google lists no such instance (404): a day past the
+                        // 730 occurrences an unbounded series expands to
+                        // there (the contract's cap). The day stays as Google
+                        // has it, and the read-back names the difference.
+                        // No step is meant to go to a key that is no day of
+                        // the series (rebase carries nothing from one keying
+                        // into another); one that did would be passed over
+                        // here too, since stopping the change on it would
+                        // leave it half done with every Finish stopping the
+                        // same way.
+                        if ((int) ($e->extra['googleStatus'] ?? 0) === 404) {
                             continue;
                         }
                         throw $e;

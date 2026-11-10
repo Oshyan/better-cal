@@ -531,4 +531,14 @@ return [
             "                return ['googleId' => \$at === (string) \$key ? \$googleId : GoogleWriter::instanceId(\$of['series'], \$at, (int) \$master['all_day'] === 1), 'key' => \$at];"]],
         'checks' => ['tag undo across a flip: the undo goes through', 'tag undo across a flip: the day no longer holds the tag'],
     ],
+    // Provider identity (server/tests/db/lib.php, identityViolations: I1), hung after every block of the database suite:
+    // the one function that names an instance at Google builds the all-day form's suffix as the timed form's, so the row
+    // a tag given to one ordinary day of an all-day series makes stores a timed id under an all-day master. The block
+    // sends Google nothing, so only its identity check can see it.
+    [
+        'id' => 'all-day-id-in-timed-form', 'file' => 'server/src/Domain/GoogleWriter.php', 'dbtest' => 'identity-rule',
+        'what' => 'GoogleWriter::instanceId builds an all-day instance\'s id in the timed form (<series id>_<date>T000000Z)',
+        'patch' => [['$allDay ? \'Ymd\' : \'Ymd\THis\Z\'', '$allDay ? \'Ymd\THis\Z\' : \'Ymd\THis\Z\'']],
+        'checks' => ["a tag given to one ordinary day of an all-day Google series: every live day row's Google id is its key's id under its series' form"],
+    ],
 ];

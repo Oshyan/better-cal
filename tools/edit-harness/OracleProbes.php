@@ -94,6 +94,15 @@ final class OracleProbes
                     $s1['rows'][$id]['recurrence_instance_utc'] = Clock::db(Clock::parse((string) $s1['rows'][$id]['recurrence_instance_utc'])->modify('+37 minutes'));
                     return [$out, $s0, $this->reshape($s1)];
                 }],
+            ['check' => 'x-identity', 'what' => "a day row's stored Google id is the other form's id of its key (all-day for a timed series, timed for an all-day one)", 'case' => 'tag-on-an-edited-day-then-the-clock-moved-at-google', 'step' => 2,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $day): array {
+                    $id = $row($s1, static fn(array $r): bool => $day($r) && !empty($r['google_event_id']));
+                    $gid = (string) $s1['rows'][$id]['google_event_id'];
+                    $cut = strrpos($gid, '_');
+                    $suffix = substr($gid, $cut + 1);
+                    $s1['rows'][$id]['google_event_id'] = substr($gid, 0, $cut + 1) . (strlen($suffix) === 8 ? $suffix . 'T000000Z' : substr($suffix, 0, 8));
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
             ['check' => 'x-conflict', 'what' => 'a write over a change at Google not yet read goes through', 'case' => 'an-ordinary-day-edited-after-a-rename-at-google-is-conditional', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     return [['ok' => true, 'error' => null] + $out, $s0, $s1];

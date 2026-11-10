@@ -2355,6 +2355,14 @@ final class Interleave
                 if ($f === 'own') {
                     continue; // the own list is never a ground itself, its contents are (the same entry)
                 }
+                // A field a day's row shows from its series on both sides (owned neither as the entry left it nor now) is
+                // the series': a later change of the series' value is that change's ground, never this day's (decisions.md,
+                // "Staleness has one definition: grounds are fields": a day's own field). The row may be there for
+                // something else it holds (reminders, an icon); with no row left the same undo was never stale (seed 54249
+                // case 109: a day kept for its reminders, its rename undone, the series renamed, the rename redone).
+                if (str_starts_with($ident, 'day:') && $b !== null && $c !== null && !in_array($f, self::ground($b), true) && !in_array($f, self::ground($c), true)) {
+                    continue;
+                }
                 if ($c === null || ($b[$f] ?? null) != ($c[$f] ?? null)) {
                     $out[$ident][] = $f;
                 }

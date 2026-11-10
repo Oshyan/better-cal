@@ -1,0 +1,42 @@
+{
+    "about": "A day renamed at Google, then given reminders held here alone, then the rename undone (the day's row stays for its reminders and follows the series' title again), then a rename for all events, then the rename redone: the redo goes through and gives the day its title back as its own. The series' new title on that day was never the day's own, so the series' rename is not a change of what the redo stands on (decisions.md, \"Staleness has one definition: grounds are fields\": a day's own field; the same redo goes through when no row is left after the undo). Seed 54249 case 109, which x-undo-fields read as stale by the title the row showed.",
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-18 16:00",
+        "length": 60
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.197,
+            "what": "title"
+        },
+        {
+            "do": "w-this-l",
+            "pick": 0.069,
+            "what": "reminders"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.417,
+            "target": "row"
+        },
+        {
+            "do": "w-all",
+            "pick": 0.821,
+            "what": "title"
+        },
+        {
+            "do": "u-entry",
+            "pick": 0.46,
+            "target": "row"
+        }
+    ]
+}

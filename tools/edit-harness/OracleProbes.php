@@ -189,6 +189,25 @@ final class OracleProbes
                     $this->db->run("UPDATE review_items SET status = 'dismissed' WHERE user_id = ? AND kind = 'google_empty'", [$this->userId]);
                     return [$out, $s0, $s1];
                 }],
+            // The same rule with a write the step scheduled during the fetch (p-overlap over an empty listing): that write is
+            // the only change allowed, so damage to any other row, or to the written day beyond the write, still fails.
+            ['check' => 'x-empty', 'what' => 'an empty whole read with a tag given during its fetch removed another row', 'case' => 'a-tag-given-during-an-empty-whole-read-is-its-only-change', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row): array {
+                    $id = $row($s1, static fn(array $r): bool => $r['recurrence_parent_id'] !== null && !array_filter($r['tags'], static fn(string $t): bool => str_starts_with($t, 'overlap-')));
+                    unset($s1['rows'][$id]);
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-empty', 'what' => 'an empty whole read with a tag given during its fetch renamed the series', 'case' => 'a-tag-given-during-an-empty-whole-read-is-its-only-change', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row, $master): array {
+                    $s1['rows'][$row($s1, $master)]['title'] = 'Sample probe title';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
+            ['check' => 'x-empty', 'what' => 'an empty whole read with a tag given during its fetch left the tagged day with another title too', 'case' => 'a-tag-given-during-an-empty-whole-read-is-its-only-change', 'step' => 4,
+                'fn' => function (string $do, array $out, array $s0, array $s1) use ($row): array {
+                    $id = $row($s1, static fn(array $r): bool => array_filter($r['tags'], static fn(string $t): bool => str_starts_with($t, 'overlap-')) !== []);
+                    $s1['rows'][$id]['title'] = 'Sample probe title';
+                    return [$out, $s0, $this->reshape($s1)];
+                }],
             ['check' => 'x-overlap', 'what' => "the tag given during a poll's fetch is gone after it", 'case' => 'a-tag-given-while-a-poll-fetches-survives-it', 'step' => 2,
                 'fn' => function (string $do, array $out, array $s0, array $s1): array {
                     foreach ($s1['rows'] as $id => $r) {

@@ -445,6 +445,29 @@ return [
             ],
         ),
     ],
+    // The journal format gate (rule 3 of 1.5.5): Finish of a pending undo gets its entry as it did before the one
+    // loader, the live row else the plan's copy, with no look at the format. Every Finish row of the table fails in
+    // both variants (Google is written to and the pending row changes), with the reviewer's probe and the open case;
+    // the backstops refuse after Google's writes, and a copy without `format` reaching one is a journaling misuse.
+    [
+        'id' => 'journal-gate-finish-bypass', 'file' => 'server/src/Domain/SeriesPlans.php', 'dbtest' => 'journal-gate',
+        'what' => 'Review\'s Finish of a pending undo loads the entry it undoes without the one loader (Undo::entryToTakeBack)',
+        'patch' => [["                \$undone = GoogleUndo::entryToFinish(\$this->db, \$userId, \$plan);",
+            "                \$undone = \$this->db->one('SELECT * FROM mutations WHERE id = ? AND user_id = ?', [(int) \$plan['undo'], \$userId]) ?? (is_array(\$plan['entry'] ?? null) ? \$plan['entry'] + ['user_id' => \$userId] : ['id' => (int) \$plan['undo'], 'user_id' => \$userId, 'entity_id' => 0, 'summary' => '', 'before_json' => null, 'after_json' => null, 'details_json' => null, 'format' => Undo::JOURNAL_FORMAT]);"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $variant): array => array_merge(...array_map(static fn(string $row): array => array_map(
+                static fn(string $what): string => "journal gate [$variant]: SeriesPlans::googleFinish$row: $what",
+                ['refused with the code and words', 'no request to Google of any kind', 'nothing written (every table as it was)'],
+            ), [' of a pending undo', ' of a pending redo', ', entry gone, its copy older', ', entry gone, its copy without format', ', entry gone, no copy', ', a redo, entry gone, its copy without format'])),
+                ['077 run (snapshots dropped)', 'snapshots kept'])),
+            [
+                'after the upgrade: Finish refused (409 not_undoable, the words), no request to Google, the pending row exactly as it was, the tags as the stop left them, Google\'s title as the stop left it',
+                'Finish refuses with its words, no request to Google; the pending row stays half done with Put back\'s words',
+                'the pending row is exactly as Put back\'s refusal left it',
+                'every change to undoable data was journaled in Undo::write',
+            ],
+        ),
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,

@@ -1,0 +1,11 @@
+{
+    "about": "A daily all-day series, one day deleted, the series made timed at 16:00 Los Angeles (00:00 UTC the next day) for all events, then the delete undone: nothing the delete changed has changed since (the change carried the skip to its day's key under the new form), so the undo goes through and the day is back (x-undo-fields, which reads the states in the entry's frame once: framing twice moved the skip a second day west of UTC).",
+    "seed": 0,
+    "n": 0,
+    "series": {"family": "daily", "rrule": "FREQ=DAILY", "import": false, "bound": "count", "boundAt": 8, "untilForm": "dayend", "allDay": true, "tzid": "UTC", "start": "2027-01-18", "length": 1, "flipZone": "America/Los_Angeles", "flipClock": 57600},
+    "steps": [
+        {"do": "w-del1", "pick": 0.64},
+        {"do": "w-all", "pick": 0, "what": "flip"},
+        {"do": "u-entry", "pick": 0.538}
+    ]
+}

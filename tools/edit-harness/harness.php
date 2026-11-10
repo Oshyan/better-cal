@@ -85,6 +85,11 @@ if (getenv('BETTERCAL_SESSION_SECRET') === false) {
     putenv('BETTERCAL_SESSION_SECRET=' . bin2hex(random_bytes(32)));
 }
 putenv('BETTERCAL_STRICT_JOURNAL=1');
+// A poll's event budget (Limits::importEventBudget) is what fits in memory_limit after what the process has used, so
+// under the CLI's 128M a shard that had run some hundreds of cases polled with a budget of 51 to 307 events and a late
+// case failed 8-google where an early one passed. With 2048M, as the interleaving mode runs, the budget is the
+// configured cap until the process passes about 1.7 GB, so how many cases ran before no longer decides a case's outcome.
+ini_set('memory_limit', '2048M');
 require $root . '/server/src/bootstrap.php';
 if (isset($opts['model'])) {
     // Declared before anything autoloads the tree's, so this copy is the model every call reaches.

@@ -107,6 +107,19 @@ final class Delta
         'toTimedClock' => 2,       // all-day made timed at 10:00 Los Angeles: the keys differ
         'zoneSameInstant' => 2,    // a zone change keeping the same moment: no instant moves (oracle pending a live probe)
         'landsOnOther' => 2,       // a drag by one period: each occurrence lands on the next one's old instant
+        'flipWide' => 8,           // the audit's reach: 00:00 UTC in a zone east, west or at UTC, consecutive days, pairs of day kinds, flips in a row, follow-ups
+    ];
+
+    /**
+     * The clocks at 00:00 UTC the flipWide shape draws from (rule 1 audit, What the harness generator must reach): at
+     * UTC; east of it, where an equal key is the same day (09:00 Tokyo, 13:00 Auckland in its summer); west of it, where
+     * it is the day before (19:00 New York and 16:00 Los Angeles in January, 20:00 and 17:00 in July). Each with the
+     * Mondays it starts on, local dates.
+     */
+    public const MIDNIGHT_UTC = [
+        ['UTC', '00:00', 'winter'], ['Asia/Tokyo', '09:00', 'winter'], ['Pacific/Auckland', '13:00', 'winter'],
+        ['America/New_York', '19:00', 'winter'], ['America/New_York', '20:00', 'summer'],
+        ['America/Los_Angeles', '16:00', 'winter'], ['America/Los_Angeles', '17:00', 'summer'],
     ];
 
     /** The shape whose stand-in behaviour is not yet known from real Google: counted apart (README, Google: Identity). */
@@ -187,6 +200,9 @@ final class Delta
                 }
                 break;
         }
+        if ($shape === 'flipWide') {
+            return self::flipWide($r, $v, $series);
+        }
         // The day acted on, an edited day with its own place and notes, and a skipped day, each before or after it;
         // in a quarter of the cases the day acted on is the edited day itself.
         $acted = $r->pick([0, 3]);
@@ -204,6 +220,57 @@ final class Delta
         ];
         return ['series' => $series, 'exceptions' => $exceptions, 'acted' => $acted, 'from' => $from, 'vector' => $v, 'stack' => null,
             'choices' => ['edit' => $choices], 'preselected' => ['edit' => $choices === []], 'identity' => $shape];
+    }
+
+    /**
+     * The flipWide shape: a series at 00:00 UTC in a zone at, east or west of UTC (or all-day, to be made timed there),
+     * daily, weekly, or weekly on two adjacent weekdays, with two or three kinds of day on consecutive occurrences (an
+     * edited day owning its place and notes, a skipped day, a day at its own time or on its own date, a day holding
+     * only a tag or only a reminder), a main change that flips its kind or moves its start onto the next day of its
+     * pattern, then up to three follow-ups (`after`, Driver::identityAfter): another flip, a "this event" rename of one
+     * of those days, a delta poll, a whole read, and an undo of a "this event" change made before the main change.
+     */
+    private static function flipWide(Rng $r, array $v, array $series): array
+    {
+        [$tz, $clock, $season] = $r->pick(self::MIDNIGHT_UTC);
+        $monday = $r->pick($season === 'winter' ? ['2027-01-04', '2027-01-18', '2027-02-01'] : ['2027-07-05', '2027-07-19']);
+        [$family, $rrule] = $r->pick([['weekly_bare', 'FREQ=WEEKLY'], ['daily', 'FREQ=DAILY'], ['weekly_list', 'FREQ=WEEKLY;BYDAY=MO,TU']]);
+        $allDay = $r->chance(0.4);
+        $series = ['family' => $family, 'rrule' => $rrule, 'import' => false, 'bound' => 'count', 'boundAt' => 8, 'untilForm' => 'dayend',
+            'allDay' => $allDay, 'tzid' => $allDay ? 'UTC' : $tz, 'start' => $allDay ? $monday : $monday . ' ' . $clock, 'length' => $allDay ? 1 : 60, 'floating' => false];
+        $v['toZone'] = $tz;
+        $v['toClock'] = (int) substr($clock, 0, 2) * 3600;
+        $v['via'] = 'master';
+        // The main change: a flip of the kind, or (a quarter) the start moved onto the next day of the pattern, form unchanged.
+        $main = $r->chance(0.25) ? 'move' : 'flip';
+        if ($main === 'move') {
+            $v['date'] = $family === 'daily' ? 1 : ($family === 'weekly_list' ? 1 : 7);
+        } else {
+            $v['allDay'] = true;
+        }
+        $kinds = ['edit' => 4, 'skip' => 4, 'own' => 2, 'tag' => 2, 'reminder' => 2];
+        $first = $r->int(1, 3);
+        $exceptions = [];
+        $count = $r->int(2, 3);
+        for ($i = 0; $i < $count; $i++) {
+            $kind = $r->weighted($kinds);
+            $at = $first + $i;
+            $exceptions[] = match ($kind) {
+                'skip' => ['at' => $at, 'kind' => 'skip'],
+                'edit' => ['at' => $at, 'kind' => 'edit', 'own' => ['location', 'description'], 'days' => 1, 'mins' => 45, 'zone' => 'America/New_York', 'len' => 30],
+                'own' => ['at' => $at, 'kind' => 'edit', 'own' => [$allDay ? 'date' : 'time'], 'days' => 2, 'mins' => 90, 'zone' => 'America/New_York', 'len' => 30],
+                'tag' => ['at' => $at, 'kind' => 'edit', 'own' => ['tags'], 'days' => 1, 'mins' => 45, 'zone' => 'America/New_York', 'len' => 30],
+                'reminder' => ['at' => $at, 'kind' => 'edit', 'own' => ['reminders'], 'days' => 1, 'mins' => 45, 'zone' => 'America/New_York', 'len' => 30],
+            };
+        }
+        $after = [];
+        $steps = $r->int(0, 3);
+        for ($i = 0; $i < $steps; $i++) {
+            $step = $r->weighted(['flip' => 3, 'this' => 3, 'poll' => 2, 'whole' => 2, 'undoThis' => 2]);
+            $after[] = $step === 'this' ? ['step' => 'this', 'at' => $first + $r->int(0, $count - 1)] : ['step' => $step];
+        }
+        return ['series' => $series, 'exceptions' => $exceptions, 'acted' => 0, 'from' => 'first', 'vector' => $v, 'stack' => null,
+            'choices' => ['edit' => []], 'preselected' => ['edit' => true], 'identity' => 'flipWide', 'after' => $after, 'identityMain' => $main];
     }
 
     /** A pattern other than the series' (the editor's Repeat changed): another family, or the same days shifted. */

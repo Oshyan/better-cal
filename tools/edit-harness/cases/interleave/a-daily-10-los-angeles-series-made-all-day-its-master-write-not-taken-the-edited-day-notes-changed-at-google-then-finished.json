@@ -1,0 +1,48 @@
+{
+    "about": "A daily series at 10:00 Los Angeles with a day given its own notes, made all-day; its master write meets the network down; the edited day's notes are changed at Google in the timed form; then Finish: the plan's notes on its own date, the change at Google named once (x-day, x-finish).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/Los_Angeles",
+        "start": "2027-01-04 10:00",
+        "length": 60,
+        "flipZone": "America/Los_Angeles",
+        "flipClock": 36000,
+        "otherZone": "America/New_York"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0.0,
+            "k": 1,
+            "write": "w-all",
+            "what": "flip"
+        },
+        {
+            "do": "r-day-notes",
+            "pick": 0.5,
+            "mark": "g"
+        },
+        {
+            "do": "finish",
+            "pick": 0.0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

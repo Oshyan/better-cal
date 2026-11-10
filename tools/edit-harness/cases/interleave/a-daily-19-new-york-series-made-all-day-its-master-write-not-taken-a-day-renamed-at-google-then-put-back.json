@@ -1,0 +1,48 @@
+{
+    "about": "As the first stopped case, then Put back: refused as changed at Google since, with nothing sent (x-day, x-putback).",
+    "seed": 0,
+    "n": 0,
+    "series": {
+        "family": "daily",
+        "rrule": "FREQ=DAILY",
+        "import": false,
+        "bound": "count",
+        "boundAt": 8,
+        "untilForm": "dayend",
+        "allDay": false,
+        "tzid": "America/New_York",
+        "start": "2027-01-04 19:00",
+        "length": 60,
+        "flipZone": "America/New_York",
+        "flipClock": 68400,
+        "otherZone": "America/Los_Angeles"
+    },
+    "steps": [
+        {
+            "do": "w-this-g",
+            "pick": 0.3,
+            "what": "description",
+            "mark": "e"
+        },
+        {
+            "do": "f-net",
+            "pick": 0.0,
+            "k": 1,
+            "write": "w-all",
+            "what": "flip"
+        },
+        {
+            "do": "r-day-rename",
+            "pick": 0.5,
+            "mark": "g"
+        },
+        {
+            "do": "putback",
+            "pick": 0.0,
+            "judge": {
+                "mark": "g",
+                "expect": "stopped"
+            }
+        }
+    ]
+}

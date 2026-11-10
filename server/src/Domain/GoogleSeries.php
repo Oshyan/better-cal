@@ -904,6 +904,20 @@ final class GoogleSeries
                     }
                 }
                 $items = $read ?? $this->readBack($calendar, $send, $t['uid'], (string) $t['googleId'], $chain, $beforeSend);
+                if ($read === null) {
+                    // The master as read back is in the plan's form (timed
+                    // or all-day) before any day is compared or sent: an
+                    // instance's id carries its master's form, so while
+                    // Google's master is in another (the write not taken,
+                    // or a list that lags it) no day of the plan can be
+                    // named there and a step would answer 404. The change
+                    // stops here, half done, with the difference named;
+                    // Finish reads again.
+                    $got = self::held($items, (string) $t['googleId'])['master'];
+                    if ($got !== null && (int) $got['all_day'] !== (int) $t['master']['all_day']) {
+                        throw new HttpError('google_write_failed', self::startWords($got, $t['master'], $thisYear), 502);
+                    }
+                }
                 if ($read === null && isset($found[$i])) {
                     // After its master write, the change's days go over what
                     // Google holds now as its deltas (rule A, as Finish
@@ -1168,11 +1182,19 @@ final class GoogleSeries
      * says nothing. The master and each live record carry `extras`, the
      * every other field of the resource (extrasOf).
      *
-     * @return array{master:?array, records:array<string,array>, cancelled:array<string,true>, skips:array<string,true>, etags:array<string,string>}
+     * A record is an instance by its identity, which is its series, its
+     * form and its key (GoogleWriter::instanceOf of its own id), never by
+     * its key alone: one whose id is in another form than the master read
+     * with it (a list that lags a change between timed and all-day) is no
+     * day of that master and is left out, whatever key it shares with one.
+     * `ids` keeps the id Google lists each record under, by its key.
+     *
+     * @return array{master:?array, records:array<string,array>, cancelled:array<string,true>, skips:array<string,true>, etags:array<string,string>, ids:array<string,string>}
      */
     public static function held(array $items, string $googleId): array
     {
-        $out = ['master' => null, 'records' => [], 'cancelled' => [], 'skips' => [], 'etags' => []];
+        $out = ['master' => null, 'records' => [], 'cancelled' => [], 'skips' => [], 'etags' => [], 'ids' => []];
+        $days = [];
         foreach ($items as $item) {
             if (isset($item['id'], $item['etag']) && is_string($item['etag'])) {
                 $out['etags'][(string) $item['id']] = $item['etag'];
@@ -1181,23 +1203,30 @@ final class GoogleSeries
             if ($parsed === null) {
                 continue;
             }
-            if (!empty($parsed['cancelled'])) {
-                if (!empty($parsed['dropped']) || $parsed['recurrence_instance_utc'] === null) {
-                    continue;
-                }
-                $out['cancelled'][(string) $parsed['recurrence_instance_utc']] = true;
-                $out['skips'][(string) $parsed['recurrence_instance_utc']] = true;
-                continue;
-            }
-            if ((string) ($item['id'] ?? '') === $googleId && $parsed['recurrence_instance_utc'] === null) {
+            if ((string) ($item['id'] ?? '') === $googleId && empty($parsed['cancelled']) && $parsed['recurrence_instance_utc'] === null) {
                 $out['master'] = $parsed;
                 foreach ($parsed['exdates'] ?? [] as $ex) {
                     $out['skips'][(string) $ex] = true;
                 }
                 continue;
             }
-            if ($parsed['recurrence_instance_utc'] !== null) {
-                $out['records'][(string) $parsed['recurrence_instance_utc']] = $parsed;
+            if (empty($parsed['dropped']) && $parsed['recurrence_instance_utc'] !== null) {
+                $days[] = [(string) ($item['id'] ?? ''), $parsed];
+            }
+        }
+        // Each record against the master it was read with (a list gives no order, so the master is found first).
+        foreach ($days as [$id, $parsed]) {
+            $of = GoogleWriter::instanceOf($id);
+            if ($out['master'] !== null && $of !== null && $of['allDay'] !== ((int) $out['master']['all_day'] === 1)) {
+                continue;
+            }
+            $key = (string) $parsed['recurrence_instance_utc'];
+            $out['ids'][$key] = $id;
+            if (!empty($parsed['cancelled'])) {
+                $out['cancelled'][$key] = true;
+                $out['skips'][$key] = true;
+            } else {
+                $out['records'][$key] = $parsed;
             }
         }
         return $out;
@@ -1437,49 +1466,74 @@ final class GoogleSeries
      * ($h, held()'s shape) and the master before and after ($old, $new: a
      * target's master): Google's own effect on a series' days, as the probe
      * found it (the contract's "Exceptions on a master change", group 3).
-     * The write is masterBody($old, $new); nothing sent, nothing changes. A
-     * record stays only while its key is an occurrence of the new master (a
-     * clock, zone, start-day or pattern change drops them all, a bound
-     * change those past the end), follows a changed start onto its
-     * occurrence with the new length (and a changed length alone with its
-     * end), and takes every title, notes, place or status the write sends;
-     * a cancelled record goes the same way and with any pattern change, and
-     * comes back with a status; a skip held as an EXDATE line goes with the
-     * rule line the write sends alone. The state a master step journals it
-     * leaves (rule B), and what "the change's own effect" is to Finish
-     * (rebase).
+     * The write is masterBody($old, $new); nothing sent, nothing changes.
+     *
+     * A record or a skip held under the old master survives the write
+     * exactly when all three hold (the model: decisions.md, "What a master
+     * write leaves at Google is predicted kept only by identity and proof"):
+     *
+     * S1, identity. Its id under the old master's form is the id of an
+     * occurrence of the new master under the new form, through the one
+     * pair (GoogleWriter::instanceId). An id carries its form, so a change
+     * between timed and all-day drops every record and every skip, in both
+     * directions, at every clock, whatever keys coincide; with the form
+     * unchanged, a key that is no longer an occurrence is dropped (a new
+     * clock or start day, 3.1 and 3.4; days past a new end, 3.9 and 3.10).
+     *
+     * S2, Google's own resets. A cancelled record goes with any change of
+     * the rule's days (3.7); a status sent makes a surviving cancelled
+     * record a live one (3.15); a skip held as an EXDATE line goes with the
+     * rule line the write sends alone (3.16).
+     *
+     * S3, proof. Everything the write changes is of a class the probe saw
+     * keep records: the length (3.2), the bound (3.8 to 3.10), a weekday
+     * added to a weekly rule (3.7), the start moved along its own pattern
+     * (3.5), the title, notes, place or status (3.12 to 3.16). A class it
+     * has not seen keep them is predicted dropped (unproven()): a prediction
+     * wrong that way costs a refused Put back with Finish as the way out,
+     * never a day's fields or a skip. For that to hold, rebase reads what
+     * Google holds now against the other answer too: $ifKept gives the
+     * series as the write leaves it should Google keep through an unproven
+     * class everything S1 and S2 allow (S3 not applied), each survivor with
+     * the write's effects. The two are the same state for a proven write.
+     *
+     * A survivor follows a changed start onto its occurrence with the new
+     * length (and a changed length alone with its end), and takes every
+     * title, notes, place or status the write sends. The state a master
+     * step journals it leaves (rule B), and what "the change's own effect"
+     * is to Finish (rebase). An undo of a series change is a forward change
+     * through this same function.
      */
-    public static function afterMaster(array $h, array $old, array $new): array
+    public static function afterMaster(array $h, array $old, array $new, bool $ifKept = false): array
     {
         $body = self::masterBody($old, $new);
         if ($body === [] || $h['master'] === null) {
             return $h;
         }
         $zoneOf = static fn(array $m): string => (int) $m['all_day'] === 1 ? '' : Time::normalizeTzid((string) $m['tzid']);
-        $startChanged = (string) $old['start_utc'] !== (string) $new['start_utc'] || (int) $old['all_day'] !== (int) $new['all_day'] || $zoneOf($old) !== $zoneOf($new);
+        $startChanged = (string) $old['start_utc'] !== (string) $new['start_utc'] || $zoneOf($old) !== $zoneOf($new);
         $lenOld = self::lengthOf($old);
         $lenNew = self::lengthOf($new);
-        $pattern = static function (string $rrule): array {
-            $parts = self::ruleParts($rrule);
-            unset($parts['COUNT'], $parts['UNTIL']);
-            return $parts;
-        };
-        $patternChanged = $pattern((string) $old['rrule']) !== $pattern((string) $new['rrule']);
+        $patternChanged = self::patternOf((string) $old['rrule']) !== self::patternOf((string) $new['rrule']);
+        $proven = $ifKept || self::unproven($old, $new, $body) === [];
         $set = [];
         foreach (['summary' => 'title', 'description' => 'description', 'location' => 'location', 'status' => 'status'] as $field => $col) {
             if (array_key_exists($field, $body)) {
                 $set[$col] = $new[$col] ?? null;
             }
         }
+        $was = (int) $old['all_day'] === 1;
         $allDay = (int) $new['all_day'] === 1;
         $series = ['start_utc' => $new['start_utc'], 'end_utc' => $new['end_utc'], 'all_day' => (int) $new['all_day'], 'tzid' => (string) $new['tzid'], 'rrule' => (string) $new['rrule'], 'exdates_json' => null];
-        $isDay = static function (string $key) use ($series, $allDay): bool {
+        // S1: the id the record has under the old master's form is an id the new master gives one of its occurrences.
+        $named = static function (string $key) use ($series, $was, $allDay): bool {
             if ($series['rrule'] === '') {
                 return false;
             }
+            $id = GoogleWriter::instanceId('', $key, $was);
             $at = Time::fromDb($key);
             foreach (Recurrence::occurrences($series, $at->modify('-1 day'), $at->modify('+2 days'), null, 8) as $o) {
-                if ($allDay ? $o['start']->setTimezone(Time::zone($series['tzid']))->format('Y-m-d') === $at->format('Y-m-d') : $o['start']->getTimestamp() === $at->getTimestamp()) {
+                if (GoogleWriter::instanceId('', Time::toDb($o['start']), $allDay) === $id) {
                     return true;
                 }
             }
@@ -1503,14 +1557,15 @@ final class GoogleSeries
         foreach ($h['records'] as $key => $r) {
             $key = (string) $key;
             unset($out['records'][$key]);
-            if ($isDay($key)) {
+            if ($proven && $named($key)) {
                 $out['records'][$key] = $follow($r, $key);
             }
         }
         foreach (array_keys($h['skips']) as $key) {
             $key = (string) $key;
             unset($out['cancelled'][$key], $out['skips'][$key]);
-            if (!isset($h['cancelled'][$key]) || !$isDay($key) || $patternChanged) {
+            // S2: an EXDATE line goes with the rule line sent alone, a cancelled record with any change of the rule's days.
+            if (!isset($h['cancelled'][$key]) || $patternChanged || !$proven || !$named($key)) {
                 continue;
             }
             if (array_key_exists('status', $set)) {
@@ -1523,6 +1578,72 @@ final class GoogleSeries
         }
         ksort($out['records']);
         return $out;
+    }
+
+    /** A rule's days: its parts without its bound (COUNT, UNTIL). @return array<string,string> */
+    private static function patternOf(string $rrule): array
+    {
+        $parts = self::ruleParts($rrule);
+        unset($parts['COUNT'], $parts['UNTIL']);
+        return $parts;
+    }
+
+    /**
+     * What a master write changes that the probe has not seen keep a
+     * series' records (S3 of afterMaster), in words; none when everything
+     * it changes is of a proven class. The one list of unproven classes: a
+     * class moves to the proven side by leaving this function once a live
+     * probe shows Google keeps records through it.
+     *
+     * - The zone of a timed series. A zone change that moves the instants
+     *   drops every record (3.3); one that moves none (10:00 Los Angeles
+     *   to 11:00 Denver) is not answered yet (3.17).
+     * - The link. Google's `source` has no probe case, on the master or
+     *   written into its records.
+     * - The rule's days, other than weekdays added to a weekly rule (3.7).
+     *   A weekday changed and the clamped month-end form dropped every
+     *   record (3.6, 3.11); a change of frequency or interval that leaves
+     *   some days where they were has no case.
+     *
+     * @return list<string>
+     */
+    private static function unproven(array $old, array $new, array $body): array
+    {
+        $out = [];
+        if ((int) $old['all_day'] === 0 && (int) $new['all_day'] === 0 && Time::normalizeTzid((string) $old['tzid']) !== Time::normalizeTzid((string) $new['tzid'])) {
+            $out[] = 'zone';
+        }
+        if (array_key_exists('source', $body)) {
+            $out[] = 'link';
+        }
+        if (self::patternOf((string) $old['rrule']) !== self::patternOf((string) $new['rrule']) && !self::addsWeekdays($old, $new)) {
+            $out[] = 'rule';
+        }
+        return $out;
+    }
+
+    /**
+     * Whether a rule change only adds weekdays to a weekly rule (probe
+     * 3.7): both weekly, every part but BYDAY the same, and every weekday
+     * the old rule names still named. A rule with no BYDAY names its
+     * start's weekday.
+     */
+    private static function addsWeekdays(array $old, array $new): bool
+    {
+        $days = static function (array $m): array {
+            $parts = self::patternOf((string) $m['rrule']);
+            if (($parts['BYDAY'] ?? '') !== '') {
+                return explode(',', $parts['BYDAY']);
+            }
+            $zone = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
+            return [strtoupper(substr(Time::fromDb((string) $m['start_utc'])->setTimezone(Time::zone($zone))->format('D'), 0, 2))];
+        };
+        $rest = static function (array $m): array {
+            $parts = self::patternOf((string) $m['rrule']);
+            unset($parts['BYDAY']);
+            return $parts;
+        };
+        return ($rest($old)['FREQ'] ?? '') === 'WEEKLY' && $rest($old) === $rest($new) && array_diff($days($old), $days($new)) === [];
     }
 
     /**
@@ -1539,13 +1660,19 @@ final class GoogleSeries
      * back to the series' values at its occurrence. A day both have as
      * ordinary is never sent, whatever records Google keeps for it.
      *
+     * Each step goes to the day's identity at Google: the id Google lists
+     * the day's record under, and for a day it lists no record of, the id
+     * its key has in the form of the master as read (GoogleWriter::instanceId),
+     * never in the target's form: an id in a form Google's master is not in
+     * names nothing there. run() sends no step while the two forms differ.
+     *
      * @return list<array{0:string,1:string,2:array,3:string}> kind, instance id, body, occurrence key
      */
     public static function stepsFor(array $t, array $items): array
     {
         $held = self::held($items, (string) $t['googleId']);
         $m = $t['master'];
-        $allDay = (int) $m['all_day'] === 1;
+        $allDay = (int) ($held['master'] ?? $m)['all_day'] === 1;
         $skipSet = array_fill_keys(array_map('strval', $t['skips']), true);
         $keys = array_values(array_unique(array_map('strval', array_merge(array_keys($t['exceptions']), $t['skips'], array_keys($held['records']), array_keys($held['cancelled'])))));
         sort($keys);
@@ -1556,7 +1683,7 @@ final class GoogleSeries
             $record = $held['records'][$key] ?? null;
             // A record the target has no edited day for is an ordinary day when it holds the series' values.
             $has = isset($held['skips'][$key]) ? 'skip' : ($record !== null && ($x !== null || !self::isPlain($record, $m, $key)) ? $record : null);
-            $id = GoogleWriter::instanceId((string) $t['googleId'], $key, $allDay);
+            $id = $held['ids'][$key] ?? GoogleWriter::instanceId((string) $t['googleId'], $key, $allDay);
             if ($want === 'skip') {
                 if ($has !== 'skip') {
                     $out['skip'][] = ['skip', $id, ['status' => 'cancelled'], $key];
@@ -1598,14 +1725,7 @@ final class GoogleSeries
         $allDay = (int) $m['all_day'] === 1;
         $tz = $allDay ? 'UTC' : (string) $m['tzid'];
         $day = static fn(string $key): string => Words::date(Cal::dnOf(Time::fromDb($key)->setTimezone(Time::zone($tz))), $thisYear);
-        $shown = static function (array $r) use ($tz, $thisYear): string {
-            $at = Time::fromDb((string) $r['start_utc']);
-            if ((int) ($r['all_day'] ?? 0) === 1) {
-                return Words::date(Cal::dnOf($at), $thisYear);
-            }
-            $zone = Time::zone((string) ($r['tzid'] ?? $tz));
-            return Words::date(Cal::dnOf($at->setTimezone($zone)), $thisYear) . ' at ' . $at->setTimezone($zone)->format('H:i');
-        };
+        $shown = static fn(array $r): string => self::shown($r, $tz, $thisYear);
         $out = [];
         $g = $held['master'];
         if ($g === null) {
@@ -1616,7 +1736,7 @@ final class GoogleSeries
             $out[] = 'Google kept the rule ' . ($g['rrule'] ?? 'none') . '; the plan had ' . ($m['rrule'] !== '' ? $m['rrule'] : 'none') . '.';
         }
         if ((string) $g['start_utc'] !== (string) $m['start_utc'] || (string) $g['end_utc'] !== (string) $m['end_utc'] || (int) $g['all_day'] !== (int) $m['all_day']) {
-            $out[] = 'Google kept the series starting ' . $shown($g) . '; the plan had ' . $shown($m) . '.';
+            $out[] = self::startWords($g, $m, $thisYear);
         } elseif (!$allDay && self::fieldsOf($g)['tzid'] !== self::fieldsOf($m)['tzid']) {
             $out[] = "Google kept the series in the zone '" . self::fieldsOf($g)['tzid'] . "'; the plan had '" . self::fieldsOf($m)['tzid'] . "'.";
         }
@@ -1669,6 +1789,24 @@ final class GoogleSeries
         return $out;
     }
 
+    /** When an event is, in words: its day, and its time in its own zone ($tz for one that names none) unless it is all-day. */
+    private static function shown(array $r, string $tz, int $thisYear): string
+    {
+        $at = Time::fromDb((string) $r['start_utc']);
+        if ((int) ($r['all_day'] ?? 0) === 1) {
+            return Words::date(Cal::dnOf($at), $thisYear);
+        }
+        $zone = Time::zone((string) ($r['tzid'] ?? $tz));
+        return Words::date(Cal::dnOf($at->setTimezone($zone)), $thisYear) . ' at ' . $at->setTimezone($zone)->format('H:i');
+    }
+
+    /** The difference named when Google holds a series at another start, length or form (timed or all-day) than the plan has: $g Google's master, $m the plan's. */
+    private static function startWords(array $g, array $m, int $thisYear): string
+    {
+        $tz = (int) $m['all_day'] === 1 ? 'UTC' : (string) $m['tzid'];
+        return 'Google kept the series starting ' . self::shown($g, $tz, $thisYear) . '; the plan had ' . self::shown($m, $tz, $thisYear) . '.';
+    }
+
     // ---- the change over what Google holds now (pure; rule A) -------------------------
 
     /** The groups a day's or a master's fields are compared in: each content field, and its placement as one. */
@@ -1717,8 +1855,17 @@ final class GoogleSeries
      * $before to $target. Google's value now is the change's to set where
      * the change explains it: as it was before, as the change's own master
      * write leaves it (afterMaster: Google writes a series' fields into its
-     * days, and drops them on a new time), or as the target has it (a step
-     * that landed). Any other value was changed elsewhere since: kept as
+     * days, and drops them on a new time; where the write is of a class the
+     * probe has not seen keep records, as it leaves it under either answer,
+     * dropped or kept), or as the target has it (a step that landed). The
+     * day before is the day of the same instance: the row's own before
+     * where the plan carries the day's row, else the day at the same key,
+     * and that only while Google holds the series in the form the change
+     * found it in. Across a change between timed and all-day that has
+     * landed, an equal key names another instance (west of UTC another
+     * day), so a day with no row is read against what the master write
+     * left there, never against the day the old form had on that key. Any
+     * other value was changed elsewhere since: kept as
      * Google holds it where the change doesn't change that group of that
      * day, and kept and named where it does (a day deleted since, a field
      * changed since): never overwritten. So every field and day the change
@@ -1741,7 +1888,11 @@ final class GoogleSeries
         $B = self::heldOf($before);
         $T = self::heldOf($target);
         $P = self::afterMaster($B, $before['master'], $target['master']);
+        // The other answer where the write is of a class the probe has not seen keep records: all of them kept (P itself otherwise).
+        $Q = self::afterMaster($B, $before['master'], $target['master'], true);
         $C = $now;
+        // An instance is its form and its key: a day B holds at a key is the same instance as the one Google holds there now only in the same form.
+        $sameForm = (int) $before['master']['all_day'] === (int) $C['master']['all_day'];
         $words = [];
         $conflicts = [];
         $overWords = []; // what a forced rebase put back over, apart from what it kept
@@ -1799,19 +1950,28 @@ final class GoogleSeries
         foreach (array_keys($keys) as $key) {
             $key = (string) $key;
             $x = $target['exceptions'][$key] ?? null;
-            $wasKey = $x !== null && isset($byRow[(int) ($x['rowId'] ?? 0)]) ? $byRow[(int) $x['rowId']] : $key;
-            $bOwn = self::dayIn($B, $wasKey);
-            $bHere = $wasKey === $key ? $bOwn : self::dayIn($B, $key);
+            $byItsRow = $x !== null && isset($byRow[(int) ($x['rowId'] ?? 0)]);
+            $wasKey = $byItsRow ? $byRow[(int) $x['rowId']] : $key;
             $p = self::dayIn($P, $key);
+            $q = self::dayIn($Q, $key);
             $t = self::dayIn($T, $key);
             $c = self::dayIn($C, $key);
+            // The day before: the row's own, or the day at the key while
+            // that key names the same instance (the form Google holds the
+            // series in now is the form it was found in). Otherwise the
+            // instance at this key came with the master write, and its
+            // before is what that write left there.
+            $known = $byItsRow || $sameForm;
+            $bx = $known ? ($before['exceptions'][$wasKey] ?? null) : null;
+            $bOwn = $known ? self::dayIn($B, $wasKey) : $p;
+            $bHere = $sameForm ? ($wasKey === $key ? $bOwn : self::dayIn($B, $key)) : $p;
             // A day the change leaves as it found it (its own part the same
             // on both sides) that Google put back to the series since: no
             // record now where the change's own write would have left one.
             // It follows the series, as a day the change has no row for.
             $follows = $x !== null && $wasKey === $key && is_array($bOwn) && is_array($t) && is_array($c)
                 && isset($B['records'][$key], $P['records'][$key]) && !isset($C['records'][$key])
-                && self::ownPart($bOwn, $before['exceptions'][$key] ?? null) === self::ownPart($t, $x);
+                && self::ownPart($bOwn, $bx) === self::ownPart($t, $x);
             if ($follows) {
                 $x = null;
             }
@@ -1826,14 +1986,14 @@ final class GoogleSeries
             $fromNow = []; // the groups of the day taken from what Google holds now, not from the change
             if ($c === 'skip' || $t === 'skip' || $bOwn === 'skip') {
                 // A day skipped on one side: the day as a whole.
-                $wantsChange = self::ownPart($bOwn, $before['exceptions'][$wasKey] ?? null) !== self::ownPart($t, $x);
-                $how = self::threeWay($c, [$bOwn, $bHere, $p, $t], $wantsChange, false);
+                $wantsChange = self::ownPart($bOwn, $bx) !== self::ownPart($t, $x);
+                $how = self::threeWay($c, [$bOwn, $bHere, $p, $q, $t], $wantsChange, false);
                 if ($how === 'conflict' && $force) {
                     $conflicts[] = [$key, 'day'];
                     $overWords[] = $dayWords($key) . " (changed at Google $since).";
                     $how = 'change';
                 }
-                if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $c !== 'skip') {
+                if ($how !== 'change' && $bOwn === 'skip' && $p !== 'skip' && $q !== 'skip' && $c !== 'skip') {
                     // A skipped day the change's own master write brought
                     // back (a status sent): its record returns with fields
                     // no read shows, so a live day there is that write's.
@@ -1857,7 +2017,7 @@ final class GoogleSeries
                 $forced = [];
                 foreach (self::GROUPS as $g => $cols) {
                     // A skip at the destination (the day the edited day moves onto) is that day's value, explaining no field.
-                    $how = self::threeWay($c[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, is_array($p) ? $p[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
+                    $how = self::threeWay($c[$g], [$bOwn[$g], is_array($bHere) ? $bHere[$g] : null, is_array($p) ? $p[$g] : null, is_array($q) ? $q[$g] : null, $t[$g]], $bOwn[$g], $t[$g]);
                     if ($how === 'conflict' && $force) {
                         $conflicts[] = [$key, $g];
                         $forced[] = self::GROUP_WORDS[$g];

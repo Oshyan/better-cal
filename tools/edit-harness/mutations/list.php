@@ -468,6 +468,34 @@ return [
             ],
         ),
     ],
+    // Provider identity (rule 1 of 1.5.5): what a master write leaves at Google is predicted by each record's id under
+    // the old master's form (GoogleSeries::afterMaster, S1). Here the id is read in the new master's form instead, so
+    // the form term is always true and a record or skip on a key the new form also has is predicted kept, as before
+    // the fix (review R1). Every after-write assertion of the coinciding-key scenarios fails, with the harness's own
+    // forward-edit checks on seed 911 cases 193 and 879 that the test runs through the driver; the plan and asked-state
+    // assertions and the two controls at 10:00 Los Angeles hold.
+    [
+        'id' => 'google-after-master-form-term', 'file' => 'server/src/Domain/GoogleSeries.php', 'dbtest' => 'google-series-identity',
+        'what' => 'a record\'s identity through a master write read in the new master\'s form, so a change between timed and all-day keeps what shares a key',
+        'patch' => [["            \$id = GoogleWriter::instanceId('', \$key, \$was);", "            \$id = GoogleWriter::instanceId('', \$key, \$allDay);"]],
+        'checks' => array_merge(
+            array_merge(...array_map(static fn(string $scenario): array => array_map(static fn(string $what): string => "$scenario: $what", [
+                'Google holds the edited day\'s record under its new identity with its notes and place',
+                'Google holds the skipped day as skipped under its new identity',
+                'Google lists the edited day with its notes and place',
+                'Google lists nothing on the skipped day',
+                'a write sent to Google carries the edited day\'s notes and place',
+                'the edited day\'s row is still there with its own notes and place',
+                'the skipped day is still skipped here',
+                'the window shows the edited day with its place and notes',
+                'the window shows nothing on the skipped day',
+            ]), [
+                'timed 00:00 UTC to all-day (edit, then skip)', 'timed 00:00 UTC to all-day (skip, then edit)', 'timed 00:00 UTC to all-day (from the last day)',
+                'all-day to timed 00:00 UTC (edit, then skip)', 'all-day to timed 00:00 UTC (skip, then edit)',
+            ])),
+            ['harness seed 911 case 193: no forward-edit check fails', 'harness seed 911 case 879: no forward-edit check fails'],
+        ),
+    ],
     // The interleaving mode (README, Interleaving), each on a product file the Google paths share.
     [
         'id' => 'google-body-sends-color', 'file' => 'server/src/Domain/GoogleWriter.php', 'checks' => ['x-write-asked'], 'interleave' => true,

@@ -4,7 +4,7 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## 1.5.5 (unreleased)
+## 1.5.5 (2026-11-10)
 
 Google calendars, CalDAV and undo after an outside review and a round of independent bug hunts: every request to Google is conditional, a change that stops half way can be finished or put back, a day keeps what only Better-Cal holds for it, and an undo refuses with its reason where it can't be sure which day it is about ([roadmap](ROADMAP.md#15-one-engine-under-the-calendar)).
 

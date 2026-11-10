@@ -2281,12 +2281,16 @@ final class Undo
      */
     public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null): array
     {
-        // Through the one loader: an entry recorded by an earlier version
-        // (JOURNAL_FORMAT) is refused here, forced or not, before anything.
-        $mutation = self::entryToTakeBack($this->db, $userId, $mutationId);
-        if ((int) $mutation['undone'] === 1) {
+        // An entry that is undone says so, whatever recorded it: that is the
+        // true answer to "undo this", and the flag is one column in every
+        // format, so nothing of the entry is read to give it.
+        if ((int) $this->db->scalar('SELECT undone FROM mutations WHERE id = ? AND user_id = ?', [$mutationId, $userId]) === 1) {
             throw HttpError::badRequest('Already undone', 'already_undone');
         }
+        // Then through the one loader: an entry recorded by an earlier
+        // version (JOURNAL_FORMAT) is refused here, forced or not, before
+        // anything of it is read.
+        $mutation = self::entryToTakeBack($this->db, $userId, $mutationId);
         if ($mutation['before_json'] === null && $mutation['after_json'] === null) {
             // Made log-only for a reason of its own (migration 064), it says so.
             $details = json_decode((string) ($mutation['details_json'] ?? ''), true);

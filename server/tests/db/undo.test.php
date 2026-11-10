@@ -31,6 +31,25 @@ return static function (Db $db): void {
     $series = static fn(string $title, string $day) => (int) $d->events->create($u, eventAt($home, $title, $day, ['rrule' => 'FREQ=DAILY;COUNT=10']))['eventId'];
     $later = static fn(int $id, string $day) => planned($d->events, $u, $id, ['scope' => 'all', 'instanceStart' => $day . 'T18:00:00+00:00', 'start' => $day . 'T19:00:00+00:00', 'end' => $day . 'T20:00:00+00:00']);
 
+    // An entry that is undone answers "already undone", also when an earlier
+    // version recorded it: one not undone answers that it can't be undone
+    // after the upgrade.
+    scenario('undo: an entry already undone says so, whatever version recorded it', function () use ($db): void {
+        $u = freshUser($db);
+        $d = domains($db);
+        $home = (int) Settings::defaultCalendarId($db, $u);
+        $made = [];
+        foreach (['Sample one', 'Sample two'] as $title) {
+            $d->events->create($u, eventAt($home, $title));
+            $made[] = lastEntry($db, $u);
+        }
+        $d->undo->undoById($u, $made[0]);
+        checkEq('undo: undone once, a second undo of it is already undone', 'already_undone', refusal(fn() => $d->undo->undoById($u, $made[0])));
+        $db->run('UPDATE mutations SET format = 1 WHERE id IN (?, ?)', $made);
+        checkEq('undo: recorded by an earlier version and undone before the upgrade: still already undone; one not undone can\'t be undone',
+            ['already_undone', 'not_undoable'], [refusal(fn() => $d->undo->undoById($u, $made[0])), refusal(fn() => $d->undo->undoById($u, $made[1]))]);
+    });
+
     // A calendar made, then an event added to it: undoing the making would
     // take the event with it.
     scenario('undo: a calendar made, then an event added to it', function () use ($db, $d, $u, $count): void {

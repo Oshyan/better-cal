@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace BetterCal\Dav;
 
 use BetterCal\Domain\CalendarMoveGuard;
+use BetterCal\Domain\Events;
+use BetterCal\Domain\Feeds;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
@@ -429,13 +431,33 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 ]);
             }
 
-            $seenInstances = [];
+            // The stored row each record of the PUT is for (Feeds::standing,
+            // the one function a list's records are matched by): the row at
+            // the record's key while the series keeps its form, and when the
+            // PUT changes the form (timed made all-day, or back) the row
+            // whose day the key is, since an equal key is then another day
+            // west of UTC. A row that leaves its key lets go of it first.
+            $rowFor = $existingByInstance;
+            if ($existingMaster !== null) {
+                $days = array_values(array_filter($existingByInstance, static fn(array $r): bool => (int) ($r['recurrence_parent_id'] ?? 0) === (int) $existingMaster['id']));
+                $stand = Feeds::standing($days, $existingMaster, array_merge($existingMaster, $masterCols));
+                foreach ($stand['leaving'] as $r) {
+                    unset($rowFor[(string) $r['recurrence_instance_utc']]);
+                }
+                Events::parkInstanceKeys($this->db, array_map(static fn(array $r): int => (int) $r['id'], $stand['leaving']));
+                foreach ($stand['at'] as $at => $r) {
+                    $rowFor[(string) $at] ??= $r; // never over a row still at that key
+                }
+            }
+            $given = []; // the rows a record of the PUT was given to, by id
             foreach ($parsedOverrides as $ov) {
                 $cols = DavIcs::eventColumns($ov);
                 $instance = (string) $cols['recurrence_instance_utc'];
-                $seenInstances[$instance] = true;
                 $cols['recurrence_parent_id'] = $masterId;
-                $current = $existingByInstance[$instance] ?? null;
+                $current = $rowFor[$instance] ?? null;
+                if ($current !== null) {
+                    $given[(int) $current['id']] = true;
+                }
                 if (OwnFields::hasColumn($this->db)) {
                     // A client's PUT carries values, not intent: what it changed decides (Rows from Elsewhere).
                     $cols['override_fields'] = OwnFields::encode(
@@ -457,8 +479,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
             // Overrides dropped from the PUT body are gone for good (with what
             // they carried, which the before snapshot holds for undo).
-            foreach ($existingByInstance as $instance => $row) {
-                if (!isset($seenInstances[$instance])) {
+            foreach ($existingByInstance as $row) {
+                if (!isset($given[(int) $row['id']])) {
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }

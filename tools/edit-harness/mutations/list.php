@@ -507,4 +507,35 @@ return [
         ]],
         'cases' => ['edited-day-rejoins-the-series'],
     ],
+    // Rule 1, the sync's match (Feeds::standing): a record of a series whose form the list changes is for the row whose day
+    // its key is, not the row at an equal key. Back at the equal key, the records west of UTC take the neighbouring day's
+    // row (a Google poll, delta and whole; an ICS feed, both directions); the controls at UTC and east of it, the changes
+    // of form with no record, and the CalDAV PUT (its own caller of the same function) do not fail.
+    [
+        'id' => 'sync-match-by-equal-key', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-match',
+        'what' => 'the sync gives a record to the stored row at an equal key, whatever form the row\'s series was stored in',
+        'patch' => [['                $current = $rowFor[$key] ?? null;', '                $current = $existingByKey[$key] ?? null;']],
+        'checks' => [
+            'each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
+            'the series is in its new form here, with no skipped day, no row left deleted and no day row without a key',
+            'after: the same two rows on the same two days, as all-day days: the tag on 7 January, the record\'s title on 8 January',
+            'after: the same two rows on the same two days, at 19:00: the record\'s title on 6 January, the tag on 7 January',
+            // No row is at the record's key, so a new row is made and both of the day's rows merge into it.
+            'one row for 4 January: the first of the two, with the record\'s title and both tags; the second is gone and no row is without a key',
+        ],
+    ],
+    // The same match under a Google delta as GoogleSync::applyChanges builds its list today: every stored row restated,
+    // old-form ones included. Read as records of the series in its new form, the restated rows of 6 and 7 January are
+    // given to the neighbouring days' rows. Once applyChanges keeps only the final master's form (audit-155-identity,
+    // the applyChanges model, rule 5) no restated row of the other form reaches the sync: this mutation then trips
+    // nothing, and the clause it removes goes with it.
+    [
+        'id' => 'sync-restated-row-read-as-a-record', 'file' => 'server/src/Domain/Feeds.php', 'dbtest' => 'sync-form-match',
+        'what' => 'a stored row a Google delta restates, in a series whose form the delta changes, is read as a record of the series in its new form',
+        'patch' => [['                if (isset($reformed[(string) $ev[\'uid\']]) && $ev[\'recurrence_instance_utc\'] !== null', '                if (false && isset($reformed[(string) $ev[\'uid\']]) && $ev[\'recurrence_instance_utc\'] !== null']],
+        'checks' => [
+            '6 January keeps its row and tag, 7 January its row and reminder, each at its own day\'s key in the new form; 5 and 8 January, whose notes Google dropped, are ordinary days',
+            'each of the four days is the row it was, at its own day\'s key in the new form: the notes on 5 and 8 January, the tag on 6 January, the reminder on 7 January',
+        ],
+    ],
 ];
